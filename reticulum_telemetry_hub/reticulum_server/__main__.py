@@ -304,7 +304,11 @@ if __name__ == "__main__":
 
     if args.storage_dir:
         storage_path = args.storage_dir
-        identity_path = os.path.join(STORAGE_PATH, "identity")
+        # store the identity in the user supplied directory rather than the
+        # default STORAGE_PATH. Previously `STORAGE_PATH` was used here which
+        # ignored the command line argument and always wrote the identity file
+        # to the default location.
+        identity_path = os.path.join(storage_path, "identity")
 
     reticulum_server = ReticulumTelemetryHub(
         args.display_name, storage_path, identity_path
