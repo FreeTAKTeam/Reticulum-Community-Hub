@@ -302,9 +302,9 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
-    if args.storage_dir:
-        storage_path = args.storage_dir
-        identity_path = os.path.join(STORAGE_PATH, "identity")
+    # Use the provided storage directory (or default) for both storage and identity paths
+    storage_path = args.storage_dir
+    identity_path = os.path.join(storage_path, "identity")
 
     reticulum_server = ReticulumTelemetryHub(
         args.display_name, storage_path, identity_path

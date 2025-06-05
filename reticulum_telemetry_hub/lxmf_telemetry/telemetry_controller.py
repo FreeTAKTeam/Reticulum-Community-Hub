@@ -110,7 +110,7 @@ class TelemetryController:
             telemeter_data[sensor.sid] = sensor_data
         return telemeter_data
 
-    def _deserialize_telemeter(self, tel_data: dict, peer_dest: str) -> Telemeter:
+    def _deserialize_telemeter(self, tel_data: dict, peer_dest: str = "") -> Telemeter:
         """Deserialize the telemeter data."""
         tel = Telemeter(peer_dest)
         for sid in tel_data:
