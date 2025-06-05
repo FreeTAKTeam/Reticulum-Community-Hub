@@ -302,6 +302,11 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
+
+    # Use the provided storage directory (or default) for both storage and identity paths
+    storage_path = args.storage_dir
+    identity_path = os.path.join(storage_path, "identity")
+
     if args.storage_dir:
         storage_path = args.storage_dir
         # store the identity in the user supplied directory rather than the
@@ -309,6 +314,7 @@ if __name__ == "__main__":
         # ignored the command line argument and always wrote the identity file
         # to the default location.
         identity_path = os.path.join(storage_path, "identity")
+
 
     reticulum_server = ReticulumTelemetryHub(
         args.display_name, storage_path, identity_path
