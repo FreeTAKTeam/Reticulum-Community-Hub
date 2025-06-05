@@ -40,16 +40,13 @@ from pathlib import Path
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from .command_manager import CommandManager
+from .constants import PLUGIN_COMMAND
 
 # Constants
 STORAGE_PATH = "RTH_Store"  # Path to store temporary files
 IDENTITY_PATH = os.path.join(STORAGE_PATH, "identity")  # Path to store identity file
 APP_NAME = LXMF.APP_NAME + ".delivery"  # Application name for LXMF
-PLUGIN_COMMAND = (
-    0  # Command to join the network, equivalent to ping on the sideband client
-)
-
-
 class AnnounceHandler:
     """Handles announcements from other nodes in the Reticulum network."""
 
@@ -98,6 +95,10 @@ class ReticulumTelemetryHub:
 
         self.identities = {}  # Dictionary to store identities
 
+        self.command_manager = CommandManager(
+            self.connections, self.tel_controller, self.my_lxmf_dest
+        )
+
         self.lxm_router.set_message_storage_limit(megabytes=5)
 
         # Register delivery callback
@@ -117,49 +118,8 @@ class ReticulumTelemetryHub:
             commands (list): List of commands received from the client
             message (LXMF.LXMessage): LXMF message object
         """
-        for command in commands:
-            print(f"Command: {command}")
-            if PLUGIN_COMMAND in command and command[PLUGIN_COMMAND] == "join":
-                dest = RNS.Destination(
-                    message.source.identity,
-                    RNS.Destination.OUT,
-                    RNS.Destination.SINGLE,
-                    "lxmf",
-                    "delivery",
-                )
-                self.connections[dest.identity.hash] = dest
-                RNS.log(f"Connection added: {message.source}")
-                confirmation = LXMF.LXMessage(
-                    dest,
-                    self.my_lxmf_dest,
-                    "Connection established",
-                    desired_method=LXMF.LXMessage.DIRECT,
-                )
-                self.lxm_router.handle_outbound(confirmation)
-                continue  # Skip the rest of the loop
-            elif PLUGIN_COMMAND in command and command[PLUGIN_COMMAND] == "leave":
-                dest = RNS.Destination(
-                    message.source.identity,
-                    RNS.Destination.OUT,
-                    RNS.Destination.SINGLE,
-                    "lxmf",
-                    "delivery",
-                )
-                self.connections.pop(dest.identity.hash, None)
-                RNS.log(f"Connection removed: {message.source}")
-                confirmation = LXMF.LXMessage(
-                    dest,
-                    self.my_lxmf_dest,
-                    "Connection removed",
-                    desired_method=LXMF.LXMessage.DIRECT,
-                )
-                self.lxm_router.handle_outbound(confirmation)
-                continue
-            msg = self.tel_controller.handle_command(
-                command, message, self.my_lxmf_dest
-            )
-            if msg:
-                self.lxm_router.handle_outbound(msg)
+        for response in self.command_manager.handle_commands(commands, message):
+            self.lxm_router.handle_outbound(response)
 
     def delivery_callback(self, message: LXMF.LXMessage):
         """Callback function to handle incoming messages.

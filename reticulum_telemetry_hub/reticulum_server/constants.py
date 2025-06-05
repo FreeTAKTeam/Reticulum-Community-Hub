@@ -1,0 +1,1 @@
+PLUGIN_COMMAND = 0
