@@ -82,7 +82,7 @@ class ReticulumTelemetryHub:
     def __init__(self, display_name: str, storage_path: Path, identity_path: Path):
         self.ret = RNS.Reticulum()  # Initialize Reticulum
         self.tel_controller = TelemetryController()  # Initialize telemetry controller
-        self.connections = {}  # List to store connections
+        self.connections = {}  # Dictionary of connections keyed by peer hash
 
         identity = self.load_or_generate_identity(
             identity_path
@@ -302,9 +302,19 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
+
     # Use the provided storage directory (or default) for both storage and identity paths
     storage_path = args.storage_dir
     identity_path = os.path.join(storage_path, "identity")
+
+    if args.storage_dir:
+        storage_path = args.storage_dir
+        # store the identity in the user supplied directory rather than the
+        # default STORAGE_PATH. Previously `STORAGE_PATH` was used here which
+        # ignored the command line argument and always wrote the identity file
+        # to the default location.
+        identity_path = os.path.join(storage_path, "identity")
+
 
     reticulum_server = ReticulumTelemetryHub(
         args.display_name, storage_path, identity_path
