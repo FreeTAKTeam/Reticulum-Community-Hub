@@ -82,7 +82,7 @@ class ReticulumTelemetryHub:
     def __init__(self, display_name: str, storage_path: Path, identity_path: Path):
         self.ret = RNS.Reticulum()  # Initialize Reticulum
         self.tel_controller = TelemetryController()  # Initialize telemetry controller
-        self.connections = {}  # List to store connections
+        self.connections = {}  # Dictionary of connections keyed by peer hash
 
         identity = self.load_or_generate_identity(
             identity_path
