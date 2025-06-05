@@ -110,11 +110,21 @@ class TelemetryController:
             telemeter_data[sensor.sid] = sensor_data
         return telemeter_data
 
-    def _deserialize_telemeter(self, tel_data: dict, peer_dest: str = "") -> Telemeter:
-        """Deserialize the telemeter data."""
+    def _deserialize_telemeter(self, tel_data, peer_dest: str = "") -> Telemeter:
+        """Deserialize the telemeter data.
+
+        The method accepts either already unpacked telemetry dictionaries or
+        raw msgpack-encoded bytes. The optional ``peer_dest`` parameter is
+        primarily used when storing data received from the network.
+        """
+        if isinstance(tel_data, (bytes, bytearray)):
+            tel_data = unpackb(tel_data, strict_map_key=False)
+
         tel = Telemeter(peer_dest)
-        for sid in tel_data:
-            if sid in sid_mapping:
+        # Iterate in the order defined by ``sid_mapping`` so tests relying on
+        # specific sensor ordering remain stable.
+        for sid in sid_mapping:
+            if sid in tel_data:
                 if tel_data[sid] is None:
                     RNS.log(f"Sensor data for {sid} is None")
                     continue
