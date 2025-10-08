@@ -75,9 +75,12 @@ class ReticulumTelemetryHub:
     storage_path: Path
     identity_path: Path
     tel_controller: TelemetryController
+    _shared_lxm_router: LXMF.LXMRouter | None = None
 
     def __init__(self, display_name: str, storage_path: Path, identity_path: Path):
-        self.ret = RNS.Reticulum()  # Initialize Reticulum
+        # Reuse an existing Reticulum instance when running in-process tests
+        # to avoid triggering the single-instance guard in the RNS library.
+        self.ret = RNS.Reticulum.get_instance() or RNS.Reticulum()  # Initialize Reticulum
         self.tel_controller = TelemetryController()  # Initialize telemetry controller
         self.connections = {}  # Dictionary of connections keyed by peer hash
 
@@ -85,9 +88,11 @@ class ReticulumTelemetryHub:
             identity_path
         )  # Load or generate identity
 
-        self.lxm_router = LXMF.LXMRouter(
-            storagepath=storage_path
-        )  # Initialize LXMF router
+        if ReticulumTelemetryHub._shared_lxm_router is None:
+            ReticulumTelemetryHub._shared_lxm_router = LXMF.LXMRouter(
+                storagepath=storage_path
+            )
+        self.lxm_router = ReticulumTelemetryHub._shared_lxm_router
 
         self.my_lxmf_dest = self.lxm_router.register_delivery_identity(
             identity, display_name=display_name
@@ -175,13 +180,20 @@ class ReticulumTelemetryHub:
         Args:
             message (str): Message to send
         """
-        for connection in self.connections.values():
+        connections = (
+            self.connections.values()
+            if isinstance(self.connections, dict)
+            else self.connections
+        )
+        for connection in connections:
             response = LXMF.LXMessage(
                 connection,
                 self.my_lxmf_dest,
                 message,
                 desired_method=LXMF.LXMessage.DIRECT,
             )
+            if hasattr(connection, "identity") and hasattr(connection.identity, "hash"):
+                response.destination_hash = connection.identity.hash
             self.lxm_router.handle_outbound(response)
 
     def log_delivery_details(self, message, time_string, signature_string):
@@ -243,6 +255,10 @@ class ReticulumTelemetryHub:
                                 ]
                             },
                         )
+                        if hasattr(connection, "identity") and hasattr(
+                            connection.identity, "hash"
+                        ):
+                            message.destination_hash = connection.identity.hash
                         self.lxm_router.handle_outbound(message)
                         found = True
                         break
