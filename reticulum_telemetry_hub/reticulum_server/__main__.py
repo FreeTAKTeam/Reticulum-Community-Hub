@@ -175,7 +175,7 @@ class ReticulumTelemetryHub:
         Args:
             message (str): Message to send
         """
-        for connection in self.connections:
+        for connection in self.connections.values():
             response = LXMF.LXMessage(
                 connection,
                 self.my_lxmf_dest,
@@ -229,8 +229,9 @@ class ReticulumTelemetryHub:
             elif choice == "telemetry":
                 connection_hash = input("Enter the connection hash: ")
                 found = False
-                for connection in self.connections:
-                    if connection.hexhash == connection_hash:
+                normalized_hash = connection_hash.strip().lower().replace(":", "")
+                for conn_hash, connection in self.connections.items():
+                    if conn_hash.hex() == normalized_hash:
                         message = LXMF.LXMessage(
                             connection,
                             self.my_lxmf_dest,
