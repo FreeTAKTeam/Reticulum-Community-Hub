@@ -37,9 +37,13 @@ class TelemetryController:
             tels = query.options(joinedload(Telemeter.sensors)).all()
             return tels
 
-    def save_telemetry(self, telemetry_data: dict, peer_dest) -> None:
+    def save_telemetry(
+        self, telemetry_data: dict, peer_dest, timestamp: Optional[datetime] = None
+    ) -> None:
         """Save the telemetry data."""
         tel = self._deserialize_telemeter(telemetry_data, peer_dest)
+        if timestamp is not None:
+            tel.time = timestamp
         with Session_cls() as ses:
             ses.add(tel)
             ses.commit()
@@ -59,7 +63,19 @@ class TelemetryController:
                 message.fields[LXMF.FIELD_TELEMETRY_STREAM], strict_map_key=False
             )
             for tel_data in tels_data:
-                self.save_telemetry(tel_data, RNS.hexrep(tel_data.pop(0)))
+                tel_entry = list(tel_data)
+                peer_hash = tel_entry.pop(0)
+                peer_dest = RNS.hexrep(peer_hash)
+                timestamp = None
+                if tel_entry:
+                    raw_timestamp = tel_entry.pop(0)
+                    if raw_timestamp is not None:
+                        timestamp = datetime.fromtimestamp(raw_timestamp)
+                payload = tel_entry.pop(0) if tel_entry else None
+                if not payload:
+                    RNS.log("Telemetry payload missing; skipping entry")
+                    continue
+                self.save_telemetry(payload, peer_dest, timestamp)
             handled = True
 
         return handled
