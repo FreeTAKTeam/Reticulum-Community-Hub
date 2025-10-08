@@ -93,7 +93,9 @@ class TelemetryController:
                         ['account', b'\x00\x00\x00', b'\xff\xff\xff'],
                     ]
                 )
-            message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packed_tels
+            message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packb(
+                packed_tels, use_bin_type=True
+            )
             print("+--- Sending telemetry data---------------------------------")
             print(f"| Telemetry data: {packed_tels}")
             print(f"| Message: {message}")
