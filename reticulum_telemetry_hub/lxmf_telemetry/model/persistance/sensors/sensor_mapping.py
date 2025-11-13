@@ -1,31 +1,31 @@
 from .sensor_enum import *
+from .acceleration import Acceleration
+from .ambient_light import AmbientLight
+from .angular_velocity import AngularVelocity
+from .battery import Battery
+from .gravity import Gravity
+from .humidity import Humidity
+from .information import Information
 from .location import Location
-from .time import Time
 from .magnetic_field import MagneticField
+from .physical_link import PhysicalLink
+from .pressure import Pressure
+from .proximity import Proximity
+from .received import Received
+from .temperature import Temperature
+from .time import Time
 from .generic import (
-    Acceleration,
-    AmbientLight,
-    AngularVelocity,
-    Battery,
     ConnectionMap,
     Custom,
     Fuel,
-    Gravity,
-    Humidity,
-    Information,
     LXMFPropagation,
     NonVolatileMemory,
-    PhysicalLink,
     PowerConsumption,
     PowerProduction,
-    Pressure,
     Processor,
-    Proximity,
     RandomAccessMemory,
-    Received,
     RNSTransport,
     Tank,
-    Temperature,
 )
 
 sid_mapping = {

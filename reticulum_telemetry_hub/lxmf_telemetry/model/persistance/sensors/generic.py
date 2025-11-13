@@ -1,38 +1,21 @@
-"""Generic SQLAlchemy models for telemetry sensors without dedicated schema.
-
-These classes persist the raw packed payload for each sensor while ensuring the
-``Sensor.sid`` column is populated so serialization works as expected. They use
-single-table inheritance to reuse the base :class:`Sensor` table.
-"""
+"""Generic SQLAlchemy models for telemetry sensors without dedicated schema."""
 from __future__ import annotations
 
 from typing import Any
 
 from .sensor import Sensor
 from .sensor_enum import (
-    SID_ACCELERATION,
-    SID_AMBIENT_LIGHT,
-    SID_ANGULAR_VELOCITY,
-    SID_BATTERY,
     SID_CONNECTION_MAP,
     SID_CUSTOM,
     SID_FUEL,
-    SID_GRAVITY,
-    SID_HUMIDITY,
-    SID_INFORMATION,
     SID_LXMF_PROPAGATION,
     SID_NVM,
-    SID_PHYSICAL_LINK,
     SID_POWER_CONSUMPTION,
     SID_POWER_PRODUCTION,
-    SID_PRESSURE,
     SID_PROCESSOR,
-    SID_PROXIMITY,
     SID_RAM,
-    SID_RECEIVED,
     SID_RNS_TRANSPORT,
     SID_TANK,
-    SID_TEMPERATURE,
 )
 from msgpack import packb, unpackb
 
@@ -76,18 +59,6 @@ def _build_sensor_class(name: str, sid: int):
     )
 
 
-Pressure = _build_sensor_class("Pressure", SID_PRESSURE)
-Battery = _build_sensor_class("Battery", SID_BATTERY)
-PhysicalLink = _build_sensor_class("PhysicalLink", SID_PHYSICAL_LINK)
-Acceleration = _build_sensor_class("Acceleration", SID_ACCELERATION)
-Temperature = _build_sensor_class("Temperature", SID_TEMPERATURE)
-Humidity = _build_sensor_class("Humidity", SID_HUMIDITY)
-AmbientLight = _build_sensor_class("AmbientLight", SID_AMBIENT_LIGHT)
-Gravity = _build_sensor_class("Gravity", SID_GRAVITY)
-AngularVelocity = _build_sensor_class("AngularVelocity", SID_ANGULAR_VELOCITY)
-Proximity = _build_sensor_class("Proximity", SID_PROXIMITY)
-Information = _build_sensor_class("Information", SID_INFORMATION)
-Received = _build_sensor_class("Received", SID_RECEIVED)
 PowerConsumption = _build_sensor_class("PowerConsumption", SID_POWER_CONSUMPTION)
 PowerProduction = _build_sensor_class("PowerProduction", SID_POWER_PRODUCTION)
 Processor = _build_sensor_class("Processor", SID_PROCESSOR)
@@ -102,27 +73,15 @@ Custom = _build_sensor_class("Custom", SID_CUSTOM)
 
 
 __all__ = [
-    "Acceleration",
-    "AmbientLight",
-    "AngularVelocity",
-    "Battery",
     "ConnectionMap",
     "Custom",
     "Fuel",
-    "Gravity",
-    "Humidity",
-    "Information",
     "LXMFPropagation",
     "NonVolatileMemory",
-    "PhysicalLink",
     "PowerConsumption",
     "PowerProduction",
-    "Pressure",
     "Processor",
-    "Proximity",
     "RandomAccessMemory",
-    "Received",
     "RNSTransport",
     "Tank",
-    "Temperature",
 ]
