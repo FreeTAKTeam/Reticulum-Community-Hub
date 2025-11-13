@@ -17,6 +17,7 @@ class MagneticField(Sensor):
 
     def __init__(self):
         super().__init__(stale_time=15)
+        self.sid = SID_MAGNETIC_FIELD
         self.x = None
         self.y = None
         self.z = None

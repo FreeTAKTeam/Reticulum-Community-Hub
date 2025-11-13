@@ -22,6 +22,7 @@ class Location(Sensor):
 
     def __init__(self):
         super().__init__(stale_time=15)
+        self.sid = SID_LOCATION
         self.latitude = None
         self.longitude = None
         self.altitude = None
