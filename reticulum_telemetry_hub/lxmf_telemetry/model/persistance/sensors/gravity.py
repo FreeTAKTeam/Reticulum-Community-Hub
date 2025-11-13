@@ -1,4 +1,4 @@
-"""SQLAlchemy model for the Magnetic Field sensor."""
+"""SQLAlchemy model for the Gravity sensor."""
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -7,11 +7,11 @@ from sqlalchemy import Float, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .sensor import Sensor
-from .sensor_enum import SID_MAGNETIC_FIELD
+from .sensor_enum import SID_GRAVITY
 
 
-class MagneticField(Sensor):
-    __tablename__ = "MagneticField"
+class Gravity(Sensor):
+    __tablename__ = "Gravity"
 
     id: Mapped[int] = mapped_column(ForeignKey("Sensor.id"), primary_key=True)
     x: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -20,7 +20,7 @@ class MagneticField(Sensor):
 
     def __init__(self) -> None:
         super().__init__(stale_time=1)
-        self.sid = SID_MAGNETIC_FIELD
+        self.sid = SID_GRAVITY
 
     def pack(self):  # type: ignore[override]
         if self.x is None and self.y is None and self.z is None:
@@ -47,6 +47,6 @@ class MagneticField(Sensor):
         return {"x": self.x, "y": self.y, "z": self.z}
 
     __mapper_args__ = {
-        "polymorphic_identity": SID_MAGNETIC_FIELD,
+        "polymorphic_identity": SID_GRAVITY,
         "with_polymorphic": "*",
     }
