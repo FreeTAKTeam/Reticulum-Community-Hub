@@ -18,7 +18,6 @@ from .generic import (
     ConnectionMap,
     Custom,
     Fuel,
-    LXMFPropagation,
     NonVolatileMemory,
     PowerConsumption,
     PowerProduction,
@@ -26,6 +25,7 @@ from .generic import (
     RandomAccessMemory,
     Tank,
 )
+from .lxmf_propagation import LXMFPropagation
 from .rns_transport import RNSTransport
 
 sid_mapping = {
