@@ -10,6 +10,9 @@ from sqlalchemy.orm import sessionmaker
 from reticulum_telemetry_hub.lxmf_telemetry import telemetry_controller as tc_mod
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import TelemetryController
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import (
+    sid_mapping,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
 import pytest
 
@@ -19,7 +22,10 @@ def test_deserialize_lxmf():
 
     tel = TelemetryController()._deserialize_telemeter(tel_data, "test")
 
-    assert len(tel.sensors) == 2
+    expected_order = [sid for sid in sid_mapping if sid in tel_data]
+
+    assert [sensor.sid for sensor in tel.sensors] == expected_order
+    assert len(tel.sensors) == len(expected_order)
     location = next(s for s in tel.sensors if hasattr(s, "latitude"))
     assert pytest.approx(location.latitude, rel=1e-6) == 44.657059
     assert pytest.approx(location.longitude, rel=1e-6) == -63.596294
