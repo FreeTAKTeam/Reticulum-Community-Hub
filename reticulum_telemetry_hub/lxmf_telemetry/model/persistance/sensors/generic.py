@@ -797,7 +797,6 @@ Fuel.entry_model = FuelEntry  # type: ignore[attr-defined]
 
 
 LXMFPropagation = _build_sensor_class("LXMFPropagation", SID_LXMF_PROPAGATION)
-RNSTransport = _build_sensor_class("RNSTransport", SID_RNS_TRANSPORT)
 ConnectionMap = _build_sensor_class("ConnectionMap", SID_CONNECTION_MAP)
 
 
@@ -818,7 +817,6 @@ __all__ = [
     "ProcessorEntry",
     "RandomAccessMemory",
     "RandomAccessMemoryEntry",
-    "RNSTransport",
     "Tank",
     "TankEntry",
 ]
