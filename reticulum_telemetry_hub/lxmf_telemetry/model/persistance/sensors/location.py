@@ -5,19 +5,20 @@ import struct
 import RNS
 from sqlalchemy import Integer, ForeignKey, Float, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
+from typing import Optional
 from datetime import datetime
-
 class Location(Sensor):
     __tablename__ = 'Location'
 
     id: Mapped[int] = mapped_column(ForeignKey('Sensor.id'), primary_key=True)
-    latitude: Mapped[float] = mapped_column()
-    longitude: Mapped[float] = mapped_column()
-    altitude: Mapped[float] = mapped_column()
-    speed: Mapped[float] = mapped_column()
-    bearing: Mapped[float] = mapped_column()
-    accuracy: Mapped[float] = mapped_column()
-    last_update: Mapped[datetime] = mapped_column(DateTime)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    altitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    speed: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bearing: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    accuracy: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_update: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
 
     def __init__(self):
         super().__init__(stale_time=15)

@@ -1,6 +1,6 @@
 # Reticulum-Telemetry-Hub (RTH)
-![image](https://github.com/user-attachments/assets/ba29799c-7194-4052-aedf-1b5e1c8648d5)
 
+![image](https://github.com/user-attachments/assets/ba29799c-7194-4052-aedf-1b5e1c8648d5)
 
 Reticulum-Telemetry-Hub (RTH) is an independent component within the [Reticulum](https://reticulum.network/) / [lXMF](https://github.com/markqvist/LXMF) ecosystem, designed to manage a complete TCP node across a Reticulum-based network. 
 The RTH  enable communication and data sharing between clients like [Sideband](https://github.com/FreeTAKTeam/Sideband](https://github.com/markqvist/Sideband)) or Meshchat, enhancing situational awareness and operational efficiency in distributed networks.
@@ -17,6 +17,7 @@ The Reticulum-Telemetry-Hub can perform the following key functions:
 - **Reticulum Transport**: RTH uses Reticulum  as a transport node, routing traffic to other peers, passing network announcements, and fulfilling path requests.
 
 ## Installation
+
 To install Reticulum-Telemetry-Hub, clone the repository and proceed with the following steps:
 
 ```bash
@@ -25,10 +26,14 @@ cd Reticulum-Telemetry-Hub
 ```
 
 ## Configuration
+
 until we implement the wizard you will need to configure different config files.
+
 ## RNS Config file
+
 located under ```/[USERNAME]/.reticulum```
-```
+
+``` ini
 [reticulum]  
   enable_transport = True
     share_instance = Yes
@@ -44,9 +49,12 @@ located under ```/[USERNAME]/.reticulum```
   listen_ip = 0.0.0.0
   listen_port = 4242
 ```
+
 ## Router Config File
+
 located under ```/[USERNAME]/.lxmd``` 
-```
+
+``` ini
 [propagation]
 enable_node = yes
 # Automatic announce interval in minutes, suggested.
@@ -59,9 +67,10 @@ display_name = RTH_router
 ```
 
 ## Service
+
 In order to start the router  automatically on startup, we will need to install a /etc/systemd/system/lxmd.service file:
 
-```
+``` ini
 [Unit]
 Description=Reticulum LXMF Daemon (lxmd)
 After=network-online.target
@@ -79,6 +88,7 @@ WantedBy=multi-user.target
 ```
 
 ## Usage
+
 Enable and start the service: Once the service file is created, run the following commands to enable and start the service:
 
 ```bash
@@ -98,6 +108,7 @@ python3 main.py
 
 
 ### Project Roadmap
+
 - **Transition to Command-Based Server Joining**: Shift the "joining the server" functionality from an announce-based method to a command-based approach for improved control and scalability.
   - **Object-Based Configuration Management**: Refactor the system to enable access to all configuration files via objects, enhancing modularity and ease of management.
 - **Configuration Wizard Development**: Introduce a user-friendly wizard to simplify the configuration process.
@@ -105,15 +116,19 @@ python3 main.py
 - **Foundation for FTS "Flock of Parrot"**: Use RTH as the base for implementing the FreeTAKServer "Flock of Parrot" concept, aiming for scalable, interconnected FTS instances.
 
 ## Contributing
+
 We welcome and encourage contributions from the community! To contribute, please fork the repository and submit a pull request. Make sure that your contributions adhere to the project's coding standards and include appropriate tests.
 
 ## License
+
 This project is licensed under the Creative Commons License Attribution-NonCommercial-ShareAlike 4.0 International. For more details, refer to the `LICENSE` file in the repository.
 
 ## Support
+
 For any issues or support, feel free to open an issue on this GitHub repository or join the FreeTAKServer community on [Discord](The FTS Discord Server).
 
 # Support Reticulum
+
 You can help support the continued development of open, free and private communications systems by donating via one of the following channels to the original Reticulm author:
 
 * Monero: 84FpY1QbxHcgdseePYNmhTHcrgMX4nFfBYtz2GKYToqHVVhJp8Eaw1Z1EedRnKD19b3B8NiLCGVxzKV17UMmmeEsCrPyA5w
