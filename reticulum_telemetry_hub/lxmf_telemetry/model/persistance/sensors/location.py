@@ -7,6 +7,7 @@ from sqlalchemy import Integer, ForeignKey, Float, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from typing import Optional
 from datetime import datetime
+
 class Location(Sensor):
     __tablename__ = 'Location'
 
@@ -19,7 +20,6 @@ class Location(Sensor):
     accuracy: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     last_update: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-
     def __init__(self):
         super().__init__(stale_time=15)
         self.latitude = None
@@ -28,19 +28,26 @@ class Location(Sensor):
         self.speed = None
         self.bearing = None
         self.accuracy = None
+        self.last_update = None
 
     def pack(self):
         try:
+            latitude = self._require_float(self.latitude, "latitude")
+            longitude = self._require_float(self.longitude, "longitude")
+            altitude = self._require_float(self.altitude, "altitude")
+            speed = self._require_float(self.speed, "speed")
+            bearing = self._require_float(self.bearing, "bearing")
+            accuracy = self._require_float(self.accuracy, "accuracy")
             return [
-                struct.pack("!i", int(round(self.latitude, 6) * 1e6)),
-                struct.pack("!i", int(round(self.longitude, 6) * 1e6)),
-                struct.pack("!I", int(round(self.altitude, 2) * 1e2)),
-                struct.pack("!I", int(round(self.speed, 2) * 1e2)),
-                struct.pack("!I", int(round(self.bearing, 2) * 1e2)),
-                struct.pack("!H", int(round(self.accuracy, 2) * 1e2)),
-                self.last_update.timestamp(),
+                struct.pack("!i", int(round(latitude, 6) * 1e6)),
+                struct.pack("!i", int(round(longitude, 6) * 1e6)),
+                struct.pack("!I", int(round(altitude, 2) * 1e2)),
+                struct.pack("!I", int(round(speed, 2) * 1e2)),
+                struct.pack("!I", int(round(bearing, 2) * 1e2)),
+                struct.pack("!H", int(round(accuracy, 2) * 1e2)),
+                self._serialize_last_update(),
             ]
-        except (KeyError, ValueError, struct.error) as e:
+        except (KeyError, ValueError, struct.error, TypeError) as e:
             RNS.log(
                 "An error occurred while packing location sensor data. "
                 "The contained exception was: " + str(e),
@@ -63,6 +70,19 @@ class Location(Sensor):
         except (struct.error, IndexError):
             return None
 
+    def _require_float(self, value: Optional[float], field_name: str) -> float:
+        if value is None:
+            raise ValueError(f"{field_name} is not set on Location sensor")
+        return float(value)
+
+    def _serialize_last_update(self) -> float:
+        if self.last_update is None:
+            raise ValueError("last_update is not set on Location sensor")
+        if isinstance(self.last_update, datetime):
+            return self.last_update.timestamp()
+        if isinstance(self.last_update, (int, float)):
+            return float(self.last_update)
+        raise TypeError("last_update must be datetime or a unix timestamp")
 
     __mapper_args__ = {
         'polymorphic_identity': SID_LOCATION,
