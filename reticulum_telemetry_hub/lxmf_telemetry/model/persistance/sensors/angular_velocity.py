@@ -18,8 +18,23 @@ class AngularVelocity(Sensor):
     y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     z: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    def __init__(self) -> None:
-        super().__init__(stale_time=1)
+    def __init__(
+        self,
+        stale_time: float | None = 1,
+        data: Any | None = None,
+        active: bool = False,
+        synthesized: bool = False,
+        last_update: float = 0,
+        last_read: float = 0,
+    ) -> None:
+        super().__init__(
+            stale_time=stale_time,
+            data=data,
+            active=active,
+            synthesized=synthesized,
+            last_update=last_update,
+            last_read=last_read,
+        )
         self.sid = SID_ANGULAR_VELOCITY
 
     def pack(self):  # type: ignore[override]
