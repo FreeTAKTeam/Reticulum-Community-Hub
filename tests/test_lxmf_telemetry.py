@@ -13,6 +13,9 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import Telemetr
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import (
     sid_mapping,
 )
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.rns_transport import (
+    RNSTransport,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
 import pytest
 
@@ -93,3 +96,59 @@ def test_handle_message_stream_preserves_timestamp_and_sensors():
         stored = ses.query(Telemeter).one()
         assert stored.time == datetime.fromtimestamp(timestamp)
         assert len(stored.sensors) > 0
+
+
+def test_rns_transport_round_trip():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    packed_payload = {
+        "transport_enabled": True,
+        "transport_identity": b"\x01" * 16,
+        "transport_uptime": 4242,
+        "traffic_rxb": 10_000,
+        "traffic_txb": 20_000,
+        "speed_rx": 128.5,
+        "speed_tx": 256.75,
+        "speed_rx_inst": 130.0,
+        "speed_tx_inst": 260.0,
+        "memory_used": 12_345_678,
+        "interface_count": 2,
+        "link_count": 7,
+        "interfaces": [
+            {"name": "if0", "state": "up"},
+            {"name": "if1", "state": "down"},
+        ],
+        "path_table": [
+            {"interface": "if0", "via": b"\xaa" * 8, "hash": b"\xbb" * 16, "hops": 1},
+        ],
+        "ifstats": {
+            "rxb": 10_000,
+            "txb": 20_000,
+            "rxs": 500.0,
+            "txs": 600.0,
+            "interfaces": [
+                {"name": "if0", "paths": 2},
+                {"name": "if1", "paths": 0},
+            ],
+        },
+    }
+
+    telemeter = Telemeter(peer_dest="dest")
+    sensor = RNSTransport()
+    sensor.unpack(packed_payload)
+    telemeter.sensors.append(sensor)
+
+    with Session() as ses:
+        ses.add(telemeter)
+        ses.commit()
+
+        stored = ses.query(RNSTransport).one()
+        repacked = stored.pack()
+
+    assert repacked["transport_identity"] == packed_payload["transport_identity"]
+    assert repacked["interfaces"] == packed_payload["interfaces"]
+    assert repacked["path_table"] == packed_payload["path_table"]
+    assert repacked["ifstats"] == packed_payload["ifstats"]
+    assert repacked["interface_count"] == packed_payload["interface_count"]

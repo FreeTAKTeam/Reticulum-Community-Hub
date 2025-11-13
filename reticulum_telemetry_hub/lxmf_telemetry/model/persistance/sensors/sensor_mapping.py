@@ -24,9 +24,9 @@ from .generic import (
     PowerProduction,
     Processor,
     RandomAccessMemory,
-    RNSTransport,
     Tank,
 )
+from .rns_transport import RNSTransport
 
 sid_mapping = {
     SID_TIME: Time,

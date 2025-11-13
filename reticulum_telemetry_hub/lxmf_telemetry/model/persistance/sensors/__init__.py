@@ -13,7 +13,6 @@ from .generic import (
     PowerProduction,
     Processor,
     RandomAccessMemory,
-    RNSTransport,
     Tank,
 )
 from .gravity import Gravity
@@ -25,6 +24,7 @@ from .physical_link import PhysicalLink
 from .pressure import Pressure
 from .proximity import Proximity
 from .received import Received
+from .rns_transport import RNSTransport
 from .sensor import Sensor
 from .sensor_enum import *
 from .sensor_mapping import sid_mapping
