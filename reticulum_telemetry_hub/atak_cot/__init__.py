@@ -12,16 +12,30 @@ strings, converted back into dictionaries and packed into a compressed
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union, cast
 import json
 import xml.etree.ElementTree as ET
 import gzip
 import msgpack
 
 
-def pack_data(obj: dict) -> bytes:
-    """Return a gzip-compressed msgpack representation of ``obj``."""
-    return gzip.compress(msgpack.packb(obj, use_bin_type=True))
+Packable = Union["Event", dict]
+
+
+def _ensure_packable(obj: Packable) -> dict:
+    """Return a dictionary representation regardless of input type."""
+    if isinstance(obj, Event):
+        return obj.to_dict()
+    if isinstance(obj, dict):
+        return obj
+    raise TypeError(f"Unsupported packable type: {type(obj)!r}")
+
+
+def pack_data(obj: Packable) -> bytes:
+    """Return a gzip-compressed msgpack representation of ``obj`` or an Event."""
+    packed = msgpack.packb(_ensure_packable(obj), use_bin_type=True)
+    packed_bytes = cast(bytes, packed)
+    return gzip.compress(packed_bytes)
 
 
 def unpack_data(data: bytes) -> dict:
@@ -49,6 +63,17 @@ class Point:
             ce=float(elem.get("ce", 0)),
             le=float(elem.get("le", 0)),
         )
+
+    def to_element(self) -> ET.Element:
+        """Return an XML element representing this point."""
+        attrib = {
+            "lat": str(self.lat),
+            "lon": str(self.lon),
+            "hae": str(self.hae),
+            "ce": str(self.ce),
+            "le": str(self.le),
+        }
+        return ET.Element("point", attrib)
 
     def to_dict(self) -> dict:
         """Return a serialisable dictionary representation."""
@@ -83,6 +108,10 @@ class Contact:
         """Construct a :class:`Contact` from an XML ``<contact>`` element."""
         return cls(callsign=elem.get("callsign", ""))
 
+    def to_element(self) -> ET.Element:
+        """Return an XML element for the contact."""
+        return ET.Element("contact", {"callsign": self.callsign})
+
     def to_dict(self) -> dict:
         """Return a serialisable representation."""
         return {"callsign": self.callsign}
@@ -104,6 +133,10 @@ class Group:
     def from_xml(cls, elem: ET.Element) -> "Group":
         """Parse an XML ``<__group>`` element into a :class:`Group`."""
         return cls(name=elem.get("name", ""), role=elem.get("role", ""))
+
+    def to_element(self) -> ET.Element:
+        """Return an XML element for the group affiliation."""
+        return ET.Element("__group", {"name": self.name, "role": self.role})
 
     def to_dict(self) -> dict:
         """Return a serialisable representation."""
@@ -134,6 +167,20 @@ class Detail:
             group=(Group.from_xml(group_el) if group_el is not None else None),
             remarks=remarks_el.text if remarks_el is not None else None,
         )
+
+    def to_element(self) -> Optional[ET.Element]:
+        """Return an XML detail element or ``None`` if empty."""
+        if not any([self.contact, self.group, self.remarks]):
+            return None
+        detail_el = ET.Element("detail")
+        if self.contact:
+            detail_el.append(self.contact.to_element())
+        if self.group:
+            detail_el.append(self.group.to_element())
+        if self.remarks:
+            remarks_el = ET.SubElement(detail_el, "remarks")
+            remarks_el.text = self.remarks
+        return detail_el
 
     def to_dict(self) -> dict:
         """Return a dictionary containing populated fields only."""
@@ -174,9 +221,15 @@ class Event:
     detail: Optional[Detail] = None
 
     @classmethod
-    def from_xml(cls, xml: str) -> "Event":
+    def from_xml(cls, xml: Union[str, bytes]) -> "Event":
         """Parse an entire ``<event>`` XML string."""
-        root = ET.fromstring(xml)
+        if isinstance(xml, bytes):
+            xml = xml.decode("utf-8")
+        return cls.from_element(ET.fromstring(xml))
+
+    @classmethod
+    def from_element(cls, root: ET.Element) -> "Event":
+        """Construct an event from an ``<event>`` element."""
         point_el = root.find("point")
         detail_el = root.find("detail")
         point = (
@@ -233,6 +286,38 @@ class Event:
         if self.detail:
             data["detail"] = self.detail.to_dict()
         return data
+
+    def to_element(self) -> ET.Element:
+        """Return an XML ``<event>`` element."""
+        event_attrs = {
+            "version": self.version,
+            "uid": self.uid,
+            "type": self.type,
+            "how": self.how,
+            "time": self.time,
+            "start": self.start,
+            "stale": self.stale,
+        }
+        root = ET.Element("event", event_attrs)
+        root.append(self.point.to_element())
+        if self.detail:
+            detail_el = self.detail.to_element()
+            if detail_el is not None:
+                root.append(detail_el)
+        return root
+
+    def to_xml(self, encoding: str = "unicode") -> Union[str, bytes]:
+        """Return an XML string (or encoded bytes) for the event."""
+        return ET.tostring(self.to_element(), encoding=encoding)
+
+    def to_xml_bytes(self, encoding: str = "utf-8") -> bytes:
+        """Convenience helper returning encoded XML bytes."""
+        xml_data = self.to_xml(encoding=encoding)
+        # ET.tostring may return bytes, but handle other bytes-like objects
+        # (bytearray, memoryview) safely by converting to bytes first.
+        if isinstance(xml_data, (bytes, bytearray, memoryview)):
+            return bytes(xml_data)
+        return xml_data.encode(encoding)
 
     def to_datapack(self) -> bytes:
         """Return a compressed datapack for network transport."""
