@@ -7,7 +7,6 @@ from .generic import (
     ConnectionMap,
     Custom,
     Fuel,
-    LXMFPropagation,
     NonVolatileMemory,
     PowerConsumption,
     PowerProduction,
@@ -20,6 +19,7 @@ from .humidity import Humidity
 from .information import Information
 from .location import Location
 from .magnetic_field import MagneticField
+from .lxmf_propagation import LXMFPropagation, LXMFPropagationPeer
 from .physical_link import PhysicalLink
 from .pressure import Pressure
 from .proximity import Proximity
@@ -44,6 +44,7 @@ __all__ = [
     "Information",
     "Location",
     "LXMFPropagation",
+    "LXMFPropagationPeer",
     "MagneticField",
     "NonVolatileMemory",
     "PhysicalLink",
