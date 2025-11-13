@@ -15,6 +15,7 @@ class Time(Sensor):
 
     def __init__(self, utc: Optional[datetime] = None):
         super().__init__(stale_time=15)
+        self.sid = SID_TIME
         self.utc = utc or datetime.now()
 
     def pack(self):
