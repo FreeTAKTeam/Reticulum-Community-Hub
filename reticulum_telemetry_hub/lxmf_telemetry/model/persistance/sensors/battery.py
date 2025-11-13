@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from msgpack import unpackb
 from sqlalchemy import Boolean, Float, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,7 +29,13 @@ class Battery(Sensor):
             and self.charging is None
             and self.temperature is None
         ):
-            return None
+            legacy_payload = self._hydrate_from_legacy_payload()
+            if (
+                self.charge_percent is None
+                and self.charging is None
+                and self.temperature is None
+            ):
+                return legacy_payload
 
         charge = None if self.charge_percent is None else round(self.charge_percent, 1)
         return [charge, self.charging, self.temperature]
@@ -41,13 +48,11 @@ class Battery(Sensor):
             return None
 
         try:
-            self.charge_percent = None if packed[0] is None else round(float(packed[0]), 1)
-            self.charging = packed[1] if len(packed) > 1 else None
-            if len(packed) > 2:
-                self.temperature = packed[2]
-            else:
-                self.temperature = None
+            values = self._apply_payload(packed)
         except (IndexError, TypeError, ValueError):
+            values = None
+
+        if values is None:
             self.charge_percent = None
             self.charging = None
             self.temperature = None
@@ -58,6 +63,61 @@ class Battery(Sensor):
             "charging": self.charging,
             "temperature": self.temperature,
         }
+
+    def _apply_payload(self, payload: Any) -> Optional[list[Any]]:
+        """Populate typed columns from an iterable payload.
+
+        Returns the payload as a list when successful so callers can reuse the
+        decoded values (e.g. when hydrating legacy rows).
+        """
+
+        if isinstance(payload, (bytes, bytearray, memoryview, str)):
+            return None
+
+        if isinstance(payload, dict):
+            return None
+
+        try:
+            values = list(payload)
+        except TypeError:
+            return None
+
+        charge_raw = values[0] if len(values) > 0 else None
+        try:
+            self.charge_percent = (
+                None if charge_raw is None else round(float(charge_raw), 1)
+            )
+        except (TypeError, ValueError):
+            self.charge_percent = None
+
+        self.charging = values[1] if len(values) > 1 else None
+        self.temperature = values[2] if len(values) > 2 else None
+
+        return values
+
+    def _hydrate_from_legacy_payload(self) -> Optional[list[Any]]:
+        """Populate typed fields from legacy ``Sensor.data`` blobs if needed."""
+
+        if getattr(self, "_legacy_hydrated", False):
+            return getattr(self, "_legacy_payload", None)
+
+        setattr(self, "_legacy_hydrated", True)
+
+        raw = self.data
+        if raw is None:
+            payload: Any = None
+        elif isinstance(raw, (bytes, bytearray, memoryview)):
+            try:
+                payload = unpackb(raw, strict_map_key=False)
+            except (TypeError, ValueError):
+                payload = raw
+        else:
+            payload = raw
+
+        values = self._apply_payload(payload) if payload is not None else None
+        fallback = values if values is not None else payload
+        setattr(self, "_legacy_payload", fallback)
+        return fallback
 
     __mapper_args__ = {
         "polymorphic_identity": SID_BATTERY,
