@@ -796,7 +796,6 @@ class FuelEntry(_CollectionEntry):
 Fuel.entry_model = FuelEntry  # type: ignore[attr-defined]
 
 
-LXMFPropagation = _build_sensor_class("LXMFPropagation", SID_LXMF_PROPAGATION)
 ConnectionMap = _build_sensor_class("ConnectionMap", SID_CONNECTION_MAP)
 
 
@@ -806,7 +805,6 @@ __all__ = [
     "CustomEntry",
     "Fuel",
     "FuelEntry",
-    "LXMFPropagation",
     "NonVolatileMemory",
     "NonVolatileMemoryEntry",
     "PowerConsumption",
