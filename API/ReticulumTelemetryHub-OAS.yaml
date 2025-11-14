@@ -1,0 +1,454 @@
+openapi: 3.0.1
+info:
+  title: ReticulumTelemetryHub
+  version: '2025.11.14'
+  description: >-
+    Abstract service for Reticulum Telemetry Hub.   This API manages subscribers, topics, client lists,  and provides hub?join/leave functionality over a Reticulum?based network.
+  contact:
+    name: FTTeam
+    url: https://github.com/FreeTAKTeam
+    email: FreeTAKTeam@gmail.com
+  license:
+    name: EPL
+paths:
+  /RTH:
+    post:
+      x-scope: public
+      tags:
+       - RTH
+      description: >-
+        join a RTH server
+      operationId: RTHjoin
+      parameters:
+        - $ref: '#/components/parameters/identity'
+      responses:
+        '200':
+          description: simple text based return value
+          content:
+            text/plain:
+              schema:
+                type: boolean
+    put:
+      x-scope: public
+      tags:
+       - RTH
+      description: >-
+      operationId: RTHLeave
+      responses:
+        '200':
+          description: simple text based return value
+          content:
+            text/plain:
+              schema:
+                type: boolean
+  /Topic/{id}:
+    get:
+      x-scope: public
+      tags:
+       - Topic
+      description: >-
+      summary: retrieve an existing Topic record based on the provided ID.
+      operationId: RetreiveTopic
+      parameters:
+        - $ref: '#/components/parameters/id'
+      responses:
+        '200':
+          $ref: '#/components/responses/200Topic_get'
+  /Client:
+    get:
+      x-scope: public
+      tags:
+       - Client
+      description: >-
+        Lists all clients currently connected to RTH, including their Reticulum identities and connection metadata
+      operationId: ListClients
+      responses:
+        '200':
+          $ref: '#/components/responses/200Client_get'
+  /api/v1/app/info:
+    get:
+      x-scope: public
+      tags:
+       - Reticulum
+      description: >-
+        returns the component and reticulum version
+      operationId: getAppInfo
+      responses:
+        '200':
+          description: simple text based return value
+          content:
+            text/plain:
+              schema:
+                  $ref: '#/components/schemas/ReticulumInfo'
+  /Topic:
+    post:
+      x-scope: public
+      tags:
+       - Topic
+      description: >-
+      summary: Creates a new Topic record.
+      operationId: CreateTopic
+      requestBody:
+        $ref: '#/components/requestBodies/Topic'
+      responses:
+        '200':
+          $ref: '#/components/responses/200Topic_post'
+    delete:
+      x-scope: public
+      tags:
+       - Topic
+      description: >-
+      summary: Deletes an existing Topic record based on the provided ID.
+      operationId: DeleteTopic
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          $ref: '#/components/responses/200Topic_delete'
+    get:
+      x-scope: public
+      tags:
+       - Topic
+      description: >-
+      summary: Retrieves a list of all Topic
+      operationId: ListTopic
+      responses:
+        '200':
+          $ref: '#/components/responses/200Topic_get'
+    patch:
+      x-scope: public
+      tags:
+       - Topic
+      description: >-
+      summary: Updates an existing Topic record.
+      operationId: PatchTopic
+      requestBody:
+        $ref: '#/components/requestBodies/Topic'
+      responses:
+        '200':
+          $ref: '#/components/responses/200Topic_patch'
+  /Topic//Subscribe:
+    post:
+      x-scope: public
+      tags:
+       - SubscribeTopic
+      description: >-
+        allow clients to subscribe or unsubscribe to specific message topics or telemetry streams,
+      operationId: SubscribeTopic
+      responses:
+        '200':
+          description: simple text based return value
+          content:
+            text/plain:
+              schema:         
+                $ref: '#/components/schemas/Subscriber'
+  /Subscriber/{id}:
+    get:
+      x-scope: public
+      tags:
+       - Subscriber
+      description: >-
+      summary: retrieve an existing Subscriber record based on the provided ID.
+      operationId: RetreiveSubscriber
+      parameters:
+        - $ref: '#/components/parameters/id'
+      responses:
+        '200':
+          $ref: '#/components/responses/200Subscriber_get'
+  /Subscriber/Add:
+    post:
+      x-scope: public
+      tags:
+       - Subscriber
+      description: >-
+      operationId: AddSubscriber
+      responses:
+        '200':
+          description: simple text based return value
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Subscriber'
+  /Subscriber:
+    post:
+      x-scope: public
+      tags:
+       - Subscriber
+      description: >-
+      summary: Creates a new Subscriber record.
+      operationId: CreateSubscriber
+      requestBody:
+        $ref: '#/components/requestBodies/Subscriber'
+      responses:
+        '200':
+          $ref: '#/components/responses/200Subscriber_post'
+    delete:
+      x-scope: public
+      tags:
+       - Subscriber
+      description: >-
+      summary: Deletes an existing Subscriber record based on the provided ID.
+      operationId: DeleteSubscriber
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          $ref: '#/components/responses/200Subscriber_delete'
+    get:
+      x-scope: public
+      tags:
+       - Subscriber
+      description: >-
+      summary: Retrieves a list of all Subscriber
+      operationId: ListSubscriber
+      responses:
+        '200':
+          $ref: '#/components/responses/200Subscriber_get'
+    patch:
+      x-scope: public
+      tags:
+       - Subscriber
+      description: >-
+      summary: Updates an existing Subscriber record.
+      operationId: PatchSubscriber
+      requestBody:
+        $ref: '#/components/requestBodies/Subscriber'
+      responses:
+        '200':
+          $ref: '#/components/responses/200Subscriber_patch'
+
+components:
+  schemas:
+    Subscriber:
+      allOf:
+        - type: object
+          properties:
+            Destination:
+              type: integer
+              description: >-
+                the destination hash
+            RejectTests:
+              type: integer
+              description: >-
+    Topic:
+      allOf:
+        - type: object
+          properties:
+            TopicName:
+              type: string
+              description: >-
+            TopicPath:
+              type: string
+              description: >-
+            TopicDescription:
+              type: string
+              description: >-
+            TopicID:
+              type: string
+              description: >-
+    Client:
+      allOf:
+        - type: object
+          properties:
+            lastSeen:
+              type: string
+              format: date
+              description: >-
+    Error:
+      description: Error
+    ReticulumInfo:
+      type: object
+      description: Summarizes the  Reticulum node and application configuration.
+      properties:
+        is_transport_enabled:
+          type: boolean
+          description: Indicates whether Reticulum transport mode is enabled.
+        is_connected_to_shared_instance:
+          type: boolean
+          description: True when the node is linked to a shared Reticulum instance.
+        reticulum_config_path:
+          type: integer
+          format: int64
+          description: Filesystem path handle or identifier for the Reticulum configuration (Int64).
+        database_path:
+          type: string
+          description: Filesystem path to the Reticulum database.
+        storage_path:
+          type: string
+          description: Root path where Reticulum stores persistent data.
+        rns_version:
+          type: string
+          description: Installed Reticulum (RNS) version string.
+        lxmf_version:
+          type: string
+          description: Installed LXMF library version.
+        app_version:
+          type: string
+          description: Version of the Reticulum Telemetry Hub application.
+  parameters:
+    identity:
+      name: identity
+      required: true
+      description: >-
+        TODO
+      schema:
+        type: string
+      in: query
+    ID:
+      name: id
+      required: true
+      description: >-
+        TODO
+      schema:
+        type: string
+      in: query
+    id:
+      name: id
+      required: true
+      description: >-
+        TODO
+      schema:
+        type: string
+      in: path
+  responses:
+    200Topic_get:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Topic'
+    200Client_get:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Client'
+    200Topic_post:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Topic'
+    200Topic_delete:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Topic'
+    200Topic_patch:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Topic'
+    200Subscriber_get:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Subscriber'
+    200Subscriber_post:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Subscriber'
+    200Subscriber_delete:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Subscriber'
+    200Subscriber_patch:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Subscriber'
+    '200':
+      description: OK
+    '201':
+      description: Added Object
+    '202':
+      description: Accepted
+    '204':
+      description: Deleted
+    '400':
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    '401':
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    '403':
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    '404':
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    '405':
+      description: Method Not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    '409':
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    '500':
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    '501':
+      description: Not Implemented
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    '503':
+      description: Service Unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    'Error':
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  requestBodies:
+    Subscriber:
+      description: >-
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Subscriber'
+      required: true
+    Topic:
+      description: >-
+        a topic is an argument that can be subscribe to receive notifications
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Topic'
+      required: true
+x-uml-relationships:
+  
+

@@ -88,7 +88,7 @@ class ReticulumTelemetryHub:
     lxm_router: LXMF.LXMRouter
     connections: dict[bytes, RNS.Destination]
     identities: dict[str, str]
-    my_lxmf_dest: RNS.Destination
+    my_lxmf_dest: RNS.Destination | None
     ret: RNS.Reticulum
     storage_path: Path
     identity_path: Path

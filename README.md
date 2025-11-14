@@ -33,12 +33,14 @@ until we implement the wizard you will need to configure different config files.
 
 located under ```/[USERNAME]/.reticulum```
 
+minimal configuration
+
 ``` ini
 [reticulum]  
   enable_transport = True
     share_instance = Yes
-[interfaces]
-  	
+
+[interfaces] 	
   [[TCP Server Interface]]
   type = TCPServerInterface
   interface_enabled = True
@@ -99,18 +101,35 @@ sudo systemctl start lxmd.service
 ```
 
 Ensure your Reticulum network  is operational and configure for the full functionality of RTH.
-Once installed and configured, you can start the Reticulum-Telemetry-Hub by running:
+Once installed and configured, you can start the Reticulum-Telemetry-Hub directly from the package entry point:
 
 ```bash
-python3 main.py
+# from the repository root
+python -m reticulum_telemetry_hub.reticulum_server \
+    --storage_dir ./RTH_Store \
+    --display_name "RTH" \
+    [--headless]
 ```
 
+### Command-line options
 
+| Flag | Description |
+| --- | --- |
+| `--storage_dir` | Directory that holds LXMF storage and the hub identity (defaults to `./RTH_Store`). |
+| `--display_name` | Human-readable label announced with your LXMF destination. |
+| `--headless` | Run without the interactive prompt; the hub periodically announces itself every 60 seconds. |
+
+In interactive mode (default) you get a prompt with three commands:
+
+* `announce` – immediately broadcast the hub’s LXMF identity.
+* `telemetry` – request a telemetry snapshot from a connected peer by entering its hash.
+* `exit` – quit the hub.
+
+Headless mode is best suited for unattended deployments or service units. Combine it with your OS process manager once you have verified the configuration.
 
 ### Project Roadmap
 
 - **Transition to Command-Based Server Joining**: Shift the "joining the server" functionality from an announce-based method to a command-based approach for improved control and scalability.
-  - **Object-Based Configuration Management**: Refactor the system to enable access to all configuration files via objects, enhancing modularity and ease of management.
 - **Configuration Wizard Development**: Introduce a user-friendly wizard to simplify the configuration process.
 - **Integration with TAK_LXMF Bridge**: Incorporate RTH into the TAK_LXMF bridge to strengthen the link between TAK devices and Reticulum networks.
 - **Foundation for FTS "Flock of Parrot"**: Use RTH as the base for implementing the FreeTAKServer "Flock of Parrot" concept, aiming for scalable, interconnected FTS instances.
