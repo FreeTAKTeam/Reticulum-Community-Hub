@@ -1,34 +1,31 @@
 """
-Reticulum Telemetry Hub (RTH) - Main Execution Script
+Reticulum Telemetry Hub (RTH)
+================================
 
-This code  initializes and manages the Reticulum Telemetry Hub (RTH) as part of the RNS ecosystem.
-The hub is designed to provide TCP node functionalities, to handle telemetry data collection, message routing, and peer communication within a Reticulum network.
+This module provides the CLI entry point that launches the Reticulum Telemetry
+Hub process. The hub brings together several components:
 
-Key Components:
-- **TelemetryController**: Manages telemetry data and command handling.
-- **AnnounceHandler**: Listens for and processes announcements from other nodes in the Reticulum network.
-- **LXMF Router**: Manages message delivery, routing, and storage within the LXMF protocol.
+* ``TelemetryController`` persists telemetry streams and handles inbound command
+  requests arriving over LXMF.
+* ``CommandManager`` implements the Reticulum plugin command vocabulary
+  (join/leave/telemetry etc.) and publishes the appropriate LXMF responses.
+* ``AnnounceHandler`` subscribes to Reticulum announcements so the hub can keep
+  a lightweight directory of peers.
+* ``ReticulumTelemetryHub`` wires the Reticulum stack, LXMF router and local
+  identity together, exposes an interactive/headless loop, and relays messages
+  between connected peers.
 
-Functionalities:
-- **One to Many Messages**: Broadcasts messages to all connected clients (experimental).
-- **Telemetry Collector**: Stores telemetry data from connected clients (currently supporting Sideband).
-- **Replication Node**: Saves messages for later delivery if the recipient is offline.
-- **Reticulum Transport**: Routes traffic, passes network announcements, and handles path requests.
+Running the script directly allows operators to:
 
-Usage:
-- The script loads or generates an identity for the hub, configures the LXMF router, and starts the main loop.
-- It supports manual commands to announce the hub identity or request telemetry from a specific connection.
+* Generate or load a persistent Reticulum identity stored under ``STORAGE_PATH``.
+* Announce the LXMF delivery destination on demand or periodically (headless
+  mode).
+* Inspect/log inbound messages and fan them out to connected peers.
+* Request telemetry snapshots from specific peers.
 
-Configuration:
-- Modify `STORAGE_PATH` and `IDENTITY_PATH` to change where data is stored.
-- The `APP_NAME` constant defines the application name used in LXMF.
-
-Running the Script:
-- Execute this script directly to start the hub and enter the interactive command loop.
-- Commands include `exit` to terminate, `announce` to re-announce the hub identity, and `telemetry` to request telemetry from a connected peer.
-
-Author: FreeTAKTeam
-Date: Aug 2024 
+Use ``python -m reticulum_telemetry_hub.reticulum_server`` to start the hub.
+Command line arguments let you override the storage path, choose a display name,
+or run in headless mode for unattended deployments.
 """
 
 import os
@@ -41,31 +38,52 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
 from .command_manager import CommandManager
-from .constants import PLUGIN_COMMAND
 
 # Constants
 STORAGE_PATH = "RTH_Store"  # Path to store temporary files
 IDENTITY_PATH = os.path.join(STORAGE_PATH, "identity")  # Path to store identity file
 APP_NAME = LXMF.APP_NAME + ".delivery"  # Application name for LXMF
-class AnnounceHandler:
-    """Handles announcements from other nodes in the Reticulum network."""
 
-    def __init__(self, identities):
-        self.aspect_filter = APP_NAME  # Filter for LXMF announcements
-        self.identities = identities  # Dictionary to store identities
+class AnnounceHandler:
+    """Track simple metadata about peers announcing on the Reticulum bus."""
+
+    def __init__(self, identities: dict[str, str]):
+        self.aspect_filter = APP_NAME
+        self.identities = identities
 
     def received_announce(self, destination_hash, announced_identity, app_data):
-        # Log the received announcement details
         RNS.log("\t+--- LXMF Announcement -----------------------------------------")
         RNS.log(f"\t| Source hash            : {RNS.prettyhexrep(destination_hash)}")
         RNS.log(f"\t| Announced identity     : {announced_identity}")
         RNS.log(f"\t| App data               : {app_data}")
         RNS.log("\t+---------------------------------------------------------------")
-        self.identities[destination_hash] = app_data.decode("utf-8")
+        label = self._decode_app_data(app_data)
+        hash_key = (
+            destination_hash.hex()
+            if isinstance(destination_hash, (bytes, bytearray))
+            else str(destination_hash)
+        )
+        self.identities[hash_key] = label
+
+    @staticmethod
+    def _decode_app_data(app_data) -> str:
+        if isinstance(app_data, bytes):
+            try:
+                return app_data.decode("utf-8").strip()
+            except UnicodeDecodeError:
+                return app_data.hex()
+        if app_data is None:
+            return "unknown"
+        return str(app_data)
 
 
 class ReticulumTelemetryHub:
-    """Reticulum Telemetry Hub (RTH)"""
+    """Runtime container that glues Reticulum, LXMF and telemetry services.
+
+    The hub owns the Reticulum stack, LXMF router, telemetry persistence layer
+    and connection bookkeeping. It can run interactively (prompt driven) or in
+    headless mode where it periodically announces its delivery identity.
+    """
 
     lxm_router: LXMF.LXMRouter
     connections: dict[bytes, RNS.Destination]
@@ -78,43 +96,39 @@ class ReticulumTelemetryHub:
     _shared_lxm_router: LXMF.LXMRouter | None = None
 
     def __init__(self, display_name: str, storage_path: Path, identity_path: Path):
+        # Normalize paths early so downstream helpers can rely on Path objects.
+        self.storage_path = Path(storage_path)
+        self.identity_path = Path(identity_path)
+        self.storage_path.mkdir(parents=True, exist_ok=True)
+        self.identity_path.parent.mkdir(parents=True, exist_ok=True)
+
         # Reuse an existing Reticulum instance when running in-process tests
         # to avoid triggering the single-instance guard in the RNS library.
-        self.ret = RNS.Reticulum.get_instance() or RNS.Reticulum()  # Initialize Reticulum
-        self.tel_controller = TelemetryController()  # Initialize telemetry controller
-        self.connections = {}  # Dictionary of connections keyed by peer hash
+        self.ret = RNS.Reticulum.get_instance() or RNS.Reticulum()
+        self.tel_controller = TelemetryController()
+        self.connections: dict[bytes, RNS.Destination] = {}
 
-        identity = self.load_or_generate_identity(
-            identity_path
-        )  # Load or generate identity
+        identity = self.load_or_generate_identity(self.identity_path)
 
         if ReticulumTelemetryHub._shared_lxm_router is None:
             ReticulumTelemetryHub._shared_lxm_router = LXMF.LXMRouter(
-                storagepath=storage_path
+                storagepath=str(self.storage_path)
             )
         self.lxm_router = ReticulumTelemetryHub._shared_lxm_router
 
         self.my_lxmf_dest = self.lxm_router.register_delivery_identity(
             identity, display_name=display_name
-        )  # Register delivery identity
+        )
 
-        self.identities = {}  # Dictionary to store identities
+        self.identities: dict[str, str] = {}
 
         self.command_manager = CommandManager(
             self.connections, self.tel_controller, self.my_lxmf_dest
         )
 
         self.lxm_router.set_message_storage_limit(megabytes=5)
-
-        # Register delivery callback
-        self.lxm_router.register_delivery_callback(
-            lambda msg: self.delivery_callback(msg)
-        )
-
-        # Register announce handler
-        RNS.Transport.register_announce_handler(
-            AnnounceHandler(self.identities)
-        )
+        self.lxm_router.register_delivery_callback(self.delivery_callback)
+        RNS.Transport.register_announce_handler(AnnounceHandler(self.identities))
 
     def command_handler(self, commands: list, message: LXMF.LXMessage):
         """Handles commands received from the client and sends responses back.
@@ -165,11 +179,10 @@ class ReticulumTelemetryHub:
                 return
 
             # Broadcast the message to all connected clients
-            msg = (
-                self.identities[message.get_source().hash]
-                + " > "
-                + message.content_as_string()
-            )
+            source = message.get_source()
+            source_hash = getattr(source, "hash", None) or message.source_hash
+            source_label = self._lookup_identity_label(source_hash)
+            msg = f"{source_label} > {message.content_as_string()}"
             self.send_message(msg)
         except Exception as e:
             RNS.log(f"Error: {e}")
@@ -180,12 +193,7 @@ class ReticulumTelemetryHub:
         Args:
             message (str): Message to send
         """
-        connections = (
-            self.connections.values()
-            if isinstance(self.connections, dict)
-            else self.connections
-        )
-        for connection in connections:
+        for connection in self.connections.values():
             response = LXMF.LXMessage(
                 connection,
                 self.my_lxmf_dest,
@@ -213,20 +221,31 @@ class ReticulumTelemetryHub:
         RNS.log(f"\t| Message signature      : {signature_string}")
         RNS.log("\t+---------------------------------------------------------------")
 
-    def load_or_generate_identity(self, identity_path):
-        # Load existing identity or generate a new one
-        if os.path.exists(identity_path):
+    def _lookup_identity_label(self, source_hash) -> str:
+        if isinstance(source_hash, (bytes, bytearray)):
+            hash_key = source_hash.hex()
+            pretty = RNS.prettyhexrep(source_hash)
+        elif source_hash:
+            hash_key = str(source_hash)
+            pretty = hash_key
+        else:
+            return "unknown"
+        return self.identities.get(hash_key, pretty)
+
+    def load_or_generate_identity(self, identity_path: Path):
+        identity_path = Path(identity_path)
+        if identity_path.exists():
             try:
                 RNS.log("Loading existing identity")
-                return RNS.Identity.from_file(identity_path)
-            except:
+                return RNS.Identity.from_file(str(identity_path))
+            except Exception:
                 RNS.log("Failed to load existing identity, generating new")
         else:
             RNS.log("Generating new identity")
 
         identity = RNS.Identity()  # Create a new identity
-        Path(identity_path).parent.mkdir(parents=True, exist_ok=True)
-        identity.to_file(identity_path)  # Save the new identity to file
+        identity_path.parent.mkdir(parents=True, exist_ok=True)
+        identity.to_file(str(identity_path))  # Save the new identity to file
         return identity
 
     def interactive_loop(self):
