@@ -3,8 +3,8 @@ from .acceleration import Acceleration
 from .ambient_light import AmbientLight
 from .angular_velocity import AngularVelocity
 from .battery import Battery
+from .connection_map import ConnectionMap
 from .generic import (
-    ConnectionMap,
     Custom,
     Fuel,
     NonVolatileMemory,

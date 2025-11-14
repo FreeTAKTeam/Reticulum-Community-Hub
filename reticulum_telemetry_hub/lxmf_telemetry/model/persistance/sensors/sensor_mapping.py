@@ -14,8 +14,8 @@ from .proximity import Proximity
 from .received import Received
 from .temperature import Temperature
 from .time import Time
+from .connection_map import ConnectionMap
 from .generic import (
-    ConnectionMap,
     Custom,
     Fuel,
     NonVolatileMemory,

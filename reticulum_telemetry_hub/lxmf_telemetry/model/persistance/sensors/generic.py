@@ -10,7 +10,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .. import Base
 from .sensor import Sensor
 from .sensor_enum import (
-    SID_CONNECTION_MAP,
     SID_CUSTOM,
     SID_FUEL,
     SID_LXMF_PROPAGATION,
@@ -796,11 +795,7 @@ class FuelEntry(_CollectionEntry):
 Fuel.entry_model = FuelEntry  # type: ignore[attr-defined]
 
 
-ConnectionMap = _build_sensor_class("ConnectionMap", SID_CONNECTION_MAP)
-
-
 __all__ = [
-    "ConnectionMap",
     "Custom",
     "CustomEntry",
     "Fuel",
