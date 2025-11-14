@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from reticulum_telemetry_hub.lxmf_telemetry import telemetry_controller as tc_mod
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import TelemetryController
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import ConnectionMap
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import (
     sid_mapping,
 )
@@ -152,3 +153,75 @@ def test_rns_transport_round_trip():
     assert repacked["path_table"] == packed_payload["path_table"]
     assert repacked["ifstats"] == packed_payload["ifstats"]
     assert repacked["interface_count"] == packed_payload["interface_count"]
+
+
+def test_connection_map_pack_unpack_round_trip():
+    sensor = ConnectionMap()
+    sensor.ensure_map("main", "Main Map")
+    sensor.add_point(
+        "main",
+        "deadbeef",
+        latitude=44.0,
+        longitude=-63.0,
+        altitude=10.0,
+        point_type="peer",
+        name="Gateway",
+        signal_strength=-42,
+        snr=12.5,
+    )
+
+    # Updating a subset of fields should preserve the existing point data.
+    sensor.add_point("main", "deadbeef", signal_strength=-40)
+    updated_point = sensor.ensure_map("main").get_point("deadbeef")
+    assert updated_point is not None
+    assert updated_point.latitude == 44.0
+    assert updated_point.longitude == -63.0
+    assert updated_point.altitude == 10.0
+    assert updated_point.point_type == "peer"
+    assert updated_point.name == "Gateway"
+    assert updated_point.signals == {"signal_strength": -40, "snr": 12.5}
+
+    expected_payload = {
+        "maps": {
+            "main": {
+                "label": "Main Map",
+                "points": {
+                    "deadbeef": {
+                        "lat": 44.0,
+                        "lon": -63.0,
+                        "alt": 10.0,
+                        "type": "peer",
+                        "name": "Gateway",
+                        "signal_strength": -40,
+                        "snr": 12.5,
+                    }
+                },
+            }
+        }
+    }
+
+    packed = sensor.pack()
+    assert packed == expected_payload
+
+    unpacked = ConnectionMap()
+    normalized = unpacked.unpack(packed)
+
+    assert normalized == expected_payload
+    assert len(unpacked.maps) == 1
+
+    unpacked_map = unpacked.ensure_map("main")
+    assert unpacked_map.label == "Main Map"
+    assert len(unpacked_map.points) == 1
+
+    point = unpacked_map.points[0]
+    assert point.point_hash == "deadbeef"
+    assert point.latitude == 44.0
+    assert point.longitude == -63.0
+    assert point.altitude == 10.0
+    assert point.point_type == "peer"
+    assert point.name == "Gateway"
+    assert point.signals == {"signal_strength": -40, "snr": 12.5}
+
+    # Updating the map label should modify the existing map entry.
+    updated = unpacked.ensure_map("main", label="Updated Label")
+    assert updated.label == "Updated Label"
