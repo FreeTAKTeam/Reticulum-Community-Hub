@@ -170,6 +170,17 @@ def test_connection_map_pack_unpack_round_trip():
         snr=12.5,
     )
 
+    # Updating a subset of fields should preserve the existing point data.
+    sensor.add_point("main", "deadbeef", signal_strength=-40)
+    updated_point = sensor.ensure_map("main").get_point("deadbeef")
+    assert updated_point is not None
+    assert updated_point.latitude == 44.0
+    assert updated_point.longitude == -63.0
+    assert updated_point.altitude == 10.0
+    assert updated_point.point_type == "peer"
+    assert updated_point.name == "Gateway"
+    assert updated_point.signals == {"signal_strength": -40, "snr": 12.5}
+
     expected_payload = {
         "maps": {
             "main": {
@@ -181,7 +192,7 @@ def test_connection_map_pack_unpack_round_trip():
                         "alt": 10.0,
                         "type": "peer",
                         "name": "Gateway",
-                        "signal_strength": -42,
+                        "signal_strength": -40,
                         "snr": 12.5,
                     }
                 },
@@ -209,7 +220,7 @@ def test_connection_map_pack_unpack_round_trip():
     assert point.altitude == 10.0
     assert point.point_type == "peer"
     assert point.name == "Gateway"
-    assert point.signals == {"signal_strength": -42, "snr": 12.5}
+    assert point.signals == {"signal_strength": -40, "snr": 12.5}
 
     # Updating the map label should modify the existing map entry.
     updated = unpacked.ensure_map("main", label="Updated Label")

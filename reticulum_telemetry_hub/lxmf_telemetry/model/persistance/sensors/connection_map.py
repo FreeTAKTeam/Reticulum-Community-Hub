@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+
+_UNSET = object()
+
 from sqlalchemy import Float, ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,12 +52,12 @@ class ConnectionMap(Sensor):
         map_name: str,
         point_hash: str,
         *,
-        latitude: Optional[float] = None,
-        longitude: Optional[float] = None,
-        altitude: Optional[float] = None,
-        point_type: Optional[str] = None,
-        name: Optional[str] = None,
-        signals: Optional[dict[str, Any]] = None,
+        latitude: float | None | object = _UNSET,
+        longitude: float | None | object = _UNSET,
+        altitude: float | None | object = _UNSET,
+        point_type: str | None | object = _UNSET,
+        name: str | None | object = _UNSET,
+        signals: dict[str, Any] | None | object = _UNSET,
         **extra_signals: Any,
     ) -> "ConnectionMapPoint":
         """Add or update a connection point within a map."""
@@ -65,17 +68,28 @@ class ConnectionMap(Sensor):
             point = ConnectionMapPoint(point_hash=point_hash)
             point.map = entry
 
-        point.latitude = latitude
-        point.longitude = longitude
-        point.altitude = altitude
-        point.point_type = point_type
-        point.name = name
+        if latitude is not _UNSET:
+            point.latitude = latitude  # type: ignore[assignment]
+        if longitude is not _UNSET:
+            point.longitude = longitude  # type: ignore[assignment]
+        if altitude is not _UNSET:
+            point.altitude = altitude  # type: ignore[assignment]
+        if point_type is not _UNSET:
+            point.point_type = point_type  # type: ignore[assignment]
+        if name is not _UNSET:
+            point.name = name  # type: ignore[assignment]
 
-        merged_signals: dict[str, Any] = {}
-        if signals:
-            merged_signals.update(signals)
-        merged_signals.update(extra_signals)
-        point.signals = {k: v for k, v in merged_signals.items() if v is not None} or None
+        if signals is not _UNSET or extra_signals:
+            if signals is _UNSET:
+                merged_signals: dict[str, Any] = dict(point.signals or {})
+            elif signals is None:
+                merged_signals = {}
+            else:
+                merged_signals = {k: v for k, v in signals.items() if v is not None}
+            for key, value in extra_signals.items():
+                if value is not None:
+                    merged_signals[key] = value
+            point.signals = merged_signals or None
 
         return point
 
