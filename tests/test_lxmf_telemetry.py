@@ -3,14 +3,14 @@ from datetime import datetime
 
 import LXMF
 import RNS
+import pytest
 from msgpack import packb, unpackb
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from reticulum_telemetry_hub.lxmf_telemetry import telemetry_controller as tc_mod
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import TelemetryController
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import ConnectionMap
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propagation import (
+    LXMFPropagation,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import (
     sid_mapping,
 )
@@ -18,7 +18,12 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.rns_transp
     RNSTransport,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
-import pytest
+from tests.factories import (
+    build_complex_telemeter_payload,
+    create_connection_map_sensor,
+    create_lxmf_propagation_sensor,
+    create_rns_transport_sensor,
+)
 
 def test_deserialize_lxmf():
     with open("sample.bin", "rb") as f:
@@ -35,25 +40,27 @@ def test_deserialize_lxmf():
     assert pytest.approx(location.longitude, rel=1e-6) == -63.596294
 
 
-def test_handle_command_stream_is_msgpack_encoded(tmp_path):
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    tc_mod._engine = engine
-    tc_mod.Session_cls = sessionmaker(bind=engine)
-
-    controller = TelemetryController()
+def test_handle_command_stream_is_msgpack_encoded(telemetry_controller, session_factory):
+    controller = telemetry_controller
+    Session = session_factory
 
     src_identity = RNS.Identity()
     dst_identity = RNS.Identity()
-    src = RNS.Destination(src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-    dst = RNS.Destination(dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
 
-    with open("sample.bin", "rb") as f:
-        tel_data = unpackb(f.read(), strict_map_key=False)
-
-    packed = packb(tel_data, use_bin_type=True)
+    payload = build_complex_telemeter_payload()
+    packed = packb(payload, use_bin_type=True)
     message = LXMF.LXMessage(dst, src, fields={LXMF.FIELD_TELEMETRY: packed})
     assert controller.handle_message(message)
+
+    # Ensure data persisted before issuing the telemetry command.
+    with Session() as ses:
+        assert ses.query(Telemeter).count() == 1
 
     command_msg = LXMF.LXMessage(src, dst)
     cmd = {TelemetryController.TELEMETRY_REQUEST: int(time.time())}
@@ -64,21 +71,29 @@ def test_handle_command_stream_is_msgpack_encoded(tmp_path):
     assert isinstance(stream, (bytes, bytearray))
     unpacked = unpackb(stream, strict_map_key=False)
     assert isinstance(unpacked, list)
-    assert unpacked
+    assert len(unpacked) == 1
+
+    peer_hash, timestamp, telemeter_blob, metadata = unpacked[0]
+    assert isinstance(peer_hash, (bytes, bytearray))
+    assert isinstance(metadata, list)
+    round_trip_payload = unpackb(telemeter_blob, strict_map_key=False)
+    assert round_trip_payload == payload
 
 
-def test_handle_message_stream_preserves_timestamp_and_sensors():
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    tc_mod._engine = engine
-    tc_mod.Session_cls = sessionmaker(bind=engine)
-
-    controller = TelemetryController()
+def test_handle_message_stream_preserves_timestamp_and_sensors(
+    telemetry_controller, session_factory
+):
+    controller = telemetry_controller
+    Session = session_factory
 
     src_identity = RNS.Identity()
     dst_identity = RNS.Identity()
-    src = RNS.Destination(src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-    dst = RNS.Destination(dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
 
     with open("sample.bin", "rb") as f:
         tel_data = unpackb(f.read(), strict_map_key=False)
@@ -93,52 +108,47 @@ def test_handle_message_stream_preserves_timestamp_and_sensors():
 
     assert controller.handle_message(message)
 
-    with tc_mod.Session_cls() as ses:
+    with Session() as ses:
         stored = ses.query(Telemeter).one()
         assert stored.time == datetime.fromtimestamp(timestamp)
         assert len(stored.sensors) > 0
 
 
-def test_rns_transport_round_trip():
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
+def test_handle_message_round_trip_complex_sensors(telemetry_controller, session_factory):
+    controller = telemetry_controller
+    Session = session_factory
 
-    packed_payload = {
-        "transport_enabled": True,
-        "transport_identity": b"\x01" * 16,
-        "transport_uptime": 4242,
-        "traffic_rxb": 10_000,
-        "traffic_txb": 20_000,
-        "speed_rx": 128.5,
-        "speed_tx": 256.75,
-        "speed_rx_inst": 130.0,
-        "speed_tx_inst": 260.0,
-        "memory_used": 12_345_678,
-        "interface_count": 2,
-        "link_count": 7,
-        "interfaces": [
-            {"name": "if0", "state": "up"},
-            {"name": "if1", "state": "down"},
-        ],
-        "path_table": [
-            {"interface": "if0", "via": b"\xaa" * 8, "hash": b"\xbb" * 16, "hops": 1},
-        ],
-        "ifstats": {
-            "rxb": 10_000,
-            "txb": 20_000,
-            "rxs": 500.0,
-            "txs": 600.0,
-            "interfaces": [
-                {"name": "if0", "paths": 2},
-                {"name": "if1", "paths": 0},
-            ],
-        },
-    }
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    payload = build_complex_telemeter_payload()
+    message = LXMF.LXMessage(
+        dst,
+        src,
+        fields={LXMF.FIELD_TELEMETRY: packb(payload, use_bin_type=True)},
+    )
+
+    assert controller.handle_message(message)
+
+    with Session() as ses:
+        stored = ses.query(Telemeter).one()
+        serialized = controller._serialize_telemeter(stored)
+        assert serialized == payload
+
+
+def test_rns_transport_round_trip(session_factory):
+    Session = session_factory
 
     telemeter = Telemeter(peer_dest="dest")
-    sensor = RNSTransport()
-    sensor.unpack(packed_payload)
+    sensor = create_rns_transport_sensor()
+    expected_payload = sensor.pack()
+    assert expected_payload is not None
     telemeter.sensors.append(sensor)
 
     with Session() as ses:
@@ -148,79 +158,77 @@ def test_rns_transport_round_trip():
         stored = ses.query(RNSTransport).one()
         repacked = stored.pack()
 
-    assert repacked["transport_identity"] == packed_payload["transport_identity"]
-    assert repacked["interfaces"] == packed_payload["interfaces"]
-    assert repacked["path_table"] == packed_payload["path_table"]
-    assert repacked["ifstats"] == packed_payload["ifstats"]
-    assert repacked["interface_count"] == packed_payload["interface_count"]
+    assert repacked == expected_payload
 
 
-def test_connection_map_pack_unpack_round_trip():
-    sensor = ConnectionMap()
-    sensor.ensure_map("main", "Main Map")
-    sensor.add_point(
-        "main",
-        "deadbeef",
-        latitude=44.0,
-        longitude=-63.0,
-        altitude=10.0,
-        point_type="peer",
-        name="Gateway",
-        signal_strength=-42,
-        snr=12.5,
-    )
+def test_lxmf_propagation_round_trip(session_factory):
+    Session = session_factory
 
-    # Updating a subset of fields should preserve the existing point data.
-    sensor.add_point("main", "deadbeef", signal_strength=-40)
-    updated_point = sensor.ensure_map("main").get_point("deadbeef")
-    assert updated_point is not None
-    assert updated_point.latitude == 44.0
-    assert updated_point.longitude == -63.0
-    assert updated_point.altitude == 10.0
-    assert updated_point.point_type == "peer"
-    assert updated_point.name == "Gateway"
-    assert updated_point.signals == {"signal_strength": -40, "snr": 12.5}
+    telemeter = Telemeter(peer_dest="dest")
+    sensor = create_lxmf_propagation_sensor()
+    expected_payload = sensor.pack()
+    assert expected_payload is not None
+    telemeter.sensors.append(sensor)
 
-    expected_payload = {
-        "maps": {
-            "main": {
-                "label": "Main Map",
-                "points": {
-                    "deadbeef": {
-                        "lat": 44.0,
-                        "lon": -63.0,
-                        "alt": 10.0,
-                        "type": "peer",
-                        "name": "Gateway",
-                        "signal_strength": -40,
-                        "snr": 12.5,
-                    }
-                },
-            }
-        }
-    }
+    with Session() as ses:
+        ses.add(telemeter)
+        ses.commit()
 
-    packed = sensor.pack()
-    assert packed == expected_payload
+        stored = ses.query(LXMFPropagation).one()
+        repacked = stored.pack()
+
+    assert repacked == expected_payload
+    assert set(repacked["peers"].keys()) == set(expected_payload["peers"].keys())
+
+
+def test_connection_map_pack_unpack_round_trip(session_factory):
+    Session = session_factory
+
+    sensor = create_connection_map_sensor()
+    expected_payload = sensor.pack()
+    assert expected_payload is not None
+
+    telemeter = Telemeter(peer_dest="dest")
+    telemeter.sensors.append(sensor)
+
+    with Session() as ses:
+        ses.add(telemeter)
+        ses.commit()
+
+        stored = ses.query(ConnectionMap).one()
+        repacked = stored.pack()
+
+    assert repacked == expected_payload
 
     unpacked = ConnectionMap()
-    normalized = unpacked.unpack(packed)
+    normalized = unpacked.unpack(repacked)
 
     assert normalized == expected_payload
-    assert len(unpacked.maps) == 1
+    assert len(unpacked.maps) == 2
 
-    unpacked_map = unpacked.ensure_map("main")
-    assert unpacked_map.label == "Main Map"
-    assert len(unpacked_map.points) == 1
+    main_map = unpacked.ensure_map("main")
+    assert main_map.label == "Main Map"
+    assert len(main_map.points) == 1
+    main_point = main_map.points[0]
+    assert main_point.point_hash == "deadbeef"
+    assert main_point.latitude == 44.0
+    assert main_point.longitude == -63.0
+    assert main_point.altitude == 10.0
+    assert main_point.point_type == "peer"
+    assert main_point.name == "Gateway"
+    assert main_point.signals == {"signal_strength": -40, "snr": 12.5}
 
-    point = unpacked_map.points[0]
-    assert point.point_hash == "deadbeef"
-    assert point.latitude == 44.0
-    assert point.longitude == -63.0
-    assert point.altitude == 10.0
-    assert point.point_type == "peer"
-    assert point.name == "Gateway"
-    assert point.signals == {"signal_strength": -40, "snr": 12.5}
+    backup_map = unpacked.ensure_map("backup")
+    assert backup_map.label == "Backup Map"
+    assert len(backup_map.points) == 1
+    backup_point = backup_map.points[0]
+    assert backup_point.point_hash == "feedface"
+    assert backup_point.latitude == 45.0
+    assert backup_point.longitude == -62.0
+    assert backup_point.altitude == 12.0
+    assert backup_point.point_type == "peer"
+    assert backup_point.name == "Repeater"
+    assert backup_point.signals == {"signal_strength": -55, "snr": 10.0}
 
     # Updating the map label should modify the existing map entry.
     updated = unpacked.ensure_map("main", label="Updated Label")
