@@ -25,6 +25,26 @@ git clone https://github.com/FreeTAKTeam/Reticulum-Telemetry-Hub.git
 cd Reticulum-Telemetry-Hub
 ```
 
+Create the environment
+
+Choose a directory where you want the Telemetry Hub to live:
+
+```bash
+python3 -m venv .venv
+```
+
+ Activate it
+
+```bash
+source .venv/bin/activate
+```
+
+You will now see (.venv) in your shell prompt. you can now
+```
+pip install --upgrade pip
+pip install rns lxmf
+```
+
 ## Configuration
 
 until we implement the wizard you will need to configure different config files.
