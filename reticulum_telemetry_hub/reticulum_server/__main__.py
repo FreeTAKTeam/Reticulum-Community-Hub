@@ -193,7 +193,12 @@ class ReticulumTelemetryHub:
         Args:
             message (str): Message to send
         """
-        for connection in self.connections.values():
+        destinations = (
+            self.connections.values()
+            if hasattr(self.connections, "values")
+            else self.connections
+        )
+        for connection in destinations:
             response = LXMF.LXMessage(
                 connection,
                 self.my_lxmf_dest,
