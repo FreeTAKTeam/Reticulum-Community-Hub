@@ -151,6 +151,7 @@ class ReticulumTelemetryHub:
                 router=self.lxm_router,
                 destination=self.my_lxmf_dest,
                 config_manager=self.config_manager,
+                telemetry_controller=self.tel_controller,
             )
             self.embedded_lxmd.start()
         else:
