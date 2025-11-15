@@ -12,16 +12,14 @@ Hub process. The hub brings together several components:
 * ``AnnounceHandler`` subscribes to Reticulum announcements so the hub can keep
   a lightweight directory of peers.
 * ``ReticulumTelemetryHub`` wires the Reticulum stack, LXMF router and local
-  identity together, exposes an interactive/headless loop, and relays messages
-  between connected peers.
+  identity together, runs headlessly, and relays messages between connected
+  peers.
 
 Running the script directly allows operators to:
 
 * Generate or load a persistent Reticulum identity stored under ``STORAGE_PATH``.
-* Announce the LXMF delivery destination on demand or periodically (headless
-  mode).
+* Announce the LXMF delivery destination on a fixed interval (headless only).
 * Inspect/log inbound messages and fan them out to connected peers.
-* Request telemetry snapshots from specific peers.
 
 Use ``python -m reticulum_telemetry_hub.reticulum_server`` to start the hub.
 Command line arguments let you override the storage path, choose a display name,
@@ -46,6 +44,14 @@ from .command_manager import CommandManager
 STORAGE_PATH = "RTH_Store"  # Path to store temporary files
 IDENTITY_PATH = os.path.join(STORAGE_PATH, "identity")  # Path to store identity file
 APP_NAME = LXMF.APP_NAME + ".delivery"  # Application name for LXMF
+DEFAULT_ANNOUNCE_INTERVAL = 60
+DEFAULT_LOG_LEVEL = getattr(RNS, "LOG_DEBUG", getattr(RNS, "LOG_INFO", 3))
+LOG_LEVELS = {
+    "error": getattr(RNS, "LOG_ERROR", 1),
+    "warning": getattr(RNS, "LOG_WARNING", 2),
+    "info": getattr(RNS, "LOG_INFO", 3),
+    "debug": getattr(RNS, "LOG_DEBUG", DEFAULT_LOG_LEVEL),
+}
 
 class AnnounceHandler:
     """Track simple metadata about peers announcing on the Reticulum bus."""
@@ -84,8 +90,8 @@ class ReticulumTelemetryHub:
     """Runtime container that glues Reticulum, LXMF and telemetry services.
 
     The hub owns the Reticulum stack, LXMF router, telemetry persistence layer
-    and connection bookkeeping. It can run interactively (prompt driven) or in
-    headless mode where it periodically announces its delivery identity.
+    and connection bookkeeping. It runs headlessly and periodically announces
+    its delivery identity.
     """
 
     lxm_router: LXMF.LXMRouter
@@ -107,16 +113,26 @@ class ReticulumTelemetryHub:
         identity_path: Path,
         *,
         embedded: bool = False,
+        announce_interval: int = DEFAULT_ANNOUNCE_INTERVAL,
+        loglevel: int = DEFAULT_LOG_LEVEL,
     ):
         # Normalize paths early so downstream helpers can rely on Path objects.
         self.storage_path = Path(storage_path)
         self.identity_path = Path(identity_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self.identity_path.parent.mkdir(parents=True, exist_ok=True)
+        self.announce_interval = announce_interval
+        self.loglevel = loglevel
 
         # Reuse an existing Reticulum instance when running in-process tests
         # to avoid triggering the single-instance guard in the RNS library.
-        self.ret = RNS.Reticulum.get_instance() or RNS.Reticulum()
+        existing_reticulum = RNS.Reticulum.get_instance()
+        if existing_reticulum is not None:
+            self.ret = existing_reticulum
+            RNS.loglevel = self.loglevel
+        else:
+            self.ret = RNS.Reticulum(loglevel=self.loglevel)
+            RNS.loglevel = self.loglevel
         self.tel_controller = TelemetryController()
         self.config_manager: HubConfigurationManager | None = None
         self.embedded_lxmd: EmbeddedLxmd | None = None
@@ -281,45 +297,15 @@ class ReticulumTelemetryHub:
         identity.to_file(str(identity_path))  # Save the new identity to file
         return identity
 
-    def interactive_loop(self):
-        # Periodically announce the LXMF identity
-        while True:
-            choice = input("Enter your choice (exit/announce/telemetry): ")
-
-            if choice == "exit":
-                break
-            elif choice == "announce":
-                self.my_lxmf_dest.announce()
-            elif choice == "telemetry":
-                connection_hash = input("Enter the connection hash: ")
-                found = False
-                normalized_hash = connection_hash.strip().lower().replace(":", "")
-                for conn_hash, connection in self.connections.items():
-                    if conn_hash.hex() == normalized_hash:
-                        message = LXMF.LXMessage(
-                            connection,
-                            self.my_lxmf_dest,
-                            "Requesting telemetry",
-                            desired_method=LXMF.LXMessage.DIRECT,
-                            fields={
-                                LXMF.FIELD_COMMANDS: [
-                                    {TelemetryController.TELEMETRY_REQUEST: 1000000000}
-                                ]
-                            },
-                        )
-                        if hasattr(connection, "identity") and hasattr(
-                            connection.identity, "hash"
-                        ):
-                            message.destination_hash = connection.identity.hash
-                        self.lxm_router.handle_outbound(message)
-                        found = True
-                        break
-                if not found:
-                    print("Connection not found")
-    def headless_loop(self):
-        while True:
+    def run(self):
+        RNS.log(
+            f"Starting headless hub; announcing every {self.announce_interval}s",
+            getattr(RNS, "LOG_INFO", 3),
+        )
+        while not self._shutdown:
             self.my_lxmf_dest.announce()
-            time.sleep(60)
+            RNS.log("LXMF identity announced", getattr(RNS, "LOG_DEBUG", self.loglevel))
+            time.sleep(self.announce_interval)
 
     def shutdown(self):
         if self._shutdown:
@@ -334,8 +320,19 @@ if __name__ == "__main__":
     ap.add_argument(
         "-s", "--storage_dir", help="Storage directory path", default=STORAGE_PATH
     )
-    ap.add_argument("--headless", action="store_true", help="Run in headless mode")
     ap.add_argument("--display_name", help="Display name for the server", default="RTH")
+    ap.add_argument(
+        "--announce-interval",
+        type=int,
+        default=DEFAULT_ANNOUNCE_INTERVAL,
+        help="Seconds between announcement broadcasts",
+    )
+    ap.add_argument(
+        "--log-level",
+        choices=list(LOG_LEVELS.keys()),
+        default="debug",
+        help="Log level to emit RNS traffic to stdout",
+    )
     ap.add_argument(
         "--embedded",
         "--embedded-lxmd",
@@ -345,7 +342,6 @@ if __name__ == "__main__":
     )
 
     args = ap.parse_args()
-
 
     # Use the provided storage directory (or default) for both storage and identity paths
     storage_path = args.storage_dir
@@ -359,16 +355,17 @@ if __name__ == "__main__":
         # to the default location.
         identity_path = os.path.join(storage_path, "identity")
 
-
     reticulum_server = ReticulumTelemetryHub(
-        args.display_name, storage_path, identity_path, embedded=args.embedded
+        args.display_name,
+        storage_path,
+        identity_path,
+        embedded=args.embedded,
+        announce_interval=args.announce_interval,
+        loglevel=LOG_LEVELS[args.log_level],
     )
 
     try:
-        if not args.headless:
-            reticulum_server.interactive_loop()
-        else:
-            reticulum_server.headless_loop()
+        reticulum_server.run()
     except KeyboardInterrupt:
         RNS.log("Received interrupt, shutting down", RNS.LOG_INFO)
     finally:
