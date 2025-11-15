@@ -139,6 +139,27 @@ python -m reticulum_telemetry_hub.reticulum_server \
 | `--display_name` | Human-readable label announced with your LXMF destination. |
 | `--headless` | Run without the interactive prompt; the hub periodically announces itself every 60 seconds. |
 
+### Embedded vs. external ``lxmd``
+
+RTH can rely on an external ``lxmd`` process (the default) or it can host the
+delivery/propagation threads internally via the ``--embedded``/``--embedded-lxmd``
+flag. Choose the mode that best matches your deployment:
+
+* **External daemon (default)** – ideal for production installs that already run
+  Reticulum infrastructure. Follow the configuration snippets above to create
+  ``~/.reticulum/config`` and ``~/.lxmd/config`` and use your init system (for
+  example ``systemd``) to keep ``lxmd`` alive. The hub connects to that router
+  and benefits from the daemon’s own storage limits and lifecycle management.
+* **Embedded ``lxmd``** – useful for development, CI or constrained hosts where
+  running a companion service is impractical. Launch the server with
+  ``python -m reticulum_telemetry_hub.reticulum_server --embedded`` (combine it
+  with ``--storage_dir`` to point at a temporary workspace). The embedded daemon
+  reads the same config files as the external one via the
+  ``HubConfigurationManager`` and automatically persists telemetry snapshots
+  emitted by the LXMF router. Tweak ``[propagation]`` settings in
+  ``~/.lxmd/config`` (announce interval, enable_node, etc.) to control the in
+  process behaviour.
+
 In interactive mode (default) you get a prompt with three commands:
 
 * `announce` – immediately broadcast the hub’s LXMF identity.

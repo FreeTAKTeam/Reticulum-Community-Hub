@@ -3,13 +3,11 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import RNS
 
-from reticulum_telemetry_hub.embedded_lxmd.embedded import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_telemetry import telemetry_controller as tc_mod
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propagation import (
     LXMFPropagation,
@@ -17,59 +15,8 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propa
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
 
 
-class DummyConfigManager:
-    """Provide the minimal configuration structure expected by EmbeddedLxmd."""
-
-    def __init__(self, *, enable_node: bool = True, interval_minutes: int = 1) -> None:
-        lxmf_router = SimpleNamespace(
-            enable_node=enable_node, announce_interval_minutes=interval_minutes
-        )
-        self.config = SimpleNamespace(lxmf_router=lxmf_router)
-
-
-class DummyDestination:
-    def __init__(self, hash_value: bytes) -> None:
-        self.hash = hash_value
-
-
-class DummyRouter:
-    """Router stub exposing the propagation attributes accessed by EmbeddedLxmd."""
-
-    def __init__(self, stats: dict[str, Any] | None) -> None:
-        self._stats = stats
-        self.identity = SimpleNamespace(hash=b"\x33" * 16)
-        self.propagation_destination = SimpleNamespace(hash=b"\x44" * 16)
-        self.delivery_per_transfer_limit = 1024
-        self.propagation_per_transfer_limit = 2048
-        self.autopeer_maxdepth = 3
-        self.from_static_only = False
-        self.unpeered_propagation_incoming = 0
-        self.unpeered_propagation_rx_bytes = 0
-        self.static_peers: list[bytes] = []
-        self.peers: dict[bytes, Any] = {}
-        self.max_peers = 5
-        self._enabled = False
-        self.announce_calls: list[bytes] = []
-        self.announce_propagation_count = 0
-
-    def enable_propagation(self) -> None:
-        self._enabled = True
-
-    def announce(self, destination_hash: bytes) -> None:
-        self.announce_calls.append(destination_hash)
-
-    def announce_propagation_node(self) -> None:
-        self.announce_propagation_count += 1
-
-    def compile_stats(self) -> dict[str, Any] | None:
-        return self._stats
-
-    def set_stats(self, stats: dict[str, Any] | None) -> None:
-        self._stats = stats
-
-
 @pytest.mark.usefixtures("session_factory")
-def test_embedded_lxmd_persists_propagation_stats(telemetry_controller):
+def test_embedded_lxmd_persists_propagation_stats(embedded_lxmd_factory):
     stats = {
         "destination_hash": b"\xaa" * 16,
         "identity_hash": b"\xbb" * 16,
@@ -112,20 +59,13 @@ def test_embedded_lxmd_persists_propagation_stats(telemetry_controller):
             }
         },
     }
-    router = DummyRouter(stats)
-    destination = DummyDestination(b"\x11" * 16)
-    embedded = EmbeddedLxmd(
-        router,
-        destination,
-        config_manager=DummyConfigManager(),
-        telemetry_controller=telemetry_controller,
-    )
+    harness = embedded_lxmd_factory(stats=stats, destination_hash=b"\x11" * 16)
 
-    embedded._maybe_emit_propagation_update(force=True)
+    harness.embedded._maybe_emit_propagation_update(force=True)
 
     with tc_mod.Session_cls() as session:
         telemeter = session.query(Telemeter).one()
-        assert telemeter.peer_dest == RNS.hexrep(destination.hash, False)
+        assert telemeter.peer_dest == RNS.hexrep(harness.destination.hash, False)
         sensor = session.query(LXMFPropagation).one()
         payload = sensor.pack()
 
@@ -138,7 +78,7 @@ def test_embedded_lxmd_persists_propagation_stats(telemetry_controller):
 
 
 @pytest.mark.usefixtures("session_factory")
-def test_embedded_lxmd_deduplicates_snapshots(telemetry_controller):
+def test_embedded_lxmd_deduplicates_snapshots(embedded_lxmd_factory):
     stats = {
         "destination_hash": b"\xaa" * 16,
         "identity_hash": b"\xbb" * 16,
@@ -156,14 +96,7 @@ def test_embedded_lxmd_deduplicates_snapshots(telemetry_controller):
         "peers": {},
         "total_peers": 0,
     }
-    router = DummyRouter(stats)
-    destination = DummyDestination(b"\x22" * 16)
-    embedded = EmbeddedLxmd(
-        router,
-        destination,
-        config_manager=DummyConfigManager(),
-        telemetry_controller=telemetry_controller,
-    )
+    harness = embedded_lxmd_factory(stats=stats, destination_hash=b"\x22" * 16)
 
     calls: list[datetime] = []
     lock = threading.Lock()
@@ -172,10 +105,81 @@ def test_embedded_lxmd_deduplicates_snapshots(telemetry_controller):
         with lock:
             calls.append(datetime.utcnow())
 
-    embedded.add_propagation_observer(observer)
+    harness.embedded.add_propagation_observer(observer)
 
-    embedded._maybe_emit_propagation_update(force=True)
-    embedded._maybe_emit_propagation_update()
+    harness.embedded._maybe_emit_propagation_update(force=True)
+    harness.embedded._maybe_emit_propagation_update()
 
     with lock:
         assert len(calls) == 1
+
+
+@pytest.mark.usefixtures("session_factory")
+def test_embedded_lxmd_fixture_emits_and_persists(running_embedded_lxmd):
+    stats = {
+        "destination_hash": b"\xff" * 16,
+        "identity_hash": b"\xee" * 16,
+        "uptime": 5.0,
+        "delivery_limit": 1024,
+        "propagation_limit": 512,
+        "autopeer_maxdepth": 2,
+        "from_static_only": False,
+        "messagestore": None,
+        "clients": None,
+        "unpeered_propagation_incoming": 0,
+        "unpeered_propagation_rx_bytes": 0,
+        "static_peers": 0,
+        "max_peers": 5,
+        "peers": {
+            b"peer-b": {
+                "type": "propagator",
+                "state": "active",
+                "alive": True,
+                "last_heard": 1,
+                "next_sync_attempt": 2,
+                "last_sync_attempt": 3,
+                "sync_backoff": 0,
+                "peering_timebase": 4,
+                "ler": 1,
+                "str": 1,
+                "transfer_limit": 64,
+                "network_distance": 1,
+                "rx_bytes": 8,
+                "tx_bytes": 16,
+                "messages": {
+                    "offered": 1,
+                    "outgoing": 1,
+                    "incoming": 0,
+                    "unhandled": 0,
+                },
+            }
+        },
+    }
+
+    observed: list[dict[str, Any]] = []
+    event = threading.Event()
+
+    def observer(payload: dict[str, Any]) -> None:
+        observed.append(payload)
+        event.set()
+
+    with running_embedded_lxmd(stats=stats, destination_hash=b"\x55" * 16) as harness:
+        harness.embedded.add_propagation_observer(observer)
+        harness.embedded.start()
+        assert event.wait(1.0), "embedded daemon never emitted propagation stats"
+        assert harness.router.announce_calls
+        assert harness.router.announce_propagation_count == 1
+
+    assert observed and observed[0]["destination_hash"] == stats["destination_hash"]
+
+    with tc_mod.Session_cls() as session:
+        telemeters = session.query(Telemeter).order_by(Telemeter.id).all()
+        assert telemeters
+        assert telemeters[-1].peer_dest == RNS.hexrep(b"\x55" * 16, False)
+        sensors = session.query(LXMFPropagation).order_by(LXMFPropagation.id).all()
+        assert sensors
+        payload = sensors[-1].pack()
+
+    assert payload is not None
+    assert payload["active_peers"] == 1
+    assert payload["peered_propagation_rx_bytes"] == 8
