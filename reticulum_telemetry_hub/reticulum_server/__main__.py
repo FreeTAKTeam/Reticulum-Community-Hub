@@ -34,6 +34,9 @@ import LXMF
 import RNS
 import argparse
 from pathlib import Path
+
+from reticulum_telemetry_hub.config.manager import HubConfigurationManager
+from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
@@ -93,9 +96,18 @@ class ReticulumTelemetryHub:
     storage_path: Path
     identity_path: Path
     tel_controller: TelemetryController
+    config_manager: HubConfigurationManager | None
+    embedded_lxmd: EmbeddedLxmd | None
     _shared_lxm_router: LXMF.LXMRouter | None = None
 
-    def __init__(self, display_name: str, storage_path: Path, identity_path: Path):
+    def __init__(
+        self,
+        display_name: str,
+        storage_path: Path,
+        identity_path: Path,
+        *,
+        embedded: bool = False,
+    ):
         # Normalize paths early so downstream helpers can rely on Path objects.
         self.storage_path = Path(storage_path)
         self.identity_path = Path(identity_path)
@@ -106,6 +118,9 @@ class ReticulumTelemetryHub:
         # to avoid triggering the single-instance guard in the RNS library.
         self.ret = RNS.Reticulum.get_instance() or RNS.Reticulum()
         self.tel_controller = TelemetryController()
+        self.config_manager: HubConfigurationManager | None = None
+        self.embedded_lxmd: EmbeddedLxmd | None = None
+        self._shutdown = False
         self.connections: dict[bytes, RNS.Destination] = {}
 
         identity = self.load_or_generate_identity(self.identity_path)
@@ -129,6 +144,19 @@ class ReticulumTelemetryHub:
         self.lxm_router.set_message_storage_limit(megabytes=5)
         self.lxm_router.register_delivery_callback(self.delivery_callback)
         RNS.Transport.register_announce_handler(AnnounceHandler(self.identities))
+
+        if embedded:
+            self.config_manager = HubConfigurationManager(storage_path=self.storage_path)
+            self.embedded_lxmd = EmbeddedLxmd(
+                router=self.lxm_router,
+                destination=self.my_lxmf_dest,
+                config_manager=self.config_manager,
+                telemetry_controller=self.tel_controller,
+            )
+            self.embedded_lxmd.start()
+        else:
+            self.config_manager = None
+            self.embedded_lxmd = None
 
     def command_handler(self, commands: list, message: LXMF.LXMessage):
         """Handles commands received from the client and sends responses back.
@@ -193,7 +221,12 @@ class ReticulumTelemetryHub:
         Args:
             message (str): Message to send
         """
-        for connection in self.connections.values():
+        destinations = (
+            self.connections.values()
+            if hasattr(self.connections, "values")
+            else self.connections
+        )
+        for connection in destinations:
             response = LXMF.LXMessage(
                 connection,
                 self.my_lxmf_dest,
@@ -288,6 +321,14 @@ class ReticulumTelemetryHub:
             self.my_lxmf_dest.announce()
             time.sleep(60)
 
+    def shutdown(self):
+        if self._shutdown:
+            return
+        self._shutdown = True
+        if self.embedded_lxmd is not None:
+            self.embedded_lxmd.stop()
+            self.embedded_lxmd = None
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -295,6 +336,13 @@ if __name__ == "__main__":
     )
     ap.add_argument("--headless", action="store_true", help="Run in headless mode")
     ap.add_argument("--display_name", help="Display name for the server", default="RTH")
+    ap.add_argument(
+        "--embedded",
+        "--embedded-lxmd",
+        dest="embedded",
+        action="store_true",
+        help="Run the LXMF router/propagation threads in-process.",
+    )
 
     args = ap.parse_args()
 
@@ -313,10 +361,15 @@ if __name__ == "__main__":
 
 
     reticulum_server = ReticulumTelemetryHub(
-        args.display_name, storage_path, identity_path
+        args.display_name, storage_path, identity_path, embedded=args.embedded
     )
 
-    if not args.headless:
-        reticulum_server.interactive_loop()
-    else:
-        reticulum_server.headless_loop()
+    try:
+        if not args.headless:
+            reticulum_server.interactive_loop()
+        else:
+            reticulum_server.headless_loop()
+    except KeyboardInterrupt:
+        RNS.log("Received interrupt, shutting down", RNS.LOG_INFO)
+    finally:
+        reticulum_server.shutdown()
