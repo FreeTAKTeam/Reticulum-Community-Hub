@@ -1,6 +1,6 @@
-import RNS
 import LXMF
-from pathlib import Path
+import RNS
+
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
@@ -71,24 +71,69 @@ def test_send_message_uses_connection_values(tmp_path):
     assert all(msg.content_as_string() == "Hello" for msg in sent)
 
 
-def test_interactive_loop_requests_telemetry_for_known_connection(monkeypatch, tmp_path):
-    hub = ReticulumTelemetryHub("TestHub", str(tmp_path), tmp_path / "identity")
-    sent = []
-    hub.lxm_router.handle_outbound = lambda m: sent.append(m)
+def test_delivery_callback_handles_commands_and_broadcasts():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
 
-    dest = RNS.Destination(
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    router_messages = []
+
+    class DummyRouter:
+        def handle_outbound(self, message):
+            router_messages.append(message)
+
+    hub.lxm_router = DummyRouter()
+    hub.my_lxmf_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    dest_one = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
-    hub.connections = {dest.identity.hash: dest}
+    dest_two = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    hub.connections = {
+        dest_one.identity.hash: dest_one,
+        dest_two.identity.hash: dest_two,
+    }
+    hub.identities = {dest_one.hash.hex(): "node-a"}
 
-    inputs = iter(["telemetry", dest.identity.hash.hex(), "exit"])
-    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    telemetry_calls = []
+    hub.tel_controller = type(
+        "DummyController",
+        (),
+        {"handle_message": lambda self, message: telemetry_calls.append(message) or True},
+    )()
 
-    hub.interactive_loop()
+    command_reply = LXMF.LXMessage(dest_one, hub.my_lxmf_dest, "cmd-reply")
+    hub.command_manager = type(
+        "DummyCommands",
+        (),
+        {
+            "handle_commands": lambda self, commands, message: [command_reply],
+        },
+    )()
 
-    assert len(sent) == 1
-    telemetry_message = sent[0]
-    assert telemetry_message.destination_hash == dest.identity.hash
-    assert telemetry_message.fields[LXMF.FIELD_COMMANDS][0][
-        TelemetryController.TELEMETRY_REQUEST
-    ] == 1000000000
+    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
+        hub, ReticulumTelemetryHub
+    )
+
+    incoming = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        dest_one,
+        "broadcast",
+        fields={LXMF.FIELD_COMMANDS: [{PLUGIN_COMMAND: CommandManager.CMD_JOIN}]},
+    )
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+
+    assert command_reply in router_messages
+    command_responses = [msg for msg in router_messages if msg is command_reply]
+    assert len(command_responses) == 1
+
+    broadcast_payloads = [msg.content_as_string() for msg in router_messages]
+    assert any("node-a > broadcast" in payload for payload in broadcast_payloads)
+    assert len(router_messages) == 1 + len(hub.connections)
+    assert telemetry_calls == [incoming]
