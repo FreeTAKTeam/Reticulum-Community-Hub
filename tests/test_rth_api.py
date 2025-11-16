@@ -39,6 +39,18 @@ def test_topic_crud(tmp_path):
     assert deleted.topic_id == topic.topic_id
 
 
+def test_patch_topic_allows_clearing_description(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(
+        Topic(topic_name="Status", topic_path="/status", topic_description="System status")
+    )
+
+    api.patch_topic(topic.topic_id, topic_description="")
+    updated = api.retrieve_topic(topic.topic_id)
+
+    assert updated.topic_description == ""
+
+
 def test_subscriber_management(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     topic = api.create_topic(Topic(topic_name="Alerts", topic_path="/alerts"))

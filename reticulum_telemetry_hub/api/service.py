@@ -75,9 +75,11 @@ class ReticulumTelemetryHubAPI:
             topic.topic_path = updates.get("topic_path") or updates.get("TopicPath")
             update_fields["topic_path"] = topic.topic_path
         if "topic_description" in updates or "TopicDescription" in updates:
-            topic.topic_description = updates.get("topic_description") or updates.get(
-                "TopicDescription"
-            )
+            if "topic_description" in updates:
+                description = updates["topic_description"]
+            else:
+                description = updates["TopicDescription"]
+            topic.topic_description = description or ""
             update_fields["topic_description"] = topic.topic_description
         if not update_fields:
             return topic
