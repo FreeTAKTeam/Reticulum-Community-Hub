@@ -104,7 +104,7 @@ class EmbeddedLxmd:
 
         self._stop_event.set()
         for thread in self._threads:
-            thread.join(timeout=1)
+            thread.join()
         self._threads.clear()
         # Allow future ``start`` calls to run the deferred jobs loop again.
         self._stop_event.clear()
