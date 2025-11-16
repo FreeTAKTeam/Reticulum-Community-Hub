@@ -179,7 +179,27 @@ class TelemetryController:
     def handle_command(self, command: dict, message: LXMF.LXMessage, my_lxm_dest) -> Optional[LXMF.LXMessage]:
         """Handle the incoming command."""
         if TelemetryController.TELEMETRY_REQUEST in command:
-            timebase = command[TelemetryController.TELEMETRY_REQUEST]
+            request_value = command[TelemetryController.TELEMETRY_REQUEST]
+
+            # Sideband (and compatible clients) send telemetry requests either as a
+            # standalone timestamp or as ``[timestamp, collector_flag]``.  The
+            # hub currently ignores the optional collector flag, but we still
+            # need to unpack the timestamp so ``datetime.fromtimestamp`` doesn't
+            # receive a list and raise ``TypeError``.
+            if isinstance(request_value, (list, tuple)):
+                if not request_value:
+                    return None
+                timebase_raw = request_value[0]
+            else:
+                timebase_raw = request_value
+
+            if not isinstance(timebase_raw, (int, float)):
+                raise TypeError(
+                    "Telemetry request timestamp must be numeric; "
+                    f"received {type(timebase_raw)!r}"
+                )
+
+            timebase = int(timebase_raw)
             with self._session_cls() as ses:
                 tels = self._load_telemetry(
                     ses, start_time=datetime.fromtimestamp(timebase)
