@@ -50,7 +50,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
 )
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import sessionmaker, Session, joinedload
+from sqlalchemy.orm import Session, joinedload, sessionmaker
 
 
 class TelemetryController:
@@ -114,6 +114,7 @@ class TelemetryController:
             query = query.filter(Telemeter.time >= start_time)
         if end_time:
             query = query.filter(Telemeter.time <= end_time)
+        query = query.order_by(Telemeter.time.desc())
         tels = query.options(
             joinedload(Telemeter.sensors),
             joinedload(Telemeter.sensors.of_type(LXMFPropagation)).joinedload(
@@ -201,9 +202,10 @@ class TelemetryController:
 
             timebase = int(timebase_raw)
             with self._session_cls() as ses:
-                tels = self._load_telemetry(
-                    ses, start_time=datetime.fromtimestamp(timebase)
-                )
+                timebase_dt = datetime.fromtimestamp(timebase)
+                teles = self._load_telemetry(ses, start_time=timebase_dt)
+                # Return one snapshot per peer using the most recent entry.
+                teles = self._latest_by_peer(teles)
                 packed_tels = []
                 dest = RNS.Destination(
                     message.source.identity,
@@ -293,6 +295,15 @@ class TelemetryController:
                 decoded = payload
             readable[name] = decoded
         return readable
+
+    def _latest_by_peer(self, telemeters: list[Telemeter]) -> list[Telemeter]:
+        """Return the most recent telemetry entry per peer."""
+        latest: dict[str, Telemeter] = {}
+        for tel in telemeters:
+            # The list is already ordered newest->oldest, so first wins.
+            if tel.peer_dest not in latest:
+                latest[tel.peer_dest] = tel
+        return list(latest.values())
 
     def _peer_hash_bytes(self, telemeter: Telemeter) -> Optional[bytes]:
         """Return the peer hash for ``telemeter`` as bytes or ``None`` on failure."""

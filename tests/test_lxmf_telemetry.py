@@ -206,6 +206,57 @@ def test_handle_command_accepts_sideband_collector_format(
     assert unpackb(blob, strict_map_key=False) == payload
 
 
+def test_handle_command_returns_latest_snapshot_per_peer(
+    telemetry_controller, session_factory
+):
+    controller = telemetry_controller
+    Session = session_factory
+
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    payload = build_complex_telemeter_payload()
+    peer_a = bytes.fromhex("aa" * 16)
+    peer_b = bytes.fromhex("bb" * 16)
+    t0 = int(time.time()) - 100
+
+    def send_snapshot(peer_hash: bytes, timestamp: int) -> None:
+        stream_payload = [peer_hash, timestamp, packb(payload, use_bin_type=True), ["meta"]]
+        stream = packb([stream_payload], use_bin_type=True)
+        message = LXMF.LXMessage(dst, src, fields={LXMF.FIELD_TELEMETRY_STREAM: stream})
+        assert controller.handle_message(message)
+
+    # Older snapshot for peer A, then a newer one, plus one for peer B
+    send_snapshot(peer_a, t0)
+    send_snapshot(peer_a, t0 + 10)
+    send_snapshot(peer_b, t0 + 5)
+
+    with Session() as ses:
+        # Sanity check DB holds all three entries
+        assert ses.query(Telemeter).count() == 3
+
+    command_msg = LXMF.LXMessage(src, dst)
+    command = {TelemetryController.TELEMETRY_REQUEST: 0}
+
+    reply = controller.handle_command(command, command_msg, dst)
+    stream_response = reply.fields[LXMF.FIELD_TELEMETRY_STREAM]
+    unpacked = unpackb(stream_response, strict_map_key=False)
+
+    assert len(unpacked) == 2  # one per peer
+    by_peer = {}
+    for entry in unpacked:
+        peer_hash = entry[0]
+        by_peer[peer_hash] = entry
+    assert by_peer[peer_a][1] == t0 + 10
+    assert by_peer[peer_b][1] == t0 + 5
+
+
 def test_handle_message_round_trip_complex_sensors(telemetry_controller, session_factory):
     controller = telemetry_controller
     Session = session_factory
