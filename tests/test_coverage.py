@@ -15,7 +15,10 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.location import Location
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.magnetic_field import MagneticField
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.time import Time
-from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
+from reticulum_telemetry_hub.reticulum_server.__main__ import (
+    AnnounceHandler,
+    ReticulumTelemetryHub,
+)
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 
@@ -101,18 +104,17 @@ def test_hub_send_and_log():
     ReticulumTelemetryHub.log_delivery_details(hub, msg, "t", "sig")
 
 
-def test_hub_loops(tmp_path, monkeypatch):
-    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
-    hub.my_lxmf_dest = type("D", (), {"announce": lambda self: None})()
-    hub.lxm_router = type("R", (), {"handle_outbound": lambda self, m: None})()
-    hub.connections = []
+def test_announce_handler_tracks_identities():
+    identities: dict[str, str] = {}
+    handler = AnnounceHandler(identities)
 
-    monkeypatch.setattr("builtins.input", lambda _: "exit")
-    ReticulumTelemetryHub.interactive_loop(hub)
+    destination_hash = bytes.fromhex("ab" * 16)
+    handler.received_announce(destination_hash, "peer", b"node-one")
 
-    monkeypatch.setattr("time.sleep", lambda x: (_ for _ in ()).throw(KeyboardInterrupt()))
-    with pytest.raises(KeyboardInterrupt):
-        ReticulumTelemetryHub.headless_loop(hub)
+    assert identities[destination_hash.hex()] == "node-one"
+    assert handler._decode_app_data(None) == "unknown"
+    assert handler._decode_app_data(b"hello") == "hello"
+    assert handler._decode_app_data(b"\xff\xfe").isalnum()
 
 
 def test_cover_main_file():
