@@ -7,13 +7,47 @@ import LXMF
 import RNS
 from msgpack import packb, unpackb
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import Sensor
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import (
+    Sensor,
+)
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import (
+    Telemeter,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propagation import (
     LXMFPropagation,
 )
 
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import sid_mapping
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import (
+    sid_mapping,
+)
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
+    SID_ACCELERATION,
+    SID_AMBIENT_LIGHT,
+    SID_ANGULAR_VELOCITY,
+    SID_BATTERY,
+    SID_CONNECTION_MAP,
+    SID_CUSTOM,
+    SID_FUEL,
+    SID_GRAVITY,
+    SID_HUMIDITY,
+    SID_INFORMATION,
+    SID_LOCATION,
+    SID_LXMF_PROPAGATION,
+    SID_MAGNETIC_FIELD,
+    SID_NVM,
+    SID_PHYSICAL_LINK,
+    SID_POWER_CONSUMPTION,
+    SID_POWER_PRODUCTION,
+    SID_PRESSURE,
+    SID_PROCESSOR,
+    SID_PROXIMITY,
+    SID_RAM,
+    SID_RECEIVED,
+    SID_RNS_TRANSPORT,
+    SID_TANK,
+    SID_TEMPERATURE,
+    SID_TIME,
+)
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, Session, joinedload
@@ -23,6 +57,34 @@ class TelemetryController:
     """This class is responsible for managing the telemetry data."""
 
     TELEMETRY_REQUEST = 1
+    SID_HUMAN_NAMES = {
+        SID_TIME: "time",
+        SID_LOCATION: "location",
+        SID_PRESSURE: "pressure",
+        SID_BATTERY: "battery",
+        SID_PHYSICAL_LINK: "physical_link",
+        SID_ACCELERATION: "acceleration",
+        SID_TEMPERATURE: "temperature",
+        SID_HUMIDITY: "humidity",
+        SID_MAGNETIC_FIELD: "magnetic_field",
+        SID_AMBIENT_LIGHT: "ambient_light",
+        SID_GRAVITY: "gravity",
+        SID_ANGULAR_VELOCITY: "angular_velocity",
+        SID_PROXIMITY: "proximity",
+        SID_INFORMATION: "information",
+        SID_RECEIVED: "received",
+        SID_POWER_CONSUMPTION: "power_consumption",
+        SID_POWER_PRODUCTION: "power_production",
+        SID_PROCESSOR: "processor",
+        SID_RAM: "ram",
+        SID_NVM: "nvm",
+        SID_TANK: "tank",
+        SID_FUEL: "fuel",
+        SID_LXMF_PROPAGATION: "lxmf_propagation",
+        SID_RNS_TRANSPORT: "rns_transport",
+        SID_CONNECTION_MAP: "connection_map",
+        SID_CUSTOM: "custom",
+    }
 
     def __init__(
         self,
@@ -85,7 +147,9 @@ class TelemetryController:
             tel_data: dict = unpackb(
                 message.fields[LXMF.FIELD_TELEMETRY], strict_map_key=False
             )
-            RNS.log(f"Telemetry data: {tel_data}")
+            readable = self._humanize_telemetry(tel_data)
+            RNS.log(f"Telemetry received from {RNS.hexrep(message.source_hash, False)}")
+            RNS.log(f"Telemetry decoded: {readable}")
             self.save_telemetry(tel_data, RNS.hexrep(message.source_hash, False))
             handled = True
         if LXMF.FIELD_TELEMETRY_STREAM in message.fields:
@@ -105,6 +169,8 @@ class TelemetryController:
                 if not payload:
                     RNS.log("Telemetry payload missing; skipping entry")
                     continue
+                readable = self._humanize_telemetry(payload)
+                RNS.log(f"Telemetry stream from {peer_dest} at {timestamp}: {readable}")
                 self.save_telemetry(payload, peer_dest, timestamp)
             handled = True
 
@@ -186,6 +252,27 @@ class TelemetryController:
                 sensor.unpack(tel_data[sid])
                 tel.sensors.append(sensor)
         return tel
+
+    def _humanize_telemetry(self, tel_data: dict) -> dict:
+        """Return a friendly dict mapping sensor names to decoded readings."""
+        if isinstance(tel_data, (bytes, bytearray)):
+            tel_data = unpackb(tel_data, strict_map_key=False)
+
+        readable: dict[str, object] = {}
+        for sid, payload in tel_data.items():
+            name = self.SID_HUMAN_NAMES.get(sid, f"sid_{sid}")
+            sensor_cls = sid_mapping.get(sid)
+            if sensor_cls is None:
+                readable[name] = payload
+                continue
+            sensor = sensor_cls()
+            try:
+                decoded = sensor.unpack(payload)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                RNS.log(f"Failed decoding telemetry sensor {name}: {exc}")
+                decoded = payload
+            readable[name] = decoded
+        return readable
 
     def _peer_hash_bytes(self, telemeter: Telemeter) -> Optional[bytes]:
         """Return the peer hash for ``telemeter`` as bytes or ``None`` on failure."""
