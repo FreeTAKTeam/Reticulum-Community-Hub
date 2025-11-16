@@ -133,7 +133,9 @@ class ReticulumTelemetryHub:
         else:
             self.ret = RNS.Reticulum(loglevel=self.loglevel)
             RNS.loglevel = self.loglevel
-        self.tel_controller = TelemetryController()
+
+        telemetry_db_path = self.storage_path / "telemetry.db"
+        self.tel_controller = TelemetryController(db_path=telemetry_db_path)
         self.config_manager: HubConfigurationManager | None = None
         self.embedded_lxmd: EmbeddedLxmd | None = None
         self._shutdown = False

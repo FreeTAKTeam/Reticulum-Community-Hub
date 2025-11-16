@@ -25,11 +25,11 @@ from tests.factories import (
     create_rns_transport_sensor,
 )
 
-def test_deserialize_lxmf():
+def test_deserialize_lxmf(telemetry_controller):
     with open("sample.bin", "rb") as f:
         tel_data = unpackb(f.read(), strict_map_key=False)
 
-    tel = TelemetryController()._deserialize_telemeter(tel_data, "test")
+    tel = telemetry_controller._deserialize_telemeter(tel_data, "test")
 
     expected_order = [sid for sid in sid_mapping if sid in tel_data]
 

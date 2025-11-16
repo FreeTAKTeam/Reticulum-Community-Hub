@@ -1,6 +1,8 @@
 from datetime import datetime
+from pathlib import Path
 import string
 from typing import Optional
+
 import LXMF
 import RNS
 from msgpack import packb, unpackb
@@ -13,11 +15,8 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propa
 
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import sid_mapping
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, Session, joinedload
-
-_engine = create_engine("sqlite:///telemetry.db")
-Base.metadata.create_all(_engine)
-Session_cls = sessionmaker(bind=_engine, expire_on_commit=False)
 
 
 class TelemetryController:
@@ -25,8 +24,22 @@ class TelemetryController:
 
     TELEMETRY_REQUEST = 1
 
-    def __init__(self) -> None:
-        pass
+    def __init__(
+        self,
+        *,
+        engine: Engine | None = None,
+        db_path: str | Path | None = None,
+    ) -> None:
+        if engine is not None and db_path is not None:
+            raise ValueError("Provide either 'engine' or 'db_path', not both")
+
+        if engine is None:
+            db_location = Path(db_path) if db_path is not None else Path("telemetry.db")
+            engine = create_engine(f"sqlite:///{db_location}")
+
+        self._engine = engine
+        Base.metadata.create_all(self._engine)
+        self._session_cls = sessionmaker(bind=self._engine, expire_on_commit=False)
 
     def _load_telemetry(
         self,
@@ -51,7 +64,7 @@ class TelemetryController:
         self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
     ) -> list[Telemeter]:
         """Get the telemetry data."""
-        with Session_cls() as ses:
+        with self._session_cls() as ses:
             return self._load_telemetry(ses, start_time, end_time)
 
     def save_telemetry(
@@ -61,7 +74,7 @@ class TelemetryController:
         tel = self._deserialize_telemeter(telemetry_data, peer_dest)
         if timestamp is not None:
             tel.time = timestamp
-        with Session_cls() as ses:
+        with self._session_cls() as ses:
             ses.add(tel)
             ses.commit()
 
@@ -101,7 +114,7 @@ class TelemetryController:
         """Handle the incoming command."""
         if TelemetryController.TELEMETRY_REQUEST in command:
             timebase = command[TelemetryController.TELEMETRY_REQUEST]
-            with Session_cls() as ses:
+            with self._session_cls() as ses:
                 tels = self._load_telemetry(
                     ses, start_time=datetime.fromtimestamp(timebase)
                 )

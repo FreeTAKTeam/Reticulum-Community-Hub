@@ -7,7 +7,6 @@ import LXMF
 import RNS
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 import reticulum_telemetry_hub
 
 from reticulum_telemetry_hub.lxmf_telemetry import telemetry_controller as tc_mod
@@ -23,13 +22,6 @@ from reticulum_telemetry_hub.reticulum_server.command_manager import CommandMana
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 
 
-# use in-memory database for tests
-engine = create_engine("sqlite:///:memory:")
-Base.metadata.create_all(engine)
-tc_mod._engine = engine
-tc_mod.Session_cls = sessionmaker(bind=engine)
-
-
 def make_dest(direction=RNS.Destination.OUT):
     ident = RNS.Identity()
     return RNS.Destination(ident, direction, RNS.Destination.SINGLE, "lxmf", "delivery")
@@ -40,8 +32,14 @@ def sample_telemeter_data():
         return msgpack.unpackb(f.read(), strict_map_key=False)
 
 
+def make_controller():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    return tc_mod.TelemetryController(engine=engine)
+
+
 def test_handle_message_and_command(tmp_path):
-    tc = tc_mod.TelemetryController()
+    tc = make_controller()
 
     src = make_dest()
     dst = make_dest()
@@ -133,7 +131,7 @@ def test_load_or_generate_identity(tmp_path):
 
 
 def test_command_manager_extra(monkeypatch):
-    cm = CommandManager({}, tc_mod.TelemetryController(), make_dest())
+    cm = CommandManager({}, make_controller(), make_dest())
     src = make_dest()
     dest = make_dest()
     msg = LXMF.LXMessage(dest, src)
