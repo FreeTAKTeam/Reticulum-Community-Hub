@@ -7,16 +7,15 @@ from typing import Any
 
 import pytest
 import RNS
-
-from reticulum_telemetry_hub.lxmf_telemetry import telemetry_controller as tc_mod
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propagation import (
     LXMFPropagation,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
 
 
-@pytest.mark.usefixtures("session_factory")
-def test_embedded_lxmd_persists_propagation_stats(embedded_lxmd_factory):
+def test_embedded_lxmd_persists_propagation_stats(
+    embedded_lxmd_factory, session_factory
+):
     stats = {
         "destination_hash": b"\xaa" * 16,
         "identity_hash": b"\xbb" * 16,
@@ -63,7 +62,8 @@ def test_embedded_lxmd_persists_propagation_stats(embedded_lxmd_factory):
 
     harness.embedded._maybe_emit_propagation_update(force=True)
 
-    with tc_mod.Session_cls() as session:
+    Session = session_factory
+    with Session() as session:
         telemeter = session.query(Telemeter).one()
         assert telemeter.peer_dest == RNS.hexrep(harness.destination.hash, False)
         sensor = session.query(LXMFPropagation).one()
@@ -114,8 +114,9 @@ def test_embedded_lxmd_deduplicates_snapshots(embedded_lxmd_factory):
         assert len(calls) == 1
 
 
-@pytest.mark.usefixtures("session_factory")
-def test_embedded_lxmd_fixture_emits_and_persists(running_embedded_lxmd):
+def test_embedded_lxmd_fixture_emits_and_persists(
+    running_embedded_lxmd, session_factory
+):
     stats = {
         "destination_hash": b"\xff" * 16,
         "identity_hash": b"\xee" * 16,
@@ -172,7 +173,8 @@ def test_embedded_lxmd_fixture_emits_and_persists(running_embedded_lxmd):
 
     assert observed and observed[0]["destination_hash"] == stats["destination_hash"]
 
-    with tc_mod.Session_cls() as session:
+    Session = session_factory
+    with Session() as session:
         telemeters = session.query(Telemeter).order_by(Telemeter.id).all()
         assert telemeters
         assert telemeters[-1].peer_dest == RNS.hexrep(b"\x55" * 16, False)

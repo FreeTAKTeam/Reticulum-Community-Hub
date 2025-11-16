@@ -18,8 +18,8 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import Telemetr
 
 
 @pytest.fixture
-def session_factory():
-    """Provide an isolated in-memory database and session factory per test."""
+def telemetry_db_engine():
+    """Return an isolated in-memory SQLite engine per test."""
 
     engine = create_engine(
         "sqlite://",
@@ -27,26 +27,24 @@ def session_factory():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
-
-    old_engine = tc_mod._engine
-    old_session_cls = tc_mod.Session_cls
-    tc_mod._engine = engine
-    tc_mod.Session_cls = SessionLocal
-
     try:
-        yield SessionLocal
+        yield engine
     finally:
-        tc_mod._engine = old_engine
-        tc_mod.Session_cls = old_session_cls
         engine.dispose()
 
 
 @pytest.fixture
-def telemetry_controller(session_factory):
+def session_factory(telemetry_db_engine):
+    """Provide a session factory bound to the per-test in-memory engine."""
+
+    return sessionmaker(bind=telemetry_db_engine, expire_on_commit=False)
+
+
+@pytest.fixture
+def telemetry_controller(telemetry_db_engine):
     """Return a ``TelemetryController`` bound to the in-memory database."""
 
-    return TelemetryController()
+    return TelemetryController(engine=telemetry_db_engine)
 
 
 class DummyConfigManager:
