@@ -114,6 +114,53 @@ def test_handle_message_stream_preserves_timestamp_and_sensors(
         assert len(stored.sensors) > 0
 
 
+def test_stream_ingest_followed_by_command_returns_valid_response(
+    telemetry_controller, session_factory
+):
+    controller = telemetry_controller
+    Session = session_factory
+
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    payload = build_complex_telemeter_payload()
+    packed_telemeter = packb(payload, use_bin_type=True)
+    timestamp = int(time.time())
+    peer_hash = bytes.fromhex("24" * 16)
+    stream_payload = [peer_hash, timestamp, packed_telemeter, ["meta"]]
+    stream = packb([stream_payload], use_bin_type=True)
+
+    message = LXMF.LXMessage(dst, src, fields={LXMF.FIELD_TELEMETRY_STREAM: stream})
+
+    assert controller.handle_message(message)
+
+    with Session() as ses:
+        stored = ses.query(Telemeter).one()
+        assert stored.peer_dest == RNS.hexrep(peer_hash, False)
+
+    command_msg = LXMF.LXMessage(src, dst)
+    command = {TelemetryController.TELEMETRY_REQUEST: timestamp - 1}
+
+    reply = controller.handle_command(command, command_msg, dst)
+    assert reply is not None
+
+    stream_response = reply.fields[LXMF.FIELD_TELEMETRY_STREAM]
+    unpacked = unpackb(stream_response, strict_map_key=False)
+    assert len(unpacked) == 1
+
+    returned_peer_hash, returned_timestamp, blob, metadata = unpacked[0]
+    assert returned_peer_hash == peer_hash
+    assert returned_timestamp == timestamp
+    assert isinstance(metadata, list)
+    assert unpackb(blob, strict_map_key=False) == payload
+
+
 def test_handle_message_round_trip_complex_sensors(telemetry_controller, session_factory):
     controller = telemetry_controller
     Session = session_factory
