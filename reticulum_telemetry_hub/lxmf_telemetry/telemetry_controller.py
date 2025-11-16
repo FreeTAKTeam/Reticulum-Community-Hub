@@ -220,7 +220,7 @@ class TelemetryController:
                         "Telemetry data",
                         desired_method=LXMF.LXMessage.DIRECT,
                     )
-                for tel in tels:
+                for tel in teles:
                     peer_hash = self._peer_hash_bytes(tel)
                     if peer_hash is None:
                         continue
