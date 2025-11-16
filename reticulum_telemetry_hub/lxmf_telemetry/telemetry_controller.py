@@ -1,5 +1,6 @@
-from typing import Optional
 from datetime import datetime
+import string
+from typing import Optional
 import LXMF
 import RNS
 from msgpack import packb, unpackb
@@ -81,7 +82,7 @@ class TelemetryController:
             for tel_data in tels_data:
                 tel_entry = list(tel_data)
                 peer_hash = tel_entry.pop(0)
-                peer_dest = RNS.hexrep(peer_hash)
+                peer_dest = RNS.hexrep(peer_hash, False)
                 timestamp = None
                 if tel_entry:
                     raw_timestamp = tel_entry.pop(0)
@@ -119,10 +120,13 @@ class TelemetryController:
                         desired_method=LXMF.LXMessage.DIRECT,
                     )
                 for tel in tels:
+                    peer_hash = self._peer_hash_bytes(tel)
+                    if peer_hash is None:
+                        continue
                     tel_data = self._serialize_telemeter(tel)
                     packed_tels.append(
                         [
-                            bytes.fromhex(tel.peer_dest),
+                            peer_hash,
                             round(tel.time.timestamp()),
                             packb(tel_data),
                             ['account', b'\x00\x00\x00', b'\xff\xff\xff'],
@@ -169,3 +173,26 @@ class TelemetryController:
                 sensor.unpack(tel_data[sid])
                 tel.sensors.append(sensor)
         return tel
+
+    def _peer_hash_bytes(self, telemeter: Telemeter) -> Optional[bytes]:
+        """Return the peer hash for ``telemeter`` as bytes or ``None`` on failure."""
+
+        peer_dest = (telemeter.peer_dest or "").strip()
+        if not peer_dest:
+            RNS.log("Telemetry entry missing peer destination; skipping")
+            return None
+
+        normalized = "".join(ch for ch in peer_dest if ch in string.hexdigits)
+        if len(normalized) % 2 != 0:
+            RNS.log(
+                f"Telemetry entry peer destination has odd length after normalization: {peer_dest!r}"
+            )
+            return None
+
+        try:
+            return bytes.fromhex(normalized)
+        except ValueError as exc:
+            RNS.log(
+                f"Skipping telemetry entry with invalid peer destination {peer_dest!r}: {exc}"
+            )
+            return None
