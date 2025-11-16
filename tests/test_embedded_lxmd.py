@@ -185,3 +185,52 @@ def test_embedded_lxmd_fixture_emits_and_persists(
     assert payload is not None
     assert payload["active_peers"] == 1
     assert payload["peered_propagation_rx_bytes"] == 8
+
+
+def test_embedded_lxmd_can_restart_after_stop(running_embedded_lxmd):
+    stats = {
+        "destination_hash": b"\x66" * 16,
+        "identity_hash": b"\x77" * 16,
+        "uptime": 10.0,
+        "delivery_limit": 128,
+        "propagation_limit": 128,
+        "autopeer_maxdepth": 1,
+        "from_static_only": False,
+        "messagestore": None,
+        "clients": None,
+        "unpeered_propagation_incoming": 0,
+        "unpeered_propagation_rx_bytes": 0,
+        "static_peers": 0,
+        "max_peers": 5,
+        "peers": {},
+        "total_peers": 0,
+    }
+
+    observed: list[dict[str, Any]] = []
+    event = threading.Event()
+
+    def observer(payload: dict[str, Any]) -> None:
+        observed.append(payload)
+        event.set()
+
+    with running_embedded_lxmd(stats=stats) as harness:
+        harness.embedded.add_propagation_observer(observer)
+
+        harness.embedded.start()
+        assert event.wait(1.0), "initial start never emitted propagation stats"
+        event.clear()
+
+        first_observed = len(observed)
+        first_announces = len(harness.router.announce_calls)
+        first_propagation_announces = harness.router.announce_propagation_count
+
+        harness.embedded.stop()
+        event.clear()
+        post_stop_observed = len(observed)
+
+        harness.embedded.start()
+        assert event.wait(1.0), "second start never emitted propagation stats"
+
+        assert len(observed) > post_stop_observed >= first_observed
+        assert len(harness.router.announce_calls) > first_announces
+        assert harness.router.announce_propagation_count > first_propagation_announces
