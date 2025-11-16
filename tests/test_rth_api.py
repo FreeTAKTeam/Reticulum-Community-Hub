@@ -1,4 +1,5 @@
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI, Topic, Subscriber
+from reticulum_telemetry_hub.api.storage import TopicRecord
 from reticulum_telemetry_hub.config import HubConfigurationManager
 def make_config_manager(tmp_path):
     storage = tmp_path / "storage"
@@ -79,3 +80,19 @@ def test_persistence_between_instances(tmp_path):
     assert api2.retrieve_topic(topic.topic_id).topic_name == "Ops"
     clients = api2.list_clients()
     assert any(c.identity == "identity42" for c in clients)
+
+
+def test_patch_topic_preserves_created_at(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
+
+    with api._storage._Session() as session:
+        original_record = session.get(TopicRecord, topic.topic_id)
+        original_created_at = original_record.created_at
+
+    api.patch_topic(topic.topic_id, topic_description="Updated status")
+
+    with api._storage._Session() as session:
+        updated_record = session.get(TopicRecord, topic.topic_id)
+        assert updated_record.description == "Updated status"
+        assert updated_record.created_at == original_created_at
