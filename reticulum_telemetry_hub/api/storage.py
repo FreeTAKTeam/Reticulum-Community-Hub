@@ -115,6 +115,32 @@ class HubStorage:
                 topic_description=record.description or "",
             )
 
+    def update_topic(
+        self,
+        topic_id: str,
+        *,
+        topic_name: Optional[str] = None,
+        topic_path: Optional[str] = None,
+        topic_description: Optional[str] = None,
+    ) -> Optional[Topic]:
+        with self._Session() as session:
+            record = session.get(TopicRecord, topic_id)
+            if not record:
+                return None
+            if topic_name is not None:
+                record.name = topic_name
+            if topic_path is not None:
+                record.path = topic_path
+            if topic_description is not None:
+                record.description = topic_description
+            session.commit()
+            return Topic(
+                topic_id=record.id,
+                topic_name=record.name,
+                topic_path=record.path,
+                topic_description=record.description or "",
+            )
+
     # ------------------------------------------------------------------ #
     # Subscriber helpers
     # ------------------------------------------------------------------ #
