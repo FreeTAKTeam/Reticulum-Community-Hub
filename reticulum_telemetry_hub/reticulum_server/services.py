@@ -6,7 +6,7 @@ import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator, Mapping
 
 import RNS
 
@@ -123,20 +123,32 @@ class GpsTelemetryService(HubService):
         for payload in stream:
             if self._stop_event.is_set():
                 break
-            lat = payload.get("lat")
-            lon = payload.get("lon")
-            if lat is None or lon is None:
-                continue
-            sensor.latitude = lat
-            sensor.longitude = lon
-            if payload.get("alt") is not None:
-                sensor.altitude = payload["alt"]
-            if payload.get("speed") is not None:
-                sensor.speed = payload["speed"]
-            sensor.last_update = datetime.utcnow()
+            self._apply_gps_payload(sensor, payload)
 
     def _iter_gps_stream(self, client: GPSDClient) -> Iterator[dict]:  # pragma: no cover - passthrough
         return client.dict_stream(convert_datetime=False)
+
+    def _apply_gps_payload(self, sensor, payload: Mapping[str, Any]) -> None:
+        lat = payload.get("lat")
+        lon = payload.get("lon")
+        if lat is None or lon is None:
+            return
+        sensor.latitude = float(lat)
+        sensor.longitude = float(lon)
+        sensor.altitude = self._coerce_float(payload.get("alt"), sensor.altitude)
+        sensor.speed = self._coerce_float(payload.get("speed"), sensor.speed)
+        sensor.bearing = self._coerce_float(payload.get("track"), sensor.bearing)
+        sensor.accuracy = self._coerce_float(payload.get("eps"), sensor.accuracy)
+        sensor.last_update = datetime.utcnow()
+
+    @staticmethod
+    def _coerce_float(value: Any, current: float | None, *, default: float = 0.0) -> float:
+        if value is None:
+            return current if current is not None else default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return current if current is not None else default
 
 
 def _gps_factory(hub: "ReticulumTelemetryHub") -> HubService:
