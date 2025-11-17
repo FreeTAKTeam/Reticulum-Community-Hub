@@ -1,3 +1,4 @@
+import struct
 import time
 from datetime import datetime
 
@@ -84,6 +85,9 @@ def test_handle_command_stream_is_msgpack_encoded(telemetry_controller, session_
     assert isinstance(peer_hash, (bytes, bytearray))
     assert isinstance(metadata, list)
     round_trip_payload = unpackb(telemeter_blob, strict_map_key=False)
+    assert round_trip_payload[SID_TIME] == pytest.approx(timestamp, rel=0)
+    # Remaining sensors should match the original payload.
+    round_trip_payload.pop(SID_TIME, None)
     assert round_trip_payload == payload
 
 
@@ -195,7 +199,9 @@ def test_stream_ingest_followed_by_command_returns_valid_response(
     assert returned_peer_hash == peer_hash
     assert returned_timestamp == timestamp
     assert isinstance(metadata, list)
-    assert unpackb(blob, strict_map_key=False) == payload
+    returned_payload = unpackb(blob, strict_map_key=False)
+    assert returned_payload.pop(SID_TIME, None) == pytest.approx(timestamp, rel=0)
+    assert returned_payload == payload
 
 
 def test_handle_command_accepts_sideband_collector_format(
@@ -240,7 +246,9 @@ def test_handle_command_accepts_sideband_collector_format(
     assert returned_peer_hash == peer_hash
     assert returned_timestamp == timestamp
     assert isinstance(metadata, list)
-    assert unpackb(blob, strict_map_key=False) == payload
+    returned_payload = unpackb(blob, strict_map_key=False)
+    assert returned_payload.pop(SID_TIME, None) == pytest.approx(timestamp, rel=0)
+    assert returned_payload == payload
 
 
 def test_handle_command_returns_latest_snapshot_per_peer(
@@ -319,6 +327,8 @@ def test_handle_message_round_trip_complex_sensors(telemetry_controller, session
     with Session() as ses:
         stored = ses.query(Telemeter).one()
         serialized = controller._serialize_telemeter(stored)
+        timestamp = serialized.pop(SID_TIME, None)
+        assert timestamp == pytest.approx(int(stored.time.timestamp()), rel=0)
         assert serialized == payload
 
 
@@ -413,3 +423,20 @@ def test_connection_map_pack_unpack_round_trip(session_factory):
     # Updating the map label should modify the existing map entry.
     updated = unpacked.ensure_map("main", label="Updated Label")
     assert updated.label == "Updated Label"
+
+
+def test_location_pack_strips_invalid_altitude_sentinel():
+    """Very large altitude values should be treated as 'no altitude'."""
+
+    sensor = Location()
+    sensor.latitude = 1.0
+    sensor.longitude = 2.0
+    sensor.altitude = 42_949_672.95
+    sensor.speed = 0.0
+    sensor.bearing = 0.0
+    sensor.accuracy = 0.0
+    sensor.last_update = datetime.fromtimestamp(1_700_000_000)
+
+    packed = sensor.pack()
+    altitude_raw = struct.unpack("!I", packed[2])[0]
+    assert altitude_raw == 0

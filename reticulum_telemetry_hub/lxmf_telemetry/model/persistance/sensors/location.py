@@ -35,7 +35,7 @@ class Location(Sensor):
         try:
             latitude = self._require_float(self.latitude, "latitude")
             longitude = self._require_float(self.longitude, "longitude")
-            altitude = self._require_float(self.altitude, "altitude")
+            altitude = self._normalize_altitude(self.altitude)
             speed = self._require_float(self.speed, "speed")
             bearing = self._require_float(self.bearing, "bearing")
             accuracy = self._require_float(self.accuracy, "accuracy")
@@ -94,6 +94,15 @@ class Location(Sensor):
         if isinstance(self.last_update, (int, float)):
             return float(self.last_update)
         raise TypeError("last_update must be datetime or a unix timestamp")
+
+    def _normalize_altitude(self, value: Optional[float]) -> float:
+        """Return a safe altitude value, replacing invalid sentinels with 0."""
+        altitude = self._require_float(value, "altitude")
+        # Sideband sometimes surfaces the 0xffffffff sentinel as 42949672.95;
+        # treat anything in that range as "no altitude" to avoid absurd UI values.
+        if altitude >= 4.294e7:
+            return 0.0
+        return altitude
 
     __mapper_args__ = {
         'polymorphic_identity': SID_LOCATION,

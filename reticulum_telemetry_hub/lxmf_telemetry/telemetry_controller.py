@@ -257,14 +257,16 @@ class TelemetryController:
                         [
                             peer_hash,
                             round(tel.time.timestamp()),
-                            packb(tel_data),
+                            packb(tel_data, use_bin_type=True),
                             ['account', b'\x00\x00\x00', b'\xff\xff\xff'],
                         ]
                     )
             message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packb(
                 packed_tels, use_bin_type=True
             )
-            readable_json = json.dumps(human_readable_entries, default=str)
+            readable_json = json.dumps(
+                self._json_safe(human_readable_entries), default=str
+            )
             print(f"Sending telemetry of {len(human_readable_entries)} clients")
             print(
                 "Telemetry response in human readeble format (JSON): "
@@ -280,6 +282,16 @@ class TelemetryController:
         for sensor in telemeter.sensors:
             sensor_data = sensor.pack()
             telemeter_data[sensor.sid] = sensor_data
+
+        # Ensure the timestamp sensor is always present so downstream
+        # consumers (e.g. Sideband) can reconstitute the Telemeter.
+        timestamp = int(telemeter.time.timestamp())
+        time_payload = telemeter_data.get(SID_TIME)
+        if not isinstance(time_payload, (int, float)):
+            telemeter_data[SID_TIME] = timestamp
+        else:
+            telemeter_data[SID_TIME] = int(time_payload)
+
         return telemeter_data
 
     def _deserialize_telemeter(self, tel_data, peer_dest: str = "") -> Telemeter:
@@ -357,3 +369,23 @@ class TelemetryController:
                 f"Skipping telemetry entry with invalid peer destination {peer_dest!r}: {exc}"
             )
             return None
+
+    def _json_safe(self, value):
+        """Return ``value`` converted into a JSON-safe structure."""
+
+        if isinstance(value, dict):
+            return {self._json_key(k): self._json_safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._json_safe(v) for v in value]
+        if isinstance(value, (bytes, bytearray)):
+            return value.hex()
+        return value
+
+    def _json_key(self, key):
+        """Return a JSON-safe dict key representation."""
+
+        if isinstance(key, (str, int, float, bool)) or key is None:
+            return key
+        if isinstance(key, (bytes, bytearray)):
+            return key.hex()
+        return str(key)
