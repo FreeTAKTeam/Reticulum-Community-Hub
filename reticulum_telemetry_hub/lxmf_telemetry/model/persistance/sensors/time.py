@@ -26,6 +26,7 @@ class Time(Sensor):
             return None
         else:
             self.utc = datetime.fromtimestamp(packed)
+            return {"timestamp": self.utc.timestamp(), "iso": self.utc.isoformat()}
 
     __mapper_args__ = {
         'polymorphic_identity': SID_TIME,

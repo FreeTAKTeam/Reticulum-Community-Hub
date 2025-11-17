@@ -62,12 +62,22 @@ class Location(Sensor):
                 return None
             else:
                 self.latitude = struct.unpack("!i", packed[0])[0] / 1e6
-                self.longitude = struct.unpack("!i", packed[1])[0] / 1e6
-                self.altitude = struct.unpack("!I", packed[2])[0] / 1e2
-                self.speed = struct.unpack("!I", packed[3])[0] / 1e2
-                self.bearing = struct.unpack("!I", packed[4])[0] / 1e2
-                self.accuracy = struct.unpack("!H", packed[5])[0] / 1e2
-                self.last_update = datetime.fromtimestamp(packed[6])
+            self.longitude = struct.unpack("!i", packed[1])[0] / 1e6
+            self.altitude = struct.unpack("!I", packed[2])[0] / 1e2
+            self.speed = struct.unpack("!I", packed[3])[0] / 1e2
+            self.bearing = struct.unpack("!I", packed[4])[0] / 1e2
+            self.accuracy = struct.unpack("!H", packed[5])[0] / 1e2
+            self.last_update = datetime.fromtimestamp(packed[6])
+            return {
+                "latitude": self.latitude,
+                "longitude": self.longitude,
+                "altitude": self.altitude,
+                "speed": self.speed,
+                "bearing": self.bearing,
+                "accuracy": self.accuracy,
+                "last_update_iso": self.last_update.isoformat(),
+                "last_update_timestamp": self.last_update.timestamp(),
+            }
         except (struct.error, IndexError):
             return None
 

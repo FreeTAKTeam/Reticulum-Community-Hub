@@ -11,6 +11,13 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import Con
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propagation import (
     LXMFPropagation,
 )
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.location import (
+    Location,
+)
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
+    SID_LOCATION,
+    SID_TIME,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import (
     sid_mapping,
 )
@@ -112,6 +119,36 @@ def test_handle_message_stream_preserves_timestamp_and_sensors(
         stored = ses.query(Telemeter).one()
         assert stored.time == datetime.fromtimestamp(timestamp)
         assert len(stored.sensors) > 0
+
+
+def test_humanize_returns_time_and_location_values(telemetry_controller):
+    controller = telemetry_controller
+    timestamp = 1_700_000_000
+    location = Location()
+    location.latitude = 44.657059
+    location.longitude = -63.596294
+    location.altitude = 120.5
+    location.speed = 5.5
+    location.bearing = 90.0
+    location.accuracy = 2.5
+    location.last_update = datetime.fromtimestamp(timestamp)
+    payload = {
+        SID_TIME: timestamp,
+        SID_LOCATION: location.pack(),
+    }
+    readable = controller._humanize_telemetry(payload)
+    time_value = readable["time"]
+    assert time_value["timestamp"] == pytest.approx(timestamp)
+    assert time_value["iso"] == datetime.fromtimestamp(timestamp).isoformat()
+    location_value = readable["location"]
+    assert pytest.approx(location_value["latitude"], rel=1e-6) == 44.657059
+    assert pytest.approx(location_value["longitude"], rel=1e-6) == -63.596294
+    assert pytest.approx(location_value["altitude"], rel=1e-6) == 120.5
+    assert pytest.approx(location_value["speed"], rel=1e-6) == 5.5
+    assert pytest.approx(location_value["bearing"], rel=1e-6) == 90.0
+    assert pytest.approx(location_value["accuracy"], rel=1e-6) == 2.5
+    assert location_value["last_update_timestamp"] == pytest.approx(timestamp)
+    assert location_value["last_update_iso"] == datetime.fromtimestamp(timestamp).isoformat()
 
 
 def test_stream_ingest_followed_by_command_returns_valid_response(
