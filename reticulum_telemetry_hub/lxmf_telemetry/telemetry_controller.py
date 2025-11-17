@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 from pathlib import Path
 import string
 from typing import Optional
@@ -220,6 +221,7 @@ class TelemetryController:
                 )
 
             timebase = int(timebase_raw)
+            human_readable_entries: list[dict[str, object]] = []
             with self._session_cls() as ses:
                 timebase_dt = datetime.fromtimestamp(timebase)
                 teles = self._load_telemetry(ses, start_time=timebase_dt)
@@ -244,6 +246,13 @@ class TelemetryController:
                     if peer_hash is None:
                         continue
                     tel_data = self._serialize_telemeter(tel)
+                    human_readable_entries.append(
+                        {
+                            "peer_destination": tel.peer_dest,
+                            "timestamp": round(tel.time.timestamp()),
+                            "telemetry": self._humanize_telemetry(tel_data),
+                        }
+                    )
                     packed_tels.append(
                         [
                             peer_hash,
@@ -255,10 +264,12 @@ class TelemetryController:
             message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packb(
                 packed_tels, use_bin_type=True
             )
-            print("+--- Sending telemetry data---------------------------------")
-            print(f"| Telemetry data: {packed_tels}")
-            print(f"| Message: {message}")
-            print("+------------------------------------------------------------")
+            readable_json = json.dumps(human_readable_entries, default=str)
+            print(f"Sending telemetry of {len(human_readable_entries)} clients")
+            print(
+                "Telemetry response in human readeble format (JSON): "
+                f"{readable_json}"
+            )
             return message
         else:
             return None
