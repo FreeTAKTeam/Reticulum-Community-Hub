@@ -11,6 +11,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.sampler import (
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_TIME,
 )
+from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterManager
 
 
 class DummyRouter:
@@ -41,6 +42,7 @@ def test_sampler_publishes_snapshots(telemetry_controller):
     server_dest = _destination()
     client_dest = _destination()
     connections = DummyConnections({client_dest.identity.hash: client_dest})
+    manager = TelemeterManager()
 
     samples = []
 
@@ -56,6 +58,7 @@ def test_sampler_publishes_snapshots(telemetry_controller):
         connections=connections,
         hub_interval=0.01,
         hub_collectors=[collector],
+        telemeter_manager=manager,
     )
 
     sampler.start()
@@ -100,6 +103,7 @@ def test_sampler_schedules_service_collectors_independently(telemetry_controller
         service_interval=0.05,
         hub_collectors=[hub_collector],
         service_collectors=[service_collector],
+        telemeter_manager=TelemeterManager(),
     )
 
     sampler.start()
@@ -109,3 +113,30 @@ def test_sampler_schedules_service_collectors_independently(telemetry_controller
     assert len(hub_calls) > len(service_calls)
     assert service_calls
     assert router.messages
+
+
+def test_sampler_uses_telemeter_manager_snapshot(telemetry_controller):
+    router = DummyRouter()
+    server_dest = _destination()
+    client_dest = _destination()
+    connections = DummyConnections({client_dest.identity.hash: client_dest})
+    manager = TelemeterManager()
+
+    sampler = TelemetrySampler(
+        telemetry_controller,
+        router,
+        server_dest,
+        connections=connections,
+        hub_interval=0.01,
+        telemeter_manager=manager,
+    )
+
+    sampler.start()
+    time.sleep(0.05)
+    sampler.stop()
+
+    assert router.messages
+    payload = unpackb(
+        router.messages[-1].fields[LXMF.FIELD_TELEMETRY], strict_map_key=False
+    )
+    assert SID_TIME in payload

@@ -12,6 +12,7 @@ import RNS
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_TIME,
 )
+from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import TelemetryController
 
 
@@ -54,6 +55,7 @@ class TelemetrySampler:
         service_interval: float | None = None,
         hub_collectors: Sequence[TelemetryCollector | Callable[[], object]] | None = None,
         service_collectors: Sequence[TelemetryCollector | Callable[[], object]] | None = None,
+        telemeter_manager: TelemeterManager | None = None,
     ) -> None:
         self._controller = controller
         self._router = router
@@ -68,10 +70,12 @@ class TelemetrySampler:
             else ""
         )
 
+        self._telemeter_manager = telemeter_manager
+
         if hub_interval is not None and hub_interval > 0:
             collectors = list(hub_collectors) if hub_collectors is not None else []
             if not collectors:
-                collectors = [self._collect_time_sensor]
+                collectors = [self._collect_telemeter_snapshot]
             if collectors:
                 interval = float(hub_interval)
                 self._jobs.append(
@@ -199,4 +203,12 @@ class TelemetrySampler:
     # ------------------------------------------------------------------
     def _collect_time_sensor(self) -> TelemetrySample:
         payload = {SID_TIME: time.time()}
+        return TelemetrySample(payload, self._local_peer_dest)
+
+    def _collect_telemeter_snapshot(self) -> TelemetrySample:
+        if self._telemeter_manager is None:
+            return self._collect_time_sensor()
+        payload = self._telemeter_manager.snapshot()
+        if SID_TIME not in payload:
+            payload[SID_TIME] = time.time()
         return TelemetrySample(payload, self._local_peer_dest)
