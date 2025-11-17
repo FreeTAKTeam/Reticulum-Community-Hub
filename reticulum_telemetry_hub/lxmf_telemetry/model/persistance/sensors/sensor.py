@@ -1,12 +1,25 @@
-from sqlalchemy import Column, ForeignKey, Integer, Float, Boolean, String, create_engine, BLOB
+from sqlalchemy import Column, ForeignKey, Integer, Float, Boolean, BLOB
 from msgpack import packb, unpackb
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship, Mapped, mapped_column
-import time
-from typing import TYPE_CHECKING
+from sqlalchemy.orm import DeclarativeMeta, relationship, Mapped, mapped_column
+
 from .. import Base
 
-class Sensor(Base):
+
+class SensorDeclarativeMeta(DeclarativeMeta):
+    """Custom declarative metaclass that fills in mapper defaults."""
+
+    def __init__(cls, classname, bases, dict_, **kwargs):
+        if classname != "Sensor":
+            mapper_args = dict_.get("__mapper_args__")
+            if mapper_args is None or "polymorphic_identity" not in mapper_args:
+                mapper_args = dict(mapper_args or {})
+                mapper_args.setdefault("with_polymorphic", "*")
+                mapper_args.setdefault("polymorphic_identity", classname)
+                cls.__mapper_args__ = mapper_args
+        super().__init__(classname, bases, dict_, **kwargs)
+
+
+class Sensor(Base, metaclass=SensorDeclarativeMeta):
     __tablename__ = 'Sensor'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -38,7 +51,7 @@ class Sensor(Base):
         return packed
 
     __mapper_args__ = {
-        'polymorphic_identity': 'Sensor',
-        'with_polymorphic': '*',
-        "polymorphic_on": sid
+        "polymorphic_identity": "Sensor",
+        "with_polymorphic": "*",
+        "polymorphic_on": sid,
     }
