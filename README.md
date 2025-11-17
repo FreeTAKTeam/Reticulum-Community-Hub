@@ -128,7 +128,7 @@ Once installed and configured, you can start the Reticulum-Telemetry-Hub directl
 python -m reticulum_telemetry_hub.reticulum_server \
     --storage_dir ./RTH_Store \
     --display_name "RTH" \
-    [--headless]
+    [--daemon --service gpsd]
 ```
 
 ### Command-line options
@@ -137,7 +137,12 @@ python -m reticulum_telemetry_hub.reticulum_server \
 | --- | --- |
 | `--storage_dir` | Directory that holds LXMF storage and the hub identity (defaults to `./RTH_Store`). |
 | `--display_name` | Human-readable label announced with your LXMF destination. |
-| `--headless` | Run without the interactive prompt; the hub periodically announces itself every 60 seconds. |
+| `--announce-interval` | Seconds between LXMF identity announcements (defaults to 60). |
+| `--hub-telemetry-interval` | Seconds between local telemetry snapshots (defaults to 600 or `$RTH_HUB_TELEMETRY_INTERVAL`). |
+| `--service-telemetry-interval` | Seconds between service collector polls (defaults to 900 or `$RTH_SERVICE_TELEMETRY_INTERVAL`). |
+| `--embedded` | Run the LXMF daemon in-process. |
+| `--daemon` | Enable daemon mode so the hub samples telemetry autonomously. |
+| `--service NAME` | Enable optional daemon services such as `gpsd` (repeat the flag for multiple services). |
 
 ### Embedded vs. external ``lxmd``
 
@@ -160,13 +165,20 @@ flag. Choose the mode that best matches your deployment:
   ``~/.lxmd/config`` (announce interval, enable_node, etc.) to control the in
   process behaviour.
 
-In interactive mode (default) you get a prompt with three commands:
+### Daemon mode & services
 
-* `announce` – immediately broadcast the hub’s LXMF identity.
-* `telemetry` – request a telemetry snapshot from a connected peer by entering its hash.
-* `exit` – quit the hub.
+Passing `--daemon` tells the hub to spin up the `TelemetrySampler` along with any
+services requested via `--service`. The sampler periodically snapshots the local
+`TelemeterManager`, persists the payload and republishes it to every connected
+client without manual intervention. Additional services (for example `gpsd`)
+run in their own threads and update specialized sensors when the host hardware
+is present. Each service self-identifies whether it can start so the daemon can
+gracefully run on hardware that lacks certain peripherals.
 
-Headless mode is best suited for unattended deployments or service units. Combine it with your OS process manager once you have verified the configuration.
+These background workers honor the normal `shutdown()` lifecycle hooks, making
+it safe to run the hub under `systemd`, `supervisord` or similar process
+managers. `pytest tests/test_reticulum_server_daemon.py -q` exercises the daemon
+mode in CI and verifies that it collects telemetry automatically.
 
 ### Project Roadmap
 
