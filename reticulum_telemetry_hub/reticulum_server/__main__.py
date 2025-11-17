@@ -39,6 +39,11 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.sampler import TelemetrySampler
+from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterManager
+from reticulum_telemetry_hub.reticulum_server.services import (
+    SERVICE_FACTORIES,
+    HubService,
+)
 from .command_manager import CommandManager
 
 # Constants
@@ -129,6 +134,8 @@ class ReticulumTelemetryHub:
     embedded_lxmd: EmbeddedLxmd | None
     _shared_lxm_router: LXMF.LXMRouter | None = None
     telemetry_sampler: TelemetrySampler | None
+    telemeter_manager: TelemeterManager | None
+    _active_services: dict[str, HubService]
 
     def __init__(
         self,
@@ -167,8 +174,11 @@ class ReticulumTelemetryHub:
         self.config_manager: HubConfigurationManager | None = None
         self.embedded_lxmd: EmbeddedLxmd | None = None
         self.telemetry_sampler: TelemetrySampler | None = None
+        self.telemeter_manager: TelemeterManager | None = None
         self._shutdown = False
         self.connections: dict[bytes, RNS.Destination] = {}
+        self._daemon_started = False
+        self._active_services = {}
 
         identity = self.load_or_generate_identity(self.identity_path)
 
@@ -205,6 +215,7 @@ class ReticulumTelemetryHub:
             self.config_manager = None
             self.embedded_lxmd = None
 
+        self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
         self.telemetry_sampler = TelemetrySampler(
             self.tel_controller,
             self.lxm_router,
@@ -212,8 +223,8 @@ class ReticulumTelemetryHub:
             connections=self.connections,
             hub_interval=hub_telemetry_interval,
             service_interval=service_telemetry_interval,
+            telemeter_manager=self.telemeter_manager,
         )
-        self.telemetry_sampler.start()
 
     def command_handler(self, commands: list, message: LXMF.LXMessage):
         """Handles commands received from the client and sends responses back.
@@ -338,26 +349,87 @@ class ReticulumTelemetryHub:
         identity.to_file(str(identity_path))  # Save the new identity to file
         return identity
 
-    def run(self):
+    def run(
+        self,
+        *,
+        daemon_mode: bool = False,
+        services: list[str] | tuple[str, ...] | None = None,
+    ):
         RNS.log(
             f"Starting headless hub; announcing every {self.announce_interval}s",
             getattr(RNS, "LOG_INFO", 3),
         )
+        if daemon_mode:
+            self.start_daemon_workers(services=services)
         while not self._shutdown:
             self.my_lxmf_dest.announce()
             RNS.log("LXMF identity announced", getattr(RNS, "LOG_DEBUG", self.loglevel))
             time.sleep(self.announce_interval)
 
+    def start_daemon_workers(
+        self, *, services: list[str] | tuple[str, ...] | None = None
+    ) -> None:
+        """Start background telemetry collectors and optional services."""
+
+        if self._daemon_started:
+            return
+
+        if self.telemetry_sampler is not None:
+            self.telemetry_sampler.start()
+
+        requested = list(services or [])
+        for name in requested:
+            service = self._create_service(name)
+            if service is None:
+                continue
+            started = service.start()
+            if started:
+                self._active_services[name] = service
+
+        self._daemon_started = True
+
+    def stop_daemon_workers(self) -> None:
+        if not self._daemon_started:
+            return
+
+        for key, service in list(self._active_services.items()):
+            try:
+                service.stop()
+            finally:
+                # Ensure the registry is cleared even if ``stop`` raises.
+                self._active_services.pop(key, None)
+
+        if self.telemetry_sampler is not None:
+            self.telemetry_sampler.stop()
+
+        self._daemon_started = False
+
+    def _create_service(self, name: str) -> HubService | None:
+        factory = SERVICE_FACTORIES.get(name)
+        if factory is None:
+            RNS.log(
+                f"Unknown daemon service '{name}'; available services: {sorted(SERVICE_FACTORIES)}",
+                RNS.LOG_WARNING,
+            )
+            return None
+        try:
+            return factory(self)
+        except Exception as exc:  # pragma: no cover - defensive
+            RNS.log(
+                f"Failed to initialize daemon service '{name}': {exc}",
+                RNS.LOG_ERROR,
+            )
+            return None
+
     def shutdown(self):
         if self._shutdown:
             return
         self._shutdown = True
+        self.stop_daemon_workers()
         if self.embedded_lxmd is not None:
             self.embedded_lxmd.stop()
             self.embedded_lxmd = None
-        if self.telemetry_sampler is not None:
-            self.telemetry_sampler.stop()
-            self.telemetry_sampler = None
+        self.telemetry_sampler = None
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
@@ -402,6 +474,23 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the LXMF router/propagation threads in-process.",
     )
+    ap.add_argument(
+        "--daemon",
+        dest="daemon",
+        action="store_true",
+        help="Start local telemetry collectors and optional services.",
+    )
+    ap.add_argument(
+        "--service",
+        dest="services",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "Enable an optional daemon service (e.g., gpsd). Repeat the flag for"
+            " multiple services."
+        ),
+    )
 
     args = ap.parse_args()
 
@@ -440,7 +529,7 @@ if __name__ == "__main__":
     )
 
     try:
-        reticulum_server.run()
+        reticulum_server.run(daemon_mode=args.daemon, services=args.services)
     except KeyboardInterrupt:
         RNS.log("Received interrupt, shutting down", RNS.LOG_INFO)
     finally:
