@@ -141,6 +141,25 @@ class TelemetryController:
             ses.add(tel)
             ses.commit()
 
+    def ingest_local_payload(
+        self,
+        payload: dict,
+        *,
+        peer_dest: str,
+    ) -> bytes | None:
+        """Persist ``payload`` and return a msgpack encoded snapshot.
+
+        The telemetry sampler uses this helper to ensure locally collected
+        sensor data flows through the same persistence pipeline as incoming
+        LXMF telemetry before broadcasting it to connected peers.
+        """
+
+        if not payload:
+            return None
+
+        self.save_telemetry(payload, peer_dest)
+        return packb(payload, use_bin_type=True)
+
     def handle_message(self, message: LXMF.LXMessage) -> bool:
         """Handle the incoming message."""
         handled = False
