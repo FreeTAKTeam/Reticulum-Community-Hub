@@ -38,6 +38,7 @@ from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from reticulum_telemetry_hub.lxmf_telemetry.sampler import TelemetrySampler
 from .command_manager import CommandManager
 
 # Constants
@@ -45,6 +46,8 @@ STORAGE_PATH = "RTH_Store"  # Path to store temporary files
 IDENTITY_PATH = os.path.join(STORAGE_PATH, "identity")  # Path to store identity file
 APP_NAME = LXMF.APP_NAME + ".delivery"  # Application name for LXMF
 DEFAULT_ANNOUNCE_INTERVAL = 60
+DEFAULT_HUB_TELEMETRY_INTERVAL = 600
+DEFAULT_SERVICE_TELEMETRY_INTERVAL = 900
 DEFAULT_LOG_LEVEL = getattr(RNS, "LOG_DEBUG", getattr(RNS, "LOG_INFO", 3))
 LOG_LEVELS = {
     "error": getattr(RNS, "LOG_ERROR", 1),
@@ -52,6 +55,26 @@ LOG_LEVELS = {
     "info": getattr(RNS, "LOG_INFO", 3),
     "debug": getattr(RNS, "LOG_DEBUG", DEFAULT_LOG_LEVEL),
 }
+ENV_HUB_TELEMETRY_INTERVAL = "RTH_HUB_TELEMETRY_INTERVAL"
+ENV_SERVICE_TELEMETRY_INTERVAL = "RTH_SERVICE_TELEMETRY_INTERVAL"
+
+
+def _resolve_interval(value: int | None, env_var: str, default: int) -> int:
+    """Return the positive interval derived from CLI/env values."""
+
+    if value is not None:
+        return max(0, int(value))
+
+    env_value = os.getenv(env_var)
+    if env_value is not None:
+        try:
+            return max(0, int(env_value))
+        except ValueError:
+            RNS.log(
+                f"Invalid telemetry interval set via {env_var}: {env_value!r}",
+                RNS.LOG_WARNING,
+            )
+    return default
 
 class AnnounceHandler:
     """Track simple metadata about peers announcing on the Reticulum bus."""
@@ -105,6 +128,7 @@ class ReticulumTelemetryHub:
     config_manager: HubConfigurationManager | None
     embedded_lxmd: EmbeddedLxmd | None
     _shared_lxm_router: LXMF.LXMRouter | None = None
+    telemetry_sampler: TelemetrySampler | None
 
     def __init__(
         self,
@@ -115,6 +139,8 @@ class ReticulumTelemetryHub:
         embedded: bool = False,
         announce_interval: int = DEFAULT_ANNOUNCE_INTERVAL,
         loglevel: int = DEFAULT_LOG_LEVEL,
+        hub_telemetry_interval: float | None = DEFAULT_HUB_TELEMETRY_INTERVAL,
+        service_telemetry_interval: float | None = DEFAULT_SERVICE_TELEMETRY_INTERVAL,
     ):
         # Normalize paths early so downstream helpers can rely on Path objects.
         self.storage_path = Path(storage_path)
@@ -122,6 +148,8 @@ class ReticulumTelemetryHub:
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self.identity_path.parent.mkdir(parents=True, exist_ok=True)
         self.announce_interval = announce_interval
+        self.hub_telemetry_interval = hub_telemetry_interval
+        self.service_telemetry_interval = service_telemetry_interval
         self.loglevel = loglevel
 
         # Reuse an existing Reticulum instance when running in-process tests
@@ -138,6 +166,7 @@ class ReticulumTelemetryHub:
         self.tel_controller = TelemetryController(db_path=telemetry_db_path)
         self.config_manager: HubConfigurationManager | None = None
         self.embedded_lxmd: EmbeddedLxmd | None = None
+        self.telemetry_sampler: TelemetrySampler | None = None
         self._shutdown = False
         self.connections: dict[bytes, RNS.Destination] = {}
 
@@ -175,6 +204,16 @@ class ReticulumTelemetryHub:
         else:
             self.config_manager = None
             self.embedded_lxmd = None
+
+        self.telemetry_sampler = TelemetrySampler(
+            self.tel_controller,
+            self.lxm_router,
+            self.my_lxmf_dest,
+            connections=self.connections,
+            hub_interval=hub_telemetry_interval,
+            service_interval=service_telemetry_interval,
+        )
+        self.telemetry_sampler.start()
 
     def command_handler(self, commands: list, message: LXMF.LXMessage):
         """Handles commands received from the client and sends responses back.
@@ -316,6 +355,9 @@ class ReticulumTelemetryHub:
         if self.embedded_lxmd is not None:
             self.embedded_lxmd.stop()
             self.embedded_lxmd = None
+        if self.telemetry_sampler is not None:
+            self.telemetry_sampler.stop()
+            self.telemetry_sampler = None
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
@@ -328,6 +370,24 @@ if __name__ == "__main__":
         type=int,
         default=DEFAULT_ANNOUNCE_INTERVAL,
         help="Seconds between announcement broadcasts",
+    )
+    ap.add_argument(
+        "--hub-telemetry-interval",
+        type=int,
+        default=None,
+        help=(
+            "Seconds between local telemetry snapshots. Overrides "
+            f"{ENV_HUB_TELEMETRY_INTERVAL}"
+        ),
+    )
+    ap.add_argument(
+        "--service-telemetry-interval",
+        type=int,
+        default=None,
+        help=(
+            "Seconds between remote telemetry collector polls. Overrides "
+            f"{ENV_SERVICE_TELEMETRY_INTERVAL}"
+        ),
     )
     ap.add_argument(
         "--log-level",
@@ -357,6 +417,17 @@ if __name__ == "__main__":
         # to the default location.
         identity_path = os.path.join(storage_path, "identity")
 
+    hub_interval = _resolve_interval(
+        args.hub_telemetry_interval,
+        ENV_HUB_TELEMETRY_INTERVAL,
+        DEFAULT_HUB_TELEMETRY_INTERVAL,
+    )
+    service_interval = _resolve_interval(
+        args.service_telemetry_interval,
+        ENV_SERVICE_TELEMETRY_INTERVAL,
+        DEFAULT_SERVICE_TELEMETRY_INTERVAL,
+    )
+
     reticulum_server = ReticulumTelemetryHub(
         args.display_name,
         storage_path,
@@ -364,6 +435,8 @@ if __name__ == "__main__":
         embedded=args.embedded,
         announce_interval=args.announce_interval,
         loglevel=LOG_LEVELS[args.log_level],
+        hub_telemetry_interval=hub_interval,
+        service_telemetry_interval=service_interval,
     )
 
     try:
