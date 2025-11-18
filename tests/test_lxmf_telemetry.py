@@ -71,7 +71,7 @@ def test_handle_command_stream_is_msgpack_encoded(telemetry_controller, session_
         assert ses.query(Telemeter).count() == 1
 
     command_msg = LXMF.LXMessage(src, dst)
-    cmd = {TelemetryController.TELEMETRY_REQUEST: int(time.time())}
+    cmd = {TelemetryController.TELEMETRY_REQUEST: int(time.time()) - 5}
 
     reply = controller.handle_command(cmd, command_msg, dst)
     stream = reply.fields[LXMF.FIELD_TELEMETRY_STREAM]
@@ -81,9 +81,8 @@ def test_handle_command_stream_is_msgpack_encoded(telemetry_controller, session_
     assert isinstance(unpacked, list)
     assert len(unpacked) == 1
 
-    peer_hash, timestamp, telemeter_blob, metadata = unpacked[0]
+    peer_hash, timestamp, telemeter_blob = unpacked[0]
     assert isinstance(peer_hash, (bytes, bytearray))
-    assert isinstance(metadata, list)
     round_trip_payload = unpackb(telemeter_blob, strict_map_key=False)
     assert round_trip_payload[SID_TIME] == pytest.approx(timestamp, rel=0)
     # Remaining sensors should match the original payload.
@@ -112,7 +111,7 @@ def test_handle_message_stream_preserves_timestamp_and_sensors(
     packed_telemeter = packb(tel_data, use_bin_type=True)
     timestamp = 1_700_000_000
     peer_hash = bytes.fromhex("42" * 16)
-    stream_payload = [peer_hash, timestamp, packed_telemeter, ["meta"]]
+    stream_payload = [peer_hash, timestamp, packed_telemeter]
     stream = packb([stream_payload], use_bin_type=True)
 
     message = LXMF.LXMessage(dst, src, fields={LXMF.FIELD_TELEMETRY_STREAM: stream})
@@ -174,7 +173,7 @@ def test_stream_ingest_followed_by_command_returns_valid_response(
     packed_telemeter = packb(payload, use_bin_type=True)
     timestamp = int(time.time())
     peer_hash = bytes.fromhex("24" * 16)
-    stream_payload = [peer_hash, timestamp, packed_telemeter, ["meta"]]
+    stream_payload = [peer_hash, timestamp, packed_telemeter]
     stream = packb([stream_payload], use_bin_type=True)
 
     message = LXMF.LXMessage(dst, src, fields={LXMF.FIELD_TELEMETRY_STREAM: stream})
@@ -195,10 +194,9 @@ def test_stream_ingest_followed_by_command_returns_valid_response(
     unpacked = unpackb(stream_response, strict_map_key=False)
     assert len(unpacked) == 1
 
-    returned_peer_hash, returned_timestamp, blob, metadata = unpacked[0]
+    returned_peer_hash, returned_timestamp, blob = unpacked[0]
     assert returned_peer_hash == peer_hash
     assert returned_timestamp == timestamp
-    assert isinstance(metadata, list)
     returned_payload = unpackb(blob, strict_map_key=False)
     assert returned_payload.pop(SID_TIME, None) == pytest.approx(timestamp, rel=0)
     assert returned_payload == payload
@@ -223,7 +221,7 @@ def test_handle_command_accepts_sideband_collector_format(
     packed_telemeter = packb(payload, use_bin_type=True)
     timestamp = int(time.time())
     peer_hash = bytes.fromhex("24" * 16)
-    stream_payload = [peer_hash, timestamp, packed_telemeter, ["meta"]]
+    stream_payload = [peer_hash, timestamp, packed_telemeter]
     stream = packb([stream_payload], use_bin_type=True)
 
     message = LXMF.LXMessage(dst, src, fields={LXMF.FIELD_TELEMETRY_STREAM: stream})
@@ -242,10 +240,9 @@ def test_handle_command_accepts_sideband_collector_format(
     unpacked = unpackb(stream_response, strict_map_key=False)
     assert len(unpacked) == 1
 
-    returned_peer_hash, returned_timestamp, blob, metadata = unpacked[0]
+    returned_peer_hash, returned_timestamp, blob = unpacked[0]
     assert returned_peer_hash == peer_hash
     assert returned_timestamp == timestamp
-    assert isinstance(metadata, list)
     returned_payload = unpackb(blob, strict_map_key=False)
     assert returned_payload.pop(SID_TIME, None) == pytest.approx(timestamp, rel=0)
     assert returned_payload == payload
@@ -272,7 +269,7 @@ def test_handle_command_returns_latest_snapshot_per_peer(
     t0 = int(time.time()) - 100
 
     def send_snapshot(peer_hash: bytes, timestamp: int) -> None:
-        stream_payload = [peer_hash, timestamp, packb(payload, use_bin_type=True), ["meta"]]
+        stream_payload = [peer_hash, timestamp, packb(payload, use_bin_type=True)]
         stream = packb([stream_payload], use_bin_type=True)
         message = LXMF.LXMessage(dst, src, fields={LXMF.FIELD_TELEMETRY_STREAM: stream})
         assert controller.handle_message(message)

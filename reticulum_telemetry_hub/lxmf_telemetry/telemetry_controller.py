@@ -258,7 +258,6 @@ class TelemetryController:
                             peer_hash,
                             round(tel.time.timestamp()),
                             packb(tel_data, use_bin_type=True),
-                            ['account', b'\x00\x00\x00', b'\xff\xff\xff'],
                         ]
                     )
             message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packb(
@@ -315,6 +314,9 @@ class TelemetryController:
                 sensor = sid_mapping[sid]()
                 sensor.unpack(tel_data[sid])
                 tel.sensors.append(sensor)
+        time_value = tel_data.get(SID_TIME)
+        if isinstance(time_value, (int, float)):
+            tel.time = datetime.fromtimestamp(int(time_value))
         return tel
 
     def _humanize_telemetry(self, tel_data: dict) -> dict:
