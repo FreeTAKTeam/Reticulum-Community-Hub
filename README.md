@@ -2,7 +2,7 @@
 
 ![image](https://github.com/user-attachments/assets/ba29799c-7194-4052-aedf-1b5e1c8648d5)
 
-Reticulum-Telemetry-Hub (RTH) is an independent component within the [Reticulum](https://reticulum.network/) / [lXMF](https://github.com/markqvist/LXMF) ecosystem, designed to manage a complete TCP node across a Reticulum-based network. 
+Reticulum-Telemetry-Hub (RTH) is an independent component within the [Reticulum](https://reticulum.network/) / [lXMF](https://github.com/markqvist/LXMF) ecosystem, designed to manage a complete TCP node across a Reticulum-based network.
 The RTH  enable communication and data sharing between clients like [Sideband](https://github.com/FreeTAKTeam/Sideband](https://github.com/markqvist/Sideband)) or Meshchat, enhancing situational awareness and operational efficiency in distributed networks.
 
 ## Core Functionalities
@@ -12,7 +12,7 @@ The Reticulum-Telemetry-Hub can perform the following key functions:
 - **One to Many Messages**: RTH supports broadcasting messages to all connected clients.
 - By sending a message to the hub, it will be distributed to all clients connected to the network. *(Initial implementation - Experimental)*
 - **Telemetry Collector**: RTH acts as a telemetry data repository, collecting data from all connected clients.
-  Currently, this functionality is focused on Sideband clients that have enabled their Reticulum identity. By  rewriting the code we hope to see a wider implementation of Telemetry in other applications. 
+  Currently, this functionality is focused on Sideband clients that have enabled their Reticulum identity. By  rewriting the code we hope to see a wider implementation of Telemetry in other applications.
 - **Replication Node**: RTH uses the LXMF router to ensure message delivery even when the target client is offline. If a message's destination is not available at the time of sending, RTH will save the message and deliver it once the client comes online.
 - **Reticulum Transport**: RTH uses Reticulum  as a transport node, routing traffic to other peers, passing network announcements, and fulfilling path requests.
 
@@ -40,7 +40,8 @@ source .venv/bin/activate
 ```
 
 You will now see (.venv) in your shell prompt. you can now
-```
+
+```bash
 pip install --upgrade pip
 pip install rns lxmf
 ```
@@ -60,7 +61,7 @@ minimal configuration
   enable_transport = True
     share_instance = Yes
 
-[interfaces] 	
+[interfaces]
   [[TCP Server Interface]]
   type = TCPServerInterface
   interface_enabled = True
@@ -74,7 +75,7 @@ minimal configuration
 
 ## Router Config File
 
-located under ```/[USERNAME]/.lxmd``` 
+located under ```/[USERNAME]/.lxmd```
 
 ``` ini
 [propagation]
@@ -199,7 +200,7 @@ This project is licensed under the Creative Commons License Attribution-NonComme
 
 For any issues or support, feel free to open an issue on this GitHub repository or join the FreeTAKServer community on [Discord](The FTS Discord Server).
 
-# Support Reticulum
+## Support Reticulum
 
 You can help support the continued development of open, free and private communications systems by donating via one of the following channels to the original Reticulm author:
 

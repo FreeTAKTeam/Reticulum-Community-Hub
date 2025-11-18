@@ -1,8 +1,9 @@
 [tool.poetry]
 name = "ReticulumTelemetryHub"
-version = "0.1.2"
-description = ""
-authors = ["naman108"]
+version = "0.5.2"
+description = "Reticulum-Telemetry-Hub (RTH) is designed to manage a complete TCP node across a Reticulum-based network. 
+The RTH  enable communication and data sharing between clients like Sideband or Meshchat, enhancing situational awareness and operational efficiency in distributed networks."
+authors = ["naman108, corvo"]
 readme = "README.md"
 packages = [
     { include = "reticulum_telemetry_hub" },
