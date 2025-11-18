@@ -3,6 +3,13 @@ from __future__ import annotations
 
 from typing import Dict
 
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
+    SID_CONNECTION_MAP,
+    SID_LXMF_PROPAGATION,
+    SID_RNS_TRANSPORT,
+    SID_TIME,
+)
+
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.connection_map import (
     ConnectionMap,
 )
@@ -11,11 +18,6 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propa
 )
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.rns_transport import (
     RNSTransport,
-)
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
-    SID_CONNECTION_MAP,
-    SID_LXMF_PROPAGATION,
-    SID_RNS_TRANSPORT,
 )
 
 
@@ -179,7 +181,7 @@ def create_connection_map_sensor() -> ConnectionMap:
     return sensor
 
 
-def build_complex_telemeter_payload() -> Dict[int, dict]:
+def build_complex_telemeter_payload(*, timestamp: int | None = None) -> Dict[int, dict | int]:
     """Return a telemetry payload covering complex/nested sensors."""
 
     sensors = [
@@ -192,6 +194,8 @@ def build_complex_telemeter_payload() -> Dict[int, dict]:
         packed = sensor.pack()
         if packed is not None:
             payload[sensor.sid] = packed
+    if timestamp is not None:
+        payload[SID_TIME] = int(timestamp)
     return payload
 
 

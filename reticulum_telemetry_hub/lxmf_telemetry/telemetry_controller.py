@@ -132,11 +132,24 @@ class TelemetryController:
             return self._load_telemetry(ses, start_time, end_time)
 
     def save_telemetry(
-        self, telemetry_data: dict, peer_dest, timestamp: Optional[datetime] = None
+        self, telemetry_data: dict | bytes, peer_dest, timestamp: Optional[datetime] = None
     ) -> None:
         """Save the telemetry data."""
         tel = self._deserialize_telemeter(telemetry_data, peer_dest)
-        if timestamp is not None:
+
+        payload = telemetry_data
+        if isinstance(payload, (bytes, bytearray)):
+            try:
+                payload = unpackb(payload, strict_map_key=False)
+            except Exception:  # pragma: no cover - defensive decoding
+                payload = None
+
+        has_sensor_timestamp = False
+        if isinstance(payload, dict):
+            time_value = payload.get(SID_TIME)
+            has_sensor_timestamp = isinstance(time_value, (int, float))
+
+        if not has_sensor_timestamp and timestamp is not None:
             tel.time = timestamp
         with self._session_cls() as ses:
             ses.add(tel)
@@ -178,18 +191,32 @@ class TelemetryController:
                 message.fields[LXMF.FIELD_TELEMETRY_STREAM], strict_map_key=False
             )
             for tel_data in tels_data:
-                tel_entry = list(tel_data)
-                peer_hash = tel_entry.pop(0)
+                if not isinstance(tel_data, (list, tuple)) or len(tel_data) != 3:
+                    RNS.log(
+                        "Telemetry stream entries must include peer hash, timestamp, and payload; skipping"
+                    )
+                    continue
+
+                peer_hash, raw_timestamp, payload = tel_data
+                if not isinstance(peer_hash, (bytes, bytearray)):
+                    RNS.log("Telemetry stream entry missing peer hash bytes; skipping")
+                    continue
+
                 peer_dest = RNS.hexrep(peer_hash, False)
+
                 timestamp = None
-                if tel_entry:
-                    raw_timestamp = tel_entry.pop(0)
-                    if raw_timestamp is not None:
-                        timestamp = datetime.fromtimestamp(raw_timestamp)
-                payload = tel_entry.pop(0) if tel_entry else None
+                if isinstance(raw_timestamp, (int, float)):
+                    timestamp = datetime.fromtimestamp(raw_timestamp)
+                elif raw_timestamp is not None:
+                    RNS.log(
+                        "Telemetry stream timestamp must be numeric or null; skipping entry"
+                    )
+                    continue
+
                 if not payload:
                     RNS.log("Telemetry payload missing; skipping entry")
                     continue
+
                 readable = self._humanize_telemetry(payload)
                 RNS.log(f"Telemetry stream from {peer_dest} at {timestamp}: {readable}")
                 self.save_telemetry(payload, peer_dest, timestamp)
@@ -258,7 +285,6 @@ class TelemetryController:
                             peer_hash,
                             round(tel.time.timestamp()),
                             packb(tel_data, use_bin_type=True),
-                            ['account', b'\x00\x00\x00', b'\xff\xff\xff'],
                         ]
                     )
             message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packb(
@@ -315,6 +341,9 @@ class TelemetryController:
                 sensor = sid_mapping[sid]()
                 sensor.unpack(tel_data[sid])
                 tel.sensors.append(sensor)
+        time_value = tel_data.get(SID_TIME)
+        if isinstance(time_value, (int, float)):
+            tel.time = datetime.fromtimestamp(int(time_value))
         return tel
 
     def _humanize_telemetry(self, tel_data: dict) -> dict:
