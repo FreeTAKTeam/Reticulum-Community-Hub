@@ -33,6 +33,7 @@ import RNS
 import argparse
 from pathlib import Path
 
+from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -194,16 +195,15 @@ class ReticulumTelemetryHub:
 
         self.identities: dict[str, str] = {}
 
-        self.command_manager = CommandManager(
-            self.connections, self.tel_controller, self.my_lxmf_dest
-        )
-
         self.lxm_router.set_message_storage_limit(megabytes=5)
         self.lxm_router.register_delivery_callback(self.delivery_callback)
         RNS.Transport.register_announce_handler(AnnounceHandler(self.identities))
 
+        api_config_manager: HubConfigurationManager | None = None
+
         if embedded:
             self.config_manager = HubConfigurationManager(storage_path=self.storage_path)
+            api_config_manager = self.config_manager
             self.embedded_lxmd = EmbeddedLxmd(
                 router=self.lxm_router,
                 destination=self.my_lxmf_dest,
@@ -213,8 +213,10 @@ class ReticulumTelemetryHub:
             self.embedded_lxmd.start()
         else:
             self.config_manager = None
+            api_config_manager = HubConfigurationManager(storage_path=self.storage_path)
             self.embedded_lxmd = None
 
+        self.api = ReticulumTelemetryHubAPI(config_manager=api_config_manager)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
         self.telemetry_sampler = TelemetrySampler(
             self.tel_controller,
@@ -224,6 +226,13 @@ class ReticulumTelemetryHub:
             hub_interval=hub_telemetry_interval,
             service_interval=service_telemetry_interval,
             telemeter_manager=self.telemeter_manager,
+        )
+
+        self.command_manager = CommandManager(
+            self.connections,
+            self.tel_controller,
+            self.my_lxmf_dest,
+            self.api,
         )
 
     def command_handler(self, commands: list, message: LXMF.LXMessage):

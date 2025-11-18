@@ -43,7 +43,47 @@ def test_join_and_list_clients(tmp_path):
 
     assert sent
     reply = sent[-1]
-    assert reply.content_as_string() == RNS.prettyhexrep(client_dest.identity.hash)
+    expected_identity = RNS.prettyhexrep(client_dest.identity.hash)
+    assert reply.content_as_string() == f"{expected_identity}|{{}}"
+
+
+def test_list_clients_persisted_across_sessions(tmp_path):
+    original_router = ReticulumTelemetryHub._shared_lxm_router
+    ReticulumTelemetryHub._shared_lxm_router = None
+    try:
+        hub = ReticulumTelemetryHub("TestHub", str(tmp_path), tmp_path / "identity")
+        hub.lxm_router.handle_outbound = lambda m: None
+
+        client_id = RNS.Identity()
+        client_dest = RNS.Destination(
+            client_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+        )
+
+        join_msg = make_message(hub.my_lxmf_dest, client_dest, CommandManager.CMD_JOIN)
+        hub.delivery_callback(join_msg)
+
+        # Recreate the hub to simulate a restart; the API-backed list should persist.
+        ReticulumTelemetryHub._shared_lxm_router = None
+        existing_destinations = list(getattr(RNS.Transport, "destinations", []))
+        RNS.Transport.destinations = []
+        try:
+            restarted = ReticulumTelemetryHub("TestHub", str(tmp_path), tmp_path / "identity")
+            sent = []
+            restarted.lxm_router.handle_outbound = lambda m: sent.append(m)
+
+            list_msg = make_message(
+                restarted.my_lxmf_dest, client_dest, CommandManager.CMD_LIST_CLIENTS
+            )
+            restarted.delivery_callback(list_msg)
+
+            assert sent
+            reply = sent[-1]
+            expected_identity = RNS.prettyhexrep(client_dest.identity.hash)
+            assert expected_identity in reply.content_as_string()
+        finally:
+            RNS.Transport.destinations = existing_destinations
+    finally:
+        ReticulumTelemetryHub._shared_lxm_router = original_router
 
 
 def test_send_message_uses_connection_values(tmp_path):

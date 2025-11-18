@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from typing import List, Optional
+import json
 import RNS
 import LXMF
+
+from reticulum_telemetry_hub.api.models import Client
+from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 
 from .constants import PLUGIN_COMMAND
 from ..lxmf_telemetry.telemetry_controller import TelemetryController
@@ -31,10 +35,17 @@ class CommandManager:
     CMD_REMOVE_SUBSCRIBER = "RemoveSubscriber"
     CMD_GET_APP_INFO = "getAppInfo"
 
-    def __init__(self, connections: dict, tel_controller: TelemetryController, my_lxmf_dest: RNS.Destination):
+    def __init__(
+        self,
+        connections: dict,
+        tel_controller: TelemetryController,
+        my_lxmf_dest: RNS.Destination,
+        api: ReticulumTelemetryHubAPI,
+    ):
         self.connections = connections
         self.tel_controller = tel_controller
         self.my_lxmf_dest = my_lxmf_dest
+        self.api = api
 
     # ------------------------------------------------------------------
     # public API
@@ -85,6 +96,7 @@ class CommandManager:
     def _handle_join(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
         self.connections[dest.identity.hash] = dest
+        self.api.join(self._identity_hex(dest.identity))
         RNS.log(f"Connection added: {message.source}")
         return LXMF.LXMessage(
             dest,
@@ -96,6 +108,7 @@ class CommandManager:
     def _handle_leave(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
         self.connections.pop(dest.identity.hash, None)
+        self.api.leave(self._identity_hex(dest.identity))
         RNS.log(f"Connection removed: {message.source}")
         return LXMF.LXMessage(
             dest,
@@ -106,7 +119,8 @@ class CommandManager:
 
     def _handle_list_clients(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
-        client_hashes = [RNS.prettyhexrep(h) for h in self.connections]
+        clients = self.api.list_clients()
+        client_hashes = [self._format_client_entry(client) for client in clients]
         return LXMF.LXMessage(
             dest,
             self.my_lxmf_dest,
@@ -118,4 +132,20 @@ class CommandManager:
         dest = self._create_dest(message.source.identity)
         info = "ReticulumTelemetryHub"
         return LXMF.LXMessage(dest, self.my_lxmf_dest, info, desired_method=LXMF.LXMessage.DIRECT)
+
+    @staticmethod
+    def _identity_hex(identity: RNS.Identity) -> str:
+        hash_bytes = getattr(identity, "hash", b"") or b""
+        return hash_bytes.hex()
+
+    @staticmethod
+    def _format_client_entry(client: Client) -> str:
+        metadata = client.metadata or {}
+        metadata_str = json.dumps(metadata, sort_keys=True)
+        try:
+            identity_bytes = bytes.fromhex(client.identity)
+            identity_value = RNS.prettyhexrep(identity_bytes)
+        except (ValueError, TypeError):
+            identity_value = client.identity
+        return f"{identity_value}|{metadata_str}"
 
