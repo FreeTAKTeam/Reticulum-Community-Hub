@@ -187,17 +187,19 @@ class TelemetryController:
             self.save_telemetry(tel_data, RNS.hexrep(message.source_hash, False))
             handled = True
         if LXMF.FIELD_TELEMETRY_STREAM in message.fields:
-            tels_data = unpackb(
-                message.fields[LXMF.FIELD_TELEMETRY_STREAM], strict_map_key=False
-            )
+            tels_data = message.fields[LXMF.FIELD_TELEMETRY_STREAM]
+            if isinstance(tels_data, (bytes, bytearray)):
+                # Sideband sends telemetry streams as raw lists; decode msgpack
+                # if a sender pre-encodes the field.
+                tels_data = unpackb(tels_data, strict_map_key=False)
             for tel_data in tels_data:
-                if not isinstance(tel_data, (list, tuple)) or len(tel_data) != 3:
+                if not isinstance(tel_data, (list, tuple)) or len(tel_data) < 3:
                     RNS.log(
                         "Telemetry stream entries must include peer hash, timestamp, and payload; skipping"
                     )
                     continue
 
-                peer_hash, raw_timestamp, payload = tel_data
+                peer_hash, raw_timestamp, payload = tel_data[:3]
                 if not isinstance(peer_hash, (bytes, bytearray)):
                     RNS.log("Telemetry stream entry missing peer hash bytes; skipping")
                     continue
@@ -285,11 +287,12 @@ class TelemetryController:
                             peer_hash,
                             round(tel.time.timestamp()),
                             packb(tel_data, use_bin_type=True),
+                            None,
                         ]
                     )
-            message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packb(
-                packed_tels, use_bin_type=True
-            )
+            # Sideband expects telemetry streams as plain lists; avoid
+            # double-encoding the field so clients can iterate entries directly.
+            message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packed_tels
             readable_json = json.dumps(
                 self._json_safe(human_readable_entries), default=str
             )
