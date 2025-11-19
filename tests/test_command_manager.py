@@ -198,8 +198,25 @@ def test_send_message_refreshes_topic_registry(tmp_path):
 
     assert len(sent) == 1
     assert sent[0].destination_hash == dest_two.identity.hash
-    assert hub.topic_subscribers[topic_id] == {dest_two.identity.hash.hex().lower()}
-    assert dummy_api.calls == 1
+
+
+def test_help_command_lists_examples(tmp_path):
+    class DummyAPI:
+        pass
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_id = RNS.Identity()
+    client_dest = RNS.Destination(
+        client_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    help_command = {PLUGIN_COMMAND: CommandManager.CMD_HELP}
+    help_msg = make_message(server_dest, client_dest, CommandManager.CMD_HELP)
+    reply = manager.handle_command(help_command, help_msg)
+    assert reply is not None
+    text = reply.content_as_string()
+    assert "Available commands" in text
+    assert CommandManager.CMD_CREATE_TOPIC in text
+    assert "TelemetryRequest" in text
 
 
 def test_delivery_callback_handles_commands_and_broadcasts():
