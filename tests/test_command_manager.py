@@ -131,6 +131,31 @@ def test_send_message_uses_connection_values(tmp_path):
     assert all(msg.content_as_string() == "Hello" for msg in sent)
 
 
+def test_send_message_filters_by_topic(tmp_path):
+    hub = ReticulumTelemetryHub("TestHub", str(tmp_path), tmp_path / "identity")
+    sent = []
+    hub.lxm_router.handle_outbound = lambda m: sent.append(m)
+
+    dest_one = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dest_two = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    hub.connections = {
+        dest_one.identity.hash: dest_one,
+        dest_two.identity.hash: dest_two,
+    }
+    topic_id = "topic-alpha"
+    hub.topic_subscribers = {topic_id: {dest_one.identity.hash.hex().lower()}}
+
+    hub.send_message("Hello", topic=topic_id)
+
+    assert len(sent) == 1
+    assert sent[0].destination_hash == dest_one.identity.hash
+
+
 def test_delivery_callback_handles_commands_and_broadcasts():
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
@@ -197,6 +222,64 @@ def test_delivery_callback_handles_commands_and_broadcasts():
     assert any("node-a > broadcast" in payload for payload in broadcast_payloads)
     assert len(router_messages) == 1 + len(hub.connections)
     assert telemetry_calls == [incoming]
+
+
+def test_delivery_callback_honors_topic_field():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    router_messages = []
+
+    class DummyRouter:
+        def handle_outbound(self, message):
+            router_messages.append(message)
+
+    hub.lxm_router = DummyRouter()
+    hub.my_lxmf_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    dest_one = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dest_two = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    hub.connections = {
+        dest_one.identity.hash: dest_one,
+        dest_two.identity.hash: dest_two,
+    }
+    hub.identities = {}
+    hub.topic_subscribers = {"topic-beta": {dest_one.identity.hash.hex().lower()}}
+    hub.api = type("DummyAPI", (), {"list_subscribers": lambda self: []})()
+
+    hub.tel_controller = type(
+        "DummyController",
+        (),
+        {"handle_message": lambda self, message: False},
+    )()
+    hub.command_manager = type(
+        "DummyCommands",
+        (),
+        {"handle_commands": lambda self, commands, message: []},
+    )()
+    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
+        hub, ReticulumTelemetryHub
+    )
+
+    incoming = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        dest_two,
+        "topic-message",
+        fields={"TopicID": "topic-beta"},
+    )
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+
+    assert len(router_messages) == 1
+    assert router_messages[0].destination_hash == dest_one.identity.hash
 
 
 def test_list_topics_includes_hint():
