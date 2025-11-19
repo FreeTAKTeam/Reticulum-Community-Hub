@@ -141,9 +141,14 @@ class ReticulumTelemetryHubAPI:
             subscriber.reject_tests = updates.get("reject_tests") or updates.get(
                 "RejectTests"
             )
-        metadata = updates.get("metadata") or updates.get("Metadata")
-        if metadata is not None:
-            subscriber.metadata = metadata
+        metadata_key = None
+        if "metadata" in updates:
+            metadata_key = "metadata"
+        elif "Metadata" in updates:
+            metadata_key = "Metadata"
+
+        if metadata_key is not None:
+            subscriber.metadata = updates[metadata_key]
         return self._storage.update_subscriber(subscriber)
 
     def add_subscriber(self, subscriber: Subscriber) -> Subscriber:
