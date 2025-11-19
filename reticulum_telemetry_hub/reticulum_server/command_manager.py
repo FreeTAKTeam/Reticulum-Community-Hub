@@ -67,8 +67,8 @@ class CommandManager:
     # individual command processing
     # ------------------------------------------------------------------
     def handle_command(self, command: dict, message: LXMF.LXMessage) -> Optional[LXMF.LXMessage]:
-        if PLUGIN_COMMAND in command:
-            name = command[PLUGIN_COMMAND]
+        name = command.get(PLUGIN_COMMAND) or command.get("Command")
+        if name is not None:
             if name == self.CMD_HELP:
                 return self._handle_help(message)
             if name == self.CMD_JOIN:

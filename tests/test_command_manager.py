@@ -1,5 +1,6 @@
 import LXMF
 import RNS
+import pytest
 from msgpack import packb
 
 from reticulum_telemetry_hub.api.models import Subscriber, Topic
@@ -12,8 +13,8 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 
 
-def make_message(dest, source, command, **command_fields):
-    payload = {PLUGIN_COMMAND: command}
+def make_message(dest, source, command, *, use_str_command=False, **command_fields):
+    payload = {"Command": command} if use_str_command else {PLUGIN_COMMAND: command}
     payload.update(command_fields)
     msg = LXMF.LXMessage(
         dest,
@@ -40,6 +41,28 @@ def make_command_manager(api):
     )
     manager = CommandManager({}, DummyTelemetryController(), server_dest, api)
     return manager, server_dest
+
+
+COMMAND_HANDLER_MAP = [
+    (CommandManager.CMD_HELP, "_handle_help"),
+    (CommandManager.CMD_JOIN, "_handle_join"),
+    (CommandManager.CMD_LEAVE, "_handle_leave"),
+    (CommandManager.CMD_LIST_CLIENTS, "_handle_list_clients"),
+    (CommandManager.CMD_GET_APP_INFO, "_handle_get_app_info"),
+    (CommandManager.CMD_LIST_TOPIC, "_handle_list_topics"),
+    (CommandManager.CMD_CREATE_TOPIC, "_handle_create_topic"),
+    (CommandManager.CMD_RETRIEVE_TOPIC, "_handle_retrieve_topic"),
+    (CommandManager.CMD_DELETE_TOPIC, "_handle_delete_topic"),
+    (CommandManager.CMD_PATCH_TOPIC, "_handle_patch_topic"),
+    (CommandManager.CMD_SUBSCRIBE_TOPIC, "_handle_subscribe_topic"),
+    (CommandManager.CMD_LIST_SUBSCRIBER, "_handle_list_subscribers"),
+    (CommandManager.CMD_CREATE_SUBSCRIBER, "_handle_create_subscriber"),
+    (CommandManager.CMD_ADD_SUBSCRIBER, "_handle_create_subscriber"),
+    (CommandManager.CMD_RETRIEVE_SUBSCRIBER, "_handle_retrieve_subscriber"),
+    (CommandManager.CMD_DELETE_SUBSCRIBER, "_handle_delete_subscriber"),
+    (CommandManager.CMD_REMOVE_SUBSCRIBER, "_handle_delete_subscriber"),
+    (CommandManager.CMD_PATCH_SUBSCRIBER, "_handle_patch_subscriber"),
+]
 
 
 def test_join_and_list_clients(tmp_path):
@@ -218,6 +241,43 @@ def test_help_command_lists_examples(tmp_path):
     assert "Available commands" in text
     assert CommandManager.CMD_CREATE_TOPIC in text
     assert "TelemetryRequest" in text
+
+
+@pytest.mark.parametrize("command_name, handler_attr", COMMAND_HANDLER_MAP)
+@pytest.mark.parametrize("use_string_key", [False, True])
+def test_handle_command_dispatches_to_handler(
+    command_name, handler_attr, use_string_key
+):
+    class DummyAPI:
+        pass
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    sentinel = object()
+    called: list[bool] = []
+
+    def stub(*args, **kwargs):
+        called.append(True)
+        return sentinel
+
+    setattr(manager, handler_attr, stub.__get__(manager, CommandManager))
+    message = make_message(
+        server_dest,
+        client_dest,
+        command_name,
+        use_str_command=use_string_key,
+    )
+    command = message.fields[LXMF.FIELD_COMMANDS][0]
+
+    response = manager.handle_command(command, message)
+
+    assert response is sentinel
+    assert called
 
 
 def test_delivery_callback_handles_commands_and_broadcasts():

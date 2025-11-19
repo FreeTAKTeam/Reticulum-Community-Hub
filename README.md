@@ -136,6 +136,18 @@ python -m reticulum_telemetry_hub.reticulum_server \
 
 RTH keeps a lightweight topic registry via its API, letting operators create topics, add subscribers and limit message delivery to interested peers. Use the `CreateTopic`/`ListTopic` commands (or the matching API methods) to define topic IDs and describe how they map to your operational channels. Connected clients can then issue the `SubscribeTopic` command so the hub records their LXMF destination hashes under the appropriate topic.
 
+To create a topic, send a `CreateTopic` command payload. For example, Sideband operators commonly issue:
+
+```json
+{
+  "Command": "CreateTopic",
+  "TopicName": "Weather",
+  "TopicPath": "environment/weather"
+}
+```
+
+This is the exact payload the hub expects (`reticulum_telemetry_hub/reticulum_server/command_manager.py:424-431`), so any LXMF client can reuse it when spawning new operational channels.
+
 Any message sent to the hub that includes a `TopicID` (in the LXMF fields or a command payload) will only be forwarded to the subscribers registered for that topic. The hub automatically refreshes the registry from the API, so new subscriptions take effect without restarting the process.
 
 ### Command-line options
@@ -189,10 +201,10 @@ mode in CI and verifies that it collects telemetry automatically.
 
 ### Project Roadmap
 
-- **Transition to Command-Based Server Joining**: Shift the "joining the server" functionality from an announce-based method to a command-based approach for improved control and scalability.
-- **Configuration Wizard Development**: Introduce a user-friendly wizard to simplify the configuration process.
-- **Integration with TAK_LXMF Bridge**: Incorporate RTH into the TAK_LXMF bridge to strengthen the link between TAK devices and Reticulum networks.
-- **Foundation for FTS "Flock of Parrot"**: Use RTH as the base for implementing the FreeTAKServer "Flock of Parrot" concept, aiming for scalable, interconnected FTS instances.
+- [x] **Transition to Command-Based Server Joining**: Shift the "joining the server" functionality from an announce-based method to a command-based approach for improved control and scalability.
+- [ ] **Configuration Wizard Development**: Introduce a user-friendly wizard to simplify the configuration process.
+- [ ] **Integration with TAK_LXMF Bridge**: Incorporate RTH into the TAK_LXMF bridge to strengthen the link between TAK devices and Reticulum networks.
+- [ ] **Foundation for FTS "Flock of Parrot"**: Use RTH as the base for implementing the FreeTAKServer "Flock of Parrot" concept, aiming for scalable, interconnected FTS instances.
 
 ## Contributing
 
