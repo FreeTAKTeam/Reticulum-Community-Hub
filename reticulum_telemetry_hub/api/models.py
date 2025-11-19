@@ -55,10 +55,16 @@ class Subscriber:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Subscriber":
+        reject_tests = None
+        if "RejectTests" in data:
+            reject_tests = data.get("RejectTests")
+        elif "reject_tests" in data:
+            reject_tests = data.get("reject_tests")
+
         return cls(
             destination=data.get("Destination") or data.get("destination") or "",
             topic_id=data.get("TopicID") or data.get("topic_id"),
-            reject_tests=data.get("RejectTests") or data.get("reject_tests"),
+            reject_tests=reject_tests,
             metadata=data.get("Metadata") or data.get("metadata") or {},
             subscriber_id=data.get("SubscriberID") or data.get("subscriber_id"),
         )
