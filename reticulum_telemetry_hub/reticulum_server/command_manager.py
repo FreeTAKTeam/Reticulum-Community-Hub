@@ -1,7 +1,7 @@
 # Command management for Reticulum Telemetry Hub
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 import json
 import RNS
 import LXMF
@@ -17,6 +17,7 @@ class CommandManager:
     """Manage RTH command execution."""
 
     # Command names based on the API specification
+    CMD_HELP = "Help"
     CMD_JOIN = "join"
     CMD_LEAVE = "leave"
     CMD_LIST_CLIENTS = "ListClients"
@@ -68,6 +69,8 @@ class CommandManager:
     def handle_command(self, command: dict, message: LXMF.LXMessage) -> Optional[LXMF.LXMessage]:
         if PLUGIN_COMMAND in command:
             name = command[PLUGIN_COMMAND]
+            if name == self.CMD_HELP:
+                return self._handle_help(message)
             if name == self.CMD_JOIN:
                 return self._handle_join(message)
             if name == self.CMD_LEAVE:
@@ -224,6 +227,26 @@ class CommandManager:
         lines = self._format_subscriber_list(subscribers)
         return self._reply(message, "\n".join(lines))
 
+    def _handle_help(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        lines = [
+            "Available commands:",
+            "  Use the 'Command' field (numeric key 0 / PLUGIN_COMMAND) to choose an action.",
+        ]
+        for entry in self._command_reference():
+            lines.append(f"- {entry['title']}: {entry['description']}")
+            lines.append(f"  Example: {entry['example']}")
+        telemetry_example = json.dumps(
+            {str(TelemetryController.TELEMETRY_REQUEST): "<unix timestamp>"},
+            sort_keys=True,
+        )
+        lines.append(
+            "- TelemetryRequest: Request telemetry snapshots using numeric key 1 (TelemetryController.TELEMETRY_REQUEST)."
+        )
+        lines.append(
+            f"  Example: {telemetry_example} (timestamp = earliest UNIX time to include)"
+        )
+        return self._reply(message, "\n".join(lines))
+
     def _handle_create_subscriber(
         self, command: dict, message: LXMF.LXMessage
     ) -> LXMF.LXMessage:
@@ -354,5 +377,115 @@ class CommandManager:
         return [
             self._format_subscriber_entry(idx, subscriber)
             for idx, subscriber in enumerate(subscribers, start=1)
+        ]
+
+    def _command_reference(self) -> List[dict]:
+        def example(command: str, **fields: Any) -> str:
+            payload = {"Command": command}
+            payload.update(fields)
+            return json.dumps(payload, sort_keys=True)
+
+        return [
+            {
+                "title": self.CMD_JOIN,
+                "description": "Register your LXMF destination with the hub to receive replies.",
+                "example": example(self.CMD_JOIN),
+            },
+            {
+                "title": self.CMD_LEAVE,
+                "description": "Remove your destination from the hub's connection list.",
+                "example": example(self.CMD_LEAVE),
+            },
+            {
+                "title": self.CMD_LIST_CLIENTS,
+                "description": "List LXMF destinations currently joined to the hub.",
+                "example": example(self.CMD_LIST_CLIENTS),
+            },
+            {
+                "title": self.CMD_GET_APP_INFO,
+                "description": "Return the hub name so you can confirm connectivity.",
+                "example": example(self.CMD_GET_APP_INFO),
+            },
+            {
+                "title": self.CMD_LIST_TOPIC,
+                "description": "Display every registered topic and its ID.",
+                "example": example(self.CMD_LIST_TOPIC),
+            },
+            {
+                "title": self.CMD_CREATE_TOPIC,
+                "description": "Create a topic by providing a name and path.",
+                "example": example(
+                    self.CMD_CREATE_TOPIC,
+                    TopicName="Weather",
+                    TopicPath="environment/weather",
+                ),
+            },
+            {
+                "title": self.CMD_RETRIEVE_TOPIC,
+                "description": "Fetch a specific topic by TopicID.",
+                "example": example(self.CMD_RETRIEVE_TOPIC, TopicID="<TopicID>"),
+            },
+            {
+                "title": self.CMD_DELETE_TOPIC,
+                "description": "Delete a topic (and unsubscribe listeners).",
+                "example": example(self.CMD_DELETE_TOPIC, TopicID="<TopicID>"),
+            },
+            {
+                "title": self.CMD_PATCH_TOPIC,
+                "description": "Update fields on a topic by TopicID.",
+                "example": example(
+                    self.CMD_PATCH_TOPIC,
+                    TopicID="<TopicID>",
+                    TopicDescription="New description",
+                ),
+            },
+            {
+                "title": self.CMD_SUBSCRIBE_TOPIC,
+                "description": "Subscribe the sending destination to a topic.",
+                "example": example(
+                    self.CMD_SUBSCRIBE_TOPIC,
+                    TopicID="<TopicID>",
+                    Metadata={"tag": "field-station"},
+                ),
+            },
+            {
+                "title": self.CMD_LIST_SUBSCRIBER,
+                "description": "List every subscriber registered with the hub.",
+                "example": example(self.CMD_LIST_SUBSCRIBER),
+            },
+            {
+                "title": f"{self.CMD_CREATE_SUBSCRIBER} / {self.CMD_ADD_SUBSCRIBER}",
+                "description": "Create a subscriber entry for any destination.",
+                "example": example(
+                    self.CMD_CREATE_SUBSCRIBER,
+                    Destination="<hex destination>",
+                    TopicID="<TopicID>",
+                ),
+            },
+            {
+                "title": self.CMD_RETRIEVE_SUBSCRIBER,
+                "description": "Fetch subscriber metadata by SubscriberID.",
+                "example": example(
+                    self.CMD_RETRIEVE_SUBSCRIBER,
+                    SubscriberID="<SubscriberID>",
+                ),
+            },
+            {
+                "title": f"{self.CMD_DELETE_SUBSCRIBER} / {self.CMD_REMOVE_SUBSCRIBER}",
+                "description": "Remove a subscriber mapping.",
+                "example": example(
+                    self.CMD_DELETE_SUBSCRIBER,
+                    SubscriberID="<SubscriberID>",
+                ),
+            },
+            {
+                "title": self.CMD_PATCH_SUBSCRIBER,
+                "description": "Update subscriber metadata by SubscriberID.",
+                "example": example(
+                    self.CMD_PATCH_SUBSCRIBER,
+                    SubscriberID="<SubscriberID>",
+                    Metadata={"tag": "updated"},
+                ),
+            },
         ]
 
