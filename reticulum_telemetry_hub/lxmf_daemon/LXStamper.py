@@ -15,7 +15,11 @@ PN_VALIDATION_POOL_MIN_SIZE     = 256
 
 active_jobs = {}
 
-if RNS.vendor.platformutils.is_linux(): multiprocessing.set_start_method("fork")
+if RNS.vendor.platformutils.is_linux():
+    try:
+        multiprocessing.set_start_method("fork")
+    except RuntimeError:
+        pass
 
 def stamp_workblock(material, expand_rounds=WORKBLOCK_EXPAND_ROUNDS):
     wb_st = time.time()
