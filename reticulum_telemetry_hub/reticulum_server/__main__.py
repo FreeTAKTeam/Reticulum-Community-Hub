@@ -26,16 +26,18 @@ Command line arguments let you override the storage path, choose a display name,
 or run in headless mode for unattended deployments.
 """
 
+import argparse
 import os
 import time
+from pathlib import Path
+
 import LXMF
 import RNS
-import argparse
-from pathlib import Path
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
+from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
@@ -82,6 +84,7 @@ def _resolve_interval(value: int | None, env_var: str, default: int) -> int:
             )
     return default
 
+
 class AnnounceHandler:
     """Track simple metadata about peers announcing on the Reticulum bus."""
 
@@ -105,13 +108,18 @@ class AnnounceHandler:
 
     @staticmethod
     def _decode_app_data(app_data) -> str:
+        if app_data is None:
+            return "unknown"
+
         if isinstance(app_data, bytes):
+            display_name = display_name_from_app_data(app_data)
+            if display_name is not None:
+                return display_name.strip()
             try:
                 return app_data.decode("utf-8").strip()
             except UnicodeDecodeError:
                 return app_data.hex()
-        if app_data is None:
-            return "unknown"
+
         return str(app_data)
 
 
@@ -204,7 +212,9 @@ class ReticulumTelemetryHub:
         api_config_manager: HubConfigurationManager | None = None
 
         if embedded:
-            self.config_manager = HubConfigurationManager(storage_path=self.storage_path)
+            self.config_manager = HubConfigurationManager(
+                storage_path=self.storage_path
+            )
             api_config_manager = self.config_manager
             self.embedded_lxmd = EmbeddedLxmd(
                 router=self.lxm_router,
@@ -566,6 +576,7 @@ class ReticulumTelemetryHub:
             self.embedded_lxmd.stop()
             self.embedded_lxmd = None
         self.telemetry_sampler = None
+
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
