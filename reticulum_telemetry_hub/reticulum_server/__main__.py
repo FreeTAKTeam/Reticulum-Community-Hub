@@ -33,6 +33,7 @@ import RNS
 import argparse
 from pathlib import Path
 
+from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -194,16 +195,15 @@ class ReticulumTelemetryHub:
 
         self.identities: dict[str, str] = {}
 
-        self.command_manager = CommandManager(
-            self.connections, self.tel_controller, self.my_lxmf_dest
-        )
-
         self.lxm_router.set_message_storage_limit(megabytes=5)
         self.lxm_router.register_delivery_callback(self.delivery_callback)
         RNS.Transport.register_announce_handler(AnnounceHandler(self.identities))
 
+        api_config_manager: HubConfigurationManager | None = None
+
         if embedded:
             self.config_manager = HubConfigurationManager(storage_path=self.storage_path)
+            api_config_manager = self.config_manager
             self.embedded_lxmd = EmbeddedLxmd(
                 router=self.lxm_router,
                 destination=self.my_lxmf_dest,
@@ -213,8 +213,10 @@ class ReticulumTelemetryHub:
             self.embedded_lxmd.start()
         else:
             self.config_manager = None
+            api_config_manager = HubConfigurationManager(storage_path=self.storage_path)
             self.embedded_lxmd = None
 
+        self.api = ReticulumTelemetryHubAPI(config_manager=api_config_manager)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
         self.telemetry_sampler = TelemetrySampler(
             self.tel_controller,
@@ -225,6 +227,15 @@ class ReticulumTelemetryHub:
             service_interval=service_telemetry_interval,
             telemeter_manager=self.telemeter_manager,
         )
+
+        self.command_manager = CommandManager(
+            self.connections,
+            self.tel_controller,
+            self.my_lxmf_dest,
+            self.api,
+        )
+        self.topic_subscribers: dict[str, set[str]] = {}
+        self._refresh_topic_registry()
 
     def command_handler(self, commands: list, message: LXMF.LXMessage):
         """Handles commands received from the client and sends responses back.
@@ -279,22 +290,27 @@ class ReticulumTelemetryHub:
             source_hash = getattr(source, "hash", None) or message.source_hash
             source_label = self._lookup_identity_label(source_hash)
             msg = f"{source_label} > {message.content_as_string()}"
-            self.send_message(msg)
+            topic_id = self._extract_target_topic(message.fields)
+            self.send_message(msg, topic=topic_id)
         except Exception as e:
             RNS.log(f"Error: {e}")
 
-    def send_message(self, message: str):
-        """Sends a message to all connected clients.
+    def send_message(self, message: str, *, topic: str | None = None):
+        """Sends a message to connected clients."""
 
-        Args:
-            message (str): Message to send
-        """
-        destinations = (
-            self.connections.values()
+        available = (
+            list(self.connections.values())
             if hasattr(self.connections, "values")
-            else self.connections
+            else list(self.connections)
         )
-        for connection in destinations:
+        if topic:
+            subscriber_hex = self._subscribers_for_topic(topic)
+            available = [
+                connection
+                for connection in available
+                if self._connection_hex(connection) in subscriber_hex
+            ]
+        for connection in available:
             response = LXMF.LXMessage(
                 connection,
                 self.my_lxmf_dest,
@@ -332,6 +348,61 @@ class ReticulumTelemetryHub:
         else:
             return "unknown"
         return self.identities.get(hash_key, pretty)
+
+    def _extract_target_topic(self, fields) -> str | None:
+        if not isinstance(fields, dict):
+            return None
+        for key in ("TopicID", "topic_id", "topic", "Topic"):
+            topic_id = fields.get(key)
+            if topic_id:
+                return str(topic_id)
+        commands = fields.get(LXMF.FIELD_COMMANDS)
+        if isinstance(commands, list):
+            for command in commands:
+                if not isinstance(command, dict):
+                    continue
+                for key in ("TopicID", "topic_id", "topic", "Topic"):
+                    topic_id = command.get(key)
+                    if topic_id:
+                        return str(topic_id)
+        return None
+
+    def _refresh_topic_registry(self) -> None:
+        if not self.api:
+            self.topic_subscribers = {}
+            return
+        try:
+            subscribers = self.api.list_subscribers()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            RNS.log(
+                f"Failed to refresh topic registry: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            self.topic_subscribers = {}
+            return
+        registry: dict[str, set[str]] = {}
+        for subscriber in subscribers:
+            topic_id = getattr(subscriber, "topic_id", None)
+            destination = getattr(subscriber, "destination", "")
+            if not topic_id or not destination:
+                continue
+            registry.setdefault(topic_id, set()).add(destination.lower())
+        self.topic_subscribers = registry
+
+    def _subscribers_for_topic(self, topic_id: str) -> set[str]:
+        if not topic_id:
+            return set()
+        if topic_id not in self.topic_subscribers:
+            self._refresh_topic_registry()
+        return self.topic_subscribers.get(topic_id, set())
+
+    @staticmethod
+    def _connection_hex(connection: RNS.Destination) -> str | None:
+        identity = getattr(connection, "identity", None)
+        hash_bytes = getattr(identity, "hash", None)
+        if isinstance(hash_bytes, (bytes, bytearray)) and hash_bytes:
+            return hash_bytes.hex().lower()
+        return None
 
     def load_or_generate_identity(self, identity_path: Path):
         identity_path = Path(identity_path)

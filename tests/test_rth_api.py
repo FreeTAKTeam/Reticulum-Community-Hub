@@ -60,10 +60,23 @@ def test_subscriber_management(tmp_path):
     assert retrieved.destination == "abc123"
     api.patch_subscriber(subscriber.subscriber_id, metadata={"level": "high"})
     assert api.retrieve_subscriber(subscriber.subscriber_id).metadata == {"level": "high"}
+    api.patch_subscriber(subscriber.subscriber_id, metadata={})
+    assert api.retrieve_subscriber(subscriber.subscriber_id).metadata == {}
     all_subs = api.list_subscribers()
     assert len(all_subs) == 1
     api.delete_subscriber(subscriber.subscriber_id)
     assert api.list_subscribers() == []
+
+
+def test_patch_subscriber_allows_zero_reject_tests(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(Topic(topic_name="Zero", topic_path="/zero"))
+    subscriber = api.subscribe_topic(topic.topic_id, destination="abc123", reject_tests=3)
+
+    api.patch_subscriber(subscriber.subscriber_id, reject_tests=0)
+    updated = api.retrieve_subscriber(subscriber.subscriber_id)
+
+    assert updated.reject_tests == 0
 
 
 def test_client_join_leave(tmp_path):

@@ -33,6 +33,15 @@ from tests.factories import (
     create_rns_transport_sensor,
 )
 
+
+def _decode_stream_entries(stream_field):
+    """Return telemetry stream entries regardless of encoding."""
+
+    if isinstance(stream_field, (bytes, bytearray)):
+        return unpackb(stream_field, strict_map_key=False)
+    assert isinstance(stream_field, list)
+    return stream_field
+
 def test_deserialize_lxmf(telemetry_controller):
     with open("sample.bin", "rb") as f:
         tel_data = unpackb(f.read(), strict_map_key=False)
@@ -76,13 +85,11 @@ def test_handle_command_stream_is_msgpack_encoded(telemetry_controller, session_
 
     reply = controller.handle_command(cmd, command_msg, dst)
     stream = reply.fields[LXMF.FIELD_TELEMETRY_STREAM]
-
-    assert isinstance(stream, (bytes, bytearray))
-    unpacked = unpackb(stream, strict_map_key=False)
+    unpacked = _decode_stream_entries(stream)
     assert isinstance(unpacked, list)
     assert len(unpacked) == 1
 
-    peer_hash, timestamp, telemeter_blob = unpacked[0]
+    peer_hash, timestamp, telemeter_blob = unpacked[0][:3]
     assert isinstance(peer_hash, (bytes, bytearray))
     round_trip_payload = unpackb(telemeter_blob, strict_map_key=False)
     assert round_trip_payload[SID_TIME] == pytest.approx(timestamp, rel=0)
@@ -229,10 +236,10 @@ def test_stream_ingest_followed_by_command_returns_valid_response(
     assert reply is not None
 
     stream_response = reply.fields[LXMF.FIELD_TELEMETRY_STREAM]
-    unpacked = unpackb(stream_response, strict_map_key=False)
+    unpacked = _decode_stream_entries(stream_response)
     assert len(unpacked) == 1
 
-    returned_peer_hash, returned_timestamp, blob = unpacked[0]
+    returned_peer_hash, returned_timestamp, blob = unpacked[0][:3]
     assert returned_peer_hash == peer_hash
     assert returned_timestamp == sensor_timestamp
     returned_payload = unpackb(blob, strict_map_key=False)
@@ -278,10 +285,10 @@ def test_handle_command_accepts_sideband_collector_format(
     assert reply is not None
 
     stream_response = reply.fields[LXMF.FIELD_TELEMETRY_STREAM]
-    unpacked = unpackb(stream_response, strict_map_key=False)
+    unpacked = _decode_stream_entries(stream_response)
     assert len(unpacked) == 1
 
-    returned_peer_hash, returned_timestamp, blob = unpacked[0]
+    returned_peer_hash, returned_timestamp, blob = unpacked[0][:3]
     assert returned_peer_hash == peer_hash
     assert returned_timestamp == sensor_timestamp
     returned_payload = unpackb(blob, strict_map_key=False)
@@ -333,7 +340,7 @@ def test_handle_command_returns_latest_snapshot_per_peer(
 
     reply = controller.handle_command(command, command_msg, dst)
     stream_response = reply.fields[LXMF.FIELD_TELEMETRY_STREAM]
-    unpacked = unpackb(stream_response, strict_map_key=False)
+    unpacked = _decode_stream_entries(stream_response)
 
     assert len(unpacked) == 2  # one per peer
     by_peer = {}

@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from typing import List, Optional
+import json
 import RNS
 import LXMF
+
+from reticulum_telemetry_hub.api.models import Client, Subscriber, Topic
+from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 
 from .constants import PLUGIN_COMMAND
 from ..lxmf_telemetry.telemetry_controller import TelemetryController
@@ -31,10 +35,17 @@ class CommandManager:
     CMD_REMOVE_SUBSCRIBER = "RemoveSubscriber"
     CMD_GET_APP_INFO = "getAppInfo"
 
-    def __init__(self, connections: dict, tel_controller: TelemetryController, my_lxmf_dest: RNS.Destination):
+    def __init__(
+        self,
+        connections: dict,
+        tel_controller: TelemetryController,
+        my_lxmf_dest: RNS.Destination,
+        api: ReticulumTelemetryHubAPI,
+    ):
         self.connections = connections
         self.tel_controller = tel_controller
         self.my_lxmf_dest = my_lxmf_dest
+        self.api = api
 
     # ------------------------------------------------------------------
     # public API
@@ -65,8 +76,30 @@ class CommandManager:
                 return self._handle_list_clients(message)
             if name == self.CMD_GET_APP_INFO:
                 return self._handle_get_app_info(message)
-            # The remaining commands are currently placeholders
-            # and can be implemented as needed.
+            if name == self.CMD_LIST_TOPIC:
+                return self._handle_list_topics(message)
+            if name == self.CMD_CREATE_TOPIC:
+                return self._handle_create_topic(command, message)
+            if name == self.CMD_RETRIEVE_TOPIC:
+                return self._handle_retrieve_topic(command, message)
+            if name == self.CMD_DELETE_TOPIC:
+                return self._handle_delete_topic(command, message)
+            if name == self.CMD_PATCH_TOPIC:
+                return self._handle_patch_topic(command, message)
+            if name == self.CMD_SUBSCRIBE_TOPIC:
+                return self._handle_subscribe_topic(command, message)
+            if name == self.CMD_LIST_SUBSCRIBER:
+                return self._handle_list_subscribers(message)
+            if name == self.CMD_CREATE_SUBSCRIBER:
+                return self._handle_create_subscriber(command, message)
+            if name == self.CMD_ADD_SUBSCRIBER:
+                return self._handle_create_subscriber(command, message)
+            if name == self.CMD_RETRIEVE_SUBSCRIBER:
+                return self._handle_retrieve_subscriber(command, message)
+            if name in (self.CMD_DELETE_SUBSCRIBER, self.CMD_REMOVE_SUBSCRIBER):
+                return self._handle_delete_subscriber(command, message)
+            if name == self.CMD_PATCH_SUBSCRIBER:
+                return self._handle_patch_subscriber(command, message)
         # Delegate to telemetry controller for telemetry related commands
         return self.tel_controller.handle_command(command, message, self.my_lxmf_dest)
 
@@ -85,6 +118,7 @@ class CommandManager:
     def _handle_join(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
         self.connections[dest.identity.hash] = dest
+        self.api.join(self._identity_hex(dest.identity))
         RNS.log(f"Connection added: {message.source}")
         return LXMF.LXMessage(
             dest,
@@ -96,6 +130,7 @@ class CommandManager:
     def _handle_leave(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
         self.connections.pop(dest.identity.hash, None)
+        self.api.leave(self._identity_hex(dest.identity))
         RNS.log(f"Connection removed: {message.source}")
         return LXMF.LXMessage(
             dest,
@@ -105,17 +140,219 @@ class CommandManager:
         )
 
     def _handle_list_clients(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        clients = self.api.list_clients()
+        client_hashes = [self._format_client_entry(client) for client in clients]
+        return self._reply(message, ",".join(client_hashes) or "")
+
+    def _handle_get_app_info(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        info = "ReticulumTelemetryHub"
+        return self._reply(message, info)
+
+    def _handle_list_topics(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        topics = self.api.list_topics()
+        content_lines = self._format_topic_list(topics)
+        content_lines.append(self._topic_subscribe_hint())
+        return self._reply(message, "\n".join(content_lines))
+
+    def _handle_create_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        topic = Topic.from_dict(command)
+        if not topic.topic_name or not topic.topic_path:
+            return self._reply(message, "TopicName and TopicPath are required")
+        created = self.api.create_topic(topic)
+        payload = json.dumps(created.to_dict(), sort_keys=True)
+        return self._reply(message, f"Topic created: {payload}")
+
+    def _handle_retrieve_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        topic_id = self._extract_topic_id(command)
+        if not topic_id:
+            return self._reply(message, "TopicID is required")
+        try:
+            topic = self.api.retrieve_topic(topic_id)
+        except KeyError as exc:
+            return self._reply(message, str(exc))
+        payload = json.dumps(topic.to_dict(), sort_keys=True)
+        return self._reply(message, payload)
+
+    def _handle_delete_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        topic_id = self._extract_topic_id(command)
+        if not topic_id:
+            return self._reply(message, "TopicID is required")
+        try:
+            topic = self.api.delete_topic(topic_id)
+        except KeyError as exc:
+            return self._reply(message, str(exc))
+        payload = json.dumps(topic.to_dict(), sort_keys=True)
+        return self._reply(message, f"Topic deleted: {payload}")
+
+    def _handle_patch_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        topic_id = self._extract_topic_id(command)
+        if not topic_id:
+            return self._reply(message, "TopicID is required")
+        updates = {k: v for k, v in command.items() if k != PLUGIN_COMMAND}
+        try:
+            topic = self.api.patch_topic(topic_id, **updates)
+        except KeyError as exc:
+            return self._reply(message, str(exc))
+        payload = json.dumps(topic.to_dict(), sort_keys=True)
+        return self._reply(message, f"Topic updated: {payload}")
+
+    def _handle_subscribe_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        topic_id = self._extract_topic_id(command)
+        if not topic_id:
+            return self._reply(message, "TopicID is required")
+        destination = self._identity_hex(message.source.identity)
+        reject_tests = None
+        if "RejectTests" in command:
+            reject_tests = command["RejectTests"]
+        elif "reject_tests" in command:
+            reject_tests = command["reject_tests"]
+        metadata = command.get("Metadata") or command.get("metadata") or {}
+        try:
+            subscriber = self.api.subscribe_topic(
+                topic_id,
+                destination=destination,
+                reject_tests=reject_tests,
+                metadata=metadata,
+            )
+        except KeyError as exc:
+            return self._reply(message, str(exc))
+        payload = json.dumps(subscriber.to_dict(), sort_keys=True)
+        return self._reply(message, f"Subscribed: {payload}")
+
+    def _handle_list_subscribers(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        subscribers = self.api.list_subscribers()
+        lines = self._format_subscriber_list(subscribers)
+        return self._reply(message, "\n".join(lines))
+
+    def _handle_create_subscriber(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        subscriber = Subscriber.from_dict(command)
+        if not subscriber.destination:
+            subscriber.destination = self._identity_hex(message.source.identity)
+        created = self.api.create_subscriber(subscriber)
+        payload = json.dumps(created.to_dict(), sort_keys=True)
+        return self._reply(message, f"Subscriber created: {payload}")
+
+    def _handle_retrieve_subscriber(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        subscriber_id = self._extract_subscriber_id(command)
+        if not subscriber_id:
+            return self._reply(message, "SubscriberID is required")
+        try:
+            subscriber = self.api.retrieve_subscriber(subscriber_id)
+        except KeyError as exc:
+            return self._reply(message, str(exc))
+        payload = json.dumps(subscriber.to_dict(), sort_keys=True)
+        return self._reply(message, payload)
+
+    def _handle_delete_subscriber(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        subscriber_id = self._extract_subscriber_id(command)
+        if not subscriber_id:
+            return self._reply(message, "SubscriberID is required")
+        try:
+            subscriber = self.api.delete_subscriber(subscriber_id)
+        except KeyError as exc:
+            return self._reply(message, str(exc))
+        payload = json.dumps(subscriber.to_dict(), sort_keys=True)
+        return self._reply(message, f"Subscriber deleted: {payload}")
+
+    def _handle_patch_subscriber(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        subscriber_id = self._extract_subscriber_id(command)
+        if not subscriber_id:
+            return self._reply(message, "SubscriberID is required")
+        updates = {k: v for k, v in command.items() if k != PLUGIN_COMMAND}
+        try:
+            subscriber = self.api.patch_subscriber(subscriber_id, **updates)
+        except KeyError as exc:
+            return self._reply(message, str(exc))
+        payload = json.dumps(subscriber.to_dict(), sort_keys=True)
+        return self._reply(message, f"Subscriber updated: {payload}")
+
+    @staticmethod
+    def _identity_hex(identity: RNS.Identity) -> str:
+        hash_bytes = getattr(identity, "hash", b"") or b""
+        return hash_bytes.hex()
+
+    @staticmethod
+    def _format_client_entry(client: Client) -> str:
+        metadata = client.metadata or {}
+        metadata_str = json.dumps(metadata, sort_keys=True)
+        try:
+            identity_bytes = bytes.fromhex(client.identity)
+            identity_value = RNS.prettyhexrep(identity_bytes)
+        except (ValueError, TypeError):
+            identity_value = client.identity
+        return f"{identity_value}|{metadata_str}"
+
+    def _reply(self, message: LXMF.LXMessage, content: str) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
-        client_hashes = [RNS.prettyhexrep(h) for h in self.connections]
         return LXMF.LXMessage(
             dest,
             self.my_lxmf_dest,
-            ",".join(client_hashes) or "",
+            content,
             desired_method=LXMF.LXMessage.DIRECT,
         )
 
-    def _handle_get_app_info(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
-        dest = self._create_dest(message.source.identity)
-        info = "ReticulumTelemetryHub"
-        return LXMF.LXMessage(dest, self.my_lxmf_dest, info, desired_method=LXMF.LXMessage.DIRECT)
+    @staticmethod
+    def _extract_topic_id(command: dict) -> Optional[str]:
+        return (
+            command.get("TopicID")
+            or command.get("topic_id")
+            or command.get("id")
+            or command.get("ID")
+        )
+
+    @staticmethod
+    def _extract_subscriber_id(command: dict) -> Optional[str]:
+        return (
+            command.get("SubscriberID")
+            or command.get("subscriber_id")
+            or command.get("id")
+            or command.get("ID")
+        )
+
+    @staticmethod
+    def _format_topic_entry(index: int, topic: Topic) -> str:
+        description = f" - {topic.topic_description}" if topic.topic_description else ""
+        topic_id = topic.topic_id or "<unassigned>"
+        return (
+            f"{index}. {topic.topic_name} [{topic.topic_path}] (ID: {topic_id}){description}"
+        )
+
+    def _format_topic_list(self, topics: List[Topic]) -> List[str]:
+        if not topics:
+            return ["No topics registered yet."]
+        return [self._format_topic_entry(idx, topic) for idx, topic in enumerate(topics, start=1)]
+
+    def _topic_subscribe_hint(self) -> str:
+        example = json.dumps(
+            {"Command": self.CMD_SUBSCRIBE_TOPIC, "TopicID": "<TopicID>"},
+            sort_keys=True,
+        )
+        return f"Send the command payload {example} to subscribe to a topic from the list above."
+
+    @staticmethod
+    def _format_subscriber_entry(index: int, subscriber: Subscriber) -> str:
+        metadata = subscriber.metadata or {}
+        metadata_str = json.dumps(metadata, sort_keys=True)
+        topic_id = subscriber.topic_id or "<any>"
+        subscriber_id = subscriber.subscriber_id or "<pending>"
+        return (
+            f"{index}. {subscriber.destination} subscribed to {topic_id} "
+            f"(SubscriberID: {subscriber_id}) metadata={metadata_str}"
+        )
+
+    def _format_subscriber_list(self, subscribers: List[Subscriber]) -> List[str]:
+        if not subscribers:
+            return ["No subscribers registered yet."]
+        return [
+            self._format_subscriber_entry(idx, subscriber)
+            for idx, subscriber in enumerate(subscribers, start=1)
+        ]
 

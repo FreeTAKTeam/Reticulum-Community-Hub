@@ -9,6 +9,8 @@ import pytest
 from sqlalchemy import create_engine
 import reticulum_telemetry_hub
 
+from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry import telemetry_controller as tc_mod
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.location import Location
@@ -130,8 +132,10 @@ def test_load_or_generate_identity(tmp_path):
     assert os.path.exists(path)
 
 
-def test_command_manager_extra(monkeypatch):
-    cm = CommandManager({}, make_controller(), make_dest())
+def test_command_manager_extra(monkeypatch, tmp_path):
+    config_manager = HubConfigurationManager(storage_path=tmp_path)
+    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    cm = CommandManager({}, make_controller(), make_dest(), api)
     src = make_dest()
     dest = make_dest()
     msg = LXMF.LXMessage(dest, src)

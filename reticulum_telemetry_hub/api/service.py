@@ -137,13 +137,18 @@ class ReticulumTelemetryHubAPI:
             )
         if "topic_id" in updates or "TopicID" in updates:
             subscriber.topic_id = updates.get("topic_id") or updates.get("TopicID")
-        if "reject_tests" in updates or "RejectTests" in updates:
-            subscriber.reject_tests = updates.get("reject_tests") or updates.get(
-                "RejectTests"
-            )
-        metadata = updates.get("metadata") or updates.get("Metadata")
-        if metadata is not None:
-            subscriber.metadata = metadata
+        if "reject_tests" in updates:
+            subscriber.reject_tests = updates["reject_tests"]
+        elif "RejectTests" in updates:
+            subscriber.reject_tests = updates["RejectTests"]
+        metadata_key = None
+        if "metadata" in updates:
+            metadata_key = "metadata"
+        elif "Metadata" in updates:
+            metadata_key = "Metadata"
+
+        if metadata_key is not None:
+            subscriber.metadata = updates[metadata_key]
         return self._storage.update_subscriber(subscriber)
 
     def add_subscriber(self, subscriber: Subscriber) -> Subscriber:
