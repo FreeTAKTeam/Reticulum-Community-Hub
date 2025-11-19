@@ -103,6 +103,7 @@ class CommandManager:
                 return self._handle_delete_subscriber(command, message)
             if name == self.CMD_PATCH_SUBSCRIBER:
                 return self._handle_patch_subscriber(command, message)
+            return self._handle_unknown_command(name, message)
         # Delegate to telemetry controller for telemetry related commands
         return self.tel_controller.handle_command(command, message, self.my_lxmf_dest)
 
@@ -228,6 +229,14 @@ class CommandManager:
         return self._reply(message, "\n".join(lines))
 
     def _handle_help(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        return self._reply(message, self._build_help_text())
+
+    def _handle_unknown_command(self, name: str, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        help_text = self._build_help_text()
+        payload = f"Unknown command '{name}'.\n{help_text}"
+        return self._reply(message, payload)
+
+    def _build_help_text(self) -> str:
         lines = [
             "Available commands:",
             "  Use the 'Command' field (numeric key 0 / PLUGIN_COMMAND) to choose an action.",
@@ -245,7 +254,7 @@ class CommandManager:
         lines.append(
             f"  Example: {telemetry_example} (timestamp = earliest UNIX time to include)"
         )
-        return self._reply(message, "\n".join(lines))
+        return "\n".join(lines)
 
     def _handle_create_subscriber(
         self, command: dict, message: LXMF.LXMessage

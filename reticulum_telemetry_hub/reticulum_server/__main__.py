@@ -138,6 +138,8 @@ class ReticulumTelemetryHub:
     telemeter_manager: TelemeterManager | None
     _active_services: dict[str, HubService]
 
+    TELEMETRY_PLACEHOLDERS = {"telemetry data", "telemetry update"}
+
     def __init__(
         self,
         display_name: str,
@@ -277,12 +279,15 @@ class ReticulumTelemetryHub:
             if message.signature_validated and LXMF.FIELD_COMMANDS in message.fields:
                 self.command_handler(message.fields[LXMF.FIELD_COMMANDS], message)
 
-            # Handle telemetry data
-            if self.tel_controller.handle_message(message):
+            telemetry_handled = self.tel_controller.handle_message(message)
+            if telemetry_handled:
                 RNS.log("Telemetry data saved")
 
             # Skip if the message content is empty
             if message.content is None or message.content == b"":
+                return
+
+            if self._is_telemetry_only(message, telemetry_handled):
                 return
 
             # Broadcast the message to all connected clients
@@ -291,18 +296,34 @@ class ReticulumTelemetryHub:
             source_label = self._lookup_identity_label(source_hash)
             msg = f"{source_label} > {message.content_as_string()}"
             topic_id = self._extract_target_topic(message.fields)
-            self.send_message(msg, topic=topic_id)
+            source_hex = self._message_source_hex(message)
+            exclude = {source_hex} if source_hex else None
+            self.send_message(msg, topic=topic_id, exclude=exclude)
         except Exception as e:
             RNS.log(f"Error: {e}")
 
-    def send_message(self, message: str, *, topic: str | None = None):
-        """Sends a message to connected clients."""
+    def send_message(
+        self,
+        message: str,
+        *,
+        topic: str | None = None,
+        exclude: set[str] | None = None,
+    ):
+        """Sends a message to connected clients.
+
+        Args:
+            message (str): Text to broadcast.
+            topic (str | None): Topic filter limiting recipients.
+            exclude (set[str] | None): Optional set of lowercase destination
+                hashes that should not receive the broadcast.
+        """
 
         available = (
             list(self.connections.values())
             if hasattr(self.connections, "values")
             else list(self.connections)
         )
+        excluded = {value.lower() for value in exclude if value} if exclude else set()
         if topic:
             subscriber_hex = self._subscribers_for_topic(topic)
             available = [
@@ -311,6 +332,9 @@ class ReticulumTelemetryHub:
                 if self._connection_hex(connection) in subscriber_hex
             ]
         for connection in available:
+            connection_hex = self._connection_hex(connection)
+            if excluded and connection_hex and connection_hex in excluded:
+                continue
             response = LXMF.LXMessage(
                 connection,
                 self.my_lxmf_dest,
@@ -403,6 +427,47 @@ class ReticulumTelemetryHub:
         if isinstance(hash_bytes, (bytes, bytearray)) and hash_bytes:
             return hash_bytes.hex().lower()
         return None
+
+    def _message_source_hex(self, message: LXMF.LXMessage) -> str | None:
+        source = message.get_source()
+        if source is not None:
+            identity = getattr(source, "identity", None)
+            hash_bytes = getattr(identity, "hash", None)
+            if isinstance(hash_bytes, (bytes, bytearray)) and hash_bytes:
+                return hash_bytes.hex().lower()
+        source_hash = getattr(message, "source_hash", None)
+        if isinstance(source_hash, (bytes, bytearray)) and source_hash:
+            return source_hash.hex().lower()
+        return None
+
+    def _is_telemetry_only(
+        self, message: LXMF.LXMessage, telemetry_handled: bool
+    ) -> bool:
+        if not telemetry_handled:
+            return False
+        fields = message.fields or {}
+        telemetry_keys = {LXMF.FIELD_TELEMETRY, LXMF.FIELD_TELEMETRY_STREAM}
+        if not any(key in fields for key in telemetry_keys):
+            return False
+        for key, value in fields.items():
+            if key in telemetry_keys:
+                continue
+            if value not in (None, "", b"", {}, [], ()):  # pragma: no cover - guard
+                return False
+        content_text = self._message_text(message)
+        if not content_text:
+            return True
+        return content_text.lower() in self.TELEMETRY_PLACEHOLDERS
+
+    @staticmethod
+    def _message_text(message: LXMF.LXMessage) -> str:
+        content = getattr(message, "content", None)
+        if not content:
+            return ""
+        try:
+            return message.content_as_string().strip()
+        except Exception:  # pragma: no cover - defensive
+            return ""
 
     def load_or_generate_identity(self, identity_path: Path):
         identity_path = Path(identity_path)
