@@ -9,8 +9,8 @@ The RTH  enable communication and data sharing between clients like [Sideband](h
 
 The Reticulum-Telemetry-Hub can perform the following key functions:
 
-- **One to Many Messages**: RTH supports broadcasting messages to all connected clients.
-- By sending a message to the hub, it will be distributed to all clients connected to the network. *(Initial implementation - Experimental)*
+- **One to Many & Topic-Targeted Messages**: RTH supports broadcasting messages to all connected clients or filtering the fan-out by topic tags maintained in the hub's subscriber registry.
+- By sending a message to the hub, it will be distributed to all clients connected to the network or, when the payload includes a `TopicID`, only to the peers subscribed to that topic. *(Initial implementation - Experimental)*
 - **Telemetry Collector**: RTH acts as a telemetry data repository, collecting data from all connected clients.
   Currently, this functionality is focused on Sideband clients that have enabled their Reticulum identity. By  rewriting the code we hope to see a wider implementation of Telemetry in other applications.
 - **Replication Node**: RTH uses the LXMF router to ensure message delivery even when the target client is offline. If a message's destination is not available at the time of sending, RTH will save the message and deliver it once the client comes online.
@@ -131,6 +131,12 @@ python -m reticulum_telemetry_hub.reticulum_server \
     --display_name "RTH" \
     [--daemon --service gpsd]
 ```
+
+### Topic-targeted broadcasts
+
+RTH keeps a lightweight topic registry via its API, letting operators create topics, add subscribers and limit message delivery to interested peers. Use the `CreateTopic`/`ListTopic` commands (or the matching API methods) to define topic IDs and describe how they map to your operational channels. Connected clients can then issue the `SubscribeTopic` command so the hub records their LXMF destination hashes under the appropriate topic.
+
+Any message sent to the hub that includes a `TopicID` (in the LXMF fields or a command payload) will only be forwarded to the subscribers registered for that topic. The hub automatically refreshes the registry from the API, so new subscriptions take effect without restarting the process.
 
 ### Command-line options
 
