@@ -60,6 +60,8 @@ def test_subscriber_management(tmp_path):
     assert retrieved.destination == "abc123"
     api.patch_subscriber(subscriber.subscriber_id, metadata={"level": "high"})
     assert api.retrieve_subscriber(subscriber.subscriber_id).metadata == {"level": "high"}
+    api.patch_subscriber(subscriber.subscriber_id, metadata={})
+    assert api.retrieve_subscriber(subscriber.subscriber_id).metadata == {}
     all_subs = api.list_subscribers()
     assert len(all_subs) == 1
     api.delete_subscriber(subscriber.subscriber_id)
