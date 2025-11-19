@@ -87,7 +87,9 @@ def test_list_clients_persisted_across_sessions(tmp_path):
         existing_destinations = list(getattr(RNS.Transport, "destinations", []))
         RNS.Transport.destinations = []
         try:
-            restarted = ReticulumTelemetryHub("TestHub", str(tmp_path), tmp_path / "identity")
+            restarted = ReticulumTelemetryHub(
+                "TestHub", str(tmp_path), tmp_path / "identity"
+            )
             sent = []
             restarted.lxm_router.handle_outbound = lambda m: sent.append(m)
 
@@ -131,6 +133,75 @@ def test_send_message_uses_connection_values(tmp_path):
     assert all(msg.content_as_string() == "Hello" for msg in sent)
 
 
+def test_send_message_filters_by_topic(tmp_path):
+    hub = ReticulumTelemetryHub("TestHub", str(tmp_path), tmp_path / "identity")
+    sent = []
+    hub.lxm_router.handle_outbound = lambda m: sent.append(m)
+
+    dest_one = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dest_two = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    hub.connections = {
+        dest_one.identity.hash: dest_one,
+        dest_two.identity.hash: dest_two,
+    }
+    topic_id = "topic-alpha"
+    hub.topic_subscribers = {topic_id: {dest_one.identity.hash.hex().lower()}}
+
+    hub.send_message("Hello", topic=topic_id)
+
+    assert len(sent) == 1
+    assert sent[0].destination_hash == dest_one.identity.hash
+
+
+def test_send_message_refreshes_topic_registry(tmp_path):
+    hub = ReticulumTelemetryHub("TestHub", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda m: sent.append(m)
+
+    dest_one = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dest_two = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    hub.connections = {
+        dest_one.identity.hash: dest_one,
+        dest_two.identity.hash: dest_two,
+    }
+    topic_id = "topic-refresh"
+
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def list_subscribers(self):
+            self.calls += 1
+            return [
+                Subscriber(
+                    destination=dest_two.identity.hash.hex(),
+                    topic_id=topic_id,
+                    metadata={"tag": "beta"},
+                )
+            ]
+
+    dummy_api = DummyAPI()
+    hub.api = dummy_api
+    hub.topic_subscribers = {}
+
+    hub.send_message("Hello", topic=topic_id)
+
+    assert len(sent) == 1
+    assert sent[0].destination_hash == dest_two.identity.hash
+    assert hub.topic_subscribers[topic_id] == {dest_two.identity.hash.hex().lower()}
+    assert dummy_api.calls == 1
+
+
 def test_delivery_callback_handles_commands_and_broadcasts():
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
@@ -163,7 +234,10 @@ def test_delivery_callback_handles_commands_and_broadcasts():
     hub.tel_controller = type(
         "DummyController",
         (),
-        {"handle_message": lambda self, message: telemetry_calls.append(message) or True},
+        {
+            "handle_message": lambda self, message: telemetry_calls.append(message)
+            or True
+        },
     )()
 
     command_reply = LXMF.LXMessage(dest_one, hub.my_lxmf_dest, "cmd-reply")
@@ -199,9 +273,72 @@ def test_delivery_callback_handles_commands_and_broadcasts():
     assert telemetry_calls == [incoming]
 
 
+def test_delivery_callback_honors_topic_field():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    router_messages = []
+
+    class DummyRouter:
+        def handle_outbound(self, message):
+            router_messages.append(message)
+
+    hub.lxm_router = DummyRouter()
+    hub.my_lxmf_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    dest_one = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dest_two = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    hub.connections = {
+        dest_one.identity.hash: dest_one,
+        dest_two.identity.hash: dest_two,
+    }
+    hub.identities = {}
+    hub.topic_subscribers = {"topic-beta": {dest_one.identity.hash.hex().lower()}}
+    hub.api = type("DummyAPI", (), {"list_subscribers": lambda self: []})()
+
+    hub.tel_controller = type(
+        "DummyController",
+        (),
+        {"handle_message": lambda self, message: False},
+    )()
+    hub.command_manager = type(
+        "DummyCommands",
+        (),
+        {"handle_commands": lambda self, commands, message: []},
+    )()
+    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
+        hub, ReticulumTelemetryHub
+    )
+
+    incoming = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        dest_two,
+        "topic-message",
+        fields={"TopicID": "topic-beta"},
+    )
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+
+    assert len(router_messages) == 1
+    assert router_messages[0].destination_hash == dest_one.identity.hash
+
+
 def test_list_topics_includes_hint():
     topics = [
-        Topic(topic_name="Alerts", topic_path="/alerts", topic_description="Status", topic_id="abc"),
+        Topic(
+            topic_name="Alerts",
+            topic_path="/alerts",
+            topic_description="Status",
+            topic_id="abc",
+        ),
         Topic(topic_name="Updates", topic_path="/updates", topic_id="def"),
     ]
 
@@ -258,7 +395,9 @@ def test_subscribe_topic_uses_source_identity():
     captured = {}
 
     class DummyAPI:
-        def subscribe_topic(self, topic_id, destination, reject_tests=None, metadata=None):
+        def subscribe_topic(
+            self, topic_id, destination, reject_tests=None, metadata=None
+        ):
             captured["topic_id"] = topic_id
             captured["destination"] = destination
             captured["reject_tests"] = reject_tests
