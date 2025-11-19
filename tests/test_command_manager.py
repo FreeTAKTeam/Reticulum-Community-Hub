@@ -1,4 +1,5 @@
 import LXMF
+import json
 import RNS
 import pytest
 from msgpack import packb
@@ -8,9 +9,6 @@ from reticulum_telemetry_hub.api.models import Subscriber, Topic
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
-from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
-    TelemetryController,
-)
 
 
 def make_message(dest, source, command, *, use_str_command=False, **command_fields):
@@ -63,6 +61,146 @@ COMMAND_HANDLER_MAP = [
     (CommandManager.CMD_REMOVE_SUBSCRIBER, "_handle_delete_subscriber"),
     (CommandManager.CMD_PATCH_SUBSCRIBER, "_handle_patch_subscriber"),
 ]
+
+
+def test_handle_commands_parses_string_entries():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.created_topics: list[Topic] = []
+
+        def create_topic(self, topic: Topic) -> Topic:
+            topic.topic_id = "topic-from-string"
+            self.created_topics.append(topic)
+            return topic
+
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = {
+        "Command": CommandManager.CMD_CREATE_TOPIC,
+        "TopicName": "Alpha",
+        "TopicPath": "alpha/path",
+    }
+    command_blob = json.dumps(payload)
+    message = LXMF.LXMessage(
+        server_dest,
+        client_dest,
+        fields={LXMF.FIELD_COMMANDS: [command_blob]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.pack()
+    message.signature_validated = True
+
+    responses = manager.handle_commands(message.fields[LXMF.FIELD_COMMANDS], message)
+
+    assert responses
+    reply_text = responses[0].content_as_string()
+    assert "Topic created" in reply_text
+    assert manager.api.created_topics
+    created_topic = manager.api.created_topics[0]
+    assert created_topic.topic_name == "Alpha"
+    assert created_topic.topic_path == "alpha/path"
+
+
+def test_create_topic_interactive_prompt_flow():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.created: list[Topic] = []
+
+        def create_topic(self, topic: Topic) -> Topic:
+            topic.topic_id = "topic-after-prompt"
+            self.created.append(topic)
+            return topic
+
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    initial_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_CREATE_TOPIC,
+        TopicName="Weather",
+    )
+    prompt_responses = manager.handle_commands(
+        initial_message.fields[LXMF.FIELD_COMMANDS], initial_message
+    )
+
+    assert prompt_responses
+    prompt_text = prompt_responses[0].content_as_string()
+    assert "TopicPath" in prompt_text
+    assert manager.pending_field_requests
+
+    followup_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_CREATE_TOPIC,
+        TopicPath="environment/weather",
+    )
+    creation_responses = manager.handle_commands(
+        followup_message.fields[LXMF.FIELD_COMMANDS], followup_message
+    )
+
+    assert creation_responses
+    creation_text = creation_responses[0].content_as_string()
+    assert "Topic created" in creation_text
+    assert manager.api.created
+    created_topic = manager.api.created[0]
+    assert created_topic.topic_name == "Weather"
+    assert created_topic.topic_path == "environment/weather"
+    assert manager.pending_field_requests == {}
+
+
+def test_create_topic_accepts_snake_case_fields():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.created: list[Topic] = []
+
+        def create_topic(self, topic: Topic) -> Topic:
+            topic.topic_id = "topic-snake"
+            self.created.append(topic)
+            return topic
+
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_CREATE_TOPIC,
+        topic_name="Alpha",
+        topic_path="alpha/path",
+    )
+    responses = manager.handle_commands(message.fields[LXMF.FIELD_COMMANDS], message)
+
+    assert responses
+    reply_text = responses[0].content_as_string()
+    assert "Topic created" in reply_text
+    created_topic = manager.api.created[0]
+    assert created_topic.topic_name == "Alpha"
+    assert created_topic.topic_path == "alpha/path"
 
 
 def test_join_and_list_clients(tmp_path):

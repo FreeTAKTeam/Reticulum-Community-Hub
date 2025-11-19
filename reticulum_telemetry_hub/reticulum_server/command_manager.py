@@ -1,8 +1,9 @@
 # Command management for Reticulum Telemetry Hub
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 import json
+import re
 import RNS
 import LXMF
 
@@ -10,6 +11,12 @@ from reticulum_telemetry_hub.api.models import Client, Subscriber, Topic
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 
 from .constants import PLUGIN_COMMAND
+from .command_text import (
+    build_help_text,
+    format_subscriber_list,
+    format_topic_list,
+    topic_subscribe_hint,
+)
 from ..lxmf_telemetry.telemetry_controller import TelemetryController
 
 
@@ -47,15 +54,25 @@ class CommandManager:
         self.tel_controller = tel_controller
         self.my_lxmf_dest = my_lxmf_dest
         self.api = api
+        self.pending_field_requests: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
     # public API
     # ------------------------------------------------------------------
-    def handle_commands(self, commands: List[dict], message: LXMF.LXMessage) -> List[LXMF.LXMessage]:
+    def handle_commands(
+        self, commands: List[dict], message: LXMF.LXMessage
+    ) -> List[LXMF.LXMessage]:
         """Process a list of commands and return generated responses."""
+
         responses: List[LXMF.LXMessage] = []
-        for cmd in commands:
-            msg = self.handle_command(cmd, message)
+        for raw_command in commands:
+            normalized, error_response = self._normalize_command(raw_command, message)
+            if error_response is not None:
+                responses.append(error_response)
+                continue
+            if normalized is None:
+                continue
+            msg = self.handle_command(normalized, message)
             if msg:
                 if isinstance(msg, list):
                     responses.extend(msg)
@@ -63,10 +80,37 @@ class CommandManager:
                     responses.append(msg)
         return responses
 
+    def _normalize_command(
+        self, raw_command: Any, message: LXMF.LXMessage
+    ) -> tuple[Optional[dict], Optional[LXMF.LXMessage]]:
+        """Normalize incoming command payloads, including JSON-wrapped strings."""
+
+        if isinstance(raw_command, str):
+            try:
+                parsed = json.loads(raw_command)
+            except json.JSONDecodeError:
+                error = self._reply(
+                    message, f"Command payload is not valid JSON: {raw_command!r}"
+                )
+                return None, error
+            if not isinstance(parsed, dict):
+                return None, self._reply(
+                    message, "Parsed command must be a JSON object"
+                )
+            return parsed, None
+        if isinstance(raw_command, dict):
+            return raw_command, None
+        return None, self._reply(
+            message, f"Unsupported command payload type: {type(raw_command).__name__}"
+        )
+
     # ------------------------------------------------------------------
     # individual command processing
     # ------------------------------------------------------------------
-    def handle_command(self, command: dict, message: LXMF.LXMessage) -> Optional[LXMF.LXMessage]:
+    def handle_command(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> Optional[LXMF.LXMessage]:
+        command = self._merge_pending_fields(command, message)
         name = command.get(PLUGIN_COMMAND) or command.get("Command")
         if name is not None:
             if name == self.CMD_HELP:
@@ -154,22 +198,31 @@ class CommandManager:
 
     def _handle_list_topics(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         topics = self.api.list_topics()
-        content_lines = self._format_topic_list(topics)
-        content_lines.append(self._topic_subscribe_hint())
+        content_lines = format_topic_list(topics)
+        content_lines.append(topic_subscribe_hint(self.CMD_SUBSCRIBE_TOPIC))
         return self._reply(message, "\n".join(content_lines))
 
-    def _handle_create_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+    def _handle_create_topic(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        missing = self._missing_fields(command, ["TopicName", "TopicPath"])
+        if missing:
+            return self._prompt_for_fields(
+                self.CMD_CREATE_TOPIC, missing, message, command
+            )
         topic = Topic.from_dict(command)
-        if not topic.topic_name or not topic.topic_path:
-            return self._reply(message, "TopicName and TopicPath are required")
         created = self.api.create_topic(topic)
         payload = json.dumps(created.to_dict(), sort_keys=True)
         return self._reply(message, f"Topic created: {payload}")
 
-    def _handle_retrieve_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+    def _handle_retrieve_topic(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
         topic_id = self._extract_topic_id(command)
         if not topic_id:
-            return self._reply(message, "TopicID is required")
+            return self._prompt_for_fields(
+                self.CMD_RETRIEVE_TOPIC, ["TopicID"], message, command
+            )
         try:
             topic = self.api.retrieve_topic(topic_id)
         except KeyError as exc:
@@ -177,10 +230,14 @@ class CommandManager:
         payload = json.dumps(topic.to_dict(), sort_keys=True)
         return self._reply(message, payload)
 
-    def _handle_delete_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+    def _handle_delete_topic(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
         topic_id = self._extract_topic_id(command)
         if not topic_id:
-            return self._reply(message, "TopicID is required")
+            return self._prompt_for_fields(
+                self.CMD_DELETE_TOPIC, ["TopicID"], message, command
+            )
         try:
             topic = self.api.delete_topic(topic_id)
         except KeyError as exc:
@@ -188,10 +245,14 @@ class CommandManager:
         payload = json.dumps(topic.to_dict(), sort_keys=True)
         return self._reply(message, f"Topic deleted: {payload}")
 
-    def _handle_patch_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+    def _handle_patch_topic(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
         topic_id = self._extract_topic_id(command)
         if not topic_id:
-            return self._reply(message, "TopicID is required")
+            return self._prompt_for_fields(
+                self.CMD_PATCH_TOPIC, ["TopicID"], message, command
+            )
         updates = {k: v for k, v in command.items() if k != PLUGIN_COMMAND}
         try:
             topic = self.api.patch_topic(topic_id, **updates)
@@ -200,10 +261,14 @@ class CommandManager:
         payload = json.dumps(topic.to_dict(), sort_keys=True)
         return self._reply(message, f"Topic updated: {payload}")
 
-    def _handle_subscribe_topic(self, command: dict, message: LXMF.LXMessage) -> LXMF.LXMessage:
+    def _handle_subscribe_topic(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
         topic_id = self._extract_topic_id(command)
         if not topic_id:
-            return self._reply(message, "TopicID is required")
+            return self._prompt_for_fields(
+                self.CMD_SUBSCRIBE_TOPIC, ["TopicID"], message, command
+            )
         destination = self._identity_hex(message.source.identity)
         reject_tests = None
         if "RejectTests" in command:
@@ -225,36 +290,138 @@ class CommandManager:
 
     def _handle_list_subscribers(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         subscribers = self.api.list_subscribers()
-        lines = self._format_subscriber_list(subscribers)
+        lines = format_subscriber_list(subscribers)
         return self._reply(message, "\n".join(lines))
 
     def _handle_help(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
-        return self._reply(message, self._build_help_text())
+        return self._reply(message, build_help_text(self))
 
-    def _handle_unknown_command(self, name: str, message: LXMF.LXMessage) -> LXMF.LXMessage:
-        help_text = self._build_help_text()
+    def _handle_unknown_command(
+        self, name: str, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        help_text = build_help_text(self)
         payload = f"Unknown command '{name}'.\n{help_text}"
         return self._reply(message, payload)
 
-    def _build_help_text(self) -> str:
+    def _prompt_for_fields(
+        self,
+        command_name: str,
+        missing_fields: List[str],
+        message: LXMF.LXMessage,
+        command: dict,
+    ) -> LXMF.LXMessage:
+        """Store pending requests and prompt the sender for missing fields."""
+
+        sender_key = self._sender_key(message)
+        self._register_pending_request(
+            sender_key, command_name, missing_fields, command
+        )
+        example_payload = self._build_prompt_example(
+            command_name, missing_fields, command
+        )
         lines = [
-            "Available commands:",
-            "  Use the 'Command' field (numeric key 0 / PLUGIN_COMMAND) to choose an action.",
+            f"{command_name} is missing required fields: {', '.join(missing_fields)}.",
+            "Reply with the missing fields in JSON format to continue.",
+            f"Example: {example_payload}",
         ]
-        for entry in self._command_reference():
-            lines.append(f"- {entry['title']}: {entry['description']}")
-            lines.append(f"  Example: {entry['example']}")
-        telemetry_example = json.dumps(
-            {str(TelemetryController.TELEMETRY_REQUEST): "<unix timestamp>"},
-            sort_keys=True,
+        return self._reply(message, "\n".join(lines))
+
+    def _register_pending_request(
+        self,
+        sender_key: str,
+        command_name: str,
+        missing_fields: List[str],
+        command: dict,
+    ) -> None:
+        """Persist partial command data while waiting for required fields."""
+
+        stored_command = dict(command)
+        requests_for_sender = self.pending_field_requests.setdefault(sender_key, {})
+        requests_for_sender[command_name] = {
+            "command": stored_command,
+            "missing": list(missing_fields),
+        }
+
+    def _merge_pending_fields(self, command: dict, message: LXMF.LXMessage) -> dict:
+        """Combine new command fragments with any pending prompt state."""
+
+        sender_key = self._sender_key(message)
+        pending_commands = self.pending_field_requests.get(sender_key)
+        if not pending_commands:
+            return command
+        command_name = command.get(PLUGIN_COMMAND) or command.get("Command")
+        if command_name is None:
+            return command
+        pending_entry = pending_commands.get(command_name)
+        if pending_entry is None:
+            return command
+        merged_command = dict(pending_entry.get("command", {}))
+        merged_command.update(command)
+        merged_command.setdefault(PLUGIN_COMMAND, command_name)
+        merged_command.setdefault("Command", command_name)
+        remaining_missing = self._missing_fields(
+            merged_command, pending_entry.get("missing", [])
         )
-        lines.append(
-            "- TelemetryRequest: Request telemetry snapshots using numeric key 1 (TelemetryController.TELEMETRY_REQUEST)."
-        )
-        lines.append(
-            f"  Example: {telemetry_example} (timestamp = earliest UNIX time to include)"
-        )
-        return "\n".join(lines)
+        if remaining_missing:
+            pending_entry["missing"] = remaining_missing
+            pending_entry["command"] = merged_command
+        else:
+            del pending_commands[command_name]
+            if not pending_commands:
+                self.pending_field_requests.pop(sender_key, None)
+        return merged_command
+
+    @staticmethod
+    def _field_value(command: dict, field: str) -> Any:
+        """Return a field value supporting common casing variants."""
+
+        alternate_keys = {
+            field,
+            field.lower(),
+            field.replace("ID", "id"),
+            field.replace("ID", "_id"),
+            field.replace("Name", "name"),
+            field.replace("Name", "_name"),
+            field.replace("Path", "path"),
+            field.replace("Path", "_path"),
+        }
+        snake_key = re.sub(r"(?<!^)(?=[A-Z])", "_", field).lower()
+        alternate_keys.add(snake_key)
+        alternate_keys.add(snake_key.replace("_i_d", "_id"))
+        for key in alternate_keys:
+            if key in command:
+                return command.get(key)
+        return command.get(field)
+
+    def _missing_fields(self, command: dict, required_fields: List[str]) -> List[str]:
+        """Identify which required fields are still empty."""
+
+        missing: List[str] = []
+        for field in required_fields:
+            value = self._field_value(command, field)
+            if value is None or value == "":
+                missing.append(field)
+        return missing
+
+    def _build_prompt_example(
+        self, command_name: str, missing_fields: List[str], command: dict
+    ) -> str:
+        """Construct a JSON example showing the missing fields."""
+
+        template: Dict[str, Any] = {"Command": command_name}
+        for key, value in command.items():
+            if key in {PLUGIN_COMMAND, "Command"}:
+                continue
+            template[key] = value
+        for field in missing_fields:
+            if self._field_value(template, field) in {None, ""}:
+                template[field] = f"<{field}>"
+        return json.dumps(template, sort_keys=True)
+
+    def _sender_key(self, message: LXMF.LXMessage) -> str:
+        """Return the hex identity key representing the message sender."""
+
+        return self._identity_hex(message.source.identity)
 
     def _handle_create_subscriber(
         self, command: dict, message: LXMF.LXMessage
@@ -271,7 +438,9 @@ class CommandManager:
     ) -> LXMF.LXMessage:
         subscriber_id = self._extract_subscriber_id(command)
         if not subscriber_id:
-            return self._reply(message, "SubscriberID is required")
+            return self._prompt_for_fields(
+                self.CMD_RETRIEVE_SUBSCRIBER, ["SubscriberID"], message, command
+            )
         try:
             subscriber = self.api.retrieve_subscriber(subscriber_id)
         except KeyError as exc:
@@ -284,7 +453,9 @@ class CommandManager:
     ) -> LXMF.LXMessage:
         subscriber_id = self._extract_subscriber_id(command)
         if not subscriber_id:
-            return self._reply(message, "SubscriberID is required")
+            return self._prompt_for_fields(
+                self.CMD_DELETE_SUBSCRIBER, ["SubscriberID"], message, command
+            )
         try:
             subscriber = self.api.delete_subscriber(subscriber_id)
         except KeyError as exc:
@@ -297,7 +468,9 @@ class CommandManager:
     ) -> LXMF.LXMessage:
         subscriber_id = self._extract_subscriber_id(command)
         if not subscriber_id:
-            return self._reply(message, "SubscriberID is required")
+            return self._prompt_for_fields(
+                self.CMD_PATCH_SUBSCRIBER, ["SubscriberID"], message, command
+            )
         updates = {k: v for k, v in command.items() if k != PLUGIN_COMMAND}
         try:
             subscriber = self.api.patch_subscriber(subscriber_id, **updates)
@@ -348,153 +521,3 @@ class CommandManager:
             or command.get("id")
             or command.get("ID")
         )
-
-    @staticmethod
-    def _format_topic_entry(index: int, topic: Topic) -> str:
-        description = f" - {topic.topic_description}" if topic.topic_description else ""
-        topic_id = topic.topic_id or "<unassigned>"
-        return (
-            f"{index}. {topic.topic_name} [{topic.topic_path}] (ID: {topic_id}){description}"
-        )
-
-    def _format_topic_list(self, topics: List[Topic]) -> List[str]:
-        if not topics:
-            return ["No topics registered yet."]
-        return [self._format_topic_entry(idx, topic) for idx, topic in enumerate(topics, start=1)]
-
-    def _topic_subscribe_hint(self) -> str:
-        example = json.dumps(
-            {"Command": self.CMD_SUBSCRIBE_TOPIC, "TopicID": "<TopicID>"},
-            sort_keys=True,
-        )
-        return f"Send the command payload {example} to subscribe to a topic from the list above."
-
-    @staticmethod
-    def _format_subscriber_entry(index: int, subscriber: Subscriber) -> str:
-        metadata = subscriber.metadata or {}
-        metadata_str = json.dumps(metadata, sort_keys=True)
-        topic_id = subscriber.topic_id or "<any>"
-        subscriber_id = subscriber.subscriber_id or "<pending>"
-        return (
-            f"{index}. {subscriber.destination} subscribed to {topic_id} "
-            f"(SubscriberID: {subscriber_id}) metadata={metadata_str}"
-        )
-
-    def _format_subscriber_list(self, subscribers: List[Subscriber]) -> List[str]:
-        if not subscribers:
-            return ["No subscribers registered yet."]
-        return [
-            self._format_subscriber_entry(idx, subscriber)
-            for idx, subscriber in enumerate(subscribers, start=1)
-        ]
-
-    def _command_reference(self) -> List[dict]:
-        def example(command: str, **fields: Any) -> str:
-            payload = {"Command": command}
-            payload.update(fields)
-            return json.dumps(payload, sort_keys=True)
-
-        return [
-            {
-                "title": self.CMD_JOIN,
-                "description": "Register your LXMF destination with the hub to receive replies.",
-                "example": example(self.CMD_JOIN),
-            },
-            {
-                "title": self.CMD_LEAVE,
-                "description": "Remove your destination from the hub's connection list.",
-                "example": example(self.CMD_LEAVE),
-            },
-            {
-                "title": self.CMD_LIST_CLIENTS,
-                "description": "List LXMF destinations currently joined to the hub.",
-                "example": example(self.CMD_LIST_CLIENTS),
-            },
-            {
-                "title": self.CMD_GET_APP_INFO,
-                "description": "Return the hub name so you can confirm connectivity.",
-                "example": example(self.CMD_GET_APP_INFO),
-            },
-            {
-                "title": self.CMD_LIST_TOPIC,
-                "description": "Display every registered topic and its ID.",
-                "example": example(self.CMD_LIST_TOPIC),
-            },
-            {
-                "title": self.CMD_CREATE_TOPIC,
-                "description": "Create a topic by providing a name and path.",
-                "example": example(
-                    self.CMD_CREATE_TOPIC,
-                    TopicName="Weather",
-                    TopicPath="environment/weather",
-                ),
-            },
-            {
-                "title": self.CMD_RETRIEVE_TOPIC,
-                "description": "Fetch a specific topic by TopicID.",
-                "example": example(self.CMD_RETRIEVE_TOPIC, TopicID="<TopicID>"),
-            },
-            {
-                "title": self.CMD_DELETE_TOPIC,
-                "description": "Delete a topic (and unsubscribe listeners).",
-                "example": example(self.CMD_DELETE_TOPIC, TopicID="<TopicID>"),
-            },
-            {
-                "title": self.CMD_PATCH_TOPIC,
-                "description": "Update fields on a topic by TopicID.",
-                "example": example(
-                    self.CMD_PATCH_TOPIC,
-                    TopicID="<TopicID>",
-                    TopicDescription="New description",
-                ),
-            },
-            {
-                "title": self.CMD_SUBSCRIBE_TOPIC,
-                "description": "Subscribe the sending destination to a topic.",
-                "example": example(
-                    self.CMD_SUBSCRIBE_TOPIC,
-                    TopicID="<TopicID>",
-                    Metadata={"tag": "field-station"},
-                ),
-            },
-            {
-                "title": self.CMD_LIST_SUBSCRIBER,
-                "description": "List every subscriber registered with the hub.",
-                "example": example(self.CMD_LIST_SUBSCRIBER),
-            },
-            {
-                "title": f"{self.CMD_CREATE_SUBSCRIBER} / {self.CMD_ADD_SUBSCRIBER}",
-                "description": "Create a subscriber entry for any destination.",
-                "example": example(
-                    self.CMD_CREATE_SUBSCRIBER,
-                    Destination="<hex destination>",
-                    TopicID="<TopicID>",
-                ),
-            },
-            {
-                "title": self.CMD_RETRIEVE_SUBSCRIBER,
-                "description": "Fetch subscriber metadata by SubscriberID.",
-                "example": example(
-                    self.CMD_RETRIEVE_SUBSCRIBER,
-                    SubscriberID="<SubscriberID>",
-                ),
-            },
-            {
-                "title": f"{self.CMD_DELETE_SUBSCRIBER} / {self.CMD_REMOVE_SUBSCRIBER}",
-                "description": "Remove a subscriber mapping.",
-                "example": example(
-                    self.CMD_DELETE_SUBSCRIBER,
-                    SubscriberID="<SubscriberID>",
-                ),
-            },
-            {
-                "title": self.CMD_PATCH_SUBSCRIBER,
-                "description": "Update subscriber metadata by SubscriberID.",
-                "example": example(
-                    self.CMD_PATCH_SUBSCRIBER,
-                    SubscriberID="<SubscriberID>",
-                    Metadata={"tag": "updated"},
-                ),
-            },
-        ]
-
