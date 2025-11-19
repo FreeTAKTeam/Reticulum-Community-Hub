@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 import json
+import re
 import RNS
 import LXMF
 
@@ -378,9 +379,15 @@ class CommandManager:
             field,
             field.lower(),
             field.replace("ID", "id"),
+            field.replace("ID", "_id"),
             field.replace("Name", "name"),
+            field.replace("Name", "_name"),
             field.replace("Path", "path"),
+            field.replace("Path", "_path"),
         }
+        snake_key = re.sub(r"(?<!^)(?=[A-Z])", "_", field).lower()
+        alternate_keys.add(snake_key)
+        alternate_keys.add(snake_key.replace("_i_d", "_id"))
         for key in alternate_keys:
             if key in command:
                 return command.get(key)

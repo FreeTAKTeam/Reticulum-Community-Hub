@@ -9,9 +9,6 @@ from reticulum_telemetry_hub.api.models import Subscriber, Topic
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
-from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
-    TelemetryController,
-)
 
 
 def make_message(dest, source, command, *, use_str_command=False, **command_fields):
@@ -166,6 +163,44 @@ def test_create_topic_interactive_prompt_flow():
     assert created_topic.topic_name == "Weather"
     assert created_topic.topic_path == "environment/weather"
     assert manager.pending_field_requests == {}
+
+
+def test_create_topic_accepts_snake_case_fields():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.created: list[Topic] = []
+
+        def create_topic(self, topic: Topic) -> Topic:
+            topic.topic_id = "topic-snake"
+            self.created.append(topic)
+            return topic
+
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_CREATE_TOPIC,
+        topic_name="Alpha",
+        topic_path="alpha/path",
+    )
+    responses = manager.handle_commands(message.fields[LXMF.FIELD_COMMANDS], message)
+
+    assert responses
+    reply_text = responses[0].content_as_string()
+    assert "Topic created" in reply_text
+    created_topic = manager.api.created[0]
+    assert created_topic.topic_name == "Alpha"
+    assert created_topic.topic_path == "alpha/path"
 
 
 def test_join_and_list_clients(tmp_path):
