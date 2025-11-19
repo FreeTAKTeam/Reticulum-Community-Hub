@@ -431,3 +431,44 @@ def test_subscribe_topic_uses_source_identity():
     assert captured["reject_tests"] == 5
     assert captured["metadata"] == {"app": "demo"}
     assert "Subscribed" in reply.content_as_string()
+
+
+def test_subscribe_topic_allows_zero_reject_tests():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.latest_reject = None
+
+        def subscribe_topic(
+            self,
+            topic_id,
+            destination,
+            reject_tests=None,
+            metadata=None,
+        ):
+            self.latest_reject = reject_tests
+            return Subscriber(
+                destination=destination,
+                topic_id=topic_id,
+                subscriber_id="sub-2",
+                reject_tests=reject_tests,
+                metadata=metadata or {},
+            )
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_identity = RNS.Identity()
+    client_dest = RNS.Destination(
+        client_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_SUBSCRIBE_TOPIC,
+        TopicID="topic-10",
+        RejectTests=0,
+    )
+    command = message.fields[LXMF.FIELD_COMMANDS][0]
+
+    reply = manager.handle_command(command, message)
+
+    assert manager.api.latest_reject == 0
+    assert "Subscribed" in reply.content_as_string()
