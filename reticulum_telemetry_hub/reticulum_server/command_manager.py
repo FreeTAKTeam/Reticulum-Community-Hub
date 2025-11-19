@@ -201,7 +201,11 @@ class CommandManager:
         if not topic_id:
             return self._reply(message, "TopicID is required")
         destination = self._identity_hex(message.source.identity)
-        reject_tests = command.get("RejectTests") or command.get("reject_tests")
+        reject_tests = None
+        if "RejectTests" in command:
+            reject_tests = command["RejectTests"]
+        elif "reject_tests" in command:
+            reject_tests = command["reject_tests"]
         metadata = command.get("Metadata") or command.get("metadata") or {}
         try:
             subscriber = self.api.subscribe_topic(
