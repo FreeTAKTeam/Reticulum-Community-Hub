@@ -47,6 +47,7 @@ from reticulum_telemetry_hub.reticulum_server.services import (
     SERVICE_FACTORIES,
     HubService,
 )
+from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 from .command_manager import CommandManager
 
 # Constants
@@ -65,6 +66,7 @@ LOG_LEVELS = {
 }
 ENV_HUB_TELEMETRY_INTERVAL = "RTH_HUB_TELEMETRY_INTERVAL"
 ENV_SERVICE_TELEMETRY_INTERVAL = "RTH_SERVICE_TELEMETRY_INTERVAL"
+TOPIC_REGISTRY_TTL_SECONDS = 5
 
 
 def _resolve_interval(value: int | None, env_var: str, default: int) -> int:
@@ -247,6 +249,7 @@ class ReticulumTelemetryHub:
             self.api,
         )
         self.topic_subscribers: dict[str, set[str]] = {}
+        self._topic_registry_last_refresh: float = 0.0
         self._refresh_topic_registry()
 
     def command_handler(self, commands: list, message: LXMF.LXMessage):
@@ -258,6 +261,8 @@ class ReticulumTelemetryHub:
         """
         for response in self.command_manager.handle_commands(commands, message):
             self.lxm_router.handle_outbound(response)
+        if self._commands_affect_subscribers(commands):
+            self._refresh_topic_registry()
 
     def delivery_callback(self, message: LXMF.LXMessage):
         """Callback function to handle incoming messages.
@@ -402,8 +407,8 @@ class ReticulumTelemetryHub:
         return None
 
     def _refresh_topic_registry(self) -> None:
+        self._topic_registry_last_refresh = time.monotonic()
         if not self.api:
-            self.topic_subscribers = {}
             return
         try:
             subscribers = self.api.list_subscribers()
@@ -422,13 +427,46 @@ class ReticulumTelemetryHub:
                 continue
             registry.setdefault(topic_id, set()).add(destination.lower())
         self.topic_subscribers = registry
+        self._topic_registry_last_refresh = time.monotonic()
 
     def _subscribers_for_topic(self, topic_id: str) -> set[str]:
         if not topic_id:
             return set()
-        if topic_id not in self.topic_subscribers:
-            self._refresh_topic_registry()
+        if not hasattr(self, "_topic_registry_last_refresh"):
+            self._topic_registry_last_refresh = time.monotonic()
+        now = time.monotonic()
+        last_refresh = getattr(self, "_topic_registry_last_refresh", 0.0)
+        is_stale = (now - last_refresh) >= TOPIC_REGISTRY_TTL_SECONDS
+        if is_stale or topic_id not in self.topic_subscribers:
+            if self.api:
+                self._refresh_topic_registry()
+            else:
+                self._topic_registry_last_refresh = now
         return self.topic_subscribers.get(topic_id, set())
+
+    def _commands_affect_subscribers(self, commands: list[dict] | None) -> bool:
+        """Return True when commands modify subscriber mappings."""
+
+        if not commands:
+            return False
+
+        subscriber_commands = {
+            CommandManager.CMD_SUBSCRIBE_TOPIC,
+            CommandManager.CMD_CREATE_SUBSCRIBER,
+            CommandManager.CMD_ADD_SUBSCRIBER,
+            CommandManager.CMD_DELETE_SUBSCRIBER,
+            CommandManager.CMD_REMOVE_SUBSCRIBER,
+            CommandManager.CMD_PATCH_SUBSCRIBER,
+        }
+
+        for command in commands:
+            if not isinstance(command, dict):
+                continue
+            name = command.get(PLUGIN_COMMAND) or command.get("Command")
+            if name in subscriber_commands:
+                return True
+
+        return False
 
     @staticmethod
     def _connection_hex(connection: RNS.Destination) -> str | None:

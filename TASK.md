@@ -4,3 +4,4 @@
 - 2025-11-19: ✅ Preserve `RejectTests=0` values when subscribing or patching subscribers.
 - 2025-11-19: ✅ Decode announce metadata using LXMF helper and ensure identity labels follow msgpack names.
 - 2025-11-19: ✅ Ensure create-subscriber commands preserve `RejectTests=0` values.
+- 2025-11-19: ✅ Refresh topic subscriber cache after subscription changes to deliver messages immediately.

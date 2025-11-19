@@ -1,4 +1,5 @@
 """Pytest fixtures shared across telemetry tests."""
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -11,10 +12,24 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
+
+
+@pytest.fixture(autouse=True)
+def reset_shared_router():
+    """Ensure each test starts with a clean shared LXMF router."""
+
+    ReticulumTelemetryHub._shared_lxm_router = None
+    yield
+    ReticulumTelemetryHub._shared_lxm_router = None
+
+
 from reticulum_telemetry_hub.embedded_lxmd.embedded import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_telemetry import telemetry_controller as tc_mod
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
-from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import TelemetryController
+from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
+    TelemetryController,
+)
 
 
 @pytest.fixture
@@ -147,4 +162,3 @@ def running_embedded_lxmd(embedded_lxmd_factory):
             harness.embedded.stop()
 
     return factory
-
