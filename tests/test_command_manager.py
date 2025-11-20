@@ -109,6 +109,188 @@ def test_handle_commands_parses_string_entries():
     assert created_topic.topic_path == "alpha/path"
 
 
+def test_handle_commands_parses_sideband_string_entries():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.created_topics: list[Topic] = []
+
+        def create_topic(self, topic: Topic) -> Topic:
+            topic.topic_id = "topic-from-sideband-str"
+            self.created_topics.append(topic)
+            return topic
+
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = {
+        "Command": CommandManager.CMD_CREATE_TOPIC,
+        "TopicName": "Alpha",
+        "TopicPath": "alpha/path",
+    }
+    message = LXMF.LXMessage(
+        server_dest,
+        client_dest,
+        fields={LXMF.FIELD_COMMANDS: [{0: json.dumps(payload)}]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.pack()
+    message.signature_validated = True
+
+    responses = manager.handle_commands(message.fields[LXMF.FIELD_COMMANDS], message)
+
+    assert responses
+    reply_text = responses[0].content_as_string()
+    assert "Topic created" in reply_text
+    assert manager.api.created_topics
+    created_topic = manager.api.created_topics[0]
+    assert created_topic.topic_name == "Alpha"
+    assert created_topic.topic_path == "alpha/path"
+
+
+def test_handle_commands_parses_sideband_dict_entries():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.created_topics: list[Topic] = []
+
+        def create_topic(self, topic: Topic) -> Topic:
+            topic.topic_id = "topic-from-sideband-dict"
+            self.created_topics.append(topic)
+            return topic
+
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = {
+        "Command": CommandManager.CMD_CREATE_TOPIC,
+        "TopicName": "Beta",
+        "TopicPath": "beta/path",
+    }
+    message = LXMF.LXMessage(
+        server_dest,
+        client_dest,
+        fields={LXMF.FIELD_COMMANDS: [{0: payload}]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.pack()
+    message.signature_validated = True
+
+    responses = manager.handle_commands(message.fields[LXMF.FIELD_COMMANDS], message)
+
+    assert responses
+    reply_text = responses[0].content_as_string()
+    assert "Topic created" in reply_text
+    assert manager.api.created_topics
+    created_topic = manager.api.created_topics[0]
+    assert created_topic.topic_name == "Beta"
+    assert created_topic.topic_path == "beta/path"
+
+
+def test_handle_commands_parses_sideband_wrapped_string_commands():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.created_topics: list[Topic] = []
+
+        def create_topic(self, topic: Topic) -> Topic:
+            topic.topic_id = "topic-from-sideband-wrapped-str"
+            self.created_topics.append(topic)
+            return topic
+
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = {
+        "Command": CommandManager.CMD_CREATE_TOPIC,
+        "TopicName": "Gamma",
+        "TopicPath": "gamma/path",
+    }
+    wrapped_command = json.dumps({0: json.dumps(payload)})
+    message = LXMF.LXMessage(
+        server_dest,
+        client_dest,
+        fields={LXMF.FIELD_COMMANDS: [wrapped_command]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.pack()
+    message.signature_validated = True
+
+    responses = manager.handle_commands(message.fields[LXMF.FIELD_COMMANDS], message)
+
+    assert responses
+    reply_text = responses[0].content_as_string()
+    assert "Topic created" in reply_text
+    assert manager.api.created_topics
+    created_topic = manager.api.created_topics[0]
+    assert created_topic.topic_name == "Gamma"
+    assert created_topic.topic_path == "gamma/path"
+
+
+def test_handle_commands_parses_sideband_wrapped_object_commands():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.created_topics: list[Topic] = []
+
+        def create_topic(self, topic: Topic) -> Topic:
+            topic.topic_id = "topic-from-sideband-wrapped-obj"
+            self.created_topics.append(topic)
+            return topic
+
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = {
+        "Command": CommandManager.CMD_CREATE_TOPIC,
+        "TopicName": "Delta",
+        "TopicPath": "delta/path",
+    }
+    wrapped_command = json.dumps({0: payload})
+    message = LXMF.LXMessage(
+        server_dest,
+        client_dest,
+        fields={LXMF.FIELD_COMMANDS: [wrapped_command]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.pack()
+    message.signature_validated = True
+
+    responses = manager.handle_commands(message.fields[LXMF.FIELD_COMMANDS], message)
+
+    assert responses
+    reply_text = responses[0].content_as_string()
+    assert "Topic created" in reply_text
+    assert manager.api.created_topics
+    created_topic = manager.api.created_topics[0]
+    assert created_topic.topic_name == "Delta"
+    assert created_topic.topic_path == "delta/path"
+
+
 def test_create_topic_interactive_prompt_flow():
     class DummyAPI:
         def __init__(self) -> None:
