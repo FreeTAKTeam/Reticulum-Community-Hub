@@ -264,12 +264,6 @@ class TelemetryController:
                     "lxmf",
                     "delivery",
                 )
-                message = LXMF.LXMessage(
-                        dest,
-                        my_lxm_dest,
-                        "Telemetry data",
-                        desired_method=LXMF.LXMessage.DIRECT,
-                    )
                 for tel in teles:
                     peer_hash = self._peer_hash_bytes(tel)
                     if peer_hash is None:
@@ -290,6 +284,13 @@ class TelemetryController:
                             None,
                         ]
                     )
+                content_payload = {"telemetry": self._json_safe(human_readable_entries)}
+                message = LXMF.LXMessage(
+                    dest,
+                    my_lxm_dest,
+                    json.dumps(content_payload),
+                    desired_method=LXMF.LXMessage.DIRECT,
+                )
             # Sideband expects telemetry streams as plain lists; avoid
             # double-encoding the field so clients can iterate entries directly.
             message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packed_tels
