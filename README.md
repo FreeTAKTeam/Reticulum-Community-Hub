@@ -132,6 +132,22 @@ python -m reticulum_telemetry_hub.reticulum_server \
     [--daemon --service gpsd]
 ```
 
+### Sending commands with parameters
+
+RTH consumes LXMF commands from the `Commands` field (numeric field ID `9`). Each command is a JSON object with a `Command` key plus any required parameters, wrapped in an array. The simplest format looks like:
+
+```json
+[{"Command": "join"}]
+```
+
+Commands that need parameters keep the same shape—add the fields alongside `Command` and send the array in the LXMF `Commands` field (not the message body). For example, `CreateTopic` needs a `TopicName` and `TopicPath`:
+
+```json
+[{"Command": "CreateTopic", "TopicName": "Weather", "TopicPath": "environment/weather"}]
+```
+
+You can stack multiple commands by adding more objects to the array. If a required field is missing, the hub will ask for it in a reply. The full list of supported command names and their sample payloads lives in `reticulum_telemetry_hub/reticulum_server/command_text.py`.
+
 ### Topic-targeted broadcasts
 
 RTH keeps a lightweight topic registry via its API, letting operators create topics, add subscribers and limit message delivery to interested peers. Use the `CreateTopic`/`ListTopic` commands (or the matching API methods) to define topic IDs and describe how they map to your operational channels. Connected clients can then issue the `SubscribeTopic` command so the hub records their LXMF destination hashes under the appropriate topic.
