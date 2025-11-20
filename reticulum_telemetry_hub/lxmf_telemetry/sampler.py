@@ -56,11 +56,13 @@ class TelemetrySampler:
         hub_collectors: Sequence[TelemetryCollector | Callable[[], object]] | None = None,
         service_collectors: Sequence[TelemetryCollector | Callable[[], object]] | None = None,
         telemeter_manager: TelemeterManager | None = None,
+        broadcast_updates: bool = False,
     ) -> None:
         self._controller = controller
         self._router = router
         self._source_destination = source_destination
         self._connections = connections if connections is not None else {}
+        self._broadcast_updates = broadcast_updates
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._jobs: list[_SamplerJob] = []
@@ -169,6 +171,9 @@ class TelemetrySampler:
         peer_dest = sample.peer_dest or self._local_peer_dest
         encoded = self._controller.ingest_local_payload(sample.payload, peer_dest=peer_dest)
         if not encoded:
+            return
+
+        if not self._broadcast_updates:
             return
 
         destinations: Sequence[RNS.Destination]
