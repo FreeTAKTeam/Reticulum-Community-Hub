@@ -66,15 +66,38 @@ def test_sampler_publishes_snapshots(telemetry_controller):
     sampler.stop()
 
     assert samples
-    assert router.messages
-
-    message = router.messages[-1]
-    assert LXMF.FIELD_TELEMETRY in message.fields
-    decoded = unpackb(message.fields[LXMF.FIELD_TELEMETRY], strict_map_key=False)
-    assert SID_TIME in decoded
-
+    assert not router.messages
     stored = telemetry_controller.get_telemetry()
     assert stored
+
+
+def test_sampler_can_broadcast_when_enabled(telemetry_controller):
+    router = DummyRouter()
+    server_dest = _destination()
+    client_dest = _destination()
+    connections = DummyConnections({client_dest.identity.hash: client_dest})
+    manager = TelemeterManager()
+
+    def collector():
+        payload = {SID_TIME: int(time.time())}
+        return payload
+
+    sampler = TelemetrySampler(
+        telemetry_controller,
+        router,
+        server_dest,
+        connections=connections,
+        hub_interval=0.01,
+        hub_collectors=[collector],
+        telemeter_manager=manager,
+        broadcast_updates=True,
+    )
+
+    sampler.start()
+    time.sleep(0.05)
+    sampler.stop()
+
+    assert router.messages
 
 
 def test_sampler_schedules_service_collectors_independently(telemetry_controller):
@@ -112,7 +135,7 @@ def test_sampler_schedules_service_collectors_independently(telemetry_controller
 
     assert len(hub_calls) > len(service_calls)
     assert service_calls
-    assert router.messages
+    assert not router.messages
 
 
 def test_sampler_uses_telemeter_manager_snapshot(telemetry_controller):
@@ -135,8 +158,8 @@ def test_sampler_uses_telemeter_manager_snapshot(telemetry_controller):
     time.sleep(0.05)
     sampler.stop()
 
-    assert router.messages
-    payload = unpackb(
-        router.messages[-1].fields[LXMF.FIELD_TELEMETRY], strict_map_key=False
-    )
-    assert SID_TIME in payload
+    assert not router.messages
+    stored = telemetry_controller.get_telemetry()
+    assert stored
+    sensor_ids = {sensor.sid for sensor in stored[-1].sensors}
+    assert SID_TIME in sensor_ids
