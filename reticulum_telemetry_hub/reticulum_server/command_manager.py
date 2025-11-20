@@ -42,6 +42,19 @@ class CommandManager:
     CMD_PATCH_SUBSCRIBER = "PatchSubscriber"
     CMD_REMOVE_SUBSCRIBER = "RemoveSubscriber"
     CMD_GET_APP_INFO = "getAppInfo"
+    POSITIONAL_FIELDS: Dict[str, List[str]] = {
+        CMD_CREATE_TOPIC: ["TopicName", "TopicPath"],
+        CMD_RETRIEVE_TOPIC: ["TopicID"],
+        CMD_DELETE_TOPIC: ["TopicID"],
+        CMD_PATCH_TOPIC: ["TopicID", "TopicName", "TopicPath", "TopicDescription"],
+        CMD_SUBSCRIBE_TOPIC: ["TopicID", "RejectTests"],
+        CMD_CREATE_SUBSCRIBER: ["Destination", "TopicID"],
+        CMD_ADD_SUBSCRIBER: ["Destination", "TopicID"],
+        CMD_RETRIEVE_SUBSCRIBER: ["SubscriberID"],
+        CMD_DELETE_SUBSCRIBER: ["SubscriberID"],
+        CMD_REMOVE_SUBSCRIBER: ["SubscriberID"],
+        CMD_PATCH_SUBSCRIBER: ["SubscriberID"],
+    }
 
     def __init__(
         self,
@@ -83,12 +96,24 @@ class CommandManager:
     def _normalize_command(
         self, raw_command: Any, message: LXMF.LXMessage
     ) -> tuple[Optional[dict], Optional[LXMF.LXMessage]]:
-        """Normalize incoming command payloads, including JSON-wrapped strings."""
+        """Normalize incoming command payloads, including JSON-wrapped strings.
+
+        Args:
+            raw_command (Any): The incoming payload from LXMF.
+            message (LXMF.LXMessage): Source LXMF message for contextual replies.
+
+        Returns:
+            tuple[Optional[dict], Optional[LXMF.LXMessage]]: Normalized payload and
+            optional error reply when parsing fails.
+        """
 
         if isinstance(raw_command, str):
             raw_command, error_response = self._parse_json_object(raw_command, message)
             if error_response is not None:
                 return None, error_response
+
+        if isinstance(raw_command, (list, tuple)):
+            raw_command = {index: value for index, value in enumerate(raw_command)}
 
         if isinstance(raw_command, dict):
             normalized, error_response = self._unwrap_sideband_payload(
@@ -96,6 +121,7 @@ class CommandManager:
             )
             if error_response is not None:
                 return None, error_response
+            normalized = self._apply_positional_payload(normalized)
             return normalized, None
 
         return None, self._reply(
@@ -158,6 +184,94 @@ class CommandManager:
                     if parsed is not None:
                         return parsed, None
         return payload, None
+
+    def _apply_positional_payload(self, payload: dict) -> dict:
+        """Expand numeric-key payloads into named command dictionaries.
+
+        Sideband can emit command payloads as ``{0: "CreateTopic", 1: "Weather"}``
+        instead of JSON objects. This helper maps known positional arguments into
+        the expected named fields so downstream handlers receive structured data.
+
+        Args:
+            payload (dict): Raw command payload.
+
+        Returns:
+            dict: Normalized payload including "Command" and PLUGIN_COMMAND keys
+            when conversion succeeds; otherwise the original payload.
+        """
+
+        if PLUGIN_COMMAND in payload or "Command" in payload:
+            has_named_fields = any(not self._is_numeric_key(key) for key in payload)
+            if has_named_fields:
+                return payload
+
+        numeric_keys = {key for key in payload if self._is_numeric_key(key)}
+        if not numeric_keys:
+            return payload
+
+        command_name = payload.get(0) if 0 in payload else payload.get("0")
+        if not isinstance(command_name, str):
+            return payload
+
+        positional_fields = self._positional_fields_for_command(command_name)
+        if not positional_fields:
+            return payload
+
+        normalized: dict = {PLUGIN_COMMAND: command_name, "Command": command_name}
+        for index, field_name in enumerate(positional_fields, start=1):
+            value = self._numeric_lookup(payload, index)
+            if value is not None:
+                normalized[field_name] = value
+
+        for key, value in payload.items():
+            if self._is_numeric_key(key):
+                continue
+            normalized[key] = value
+        return normalized
+
+    def _positional_fields_for_command(self, command_name: str) -> List[str]:
+        """Return positional field hints for known commands.
+
+        Args:
+            command_name (str): Name of the incoming command.
+
+        Returns:
+            List[str]: Ordered field names expected for positional payloads.
+        """
+
+        return self.POSITIONAL_FIELDS.get(command_name, [])
+
+    @staticmethod
+    def _numeric_lookup(payload: dict, index: int) -> Any:
+        """Fetch a value from digit-only keys in either int or str form.
+
+        Args:
+            payload (dict): Payload to search.
+            index (int): Numeric index to look up.
+
+        Returns:
+            Any: The value bound to the numeric key when present.
+        """
+
+        if index in payload:
+            return payload.get(index)
+        return payload.get(str(index))
+
+    @staticmethod
+    def _is_numeric_key(key: Any) -> bool:
+        """Return True when the key is a digit-like identifier.
+
+        Args:
+            key (Any): Key to evaluate.
+
+        Returns:
+            bool: True when the key contains only digits.
+        """
+
+        try:
+            return str(key).isdigit()
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # individual command processing
@@ -354,6 +468,10 @@ class CommandManager:
     def _handle_unknown_command(
         self, name: str, message: LXMF.LXMessage
     ) -> LXMF.LXMessage:
+        sender = self._identity_hex(message.source.identity)
+        RNS.log(
+            f"Unknown command '{name}' from {sender}", getattr(RNS, "LOG_ERROR", 1)
+        )
         help_text = build_help_text(self)
         payload = f"Unknown command '{name}'.\n{help_text}"
         return self._reply(message, payload)
