@@ -8,3 +8,5 @@
 - 2025-11-19: ✅ Persist joined client list across Reticulum Telemetry Hub sessions.
 - 2025-11-19: ✅ Handle string-wrapped LXMF commands and prompt for missing command parameters interactively.
 - 2025-11-19: ✅ Accept snake_case command fields when prompting for missing data.
+- 2025-11-20: ✅ Normalize Sideband-wrapped commands to preserve telemetry commands.
+- 2025-11-20: ✅ Normalize Sideband-wrapped command payloads carrying JSON objects.
