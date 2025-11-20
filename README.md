@@ -1,4 +1,4 @@
-﻿# Reticulum-Telemetry-Hub (RTH)
+# Reticulum-Telemetry-Hub (RTH)
 
 ![image](https://github.com/user-attachments/assets/ba29799c-7194-4052-aedf-1b5e1c8648d5)
 
