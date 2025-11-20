@@ -172,6 +172,8 @@ This is the exact payload the hub expects (`reticulum_telemetry_hub/reticulum_se
 
 Current Sideband builds wrap whatever you paste into the `Commands` field as a quoted string, so the hub sees `Fields : {9: [{0: '{\"Command\":\"CreateTopic\"...`}]}` and ignores it. RTH expects a JSON object inside the commands array, not a quoted blob, and there is no Sideband UI that emits that today. Until RTH is updated to either parse the wrapped string or prompt interactively (e.g., ask for `TopicName` and `TopicPath` after receiving `CreateTopic`), the only reliable way to create topics is via a client that sends real JSON (e.g., the HTTP API, a custom LXMF sender, or by patching RTH to unwrap the string). If you are testing, check the RTH log; if you see quotes around the whole command, the hub will not act on it with the current code.
 
+RTH now also tolerates Sideband's positional fallback that shows up in logs like `Fields: {9: {0: "CreateTopic", 1: "Weather", 2: "environment/weather"}}`. The hub maps the numeric positions into the expected fields for known commands, so the payload above is treated the same as the JSON example earlier.
+
 Any message sent to the hub that includes a `TopicID` (in the LXMF fields or a command payload) will only be forwarded to the subscribers registered for that topic. The hub automatically refreshes the registry from the API, so new subscriptions take effect without restarting the process.
 
 ### Command-line options

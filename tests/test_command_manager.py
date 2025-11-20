@@ -291,6 +291,50 @@ def test_handle_commands_parses_sideband_wrapped_object_commands():
     assert created_topic.topic_path == "delta/path"
 
 
+def test_handle_commands_accepts_positional_numeric_payload():
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.created_topics: list[Topic] = []
+
+        def create_topic(self, topic: Topic) -> Topic:
+            topic.topic_id = "topic-from-positional"
+            self.created_topics.append(topic)
+            return topic
+
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = {
+        0: CommandManager.CMD_CREATE_TOPIC,
+        1: "Weather",
+        2: "environment/weather",
+    }
+    message = LXMF.LXMessage(
+        server_dest,
+        client_dest,
+        fields={LXMF.FIELD_COMMANDS: [payload]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.pack()
+    message.signature_validated = True
+
+    responses = manager.handle_commands(message.fields[LXMF.FIELD_COMMANDS], message)
+
+    assert responses
+    reply_text = responses[0].content_as_string()
+    assert "Topic created" in reply_text
+    created_topic = manager.api.created_topics[0]
+    assert created_topic.topic_name == "Weather"
+    assert created_topic.topic_path == "environment/weather"
+
+
 def test_create_topic_interactive_prompt_flow():
     class DummyAPI:
         def __init__(self) -> None:
@@ -345,6 +389,40 @@ def test_create_topic_interactive_prompt_flow():
     assert created_topic.topic_name == "Weather"
     assert created_topic.topic_path == "environment/weather"
     assert manager.pending_field_requests == {}
+
+
+def test_unknown_command_logs_error(monkeypatch):
+    class DummyAPI:
+        def list_topics(self):
+            return []
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    logs: list[tuple[str, int | None]] = []
+
+    def fake_log(message, level=None):
+        logs.append((message, level))
+
+    monkeypatch.setattr(RNS, "log", fake_log)
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    message = make_message(server_dest, client_dest, "NotACommand")
+
+    responses = manager.handle_commands(message.fields[LXMF.FIELD_COMMANDS], message)
+
+    assert responses
+    reply_text = responses[0].content_as_string()
+    assert "Unknown command" in reply_text
+    assert logs
+    relevant = [entry for entry in logs if "NotACommand" in entry[0]]
+    assert relevant
+    logged_message, logged_level = relevant[-1]
+    assert "NotACommand" in logged_message
+    assert logged_level == getattr(RNS, "LOG_ERROR", 1)
 
 
 def test_create_topic_accepts_snake_case_fields():
