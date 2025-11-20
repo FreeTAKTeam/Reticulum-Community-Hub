@@ -1,4 +1,4 @@
-# Reticulum-Telemetry-Hub (RTH)
+﻿# Reticulum-Telemetry-Hub (RTH)
 
 ![image](https://github.com/user-attachments/assets/ba29799c-7194-4052-aedf-1b5e1c8648d5)
 
@@ -156,13 +156,13 @@ Parameters are provided alongside the command name in the same object. RTH toler
 [{"Command": "PatchTopic", "TopicID": "<TopicID>", "TopicDescription": "New description"}]
 ```
 
-You can stack multiple commands by adding more objects to the array. If a required field is missing, the hub will ask for it and keep the partially supplied values. Reply with another command object that includes the missing fields—RTH merges it with your earlier attempt:
+You can stack multiple commands by adding more objects to the array. If a required field is missing, the hub will ask for it and keep the partially supplied values. Reply with another command object that includes the missing fields--RTH merges it with your earlier attempt:
 
 1. Send a partial command: `[{"Command": "CreateTopic", "TopicName": "Weather"}]`
 2. The hub replies asking for `TopicPath` and shows an example.
 3. Reply with the missing field only (or the full payload): `[{"Command": "CreateTopic", "TopicPath": "environment/weather"}]`
 
-The full list of supported command names and their sample payloads lives in `reticulum_telemetry_hub/reticulum_server/command_text.py`.
+The full list of supported command names (with examples) is in `docs/supportedCommands.md`; the in-code reference lives in `reticulum_telemetry_hub/reticulum_server/command_text.py`.
 
 ### Topic-targeted broadcasts
 
@@ -268,3 +268,5 @@ You can help support the continued development of open, free and private communi
 * Ethereum: 0xFDabC71AC4c0C78C95aDDDe3B4FA19d6273c5E73
 * Bitcoin: 35G9uWVzrpJJibzUwpNUQGQNFzLirhrYAH
 * Ko-Fi: https://ko-fi.com/markqvist
+
+
