@@ -27,6 +27,7 @@ or run in headless mode for unattended deployments.
 """
 
 import argparse
+import json
 import os
 import time
 from pathlib import Path
@@ -67,6 +68,7 @@ LOG_LEVELS = {
 ENV_HUB_TELEMETRY_INTERVAL = "RTH_HUB_TELEMETRY_INTERVAL"
 ENV_SERVICE_TELEMETRY_INTERVAL = "RTH_SERVICE_TELEMETRY_INTERVAL"
 TOPIC_REGISTRY_TTL_SECONDS = 5
+ESCAPED_COMMAND_PREFIX = "\\\\\\"
 
 
 def _resolve_interval(value: int | None, env_var: str, default: int) -> int:
@@ -269,6 +271,92 @@ class ReticulumTelemetryHub:
         if self._commands_affect_subscribers(commands):
             self._refresh_topic_registry()
 
+    def _parse_escape_prefixed_commands(
+        self, message: LXMF.LXMessage
+    ) -> list[dict] | None:
+        """Parse a command list from an escape-prefixed message body.
+
+        The `Commands` LXMF field may be unavailable in some clients, so the
+        hub accepts a leading ``\\\\\\`` prefix in the message content and
+        treats the remainder as a command payload.
+
+        Args:
+            message (LXMF.LXMessage): LXMF message object.
+
+        Returns:
+            list[dict] | None: Normalized command list, an empty list when the
+                payload is malformed, or ``None`` when no escape prefix is
+                present.
+        """
+
+        if LXMF.FIELD_COMMANDS in message.fields:
+            return None
+
+        if message.content is None or message.content == b"":
+            return None
+
+        try:
+            content_text = message.content_as_string()
+        except Exception as exc:
+            RNS.log(
+                f"Unable to decode message content for escape-prefixed commands: {exc}",
+                RNS.LOG_WARNING,
+            )
+            return []
+
+        if not content_text.startswith(ESCAPED_COMMAND_PREFIX):
+            return None
+
+        # Reason: the prefix signals that the body should be treated as a command
+        # payload even when the `Commands` field is unavailable.
+        body = content_text[len(ESCAPED_COMMAND_PREFIX) :].strip()
+        if not body:
+            RNS.log(
+                "Ignored escape-prefixed command payload with no body.",
+                RNS.LOG_WARNING,
+            )
+            return []
+
+        parsed_payload = None
+        if body.startswith("{") or body.startswith("["):
+            try:
+                parsed_payload = json.loads(body)
+            except json.JSONDecodeError as exc:
+                RNS.log(
+                    f"Failed to parse escape-prefixed JSON payload: {exc}",
+                    RNS.LOG_WARNING,
+                )
+                return []
+
+        if parsed_payload is None:
+            return [{"Command": body}]
+
+        if isinstance(parsed_payload, dict):
+            return [parsed_payload]
+
+        if isinstance(parsed_payload, list):
+            if not parsed_payload:
+                RNS.log(
+                    "Ignored escape-prefixed command list with no entries.",
+                    RNS.LOG_WARNING,
+                )
+                return []
+
+            if not all(isinstance(item, dict) for item in parsed_payload):
+                RNS.log(
+                    "Escape-prefixed JSON must be an object or list of objects.",
+                    RNS.LOG_WARNING,
+                )
+                return []
+
+            return parsed_payload
+
+        RNS.log(
+            "Escape-prefixed payload must decode to a JSON object or list of objects.",
+            RNS.LOG_WARNING,
+        )
+        return []
+
     def delivery_callback(self, message: LXMF.LXMessage):
         """Callback function to handle incoming messages.
 
@@ -296,8 +384,13 @@ class ReticulumTelemetryHub:
             self.log_delivery_details(message, time_string, signature_string)
 
             # Handle the commands
-            if message.signature_validated and LXMF.FIELD_COMMANDS in message.fields:
-                self.command_handler(message.fields[LXMF.FIELD_COMMANDS], message)
+            if message.signature_validated:
+                if LXMF.FIELD_COMMANDS in message.fields:
+                    self.command_handler(message.fields[LXMF.FIELD_COMMANDS], message)
+                else:
+                    escape_commands = self._parse_escape_prefixed_commands(message)
+                    if escape_commands:
+                        self.command_handler(escape_commands, message)
 
             telemetry_handled = self.tel_controller.handle_message(message)
             if telemetry_handled:

@@ -25,3 +25,4 @@ Place commands in the LXMF `Commands` field (field ID `9`) as a JSON array of ob
 Notes:
 - RTH accepts common field name variants (e.g., `TopicID`, `topic_id`, `topic_id`, `TopicPath`, `topic_path`).
 - If required fields are missing, the hub replies with the missing keys and merges your follow-up payload with the original.
+- When the `Commands` field is unavailable, prefix the message body with ``\\\`` so the hub treats it as a command payload (e.g., ``\\\join`` or ``\\\{"Command":"SubscribeTopic","TopicID":"<TopicID>"}``).
