@@ -139,6 +139,9 @@ RTH consumes LXMF commands from the `Commands` field (numeric field ID `9`). Eac
 - A plain JSON object: `[{"Command": "join"}]`
 - A JSON string that parses to an object: `[ "{\"Command\": \"join\"}" ]`
 - Sideband-style numeric wrapper that RTH unwraps automatically: `[{"0": "{\"Command\":\"join\"}"}]`
+- An escape-prefixed message body when you cannot populate the `Commands` field:
+  - Plain text: ``\\\join`` (RTH wraps this as `[{"Command":"join"}]`)
+  - JSON: ``\\\{"Command":"CreateTopic","TopicName":"Weather","TopicPath":"environment/weather"}``
 
 Parameters are provided alongside the command name in the same object. RTH tolerates common casing differences (`TopicID`, `topic_id`, `topic_id`, etc.) and will prompt for anything still missing.
 
