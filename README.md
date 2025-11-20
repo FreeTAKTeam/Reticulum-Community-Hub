@@ -134,19 +134,35 @@ python -m reticulum_telemetry_hub.reticulum_server \
 
 ### Sending commands with parameters
 
-RTH consumes LXMF commands from the `Commands` field (numeric field ID `9`). Each command is a JSON object with a `Command` key plus any required parameters, wrapped in an array. The simplest format looks like:
+RTH consumes LXMF commands from the `Commands` field (numeric field ID `9`). Each command is a JSON object inside that array and may include either the string key `Command` or the numeric key `0` (`PLUGIN_COMMAND`) for the command name. The server now accepts the following shapes:
 
-```json
-[{"Command": "join"}]
-```
+- A plain JSON object: `[{"Command": "join"}]`
+- A JSON string that parses to an object: `[ "{\"Command\": \"join\"}" ]`
+- Sideband-style numeric wrapper that RTH unwraps automatically: `[{"0": "{\"Command\":\"join\"}"}]`
 
-Commands that need parameters keep the same shape—add the fields alongside `Command` and send the array in the LXMF `Commands` field (not the message body). For example, `CreateTopic` needs a `TopicName` and `TopicPath`:
+Parameters are provided alongside the command name in the same object. RTH tolerates common casing differences (`TopicID`, `topic_id`, `topic_id`, etc.) and will prompt for anything still missing.
+
+**Typical commands with parameters**
 
 ```json
 [{"Command": "CreateTopic", "TopicName": "Weather", "TopicPath": "environment/weather"}]
 ```
 
-You can stack multiple commands by adding more objects to the array. If a required field is missing, the hub will ask for it in a reply. The full list of supported command names and their sample payloads lives in `reticulum_telemetry_hub/reticulum_server/command_text.py`.
+```json
+[{"Command": "SubscribeTopic", "TopicID": "<TopicID>", "RejectTests": true, "Metadata": {"role": "field-station"}}]
+```
+
+```json
+[{"Command": "PatchTopic", "TopicID": "<TopicID>", "TopicDescription": "New description"}]
+```
+
+You can stack multiple commands by adding more objects to the array. If a required field is missing, the hub will ask for it and keep the partially supplied values. Reply with another command object that includes the missing fields—RTH merges it with your earlier attempt:
+
+1. Send a partial command: `[{"Command": "CreateTopic", "TopicName": "Weather"}]`
+2. The hub replies asking for `TopicPath` and shows an example.
+3. Reply with the missing field only (or the full payload): `[{"Command": "CreateTopic", "TopicPath": "environment/weather"}]`
+
+The full list of supported command names and their sample payloads lives in `reticulum_telemetry_hub/reticulum_server/command_text.py`.
 
 ### Topic-targeted broadcasts
 
