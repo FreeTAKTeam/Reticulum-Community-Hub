@@ -114,9 +114,14 @@ class AnnounceHandler:
             return "unknown"
 
         if isinstance(app_data, bytes):
-            display_name = display_name_from_app_data(app_data)
+            try:
+                display_name = display_name_from_app_data(app_data)
+            except Exception:
+                display_name = None
+
             if display_name is not None:
                 return display_name.strip()
+
             try:
                 return app_data.decode("utf-8").strip()
             except UnicodeDecodeError:
