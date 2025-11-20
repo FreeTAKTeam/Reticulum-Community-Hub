@@ -99,6 +99,26 @@ class CommandManager:
                 )
             return parsed, None
         if isinstance(raw_command, dict):
+            if len(raw_command) == 1:
+                key = next(iter(raw_command))
+                if isinstance(key, (int, str)) and str(key).isdigit():
+                    payload = raw_command[key]
+                    if isinstance(payload, dict):
+                        return payload, None
+                    if isinstance(payload, str) and payload.lstrip().startswith("{"):
+                        try:
+                            parsed_payload = json.loads(payload)
+                        except json.JSONDecodeError:
+                            error = self._reply(
+                                message,
+                                f"Command payload is not valid JSON: {payload!r}",
+                            )
+                            return None, error
+                        if not isinstance(parsed_payload, dict):
+                            return None, self._reply(
+                                message, "Parsed command must be a JSON object"
+                            )
+                        return parsed_payload, None
             return raw_command, None
         return None, self._reply(
             message, f"Unsupported command payload type: {type(raw_command).__name__}"
