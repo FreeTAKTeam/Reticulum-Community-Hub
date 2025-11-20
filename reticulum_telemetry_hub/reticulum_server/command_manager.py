@@ -86,43 +86,78 @@ class CommandManager:
         """Normalize incoming command payloads, including JSON-wrapped strings."""
 
         if isinstance(raw_command, str):
-            try:
-                parsed = json.loads(raw_command)
-            except json.JSONDecodeError:
-                error = self._reply(
-                    message, f"Command payload is not valid JSON: {raw_command!r}"
-                )
-                return None, error
-            if not isinstance(parsed, dict):
-                return None, self._reply(
-                    message, "Parsed command must be a JSON object"
-                )
-            return parsed, None
+            raw_command, error_response = self._parse_json_object(raw_command, message)
+            if error_response is not None:
+                return None, error_response
+
         if isinstance(raw_command, dict):
-            if len(raw_command) == 1:
-                key = next(iter(raw_command))
-                if isinstance(key, (int, str)) and str(key).isdigit():
-                    payload = raw_command[key]
-                    if isinstance(payload, dict):
-                        return payload, None
-                    if isinstance(payload, str) and payload.lstrip().startswith("{"):
-                        try:
-                            parsed_payload = json.loads(payload)
-                        except json.JSONDecodeError:
-                            error = self._reply(
-                                message,
-                                f"Command payload is not valid JSON: {payload!r}",
-                            )
-                            return None, error
-                        if not isinstance(parsed_payload, dict):
-                            return None, self._reply(
-                                message, "Parsed command must be a JSON object"
-                            )
-                        return parsed_payload, None
-            return raw_command, None
+            normalized, error_response = self._unwrap_sideband_payload(
+                raw_command, message
+            )
+            if error_response is not None:
+                return None, error_response
+            return normalized, None
+
         return None, self._reply(
             message, f"Unsupported command payload type: {type(raw_command).__name__}"
         )
+
+    def _parse_json_object(
+        self, payload: str, message: LXMF.LXMessage
+    ) -> tuple[Optional[dict], Optional[LXMF.LXMessage]]:
+        """Parse a JSON string and ensure it represents an object.
+
+        Args:
+            payload (str): Raw JSON string containing command data.
+            message (LXMF.LXMessage): Source LXMF message for error replies.
+
+        Returns:
+            tuple[Optional[dict], Optional[LXMF.LXMessage]]: Parsed JSON
+            object or an error response when parsing fails.
+        """
+
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            error = self._reply(
+                message, f"Command payload is not valid JSON: {payload!r}"
+            )
+            return None, error
+        if not isinstance(parsed, dict):
+            return None, self._reply(message, "Parsed command must be a JSON object")
+        return parsed, None
+
+    def _unwrap_sideband_payload(
+        self, payload: dict, message: LXMF.LXMessage
+    ) -> tuple[dict, Optional[LXMF.LXMessage]]:
+        """Remove Sideband numeric-key wrappers and parse nested JSON content.
+
+        Args:
+            payload (dict): Incoming command payload.
+            message (LXMF.LXMessage): Source LXMF message for error replies.
+
+        Returns:
+            tuple[dict, Optional[LXMF.LXMessage]]: Normalized command payload and
+            an optional error response when nested parsing fails.
+        """
+
+        if len(payload) == 1:
+            key = next(iter(payload))
+            if isinstance(key, (int, str)) and str(key).isdigit():
+                inner_payload = payload[key]
+                if isinstance(inner_payload, dict):
+                    return inner_payload, None
+                if isinstance(inner_payload, str) and inner_payload.lstrip().startswith(
+                    "{"
+                ):
+                    parsed, error_response = self._parse_json_object(
+                        inner_payload, message
+                    )
+                    if error_response is not None:
+                        return payload, error_response
+                    if parsed is not None:
+                        return parsed, None
+        return payload, None
 
     # ------------------------------------------------------------------
     # individual command processing
