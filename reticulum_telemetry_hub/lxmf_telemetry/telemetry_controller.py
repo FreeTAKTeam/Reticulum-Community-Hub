@@ -299,7 +299,7 @@ class TelemetryController:
             )
             print(f"Sending telemetry of {len(human_readable_entries)} clients")
             print(
-                "Telemetry response in human readeble format (JSON): "
+                "Telemetry response in human readeble format: "
                 f"{readable_json}"
             )
             return message
