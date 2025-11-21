@@ -104,3 +104,62 @@ def test_delivery_callback_ignores_non_prefixed_bodies():
     hub.delivery_callback(incoming)
 
     assert not received
+
+
+def test_delivery_callback_suppresses_broadcast_for_escape_commands():
+    """Ensure escape-prefixed command bodies are not echoed to clients."""
+    hub = _make_stub_hub()
+    received = []
+    broadcasts: list[tuple] = []
+
+    def record(commands, message):
+        received.append(commands)
+
+    def record_broadcast(*args, **kwargs):
+        broadcasts.append((args, kwargs))
+
+    hub.command_handler = record
+    hub.send_message = record_broadcast
+
+    dest_one = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = f"{ESCAPED_COMMAND_PREFIX}{CommandManager.CMD_JOIN}"
+    incoming = LXMF.LXMessage(hub.my_lxmf_dest, dest_one, payload, fields={})
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+
+    assert received == [[{"Command": CommandManager.CMD_JOIN}]]
+    assert broadcasts == []
+
+
+def test_delivery_callback_suppresses_broadcast_for_lxmf_commands():
+    """Ensure LXMF command fields do not broadcast message bodies."""
+    hub = _make_stub_hub()
+    received = []
+    broadcasts: list[tuple] = []
+
+    def record(commands, message):
+        received.append(commands)
+
+    def record_broadcast(*args, **kwargs):
+        broadcasts.append((args, kwargs))
+
+    hub.command_handler = record
+    hub.send_message = record_broadcast
+
+    dest_one = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    command_fields = [{"Command": CommandManager.CMD_LIST_CLIENTS}]
+    incoming = LXMF.LXMessage(
+        hub.my_lxmf_dest, dest_one, CommandManager.CMD_LIST_CLIENTS, fields={}
+    )
+    incoming.fields[LXMF.FIELD_COMMANDS] = command_fields
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+
+    assert received == [command_fields]
+    assert broadcasts == []

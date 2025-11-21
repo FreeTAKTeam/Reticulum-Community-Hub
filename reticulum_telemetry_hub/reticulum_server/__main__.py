@@ -273,7 +273,7 @@ class ReticulumTelemetryHub:
 
     def _parse_escape_prefixed_commands(
         self, message: LXMF.LXMessage
-    ) -> list[dict] | None:
+    ) -> tuple[list[dict] | None, bool]:
         """Parse a command list from an escape-prefixed message body.
 
         The `Commands` LXMF field may be unavailable in some clients, so the
@@ -284,16 +284,17 @@ class ReticulumTelemetryHub:
             message (LXMF.LXMessage): LXMF message object.
 
         Returns:
-            list[dict] | None: Normalized command list, an empty list when the
-                payload is malformed, or ``None`` when no escape prefix is
-                present.
+            tuple[list[dict] | None, bool]: Normalized command list, an empty
+                list when the payload is malformed, or ``None`` when no escape
+                prefix is present, paired with a boolean indicating whether the
+                escape prefix was detected.
         """
 
         if LXMF.FIELD_COMMANDS in message.fields:
-            return None
+            return None, False
 
         if message.content is None or message.content == b"":
-            return None
+            return None, False
 
         try:
             content_text = message.content_as_string()
@@ -302,10 +303,10 @@ class ReticulumTelemetryHub:
                 f"Unable to decode message content for escape-prefixed commands: {exc}",
                 RNS.LOG_WARNING,
             )
-            return []
+            return [], False
 
         if not content_text.startswith(ESCAPED_COMMAND_PREFIX):
-            return None
+            return None, False
 
         # Reason: the prefix signals that the body should be treated as a command
         # payload even when the `Commands` field is unavailable.
@@ -315,7 +316,7 @@ class ReticulumTelemetryHub:
                 "Ignored escape-prefixed command payload with no body.",
                 RNS.LOG_WARNING,
             )
-            return []
+            return [], True
 
         parsed_payload = None
         if body.startswith("{") or body.startswith("["):
@@ -326,13 +327,13 @@ class ReticulumTelemetryHub:
                     f"Failed to parse escape-prefixed JSON payload: {exc}",
                     RNS.LOG_WARNING,
                 )
-                return []
+                return [], True
 
         if parsed_payload is None:
-            return [{"Command": body}]
+            return [{"Command": body}], True
 
         if isinstance(parsed_payload, dict):
-            return [parsed_payload]
+            return [parsed_payload], True
 
         if isinstance(parsed_payload, list):
             if not parsed_payload:
@@ -340,22 +341,22 @@ class ReticulumTelemetryHub:
                     "Ignored escape-prefixed command list with no entries.",
                     RNS.LOG_WARNING,
                 )
-                return []
+                return [], True
 
             if not all(isinstance(item, dict) for item in parsed_payload):
                 RNS.log(
                     "Escape-prefixed JSON must be an object or list of objects.",
                     RNS.LOG_WARNING,
                 )
-                return []
+                return [], True
 
-            return parsed_payload
+            return parsed_payload, True
 
         RNS.log(
             "Escape-prefixed payload must decode to a JSON object or list of objects.",
             RNS.LOG_WARNING,
         )
-        return []
+        return [], True
 
     def delivery_callback(self, message: LXMF.LXMessage):
         """Callback function to handle incoming messages.
@@ -383,12 +384,18 @@ class ReticulumTelemetryHub:
             # Log the delivery details
             self.log_delivery_details(message, time_string, signature_string)
 
+            command_payload_present = False
             # Handle the commands
             if message.signature_validated:
                 if LXMF.FIELD_COMMANDS in message.fields:
+                    command_payload_present = True
                     self.command_handler(message.fields[LXMF.FIELD_COMMANDS], message)
                 else:
-                    escape_commands = self._parse_escape_prefixed_commands(message)
+                    escape_commands, escape_detected = self._parse_escape_prefixed_commands(
+                        message
+                    )
+                    if escape_detected:
+                        command_payload_present = True
                     if escape_commands:
                         self.command_handler(escape_commands, message)
 
@@ -401,6 +408,9 @@ class ReticulumTelemetryHub:
                 return
 
             if self._is_telemetry_only(message, telemetry_handled):
+                return
+
+            if command_payload_present:
                 return
 
             # Broadcast the message to all connected clients
