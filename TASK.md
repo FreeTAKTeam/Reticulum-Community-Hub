@@ -13,3 +13,4 @@
 - 2025-11-20: ✅ Accept positional LXMF command parameters and log unknown commands.
 - 2025-11-20: ✅ Stop unsolicited "Telemetry data" LXMF broadcasts to known identities.
 - 2025-11-20: ✅ Detect escape-prefixed telemetry payloads and normalize commands before broadcasting.
+- 2025-11-20: ✅ Suppress broadcasts when escape-prefixed commands are detected in plaintext bodies.

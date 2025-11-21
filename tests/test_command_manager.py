@@ -744,9 +744,8 @@ def test_delivery_callback_handles_commands_and_broadcasts():
     assert len(command_responses) == 1
 
     broadcast_payloads = [msg.content_as_string() for msg in router_messages]
-    assert any("node-a > broadcast" in payload for payload in broadcast_payloads)
-    expected_total = 1 + max(0, len(hub.connections) - 1)
-    assert len(router_messages) == expected_total
+    assert all("broadcast" not in payload for payload in broadcast_payloads)
+    assert len(router_messages) == 1
     assert telemetry_calls == [incoming]
 
 
