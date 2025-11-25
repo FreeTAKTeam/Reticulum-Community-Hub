@@ -183,6 +183,15 @@ RTH  also tolerates Sideband's positional fallback that shows up in logs like `F
 
 Any message sent to the hub that includes a `TopicID` (in the LXMF fields or a command payload) will only be forwarded to the subscribers registered for that topic. The hub automatically refreshes the registry from the API, so new subscriptions take effect without restarting the process.
 
+### Telemetry requests
+
+Send `TelemetryRequest` (numeric key `1`) to fetch recent telemetry snapshots. The hub replies with:
+
+- A `FIELD_TELEMETRY_STREAM` field containing msgpack-encoded snapshots (Sideband-compatible).
+- A message body containing JSON with a human-readable `telemetry` array (peer hash, timestamp, decoded sensors).
+
+See `docs/example_telemetry.json` for a sample response body.
+
 ### Command-line options
 
 | Flag | Description |
