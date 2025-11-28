@@ -91,19 +91,19 @@ display_name = RTH_router
 
 ## Service
 
-In order to start the router  automatically on startup, we will need to install a /etc/systemd/system/lxmd.service file:
+In order to start the RTH   automatically on startup, we will need to install a /etc/systemd/system/RTH.service file:
 
 ``` ini
 [Unit]
-Description=Reticulum LXMF Daemon (lxmd)
+Description=Reticulum Telemetry Hub
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/lxmd
+ExecStart=/usr/local/bin/RTH
 Restart=on-failure
-User=root  # Change this if you run lxmd as a non-root user
-WorkingDirectory=/usr/local/bin  # Adjust to where lxmd is located
+User=root  # Change this if you run RTH as a non-root user
+WorkingDirectory=/usr/local/bin  # Adjust to where RTH is located
 ExecReload=/bin/kill -HUP $MAINPID
 
 [Install]
@@ -117,8 +117,8 @@ Enable and start the service: Once the service file is created, run the followin
 ```bash
 Copy code
 sudo systemctl daemon-reload
-sudo systemctl enable lxmd.service
-sudo systemctl start lxmd.service
+sudo systemctl enable RTH.service
+sudo systemctl start RTH.service
 ```
 
 Ensure your Reticulum network  is operational and configure for the full functionality of RTH.
