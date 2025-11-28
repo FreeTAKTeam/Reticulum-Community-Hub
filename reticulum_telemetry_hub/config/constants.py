@@ -1,0 +1,8 @@
+"""Common configuration defaults for the telemetry hub runtime."""
+
+DEFAULT_STORAGE_PATH = "RTH_Store"
+DEFAULT_ANNOUNCE_INTERVAL = 60
+DEFAULT_HUB_TELEMETRY_INTERVAL = 600
+DEFAULT_SERVICE_TELEMETRY_INTERVAL = 900
+DEFAULT_LOG_LEVEL_NAME = "debug"
+

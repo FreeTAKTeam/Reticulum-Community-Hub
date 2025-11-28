@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -107,9 +106,8 @@ class GpsTelemetryService(HubService):
         self._client_factory = client_factory or (
             lambda **kwargs: GPSDClient(**kwargs)
         )  # type: ignore[arg-type]
-        self._host = host or os.getenv("RTH_GPSD_HOST", "127.0.0.1")
-        raw_port = os.getenv("RTH_GPSD_PORT")
-        self._port = int(raw_port) if raw_port is not None else (port or 2947)
+        self._host = host or "127.0.0.1"
+        self._port = port or 2947
 
     def is_supported(self) -> bool:
         return GPSDClient is not None and self._telemeter_manager is not None
@@ -215,7 +213,15 @@ class CotTelemetryService(HubService):
 
 
 def _gps_factory(hub: "ReticulumTelemetryHub") -> HubService:
-    return GpsTelemetryService(telemeter_manager=hub.telemeter_manager)
+    config_manager = hub.config_manager or HubConfigurationManager(
+        storage_path=hub.storage_path
+    )
+    runtime_config = config_manager.runtime_config
+    return GpsTelemetryService(
+        telemeter_manager=hub.telemeter_manager,
+        host=runtime_config.gpsd_host,
+        port=runtime_config.gpsd_port,
+    )
 
 
 def _cot_factory(hub: "ReticulumTelemetryHub") -> HubService:

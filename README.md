@@ -192,18 +192,61 @@ Send `TelemetryRequest` (numeric key `1`) to fetch recent telemetry snapshots. T
 
 See `docs/example_telemetry.json` for a sample response body.
 
+### Unified configuration (``config.ini``)
+
+RTH reads defaults from a single ``config.ini`` file located in the storage directory (or an alternate path supplied via ``--config``). Command-line flags still win at runtime, but the file keeps every parameter—telemetry cadence, TAK settings, telemetry synthesis and service options—in one place.
+
+Example configuration:
+
+```ini
+[hub]
+display_name = RTH
+announce_interval = 60
+hub_telemetry_interval = 600
+service_telemetry_interval = 900
+log_level = debug
+embedded_lxmd = false
+services = gpsd, tak_cot
+telemetry_filename = telemetry.ini
+
+[tak]
+cot_url = tcp://127.0.0.1:8087
+callsign = RTH
+poll_interval_seconds = 30
+tls_client_cert =
+tls_client_key =
+tls_ca =
+tls_insecure = false
+
+[gpsd]
+host = 127.0.0.1
+port = 2947
+
+[telemetry]
+synthesize_location = true
+location_latitude = 44.0
+location_longitude = -63.0
+location_altitude = 10.0
+location_accuracy = 5.0
+static_information = Callsign RTH
+enable_battery = yes
+```
+
+Values omitted from the file fall back to the built-in defaults listed below. The telemetry section mirrors the prior ``telemetry.ini`` format so existing files remain compatible.
+
 ### Command-line options
 
 | Flag | Description |
 | --- | --- |
+| `--config` | Path to ``config.ini`` (defaults to ``<storage_dir>/config.ini``). |
 | `--storage_dir` | Directory that holds LXMF storage and the hub identity (defaults to `./RTH_Store`). |
-| `--display_name` | Human-readable label announced with your LXMF destination. |
-| `--announce-interval` | Seconds between LXMF identity announcements (defaults to 60). |
-| `--hub-telemetry-interval` | Seconds between local telemetry snapshots (defaults to 600 or `$RTH_HUB_TELEMETRY_INTERVAL`). |
-| `--service-telemetry-interval` | Seconds between service collector polls (defaults to 900 or `$RTH_SERVICE_TELEMETRY_INTERVAL`). |
-| `--embedded` | Run the LXMF daemon in-process. |
+| `--display_name` | Human-readable label announced with your LXMF destination (defaults to `[hub].display_name`). |
+| `--announce-interval` | Seconds between LXMF identity announcements (defaults to `[hub].announce_interval`). |
+| `--hub-telemetry-interval` | Seconds between local telemetry snapshots (defaults to `[hub].hub_telemetry_interval`). |
+| `--service-telemetry-interval` | Seconds between service collector polls (defaults to `[hub].service_telemetry_interval`). |
+| `--embedded/--no-embedded` | Run the LXMF daemon in-process (defaults to `[hub].embedded_lxmd`). |
 | `--daemon` | Enable daemon mode so the hub samples telemetry autonomously. |
-| `--service NAME` | Enable optional daemon services such as `gpsd` (repeat the flag for multiple services). |
+| `--service NAME` | Enable optional daemon services such as `gpsd` (repeat the flag for multiple services). Defaults to `[hub].services`. |
 
 ### Embedded vs. external ``lxmd``
 
@@ -246,40 +289,20 @@ mode in CI and verifies that it collects telemetry automatically.
 Use the `tak_cot` service to push location updates to a TAK endpoint over
 Cursor-on-Target. The hub polls the latest `location` sensor snapshot and
 transmits it via PyTAK with the configured callsign and TLS settings. Enable the
-service with the CLI flag and customize its behavior through environment
-variables (or a `.env` file):
+service with the CLI flag and customize its behavior through the `[tak]` section
+in ``config.ini``.
 
 Signed chat messages delivered over LXMF are also mirrored into CoT chat events
 when they include non-telemetry content. Remarks carry the chat body and topic
 identifier to maintain topic-aware routing inside TAK tools.
 
-| Environment variable | Purpose |
-| --- | --- |
-| `RTH_TAK_COT_URL` | CoT endpoint URL (for example `tcp://127.0.0.1:8087`). |
-| `RTH_TAK_CALLSIGN` | Callsign/UID prefix used in CoT events. |
-| `RTH_TAK_INTERVAL_SECONDS` | How often to send location updates (defaults to 30 seconds). |
-| `RTH_TAK_TLS_CLIENT_CERT` | Path to a TLS client certificate (optional). |
-| `RTH_TAK_TLS_CLIENT_KEY` | Path to the TLS client key (optional). |
-| `RTH_TAK_TLS_CA` | Custom CA bundle for TLS verification (optional). |
-| `RTH_TAK_TLS_INSECURE` | Set to `true` to skip TLS verification (not recommended). |
-
 Example: `python -m reticulum_telemetry_hub.reticulum_server --daemon --service tak_cot`.
 
 #### Configuring the TAK integration
 
-1. Ensure PyTAK is installed in the same environment as RTH (`pip install pytak` is already declared as a dependency).  
-2. Set the connection details via environment variables or a `.env` file in the repo root (loaded automatically):
-   ```
-   RTH_TAK_COT_URL=tcp://atak.example.com:8087
-   RTH_TAK_CALLSIGN=RTH
-   RTH_TAK_INTERVAL_SECONDS=30
-   # Optional TLS settings
-   # RTH_TAK_TLS_CLIENT_CERT=/path/to/cert.pem
-   # RTH_TAK_TLS_CLIENT_KEY=/path/to/key.pem
-   # RTH_TAK_TLS_CA=/path/to/ca.pem
-   # RTH_TAK_TLS_INSECURE=true
-   ```
-3. Start the hub with the TAK service enabled (combine with `--embedded` if you are not running an external `lxmd`):  
+1. Ensure PyTAK is installed in the same environment as RTH (`pip install pytak` is already declared as a dependency).
+2. Populate the `[tak]` section in ``config.ini`` with your endpoint details (see the example above). Flags override file values if you need a one-off change.
+3. Start the hub with the TAK service enabled (combine with `--embedded` if you are not running an external `lxmd`):
    `python -m reticulum_telemetry_hub.reticulum_server --daemon --service tak_cot`
 4. Provide a location feed so the connector has something to send. The hub will use the latest `location` sensor reading (for example from the `gpsd` service: `--service gpsd`), or any location telemetry already present in the database.
 5. Watch the logs for successful CoT dispatches; failures will be logged with the TAK connector error message.

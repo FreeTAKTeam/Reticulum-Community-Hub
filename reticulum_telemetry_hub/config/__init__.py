@@ -6,7 +6,13 @@ code makes it easier to reason about config state, avoids ad-hoc string
 parsing, and supports introspection APIs.
 """
 
-from .models import RNSInterfaceConfig, ReticulumConfig, LXMFRouterConfig, HubAppConfig
+from .models import (
+    HubAppConfig,
+    HubRuntimeConfig,
+    LXMFRouterConfig,
+    RNSInterfaceConfig,
+    ReticulumConfig,
+)
 from .manager import HubConfigurationManager
 
 __all__ = [
@@ -14,5 +20,6 @@ __all__ = [
     "ReticulumConfig",
     "LXMFRouterConfig",
     "HubAppConfig",
+    "HubRuntimeConfig",
     "HubConfigurationManager",
 ]

@@ -148,9 +148,15 @@ class TelemetryRuntimeConfig:
         *,
         filename: str = "telemetry.ini",
     ) -> "TelemetryRuntimeConfig":
-        path = None
-        if manager is not None:
-            path = Path(manager.storage_path) / filename
+        if manager is None:
+            return cls()
+
+        telemetry_filename = manager.runtime_config.telemetry_filename or filename
+
+        if manager.config_parser.has_section("telemetry"):
+            return cls.from_section(manager.config_parser["telemetry"])
+
+        path = Path(manager.storage_path) / telemetry_filename
         return cls.from_file(path)
 
     @classmethod
@@ -165,6 +171,13 @@ class TelemetryRuntimeConfig:
         if parser.has_section("telemetry"):
             section: Mapping[str, str] = parser["telemetry"]
         else:
+            section = {}
+
+        return cls.from_section(section)
+
+    @classmethod
+    def from_section(cls, section: Mapping[str, str]) -> "TelemetryRuntimeConfig":
+        if section is None:
             section = {}
 
         enabled: MutableMapping[int, bool] = {}

@@ -53,14 +53,17 @@ from reticulum_telemetry_hub.reticulum_server.services import (
 )
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 from .command_manager import CommandManager
+from reticulum_telemetry_hub.config.constants import (
+    DEFAULT_ANNOUNCE_INTERVAL,
+    DEFAULT_HUB_TELEMETRY_INTERVAL,
+    DEFAULT_LOG_LEVEL_NAME,
+    DEFAULT_SERVICE_TELEMETRY_INTERVAL,
+    DEFAULT_STORAGE_PATH,
+)
 
 # Constants
-STORAGE_PATH = "RTH_Store"  # Path to store temporary files
-IDENTITY_PATH = os.path.join(STORAGE_PATH, "identity")  # Path to store identity file
+STORAGE_PATH = DEFAULT_STORAGE_PATH  # Path to store temporary files
 APP_NAME = LXMF.APP_NAME + ".delivery"  # Application name for LXMF
-DEFAULT_ANNOUNCE_INTERVAL = 60
-DEFAULT_HUB_TELEMETRY_INTERVAL = 600
-DEFAULT_SERVICE_TELEMETRY_INTERVAL = 900
 DEFAULT_LOG_LEVEL = getattr(RNS, "LOG_DEBUG", getattr(RNS, "LOG_INFO", 3))
 LOG_LEVELS = {
     "error": getattr(RNS, "LOG_ERROR", 1),
@@ -68,28 +71,17 @@ LOG_LEVELS = {
     "info": getattr(RNS, "LOG_INFO", 3),
     "debug": getattr(RNS, "LOG_DEBUG", DEFAULT_LOG_LEVEL),
 }
-ENV_HUB_TELEMETRY_INTERVAL = "RTH_HUB_TELEMETRY_INTERVAL"
-ENV_SERVICE_TELEMETRY_INTERVAL = "RTH_SERVICE_TELEMETRY_INTERVAL"
 TOPIC_REGISTRY_TTL_SECONDS = 5
 ESCAPED_COMMAND_PREFIX = "\\\\\\"
 
 
-def _resolve_interval(value: int | None, env_var: str, default: int) -> int:
-    """Return the positive interval derived from CLI/env values."""
+def _resolve_interval(value: int | None, fallback: int) -> int:
+    """Return the positive interval derived from CLI/config values."""
 
     if value is not None:
         return max(0, int(value))
 
-    env_value = os.getenv(env_var)
-    if env_value is not None:
-        try:
-            return max(0, int(env_value))
-        except ValueError:
-            RNS.log(
-                f"Invalid telemetry interval set via {env_var}: {env_value!r}",
-                RNS.LOG_WARNING,
-            )
-    return default
+    return max(0, int(fallback))
 
 
 class AnnounceHandler:
@@ -172,7 +164,23 @@ class ReticulumTelemetryHub:
         loglevel: int = DEFAULT_LOG_LEVEL,
         hub_telemetry_interval: float | None = DEFAULT_HUB_TELEMETRY_INTERVAL,
         service_telemetry_interval: float | None = DEFAULT_SERVICE_TELEMETRY_INTERVAL,
+        config_manager: HubConfigurationManager | None = None,
+        config_path: Path | None = None,
     ):
+        """Initialize the telemetry hub runtime container.
+
+        Args:
+            display_name (str): Label announced with the LXMF destination.
+            storage_path (Path): Directory containing hub storage files.
+            identity_path (Path): Path to the persisted LXMF identity.
+            embedded (bool): Whether to run the LXMF router threads in-process.
+            announce_interval (int): Seconds between LXMF announces.
+            loglevel (int): RNS log level to emit.
+            hub_telemetry_interval (float | None): Interval for local telemetry sampling.
+            service_telemetry_interval (float | None): Interval for remote service sampling.
+            config_manager (HubConfigurationManager | None): Optional preloaded configuration manager.
+            config_path (Path | None): Path to ``config.ini`` when creating a manager internally.
+        """
         # Normalize paths early so downstream helpers can rely on Path objects.
         self.storage_path = Path(storage_path)
         self.identity_path = Path(identity_path)
@@ -195,7 +203,7 @@ class ReticulumTelemetryHub:
 
         telemetry_db_path = self.storage_path / "telemetry.db"
         self.tel_controller = TelemetryController(db_path=telemetry_db_path)
-        self.config_manager: HubConfigurationManager | None = None
+        self.config_manager: HubConfigurationManager | None = config_manager
         self.embedded_lxmd: EmbeddedLxmd | None = None
         self.telemetry_sampler: TelemetrySampler | None = None
         self.telemeter_manager: TelemeterManager | None = None
@@ -222,13 +230,13 @@ class ReticulumTelemetryHub:
         self.lxm_router.register_delivery_callback(self.delivery_callback)
         RNS.Transport.register_announce_handler(AnnounceHandler(self.identities))
 
-        api_config_manager: HubConfigurationManager | None = None
-
-        if embedded:
+        if self.config_manager is None:
             self.config_manager = HubConfigurationManager(
-                storage_path=self.storage_path
+                storage_path=self.storage_path, config_path=config_path
             )
-            api_config_manager = self.config_manager
+
+        self.embedded_lxmd = None
+        if embedded:
             self.embedded_lxmd = EmbeddedLxmd(
                 router=self.lxm_router,
                 destination=self.my_lxmf_dest,
@@ -236,14 +244,10 @@ class ReticulumTelemetryHub:
                 telemetry_controller=self.tel_controller,
             )
             self.embedded_lxmd.start()
-        else:
-            self.config_manager = None
-            api_config_manager = HubConfigurationManager(storage_path=self.storage_path)
-            self.embedded_lxmd = None
 
-        self.api = ReticulumTelemetryHubAPI(config_manager=api_config_manager)
+        self.api = ReticulumTelemetryHubAPI(config_manager=self.config_manager)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
-        tak_config_manager = self.config_manager or api_config_manager
+        tak_config_manager = self.config_manager
         self.tak_connector = TakConnector(
             config=tak_config_manager.tak_config if tak_config_manager else None,
             telemeter_manager=self.telemeter_manager,
@@ -763,44 +767,46 @@ class ReticulumTelemetryHub:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "-s", "--storage_dir", help="Storage directory path", default=STORAGE_PATH
+        "-c",
+        "--config",
+        dest="config_path",
+        help="Path to a unified config.ini file",
+        default=None,
     )
-    ap.add_argument("--display_name", help="Display name for the server", default="RTH")
+    ap.add_argument(
+        "-s", "--storage_dir", help="Storage directory path", default=None
+    )
+    ap.add_argument("--display_name", help="Display name for the server", default=None)
     ap.add_argument(
         "--announce-interval",
         type=int,
-        default=DEFAULT_ANNOUNCE_INTERVAL,
+        default=None,
         help="Seconds between announcement broadcasts",
     )
     ap.add_argument(
         "--hub-telemetry-interval",
         type=int,
         default=None,
-        help=(
-            "Seconds between local telemetry snapshots. Overrides "
-            f"{ENV_HUB_TELEMETRY_INTERVAL}"
-        ),
+        help="Seconds between local telemetry snapshots."
     )
     ap.add_argument(
         "--service-telemetry-interval",
         type=int,
         default=None,
-        help=(
-            "Seconds between remote telemetry collector polls. Overrides "
-            f"{ENV_SERVICE_TELEMETRY_INTERVAL}"
-        ),
+        help="Seconds between remote telemetry collector polls.",
     )
     ap.add_argument(
         "--log-level",
         choices=list(LOG_LEVELS.keys()),
-        default="debug",
+        default=None,
         help="Log level to emit RNS traffic to stdout",
     )
     ap.add_argument(
         "--embedded",
         "--embedded-lxmd",
         dest="embedded",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Run the LXMF router/propagation threads in-process.",
     )
     ap.add_argument(
@@ -823,42 +829,51 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
-    # Use the provided storage directory (or default) for both storage and identity paths
-    storage_path = args.storage_dir
+    storage_path = args.storage_dir or STORAGE_PATH
     identity_path = os.path.join(storage_path, "identity")
+    config_path = Path(args.config_path) if args.config_path else Path(storage_path) / "config.ini"
 
-    if args.storage_dir:
-        storage_path = args.storage_dir
-        # store the identity in the user supplied directory rather than the
-        # default STORAGE_PATH. Previously `STORAGE_PATH` was used here which
-        # ignored the command line argument and always wrote the identity file
-        # to the default location.
-        identity_path = os.path.join(storage_path, "identity")
+    config_manager = HubConfigurationManager(
+        storage_path=storage_path, config_path=config_path
+    )
+    runtime_config = config_manager.runtime_config
 
+    display_name = args.display_name or runtime_config.display_name
+    announce_interval = args.announce_interval or runtime_config.announce_interval
     hub_interval = _resolve_interval(
         args.hub_telemetry_interval,
-        ENV_HUB_TELEMETRY_INTERVAL,
-        DEFAULT_HUB_TELEMETRY_INTERVAL,
+        runtime_config.hub_telemetry_interval or DEFAULT_HUB_TELEMETRY_INTERVAL,
     )
     service_interval = _resolve_interval(
         args.service_telemetry_interval,
-        ENV_SERVICE_TELEMETRY_INTERVAL,
-        DEFAULT_SERVICE_TELEMETRY_INTERVAL,
+        runtime_config.service_telemetry_interval
+        or DEFAULT_SERVICE_TELEMETRY_INTERVAL,
     )
 
+    log_level_name = (
+        args.log_level or runtime_config.log_level or DEFAULT_LOG_LEVEL_NAME
+    ).lower()
+    loglevel = LOG_LEVELS.get(log_level_name, DEFAULT_LOG_LEVEL)
+
+    embedded = runtime_config.embedded_lxmd if args.embedded is None else args.embedded
+    requested_services = list(runtime_config.default_services)
+    requested_services.extend(args.services or [])
+    services = list(dict.fromkeys(requested_services))
+
     reticulum_server = ReticulumTelemetryHub(
-        args.display_name,
+        display_name,
         storage_path,
         identity_path,
-        embedded=args.embedded,
-        announce_interval=args.announce_interval,
-        loglevel=LOG_LEVELS[args.log_level],
+        embedded=embedded,
+        announce_interval=announce_interval,
+        loglevel=loglevel,
         hub_telemetry_interval=hub_interval,
         service_telemetry_interval=service_interval,
+        config_manager=config_manager,
     )
 
     try:
-        reticulum_server.run(daemon_mode=args.daemon, services=args.services)
+        reticulum_server.run(daemon_mode=args.daemon, services=services)
     except KeyboardInterrupt:
         RNS.log("Received interrupt, shutting down", RNS.LOG_INFO)
     finally:

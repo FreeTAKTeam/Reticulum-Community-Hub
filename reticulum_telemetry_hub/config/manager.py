@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import os
 from configparser import ConfigParser
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 from dotenv import load_dotenv as load_env
 
 from .models import (
     HubAppConfig,
+    HubRuntimeConfig,
     LXMFRouterConfig,
     RNSInterfaceConfig,
     ReticulumConfig,
     TakConnectionConfig,
 )
+from reticulum_telemetry_hub.config.constants import DEFAULT_STORAGE_PATH
 
 
 class HubConfigurationManager:
@@ -22,6 +23,7 @@ class HubConfigurationManager:
     def __init__(
         self,
         storage_path: Optional[Path] = None,
+        config_path: Optional[Path] = None,
         reticulum_config_path: Optional[Path] = None,
         lxmf_router_config_path: Optional[Path] = None,
     ) -> None:
@@ -35,12 +37,23 @@ class HubConfigurationManager:
                 LXMF router configuration file.
         """
         load_env()
-        self.storage_path = Path(storage_path or "RTH_Store")
+        self.storage_path = Path(storage_path or DEFAULT_STORAGE_PATH)
+        self.config_path = Path(config_path or self.storage_path / "config.ini")
+        self._config_parser = self._load_config_parser(self.config_path)
+        self.runtime_config = self._load_runtime_config()
+
+        reticulum_path_override = self.runtime_config.reticulum_config_path
+        lxmf_path_override = self.runtime_config.lxmf_router_config_path
+
         self.reticulum_config_path = Path(
-            reticulum_config_path or Path.home() / ".reticulum" / "config"
+            reticulum_config_path
+            or reticulum_path_override
+            or Path.home() / ".reticulum" / "config"
         )
         self.lxmf_router_config_path = Path(
-            lxmf_router_config_path or Path.home() / ".lxmd" / "config"
+            lxmf_router_config_path
+            or lxmf_path_override
+            or Path.home() / ".lxmd" / "config"
         )
         self._tak_config = self._load_tak_config()
         self._config = self._load()
@@ -63,12 +76,20 @@ class HubConfigurationManager:
         """
         return self._tak_config
 
+    @property
+    def config_parser(self) -> ConfigParser:
+        """Expose the raw ``ConfigParser`` loaded from disk."""
+
+        return self._config_parser
+
     def reload(self) -> HubAppConfig:
         """Reload configuration files from disk and environment.
 
         Returns:
             HubAppConfig: Freshly parsed application configuration.
         """
+        self._config_parser = self._load_config_parser(self.config_path)
+        self.runtime_config = self._load_runtime_config()
         self._tak_config = self._load_tak_config()
         self._config = self._load()
         return self._config
@@ -80,6 +101,70 @@ class HubConfigurationManager:
     # ------------------------------------------------------------------ #
     # private helpers
     # ------------------------------------------------------------------ #
+    def _load_config_parser(self, path: Path) -> ConfigParser:
+        """Return a parser populated from ``config.ini`` when present."""
+
+        parser = ConfigParser()
+        if path.exists():
+            parser.read(path)
+        return parser
+
+    def _load_runtime_config(self) -> HubRuntimeConfig:
+        """Construct the runtime configuration from ``config.ini``."""
+
+        defaults = HubRuntimeConfig()
+        hub_section = self._get_section("hub")
+        services_value = hub_section.get("services", "")
+        services = tuple(
+            part.strip() for part in services_value.split(",") if part.strip()
+        )
+
+        reticulum_path = hub_section.get("reticulum_config_path")
+        lxmf_path = hub_section.get("lxmf_router_config_path")
+        telemetry_filename = hub_section.get(
+            "telemetry_filename", defaults.telemetry_filename
+        )
+
+        gps_section = self._get_section("gpsd")
+        gps_host = gps_section.get("host", defaults.gpsd_host)
+        gps_port = self._coerce_int(gps_section.get("port"), defaults.gpsd_port)
+
+        return HubRuntimeConfig(
+            display_name=hub_section.get("display_name", defaults.display_name),
+            announce_interval=self._coerce_int(
+                hub_section.get("announce_interval"), defaults.announce_interval
+            ),
+            hub_telemetry_interval=self._coerce_int(
+                hub_section.get("hub_telemetry_interval"),
+                defaults.hub_telemetry_interval,
+            ),
+            service_telemetry_interval=self._coerce_int(
+                hub_section.get("service_telemetry_interval"),
+                defaults.service_telemetry_interval,
+            ),
+            log_level=hub_section.get("log_level", defaults.log_level).lower(),
+            embedded_lxmd=self._get_bool(
+                hub_section, "embedded_lxmd", defaults.embedded_lxmd
+            ),
+            default_services=services,
+            gpsd_host=gps_host,
+            gpsd_port=gps_port,
+            reticulum_config_path=(
+                Path(reticulum_path).expanduser() if reticulum_path else None
+            ),
+            lxmf_router_config_path=(
+                Path(lxmf_path).expanduser() if lxmf_path else None
+            ),
+            telemetry_filename=telemetry_filename,
+        )
+
+    def _get_section(self, name: str) -> Mapping[str, str]:
+        """Return a config section if it exists."""
+
+        if self._config_parser.has_section(name):
+            return self._config_parser[name]
+        return {}
+
     def _load(self) -> HubAppConfig:
         """Assemble the high level hub configuration object."""
         reticulum = self._load_reticulum_config(self.reticulum_config_path)
@@ -141,6 +226,28 @@ class HubConfigurationManager:
         )
 
     @staticmethod
+    def _coerce_int(value: str | None, default: int) -> int:
+        """Return an integer from a string value or fallback."""
+
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except ValueError:
+            return default
+
+    @staticmethod
+    def _coerce_float(value: str | None, default: float) -> float:
+        """Return a float from a string value or fallback."""
+
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except ValueError:
+            return default
+
+    @staticmethod
     def _get_bool(section, key: str, default: bool) -> bool:
         """Interpret boolean-like strings from a config section."""
         value = section.get(key)
@@ -161,30 +268,26 @@ class HubConfigurationManager:
         return {}
 
     def _load_tak_config(self) -> TakConnectionConfig:
-        """Construct the TAK configuration using environment overrides."""
-        defaults = TakConnectionConfig()
-        interval_env = os.getenv(
-            "RTH_TAK_INTERVAL_SECONDS", os.getenv("RTH_TAK_INTERVAL")
-        )
-        interval = defaults.poll_interval_seconds
-        if interval_env is not None:
-            try:
-                interval = float(interval_env)
-            except ValueError:
-                interval = defaults.poll_interval_seconds
+        """Construct the TAK configuration using ``config.ini`` values."""
 
-        tls_insecure = self._get_bool(
-            {"tls_insecure": os.getenv("RTH_TAK_TLS_INSECURE", "false")},
-            "tls_insecure",
-            False,
+        defaults = TakConnectionConfig()
+        section = self._get_section("tak")
+
+        interval = self._coerce_float(
+            section.get("poll_interval_seconds")
+            or section.get("interval_seconds")
+            or section.get("interval"),
+            defaults.poll_interval_seconds,
         )
 
         return TakConnectionConfig(
-            cot_url=os.getenv("RTH_TAK_COT_URL", defaults.cot_url),
-            callsign=os.getenv("RTH_TAK_CALLSIGN", defaults.callsign),
+            cot_url=section.get("cot_url", defaults.cot_url),
+            callsign=section.get("callsign", defaults.callsign),
             poll_interval_seconds=interval,
-            tls_client_cert=os.getenv("RTH_TAK_TLS_CLIENT_CERT"),
-            tls_client_key=os.getenv("RTH_TAK_TLS_CLIENT_KEY"),
-            tls_ca=os.getenv("RTH_TAK_TLS_CA"),
-            tls_insecure=tls_insecure,
+            tls_client_cert=section.get("tls_client_cert"),
+            tls_client_key=section.get("tls_client_key"),
+            tls_ca=section.get("tls_ca"),
+            tls_insecure=self._get_bool(
+                section, "tls_insecure", defaults.tls_insecure
+            ),
         )
