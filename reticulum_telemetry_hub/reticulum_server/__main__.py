@@ -39,6 +39,7 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
+from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
@@ -153,6 +154,7 @@ class ReticulumTelemetryHub:
     _shared_lxm_router: LXMF.LXMRouter | None = None
     telemetry_sampler: TelemetrySampler | None
     telemeter_manager: TelemeterManager | None
+    tak_connector: TakConnector | None
     _active_services: dict[str, HubService]
 
     TELEMETRY_PLACEHOLDERS = {"telemetry data", "telemetry update"}
@@ -239,6 +241,12 @@ class ReticulumTelemetryHub:
 
         self.api = ReticulumTelemetryHubAPI(config_manager=api_config_manager)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
+        tak_config_manager = self.config_manager or api_config_manager
+        self.tak_connector = TakConnector(
+            config=tak_config_manager.tak_config if tak_config_manager else None,
+            telemeter_manager=self.telemeter_manager,
+            telemetry_controller=self.tel_controller,
+        )
         self.telemetry_sampler = TelemetrySampler(
             self.tel_controller,
             self.lxm_router,
@@ -391,8 +399,8 @@ class ReticulumTelemetryHub:
                     command_payload_present = True
                     self.command_handler(message.fields[LXMF.FIELD_COMMANDS], message)
                 else:
-                    escape_commands, escape_detected = self._parse_escape_prefixed_commands(
-                        message
+                    escape_commands, escape_detected = (
+                        self._parse_escape_prefixed_commands(message)
                     )
                     if escape_detected:
                         command_payload_present = True

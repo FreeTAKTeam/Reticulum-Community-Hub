@@ -241,6 +241,26 @@ it safe to run the hub under `systemd`, `supervisord` or similar process
 managers. `pytest tests/test_reticulum_server_daemon.py -q` exercises the daemon
 mode in CI and verifies that it collects telemetry automatically.
 
+### TAK/CoT connector
+
+Use the `tak_cot` service to push location updates to a TAK endpoint over
+Cursor-on-Target. The hub polls the latest `location` sensor snapshot and
+transmits it via PyTAK with the configured callsign and TLS settings. Enable the
+service with the CLI flag and customize its behavior through environment
+variables (or a `.env` file):
+
+| Environment variable | Purpose |
+| --- | --- |
+| `RTH_TAK_COT_URL` | CoT endpoint URL (for example `tcp://127.0.0.1:8087`). |
+| `RTH_TAK_CALLSIGN` | Callsign/UID prefix used in CoT events. |
+| `RTH_TAK_INTERVAL_SECONDS` | How often to send location updates (defaults to 30 seconds). |
+| `RTH_TAK_TLS_CLIENT_CERT` | Path to a TLS client certificate (optional). |
+| `RTH_TAK_TLS_CLIENT_KEY` | Path to the TLS client key (optional). |
+| `RTH_TAK_TLS_CA` | Custom CA bundle for TLS verification (optional). |
+| `RTH_TAK_TLS_INSECURE` | Set to `true` to skip TLS verification (not recommended). |
+
+Example: `python -m reticulum_telemetry_hub.reticulum_server --daemon --service tak_cot`.
+
 ### Project Roadmap
 
 - [x] **Transition to Command-Based Server Joining**: Shift the "joining the server" functionality from an announce-based method to a command-based approach for improved control and scalability.

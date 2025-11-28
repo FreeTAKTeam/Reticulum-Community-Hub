@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Optional
+
+from reticulum_telemetry_hub.atak_cot import Contact, Detail, Event
+from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
+from reticulum_telemetry_hub.config.models import TakConnectionConfig
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import (
+    sensor_enum,
+)
+from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import (
+    TelemeterManager,
+)
+from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
+    TelemetryController,
+)
+
+SID_LOCATION = sensor_enum.SID_LOCATION
+
+
+@dataclass
+class LocationSnapshot:
+    """Represents the latest known position of the hub."""
+
+    latitude: float
+    longitude: float
+    altitude: float
+    speed: float
+    bearing: float
+    accuracy: float
+    updated_at: datetime
+    peer_hash: str | None = None
+
+
+def _utc_iso(dt: datetime) -> str:
+    """Return an ISO-8601 string without microseconds suffixed with ``Z``."""
+
+    return dt.replace(microsecond=0).isoformat() + "Z"
+
+
+class TakConnector:
+    """Build and transmit CoT events describing the hub's location."""
+
+    EVENT_TYPE = "a-f-G-U-C"
+    EVENT_HOW = "m-g"
+
+    def __init__(
+        self,
+        *,
+        config: TakConnectionConfig | None = None,
+        pytak_client: PytakClient | None = None,
+        telemeter_manager: TelemeterManager | None = None,
+        telemetry_controller: TelemetryController | None = None,
+    ) -> None:
+        """Initialize the connector with optional collaborators."""
+
+        self._config = config or TakConnectionConfig()
+        self._pytak_client = pytak_client or PytakClient(
+            self._config.to_config_parser()
+        )
+        self._config_parser = self._config.to_config_parser()
+        self._telemeter_manager = telemeter_manager
+        self._telemetry_controller = telemetry_controller
+
+    @property
+    def config(self) -> TakConnectionConfig:
+        """Return the current TAK connection configuration."""
+
+        return self._config
+
+    async def send_latest_location(self) -> bool:
+        """Send the most recent location snapshot if one is available."""
+
+        event = self.build_event()
+        if event is None:
+            return False
+        await self._pytak_client.create_and_send_message(
+            event, config=self._config_parser, parse_inbound=False
+        )
+        return True
+
+    def build_event(self) -> Event | None:
+        """Construct a CoT :class:`Event` from available telemetry."""
+
+        snapshot = self._latest_location()
+        if snapshot is None:
+            return None
+
+        now = datetime.utcnow()
+        stale_delta = max(self._config.poll_interval_seconds, 1.0)
+        stale = now + timedelta(seconds=stale_delta * 2)
+
+        identifier = self._identifier_from_hash(snapshot.peer_hash)
+        uid = identifier if identifier else self._config.callsign
+        if identifier and identifier != self._config.callsign:
+            uid = f"{self._config.callsign}-{identifier}"
+
+        contact = Contact(callsign=identifier or self._config.callsign)
+        detail = Detail(contact=contact)
+
+        event_dict = {
+            "version": "2.0",
+            "uid": uid,
+            "type": self.EVENT_TYPE,
+            "how": self.EVENT_HOW,
+            "time": _utc_iso(now),
+            "start": _utc_iso(snapshot.updated_at),
+            "stale": _utc_iso(stale),
+            "point": {
+                "lat": snapshot.latitude,
+                "lon": snapshot.longitude,
+                "hae": snapshot.altitude,
+                "ce": snapshot.accuracy,
+                "le": snapshot.accuracy,
+            },
+            "detail": detail.to_dict(),
+        }
+        return Event.from_dict(event_dict)
+
+    def _latest_location(self) -> LocationSnapshot | None:
+        """Return the freshest location snapshot available."""
+
+        location = self._latest_location_from_manager()
+        if location is not None:
+            return location
+        return self._latest_location_from_controller()
+
+    def _latest_location_from_manager(self) -> LocationSnapshot | None:
+        """Extract the latest location data from the telemeter manager."""
+
+        if self._telemeter_manager is None:
+            return None
+
+        sensor = self._telemeter_manager.get_sensor("location")
+        if sensor is None:
+            return None
+
+        latitude = getattr(sensor, "latitude", None)
+        longitude = getattr(sensor, "longitude", None)
+        if latitude is None or longitude is None:
+            return None
+
+        altitude = getattr(sensor, "altitude", 0.0) or 0.0
+        speed = getattr(sensor, "speed", 0.0) or 0.0
+        bearing = getattr(sensor, "bearing", 0.0) or 0.0
+        accuracy = getattr(sensor, "accuracy", 0.0) or 0.0
+        updated_at = getattr(sensor, "last_update", None) or datetime.utcnow()
+        peer_hash = getattr(
+            getattr(self._telemeter_manager, "telemeter", None),
+            "peer_dest",
+            None,
+        )
+
+        return LocationSnapshot(
+            latitude=float(latitude),
+            longitude=float(longitude),
+            altitude=float(altitude),
+            speed=float(speed),
+            bearing=float(bearing),
+            accuracy=float(accuracy),
+            updated_at=updated_at,
+            peer_hash=str(peer_hash) if peer_hash is not None else None,
+        )
+
+    def _latest_location_from_controller(self) -> LocationSnapshot | None:
+        """Extract the latest location data from the telemetry controller."""
+
+        if self._telemetry_controller is None:
+            return None
+
+        telemetry = self._telemetry_controller.get_telemetry()
+        if not telemetry:
+            return None
+
+        telemeter = telemetry[0]
+        location_sensor = None
+        for sensor in getattr(telemeter, "sensors", []):
+            if getattr(sensor, "sid", None) == SID_LOCATION:
+                location_sensor = sensor
+                break
+
+        if location_sensor is None:
+            return None
+
+        latitude = getattr(location_sensor, "latitude", None)
+        longitude = getattr(location_sensor, "longitude", None)
+        if latitude is None or longitude is None:
+            return None
+
+        altitude = getattr(location_sensor, "altitude", 0.0) or 0.0
+        speed = getattr(location_sensor, "speed", 0.0) or 0.0
+        bearing = getattr(location_sensor, "bearing", 0.0) or 0.0
+        accuracy = getattr(location_sensor, "accuracy", 0.0) or 0.0
+        updated_at = getattr(location_sensor, "last_update", None) or getattr(
+            telemeter, "time", datetime.utcnow()
+        )
+
+        return LocationSnapshot(
+            latitude=float(latitude),
+            longitude=float(longitude),
+            altitude=float(altitude),
+            speed=float(speed),
+            bearing=float(bearing),
+            accuracy=float(accuracy),
+            updated_at=updated_at,
+            peer_hash=getattr(telemeter, "peer_dest", None),
+        )
+
+    def _identifier_from_hash(self, peer_hash: Optional[str]) -> str:
+        """Derive a readable identifier from a destination hash."""
+
+        if peer_hash is None:
+            return self._config.callsign
+        normalized = str(peer_hash).strip().split(":")[-1]
+        normalized = normalized or self._config.callsign
+        if len(normalized) > 12:
+            normalized = normalized[-12:]
+        return normalized

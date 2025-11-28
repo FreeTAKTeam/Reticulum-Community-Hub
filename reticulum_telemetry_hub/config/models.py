@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from configparser import ConfigParser
+
 
 @dataclass
 class RNSInterfaceConfig:
@@ -70,6 +72,7 @@ class HubAppConfig:
     reticulum: ReticulumConfig
     lxmf_router: LXMFRouterConfig
     app_version: Optional[str] = None
+    tak_connection: "TakConnectionConfig | None" = None
 
     def to_reticulum_info_dict(self) -> dict:
         """Return a dict compatible with the ReticulumInfo schema."""
@@ -95,3 +98,43 @@ class HubAppConfig:
             return version(distribution)
         except Exception:
             return "unknown"
+
+
+@dataclass
+class TakConnectionConfig:
+    """Settings that control TAK/CoT connectivity."""
+
+    cot_url: str = "tcp://127.0.0.1:8087"
+    callsign: str = "RTH"
+    poll_interval_seconds: float = 30.0
+    tls_client_cert: str | None = None
+    tls_client_key: str | None = None
+    tls_ca: str | None = None
+    tls_insecure: bool = False
+
+    def to_config_parser(self) -> ConfigParser:
+        """Return a ConfigParser that PyTAK understands."""
+
+        parser = ConfigParser()
+        parser["fts"] = {
+            "COT_URL": self.cot_url,
+            "CALLSIGN": self.callsign,
+            "SSL_CLIENT_CERT": self.tls_client_cert or "",
+            "SSL_CLIENT_KEY": self.tls_client_key or "",
+            "SSL_CLIENT_CAFILE": self.tls_ca or "",
+            "SSL_VERIFY": "false" if self.tls_insecure else "true",
+        }
+        return parser
+
+    def to_dict(self) -> dict:
+        """Return a serialisable representation for debugging or logs."""
+
+        return {
+            "cot_url": self.cot_url,
+            "callsign": self.callsign,
+            "poll_interval_seconds": self.poll_interval_seconds,
+            "tls_client_cert": self.tls_client_cert,
+            "tls_client_key": self.tls_client_key,
+            "tls_ca": self.tls_ca,
+            "tls_insecure": self.tls_insecure,
+        }

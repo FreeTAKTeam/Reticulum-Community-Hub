@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping
 
 import RNS
 
@@ -15,7 +16,16 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - gpsdclient is optional
     GPSDClient = None  # type: ignore
 
-from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterManager
+from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
+from reticulum_telemetry_hub.config.manager import HubConfigurationManager
+from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import (
+    TelemeterManager,
+)
+
+if TYPE_CHECKING:
+    from reticulum_telemetry_hub.reticulum_server.__main__ import (
+        ReticulumTelemetryHub,
+    )
 
 
 @dataclass
@@ -33,7 +43,11 @@ class HubService:
             return False
         if not self.is_supported():
             RNS.log(
-                f"Skipping daemon service '{self.name}' because the host does not provide the required hardware/software",
+                (
+                    "Skipping daemon service "
+                    f"'{self.name}' because the host does not provide "
+                    "the required hardware/software"
+                ),
                 RNS.LOG_INFO,
             )
             return False
@@ -90,7 +104,9 @@ class GpsTelemetryService(HubService):
     ) -> None:
         super().__init__(name="gpsd")
         self._telemeter_manager = telemeter_manager
-        self._client_factory = client_factory or (lambda **kwargs: GPSDClient(**kwargs))  # type: ignore[arg-type]
+        self._client_factory = client_factory or (
+            lambda **kwargs: GPSDClient(**kwargs)
+        )  # type: ignore[arg-type]
         self._host = host or os.getenv("RTH_GPSD_HOST", "127.0.0.1")
         raw_port = os.getenv("RTH_GPSD_PORT")
         self._port = int(raw_port) if raw_port is not None else (port or 2947)
@@ -108,7 +124,10 @@ class GpsTelemetryService(HubService):
         sensor = manager.get_sensor("location")
         if sensor is None:
             RNS.log(
-                "GPS daemon service could not obtain a location sensor; aborting",
+                (
+                    "GPS daemon service could not obtain a location sensor; "
+                    "aborting"
+                ),
                 RNS.LOG_WARNING,
             )
             return
@@ -116,7 +135,13 @@ class GpsTelemetryService(HubService):
         try:
             client = self._client_factory(host=self._host, port=self._port)
         except Exception as exc:
-            RNS.log(f"Unable to connect to gpsd on {self._host}:{self._port}: {exc}", RNS.LOG_ERROR)
+            RNS.log(
+                (
+                    "Unable to connect to gpsd on "
+                    f"{self._host}:{self._port}: {exc}"
+                ),
+                RNS.LOG_ERROR,
+            )
             return
 
         stream = self._iter_gps_stream(client)
@@ -125,7 +150,9 @@ class GpsTelemetryService(HubService):
                 break
             self._apply_gps_payload(sensor, payload)
 
-    def _iter_gps_stream(self, client: GPSDClient) -> Iterator[dict]:  # pragma: no cover - passthrough
+    def _iter_gps_stream(
+        self, client: GPSDClient
+    ) -> Iterator[dict]:  # pragma: no cover - passthrough
         return client.dict_stream(convert_datetime=False)
 
     def _apply_gps_payload(self, sensor, payload: Mapping[str, Any]) -> None:
@@ -135,14 +162,24 @@ class GpsTelemetryService(HubService):
             return
         sensor.latitude = float(lat)
         sensor.longitude = float(lon)
-        sensor.altitude = self._coerce_float(payload.get("alt"), sensor.altitude)
-        sensor.speed = self._coerce_float(payload.get("speed"), sensor.speed)
-        sensor.bearing = self._coerce_float(payload.get("track"), sensor.bearing)
-        sensor.accuracy = self._coerce_float(payload.get("eps"), sensor.accuracy)
+        sensor.altitude = self._coerce_float(
+            payload.get("alt"), sensor.altitude
+        )
+        sensor.speed = self._coerce_float(
+            payload.get("speed"), sensor.speed
+        )
+        sensor.bearing = self._coerce_float(
+            payload.get("track"), sensor.bearing
+        )
+        sensor.accuracy = self._coerce_float(
+            payload.get("eps"), sensor.accuracy
+        )
         sensor.last_update = datetime.utcnow()
 
     @staticmethod
-    def _coerce_float(value: Any, current: float | None, *, default: float = 0.0) -> float:
+    def _coerce_float(
+        value: Any, current: float | None, *, default: float = 0.0
+    ) -> float:
         if value is None:
             return current if current is not None else default
         try:
@@ -151,10 +188,54 @@ class GpsTelemetryService(HubService):
             return current if current is not None else default
 
 
+class CotTelemetryService(HubService):
+    """Scheduler that pushes location updates to a TAK endpoint."""
+
+    def __init__(self, *, connector: TakConnector, interval: float) -> None:
+        super().__init__(name="tak_cot")
+        self._connector = connector
+        self._interval = interval if interval > 0 else 1.0
+
+    def is_supported(self) -> bool:
+        return self._connector is not None and self._interval > 0
+
+    def poll_interval(self) -> float:
+        return self._interval
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                asyncio.run(self._connector.send_latest_location())
+            except Exception as exc:  # pragma: no cover - defensive logging
+                RNS.log(
+                    f"TAK connector failed to send CoT update: {exc}",
+                    RNS.LOG_ERROR,
+                )
+            self._stop_event.wait(self._interval)
+
+
 def _gps_factory(hub: "ReticulumTelemetryHub") -> HubService:
     return GpsTelemetryService(telemeter_manager=hub.telemeter_manager)
 
 
-SERVICE_FACTORIES: dict[str, Callable[["ReticulumTelemetryHub"], HubService]] = {
+def _cot_factory(hub: "ReticulumTelemetryHub") -> HubService:
+    config_manager = hub.config_manager or HubConfigurationManager(
+        storage_path=hub.storage_path
+    )
+    connector = hub.tak_connector
+    if connector is None:
+        connector = TakConnector(
+            config=config_manager.tak_config,
+            telemeter_manager=hub.telemeter_manager,
+            telemetry_controller=hub.tel_controller,
+        )
+    interval = connector.config.poll_interval_seconds
+    return CotTelemetryService(connector=connector, interval=interval)
+
+
+SERVICE_FACTORIES: dict[
+    str, Callable[["ReticulumTelemetryHub"], HubService]
+] = {
     "gpsd": _gps_factory,
+    "tak_cot": _cot_factory,
 }
