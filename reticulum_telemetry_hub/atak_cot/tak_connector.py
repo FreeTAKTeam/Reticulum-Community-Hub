@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import uuid
 
 from reticulum_telemetry_hub.atak_cot import Contact
 from reticulum_telemetry_hub.atak_cot import Detail
@@ -194,7 +195,9 @@ class TakConnector:
         accuracy = snapshot.accuracy if snapshot else 0.0
 
         identifier = self._identifier_from_hash(source_hash)
-        uid = f"{identifier}-chat-{int(now.timestamp())}"
+        timestamp_ms = int(start_time.timestamp() * 1000)
+        uid_suffix = uuid.uuid4().hex[:6]
+        uid = f"{identifier}-chat-{timestamp_ms}-{uid_suffix}"
         contact = Contact(callsign=sender_label or identifier)
         group = Group(name=str(topic_id), role="topic") if topic_id else None
 

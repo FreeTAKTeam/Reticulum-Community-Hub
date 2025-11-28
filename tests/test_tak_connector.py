@@ -142,3 +142,24 @@ def test_send_chat_event_dispatches_payload():
     assert event.detail.group is not None
     assert cfg["fts"]["CALLSIGN"] == "HUB"
     assert parse_flag is False
+
+
+def test_chat_uids_remain_unique():
+    connector = TakConnector(config=TakConnectionConfig(callsign="RTH"))
+
+    first = connector.build_chat_event(
+        content="Hello there",
+        sender_label="Alpha",
+        topic_id="ops",
+        source_hash=b"\x01" * 8,
+        timestamp=datetime(2025, 1, 1, 0, 0, 0),
+    )
+    second = connector.build_chat_event(
+        content="Hello there",
+        sender_label="Alpha",
+        topic_id="ops",
+        source_hash=b"\x01" * 8,
+        timestamp=datetime(2025, 1, 1, 0, 0, 0),
+    )
+
+    assert first.uid != second.uid
