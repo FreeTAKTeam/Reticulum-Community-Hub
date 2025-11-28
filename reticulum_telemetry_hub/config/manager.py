@@ -37,8 +37,10 @@ class HubConfigurationManager:
                 LXMF router configuration file.
         """
         load_env()
-        self.storage_path = Path(storage_path or DEFAULT_STORAGE_PATH)
-        self.config_path = Path(config_path or self.storage_path / "config.ini")
+        self.storage_path = Path(storage_path or DEFAULT_STORAGE_PATH).expanduser()
+        self.config_path = Path(
+            config_path or self.storage_path / "config.ini"
+        ).expanduser()
         self._config_parser = self._load_config_parser(self.config_path)
         self.runtime_config = self._load_runtime_config()
 

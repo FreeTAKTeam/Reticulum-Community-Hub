@@ -829,9 +829,13 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
-    storage_path = args.storage_dir or STORAGE_PATH
-    identity_path = os.path.join(storage_path, "identity")
-    config_path = Path(args.config_path) if args.config_path else Path(storage_path) / "config.ini"
+    storage_path = Path(args.storage_dir or STORAGE_PATH).expanduser()
+    identity_path = storage_path / "identity"
+    config_path = (
+        Path(args.config_path).expanduser()
+        if args.config_path
+        else storage_path / "config.ini"
+    )
 
     config_manager = HubConfigurationManager(
         storage_path=storage_path, config_path=config_path
