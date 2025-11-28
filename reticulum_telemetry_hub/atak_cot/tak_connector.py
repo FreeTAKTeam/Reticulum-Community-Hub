@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional
 
-from reticulum_telemetry_hub.atak_cot import Contact, Detail, Event
+from reticulum_telemetry_hub.atak_cot import Contact
+from reticulum_telemetry_hub.atak_cot import Detail
+from reticulum_telemetry_hub.atak_cot import Event
+from reticulum_telemetry_hub.atak_cot import Group
 from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
 from reticulum_telemetry_hub.config.models import TakConnectionConfig
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import (
@@ -52,6 +54,8 @@ class TakConnector:
 
     EVENT_TYPE = "a-f-G-U-C"
     EVENT_HOW = "m-g"
+    CHAT_EVENT_TYPE = "b-t-f"
+    CHAT_EVENT_HOW = "h-g-i-g-o"
 
     def __init__(
         self,
@@ -151,6 +155,108 @@ class TakConnector:
             "detail": detail.to_dict(),
         }
         return Event.from_dict(event_dict)
+
+    def build_chat_event(
+        self,
+        *,
+        content: str,
+        sender_label: str,
+        topic_id: str | None = None,
+        source_hash: str | None = None,
+        timestamp: datetime | None = None,
+    ) -> Event:
+        """Construct a CoT chat :class:`Event` for LXMF message content.
+
+        Args:
+            content (str): Plaintext chat body to relay.
+            sender_label (str): Human-readable label for the sender.
+            topic_id (str | None): Optional topic identifier for routing.
+            source_hash (str | None): Optional sender hash used to derive the
+                UID.
+            timestamp (datetime | None): Time the LXMF message was created.
+
+        Returns:
+            Event: Populated CoT chat event ready for transmission.
+        """
+
+        if not content:
+            raise ValueError("Chat content is required to build a CoT event.")
+
+        now = datetime.utcnow()
+        start_time = timestamp or now
+        stale_delta = max(self._config.poll_interval_seconds, 1.0)
+        stale = now + timedelta(seconds=stale_delta * 2)
+
+        snapshot = self._latest_location()
+        latitude = snapshot.latitude if snapshot else 0.0
+        longitude = snapshot.longitude if snapshot else 0.0
+        altitude = snapshot.altitude if snapshot else 0.0
+        accuracy = snapshot.accuracy if snapshot else 0.0
+
+        identifier = self._identifier_from_hash(source_hash)
+        uid = f"{identifier}-chat-{int(now.timestamp())}"
+        contact = Contact(callsign=sender_label or identifier)
+        group = Group(name=str(topic_id), role="topic") if topic_id else None
+
+        remarks = content.strip()
+        if topic_id:
+            remarks = f"[topic:{topic_id}] {remarks}"
+
+        detail = Detail(contact=contact, group=group, remarks=remarks)
+
+        event_dict = {
+            "version": "2.0",
+            "uid": uid,
+            "type": self.CHAT_EVENT_TYPE,
+            "how": self.CHAT_EVENT_HOW,
+            "time": _utc_iso(now),
+            "start": _utc_iso(start_time),
+            "stale": _utc_iso(stale),
+            "point": {
+                "lat": latitude,
+                "lon": longitude,
+                "hae": altitude,
+                "ce": accuracy,
+                "le": accuracy,
+            },
+            "detail": detail.to_dict(),
+        }
+        return Event.from_dict(event_dict)
+
+    async def send_chat_event(
+        self,
+        *,
+        content: str,
+        sender_label: str,
+        topic_id: str | None = None,
+        source_hash: str | None = None,
+        timestamp: datetime | None = None,
+    ) -> bool:
+        """Send a CoT chat event derived from LXMF payloads.
+
+        Args:
+            content (str): Plaintext chat body to relay.
+            sender_label (str): Human-readable label for the sender.
+            topic_id (str | None): Optional topic identifier for routing.
+            source_hash (str | None): Optional sender hash used to derive the
+                UID.
+            timestamp (datetime | None): Time the LXMF message was created.
+
+        Returns:
+            bool: ``True`` when a message was dispatched.
+        """
+
+        event = self.build_chat_event(
+            content=content,
+            sender_label=sender_label,
+            topic_id=topic_id,
+            source_hash=source_hash,
+            timestamp=timestamp,
+        )
+        await self._pytak_client.create_and_send_message(
+            event, config=self._config_parser, parse_inbound=False
+        )
+        return True
 
     def _latest_location(self) -> LocationSnapshot | None:
         """Return the freshest location snapshot available.
@@ -255,11 +361,11 @@ class TakConnector:
             peer_hash=getattr(telemeter, "peer_dest", None),
         )
 
-    def _identifier_from_hash(self, peer_hash: Optional[str]) -> str:
+    def _identifier_from_hash(self, peer_hash: str | bytes | None) -> str:
         """Derive a readable identifier from a destination hash.
 
         Args:
-            peer_hash (Optional[str]): Destination hash extracted from the
+            peer_hash (str | bytes | None): Destination hash extracted from the
                 telemeter or controller.
 
         Returns:
@@ -268,7 +374,10 @@ class TakConnector:
 
         if peer_hash is None:
             return self._config.callsign
-        normalized = str(peer_hash).strip().split(":")[-1]
+        if isinstance(peer_hash, (bytes, bytearray)):
+            normalized = peer_hash.hex()
+        else:
+            normalized = str(peer_hash).strip().split(":")[-1]
         normalized = normalized or self._config.callsign
         if len(normalized) > 12:
             normalized = normalized[-12:]

@@ -15,3 +15,4 @@
 - 2025-11-20: ✅ Detect escape-prefixed telemetry payloads and normalize commands before broadcasting.
 - 2025-11-20: ✅ Suppress broadcasts when escape-prefixed commands are detected in plaintext bodies.
 - 2025-11-28: ✅ Add TAK CoT connector service for broadcasting location updates.
+- 2025-11-28: ✅ Convert LXMF chat traffic into CoT chat events with topic-aware routing.

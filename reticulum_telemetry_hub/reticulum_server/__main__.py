@@ -27,9 +27,11 @@ or run in headless mode for unattended deployments.
 """
 
 import argparse
+import asyncio
 import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 
 import LXMF
@@ -421,12 +423,38 @@ class ReticulumTelemetryHub:
             if command_payload_present:
                 return
 
-            # Broadcast the message to all connected clients
             source = message.get_source()
             source_hash = getattr(source, "hash", None) or message.source_hash
             source_label = self._lookup_identity_label(source_hash)
-            msg = f"{source_label} > {message.content_as_string()}"
             topic_id = self._extract_target_topic(message.fields)
+            content_text = self._message_text(message)
+
+            tak_connector = getattr(self, "tak_connector", None)
+            if tak_connector is not None and content_text:
+                try:
+                    message_time = datetime.utcfromtimestamp(
+                        getattr(message, "timestamp", time.time())
+                    )
+                except Exception:
+                    message_time = datetime.utcnow()
+                try:
+                    asyncio.run(
+                        tak_connector.send_chat_event(
+                            content=content_text,
+                            sender_label=source_label,
+                            topic_id=topic_id,
+                            source_hash=source_hash,
+                            timestamp=message_time,
+                        )
+                    )
+                except Exception as exc:  # pragma: no cover - defensive log
+                    RNS.log(
+                        f"Failed to send CoT chat event: {exc}",
+                        getattr(RNS, "LOG_WARNING", 2),
+                    )
+
+            # Broadcast the message to all connected clients
+            msg = f"{source_label} > {content_text}"
             source_hex = self._message_source_hex(message)
             exclude = {source_hex} if source_hex else None
             self.send_message(msg, topic=topic_id, exclude=exclude)
