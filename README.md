@@ -261,6 +261,25 @@ variables (or a `.env` file):
 
 Example: `python -m reticulum_telemetry_hub.reticulum_server --daemon --service tak_cot`.
 
+#### Configuring the TAK integration
+
+1. Ensure PyTAK is installed in the same environment as RTH (`pip install pytak` is already declared as a dependency).  
+2. Set the connection details via environment variables or a `.env` file in the repo root (loaded automatically):
+   ```
+   RTH_TAK_COT_URL=tcp://atak.example.com:8087
+   RTH_TAK_CALLSIGN=RTH
+   RTH_TAK_INTERVAL_SECONDS=30
+   # Optional TLS settings
+   # RTH_TAK_TLS_CLIENT_CERT=/path/to/cert.pem
+   # RTH_TAK_TLS_CLIENT_KEY=/path/to/key.pem
+   # RTH_TAK_TLS_CA=/path/to/ca.pem
+   # RTH_TAK_TLS_INSECURE=true
+   ```
+3. Start the hub with the TAK service enabled (combine with `--embedded` if you are not running an external `lxmd`):  
+   `python -m reticulum_telemetry_hub.reticulum_server --daemon --service tak_cot`
+4. Provide a location feed so the connector has something to send. The hub will use the latest `location` sensor reading (for example from the `gpsd` service: `--service gpsd`), or any location telemetry already present in the database.
+5. Watch the logs for successful CoT dispatches; failures will be logged with the TAK connector error message.
+
 ### Project Roadmap
 
 - [x] **Transition to Command-Based Server Joining**: Shift the "joining the server" functionality from an announce-based method to a command-based approach for improved control and scalability.
