@@ -25,6 +25,15 @@ class HubConfigurationManager:
         reticulum_config_path: Optional[Path] = None,
         lxmf_router_config_path: Optional[Path] = None,
     ) -> None:
+        """Load configuration files and prepare helpers.
+
+        Args:
+            storage_path (Optional[Path]): Root path for hub storage.
+            reticulum_config_path (Optional[Path]): Override path to the
+                Reticulum configuration file.
+            lxmf_router_config_path (Optional[Path]): Override path to the
+                LXMF router configuration file.
+        """
         load_env()
         self.storage_path = Path(storage_path or "RTH_Store")
         self.reticulum_config_path = Path(
@@ -38,24 +47,41 @@ class HubConfigurationManager:
 
     @property
     def config(self) -> HubAppConfig:
+        """Return the aggregated hub configuration.
+
+        Returns:
+            HubAppConfig: Current configuration snapshot.
+        """
         return self._config
 
     @property
     def tak_config(self) -> TakConnectionConfig:
+        """Return the TAK connector configuration.
+
+        Returns:
+            TakConnectionConfig: Current TAK connection settings.
+        """
         return self._tak_config
 
     def reload(self) -> HubAppConfig:
+        """Reload configuration files from disk and environment.
+
+        Returns:
+            HubAppConfig: Freshly parsed application configuration.
+        """
         self._tak_config = self._load_tak_config()
         self._config = self._load()
         return self._config
 
     def reticulum_info_snapshot(self) -> dict:
+        """Return a summary of Reticulum runtime configuration."""
         return self._config.to_reticulum_info_dict()
 
     # ------------------------------------------------------------------ #
     # private helpers
     # ------------------------------------------------------------------ #
     def _load(self) -> HubAppConfig:
+        """Assemble the high level hub configuration object."""
         reticulum = self._load_reticulum_config(self.reticulum_config_path)
         lxmf = self._load_lxmf_config(self.lxmf_router_config_path)
         storage_path = self.storage_path
@@ -71,6 +97,7 @@ class HubConfigurationManager:
         )
 
     def _load_reticulum_config(self, path: Path) -> ReticulumConfig:
+        """Parse the Reticulum configuration file."""
         parser = ConfigParser()
         if path.exists():
             parser.read(path)
@@ -95,6 +122,7 @@ class HubConfigurationManager:
         )
 
     def _load_lxmf_config(self, path: Path) -> LXMFRouterConfig:
+        """Parse the LXMF router configuration file."""
         parser = ConfigParser()
         if path.exists():
             parser.read(path)
@@ -114,6 +142,7 @@ class HubConfigurationManager:
 
     @staticmethod
     def _get_bool(section, key: str, default: bool) -> bool:
+        """Interpret boolean-like strings from a config section."""
         value = section.get(key)
         if value is None:
             return default
@@ -121,6 +150,7 @@ class HubConfigurationManager:
 
     @staticmethod
     def _find_interface_section(parser: ConfigParser) -> dict:
+        """Find the first TCP interface section in a configuration parser."""
         candidate_sections = [
             name
             for name in parser.sections()
@@ -131,6 +161,7 @@ class HubConfigurationManager:
         return {}
 
     def _load_tak_config(self) -> TakConnectionConfig:
+        """Construct the TAK configuration using environment overrides."""
         defaults = TakConnectionConfig()
         interval_env = os.getenv(
             "RTH_TAK_INTERVAL_SECONDS", os.getenv("RTH_TAK_INTERVAL")

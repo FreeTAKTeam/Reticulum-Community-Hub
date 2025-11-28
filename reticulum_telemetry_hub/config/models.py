@@ -17,6 +17,12 @@ class RNSInterfaceConfig:
     interface_type: str = "TCPServerInterface"
 
     def to_dict(self) -> dict:
+        """Serialise the TCP interface configuration.
+
+        Returns:
+            dict: Mapping consumable by Reticulum configuration writers.
+        """
+
         return {
             "listen_ip": self.listen_ip,
             "listen_port": self.listen_port,
@@ -35,6 +41,12 @@ class ReticulumConfig:
     tcp_interface: RNSInterfaceConfig = field(default_factory=RNSInterfaceConfig)
 
     def to_dict(self) -> dict:
+        """Serialise the Reticulum configuration values.
+
+        Returns:
+            dict: Flattened representation including nested interfaces.
+        """
+
         data = {
             "path": str(self.path),
             "enable_transport": self.enable_transport,
@@ -54,6 +66,12 @@ class LXMFRouterConfig:
     display_name: str = "RTH_router"
 
     def to_dict(self) -> dict:
+        """Serialise LXMF router configuration fields.
+
+        Returns:
+            dict: Mapping used by the embedded LXMF daemon.
+        """
+
         return {
             "path": str(self.path),
             "enable_node": self.enable_node,
@@ -75,7 +93,11 @@ class HubAppConfig:
     tak_connection: "TakConnectionConfig | None" = None
 
     def to_reticulum_info_dict(self) -> dict:
-        """Return a dict compatible with the ReticulumInfo schema."""
+        """Return a dict compatible with the ReticulumInfo schema.
+
+        Returns:
+            dict: Snapshot of the Reticulum runtime configuration.
+        """
         return {
             "is_transport_enabled": self.reticulum.enable_transport,
             "is_connected_to_shared_instance": self.reticulum.share_instance,
@@ -113,7 +135,11 @@ class TakConnectionConfig:
     tls_insecure: bool = False
 
     def to_config_parser(self) -> ConfigParser:
-        """Return a ConfigParser that PyTAK understands."""
+        """Return a ConfigParser that PyTAK understands.
+
+        Returns:
+            ConfigParser: Parser configured with PyTAK-compatible values.
+        """
 
         parser = ConfigParser()
         parser["fts"] = {
@@ -127,7 +153,11 @@ class TakConnectionConfig:
         return parser
 
     def to_dict(self) -> dict:
-        """Return a serialisable representation for debugging or logs."""
+        """Return a serialisable representation for debugging or logs.
+
+        Returns:
+            dict: Copy of the connector settings for display purposes.
+        """
 
         return {
             "cot_url": self.cot_url,

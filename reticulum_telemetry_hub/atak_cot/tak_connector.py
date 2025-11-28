@@ -35,7 +35,14 @@ class LocationSnapshot:
 
 
 def _utc_iso(dt: datetime) -> str:
-    """Return an ISO-8601 string without microseconds suffixed with ``Z``."""
+    """Format a ``datetime`` in UTC without microseconds.
+
+    Args:
+        dt (datetime): Datetime to normalise.
+
+    Returns:
+        str: ISO-8601 timestamp suffixed with ``Z``.
+    """
 
     return dt.replace(microsecond=0).isoformat() + "Z"
 
@@ -54,7 +61,19 @@ class TakConnector:
         telemeter_manager: TelemeterManager | None = None,
         telemetry_controller: TelemetryController | None = None,
     ) -> None:
-        """Initialize the connector with optional collaborators."""
+        """Initialize the connector with optional collaborators.
+
+        Args:
+            config (TakConnectionConfig | None): Connection parameters for
+                PyTAK. Defaults to a new :class:`TakConnectionConfig` when
+                omitted.
+            pytak_client (PytakClient | None): Client used to create and send
+                messages. A default client is created when not provided.
+            telemeter_manager (TelemeterManager | None): Manager that exposes
+                live sensor data.
+            telemetry_controller (TelemetryController | None): Controller used
+                for fallback location lookups.
+        """
 
         self._config = config or TakConnectionConfig()
         self._pytak_client = pytak_client or PytakClient(
@@ -66,12 +85,21 @@ class TakConnector:
 
     @property
     def config(self) -> TakConnectionConfig:
-        """Return the current TAK connection configuration."""
+        """Return the current TAK connection configuration.
+
+        Returns:
+            TakConnectionConfig: Active configuration for outbound CoT events.
+        """
 
         return self._config
 
     async def send_latest_location(self) -> bool:
-        """Send the most recent location snapshot if one is available."""
+        """Send the most recent location snapshot if one is available.
+
+        Returns:
+            bool: ``True`` when a message was dispatched, ``False`` when no
+            location was available.
+        """
 
         event = self.build_event()
         if event is None:
@@ -82,7 +110,12 @@ class TakConnector:
         return True
 
     def build_event(self) -> Event | None:
-        """Construct a CoT :class:`Event` from available telemetry."""
+        """Construct a CoT :class:`Event` from available telemetry.
+
+        Returns:
+            Event | None: Populated CoT event or ``None`` when no location
+            snapshot exists.
+        """
 
         snapshot = self._latest_location()
         if snapshot is None:
@@ -120,7 +153,11 @@ class TakConnector:
         return Event.from_dict(event_dict)
 
     def _latest_location(self) -> LocationSnapshot | None:
-        """Return the freshest location snapshot available."""
+        """Return the freshest location snapshot available.
+
+        Returns:
+            LocationSnapshot | None: Most recent location if available.
+        """
 
         location = self._latest_location_from_manager()
         if location is not None:
@@ -128,7 +165,12 @@ class TakConnector:
         return self._latest_location_from_controller()
 
     def _latest_location_from_manager(self) -> LocationSnapshot | None:
-        """Extract the latest location data from the telemeter manager."""
+        """Extract the latest location data from the telemeter manager.
+
+        Returns:
+            LocationSnapshot | None: Location snapshot when a location sensor
+            exists.
+        """
 
         if self._telemeter_manager is None:
             return None
@@ -165,7 +207,12 @@ class TakConnector:
         )
 
     def _latest_location_from_controller(self) -> LocationSnapshot | None:
-        """Extract the latest location data from the telemetry controller."""
+        """Extract the latest location data from the telemetry controller.
+
+        Returns:
+            LocationSnapshot | None: Location snapshot derived from stored
+            telemetry.
+        """
 
         if self._telemetry_controller is None:
             return None
@@ -209,7 +256,15 @@ class TakConnector:
         )
 
     def _identifier_from_hash(self, peer_hash: Optional[str]) -> str:
-        """Derive a readable identifier from a destination hash."""
+        """Derive a readable identifier from a destination hash.
+
+        Args:
+            peer_hash (Optional[str]): Destination hash extracted from the
+                telemeter or controller.
+
+        Returns:
+            str: Callsign-compatible identifier.
+        """
 
         if peer_hash is None:
             return self._config.callsign
