@@ -18,9 +18,7 @@ class DummyPytakClient:
     def __init__(self) -> None:
         self.sent: list[tuple] = []
 
-    async def create_and_send_message(
-        self, message, config=None, parse_inbound=True
-    ):
+    async def create_and_send_message(self, message, config=None, parse_inbound=True):
         self.sent.append((message, config, parse_inbound))
 
 
@@ -66,9 +64,7 @@ def test_connector_builds_cot_event_from_location():
 def test_connector_sends_cot_payload():
     manager = _build_manager()
     client = DummyPytakClient()
-    config = TakConnectionConfig(
-        cot_url="udp://example:8087", callsign="HUB"
-    )
+    config = TakConnectionConfig(cot_url="udp://example:8087", callsign="HUB")
     connector = TakConnector(
         config=config, pytak_client=client, telemeter_manager=manager
     )
@@ -101,3 +97,69 @@ def test_cot_service_publishes_periodically():
         service.stop()
 
     assert len(client.sent) >= 2
+
+
+def test_build_chat_event_includes_topic():
+    connector = TakConnector(config=TakConnectionConfig(callsign="RTH"))
+
+    event = connector.build_chat_event(
+        content="Hello team",
+        sender_label="Alpha",
+        topic_id="ops",
+        source_hash=b"\xaa" * 8,
+        timestamp=datetime(2025, 1, 2, 3, 4, 5),
+    )
+
+    assert event.type == connector.CHAT_EVENT_TYPE
+    assert event.detail is not None
+    assert event.detail.contact is not None
+    assert event.detail.contact.callsign == "Alpha"
+    assert event.detail.group is not None
+    assert event.detail.group.name == "ops"
+    assert event.detail.remarks.startswith("[topic:ops] Hello team")
+
+
+def test_send_chat_event_dispatches_payload():
+    client = DummyPytakClient()
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"), pytak_client=client
+    )
+
+    asyncio.run(
+        connector.send_chat_event(
+            content="Status update",
+            sender_label="Bravo",
+            topic_id="status",
+            source_hash="feed",
+            timestamp=datetime(2025, 1, 1, 0, 0, 0),
+        )
+    )
+
+    assert client.sent
+    event, cfg, parse_flag = client.sent[0]
+    assert event.type == connector.CHAT_EVENT_TYPE
+    assert event.detail is not None
+    assert event.detail.group is not None
+    assert cfg["fts"]["CALLSIGN"] == "HUB"
+    assert parse_flag is False
+
+
+def test_chat_uids_remain_unique():
+    connector = TakConnector(config=TakConnectionConfig(callsign="RTH"))
+
+    first = connector.build_chat_event(
+        content="Hello there",
+        sender_label="Alpha",
+        topic_id="ops",
+        source_hash=b"\x01" * 8,
+        timestamp=datetime(2025, 1, 1, 0, 0, 0),
+    )
+    second = connector.build_chat_event(
+        content="Hello there",
+        sender_label="Alpha",
+        topic_id="ops",
+        source_hash=b"\x01" * 8,
+        timestamp=datetime(2025, 1, 1, 0, 0, 0),
+    )
+
+    assert first.uid != second.uid

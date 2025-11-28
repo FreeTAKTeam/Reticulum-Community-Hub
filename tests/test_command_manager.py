@@ -4,6 +4,7 @@ import RNS
 import pytest
 from msgpack import packb
 
+from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.api.models import Subscriber, Topic
 
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
@@ -749,6 +750,67 @@ def test_delivery_callback_handles_commands_and_broadcasts():
     assert telemetry_calls == [incoming]
 
 
+class DummyPytakClient:
+    def __init__(self) -> None:
+        self.sent: list[tuple] = []
+
+    async def create_and_send_message(self, message, config=None, parse_inbound=True):
+        self.sent.append((message, config, parse_inbound))
+
+
+def test_delivery_callback_emits_cot_chat_for_valid_message():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    hub.lxm_router = type(
+        "DummyRouter", (), {"handle_outbound": lambda self, msg: None}
+    )()
+    hub.my_lxmf_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    sender_hash = sender.identity.hash.hex()
+    hub.connections = {}
+    hub.identities = {sender_hash: "peer-one"}
+    hub.topic_subscribers = {}
+    hub.api = type("DummyAPI", (), {"list_subscribers": lambda self: []})()
+    hub.tel_controller = type(
+        "DummyController",
+        (),
+        {"handle_message": lambda self, message: False},
+    )()
+    hub.command_manager = type(
+        "DummyCommands",
+        (),
+        {"handle_commands": lambda self, commands, message: []},
+    )()
+    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
+        hub, ReticulumTelemetryHub
+    )
+    client = DummyPytakClient()
+    hub.tak_connector = TakConnector(pytak_client=client)
+
+    incoming = LXMF.LXMessage(
+        hub.my_lxmf_dest, sender, "Hello world", fields={"TopicID": "chat"}
+    )
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+
+    assert client.sent
+    event, config, parse_flag = client.sent[0]
+    assert event.detail is not None
+    assert event.detail.group is not None
+    assert event.detail.group.name == "chat"
+    assert "Hello world" in event.detail.remarks
+    assert config["fts"]["CALLSIGN"] == hub.tak_connector.config.callsign
+    assert parse_flag is False
+
+
 def test_delivery_callback_honors_topic_field():
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
@@ -919,6 +981,51 @@ def test_delivery_callback_skips_telemetry_only_messages():
     hub.delivery_callback(incoming)
 
     assert not router_messages
+
+
+def test_delivery_callback_skips_cot_chat_for_telemetry():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    hub.lxm_router = type(
+        "DummyRouter", (), {"handle_outbound": lambda self, msg: None}
+    )()
+    hub.my_lxmf_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    hub.connections = {}
+    hub.identities = {}
+    hub.topic_subscribers = {}
+    hub.api = type("DummyAPI", (), {"list_subscribers": lambda self: []})()
+    hub.tel_controller = type(
+        "DummyController",
+        (),
+        {"handle_message": lambda self, message: True},
+    )()
+    hub.command_manager = type(
+        "DummyCommands",
+        (),
+        {"handle_commands": lambda self, commands, message: []},
+    )()
+    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
+        hub, ReticulumTelemetryHub
+    )
+    client = DummyPytakClient()
+    hub.tak_connector = TakConnector(pytak_client=client)
+
+    telemetry_fields = {LXMF.FIELD_TELEMETRY: packb({"sensor": 1}, use_bin_type=True)}
+    incoming = LXMF.LXMessage(
+        hub.my_lxmf_dest, sender, "Telemetry data", fields=telemetry_fields
+    )
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+
+    assert not client.sent
 
 
 def test_list_topics_includes_hint():

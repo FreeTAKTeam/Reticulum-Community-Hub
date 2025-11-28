@@ -249,6 +249,10 @@ transmits it via PyTAK with the configured callsign and TLS settings. Enable the
 service with the CLI flag and customize its behavior through environment
 variables (or a `.env` file):
 
+Signed chat messages delivered over LXMF are also mirrored into CoT chat events
+when they include non-telemetry content. Remarks carry the chat body and topic
+identifier to maintain topic-aware routing inside TAK tools.
+
 | Environment variable | Purpose |
 | --- | --- |
 | `RTH_TAK_COT_URL` | CoT endpoint URL (for example `tcp://127.0.0.1:8087`). |
