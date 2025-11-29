@@ -112,6 +112,7 @@ class HubAppConfig:
     storage_path: Path
     database_path: Path
     hub_database_path: Path
+    runtime: "HubRuntimeConfig"
     reticulum: ReticulumConfig
     lxmf_router: LXMFRouterConfig
     app_version: Optional[str] = None

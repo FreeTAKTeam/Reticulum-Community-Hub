@@ -64,46 +64,63 @@ pytest tests/test_reticulum_server_daemon.py -q
 
 ## Configuration
 
-until we implement the wizard you will need to configure different config files.
+RTH now uses a unified runtime configuration file alongside the Reticulum/LXMF configs. Defaults live under `RTH_Store`, but you can point at another storage directory with `--storage_dir` (the hub will look for `config.ini` there).
 
-## RNS Config file
+### Unified runtime config (`config.ini`)
 
-located under ```/[USERNAME]/.reticulum```
+Create `RTH_Store/config.ini` (or place it in your chosen storage directory). CLI flags always override the file, and the file overrides built-in defaults.
 
-minimal configuration
+```ini
+[hub]
+display_name = RTH
+announce_interval = 60           # seconds
+hub_telemetry_interval = 600     # seconds
+service_telemetry_interval = 900 # seconds
+log_level = debug
+embedded_lxmd = false            # set true to run the embedded router
+services = tak_cot, gpsd         # comma-separated default services
+reticulum_config_path = ~/.reticulum/config
+lxmf_router_config_path = ~/.lxmd/config
+telemetry_filename = telemetry.ini
 
-``` ini
-[reticulum]  
-  enable_transport = True
-    share_instance = Yes
+[reticulum]
+enable_transport = true
+share_instance = true
 
 [interfaces]
-  [[TCP Server Interface]]
-  type = TCPServerInterface
-  interface_enabled = True
+type = TCPServerInterface
+interface_enabled = true
+listen_ip = 0.0.0.0
+listen_port = 4242
 
-  # This configuration will listen on all IP
-  # interfaces on port 4242
-
-  listen_ip = 0.0.0.0
-  listen_port = 4242
-```
-
-## Router Config File
-
-located under ```/[USERNAME]/.lxmd```
-
-``` ini
 [propagation]
 enable_node = yes
-# Automatic announce interval in minutes, suggested.
-announce_interval = 10
+announce_interval = 10           # minutes
 propagation_transfer_max_accepted_size = 1024
 
 [lxmf]
 display_name = RTH_router
 
+[gpsd]
+host = 127.0.0.1
+port = 2947
+
+[tak]
+cot_url = tcp://127.0.0.1:8087
+callsign = RTH
+poll_interval_seconds = 30
+# tls_client_cert = /path/to/cert.pem
+# tls_client_key  = /path/to/key.pem
+# tls_ca          = /path/to/ca.pem
+# tls_insecure    = true
 ```
+
+How the unified config is used:
+
+- `HubConfigurationManager` loads `config.ini` into a single runtime view (`HubRuntimeConfig` stored on `HubAppConfig`).
+- Reticulum and LXMF settings can be supplied directly in `config.ini`, or you can point to existing config files via `[hub].reticulum_config_path` / `[hub].lxmf_router_config_path`.
+- TAK, GPSD, announce/telemetry intervals, default services, log level, and embedded/external LXMF choices are all centralized here.
+- CLI flags (`--storage_dir`, `--config`, `--display-name`, `--announce-interval`, `--embedded`, `--service`, etc.) override any values loaded from the file.
 
 ## Service
 
@@ -270,22 +287,25 @@ RTH can rely on an external ``lxmd`` process (the default) or it can host the
 delivery/propagation threads internally via the ``--embedded``/``--embedded-lxmd``
 flag. Choose the mode that best matches your deployment:
 
-* **External daemon (default)** – ideal for production installs that already run
-  Reticulum infrastructure. Follow the configuration snippets above to create
-  ``~/.reticulum/config`` and ``~/.lxmd/config`` and use your init system (for
-  example ``systemd``) to keep ``lxmd`` alive. The hub connects to that router
-  and benefits from the daemon’s own storage limits and lifecycle management.
-* **Embedded ``lxmd``** – useful for development, CI or constrained hosts where
+* **External daemon (default)** - ideal for production installs that already run
+  Reticulum infrastructure. Keep your Reticulum/LXMF daemons configured with
+  their normal files (``~/.reticulum/config`` and ``~/.lxmd/config``) and mirror
+  those values into ``config.ini`` so the hub reflects the same settings. Use
+  your init system (for example ``systemd``) to keep ``lxmd`` alive. The hub
+  connects to that router and benefits from the daemon's storage limits and
+  lifecycle management.
+* **Embedded ``lxmd``** - useful for development, CI or constrained hosts where
   running a companion service is impractical. Launch the server with
   ``python -m reticulum_telemetry_hub.reticulum_server --embedded`` (combine it
   with ``--storage_dir`` to point at a temporary workspace). The embedded daemon
-  reads the same config files as the external one via the
-  ``HubConfigurationManager`` and automatically persists telemetry snapshots
-  emitted by the LXMF router. Tweak ``[propagation]`` settings in
-  ``~/.lxmd/config`` (announce interval, enable_node, etc.) to control the in
-  process behaviour.
+  reads its values from ``config.ini`` via the ``HubConfigurationManager`` and
+  automatically persists telemetry snapshots emitted by the LXMF router. Tweak
+  the ``[propagation]`` settings in the file (announce interval, enable_node,
+  etc.) to control in-process behaviour.
 
 ### Daemon mode & services
+
+
 
 Passing `--daemon` tells the hub to spin up the `TelemetrySampler` along with any
 services requested via `--service`. The sampler periodically snapshots the local

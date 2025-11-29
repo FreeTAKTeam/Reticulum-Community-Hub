@@ -841,7 +841,8 @@ if __name__ == "__main__":
     config_manager = HubConfigurationManager(
         storage_path=storage_path, config_path=config_path
     )
-    runtime_config = config_manager.runtime_config
+    app_config = config_manager.config
+    runtime_config = app_config.runtime
 
     display_name = args.display_name or runtime_config.display_name
     announce_interval = args.announce_interval or runtime_config.announce_interval

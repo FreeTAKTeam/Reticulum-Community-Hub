@@ -26,4 +26,8 @@ source "$VENV_DIR/bin/activate"
 python -m pip install --upgrade pip
 python -m pip install -e .
 
-exec python -m reticulum_telemetry_hub.reticulum_server "$@"
+# FreeTAKServer  endpoint for CoT pushes unless  provided to you by us for free
+export RTH_TAK_COT_URL="${RTH_TAK_COT_URL:-tcp://137.184.101.250:8087}"
+
+exec RTH_TAK_COT_URL="$RTH_TAK_COT_URL" \
+    python -m reticulum_telemetry_hub.reticulum_server --daemon --service tak_cot "$@"

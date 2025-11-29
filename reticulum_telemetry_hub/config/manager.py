@@ -178,6 +178,7 @@ class HubConfigurationManager:
             storage_path=storage_path,
             database_path=database_path,
             hub_database_path=hub_db_path,
+            runtime=self.runtime_config,
             reticulum=reticulum,
             lxmf_router=lxmf,
             tak_connection=self._tak_config,
@@ -188,14 +189,29 @@ class HubConfigurationManager:
         parser = ConfigParser()
         if path.exists():
             parser.read(path)
-        ret_section = parser["reticulum"] if parser.has_section("reticulum") else {}
+
+        # Use values from config.ini when present; fall back to external files.
+        file_ret_section = (
+            dict(parser["reticulum"]) if parser.has_section("reticulum") else {}
+        )
+        cfg_ret_section = dict(self._get_section("reticulum"))
+        ret_section = {**file_ret_section, **cfg_ret_section}
+
+        file_iface_section = dict(self._find_interface_section(parser))
+        cfg_iface_section = {}
+        for name in ("interfaces", "interface", "tcp_interface"):
+            if self._config_parser.has_section(name):
+                cfg_iface_section = dict(self._config_parser[name])
+                break
+        interface_section = {**file_iface_section, **cfg_iface_section}
+
         enable_transport = self._get_bool(ret_section, "enable_transport", True)
         share_instance = self._get_bool(ret_section, "share_instance", True)
 
-        interface_section = self._find_interface_section(parser)
+        listen_port = self._coerce_int(interface_section.get("listen_port"), 4242)
         interface = RNSInterfaceConfig(
             listen_ip=interface_section.get("listen_ip", "0.0.0.0"),
-            listen_port=int(interface_section.get("listen_port", 4242)),
+            listen_port=listen_port,
             interface_enabled=self._get_bool(
                 interface_section, "interface_enabled", True
             ),
@@ -213,12 +229,21 @@ class HubConfigurationManager:
         parser = ConfigParser()
         if path.exists():
             parser.read(path)
-        propagation_section = (
-            parser["propagation"] if parser.has_section("propagation") else {}
+
+        file_prop_section = (
+            dict(parser["propagation"]) if parser.has_section("propagation") else {}
         )
-        lxmf_section = parser["lxmf"] if parser.has_section("lxmf") else {}
+        cfg_prop_section = dict(self._get_section("propagation"))
+        propagation_section = {**file_prop_section, **cfg_prop_section}
+
+        file_lxmf_section = dict(parser["lxmf"]) if parser.has_section("lxmf") else {}
+        cfg_lxmf_section = dict(self._get_section("lxmf"))
+        lxmf_section = {**file_lxmf_section, **cfg_lxmf_section}
+
         enable_node = self._get_bool(propagation_section, "enable_node", True)
-        announce_interval = int(propagation_section.get("announce_interval", 10))
+        announce_interval = self._coerce_int(
+            propagation_section.get("announce_interval"), 10
+        )
         display_name = lxmf_section.get("display_name", "RTH_router")
         return LXMFRouterConfig(
             path=path,
