@@ -20,3 +20,4 @@
 - 2025-11-28: ✅ Consolidate hub configuration (including TAK) into a unified ``config.ini`` while preserving CLI flag overrides.
 - 2025-11-29: ✅ Add Google-style docstrings to API service methods to clarify IDs, metadata defaults, and error handling.
 - 2025-11-29: ✅ Refresh README installation steps, dependency guidance, and link targets.
+- 2025-11-29: ✅ Assign TAK location events to the originating Reticulum identity using display names when available or LXMF addresses otherwise.

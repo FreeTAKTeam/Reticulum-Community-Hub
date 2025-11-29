@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Callable
 import uuid
 
 from reticulum_telemetry_hub.atak_cot import Contact
@@ -65,6 +66,7 @@ class TakConnector:
         pytak_client: PytakClient | None = None,
         telemeter_manager: TelemeterManager | None = None,
         telemetry_controller: TelemetryController | None = None,
+        identity_lookup: Callable[[str | bytes | None], str] | None = None,
     ) -> None:
         """Initialize the connector with optional collaborators.
 
@@ -78,6 +80,9 @@ class TakConnector:
                 live sensor data.
             telemetry_controller (TelemetryController | None): Controller used
                 for fallback location lookups.
+            identity_lookup (Callable[[str | bytes | None], str] | None):
+                Optional lookup used to resolve destination hashes into human
+                readable labels.
         """
 
         self._config = config or TakConnectionConfig()
@@ -87,6 +92,7 @@ class TakConnector:
         self._config_parser = self._config.to_config_parser()
         self._telemeter_manager = telemeter_manager
         self._telemetry_controller = telemetry_controller
+        self._identity_lookup = identity_lookup
 
     @property
     def config(self) -> TakConnectionConfig:
@@ -384,4 +390,31 @@ class TakConnector:
         normalized = normalized or self._config.callsign
         if len(normalized) > 12:
             normalized = normalized[-12:]
+        label = self._label_from_identity(peer_hash)
+        if label:
+            return label
         return normalized
+
+    def _label_from_identity(self, peer_hash: str | bytes | None) -> str | None:
+        """Return a display label for ``peer_hash`` when a lookup is available.
+
+        Args:
+            peer_hash (str | bytes | None): Destination hash supplied by the
+                telemetry source.
+
+        Returns:
+            str | None: A human-friendly label if the lookup yields one.
+        """
+
+        if self._identity_lookup is None:
+            return None
+        if peer_hash is None:
+            return None
+        try:
+            label = self._identity_lookup(peer_hash)
+        except Exception:
+            return None
+        if label is None:
+            return None
+        cleaned = str(label).strip()
+        return cleaned or None
