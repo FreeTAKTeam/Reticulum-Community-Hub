@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable
+import json
 import uuid
 
 import RNS
@@ -124,6 +125,11 @@ class TakConnector:
                 RNS.LOG_WARNING,
             )
             return False
+        event_payload = json.dumps(event.to_dict())
+        RNS.log(
+            f"TAK connector sending event type {event.type} with payload: {event_payload}",
+            RNS.LOG_INFO,
+        )
         await self._pytak_client.create_and_send_message(
             event, config=self._config_parser, parse_inbound=False
         )
@@ -305,6 +311,11 @@ class TakConnector:
             topic_id=topic_id,
             source_hash=source_hash,
             timestamp=timestamp,
+        )
+        event_payload = json.dumps(event.to_dict())
+        RNS.log(
+            f"TAK connector sending event type {event.type} with payload: {event_payload}",
+            RNS.LOG_INFO,
         )
         await self._pytak_client.create_and_send_message(
             event, config=self._config_parser, parse_inbound=False
