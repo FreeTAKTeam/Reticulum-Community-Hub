@@ -19,3 +19,4 @@
 - 2025-11-28: ✅ Ensure CoT chat events generate unique UIDs for rapid messages.
 - 2025-11-28: ✅ Consolidate hub configuration (including TAK) into a unified ``config.ini`` while preserving CLI flag overrides.
 - 2025-11-29: ✅ Add Google-style docstrings to API service methods to clarify IDs, metadata defaults, and error handling.
+- 2025-11-29: ✅ Refresh README installation steps, dependency guidance, and link targets.

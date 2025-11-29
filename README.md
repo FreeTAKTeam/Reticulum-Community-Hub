@@ -3,7 +3,7 @@
 ![image](https://github.com/user-attachments/assets/ba29799c-7194-4052-aedf-1b5e1c8648d5)
 
 Reticulum-Telemetry-Hub (RTH) is an independent component within the [Reticulum](https://reticulum.network/) / [lXMF](https://github.com/markqvist/LXMF) ecosystem, designed to manage a complete TCP node across a Reticulum-based network.
-The RTH  enable communication and data sharing between clients like [Sideband](https://github.com/FreeTAKTeam/Sideband](https://github.com/markqvist/Sideband)) or Meshchat, enhancing situational awareness and operational efficiency in distributed networks.
+The RTH  enable communication and data sharing between clients like [Sideband](https://github.com/markqvist/Sideband) or Meshchat, enhancing situational awareness and operational efficiency in distributed networks.
 
 ## Core Functionalities
 
@@ -43,7 +43,23 @@ You will now see (.venv) in your shell prompt. you can now
 
 ```bash
 pip install --upgrade pip
-pip install rns lxmf
+pip install -e .
+```
+
+The editable install pulls every dependency declared in ``pyproject.toml`` (including runtime services and the bundled tests). If you prefer Poetry, run ``pip install poetry`` once and then use ``poetry install`` to create and manage the virtual environment instead.
+
+*Optional extras*: No extras are currently defined, so the commands above install the complete feature set out of the box.
+
+### Verify the setup
+
+After installation, run a quick smoke test to confirm the environment is wired correctly:
+
+```bash
+# Show the available runtime flags and ensure the entry point loads
+python -m reticulum_telemetry_hub.reticulum_server --help
+
+# Run the lightweight daemon test (optional, but verifies command handling)
+pytest tests/test_reticulum_server_daemon.py -q
 ```
 
 ## Configuration
