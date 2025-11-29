@@ -122,6 +122,11 @@ class FTSCLITool(pytak.CLITool):
             self.running_c_tasks, return_when=asyncio.ALL_COMPLETED
         )
 
+        # Give the TX/RX workers a moment to drain the queues before cancelling
+        # them. Without this pause, the main loop could cancel the TX worker
+        # before it flushes the enqueued CoT payload.
+        await asyncio.sleep(getattr(self, "min_period", 0.1) or 0.1)
+
         results: list[Any] = []
 
         # Collect results from worker instances (ReceiveWorker stores parsed data

@@ -114,10 +114,15 @@ class TakConnector:
 
         event = self.build_event()
         if event is None:
+            RNS.log(
+                "TAK connector skipped CoT send because no location is available",
+                RNS.LOG_WARNING,
+            )
             return False
         await self._pytak_client.create_and_send_message(
             event, config=self._config_parser, parse_inbound=False
         )
+        RNS.log("TAK connector dispatched latest CoT event", RNS.LOG_INFO)
         return True
 
     def build_event(self) -> Event | None:
