@@ -22,3 +22,4 @@
 - 2025-11-29: ✅ Refresh README installation steps, dependency guidance, and link targets.
 - 2025-11-29: ✅ Assign TAK location events to the originating Reticulum identity using display names when available or LXMF addresses otherwise.
 - 2025-11-29: ✅ Normalize TAK connector identifiers derived from pretty-formatted hashes.
+- 2025-11-29: ✅ Raise coverage to at least 90% and correct formatting issues.
