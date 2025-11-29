@@ -18,3 +18,4 @@
 - 2025-11-28: ✅ Convert LXMF chat traffic into CoT chat events with topic-aware routing.
 - 2025-11-28: ✅ Ensure CoT chat events generate unique UIDs for rapid messages.
 - 2025-11-28: ✅ Consolidate hub configuration (including TAK) into a unified ``config.ini`` while preserving CLI flag overrides.
+- 2025-11-29: ✅ Add Google-style docstrings to API service methods to clarify IDs, metadata defaults, and error handling.
