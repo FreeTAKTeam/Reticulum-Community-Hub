@@ -61,6 +61,48 @@ def test_connector_builds_cot_event_from_location():
     assert event.start.startswith("2025-01-01T00:00:00")
 
 
+def test_connector_prefers_identity_lookup_label():
+    manager = _build_manager()
+    manager.telemeter.peer_dest = "deadbeef"
+    lookups: list[str | bytes | None] = []
+
+    def lookup_identity(peer_hash: str | bytes | None) -> str:
+        lookups.append(peer_hash)
+        if peer_hash == "deadbeef":
+            return "Display Name"
+        return ""
+
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"),
+        telemeter_manager=manager,
+        identity_lookup=lookup_identity,
+    )
+
+    event = connector.build_event()
+
+    assert event is not None
+    assert event.detail is not None
+    assert event.detail.contact is not None
+    assert event.detail.contact.callsign == "Display Name"
+    assert lookups
+
+
+def test_connector_normalizes_pretty_hash_identifiers():
+    manager = _build_manager()
+    manager.telemeter.peer_dest = "aa:bb:cc:dd"
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"), telemeter_manager=manager
+    )
+
+    event = connector.build_event()
+
+    assert event is not None
+    assert event.detail is not None
+    assert event.detail.contact is not None
+    assert event.detail.contact.callsign == "aabbccdd"
+    assert event.uid.startswith("HUB-aabbccdd")
+
+
 def test_connector_sends_cot_payload():
     manager = _build_manager()
     client = DummyPytakClient()

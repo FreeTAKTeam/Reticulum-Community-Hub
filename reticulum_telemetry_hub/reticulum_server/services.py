@@ -234,6 +234,7 @@ def _cot_factory(hub: "ReticulumTelemetryHub") -> HubService:
             config=config_manager.tak_config,
             telemeter_manager=hub.telemeter_manager,
             telemetry_controller=hub.tel_controller,
+            identity_lookup=hub._lookup_identity_label,
         )
     interval = connector.config.poll_interval_seconds
     return CotTelemetryService(connector=connector, interval=interval)

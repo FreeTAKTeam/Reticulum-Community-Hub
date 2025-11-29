@@ -252,6 +252,7 @@ class ReticulumTelemetryHub:
             config=tak_config_manager.tak_config if tak_config_manager else None,
             telemeter_manager=self.telemeter_manager,
             telemetry_controller=self.tel_controller,
+            identity_lookup=self._lookup_identity_label,
         )
         self.telemetry_sampler = TelemetrySampler(
             self.tel_controller,
