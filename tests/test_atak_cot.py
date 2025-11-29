@@ -1,16 +1,23 @@
 import json
+
+import pytest
+
 from reticulum_telemetry_hub.atak_cot import Event, pack_data, unpack_data
 
 COT_XML = """
-<event version="2.0" uid="android-001" type="b-m-f" how="m-g" time="2024-01-01T00:00:00Z" start="2024-01-01T00:00:00Z" stale="2024-01-01T01:00:00Z">
+<event version="2.0" uid="android-001" type="b-m-f" how="m-g"
+  time="2024-01-01T00:00:00Z" start="2024-01-01T00:00:00Z"
+  stale="2024-01-01T01:00:00Z">
   <point lat="34.0" lon="-117.0" hae="0" ce="50" le="50" />
   <detail>
     <contact callsign="TestMarker" />
     <__group name="Blue" role="Team" />
+    <track course="90.0" speed="12.5" />
     <remarks>Example marker</remarks>
   </detail>
 </event>
 """
+
 
 def test_roundtrip_datapack():
     event = Event.from_xml(COT_XML)
@@ -19,6 +26,8 @@ def test_roundtrip_datapack():
     assert restored.uid == event.uid
     assert restored.point.lat == event.point.lat
     assert restored.detail.contact.callsign == "TestMarker"
+    assert restored.detail.track is not None
+    assert restored.detail.track.speed == pytest.approx(12.5)
 
 
 def test_json_roundtrip():
@@ -27,6 +36,8 @@ def test_json_roundtrip():
     restored = Event.from_json(json_data)
     assert restored.uid == event.uid
     assert restored.detail.group.name == "Blue"
+    assert restored.detail.track is not None
+    assert restored.detail.track.course == pytest.approx(90.0)
 
 
 def test_pack_data_accepts_event_instances():
@@ -36,6 +47,8 @@ def test_pack_data_accepts_event_instances():
     restored = Event.from_dict(decoded)
     assert restored.uid == event.uid
     assert restored.point.lon == event.point.lon
+    assert restored.detail.track is not None
+    assert restored.detail.track.speed == pytest.approx(12.5)
 
 
 def test_xml_roundtrip_bytes():
@@ -44,3 +57,4 @@ def test_xml_roundtrip_bytes():
     xml_bytes = event.to_xml_bytes()
     restored = Event.from_xml(xml_bytes)
     assert restored.detail.remarks == "Updated"
+    assert restored.detail.track is not None

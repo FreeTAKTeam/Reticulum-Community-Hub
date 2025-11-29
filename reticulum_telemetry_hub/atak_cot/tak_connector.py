@@ -10,6 +10,7 @@ from reticulum_telemetry_hub.atak_cot import Contact
 from reticulum_telemetry_hub.atak_cot import Detail
 from reticulum_telemetry_hub.atak_cot import Event
 from reticulum_telemetry_hub.atak_cot import Group
+from reticulum_telemetry_hub.atak_cot import Track
 from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
 from reticulum_telemetry_hub.config.models import TakConnectionConfig
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import (
@@ -116,7 +117,8 @@ class TakConnector:
         event = self.build_event()
         if event is None:
             RNS.log(
-                "TAK connector skipped CoT send because no location is available",
+                "TAK connector skipped CoT send because no location is "
+                "available",
                 RNS.LOG_WARNING,
             )
             return False
@@ -148,7 +150,9 @@ class TakConnector:
             uid = f"{self._config.callsign}-{identifier}"
 
         contact = Contact(callsign=identifier or self._config.callsign)
-        detail = Detail(contact=contact)
+        group = Group(name="Cyan", role="Team")
+        track = Track(course=snapshot.bearing, speed=snapshot.speed)
+        detail = Detail(contact=contact, group=group, track=track)
 
         event_dict = {
             "version": "2.0",
@@ -401,7 +405,9 @@ class TakConnector:
             normalized = normalized[-12:]
         return normalized
 
-    def _label_from_identity(self, peer_hash: str | bytes | None) -> str | None:
+    def _label_from_identity(
+        self, peer_hash: str | bytes | None
+    ) -> str | None:
         """Return a display label for ``peer_hash`` when a lookup is available.
 
         Args:
