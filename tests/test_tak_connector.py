@@ -1,10 +1,12 @@
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta
 
 import xml.etree.ElementTree as ET
 
 import pytest
+import RNS
 
 from reticulum_telemetry_hub.atak_cot.tak_connector import LocationSnapshot
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
@@ -251,6 +253,73 @@ def test_send_chat_event_dispatches_payload():
     assert event.detail.group is not None
     assert cfg["fts"]["CALLSIGN"] == "HUB"
     assert parse_flag is False
+
+
+def test_send_latest_location_logs_payload(monkeypatch):
+    manager = _build_manager()
+    client = DummyPytakClient()
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"),
+        pytak_client=client,
+        telemeter_manager=manager,
+    )
+    logs: list[tuple[str, int | None]] = []
+
+    def fake_log(message: str, level: int | None = None) -> None:
+        logs.append((message, level))
+
+    monkeypatch.setattr(
+        "reticulum_telemetry_hub.atak_cot.tak_connector.RNS.log", fake_log
+    )
+
+    asyncio.run(connector.send_latest_location())
+
+    assert client.sent
+    assert logs
+    payload_entry = next(
+        (msg for msg, level in logs if "payload:" in msg and level == RNS.LOG_INFO),
+        None,
+    )
+    assert payload_entry is not None
+    payload_text = payload_entry.split("payload:", maxsplit=1)[1].strip()
+    payload = json.loads(payload_text)
+    assert payload.get("type") == connector.EVENT_TYPE
+
+
+def test_send_chat_event_logs_payload(monkeypatch):
+    client = DummyPytakClient()
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"), pytak_client=client
+    )
+    logs: list[tuple[str, int | None]] = []
+
+    def fake_log(message: str, level: int | None = None) -> None:
+        logs.append((message, level))
+
+    monkeypatch.setattr(
+        "reticulum_telemetry_hub.atak_cot.tak_connector.RNS.log", fake_log
+    )
+
+    asyncio.run(
+        connector.send_chat_event(
+            content="Status update",
+            sender_label="Bravo",
+            topic_id="ops",
+            source_hash="feed",
+            timestamp=datetime(2025, 1, 1, 0, 0, 0),
+        )
+    )
+
+    assert client.sent
+    assert logs
+    payload_entry = next(
+        (msg for msg, level in logs if "payload:" in msg and level == RNS.LOG_INFO),
+        None,
+    )
+    assert payload_entry is not None
+    payload_text = payload_entry.split("payload:", maxsplit=1)[1].strip()
+    payload = json.loads(payload_text)
+    assert payload.get("type") == connector.CHAT_EVENT_TYPE
 
 
 def test_chat_uids_remain_unique():
