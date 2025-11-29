@@ -2,6 +2,8 @@ import asyncio
 import time
 from datetime import datetime
 
+import xml.etree.ElementTree as ET
+
 import pytest
 
 from reticulum_telemetry_hub.atak_cot.tak_connector import LocationSnapshot
@@ -19,7 +21,9 @@ class DummyPytakClient:
     def __init__(self) -> None:
         self.sent: list[tuple] = []
 
-    async def create_and_send_message(self, message, config=None, parse_inbound=True):
+    async def create_and_send_message(
+        self, message, config=None, parse_inbound=True
+    ):
         self.sent.append((message, config, parse_inbound))
 
 
@@ -59,7 +63,42 @@ def test_connector_builds_cot_event_from_location():
     assert event.detail is not None
     assert event.detail.contact is not None
     assert event.detail.contact.callsign == "userhash1"
+    assert event.detail.group is not None
+    assert event.detail.group.name == "Cyan"
+    assert event.detail.group.role == "Team"
+    assert event.detail.track is not None
+    assert event.detail.track.course == pytest.approx(180.0)
+    assert event.detail.track.speed == pytest.approx(2.5)
     assert event.start.startswith("2025-01-01T00:00:00")
+
+
+def test_connector_build_event_generates_expected_xml():
+    manager = _build_manager()
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"), telemeter_manager=manager
+    )
+
+    event = connector.build_event()
+
+    assert event is not None
+    xml_data = event.to_xml()
+    root = ET.fromstring(xml_data)
+
+    detail = root.find("detail")
+    assert detail is not None
+    contact_el = detail.find("contact")
+    assert contact_el is not None
+    assert contact_el.get("callsign") == "userhash1"
+
+    group_el = detail.find("__group")
+    assert group_el is not None
+    assert group_el.get("name") == "Cyan"
+    assert group_el.get("role") == "Team"
+
+    track_el = detail.find("track")
+    assert track_el is not None
+    assert track_el.get("course") == "180.0"
+    assert track_el.get("speed") == "2.5"
 
 
 def test_connector_prefers_identity_lookup_label():

@@ -1,10 +1,10 @@
 """ATAK COT support classes and datapack utilities.
 
 This module provides a very small subset of the `Cursor on Target`_ (CoT)
-schema used by ATAK. It is intentionally lightweight and only implements the
-elements required by the accompanying tests. The objects can be created from XML
-strings, converted back into dictionaries and packed into a compressed
-"datapack" format for transport.
+schema used by ATAK. It is intentionally lightweight and only implements
+the elements required by the accompanying tests. The objects can be
+created from XML strings, converted back into dictionaries and packed into
+a compressed "datapack" format for transport.
 
 .. _Cursor on Target: https://github.com/FreeTAKTeam/FreeTAKTest
 """
@@ -32,7 +32,8 @@ def _ensure_packable(obj: Packable) -> dict:
 
 
 def pack_data(obj: Packable) -> bytes:
-    """Return a gzip-compressed msgpack representation of ``obj`` or an Event."""
+    """Return a compressed msgpack representation of ``obj`` or an Event."""
+
     packed = msgpack.packb(_ensure_packable(obj), use_bin_type=True)
     packed_bytes = cast(bytes, packed)
     return gzip.compress(packed_bytes)
@@ -149,11 +150,50 @@ class Group:
 
 
 @dataclass
+class Track:
+    """Represents movement information such as speed and bearing."""
+
+    course: float
+    speed: float
+
+    @classmethod
+    def from_xml(cls, elem: ET.Element) -> "Track":
+        """Parse an XML ``<track>`` element into a :class:`Track`."""
+
+        return cls(
+            course=float(elem.get("course", 0)),
+            speed=float(elem.get("speed", 0)),
+        )
+
+    def to_element(self) -> ET.Element:
+        """Return an XML element for the movement details."""
+
+        return ET.Element(
+            "track", {"course": str(self.course), "speed": str(self.speed)}
+        )
+
+    def to_dict(self) -> dict:
+        """Return a serialisable representation."""
+
+        return {"course": self.course, "speed": self.speed}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Track":
+        """Create a :class:`Track` from a dictionary."""
+
+        return cls(
+            course=float(data.get("course", 0)),
+            speed=float(data.get("speed", 0)),
+        )
+
+
+@dataclass
 class Detail:
-    """Additional information such as contact and group."""
+    """Additional information such as contact, group, and movement."""
 
     contact: Optional[Contact] = None
     group: Optional[Group] = None
+    track: Optional[Track] = None
     remarks: Optional[str] = None
 
     @classmethod
@@ -161,22 +201,30 @@ class Detail:
         """Create a :class:`Detail` from a ``<detail>`` element."""
         contact_el = elem.find("contact")
         group_el = elem.find("__group")
+        track_el = elem.find("track")
         remarks_el = elem.find("remarks")
         return cls(
-            contact=(Contact.from_xml(contact_el) if contact_el is not None else None),
+            contact=(
+                Contact.from_xml(contact_el)
+                if contact_el is not None
+                else None
+            ),
             group=(Group.from_xml(group_el) if group_el is not None else None),
+            track=(Track.from_xml(track_el) if track_el is not None else None),
             remarks=remarks_el.text if remarks_el is not None else None,
         )
 
     def to_element(self) -> Optional[ET.Element]:
         """Return an XML detail element or ``None`` if empty."""
-        if not any([self.contact, self.group, self.remarks]):
+        if not any([self.contact, self.group, self.track, self.remarks]):
             return None
         detail_el = ET.Element("detail")
         if self.contact:
             detail_el.append(self.contact.to_element())
         if self.group:
             detail_el.append(self.group.to_element())
+        if self.track:
+            detail_el.append(self.track.to_element())
         if self.remarks:
             remarks_el = ET.SubElement(detail_el, "remarks")
             remarks_el.text = self.remarks
@@ -189,6 +237,8 @@ class Detail:
             data["contact"] = self.contact.to_dict()
         if self.group:
             data["group"] = self.group.to_dict()
+        if self.track:
+            data["track"] = self.track.to_dict()
         if self.remarks:
             data["remarks"] = self.remarks
         return data
@@ -202,8 +252,11 @@ class Detail:
         group = None
         if "group" in data:
             group = Group.from_dict(data["group"])
+        track = None
+        if "track" in data:
+            track = Track.from_dict(data["track"])
         remarks = data.get("remarks")
-        return cls(contact=contact, group=group, remarks=remarks)
+        return cls(contact=contact, group=group, track=track, remarks=remarks)
 
 
 @dataclass
@@ -233,7 +286,9 @@ class Event:
         point_el = root.find("point")
         detail_el = root.find("detail")
         point = (
-            Point.from_xml(point_el) if point_el is not None else Point(0, 0, 0, 0, 0)
+            Point.from_xml(point_el)
+            if point_el is not None
+            else Point(0, 0, 0, 0, 0)
         )
         detail = Detail.from_xml(detail_el) if detail_el is not None else None
         return cls(
@@ -335,6 +390,7 @@ __all__ = [
     "Detail",
     "Point",
     "Group",
+    "Track",
     "Contact",
     "pack_data",
     "unpack_data",
