@@ -51,12 +51,12 @@ class HubConfigurationManager:
             reticulum_config_path
             or reticulum_path_override
             or Path.home() / ".reticulum" / "config"
-        )
+        ).expanduser()
         self.lxmf_router_config_path = Path(
             lxmf_router_config_path
             or lxmf_path_override
             or Path.home() / ".lxmd" / "config"
-        )
+        ).expanduser()
         self._tak_config = self._load_tak_config()
         self._config = self._load()
 
