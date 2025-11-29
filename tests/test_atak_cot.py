@@ -2,7 +2,15 @@ import json
 
 import pytest
 
-from reticulum_telemetry_hub.atak_cot import Event, pack_data, unpack_data
+from reticulum_telemetry_hub.atak_cot import Chat
+from reticulum_telemetry_hub.atak_cot import ChatGroup
+from reticulum_telemetry_hub.atak_cot import Contact
+from reticulum_telemetry_hub.atak_cot import Detail
+from reticulum_telemetry_hub.atak_cot import Event
+from reticulum_telemetry_hub.atak_cot import Group
+from reticulum_telemetry_hub.atak_cot import Link
+from reticulum_telemetry_hub.atak_cot import Point
+from reticulum_telemetry_hub.atak_cot import pack_data, unpack_data
 
 COT_XML = """
 <event version="2.0" uid="android-001" type="b-m-f" how="m-g"
@@ -58,3 +66,56 @@ def test_xml_roundtrip_bytes():
     restored = Event.from_xml(xml_bytes)
     assert restored.detail.remarks == "Updated"
     assert restored.detail.track is not None
+
+
+def test_geochat_detail_roundtrip():
+    detail = Detail(
+        contact=Contact(callsign="Alpha"),
+        group=Group(name="ops", role="topic"),
+        groups=[Group(name="RTH", role="Team")],
+        chat=Chat(
+            parent="RootContactGroup.ops",
+            group_owner="Alpha",
+            chatroom="ops",
+        ),
+        chat_group=ChatGroup(
+            chatroom="ops",
+            chat_id="RootContactGroup.ops",
+            uid0="0101010101010101",
+            uid1="",
+        ),
+        links=[
+            Link(
+                uid="0101010101010101",
+                production_time="2025-01-02T03:04:05Z",
+                parent_callsign="ops",
+                type="a-f-G-U-C",
+                relation="p-p",
+            )
+        ],
+        remarks="[topic:ops] Hello team",
+    )
+    event = Event(
+        version="2.0",
+        uid="GeoChat.0101010101010101",
+        type="b-t-f",
+        how="h-g-i-g-o",
+        time="2025-01-02T03:04:06Z",
+        start="2025-01-02T03:04:05Z",
+        stale="2025-01-02T03:05:06Z",
+        point=Point(lat=0.0, lon=0.0, hae=0.0, ce=0.0, le=0.0),
+        detail=detail,
+    )
+
+    xml_data = event.to_xml()
+    restored = Event.from_xml(xml_data)
+
+    assert restored.detail is not None
+    assert restored.detail.chat is not None
+    assert restored.detail.chat.parent == "RootContactGroup.ops"
+    assert restored.detail.chat_group is not None
+    assert restored.detail.chat_group.chatroom == "ops"
+    assert restored.detail.links
+    assert restored.detail.links[0].uid == "0101010101010101"
+    assert restored.detail.groups
+    assert restored.detail.groups[0].name == "RTH"
