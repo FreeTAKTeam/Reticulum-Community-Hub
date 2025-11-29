@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pytest
 
+from reticulum_telemetry_hub.atak_cot.tak_connector import LocationSnapshot
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.config.models import TakConnectionConfig
 from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import (
@@ -118,6 +119,35 @@ def test_connector_sends_cot_payload():
     message, cfg, parse_flag = client.sent[0]
     assert message.detail.contact.callsign == "userhash1"
     assert cfg["fts"]["COT_URL"] == "udp://example:8087"
+    assert parse_flag is False
+
+
+def test_send_latest_location_uses_snapshot(monkeypatch):
+    """Ensure ``send_latest_location`` sends when a snapshot exists."""
+
+    client = DummyPytakClient()
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"), pytak_client=client
+    )
+    snapshot = LocationSnapshot(
+        latitude=1.0,
+        longitude=2.0,
+        altitude=3.0,
+        speed=0.0,
+        bearing=0.0,
+        accuracy=1.0,
+        updated_at=datetime(2025, 1, 1, 0, 0, 0),
+    )
+    monkeypatch.setattr(connector, "_latest_location", lambda: snapshot)
+
+    result = asyncio.run(connector.send_latest_location())
+
+    assert result is True
+    assert client.sent
+    message, cfg, parse_flag = client.sent[0]
+    assert message.point.lat == pytest.approx(1.0)
+    assert message.point.lon == pytest.approx(2.0)
+    assert cfg["fts"]["CALLSIGN"] == "HUB"
     assert parse_flag is False
 
 
