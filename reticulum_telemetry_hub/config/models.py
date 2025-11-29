@@ -2,9 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from configparser import ConfigParser
+
+from reticulum_telemetry_hub.config.constants import (
+    DEFAULT_ANNOUNCE_INTERVAL,
+    DEFAULT_HUB_TELEMETRY_INTERVAL,
+    DEFAULT_LOG_LEVEL_NAME,
+    DEFAULT_SERVICE_TELEMETRY_INTERVAL,
+)
 
 
 @dataclass
@@ -78,6 +85,24 @@ class LXMFRouterConfig:
             "announce_interval_minutes": self.announce_interval_minutes,
             "display_name": self.display_name,
         }
+
+
+@dataclass
+class HubRuntimeConfig:
+    """Configuration values that guide the hub runtime defaults."""
+
+    display_name: str = "RTH"
+    announce_interval: int = DEFAULT_ANNOUNCE_INTERVAL
+    hub_telemetry_interval: int = DEFAULT_HUB_TELEMETRY_INTERVAL
+    service_telemetry_interval: int = DEFAULT_SERVICE_TELEMETRY_INTERVAL
+    log_level: str = DEFAULT_LOG_LEVEL_NAME
+    embedded_lxmd: bool = False
+    default_services: Tuple[str, ...] = ()
+    gpsd_host: str = "127.0.0.1"
+    gpsd_port: int = 2947
+    reticulum_config_path: Path | None = None
+    lxmf_router_config_path: Path | None = None
+    telemetry_filename: str = "telemetry.ini"
 
 
 @dataclass

@@ -17,3 +17,4 @@
 - 2025-11-28: ✅ Add TAK CoT connector service for broadcasting location updates.
 - 2025-11-28: ✅ Convert LXMF chat traffic into CoT chat events with topic-aware routing.
 - 2025-11-28: ✅ Ensure CoT chat events generate unique UIDs for rapid messages.
+- 2025-11-28: ✅ Consolidate hub configuration (including TAK) into a unified ``config.ini`` while preserving CLI flag overrides.
