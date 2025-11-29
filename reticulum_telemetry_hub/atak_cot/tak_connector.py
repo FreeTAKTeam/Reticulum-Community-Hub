@@ -6,10 +6,13 @@ from typing import Callable
 import uuid
 
 import RNS
+from reticulum_telemetry_hub.atak_cot import Chat
+from reticulum_telemetry_hub.atak_cot import ChatGroup
 from reticulum_telemetry_hub.atak_cot import Contact
 from reticulum_telemetry_hub.atak_cot import Detail
 from reticulum_telemetry_hub.atak_cot import Event
 from reticulum_telemetry_hub.atak_cot import Group
+from reticulum_telemetry_hub.atak_cot import Link
 from reticulum_telemetry_hub.atak_cot import Track
 from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
 from reticulum_telemetry_hub.config.models import TakConnectionConfig
@@ -117,8 +120,7 @@ class TakConnector:
         event = self.build_event()
         if event is None:
             RNS.log(
-                "TAK connector skipped CoT send because no location is "
-                "available",
+                "TAK connector skipped CoT send because no location is " "available",
                 RNS.LOG_WARNING,
             )
             return False
@@ -213,15 +215,47 @@ class TakConnector:
         identifier = self._identifier_from_hash(source_hash)
         timestamp_ms = int(start_time.timestamp() * 1000)
         uid_suffix = uuid.uuid4().hex[:6]
-        uid = f"{identifier}-chat-{timestamp_ms}-{uid_suffix}"
+        uid = f"GeoChat.{identifier}-chat-{timestamp_ms}-{uid_suffix}"
         contact = Contact(callsign=sender_label or identifier)
         group = Group(name=str(topic_id), role="topic") if topic_id else None
+
+        chatroom = str(topic_id) if topic_id else "GeoChat"
+        chat_parent = f"RootContactGroup.{chatroom}"
+        hierarchy_groups: list[Group] = []
+        if topic_id:
+            hierarchy_groups.append(Group(name=self._config.callsign, role="Team"))
+        chat = Chat(
+            parent=chat_parent,
+            group_owner=contact.callsign,
+            chatroom=chatroom,
+        )
+        chat_group = ChatGroup(
+            chatroom=chatroom,
+            chat_id=chat_parent,
+            uid0=identifier,
+            uid1="",
+        )
+        link = Link(
+            uid=identifier,
+            production_time=_utc_iso(start_time),
+            parent_callsign=chatroom,
+            type=self.EVENT_TYPE,
+            relation="p-p",
+        )
 
         remarks = content.strip()
         if topic_id:
             remarks = f"[topic:{topic_id}] {remarks}"
 
-        detail = Detail(contact=contact, group=group, remarks=remarks)
+        detail = Detail(
+            contact=contact,
+            group=group,
+            groups=hierarchy_groups,
+            chat=chat,
+            chat_group=chat_group,
+            links=[link],
+            remarks=remarks,
+        )
 
         event_dict = {
             "version": "2.0",
@@ -405,9 +439,7 @@ class TakConnector:
             normalized = normalized[-12:]
         return normalized
 
-    def _label_from_identity(
-        self, peer_hash: str | bytes | None
-    ) -> str | None:
+    def _label_from_identity(self, peer_hash: str | bytes | None) -> str | None:
         """Return a display label for ``peer_hash`` when a lookup is available.
 
         Args:

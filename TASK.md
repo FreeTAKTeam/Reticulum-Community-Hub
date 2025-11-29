@@ -25,3 +25,4 @@
 - 2025-11-29: ✅ Raise coverage to at least 90% and correct formatting issues.
 - 2025-11-29: ✅ Add RNS import to TAK connector and test send_latest_location to avoid NameError.
 - 2025-11-29: ✅ Extend TakConnector.build_event to include group defaults and track metadata.
+- 2025-11-29: ✅ Add GeoChat detail construction for chat events including hierarchy links.

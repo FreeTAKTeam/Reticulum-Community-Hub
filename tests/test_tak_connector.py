@@ -1,6 +1,6 @@
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import xml.etree.ElementTree as ET
 
@@ -21,9 +21,7 @@ class DummyPytakClient:
     def __init__(self) -> None:
         self.sent: list[tuple] = []
 
-    async def create_and_send_message(
-        self, message, config=None, parse_inbound=True
-    ):
+    async def create_and_send_message(self, message, config=None, parse_inbound=True):
         self.sent.append((message, config, parse_inbound))
 
 
@@ -274,3 +272,66 @@ def test_chat_uids_remain_unique():
     )
 
     assert first.uid != second.uid
+
+
+def test_chat_event_matches_geochat_payload(monkeypatch):
+    connector = TakConnector(config=TakConnectionConfig(callsign="RTH"))
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def utcnow(cls) -> datetime:  # type: ignore[override]
+            return datetime(2025, 1, 2, 3, 4, 6)
+
+    class FixedUUID:
+        hex = "abcdefabcdefabcdefabcdefabcdefab"
+
+    monkeypatch.setattr(
+        "reticulum_telemetry_hub.atak_cot.tak_connector.datetime", FixedDateTime
+    )
+    monkeypatch.setattr(
+        "reticulum_telemetry_hub.atak_cot.tak_connector.uuid.uuid4",
+        lambda: FixedUUID(),
+    )
+
+    start_time = datetime(2025, 1, 2, 3, 4, 5)
+    topic_id = "ops"
+    content = "Hello team"
+    identifier = connector._identifier_from_hash(b"\x01" * 8)
+    timestamp_ms = int(start_time.timestamp() * 1000)
+    uid_suffix = FixedUUID.hex[:6]
+    uid = f"GeoChat.{identifier}-chat-{timestamp_ms}-{uid_suffix}"
+    now = FixedDateTime.utcnow()
+    stale_delta = max(connector.config.poll_interval_seconds, 1.0)
+    stale = now + timedelta(seconds=stale_delta * 2)
+
+    event = connector.build_chat_event(
+        content=content,
+        sender_label="Alpha",
+        topic_id=topic_id,
+        source_hash=b"\x01" * 8,
+        timestamp=start_time,
+    )
+
+    expected_xml = (
+        f'<event version="2.0" uid="{uid}" type="{connector.CHAT_EVENT_TYPE}" '
+        f'how="{connector.CHAT_EVENT_HOW}" time="{now.replace(microsecond=0).isoformat()}Z" '
+        f'start="{start_time.replace(microsecond=0).isoformat()}Z" '
+        f'stale="{stale.replace(microsecond=0).isoformat()}Z">'
+        '<point lat="0.0" lon="0.0" hae="0.0" ce="0.0" le="0.0" />'
+        "<detail>"
+        '<contact callsign="Alpha" />'
+        f'<__group name="{topic_id}" role="topic" />'
+        '<__group name="RTH" role="Team" />'
+        f'<__chat parent="RootContactGroup.{topic_id}" groupOwner="Alpha" chatroom="{topic_id}" />'
+        f'<chatgrp chatroom="{topic_id}" id="RootContactGroup.{topic_id}" uid0="{identifier}" uid1="" />'
+        f'<link uid="{identifier}" production_time="{start_time.replace(microsecond=0).isoformat()}Z" '
+        f'parent_callsign="{topic_id}" type="{connector.EVENT_TYPE}" relation="p-p" />'
+        f"<remarks>[topic:{topic_id}] {content}</remarks>"
+        "</detail>"
+        "</event>"
+    )
+
+    normalized_expected = ET.tostring(ET.fromstring(expected_xml), encoding="unicode")
+    normalized_actual = ET.tostring(ET.fromstring(event.to_xml()), encoding="unicode")
+
+    assert normalized_actual == normalized_expected

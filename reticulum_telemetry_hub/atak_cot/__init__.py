@@ -11,7 +11,7 @@ a compressed "datapack" format for transport.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Union, cast
 import json
 import xml.etree.ElementTree as ET
@@ -188,43 +188,234 @@ class Track:
 
 
 @dataclass
+class Chat:
+    """Metadata describing the GeoChat parent and room."""
+
+    parent: str
+    group_owner: Optional[str] = None
+    chatroom: Optional[str] = None
+
+    @classmethod
+    def from_xml(cls, elem: ET.Element) -> "Chat":
+        """Create a :class:`Chat` from an XML ``<__chat>`` element."""
+
+        return cls(
+            parent=elem.get("parent", ""),
+            group_owner=elem.get("groupOwner"),
+            chatroom=elem.get("chatroom"),
+        )
+
+    def to_element(self) -> ET.Element:
+        """Return an XML element representing the chat metadata."""
+
+        attrib = {"parent": self.parent}
+        if self.group_owner is not None:
+            attrib["groupOwner"] = self.group_owner
+        if self.chatroom is not None:
+            attrib["chatroom"] = self.chatroom
+        return ET.Element("__chat", attrib)
+
+    def to_dict(self) -> dict:
+        """Return a serialisable representation of the chat details."""
+
+        data = {"parent": self.parent}
+        if self.group_owner is not None:
+            data["group_owner"] = self.group_owner
+        if self.chatroom is not None:
+            data["chatroom"] = self.chatroom
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Chat":
+        """Create a :class:`Chat` from a dictionary."""
+
+        return cls(
+            parent=data.get("parent", ""),
+            group_owner=data.get("group_owner"),
+            chatroom=data.get("chatroom"),
+        )
+
+
+@dataclass
+class ChatGroup:
+    """Participants and identifiers for a GeoChat room."""
+
+    chatroom: str
+    chat_id: str
+    uid0: str
+    uid1: str = ""
+
+    @classmethod
+    def from_xml(cls, elem: ET.Element) -> "ChatGroup":
+        """Create a :class:`ChatGroup` from a ``<chatgrp>`` element."""
+
+        return cls(
+            chatroom=elem.get("chatroom", ""),
+            chat_id=elem.get("id", ""),
+            uid0=elem.get("uid0", ""),
+            uid1=elem.get("uid1", ""),
+        )
+
+    def to_element(self) -> ET.Element:
+        """Return an XML element describing the chat group."""
+
+        attrib = {
+            "chatroom": self.chatroom,
+            "id": self.chat_id,
+            "uid0": self.uid0,
+            "uid1": self.uid1,
+        }
+        return ET.Element("chatgrp", attrib)
+
+    def to_dict(self) -> dict:
+        """Return a serialisable representation of the chat group."""
+
+        return {
+            "chatroom": self.chatroom,
+            "chat_id": self.chat_id,
+            "uid0": self.uid0,
+            "uid1": self.uid1,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ChatGroup":
+        """Create a :class:`ChatGroup` from a dictionary."""
+
+        return cls(
+            chatroom=data.get("chatroom", ""),
+            chat_id=data.get("chat_id", ""),
+            uid0=data.get("uid0", ""),
+            uid1=data.get("uid1", ""),
+        )
+
+
+@dataclass
+class Link:
+    """Relationship metadata for GeoChat participants."""
+
+    uid: str
+    production_time: str
+    parent_callsign: str
+    type: str
+    relation: str
+
+    @classmethod
+    def from_xml(cls, elem: ET.Element) -> "Link":
+        """Create a :class:`Link` from a ``<link>`` element."""
+
+        return cls(
+            uid=elem.get("uid", ""),
+            production_time=elem.get("production_time", ""),
+            parent_callsign=elem.get("parent_callsign", ""),
+            type=elem.get("type", ""),
+            relation=elem.get("relation", ""),
+        )
+
+    def to_element(self) -> ET.Element:
+        """Return an XML element for the participant link."""
+
+        attrib = {
+            "uid": self.uid,
+            "production_time": self.production_time,
+            "parent_callsign": self.parent_callsign,
+            "type": self.type,
+            "relation": self.relation,
+        }
+        return ET.Element("link", attrib)
+
+    def to_dict(self) -> dict:
+        """Return a serialisable representation of the link."""
+
+        return {
+            "uid": self.uid,
+            "production_time": self.production_time,
+            "parent_callsign": self.parent_callsign,
+            "type": self.type,
+            "relation": self.relation,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Link":
+        """Create a :class:`Link` from a dictionary."""
+
+        return cls(
+            uid=data.get("uid", ""),
+            production_time=data.get("production_time", ""),
+            parent_callsign=data.get("parent_callsign", ""),
+            type=data.get("type", ""),
+            relation=data.get("relation", ""),
+        )
+
+
+@dataclass
 class Detail:
     """Additional information such as contact, group, and movement."""
 
     contact: Optional[Contact] = None
     group: Optional[Group] = None
+    groups: list[Group] = field(default_factory=list)
     track: Optional[Track] = None
+    chat: Optional[Chat] = None
+    chat_group: Optional[ChatGroup] = None
+    links: list[Link] = field(default_factory=list)
     remarks: Optional[str] = None
 
     @classmethod
     def from_xml(cls, elem: ET.Element) -> "Detail":
         """Create a :class:`Detail` from a ``<detail>`` element."""
         contact_el = elem.find("contact")
-        group_el = elem.find("__group")
+        group_elems = elem.findall("__group")
         track_el = elem.find("track")
+        chat_el = elem.find("__chat")
+        chatgrp_el = elem.find("chatgrp")
+        link_elems = elem.findall("link")
         remarks_el = elem.find("remarks")
+        groups = [Group.from_xml(item) for item in group_elems]
+        primary_group = groups[0] if groups else None
+        extra_groups = groups[1:] if len(groups) > 1 else []
         return cls(
-            contact=(
-                Contact.from_xml(contact_el)
-                if contact_el is not None
-                else None
-            ),
-            group=(Group.from_xml(group_el) if group_el is not None else None),
+            contact=(Contact.from_xml(contact_el) if contact_el is not None else None),
+            group=primary_group,
+            groups=extra_groups,
             track=(Track.from_xml(track_el) if track_el is not None else None),
+            chat=Chat.from_xml(chat_el) if chat_el is not None else None,
+            chat_group=(
+                ChatGroup.from_xml(chatgrp_el) if chatgrp_el is not None else None
+            ),
+            links=[Link.from_xml(item) for item in link_elems],
             remarks=remarks_el.text if remarks_el is not None else None,
         )
 
     def to_element(self) -> Optional[ET.Element]:
         """Return an XML detail element or ``None`` if empty."""
-        if not any([self.contact, self.group, self.track, self.remarks]):
+        if not any(
+            [
+                self.contact,
+                self.group,
+                self.groups,
+                self.track,
+                self.chat,
+                self.chat_group,
+                self.links,
+                self.remarks,
+            ]
+        ):
             return None
         detail_el = ET.Element("detail")
         if self.contact:
             detail_el.append(self.contact.to_element())
         if self.group:
             detail_el.append(self.group.to_element())
+        for group in self.groups:
+            detail_el.append(group.to_element())
         if self.track:
             detail_el.append(self.track.to_element())
+        if self.chat:
+            detail_el.append(self.chat.to_element())
+        if self.chat_group:
+            detail_el.append(self.chat_group.to_element())
+        for link in self.links:
+            detail_el.append(link.to_element())
         if self.remarks:
             remarks_el = ET.SubElement(detail_el, "remarks")
             remarks_el.text = self.remarks
@@ -237,8 +428,16 @@ class Detail:
             data["contact"] = self.contact.to_dict()
         if self.group:
             data["group"] = self.group.to_dict()
+        if self.groups:
+            data["groups"] = [group.to_dict() for group in self.groups]
         if self.track:
             data["track"] = self.track.to_dict()
+        if self.chat:
+            data["chat"] = self.chat.to_dict()
+        if self.chat_group:
+            data["chat_group"] = self.chat_group.to_dict()
+        if self.links:
+            data["links"] = [link.to_dict() for link in self.links]
         if self.remarks:
             data["remarks"] = self.remarks
         return data
@@ -252,11 +451,30 @@ class Detail:
         group = None
         if "group" in data:
             group = Group.from_dict(data["group"])
+        groups_data = data.get("groups", [])
+        groups = [Group.from_dict(item) for item in groups_data]
         track = None
         if "track" in data:
             track = Track.from_dict(data["track"])
+        chat = None
+        if "chat" in data:
+            chat = Chat.from_dict(data["chat"])
+        chat_group = None
+        if "chat_group" in data:
+            chat_group = ChatGroup.from_dict(data["chat_group"])
+        links_data = data.get("links", [])
+        links = [Link.from_dict(item) for item in links_data]
         remarks = data.get("remarks")
-        return cls(contact=contact, group=group, track=track, remarks=remarks)
+        return cls(
+            contact=contact,
+            group=group,
+            groups=groups,
+            track=track,
+            chat=chat,
+            chat_group=chat_group,
+            links=links,
+            remarks=remarks,
+        )
 
 
 @dataclass
@@ -286,9 +504,7 @@ class Event:
         point_el = root.find("point")
         detail_el = root.find("detail")
         point = (
-            Point.from_xml(point_el)
-            if point_el is not None
-            else Point(0, 0, 0, 0, 0)
+            Point.from_xml(point_el) if point_el is not None else Point(0, 0, 0, 0, 0)
         )
         detail = Detail.from_xml(detail_el) if detail_el is not None else None
         return cls(
@@ -390,6 +606,9 @@ __all__ = [
     "Detail",
     "Point",
     "Group",
+    "Chat",
+    "ChatGroup",
+    "Link",
     "Track",
     "Contact",
     "pack_data",
