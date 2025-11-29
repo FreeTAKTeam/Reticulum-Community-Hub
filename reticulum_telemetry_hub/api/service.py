@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from typing import List, Optional
+from typing import List
+from typing import Optional
 
 from reticulum_telemetry_hub.config import HubConfigurationManager
 
-from .models import Client, ReticulumInfo, Subscriber, Topic
+from .models import Client
+from .models import ReticulumInfo
+from .models import Subscriber
+from .models import Topic
 from .storage import HubStorage
 
 
@@ -17,6 +21,17 @@ class ReticulumTelemetryHubAPI:
         config_manager: Optional[HubConfigurationManager] = None,
         storage: Optional[HubStorage] = None,
     ) -> None:
+        """Initialize the API service with configuration and storage providers.
+
+        Args:
+            config_manager (Optional[HubConfigurationManager]): Manager
+                supplying hub configuration. When omitted, a default manager
+                loads the hub configuration and database path.
+            storage (Optional[HubStorage]): Persistence provider for clients,
+                topics, and subscribers. Defaults to storage built with the
+                configuration's database path.
+
+        """
         self._config_manager = config_manager or HubConfigurationManager()
         hub_db_path = self._config_manager.config.hub_database_path
         self._storage = storage or HubStorage(hub_db_path)
@@ -25,12 +40,39 @@ class ReticulumTelemetryHubAPI:
     # RTH operations
     # ------------------------------------------------------------------ #
     def join(self, identity: str) -> bool:
+        """Register a client with the Reticulum Telemetry Hub.
+
+        Args:
+            identity (str): Unique Reticulum identity string.
+
+        Returns:
+            bool: ``True`` when the identity is recorded or updated.
+
+        Raises:
+            ValueError: If ``identity`` is empty.
+
+        Examples:
+            >>> api.join("ABCDE")
+            True
+        """
         if not identity:
             raise ValueError("identity is required")
         self._storage.upsert_client(identity)
         return True
 
     def leave(self, identity: str) -> bool:
+        """Remove a client from the hub.
+
+        Args:
+            identity (str): Identity previously joined to the hub.
+
+        Returns:
+            bool: ``True`` if the client existed and was removed; ``False``
+                otherwise.
+
+        Raises:
+            ValueError: If ``identity`` is empty.
+        """
         if not identity:
             raise ValueError("identity is required")
         return self._storage.remove_client(identity)
@@ -39,40 +81,113 @@ class ReticulumTelemetryHubAPI:
     # Client operations
     # ------------------------------------------------------------------ #
     def list_clients(self) -> List[Client]:
+        """Return all clients that have joined the hub.
+
+        Returns:
+            List[Client]: All persisted client records in insertion order.
+        """
         return self._storage.list_clients()
 
     # ------------------------------------------------------------------ #
     # Topic operations
     # ------------------------------------------------------------------ #
     def create_topic(self, topic: Topic) -> Topic:
+        """Create a topic in the hub database.
+
+        Args:
+            topic (Topic): Topic definition to store. ``topic_id`` is
+                auto-generated when not provided.
+
+        Returns:
+            Topic: Persisted topic record with a guaranteed ``topic_id``.
+
+        Raises:
+            ValueError: If ``topic.topic_name`` or ``topic.topic_path`` is
+                missing.
+
+        Notes:
+            A hex UUID is generated for ``topic_id`` when it is absent to
+            ensure unique topic identifiers across requests.
+        """
         if not topic.topic_name or not topic.topic_path:
             raise ValueError("TopicName and TopicPath are required")
         topic.topic_id = topic.topic_id or uuid.uuid4().hex
         return self._storage.create_topic(topic)
 
     def list_topics(self) -> List[Topic]:
+        """List all topics known to the hub.
+
+        Returns:
+            List[Topic]: Current topic catalog from storage.
+        """
         return self._storage.list_topics()
 
     def retrieve_topic(self, topic_id: str) -> Topic:
+        """Fetch a topic by its identifier.
+
+        Args:
+            topic_id (str): Identifier of the topic to retrieve.
+
+        Returns:
+            Topic: The matching topic.
+
+        Raises:
+            KeyError: If the topic does not exist.
+        """
         topic = self._storage.get_topic(topic_id)
         if not topic:
             raise KeyError(f"Topic '{topic_id}' not found")
         return topic
 
     def delete_topic(self, topic_id: str) -> Topic:
+        """Delete a topic by its identifier.
+
+        Args:
+            topic_id (str): Identifier of the topic to delete.
+
+        Returns:
+            Topic: The removed topic record.
+
+        Raises:
+            KeyError: If the topic does not exist.
+        """
         topic = self._storage.delete_topic(topic_id)
         if not topic:
             raise KeyError(f"Topic '{topic_id}' not found")
         return topic
 
     def patch_topic(self, topic_id: str, **updates) -> Topic:
+        """Update selected fields of a topic.
+
+        Args:
+            topic_id (str): Identifier of the topic to update.
+            **updates: Optional fields to modify, accepting either snake_case
+                or title-cased keys (``topic_name``/``TopicName``,
+                ``topic_path``/``TopicPath``, ``topic_description``/
+                ``TopicDescription``).
+
+        Returns:
+            Topic: Updated topic. If no update fields are provided, the
+                existing topic is returned unchanged.
+
+        Raises:
+            KeyError: If the topic does not exist.
+
+        Notes:
+            ``topic_description`` defaults to an empty string when explicitly
+            set to ``None`` or an empty value.
+        """
         topic = self.retrieve_topic(topic_id)
         update_fields = {}
         if "topic_name" in updates or "TopicName" in updates:
-            topic.topic_name = updates.get("topic_name") or updates.get("TopicName")
+            topic.topic_name = updates.get("topic_name") or updates.get(
+                "TopicName"
+            )
             update_fields["topic_name"] = topic.topic_name
         if "topic_path" in updates or "TopicPath" in updates:
-            topic.topic_path = updates.get("topic_path") or updates.get("TopicPath")
+            topic.topic_path = updates.get("topic_path") or updates.get(
+                "TopicPath"
+            )
             update_fields["topic_path"] = topic.topic_path
         if "topic_description" in updates or "TopicDescription" in updates:
             if "topic_description" in updates:
@@ -83,7 +198,9 @@ class ReticulumTelemetryHubAPI:
             update_fields["topic_description"] = topic.topic_description
         if not update_fields:
             return topic
-        updated_topic = self._storage.update_topic(topic.topic_id, **update_fields)
+        updated_topic = self._storage.update_topic(
+            topic.topic_id, **update_fields
+        )
         if not updated_topic:
             raise KeyError(f"Topic '{topic_id}' not found")
         return updated_topic
@@ -95,6 +212,28 @@ class ReticulumTelemetryHubAPI:
         reject_tests: Optional[int] = None,
         metadata: Optional[dict] = None,
     ) -> Subscriber:
+        """Subscribe a destination to a topic.
+
+        Args:
+            topic_id (str): Identifier of the topic to subscribe to.
+            destination (str): Destination identity or address.
+            reject_tests (Optional[int]): Value indicating whether to reject
+                test messages; stored as provided.
+            metadata (Optional[dict]): Subscriber metadata. Defaults to an
+                empty dict when not provided.
+
+        Returns:
+            Subscriber: Persisted subscriber with a generated ``subscriber_id``
+                and the topic's resolved ``topic_id``.
+
+        Raises:
+            KeyError: If the referenced topic does not exist.
+            ValueError: If ``destination`` is empty.
+
+        Examples:
+            >>> api.subscribe_topic(topic_id, "dest")
+            Subscriber(..., subscriber_id="<uuid>", metadata={})
+        """
         topic = self.retrieve_topic(topic_id)
         subscriber = Subscriber(
             destination=destination,
@@ -108,6 +247,23 @@ class ReticulumTelemetryHubAPI:
     # Subscriber operations
     # ------------------------------------------------------------------ #
     def create_subscriber(self, subscriber: Subscriber) -> Subscriber:
+        """Create a subscriber record.
+
+        Args:
+            subscriber (Subscriber): Subscriber definition.
+                ``subscriber_id`` is auto-generated when missing. ``topic_id``
+                defaults to an empty string when not provided.
+
+        Returns:
+            Subscriber: Persisted subscriber with ensured identifiers.
+
+        Raises:
+            ValueError: If ``subscriber.destination`` is empty.
+
+        Notes:
+            ``subscriber.metadata`` is stored as-is; callers should supply an
+            empty dict when no metadata is required to avoid ``None`` values.
+        """
         if not subscriber.destination:
             raise ValueError("Subscriber destination is required")
         subscriber.topic_id = subscriber.topic_id or ""
@@ -115,28 +271,77 @@ class ReticulumTelemetryHubAPI:
         return self._storage.create_subscriber(subscriber)
 
     def list_subscribers(self) -> List[Subscriber]:
+        """List all subscribers.
+
+        Returns:
+            List[Subscriber]: Subscribers currently stored in the hub.
+        """
         return self._storage.list_subscribers()
 
     def retrieve_subscriber(self, subscriber_id: str) -> Subscriber:
+        """Fetch a subscriber by identifier.
+
+        Args:
+            subscriber_id (str): Identifier of the subscriber to retrieve.
+
+        Returns:
+            Subscriber: The matching subscriber.
+
+        Raises:
+            KeyError: If the subscriber does not exist.
+        """
         subscriber = self._storage.get_subscriber(subscriber_id)
         if not subscriber:
             raise KeyError(f"Subscriber '{subscriber_id}' not found")
         return subscriber
 
     def delete_subscriber(self, subscriber_id: str) -> Subscriber:
+        """Delete a subscriber by identifier.
+
+        Args:
+            subscriber_id (str): Identifier of the subscriber to delete.
+
+        Returns:
+            Subscriber: The removed subscriber record.
+
+        Raises:
+            KeyError: If the subscriber does not exist.
+        """
         subscriber = self._storage.delete_subscriber(subscriber_id)
         if not subscriber:
             raise KeyError(f"Subscriber '{subscriber_id}' not found")
         return subscriber
 
     def patch_subscriber(self, subscriber_id: str, **updates) -> Subscriber:
+        """Update selected subscriber fields.
+
+        Args:
+            subscriber_id (str): Identifier of the subscriber to update.
+            **updates: Optional fields to modify, accepting either snake_case
+                or title-cased keys (``destination``/``Destination``,
+                ``topic_id``/``TopicID``, ``reject_tests``/``RejectTests``,
+                ``metadata``/``Metadata``).
+
+        Returns:
+            Subscriber: Updated subscriber record.
+
+        Raises:
+            KeyError: If the subscriber does not exist.
+
+        Notes:
+            The metadata dictionary is replaced only when provided; otherwise,
+            existing metadata remains unchanged. Topic existence is not
+            validated during updates.
+        """
         subscriber = self.retrieve_subscriber(subscriber_id)
         if "destination" in updates or "Destination" in updates:
             subscriber.destination = updates.get("destination") or updates.get(
                 "Destination"
             )
         if "topic_id" in updates or "TopicID" in updates:
-            subscriber.topic_id = updates.get("topic_id") or updates.get("TopicID")
+            subscriber.topic_id = updates.get("topic_id") or updates.get(
+                "TopicID"
+            )
         if "reject_tests" in updates:
             subscriber.reject_tests = updates["reject_tests"]
         elif "RejectTests" in updates:
@@ -152,11 +357,25 @@ class ReticulumTelemetryHubAPI:
         return self._storage.update_subscriber(subscriber)
 
     def add_subscriber(self, subscriber: Subscriber) -> Subscriber:
+        """Alias for :meth:`create_subscriber`.
+
+        Args:
+            subscriber (Subscriber): Subscriber definition to persist.
+
+        Returns:
+            Subscriber: Persisted subscriber record.
+        """
         return self.create_subscriber(subscriber)
 
     # ------------------------------------------------------------------ #
     # Reticulum info
     # ------------------------------------------------------------------ #
     def get_app_info(self) -> ReticulumInfo:
+        """Return the current Reticulum configuration snapshot.
+
+        Returns:
+            ReticulumInfo: Configuration values sourced from the configuration
+            manager.
+        """
         info_dict = self._config_manager.reticulum_info_snapshot()
         return ReticulumInfo(**info_dict)
