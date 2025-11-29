@@ -87,6 +87,22 @@ def test_connector_prefers_identity_lookup_label():
     assert lookups
 
 
+def test_connector_normalizes_pretty_hash_identifiers():
+    manager = _build_manager()
+    manager.telemeter.peer_dest = "aa:bb:cc:dd"
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"), telemeter_manager=manager
+    )
+
+    event = connector.build_event()
+
+    assert event is not None
+    assert event.detail is not None
+    assert event.detail.contact is not None
+    assert event.detail.contact.callsign == "aabbccdd"
+    assert event.uid.startswith("HUB-aabbccdd")
+
+
 def test_connector_sends_cot_payload():
     manager = _build_manager()
     client = DummyPytakClient()

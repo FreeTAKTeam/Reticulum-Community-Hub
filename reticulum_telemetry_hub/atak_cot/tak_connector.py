@@ -381,18 +381,18 @@ class TakConnector:
             str: Callsign-compatible identifier.
         """
 
+        label = self._label_from_identity(peer_hash)
+        if label:
+            return label
         if peer_hash is None:
             return self._config.callsign
         if isinstance(peer_hash, (bytes, bytearray)):
             normalized = peer_hash.hex()
         else:
-            normalized = str(peer_hash).strip().split(":")[-1]
-        normalized = normalized or self._config.callsign
+            normalized = str(peer_hash).strip()
+        normalized = normalized.replace(":", "") or self._config.callsign
         if len(normalized) > 12:
             normalized = normalized[-12:]
-        label = self._label_from_identity(peer_hash)
-        if label:
-            return label
         return normalized
 
     def _label_from_identity(self, peer_hash: str | bytes | None) -> str | None:
