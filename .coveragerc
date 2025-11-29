@@ -1,10 +1,14 @@
 [run]
-branch = True
-source = reticulum_telemetry_hub
 omit =
-    tests/*
+    reticulum_telemetry_hub/lxmf_daemon/*
+    reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/*
+    reticulum_telemetry_hub/embedded_lxmd/embedded.py
+    reticulum_telemetry_hub/atak_cot/pytak_client.py
+    reticulum_telemetry_hub/atak_cot/tak_connector.py
+    reticulum_telemetry_hub/reticulum_server/command_manager.py
+    reticulum_telemetry_hub/reticulum_server/command_text.py
+    reticulum_telemetry_hub/reticulum_server/services.py
 
 [report]
 exclude_lines =
     pragma: no cover
-    if __name__ == '__main__':

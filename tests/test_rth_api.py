@@ -1,6 +1,12 @@
-from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI, Topic, Subscriber
+import pytest
+
+from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.api import Subscriber
+from reticulum_telemetry_hub.api import Topic
 from reticulum_telemetry_hub.api.storage import TopicRecord
 from reticulum_telemetry_hub.config import HubConfigurationManager
+
+
 def make_config_manager(tmp_path):
     storage = tmp_path / "storage"
     storage.mkdir()
@@ -22,7 +28,9 @@ def make_config_manager(tmp_path):
         "display_name = TestRouter\n"
     )
     return HubConfigurationManager(
-        storage_path=storage, reticulum_config_path=reticulum_cfg, lxmf_router_config_path=lxmf_cfg
+        storage_path=storage,
+        reticulum_config_path=reticulum_cfg,
+        lxmf_router_config_path=lxmf_cfg,
     )
 
 
@@ -121,3 +129,77 @@ def test_patch_topic_preserves_created_at(tmp_path):
         updated_record = session.get(TopicRecord, topic.topic_id)
         assert updated_record.description == "Updated status"
         assert updated_record.created_at == original_created_at
+
+
+def test_join_and_leave_require_identity(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    with pytest.raises(ValueError):
+        api.join("")
+
+    with pytest.raises(ValueError):
+        api.leave("")
+
+
+def test_create_topic_requires_fields(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    with pytest.raises(ValueError):
+        api.create_topic(Topic(topic_name="", topic_path=""))
+
+
+def test_topic_operations_raise_when_missing(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    with pytest.raises(KeyError):
+        api.retrieve_topic("missing")
+
+    with pytest.raises(KeyError):
+        api.delete_topic("missing")
+
+
+def test_patch_topic_without_updates_returns_original(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
+
+    returned = api.patch_topic(topic.topic_id)
+
+    assert returned.topic_id == topic.topic_id
+
+
+def test_patch_topic_raises_when_storage_returns_none(tmp_path, monkeypatch):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
+
+    monkeypatch.setattr(api._storage, "update_topic", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(KeyError):
+        api.patch_topic(topic.topic_id, topic_name="New Name")
+
+
+def test_create_subscriber_requires_destination(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    with pytest.raises(ValueError):
+        api.create_subscriber(Subscriber(destination=""))
+
+
+def test_subscriber_operations_raise_when_missing(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    with pytest.raises(KeyError):
+        api.retrieve_subscriber("unknown")
+
+    with pytest.raises(KeyError):
+        api.delete_subscriber("unknown")
+
+
+def test_patch_subscriber_accepts_metadata_with_title_case(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(Topic(topic_name="Alerts", topic_path="/alerts"))
+    subscriber = api.subscribe_topic(topic.topic_id, destination="dest")
+
+    api.patch_subscriber(subscriber.subscriber_id, Metadata={"priority": "high"})
+    updated = api.retrieve_subscriber(subscriber.subscriber_id)
+
+    assert updated.metadata == {"priority": "high"}
