@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Callable
 import uuid
 
+import RNS
 from reticulum_telemetry_hub.atak_cot import Contact
 from reticulum_telemetry_hub.atak_cot import Detail
 from reticulum_telemetry_hub.atak_cot import Event

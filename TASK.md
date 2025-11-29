@@ -23,3 +23,4 @@
 - 2025-11-29: ✅ Assign TAK location events to the originating Reticulum identity using display names when available or LXMF addresses otherwise.
 - 2025-11-29: ✅ Normalize TAK connector identifiers derived from pretty-formatted hashes.
 - 2025-11-29: ✅ Raise coverage to at least 90% and correct formatting issues.
+- 2025-11-29: ✅ Add RNS import to TAK connector and test send_latest_location to avoid NameError.
