@@ -179,7 +179,10 @@ class PytakClient:
         cfg = self._ensure_config(config)
         section = self._config_section(cfg)
 
-        cli_tool = FTSCLITool(cfg)
+        # pyTAK's CLITool expects a section-level view so option lookups do not
+        # require a section name. Passing the SectionProxy avoids calling
+        # ConfigParser.get(section, option) with missing arguments.
+        cli_tool = FTSCLITool(section)
         await cli_tool.setup()
 
         cli_tool.add_c_task(SendWorker(cast(asyncio.Queue, cli_tool.tx_queue), section, message))
