@@ -5,6 +5,7 @@ import pytest
 from msgpack import packb
 
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
+from reticulum_telemetry_hub.atak_cot import Remarks
 from reticulum_telemetry_hub.api.models import Subscriber, Topic
 
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
@@ -804,9 +805,10 @@ def test_delivery_callback_emits_cot_chat_for_valid_message():
     assert client.sent
     event, config, parse_flag = client.sent[0]
     assert event.detail is not None
-    assert event.detail.group is not None
-    assert event.detail.group.name == "chat"
-    assert "Hello world" in event.detail.remarks
+    assert event.detail.chat is not None
+    assert event.detail.chat.chatroom == "chat"
+    assert isinstance(event.detail.remarks, Remarks)
+    assert "Hello world" in event.detail.remarks.text
     assert config["fts"]["CALLSIGN"] == hub.tak_connector.config.callsign
     assert parse_flag is False
 
