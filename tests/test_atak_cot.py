@@ -4,12 +4,15 @@ import pytest
 
 from reticulum_telemetry_hub.atak_cot import Chat
 from reticulum_telemetry_hub.atak_cot import ChatGroup
-from reticulum_telemetry_hub.atak_cot import Contact
+from reticulum_telemetry_hub.atak_cot import ChatHierarchy
+from reticulum_telemetry_hub.atak_cot import ChatHierarchyContact
+from reticulum_telemetry_hub.atak_cot import ChatHierarchyGroup
 from reticulum_telemetry_hub.atak_cot import Detail
 from reticulum_telemetry_hub.atak_cot import Event
 from reticulum_telemetry_hub.atak_cot import Group
 from reticulum_telemetry_hub.atak_cot import Link
 from reticulum_telemetry_hub.atak_cot import Point
+from reticulum_telemetry_hub.atak_cot import Remarks
 from reticulum_telemetry_hub.atak_cot import pack_data, unpack_data
 
 COT_XML = """
@@ -70,30 +73,52 @@ def test_xml_roundtrip_bytes():
 
 def test_geochat_detail_roundtrip():
     detail = Detail(
-        contact=Contact(callsign="Alpha"),
-        group=Group(name="ops", role="topic"),
-        groups=[Group(name="RTH", role="Team")],
         chat=Chat(
-            parent="RootContactGroup.ops",
-            group_owner="Alpha",
+            id="ops",
             chatroom="ops",
-        ),
-        chat_group=ChatGroup(
-            chatroom="ops",
-            chat_id="RootContactGroup.ops",
-            uid0="0101010101010101",
-            uid1="",
+            sender_callsign="Alpha",
+            group_owner="false",
+            chat_group=ChatGroup(
+                chatroom="ops",
+                chat_id="ops",
+                uid0="0101010101010101",
+                uid1="",
+                uid2="user2",
+            ),
+            hierarchy=ChatHierarchy(
+                groups=[
+                    ChatHierarchyGroup(
+                        uid="TeamGroups",
+                        name="Teams",
+                        groups=[
+                            ChatHierarchyGroup(
+                                uid="ops",
+                                name="ops",
+                                contacts=[
+                                    ChatHierarchyContact(
+                                        uid="0101010101010101", name="Alpha"
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ]
+            ),
         ),
         links=[
             Link(
                 uid="0101010101010101",
-                production_time="2025-01-02T03:04:05Z",
-                parent_callsign="ops",
-                type="a-f-G-U-C",
+                type="a-f-G-U-C-I",
                 relation="p-p",
             )
         ],
-        remarks="[topic:ops] Hello team",
+        remarks=Remarks(
+            text="[topic:ops] Hello team",
+            source="BAO.F.Alpha.0101010101010101",
+            source_id="0101010101010101",
+            to="ops",
+            time="2025-01-02T03:04:05Z",
+        ),
     )
     event = Event(
         version="2.0",
@@ -112,10 +137,13 @@ def test_geochat_detail_roundtrip():
 
     assert restored.detail is not None
     assert restored.detail.chat is not None
-    assert restored.detail.chat.parent == "RootContactGroup.ops"
-    assert restored.detail.chat_group is not None
-    assert restored.detail.chat_group.chatroom == "ops"
+    assert restored.detail.chat.id == "ops"
+    assert restored.detail.chat.chat_group is not None
+    assert restored.detail.chat.chat_group.chatroom == "ops"
+    assert restored.detail.chat.hierarchy is not None
+    assert restored.detail.chat.hierarchy.groups[0].uid == "TeamGroups"
     assert restored.detail.links
     assert restored.detail.links[0].uid == "0101010101010101"
-    assert restored.detail.groups
-    assert restored.detail.groups[0].name == "RTH"
+    assert restored.detail.links[0].type == "a-f-G-U-C-I"
+    assert isinstance(restored.detail.remarks, Remarks)
+    assert restored.detail.remarks.source_id == "0101010101010101"

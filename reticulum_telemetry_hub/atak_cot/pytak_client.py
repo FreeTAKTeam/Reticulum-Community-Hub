@@ -70,7 +70,9 @@ class SendWorker(pytak.QueueWorker):
 class ReceiveWorker(pytak.QueueWorker):
     """pyTAK worker that optionally parses incoming CoT XML into Event objects."""
 
-    def __init__(self, queue: asyncio.Queue, config: SectionProxy, parse: bool = True) -> None:
+    def __init__(
+        self, queue: asyncio.Queue, config: SectionProxy, parse: bool = True
+    ) -> None:
         super().__init__(queue, config)
         self._parse = parse
         # store parsed or raw data here so callers can inspect worker instances
@@ -86,7 +88,8 @@ class ReceiveWorker(pytak.QueueWorker):
         except Exception:
             self.result = data
         return None
-    
+
+
 class FTSCLITool(pytak.CLITool):
     def __init__(
         self,
@@ -167,7 +170,9 @@ class PytakClient:
             self._config = self._setup_config()
         return self._config
 
-    def _config_section(self, config: ConfigParser, section: str = "fts") -> SectionProxy:
+    def _config_section(
+        self, config: ConfigParser, section: str = "fts"
+    ) -> SectionProxy:
         if config.has_section(section):
             return config[section]
         sections = config.sections()
@@ -190,8 +195,14 @@ class PytakClient:
         cli_tool = FTSCLITool(section)
         await cli_tool.setup()
 
-        cli_tool.add_c_task(SendWorker(cast(asyncio.Queue, cli_tool.tx_queue), section, message))
-        cli_tool.add_c_task(ReceiveWorker(cast(asyncio.Queue, cli_tool.rx_queue), section, parse=parse_inbound))
+        cli_tool.add_c_task(
+            SendWorker(cast(asyncio.Queue, cli_tool.tx_queue), section, message)
+        )
+        cli_tool.add_c_task(
+            ReceiveWorker(
+                cast(asyncio.Queue, cli_tool.rx_queue), section, parse=parse_inbound
+            )
+        )
 
         await cli_tool.run()
         return cli_tool.results
@@ -203,4 +214,6 @@ class PytakClient:
         parse_inbound: bool = True,
     ):
         """Convenience helper that sends a single Event."""
-        return await self.create_and_send_message(event, config=config, parse_inbound=parse_inbound)
+        return await self.create_and_send_message(
+            event, config=config, parse_inbound=parse_inbound
+        )

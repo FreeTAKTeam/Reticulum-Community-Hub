@@ -10,6 +10,7 @@ import RNS
 
 from reticulum_telemetry_hub.atak_cot.tak_connector import LocationSnapshot
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
+from reticulum_telemetry_hub.atak_cot import Remarks
 from reticulum_telemetry_hub.config.models import TakConnectionConfig
 from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import (
     TelemeterManager,
@@ -289,11 +290,12 @@ def test_build_chat_event_includes_topic():
 
     assert event.type == connector.CHAT_EVENT_TYPE
     assert event.detail is not None
-    assert event.detail.contact is not None
-    assert event.detail.contact.callsign == "Alpha"
-    assert event.detail.group is not None
-    assert event.detail.group.name == "ops"
-    assert event.detail.remarks.startswith("[topic:ops] Hello team")
+    assert event.detail.chat is not None
+    assert event.detail.chat.chatroom == "ops"
+    assert event.detail.chat.chat_group is not None
+    assert isinstance(event.detail.remarks, Remarks)
+    assert event.detail.remarks.text == "Hello team"
+    assert event.detail.remarks.to == "ops"
 
 
 def test_send_chat_event_dispatches_payload():
@@ -316,7 +318,10 @@ def test_send_chat_event_dispatches_payload():
     event, cfg, parse_flag = client.sent[0]
     assert event.type == connector.CHAT_EVENT_TYPE
     assert event.detail is not None
-    assert event.detail.group is not None
+    assert event.detail.chat is not None
+    assert event.detail.chat.chatroom == "status"
+    assert isinstance(event.detail.remarks, Remarks)
+    assert event.detail.remarks.text == "Status update"
     assert cfg["fts"]["CALLSIGN"] == "HUB"
     assert parse_flag is False
 
@@ -454,14 +459,19 @@ def test_chat_event_matches_geochat_payload(monkeypatch):
         f'stale="{stale.replace(microsecond=0).isoformat()}Z">'
         '<point lat="0.0" lon="0.0" hae="0.0" ce="0.0" le="0.0" />'
         "<detail>"
-        '<contact callsign="Alpha" />'
-        f'<__group name="{topic_id}" role="topic" />'
-        '<__group name="RTH" role="Team" />'
-        f'<__chat parent="RootContactGroup.{topic_id}" groupOwner="Alpha" chatroom="{topic_id}" />'
-        f'<chatgrp chatroom="{topic_id}" id="RootContactGroup.{topic_id}" uid0="{identifier}" uid1="" />'
-        f'<link uid="{identifier}" production_time="{start_time.replace(microsecond=0).isoformat()}Z" '
-        f'parent_callsign="{topic_id}" type="{connector.EVENT_TYPE}" relation="p-p" />'
-        f"<remarks>[topic:{topic_id}] {content}</remarks>"
+        f'<__chat id="{topic_id}" chatroom="{topic_id}" senderCallsign="Alpha" groupOwner="false">'
+        f'<chatgrp chatroom="{topic_id}" id="{topic_id}" uid0="{identifier}" uid1="" />'
+        "<hierarchy>"
+        '<group uid="TeamGroups" name="Teams">'
+        f'<group uid="{topic_id}" name="{topic_id}">'
+        f'<contact uid="{identifier}" name="Alpha" />'
+        "</group>"
+        "</group>"
+        "</hierarchy>"
+        "</__chat>"
+        f'<link uid="{identifier}" type="{connector.CHAT_LINK_TYPE}" relation="p-p" />'
+        f'<remarks source="BAO.F.Alpha.{identifier}" sourceID="{identifier}" to="{topic_id}" '
+        f'time="{start_time.replace(microsecond=0).isoformat()}Z">{content}</remarks>'
         "</detail>"
         "</event>"
     )

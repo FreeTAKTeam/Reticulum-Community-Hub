@@ -9,11 +9,15 @@ import uuid
 import RNS
 from reticulum_telemetry_hub.atak_cot import Chat
 from reticulum_telemetry_hub.atak_cot import ChatGroup
+from reticulum_telemetry_hub.atak_cot import ChatHierarchy
+from reticulum_telemetry_hub.atak_cot import ChatHierarchyContact
+from reticulum_telemetry_hub.atak_cot import ChatHierarchyGroup
 from reticulum_telemetry_hub.atak_cot import Contact
 from reticulum_telemetry_hub.atak_cot import Detail
 from reticulum_telemetry_hub.atak_cot import Event
 from reticulum_telemetry_hub.atak_cot import Group
 from reticulum_telemetry_hub.atak_cot import Link
+from reticulum_telemetry_hub.atak_cot import Remarks
 from reticulum_telemetry_hub.atak_cot import Track
 from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
 from reticulum_telemetry_hub.config.models import TakConnectionConfig
@@ -62,6 +66,7 @@ class TakConnector:
 
     EVENT_TYPE = "a-f-G-U-C"
     EVENT_HOW = "m-g"
+    CHAT_LINK_TYPE = "a-f-G-U-C-I"
     CHAT_EVENT_TYPE = "b-t-f"
     CHAT_EVENT_HOW = "h-g-i-g-o"
 
@@ -266,43 +271,52 @@ class TakConnector:
         timestamp_ms = int(start_time.timestamp() * 1000)
         uid_suffix = uuid.uuid4().hex[:6]
         uid = f"GeoChat.{identifier}-chat-{timestamp_ms}-{uid_suffix}"
-        contact = Contact(callsign=sender_label or identifier)
-        group = Group(name=str(topic_id), role="topic") if topic_id else None
 
         chatroom = str(topic_id) if topic_id else "GeoChat"
-        chat_parent = f"RootContactGroup.{chatroom}"
-        hierarchy_groups: list[Group] = []
-        if topic_id:
-            hierarchy_groups.append(Group(name=self._config.callsign, role="Team"))
-        chat = Chat(
-            parent=chat_parent,
-            group_owner=contact.callsign,
-            chatroom=chatroom,
-        )
         chat_group = ChatGroup(
             chatroom=chatroom,
-            chat_id=chat_parent,
+            chat_id=chatroom,
             uid0=identifier,
             uid1="",
         )
+        hierarchy_contact = ChatHierarchyContact(
+            uid=identifier, name=sender_label or identifier
+        )
+        chat_hierarchy_group = ChatHierarchyGroup(
+            uid=chatroom,
+            name=chatroom,
+            contacts=[hierarchy_contact],
+        )
+        hierarchy_root = ChatHierarchyGroup(
+            uid="TeamGroups",
+            name="Teams",
+            groups=[chat_hierarchy_group],
+        )
+        hierarchy = ChatHierarchy(groups=[hierarchy_root])
+        chat = Chat(
+            id=chatroom,
+            chatroom=chatroom,
+            sender_callsign=sender_label or identifier,
+            group_owner="false",
+            chat_group=chat_group,
+            hierarchy=hierarchy,
+        )
         link = Link(
             uid=identifier,
-            production_time=_utc_iso(start_time),
-            parent_callsign=chatroom,
-            type=self.EVENT_TYPE,
+            type=self.CHAT_LINK_TYPE,
             relation="p-p",
         )
 
-        remarks = content.strip()
-        if topic_id:
-            remarks = f"[topic:{topic_id}] {remarks}"
+        remarks = Remarks(
+            text=content.strip(),
+            source=f"BAO.F.{sender_label}.{identifier}",
+            source_id=identifier,
+            to=chatroom,
+            time=_utc_iso(start_time),
+        )
 
         detail = Detail(
-            contact=contact,
-            group=group,
-            groups=hierarchy_groups,
             chat=chat,
-            chat_group=chat_group,
             links=[link],
             remarks=remarks,
         )
@@ -617,7 +631,9 @@ class TakConnector:
         cleaned = str(label).strip()
         return cleaned or None
 
-    def _coerce_float(self, value: Any, *, default: float | None = None) -> float | None:
+    def _coerce_float(
+        self, value: Any, *, default: float | None = None
+    ) -> float | None:
         """Safely cast a value to ``float`` when possible."""
 
         if value is None:
