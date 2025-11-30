@@ -42,6 +42,21 @@ def _build_manager() -> TelemeterManager:
     return manager
 
 
+def _telemetry_payload() -> dict:
+    return {
+        "time": {"timestamp": 1764453963.0},
+        "location": {
+            "latitude": 50.0,
+            "longitude": 15.0,
+            "altitude": 0.0,
+            "speed": 0.0,
+            "bearing": 0.0,
+            "accuracy": 0.01,
+            "last_update_iso": "2025-11-29T20:36:02",
+        },
+    }
+
+
 def test_connector_builds_cot_event_from_location():
     manager = _build_manager()
     config = TakConnectionConfig(
@@ -57,7 +72,7 @@ def test_connector_builds_cot_event_from_location():
     event = connector.build_event()
 
     assert event is not None
-    assert event.uid.startswith("HUB-")
+    assert event.uid == "userhash1"
     assert event.point.lat == pytest.approx(40.7128)
     assert event.point.lon == pytest.approx(-74.006)
     assert event.detail is not None
@@ -83,6 +98,8 @@ def test_connector_build_event_generates_expected_xml():
     assert event is not None
     xml_data = event.to_xml()
     root = ET.fromstring(xml_data)
+
+    assert root.get("uid") == "userhash1"
 
     detail = root.find("detail")
     assert detail is not None
@@ -121,6 +138,7 @@ def test_connector_prefers_identity_lookup_label():
     event = connector.build_event()
 
     assert event is not None
+    assert event.uid == "deadbeef"
     assert event.detail is not None
     assert event.detail.contact is not None
     assert event.detail.contact.callsign == "Display Name"
@@ -140,7 +158,7 @@ def test_connector_normalizes_pretty_hash_identifiers():
     assert event.detail is not None
     assert event.detail.contact is not None
     assert event.detail.contact.callsign == "aabbccdd"
-    assert event.uid.startswith("HUB-aabbccdd")
+    assert event.uid == "aabbccdd"
 
 
 def test_connector_sends_cot_payload():
@@ -186,6 +204,54 @@ def test_send_latest_location_uses_snapshot(monkeypatch):
     message, cfg, parse_flag = client.sent[0]
     assert message.point.lat == pytest.approx(1.0)
     assert message.point.lon == pytest.approx(2.0)
+    assert cfg["fts"]["CALLSIGN"] == "HUB"
+    assert parse_flag is False
+
+
+def test_build_event_from_telemetry_uses_sender_uid():
+    peer_hash = bytes.fromhex("c9ded55aad183600fd8c4e2ad341a7e1")
+    connector = TakConnector(config=TakConnectionConfig(callsign="HUB"))
+
+    event = connector.build_event_from_telemetry(
+        _telemetry_payload(),
+        peer_hash=peer_hash,
+        timestamp=datetime(2025, 11, 29, 22, 6, 3),
+    )
+
+    assert event is not None
+    assert event.uid == peer_hash.hex()
+    assert event.detail is not None
+    assert event.detail.contact is not None
+    assert event.detail.contact.callsign == peer_hash.hex()
+    assert event.point.lat == pytest.approx(50.0)
+    assert event.point.lon == pytest.approx(15.0)
+    assert event.start.startswith("2025-11-29T20:36:02")
+
+
+def test_send_telemetry_event_dispatches(monkeypatch):
+    client = DummyPytakClient()
+
+    def identity_lookup(_: str | bytes | None) -> str:
+        return "Scout"
+
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"),
+        pytak_client=client,
+        identity_lookup=identity_lookup,
+    )
+
+    asyncio.run(
+        connector.send_telemetry_event(
+            _telemetry_payload(),
+            peer_hash="abcd1234",
+            timestamp=datetime(2025, 11, 29, 22, 6, 3),
+        )
+    )
+
+    assert client.sent
+    event, cfg, parse_flag = client.sent[0]
+    assert event.uid == "abcd1234"
+    assert event.detail.contact.callsign == "Scout"
     assert cfg["fts"]["CALLSIGN"] == "HUB"
     assert parse_flag is False
 

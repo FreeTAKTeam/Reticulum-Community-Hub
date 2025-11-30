@@ -2,15 +2,12 @@ from datetime import datetime
 import json
 from pathlib import Path
 import string
-from typing import Optional
+from typing import Callable, Optional
 
 import LXMF
 import RNS
 from msgpack import packb, unpackb
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import (
-    Sensor,
-)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import (
     Telemeter,
 )
@@ -103,6 +100,9 @@ class TelemetryController:
         self._engine = engine
         Base.metadata.create_all(self._engine)
         self._session_cls = sessionmaker(bind=self._engine, expire_on_commit=False)
+        self._telemetry_listener: Callable[
+            [dict, str | bytes | None, Optional[datetime]], None
+        ] | None = None
 
     def _load_telemetry(
         self,
@@ -130,6 +130,14 @@ class TelemetryController:
         """Get the telemetry data."""
         with self._session_cls() as ses:
             return self._load_telemetry(ses, start_time, end_time)
+
+    def register_listener(
+        self,
+        listener: Callable[[dict, str | bytes | None, Optional[datetime]], None],
+    ) -> None:
+        """Register a callback invoked when telemetry is ingested."""
+
+        self._telemetry_listener = listener
 
     def save_telemetry(
         self, telemetry_data: dict | bytes, peer_dest, timestamp: Optional[datetime] = None
@@ -182,9 +190,11 @@ class TelemetryController:
                 message.fields[LXMF.FIELD_TELEMETRY], strict_map_key=False
             )
             readable = self._humanize_telemetry(tel_data)
+            timestamp = self._extract_timestamp(readable)
             RNS.log(f"Telemetry received from {RNS.hexrep(message.source_hash, False)}")
             RNS.log(f"Telemetry decoded: {readable}")
             self.save_telemetry(tel_data, RNS.hexrep(message.source_hash, False))
+            self._notify_listener(readable, message.source_hash, timestamp)
             handled = True
         if LXMF.FIELD_TELEMETRY_STREAM in message.fields:
             tels_data = message.fields[LXMF.FIELD_TELEMETRY_STREAM]
@@ -222,6 +232,8 @@ class TelemetryController:
                 readable = self._humanize_telemetry(payload)
                 RNS.log(f"Telemetry stream from {peer_dest} at {timestamp}: {readable}")
                 self.save_telemetry(payload, peer_dest, timestamp)
+                stream_timestamp = timestamp or self._extract_timestamp(readable)
+                self._notify_listener(readable, peer_hash, stream_timestamp)
             handled = True
 
         return handled
@@ -379,6 +391,38 @@ class TelemetryController:
             if tel.peer_dest not in latest:
                 latest[tel.peer_dest] = tel
         return list(latest.values())
+
+    def _notify_listener(
+        self, telemetry: dict, peer_hash: str | bytes | None, timestamp: Optional[datetime]
+    ) -> None:
+        """Invoke the registered telemetry listener when present."""
+
+        if self._telemetry_listener is None:
+            return
+        try:
+            self._telemetry_listener(telemetry, peer_hash, timestamp)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            RNS.log(
+                f"Telemetry listener raised an exception: {exc}", RNS.LOG_WARNING
+            )
+
+    def _extract_timestamp(self, telemetry: dict) -> Optional[datetime]:
+        """Return a datetime parsed from a telemetry payload when available."""
+
+        time_payload = telemetry.get("time")
+        if isinstance(time_payload, dict):
+            raw_timestamp = time_payload.get("timestamp")
+            if isinstance(raw_timestamp, (int, float)):
+                return datetime.fromtimestamp(int(raw_timestamp))
+            iso_value = time_payload.get("iso")
+            if isinstance(iso_value, str):
+                try:
+                    return datetime.fromisoformat(iso_value)
+                except ValueError:
+                    return None
+        if isinstance(time_payload, (int, float)):
+            return datetime.fromtimestamp(int(time_payload))
+        return None
 
     def _peer_hash_bytes(self, telemeter: Telemeter) -> Optional[bytes]:
         """Return the peer hash for ``telemeter`` as bytes or ``None`` on failure."""
