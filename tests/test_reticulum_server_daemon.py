@@ -1,14 +1,45 @@
+import asyncio
 import time
 
 import LXMF
 import RNS
-import pytest
 
 from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.reticulum_server import services
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
+from reticulum_telemetry_hub.reticulum_server.__main__ import _dispatch_coroutine
+
+
+def test_dispatch_coroutine_runs_without_loop():
+    ran: list[str] = []
+
+    async def _mark_run() -> None:
+        ran.append("ran")
+
+    _dispatch_coroutine(_mark_run())
+
+    assert ran == ["ran"]
+
+
+def test_dispatch_coroutine_uses_running_loop():
+    ran: list[str] = []
+
+    async def _mark_run() -> None:
+        ran.append("ran")
+
+    async def _runner() -> None:
+        _dispatch_coroutine(_mark_run())
+        await asyncio.sleep(0)
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_runner())
+    finally:
+        loop.close()
+
+    assert ran == ["ran"]
 
 
 class DummyService(services.HubService):

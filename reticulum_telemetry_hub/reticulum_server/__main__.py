@@ -83,6 +83,22 @@ def _resolve_interval(value: int | None, fallback: int) -> int:
     return max(0, int(fallback))
 
 
+def _dispatch_coroutine(coroutine) -> None:
+    """Execute ``coroutine`` on the active event loop or create one if needed.
+
+    Args:
+        coroutine: Awaitable object to schedule or run synchronously.
+    """
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(coroutine)
+        return
+
+    loop.create_task(coroutine)
+
+
 class AnnounceHandler:
     """Track simple metadata about peers announcing on the Reticulum bus."""
 
@@ -549,7 +565,7 @@ class ReticulumTelemetryHub:
         if tak_connector is None:
             return
         try:
-            asyncio.run(
+            _dispatch_coroutine(
                 tak_connector.send_telemetry_event(
                     telemetry,
                     peer_hash=peer_hash,

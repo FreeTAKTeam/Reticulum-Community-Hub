@@ -28,3 +28,4 @@
 - 2025-11-29: ✅ Add GeoChat detail construction for chat events including hierarchy links.
 - 2025-11-29: ✅ Log TAK event types and JSON payloads before transmission.
 - 2025-11-29: ✅ Convert incoming telemetry to TAK CoT events using sender UIDs and display names.
+- 2025-11-30: ✅ Avoid rerunning event loops when dispatching telemetry CoT events.
