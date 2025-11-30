@@ -42,6 +42,7 @@ def _decode_stream_entries(stream_field):
     assert isinstance(stream_field, list)
     return stream_field
 
+
 def test_deserialize_lxmf(telemetry_controller):
     with open("sample.bin", "rb") as f:
         tel_data = unpackb(f.read(), strict_map_key=False)
@@ -195,6 +196,50 @@ def test_humanize_returns_time_and_location_values(telemetry_controller):
     assert pytest.approx(location_value["accuracy"], rel=1e-6) == 2.5
     assert location_value["last_update_timestamp"] == pytest.approx(timestamp)
     assert location_value["last_update_iso"] == datetime.fromtimestamp(timestamp).isoformat()
+
+
+def test_handle_message_notifies_listener(telemetry_controller):
+    events: list[tuple[dict, bytes | str | None, datetime | None]] = []
+
+    def listener(payload: dict, peer_hash, timestamp: datetime | None) -> None:
+        events.append((payload, peer_hash, timestamp))
+
+    telemetry_controller.register_listener(listener)
+
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    location = Location()
+    location.latitude = 50.0
+    location.longitude = 15.0
+    location.altitude = 10.0
+    location.speed = 1.0
+    location.bearing = 2.0
+    location.accuracy = 0.5
+    location.last_update = datetime(2025, 11, 29, 20, 36, 2)
+    payload = {
+        SID_LOCATION: location.pack(),
+        SID_TIME: int(time.time()),
+    }
+
+    message = LXMF.LXMessage(
+        dst, src, fields={LXMF.FIELD_TELEMETRY: packb(payload, use_bin_type=True)}
+    )
+    assert telemetry_controller.handle_message(message)
+
+    assert events
+    decoded, peer_hash, timestamp = events[0]
+    assert decoded.get("location", {}).get("latitude") == pytest.approx(50.0)
+    assert decoded.get("location", {}).get("longitude") == pytest.approx(15.0)
+    assert peer_hash == src.hash
+    assert timestamp is not None
+    assert isinstance(timestamp, datetime)
 
 
 def test_stream_ingest_followed_by_command_returns_valid_response(

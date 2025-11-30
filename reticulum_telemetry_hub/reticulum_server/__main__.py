@@ -29,7 +29,6 @@ or run in headless mode for unattended deployments.
 import argparse
 import asyncio
 import json
-import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -82,6 +81,22 @@ def _resolve_interval(value: int | None, fallback: int) -> int:
         return max(0, int(value))
 
     return max(0, int(fallback))
+
+
+def _dispatch_coroutine(coroutine) -> None:
+    """Execute ``coroutine`` on the active event loop or create one if needed.
+
+    Args:
+        coroutine: Awaitable object to schedule or run synchronously.
+    """
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(coroutine)
+        return
+
+    loop.create_task(coroutine)
 
 
 class AnnounceHandler:
@@ -254,6 +269,7 @@ class ReticulumTelemetryHub:
             telemetry_controller=self.tel_controller,
             identity_lookup=self._lookup_identity_label,
         )
+        self.tel_controller.register_listener(self._handle_telemetry_for_tak)
         self.telemetry_sampler = TelemetrySampler(
             self.tel_controller,
             self.lxm_router,
@@ -325,7 +341,7 @@ class ReticulumTelemetryHub:
 
         # Reason: the prefix signals that the body should be treated as a command
         # payload even when the `Commands` field is unavailable.
-        body = content_text[len(ESCAPED_COMMAND_PREFIX) :].strip()
+        body = content_text[len(ESCAPED_COMMAND_PREFIX):].strip()
         if not body:
             RNS.log(
                 "Ignored escape-prefixed command payload with no body.",
@@ -536,6 +552,31 @@ class ReticulumTelemetryHub:
         else:
             return "unknown"
         return self.identities.get(hash_key, pretty)
+
+    def _handle_telemetry_for_tak(
+        self,
+        telemetry: dict,
+        peer_hash: str | bytes | None,
+        timestamp: datetime | None,
+    ) -> None:
+        """Convert telemetry payloads into CoT events for TAK consumers."""
+
+        tak_connector = getattr(self, "tak_connector", None)
+        if tak_connector is None:
+            return
+        try:
+            _dispatch_coroutine(
+                tak_connector.send_telemetry_event(
+                    telemetry,
+                    peer_hash=peer_hash,
+                    timestamp=timestamp,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            RNS.log(
+                f"Failed to send telemetry CoT event: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
 
     def _extract_target_topic(self, fields) -> str | None:
         if not isinstance(fields, dict):
