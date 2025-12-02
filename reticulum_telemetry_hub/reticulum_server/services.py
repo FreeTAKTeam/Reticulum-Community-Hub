@@ -122,10 +122,7 @@ class GpsTelemetryService(HubService):
         sensor = manager.get_sensor("location")
         if sensor is None:
             RNS.log(
-                (
-                    "GPS daemon service could not obtain a location sensor; "
-                    "aborting"
-                ),
+                ("GPS daemon service could not obtain a location sensor; " "aborting"),
                 RNS.LOG_WARNING,
             )
             return
@@ -134,10 +131,7 @@ class GpsTelemetryService(HubService):
             client = self._client_factory(host=self._host, port=self._port)
         except Exception as exc:
             RNS.log(
-                (
-                    "Unable to connect to gpsd on "
-                    f"{self._host}:{self._port}: {exc}"
-                ),
+                ("Unable to connect to gpsd on " f"{self._host}:{self._port}: {exc}"),
                 RNS.LOG_ERROR,
             )
             return
@@ -160,18 +154,10 @@ class GpsTelemetryService(HubService):
             return
         sensor.latitude = float(lat)
         sensor.longitude = float(lon)
-        sensor.altitude = self._coerce_float(
-            payload.get("alt"), sensor.altitude
-        )
-        sensor.speed = self._coerce_float(
-            payload.get("speed"), sensor.speed
-        )
-        sensor.bearing = self._coerce_float(
-            payload.get("track"), sensor.bearing
-        )
-        sensor.accuracy = self._coerce_float(
-            payload.get("eps"), sensor.accuracy
-        )
+        sensor.altitude = self._coerce_float(payload.get("alt"), sensor.altitude)
+        sensor.speed = self._coerce_float(payload.get("speed"), sensor.speed)
+        sensor.bearing = self._coerce_float(payload.get("track"), sensor.bearing)
+        sensor.accuracy = self._coerce_float(payload.get("eps"), sensor.accuracy)
         sensor.last_update = datetime.utcnow()
 
     @staticmethod
@@ -202,6 +188,13 @@ class CotTelemetryService(HubService):
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
+            try:
+                asyncio.run(self._connector.send_keepalive())
+            except Exception as exc:  # pragma: no cover - defensive logging
+                RNS.log(
+                    f"TAK connector failed to send keepalive: {exc}",
+                    RNS.LOG_ERROR,
+                )
             try:
                 asyncio.run(self._connector.send_latest_location())
             except Exception as exc:  # pragma: no cover - defensive logging
@@ -240,9 +233,7 @@ def _cot_factory(hub: "ReticulumTelemetryHub") -> HubService:
     return CotTelemetryService(connector=connector, interval=interval)
 
 
-SERVICE_FACTORIES: dict[
-    str, Callable[["ReticulumTelemetryHub"], HubService]
-] = {
+SERVICE_FACTORIES: dict[str, Callable[["ReticulumTelemetryHub"], HubService]] = {
     "gpsd": _gps_factory,
     "tak_cot": _cot_factory,
 }

@@ -7,6 +7,7 @@ import json
 import uuid
 
 import RNS
+from pytak.functions import tak_pong
 from reticulum_telemetry_hub.atak_cot import Chat
 from reticulum_telemetry_hub.atak_cot import ChatGroup
 from reticulum_telemetry_hub.atak_cot import ChatHierarchy
@@ -228,6 +229,19 @@ class TakConnector:
             event, config=self._config_parser, parse_inbound=False
         )
         RNS.log("TAK connector dispatched telemetry CoT event", RNS.LOG_INFO)
+        return True
+
+    async def send_keepalive(self) -> bool:
+        """Transmit a takPong CoT event to keep the TAK session alive.
+
+        Returns:
+            bool: ``True`` when the keepalive is dispatched.
+        """
+
+        RNS.log("TAK connector sending keepalive takPong", RNS.LOG_DEBUG)
+        await self._pytak_client.create_and_send_message(
+            tak_pong(), config=self._config_parser, parse_inbound=False
+        )
         return True
 
     def build_chat_event(
