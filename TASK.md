@@ -30,3 +30,4 @@
 - 2025-11-29: ✅ Convert incoming telemetry to TAK CoT events using sender UIDs and display names.
 - 2025-11-30: ✅ Avoid rerunning event loops when dispatching telemetry CoT events.
 - 2025-11-30: ✅ Fix TAK GeoChat payload structure and hierarchy.
+- 2025-12-02: ✅ Ensure TAK connection status logging and keepalive pongs.

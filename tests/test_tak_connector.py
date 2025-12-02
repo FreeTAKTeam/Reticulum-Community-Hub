@@ -257,6 +257,23 @@ def test_send_telemetry_event_dispatches(monkeypatch):
     assert parse_flag is False
 
 
+def test_send_keepalive_dispatches():
+    client = DummyPytakClient()
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"), pytak_client=client
+    )
+
+    asyncio.run(connector.send_keepalive())
+
+    assert client.sent
+    message, cfg, parse_flag = client.sent[0]
+    root = ET.fromstring(message)
+    assert root.get("type") == "t-x-d-d"
+    assert root.get("uid") == "takPong"
+    assert cfg["fts"]["CALLSIGN"] == "HUB"
+    assert parse_flag is False
+
+
 def test_cot_service_publishes_periodically():
     manager = _build_manager()
     client = DummyPytakClient()
@@ -275,6 +292,8 @@ def test_cot_service_publishes_periodically():
         service.stop()
 
     assert len(client.sent) >= 2
+    assert any(isinstance(payload, bytes) for payload, _, _ in client.sent)
+    assert any(hasattr(payload, "detail") for payload, _, _ in client.sent)
 
 
 def test_build_chat_event_includes_topic():

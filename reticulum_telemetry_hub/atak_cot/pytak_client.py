@@ -114,6 +114,17 @@ class FTSCLITool(pytak.CLITool):
         for task in tasks:
             self.run_c_task(task)
 
+    async def setup(self) -> None:
+        cot_url = self.config.get("COT_URL", "")
+        try:
+            await super().setup()
+        except Exception as exc:
+            self._logger.error(
+                "Failed to connect to TAK server at %s: %s", cot_url or "unknown", exc
+            )
+            raise
+        self._logger.info("Connected to TAK server at %s", cot_url or "unknown")
+
     async def run(self, number_of_iterations: int = 0) -> None:
         """Runs this Thread and its associated coroutine tasks."""
         self._logger.info("Run: %s", self.__class__)
