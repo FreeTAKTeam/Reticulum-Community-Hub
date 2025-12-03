@@ -5,7 +5,10 @@ from __future__ import annotations
 from reticulum_telemetry_hub.atak_cot.base import Contact
 from reticulum_telemetry_hub.atak_cot.base import Group
 from reticulum_telemetry_hub.atak_cot.base import Point
+from reticulum_telemetry_hub.atak_cot.base import Status
+from reticulum_telemetry_hub.atak_cot.base import Takv
 from reticulum_telemetry_hub.atak_cot.base import Track
+from reticulum_telemetry_hub.atak_cot.base import Uid
 from reticulum_telemetry_hub.atak_cot.chat import Chat
 from reticulum_telemetry_hub.atak_cot.chat import ChatGroup
 from reticulum_telemetry_hub.atak_cot.chat import ChatHierarchy
@@ -26,6 +29,9 @@ __all__ = [
     "Group",
     "Point",
     "Track",
+    "Takv",
+    "Uid",
+    "Status",
     "Chat",
     "ChatGroup",
     "ChatHierarchy",
