@@ -337,6 +337,32 @@ def test_cot_service_publishes_periodically():
     assert any(hasattr(payload, "detail") for payload, _, _ in client.sent)
 
 
+def test_cot_service_sends_keepalive_on_schedule():
+    manager = _build_manager()
+    client = DummyPytakClient()
+    connector = TakConnector(
+        config=TakConnectionConfig(poll_interval_seconds=0.2),
+        pytak_client=client,
+        telemeter_manager=manager,
+    )
+    service = CotTelemetryService(
+        connector=connector, interval=0.2, keepalive_interval=0.05
+    )
+
+    try:
+        started = service.start()
+        assert started is True
+        time.sleep(0.18)
+    finally:
+        service.stop()
+
+    keepalives = [payload for payload, _, _ in client.sent if isinstance(payload, bytes)]
+    locations = [payload for payload, _, _ in client.sent if not isinstance(payload, bytes)]
+
+    assert len(keepalives) >= 2
+    assert len(locations) >= 1
+
+
 def test_build_chat_event_includes_topic():
     connector = TakConnector(config=TakConnectionConfig(callsign="RTH"))
 
@@ -414,7 +440,8 @@ def test_send_latest_location_logs_payload(monkeypatch):
     assert payload_entry is not None
     payload_text = payload_entry.split("payload:", maxsplit=1)[1].strip()
     payload = json.loads(payload_text)
-    assert payload.get("type") == connector.EVENT_TYPE
+    payload_event = payload.get("event", payload)
+    assert payload_event.get("type") == connector.EVENT_TYPE
 
 
 def test_send_chat_event_logs_payload(monkeypatch):
@@ -450,7 +477,8 @@ def test_send_chat_event_logs_payload(monkeypatch):
     assert payload_entry is not None
     payload_text = payload_entry.split("payload:", maxsplit=1)[1].strip()
     payload = json.loads(payload_text)
-    assert payload.get("type") == connector.CHAT_EVENT_TYPE
+    payload_event = payload.get("event", payload)
+    assert payload_event.get("type") == connector.CHAT_EVENT_TYPE
 
 
 def test_chat_uids_remain_unique():

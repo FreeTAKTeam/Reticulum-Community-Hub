@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -175,10 +176,17 @@ class GpsTelemetryService(HubService):
 class CotTelemetryService(HubService):
     """Scheduler that pushes location updates to a TAK endpoint."""
 
-    def __init__(self, *, connector: TakConnector, interval: float) -> None:
+    def __init__(
+        self,
+        *,
+        connector: TakConnector,
+        interval: float,
+        keepalive_interval: float = 60.0,
+    ) -> None:
         super().__init__(name="tak_cot")
         self._connector = connector
         self._interval = interval if interval > 0 else 1.0
+        self._keepalive_interval = keepalive_interval if keepalive_interval > 0 else 60.0
 
     def is_supported(self) -> bool:
         return self._connector is not None and self._interval > 0
@@ -187,22 +195,34 @@ class CotTelemetryService(HubService):
         return self._interval
 
     def _run(self) -> None:
+        last_keepalive = time.monotonic() - self._keepalive_interval
+        last_location = time.monotonic() - self._interval
         while not self._stop_event.is_set():
-            try:
-                asyncio.run(self._connector.send_keepalive())
-            except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
-                    f"TAK connector failed to send keepalive: {exc}",
-                    RNS.LOG_ERROR,
-                )
-            try:
-                asyncio.run(self._connector.send_latest_location())
-            except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
-                    f"TAK connector failed to send CoT update: {exc}",
-                    RNS.LOG_ERROR,
-                )
-            self._stop_event.wait(self._interval)
+            now = time.monotonic()
+            if now - last_keepalive >= self._keepalive_interval:
+                try:
+                    asyncio.run(self._connector.send_keepalive())
+                    last_keepalive = time.monotonic()
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    RNS.log(
+                        f"TAK connector failed to send keepalive: {exc}",
+                        RNS.LOG_ERROR,
+                    )
+            if now - last_location >= self._interval:
+                try:
+                    asyncio.run(self._connector.send_latest_location())
+                    last_location = time.monotonic()
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    RNS.log(
+                        f"TAK connector failed to send CoT update: {exc}",
+                        RNS.LOG_ERROR,
+                    )
+            remaining_keepalive = self._keepalive_interval - (
+                time.monotonic() - last_keepalive
+            )
+            remaining_location = self._interval - (time.monotonic() - last_location)
+            wait_time = max(min(remaining_keepalive, remaining_location), 0.01)
+            self._stop_event.wait(wait_time)
 
 
 def _gps_factory(hub: "ReticulumTelemetryHub") -> HubService:
