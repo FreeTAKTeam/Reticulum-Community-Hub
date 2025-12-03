@@ -43,12 +43,26 @@ def test_roundtrip_datapack():
 
 def test_json_roundtrip():
     event = Event.from_xml(COT_XML)
-    json_data = json.dumps(event.to_dict())
+    event_dict = event.to_dict()
+    assert "event" in event_dict
+    json_data = json.dumps(event_dict)
     restored = Event.from_json(json_data)
     assert restored.uid == event.uid
     assert restored.detail.group.name == "Blue"
     assert restored.detail.track is not None
     assert restored.detail.track.course == pytest.approx(90.0)
+
+
+def test_from_dict_accepts_legacy_payload():
+    event = Event.from_xml(COT_XML)
+    legacy_payload = event.to_dict()["event"]
+
+    restored = Event.from_dict(legacy_payload)
+
+    assert restored.uid == event.uid
+    assert restored.type == event.type
+    assert restored.point.lat == event.point.lat
+    assert restored.detail.contact.callsign == "TestMarker"
 
 
 def test_pack_data_accepts_event_instances():

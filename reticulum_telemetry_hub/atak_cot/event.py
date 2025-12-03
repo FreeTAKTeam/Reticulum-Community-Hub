@@ -83,19 +83,20 @@ class Event:
 
     @classmethod
     def from_dict(cls, obj: dict) -> "Event":
-        """Construct an :class:`Event` from a dictionary."""
+        """Construct an :class:`Event` from a dictionary rooted at ``event``."""
 
-        point = Point.from_dict(obj.get("point", {}))
-        detail_obj = obj.get("detail")
+        event_obj = obj.get("event") if isinstance(obj.get("event"), dict) else obj
+        point = Point.from_dict(event_obj.get("point", {}))
+        detail_obj = event_obj.get("detail")
         detail = Detail.from_dict(detail_obj) if detail_obj else None
         return cls(
-            version=obj.get("version", ""),
-            uid=obj.get("uid", ""),
-            type=obj.get("type", ""),
-            how=obj.get("how", ""),
-            time=obj.get("time", ""),
-            start=obj.get("start", ""),
-            stale=obj.get("stale", ""),
+            version=event_obj.get("version", ""),
+            uid=event_obj.get("uid", ""),
+            type=event_obj.get("type", ""),
+            how=event_obj.get("how", ""),
+            time=event_obj.get("time", ""),
+            start=event_obj.get("start", ""),
+            stale=event_obj.get("stale", ""),
             point=point,
             detail=detail,
         )
@@ -136,9 +137,9 @@ class Event:
         return ET.tostring(self.to_element())
 
     def to_dict(self) -> dict:
-        """Return a dictionary representation of the event."""
+        """Return a dictionary representation of the event with an ``event`` root."""
 
-        data = {
+        event_data = {
             "version": self.version,
             "uid": self.uid,
             "type": self.type,
@@ -149,8 +150,8 @@ class Event:
             "point": self.point.to_dict(),
         }
         if self.detail:
-            data["detail"] = self.detail.to_dict()
-        return data
+            event_data["detail"] = self.detail.to_dict()
+        return {"event": event_data}
 
     def to_json(self) -> str:
         """Return a JSON representation of the event."""
