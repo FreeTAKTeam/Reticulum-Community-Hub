@@ -68,30 +68,37 @@ class Contact:
     """Identifies the sender of the COT message."""
 
     callsign: str
+    endpoint: str | None = None
 
     @classmethod
     def from_xml(cls, elem):
         """Construct a :class:`Contact` from an XML ``<contact>`` element."""
 
-        return cls(callsign=elem.get("callsign", ""))
+        return cls(callsign=elem.get("callsign", ""), endpoint=elem.get("endpoint"))
 
     def to_element(self):
         """Return an XML element for the contact."""
 
         from xml.etree import ElementTree as ET
 
-        return ET.Element("contact", {"callsign": self.callsign})
+        attrib = {"callsign": self.callsign}
+        if self.endpoint:
+            attrib["endpoint"] = self.endpoint
+        return ET.Element("contact", attrib)
 
     def to_dict(self) -> dict:
         """Return a serialisable representation."""
 
-        return {"callsign": self.callsign}
+        data = {"callsign": self.callsign}
+        if self.endpoint:
+            data["endpoint"] = self.endpoint
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "Contact":
         """Create a :class:`Contact` from a dictionary."""
 
-        return cls(callsign=data.get("callsign", ""))
+        return cls(callsign=data.get("callsign", ""), endpoint=data.get("endpoint"))
 
 
 @dataclass
@@ -162,3 +169,122 @@ class Track:
         return cls(
             course=float(data.get("course", 0)), speed=float(data.get("speed", 0))
         )
+
+
+@dataclass
+class Takv:
+    """Describes the TAK client version and platform information."""
+
+    version: str
+    platform: str
+    os: str
+    device: str
+
+    @classmethod
+    def from_xml(cls, elem):
+        """Create a :class:`Takv` from an XML ``<takv>`` element."""
+
+        return cls(
+            version=elem.get("version", ""),
+            platform=elem.get("platform", ""),
+            os=elem.get("os", ""),
+            device=elem.get("device", ""),
+        )
+
+    def to_element(self):
+        """Return an XML element representing this TAK client."""
+
+        from xml.etree import ElementTree as ET
+
+        return ET.Element(
+            "takv",
+            {
+                "version": self.version,
+                "platform": self.platform,
+                "os": self.os,
+                "device": self.device,
+            },
+        )
+
+    def to_dict(self) -> dict:
+        """Return a serialisable representation."""
+
+        return {
+            "version": self.version,
+            "platform": self.platform,
+            "os": self.os,
+            "device": self.device,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Takv":
+        """Create a :class:`Takv` from a dictionary."""
+
+        return cls(
+            version=data.get("version", ""),
+            platform=data.get("platform", ""),
+            os=data.get("os", ""),
+            device=data.get("device", ""),
+        )
+
+
+@dataclass
+class Uid:
+    """Nested UID used by ATAK to describe the Droid identifier."""
+
+    droid: str
+
+    @classmethod
+    def from_xml(cls, elem):
+        """Construct a :class:`Uid` from an XML ``<uid>`` element."""
+
+        return cls(droid=elem.get("Droid", ""))
+
+    def to_element(self):
+        """Return an XML element representing the UID."""
+
+        from xml.etree import ElementTree as ET
+
+        return ET.Element("uid", {"Droid": self.droid})
+
+    def to_dict(self) -> dict:
+        """Return a serialisable representation."""
+
+        return {"Droid": self.droid}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Uid":
+        """Create a :class:`Uid` from a dictionary."""
+
+        return cls(droid=data.get("Droid", ""))
+
+
+@dataclass
+class Status:
+    """Represents battery status information."""
+
+    battery: float
+
+    @classmethod
+    def from_xml(cls, elem):
+        """Construct a :class:`Status` from an XML ``<status>`` element."""
+
+        return cls(battery=float(elem.get("battery", 0)))
+
+    def to_element(self):
+        """Return an XML element representing status."""
+
+        from xml.etree import ElementTree as ET
+
+        return ET.Element("status", {"battery": str(self.battery)})
+
+    def to_dict(self) -> dict:
+        """Return a serialisable representation."""
+
+        return {"battery": self.battery}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Status":
+        """Create a :class:`Status` from a dictionary."""
+
+        return cls(battery=float(data.get("battery", 0)))

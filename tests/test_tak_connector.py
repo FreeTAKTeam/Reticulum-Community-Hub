@@ -79,12 +79,19 @@ def test_connector_builds_cot_event_from_location():
     assert event.detail is not None
     assert event.detail.contact is not None
     assert event.detail.contact.callsign == "userhash1"
+    assert event.detail.contact.endpoint == "example:8087:udp"
     assert event.detail.group is not None
-    assert event.detail.group.name == "Cyan"
-    assert event.detail.group.role == "Team"
+    assert event.detail.group.name == "Yellow"
+    assert event.detail.group.role == "Team Member"
     assert event.detail.track is not None
     assert event.detail.track.course == pytest.approx(180.0)
     assert event.detail.track.speed == pytest.approx(2.5)
+    assert event.detail.status is not None
+    assert event.detail.status.battery == pytest.approx(0.0)
+    assert event.detail.takv is not None
+    assert event.detail.takv.version == "4.9.0.156"
+    assert event.detail.uid is not None
+    assert event.detail.uid.droid == "userhash1"
     assert event.start.startswith("2025-01-01T00:00:00")
 
 
@@ -107,16 +114,32 @@ def test_connector_build_event_generates_expected_xml():
     contact_el = detail.find("contact")
     assert contact_el is not None
     assert contact_el.get("callsign") == "userhash1"
+    assert contact_el.get("endpoint") == "127.0.0.1:8087:tcp"
+
+    takv_el = detail.find("takv")
+    assert takv_el is not None
+    assert takv_el.get("version") == "4.9.0.156"
+    assert takv_el.get("platform") == "WinTAK-CIV"
+    assert takv_el.get("os") == "Microsoft Windows 11 Pro"
+    assert takv_el.get("device") == "LENOVO 20XW003LUS"
 
     group_el = detail.find("__group")
     assert group_el is not None
-    assert group_el.get("name") == "Cyan"
-    assert group_el.get("role") == "Team"
+    assert group_el.get("name") == "Yellow"
+    assert group_el.get("role") == "Team Member"
 
     track_el = detail.find("track")
     assert track_el is not None
     assert track_el.get("course") == "180.0"
     assert track_el.get("speed") == "2.5"
+
+    status_el = detail.find("status")
+    assert status_el is not None
+    assert status_el.get("battery") == "0.0"
+
+    uid_el = detail.find("uid")
+    assert uid_el is not None
+    assert uid_el.get("Droid") == "userhash1"
 
 
 def test_connector_prefers_identity_lookup_label():
