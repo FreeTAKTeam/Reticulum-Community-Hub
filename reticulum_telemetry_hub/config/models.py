@@ -159,6 +159,8 @@ class TakConnectionConfig:
     tls_client_key: str | None = None
     tls_ca: str | None = None
     tls_insecure: bool = False
+    tak_proto: int = 0
+    fts_compat: int = 1
 
     def to_config_parser(self) -> ConfigParser:
         """Return a ConfigParser that PyTAK understands.
@@ -175,6 +177,8 @@ class TakConnectionConfig:
             "SSL_CLIENT_KEY": self.tls_client_key or "",
             "SSL_CLIENT_CAFILE": self.tls_ca or "",
             "SSL_VERIFY": "false" if self.tls_insecure else "true",
+            "TAK_PROTO": str(self.tak_proto),
+            "FTS_COMPAT": str(self.fts_compat),
         }
         return parser
 
@@ -193,4 +197,6 @@ class TakConnectionConfig:
             "tls_client_key": self.tls_client_key,
             "tls_ca": self.tls_ca,
             "tls_insecure": self.tls_insecure,
+            "tak_proto": self.tak_proto,
+            "fts_compat": self.fts_compat,
         }

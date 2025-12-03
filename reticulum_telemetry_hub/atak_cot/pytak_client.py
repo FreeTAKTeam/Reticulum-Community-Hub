@@ -171,6 +171,8 @@ class PytakClient:
         config["fts"] = {
             "COT_URL": "tcp://127.0.0.1:8087",
             "CALLSIGN": "FTS_PYTAK",
+            "TAK_PROTO": "0",
+            "FTS_COMPAT": "1",
         }
         return config
 

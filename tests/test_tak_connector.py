@@ -200,7 +200,25 @@ def test_connector_sends_cot_payload():
     message, cfg, parse_flag = client.sent[0]
     assert message.detail.contact.callsign == "userhash1"
     assert cfg["fts"]["COT_URL"] == "udp://example:8087"
+    assert cfg["fts"]["TAK_PROTO"] == "0"
+    assert cfg["fts"]["FTS_COMPAT"] == "1"
     assert parse_flag is False
+
+
+def test_connection_config_includes_pytak_options():
+    config = TakConnectionConfig(
+        cot_url="tcp://example:1234",
+        callsign="TEST",
+        tak_proto=0,
+        fts_compat=1,
+    )
+
+    cfg = config.to_config_parser()
+
+    assert cfg["fts"]["COT_URL"] == "tcp://example:1234"
+    assert cfg["fts"]["CALLSIGN"] == "TEST"
+    assert cfg["fts"]["TAK_PROTO"] == "0"
+    assert cfg["fts"]["FTS_COMPAT"] == "1"
 
 
 def test_send_latest_location_uses_snapshot(monkeypatch):
