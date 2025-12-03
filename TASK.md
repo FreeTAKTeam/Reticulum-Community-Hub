@@ -31,3 +31,4 @@
 - 2025-11-30: ✅ Avoid rerunning event loops when dispatching telemetry CoT events.
 - 2025-11-30: ✅ Fix TAK GeoChat payload structure and hierarchy.
 - 2025-12-02: ✅ Ensure TAK connection status logging and keepalive pongs.
+- 2025-12-03: ✅ Ensure TAK COR events use TCP unicast with TAK_PROTO=0 and FTS_COMPAT=1 defaults.
