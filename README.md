@@ -250,6 +250,8 @@ tls_client_cert =
 tls_client_key =
 tls_ca =
 tls_insecure = false
+tak_proto = 0
+fts_compat = 1
 
 [gpsd]
 host = 127.0.0.1
@@ -264,6 +266,10 @@ location_accuracy = 5.0
 static_information = Callsign RTH
 enable_battery = yes
 ```
+
+TAK servers typically expect TCP unicast connections. Keep ``cot_url`` in the
+``tcp://host:port`` format and use ``tak_proto = 0`` (TAK XML) with
+``fts_compat = 1`` to match PyTAK's compatibility guidance.
 
 Values omitted from the file fall back to the built-in defaults listed below. The telemetry section mirrors the prior ``telemetry.ini`` format so existing files remain compatible.
 

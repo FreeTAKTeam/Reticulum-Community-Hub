@@ -37,3 +37,21 @@ def test_config_manager_expands_optional_config_overrides(monkeypatch, tmp_path)
         tmp_path / "custom/.reticulum/config"
     )
     assert manager.lxmf_router_config_path == tmp_path / "custom/.lxmd/config"
+
+
+def test_tak_config_includes_proto_and_compat(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[tak]\n"
+        "cot_url = tcp://example:8087\n"
+        "tak_proto = 0\n"
+        "fts_compat = 1\n"
+    )
+
+    manager = HubConfigurationManager(
+        storage_path=tmp_path, config_path=config_path
+    )
+
+    assert manager.tak_config.cot_url == "tcp://example:8087"
+    assert manager.tak_config.tak_proto == 0
+    assert manager.tak_config.fts_compat == 1
