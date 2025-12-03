@@ -34,7 +34,7 @@
   - An identity lookup used to render peer hashes as labels in CoT `callsign`s
 - Telemetry fan-out:
   - `TelemetryController.register_listener` calls `_handle_telemetry_for_tak`, which invokes `TakConnector.send_telemetry_event(...)` for every inbound telemetry payload that contains location data.
-  - The `tak_cot` daemon service runs `send_keepalive()` and `send_latest_location()` every `poll_interval_seconds`.
+  - The `tak_cot` daemon service runs `send_latest_location()` every `poll_interval_seconds` and dispatches a keepalive `takPong` every 60 seconds to maintain the session.
 - Chat relay:
   - Inbound LXMF deliveries handled in `ReticulumTelemetryHub.delivery_callback` are mirrored into TAK via `TakConnector.send_chat_event(...)` when the message body is non-empty.
 
