@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
+from urllib.parse import urlparse
 import json
 import uuid
 
@@ -19,7 +20,10 @@ from reticulum_telemetry_hub.atak_cot import Event
 from reticulum_telemetry_hub.atak_cot import Group
 from reticulum_telemetry_hub.atak_cot import Link
 from reticulum_telemetry_hub.atak_cot import Remarks
+from reticulum_telemetry_hub.atak_cot import Status
+from reticulum_telemetry_hub.atak_cot import Takv
 from reticulum_telemetry_hub.atak_cot import Track
+from reticulum_telemetry_hub.atak_cot import Uid
 from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
 from reticulum_telemetry_hub.config.models import TakConnectionConfig
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import (
@@ -66,10 +70,17 @@ class TakConnector:
     """Build and transmit CoT events describing the hub's location."""
 
     EVENT_TYPE = "a-f-G-U-C"
-    EVENT_HOW = "m-g"
+    EVENT_HOW = "h-g-i-g-o"
     CHAT_LINK_TYPE = "a-f-G-U-C-I"
     CHAT_EVENT_TYPE = "b-t-f"
     CHAT_EVENT_HOW = "h-g-i-g-o"
+    TAKV_VERSION = "4.9.0.156"
+    TAKV_PLATFORM = "WinTAK-CIV"
+    TAKV_OS = "Microsoft Windows 11 Pro"
+    TAKV_DEVICE = "LENOVO 20XW003LUS"
+    GROUP_NAME = "Yellow"
+    GROUP_ROLE = "Team Member"
+    STATUS_BATTERY = 0.0
 
     def __init__(
         self,
@@ -406,6 +417,15 @@ class TakConnector:
             return location
         return self._latest_location_from_controller()
 
+    def _cot_endpoint(self) -> str | None:
+        """Return the contact endpoint derived from the configured COT URL."""
+
+        parsed = urlparse(self._config.cot_url)
+        if not parsed.scheme or not parsed.hostname:
+            return None
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"{parsed.hostname}{port}:{parsed.scheme}"
+
     def _latest_location_from_manager(self) -> LocationSnapshot | None:
         """Extract the latest location data from the telemeter manager.
 
@@ -515,10 +535,23 @@ class TakConnector:
         stale_delta = max(self._config.poll_interval_seconds, 1.0)
         stale = now + timedelta(seconds=stale_delta * 2)
 
-        contact = Contact(callsign=callsign)
-        group = Group(name="Cyan", role="Team")
+        contact = Contact(callsign=callsign, endpoint=self._cot_endpoint())
+        group = Group(name=self.GROUP_NAME, role=self.GROUP_ROLE)
         track = Track(course=snapshot.bearing, speed=snapshot.speed)
-        detail = Detail(contact=contact, group=group, track=track)
+        takv = Takv(
+            version=self.TAKV_VERSION,
+            platform=self.TAKV_PLATFORM,
+            os=self.TAKV_OS,
+            device=self.TAKV_DEVICE,
+        )
+        detail = Detail(
+            contact=contact,
+            group=group,
+            track=track,
+            takv=takv,
+            uid=Uid(droid=callsign),
+            status=Status(battery=self.STATUS_BATTERY),
+        )
 
         event_dict = {
             "version": "2.0",
