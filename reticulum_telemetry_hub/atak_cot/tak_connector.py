@@ -150,7 +150,10 @@ class TakConnector:
         await self._pytak_client.create_and_send_message(
             event, config=self._config_parser, parse_inbound=False
         )
-        RNS.log("TAK connector dispatched latest CoT event", RNS.LOG_INFO)
+        RNS.log(
+            f"TAK connector  CoT event with payload: {event_payload}",
+            RNS.LOG_INFO,
+        )
         return True
 
     def build_event(self) -> Event | None:
