@@ -42,7 +42,7 @@ def test_config_manager_expands_optional_config_overrides(monkeypatch, tmp_path)
 def test_tak_config_includes_proto_and_compat(tmp_path):
     config_path = tmp_path / "config.ini"
     config_path.write_text(
-        "[tak]\n"
+        "[TAK]\n"
         "cot_url = tcp://example:8087\n"
         "tak_proto = 0\n"
         "fts_compat = 1\n"

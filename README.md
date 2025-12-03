@@ -105,7 +105,7 @@ display_name = RTH_router
 host = 127.0.0.1
 port = 2947
 
-[tak]
+[TAK]
 cot_url = tcp://127.0.0.1:8087
 callsign = RTH
 poll_interval_seconds = 30
@@ -242,7 +242,7 @@ embedded_lxmd = false
 services = gpsd, tak_cot
 telemetry_filename = telemetry.ini
 
-[tak]
+[TAK]
 cot_url = tcp://127.0.0.1:8087
 callsign = RTH
 poll_interval_seconds = 30
@@ -331,7 +331,7 @@ mode in CI and verifies that it collects telemetry automatically.
 Use the `tak_cot` service to push location updates to a TAK endpoint over
 Cursor-on-Target. The hub polls the latest `location` sensor snapshot and
 transmits it via PyTAK with the configured callsign and TLS settings. Enable the
-service with the CLI flag and customize its behavior through the `[tak]` section
+service with the CLI flag and customize its behavior through the `[TAK]` section
 in ``config.ini``.
 
 Signed chat messages delivered over LXMF are also mirrored into CoT chat events
@@ -343,7 +343,7 @@ Example: `python -m reticulum_telemetry_hub.reticulum_server --daemon --service 
 #### Configuring the TAK integration
 
 1. Ensure PyTAK is installed in the same environment as RTH (`pip install pytak` is already declared as a dependency).
-2. Populate the `[tak]` section in ``config.ini`` with your endpoint details (see the example above). Flags override file values if you need a one-off change.
+2. Populate the `[TAK]` section in ``config.ini`` with your endpoint details (see the example above). Flags override file values if you need a one-off change.
 3. Start the hub with the TAK service enabled (combine with `--embedded` if you are not running an external `lxmd`):
    `python -m reticulum_telemetry_hub.reticulum_server --daemon --service tak_cot`
 4. Provide a location feed so the connector has something to send. The hub will use the latest `location` sensor reading (for example from the `gpsd` service: `--service gpsd`), or any location telemetry already present in the database.

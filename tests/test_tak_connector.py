@@ -89,7 +89,7 @@ def test_connector_builds_cot_event_from_location():
     assert event.detail.status is not None
     assert event.detail.status.battery == pytest.approx(0.0)
     assert event.detail.takv is not None
-    assert event.detail.takv.version == "4.9.0.156"
+    assert event.detail.takv.version == "0.44.0"
     assert event.detail.uid is not None
     assert event.detail.uid.droid == "userhash1"
     assert event.start.startswith("2025-01-01T00:00:00")
@@ -118,7 +118,7 @@ def test_connector_build_event_generates_expected_xml():
 
     takv_el = detail.find("takv")
     assert takv_el is not None
-    assert takv_el.get("version") == "4.9.0.156"
+    assert takv_el.get("version") == "0.44.0"
     assert takv_el.get("platform") == "WinTAK-CIV"
     assert takv_el.get("os") == "Microsoft Windows 11 Pro"
     assert takv_el.get("device") == "LENOVO 20XW003LUS"

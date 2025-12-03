@@ -74,7 +74,7 @@ class TakConnector:
     CHAT_LINK_TYPE = "a-f-G-U-C-I"
     CHAT_EVENT_TYPE = "b-t-f"
     CHAT_EVENT_HOW = "h-g-i-g-o"
-    TAKV_VERSION = "4.9.0.156"
+    TAKV_VERSION = "0.44.0"
     TAKV_PLATFORM = "WinTAK-CIV"
     TAKV_OS = "Microsoft Windows 11 Pro"
     TAKV_DEVICE = "LENOVO 20XW003LUS"

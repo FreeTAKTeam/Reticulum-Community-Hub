@@ -298,7 +298,8 @@ class HubConfigurationManager:
         """Construct the TAK configuration using ``config.ini`` values."""
 
         defaults = TakConnectionConfig()
-        section = self._get_section("tak")
+        # Prefer the new uppercase [TAK] section; fall back to legacy [tak].
+        section = self._get_section("TAK") or self._get_section("tak")
 
         interval = self._coerce_float(
             section.get("poll_interval_seconds")
