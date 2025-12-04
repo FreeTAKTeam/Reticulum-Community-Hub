@@ -100,9 +100,9 @@ class TelemetryController:
         self._engine = engine
         Base.metadata.create_all(self._engine)
         self._session_cls = sessionmaker(bind=self._engine, expire_on_commit=False)
-        self._telemetry_listener: Callable[
-            [dict, str | bytes | None, Optional[datetime]], None
-        ] | None = None
+        self._telemetry_listener: (
+            Callable[[dict, str | bytes | None, Optional[datetime]], None] | None
+        ) = None
 
     def _load_telemetry(
         self,
@@ -140,7 +140,10 @@ class TelemetryController:
         self._telemetry_listener = listener
 
     def save_telemetry(
-        self, telemetry_data: dict | bytes, peer_dest, timestamp: Optional[datetime] = None
+        self,
+        telemetry_data: dict | bytes,
+        peer_dest,
+        timestamp: Optional[datetime] = None,
     ) -> None:
         """Save the telemetry data."""
         tel = self._deserialize_telemeter(telemetry_data, peer_dest)
@@ -238,7 +241,9 @@ class TelemetryController:
 
         return handled
 
-    def handle_command(self, command: dict, message: LXMF.LXMessage, my_lxm_dest) -> Optional[LXMF.LXMessage]:
+    def handle_command(
+        self, command: dict, message: LXMF.LXMessage, my_lxm_dest
+    ) -> Optional[LXMF.LXMessage]:
         """Handle the incoming command."""
         if TelemetryController.TELEMETRY_REQUEST in command:
             request_value = command[TelemetryController.TELEMETRY_REQUEST]
@@ -310,10 +315,7 @@ class TelemetryController:
                 self._json_safe(human_readable_entries), default=str
             )
             print(f"Sending telemetry of {len(human_readable_entries)} clients")
-            print(
-                "Telemetry response in human readeble format: "
-                f"{readable_json}"
-            )
+            print("Telemetry response in human readeble format: " f"{readable_json}")
             return message
         else:
             return None
@@ -393,7 +395,10 @@ class TelemetryController:
         return list(latest.values())
 
     def _notify_listener(
-        self, telemetry: dict, peer_hash: str | bytes | None, timestamp: Optional[datetime]
+        self,
+        telemetry: dict,
+        peer_hash: str | bytes | None,
+        timestamp: Optional[datetime],
     ) -> None:
         """Invoke the registered telemetry listener when present."""
 
@@ -402,9 +407,7 @@ class TelemetryController:
         try:
             self._telemetry_listener(telemetry, peer_hash, timestamp)
         except Exception as exc:  # pragma: no cover - defensive logging
-            RNS.log(
-                f"Telemetry listener raised an exception: {exc}", RNS.LOG_WARNING
-            )
+            RNS.log(f"Telemetry listener raised an exception: {exc}", RNS.LOG_WARNING)
 
     def _extract_timestamp(self, telemetry: dict) -> Optional[datetime]:
         """Return a datetime parsed from a telemetry payload when available."""
@@ -433,6 +436,11 @@ class TelemetryController:
             return None
 
         normalized = "".join(ch for ch in peer_dest if ch in string.hexdigits)
+        if not normalized:
+            RNS.log(
+                f"Telemetry entry peer destination missing hex characters: {peer_dest!r}"
+            )
+            return None
         if len(normalized) % 2 != 0:
             RNS.log(
                 f"Telemetry entry peer destination has odd length after normalization: {peer_dest!r}"

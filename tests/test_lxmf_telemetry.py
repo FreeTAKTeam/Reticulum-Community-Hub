@@ -1,14 +1,18 @@
 import struct
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import LXMF
 import RNS
 import pytest
 from msgpack import packb, unpackb
 
-from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import TelemetryController
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import ConnectionMap
+from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
+    TelemetryController,
+)
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import (
+    ConnectionMap,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propagation import (
     LXMFPropagation,
 )
@@ -58,7 +62,9 @@ def test_deserialize_lxmf(telemetry_controller):
     assert pytest.approx(location.longitude, rel=1e-6) == -63.596294
 
 
-def test_handle_command_stream_is_msgpack_encoded(telemetry_controller, session_factory):
+def test_handle_command_stream_is_msgpack_encoded(
+    telemetry_controller, session_factory
+):
     controller = telemetry_controller
     Session = session_factory
 
@@ -195,7 +201,10 @@ def test_humanize_returns_time_and_location_values(telemetry_controller):
     assert pytest.approx(location_value["bearing"], rel=1e-6) == 90.0
     assert pytest.approx(location_value["accuracy"], rel=1e-6) == 2.5
     assert location_value["last_update_timestamp"] == pytest.approx(timestamp)
-    assert location_value["last_update_iso"] == datetime.fromtimestamp(timestamp).isoformat()
+    assert (
+        location_value["last_update_iso"]
+        == datetime.fromtimestamp(timestamp).isoformat()
+    )
 
 
 def test_handle_message_notifies_listener(telemetry_controller):
@@ -288,7 +297,9 @@ def test_stream_ingest_followed_by_command_returns_valid_response(
     assert returned_peer_hash == peer_hash
     assert returned_timestamp == sensor_timestamp
     returned_payload = unpackb(blob, strict_map_key=False)
-    assert returned_payload.pop(SID_TIME, None) == pytest.approx(sensor_timestamp, rel=0)
+    assert returned_payload.pop(SID_TIME, None) == pytest.approx(
+        sensor_timestamp, rel=0
+    )
     expected_payload = dict(payload)
     expected_payload.pop(SID_TIME, None)
     assert returned_payload == expected_payload
@@ -337,7 +348,9 @@ def test_handle_command_accepts_sideband_collector_format(
     assert returned_peer_hash == peer_hash
     assert returned_timestamp == sensor_timestamp
     returned_payload = unpackb(blob, strict_map_key=False)
-    assert returned_payload.pop(SID_TIME, None) == pytest.approx(sensor_timestamp, rel=0)
+    assert returned_payload.pop(SID_TIME, None) == pytest.approx(
+        sensor_timestamp, rel=0
+    )
     expected_payload = dict(payload)
     expected_payload.pop(SID_TIME, None)
     assert returned_payload == expected_payload
@@ -362,7 +375,9 @@ def test_handle_command_returns_latest_snapshot_per_peer(
     peer_b = bytes.fromhex("bb" * 16)
     t0 = int(time.time()) - 100
 
-    def send_snapshot(peer_hash: bytes, timestamp: int, sensor_time: int | None = None) -> None:
+    def send_snapshot(
+        peer_hash: bytes, timestamp: int, sensor_time: int | None = None
+    ) -> None:
         telem_payload = build_complex_telemeter_payload(
             timestamp=sensor_time if sensor_time is not None else timestamp
         )
@@ -396,7 +411,9 @@ def test_handle_command_returns_latest_snapshot_per_peer(
     assert by_peer[peer_b][1] == t0 + 5
 
 
-def test_handle_message_round_trip_complex_sensors(telemetry_controller, session_factory):
+def test_handle_message_round_trip_complex_sensors(
+    telemetry_controller, session_factory
+):
     controller = telemetry_controller
     Session = session_factory
 
@@ -517,6 +534,171 @@ def test_connection_map_pack_unpack_round_trip(session_factory):
     # Updating the map label should modify the existing map entry.
     updated = unpacked.ensure_map("main", label="Updated Label")
     assert updated.label == "Updated Label"
+
+
+def test_controller_rejects_engine_and_db_path(telemetry_db_engine):
+    with pytest.raises(ValueError):
+        TelemetryController(engine=telemetry_db_engine, db_path="telemetry.db")
+
+
+def test_get_telemetry_filters_end_time(telemetry_controller, session_factory):
+    Session = session_factory
+
+    newer = Telemeter(peer_dest="peer-newer")
+    newer.time = datetime.now()
+    older = Telemeter(peer_dest="peer-older")
+    older.time = newer.time - timedelta(hours=1)
+
+    with Session() as session:
+        session.add_all([newer, older])
+        session.commit()
+
+    end_time = newer.time - timedelta(minutes=30)
+    results = telemetry_controller.get_telemetry(end_time=end_time)
+
+    assert all(telemeter.time <= end_time for telemeter in results)
+
+
+def test_ingest_local_payload_ignores_empty_payload(
+    telemetry_controller, session_factory
+):
+    Session = session_factory
+
+    result = telemetry_controller.ingest_local_payload({}, peer_dest="local")
+
+    assert result is None
+    with Session() as session:
+        assert session.query(Telemeter).count() == 0
+
+
+def test_handle_message_stream_skips_invalid_entries(
+    telemetry_controller, session_factory
+):
+    controller = telemetry_controller
+    Session = session_factory
+
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    invalid_entries = [
+        {"peer": "missing tuple"},
+        ["not-bytes", 123, {"sid": 1}],
+        [b"\x01\x02", "not-a-number", {"sid": 2}],
+        [b"\x03\x04", 123, None],
+    ]
+
+    message = LXMF.LXMessage(
+        dst, src, fields={LXMF.FIELD_TELEMETRY_STREAM: invalid_entries}
+    )
+
+    assert controller.handle_message(message)
+
+    with Session() as session:
+        assert session.query(Telemeter).count() == 0
+
+
+def test_handle_command_rejects_empty_sideband_request(
+    telemetry_controller, session_factory
+):
+    controller = telemetry_controller
+    Session = session_factory
+
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    with Session() as session:
+        session.query(Telemeter).delete()
+        session.commit()
+
+    command_msg = LXMF.LXMessage(src, dst)
+    command = {TelemetryController.TELEMETRY_REQUEST: []}
+
+    assert controller.handle_command(command, command_msg, dst) is None
+
+
+def test_handle_command_rejects_non_numeric_timestamp(telemetry_controller):
+    controller = telemetry_controller
+
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    command_msg = LXMF.LXMessage(src, dst)
+    command = {TelemetryController.TELEMETRY_REQUEST: "invalid"}
+
+    with pytest.raises(TypeError):
+        controller.handle_command(command, command_msg, dst)
+
+
+def test_handle_command_returns_none_without_request(telemetry_controller):
+    controller = telemetry_controller
+
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    command_msg = LXMF.LXMessage(src, dst)
+
+    assert controller.handle_command({}, command_msg, dst) is None
+
+
+def test_humanize_handles_unknown_sensor(telemetry_controller):
+    controller = telemetry_controller
+
+    readable = controller._humanize_telemetry({999: "raw"})
+
+    assert readable["sid_999"] == "raw"
+
+
+def test_extract_timestamp_rejects_invalid_iso(telemetry_controller):
+    controller = telemetry_controller
+
+    timestamp = controller._extract_timestamp({"time": {"iso": "not-a-datetime"}})
+
+    assert timestamp is None
+
+
+def test_deserialize_skips_none_sensor_payload(telemetry_controller):
+    controller = telemetry_controller
+
+    telemeter = controller._deserialize_telemeter({SID_TIME: 1, SID_LOCATION: None})
+
+    assert len(telemeter.sensors) == 1
+    assert telemeter.sensors[0].sid == SID_TIME
+
+
+def test_peer_hash_bytes_handles_invalid_inputs(telemetry_controller):
+    controller = telemetry_controller
+
+    missing = Telemeter(peer_dest="   ")
+    odd_length = Telemeter(peer_dest="abc")
+    invalid_hex = Telemeter(peer_dest="zz")
+
+    assert controller._peer_hash_bytes(missing) is None
+    assert controller._peer_hash_bytes(odd_length) is None
+    assert controller._peer_hash_bytes(invalid_hex) is None
 
 
 def test_location_pack_strips_invalid_altitude_sentinel():
