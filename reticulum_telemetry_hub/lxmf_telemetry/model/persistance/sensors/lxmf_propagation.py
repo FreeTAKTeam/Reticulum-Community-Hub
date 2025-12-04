@@ -1,4 +1,5 @@
 """SQLAlchemy model for LXMF propagation telemetry data."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -180,7 +181,9 @@ class LXMFPropagation(Sensor):
 
     SID = SID_LXMF_PROPAGATION
 
-    id: Mapped[int] = mapped_column(ForeignKey("Sensor.id", ondelete="CASCADE"), primary_key=True)
+    id: Mapped[int] = mapped_column(
+        ForeignKey("Sensor.id", ondelete="CASCADE"), primary_key=True
+    )
     destination_hash: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     identity_hash: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     uptime: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -304,9 +307,11 @@ class LXMFPropagation(Sensor):
             "delivery_limit": self.delivery_limit,
             "propagation_limit": self.propagation_limit,
             "autopeer_maxdepth": self.autopeer_maxdepth,
-            "from_static_only": bool(self.from_static_only)
-            if self.from_static_only is not None
-            else None,
+            "from_static_only": (
+                bool(self.from_static_only)
+                if self.from_static_only is not None
+                else None
+            ),
             "unpeered_propagation_incoming": self.unpeered_incoming,
             "unpeered_propagation_rx_bytes": self.unpeered_rx_bytes,
             "static_peers": self.static_peers,
@@ -332,11 +337,16 @@ class LXMFPropagation(Sensor):
         if clients is not None:
             payload["clients"] = clients
 
-        if all(
-            value in (None, {}, [])
-            for key, value in payload.items()
-            if key not in {"peers", "messagestore", "clients"}
-        ) and not peers_payload and message_store is None and clients is None:
+        if (
+            all(
+                value in (None, {}, [])
+                for key, value in payload.items()
+                if key not in {"peers", "messagestore", "clients"}
+            )
+            and not peers_payload
+            and message_store is None
+            and clients is None
+        ):
             return None
 
         return payload

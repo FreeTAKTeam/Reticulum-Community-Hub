@@ -469,9 +469,7 @@ class CommandManager:
         self, name: str, message: LXMF.LXMessage
     ) -> LXMF.LXMessage:
         sender = self._identity_hex(message.source.identity)
-        RNS.log(
-            f"Unknown command '{name}' from {sender}", getattr(RNS, "LOG_ERROR", 1)
-        )
+        RNS.log(f"Unknown command '{name}' from {sender}", getattr(RNS, "LOG_ERROR", 1))
         help_text = build_help_text(self)
         payload = f"Unknown command '{name}'.\n{help_text}"
         return self._reply(message, payload)

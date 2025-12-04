@@ -16,9 +16,7 @@ def test_config_manager_expands_user_paths(monkeypatch, tmp_path):
 
     default_config_manager = HubConfigurationManager(storage_path=storage_path)
     assert default_config_manager.storage_path == tmp_path / "rth_store"
-    assert default_config_manager.config_path == (
-        tmp_path / "rth_store" / "config.ini"
-    )
+    assert default_config_manager.config_path == (tmp_path / "rth_store" / "config.ini")
 
 
 def test_config_manager_expands_optional_config_overrides(monkeypatch, tmp_path):
@@ -33,24 +31,17 @@ def test_config_manager_expands_optional_config_overrides(monkeypatch, tmp_path)
         lxmf_router_config_path=lxmf_path,
     )
 
-    assert manager.reticulum_config_path == (
-        tmp_path / "custom/.reticulum/config"
-    )
+    assert manager.reticulum_config_path == (tmp_path / "custom/.reticulum/config")
     assert manager.lxmf_router_config_path == tmp_path / "custom/.lxmd/config"
 
 
 def test_tak_config_includes_proto_and_compat(tmp_path):
     config_path = tmp_path / "config.ini"
     config_path.write_text(
-        "[TAK]\n"
-        "cot_url = tcp://example:8087\n"
-        "tak_proto = 0\n"
-        "fts_compat = 1\n"
+        "[TAK]\n" "cot_url = tcp://example:8087\n" "tak_proto = 0\n" "fts_compat = 1\n"
     )
 
-    manager = HubConfigurationManager(
-        storage_path=tmp_path, config_path=config_path
-    )
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
 
     assert manager.tak_config.cot_url == "tcp://example:8087"
     assert manager.tak_config.tak_proto == 0

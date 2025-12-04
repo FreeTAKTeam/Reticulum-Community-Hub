@@ -6,7 +6,7 @@ from typing import List, Optional
 import uuid
 
 from sqlalchemy import JSON, Column, DateTime, Integer, String, create_engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .models import Client, Subscriber, Topic
 

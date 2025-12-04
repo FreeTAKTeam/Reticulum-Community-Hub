@@ -5,7 +5,6 @@ from pathlib import Path
 import msgpack
 import LXMF
 import RNS
-import pytest
 from sqlalchemy import create_engine
 import reticulum_telemetry_hub
 
@@ -13,8 +12,12 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry import telemetry_controller as tc_mod
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.location import Location
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.magnetic_field import MagneticField
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.location import (
+    Location,
+)
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.magnetic_field import (
+    MagneticField,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.time import Time
 from reticulum_telemetry_hub.reticulum_server.__main__ import (
     AnnounceHandler,
@@ -91,9 +94,11 @@ def test_hub_send_and_log():
     sent = []
     hub.my_lxmf_dest = make_dest(RNS.Destination.IN)
     hub.connections = [make_dest()]
+
     class DummyRouter:
         def handle_outbound(self, m):
             sent.append(m)
+
     hub.lxm_router = DummyRouter()
 
     ReticulumTelemetryHub.send_message(hub, "hi")
@@ -118,7 +123,9 @@ def test_announce_handler_tracks_identities():
 
 
 def test_cover_main_file():
-    path = Path(reticulum_telemetry_hub.reticulum_server.__file__).with_name("__main__.py")
+    path = Path(reticulum_telemetry_hub.reticulum_server.__file__).with_name(
+        "__main__.py"
+    )
     lines = open(path).read().splitlines()
     dummy_source = "pass\n" * len(lines)
     compile_obj = compile(dummy_source, str(path), "exec")
@@ -129,6 +136,7 @@ def test_load_or_generate_identity(tmp_path):
     hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
     path = tmp_path / "id"
     ident = ReticulumTelemetryHub.load_or_generate_identity(hub, str(path))
+    assert ident is not None
     assert os.path.exists(path)
 
 

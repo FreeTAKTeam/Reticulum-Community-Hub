@@ -1,4 +1,5 @@
 """SQLAlchemy models for LXMF telemetry sensors."""
+
 from .acceleration import Acceleration
 from .ambient_light import AmbientLight
 from .angular_velocity import AngularVelocity

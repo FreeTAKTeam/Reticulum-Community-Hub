@@ -1,4 +1,5 @@
 """Generic SQLAlchemy models for telemetry sensors without dedicated schema."""
+
 from __future__ import annotations
 
 from typing import Any, Iterable, Optional
@@ -71,7 +72,9 @@ class _CollectionEntry(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     sensor_id: Mapped[int] = mapped_column(ForeignKey("Sensor.id", ondelete="CASCADE"))
-    type_label: Mapped[str] = mapped_column(String, nullable=False, default=DEFAULT_LABEL)
+    type_label: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_LABEL
+    )
 
     @staticmethod
     def pack_label(label: str) -> Any:
@@ -166,7 +169,10 @@ class PowerConsumption(_CollectionSensor):
         self.sid = SID_POWER_CONSUMPTION
 
     def update_consumer(
-        self, power: Optional[float], type_label: Any = None, custom_icon: Optional[str] = None
+        self,
+        power: Optional[float],
+        type_label: Any = None,
+        custom_icon: Optional[str] = None,
     ) -> bool:
         label = PowerConsumptionEntry.normalize_label(type_label)
         if label is None:
@@ -199,7 +205,9 @@ class PowerConsumptionEntry(_CollectionEntry):
 
     power: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     custom_icon: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    sensor: Mapped[PowerConsumption] = relationship("PowerConsumption", back_populates="entries")
+    sensor: Mapped[PowerConsumption] = relationship(
+        "PowerConsumption", back_populates="entries"
+    )
 
     def pack_values(self) -> list[Any]:
         return [self.power, self.custom_icon]
@@ -236,7 +244,10 @@ class PowerProduction(_CollectionSensor):
         self.sid = SID_POWER_PRODUCTION
 
     def update_producer(
-        self, power: Optional[float], type_label: Any = None, custom_icon: Optional[str] = None
+        self,
+        power: Optional[float],
+        type_label: Any = None,
+        custom_icon: Optional[str] = None,
     ) -> bool:
         label = PowerProductionEntry.normalize_label(type_label)
         if label is None:
@@ -269,7 +280,9 @@ class PowerProductionEntry(_CollectionEntry):
 
     power: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     custom_icon: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    sensor: Mapped[PowerProduction] = relationship("PowerProduction", back_populates="entries")
+    sensor: Mapped[PowerProduction] = relationship(
+        "PowerProduction", back_populates="entries"
+    )
 
     def pack_values(self) -> list[Any]:
         return [self.power, self.custom_icon]
@@ -362,7 +375,10 @@ class ProcessorEntry(_CollectionEntry):
 
     def pack_values(self) -> list[Any]:
         load_avgs = None
-        if any(value is not None for value in (self.load_avg_1m, self.load_avg_5m, self.load_avg_15m)):
+        if any(
+            value is not None
+            for value in (self.load_avg_1m, self.load_avg_5m, self.load_avg_15m)
+        ):
             load_avgs = [self.load_avg_1m, self.load_avg_5m, self.load_avg_15m]
         return [self.current_load, load_avgs, self.clock]
 
@@ -413,7 +429,10 @@ class RandomAccessMemory(_CollectionSensor):
         self.sid = SID_RAM
 
     def update_entry(
-        self, capacity: Optional[float] = None, used: Optional[float] = None, type_label: Any = None
+        self,
+        capacity: Optional[float] = None,
+        used: Optional[float] = None,
+        type_label: Any = None,
     ) -> bool:
         label = RandomAccessMemoryEntry.normalize_label(type_label)
         if label is None:
@@ -446,7 +465,9 @@ class RandomAccessMemoryEntry(_CollectionEntry):
 
     capacity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     used: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    sensor: Mapped[RandomAccessMemory] = relationship("RandomAccessMemory", back_populates="entries")
+    sensor: Mapped[RandomAccessMemory] = relationship(
+        "RandomAccessMemory", back_populates="entries"
+    )
 
     def pack_values(self) -> list[Any]:
         return [self.capacity, self.used]
@@ -483,7 +504,10 @@ class NonVolatileMemory(_CollectionSensor):
         self.sid = SID_NVM
 
     def update_entry(
-        self, capacity: Optional[float] = None, used: Optional[float] = None, type_label: Any = None
+        self,
+        capacity: Optional[float] = None,
+        used: Optional[float] = None,
+        type_label: Any = None,
     ) -> bool:
         label = NonVolatileMemoryEntry.normalize_label(type_label)
         if label is None:
@@ -516,7 +540,9 @@ class NonVolatileMemoryEntry(_CollectionEntry):
 
     capacity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     used: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    sensor: Mapped[NonVolatileMemory] = relationship("NonVolatileMemory", back_populates="entries")
+    sensor: Mapped[NonVolatileMemory] = relationship(
+        "NonVolatileMemory", back_populates="entries"
+    )
 
     def pack_values(self) -> list[Any]:
         return [self.capacity, self.used]

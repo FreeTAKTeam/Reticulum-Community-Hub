@@ -20,17 +20,25 @@ class SensorDeclarativeMeta(DeclarativeMeta):
 
 
 class Sensor(Base, metaclass=SensorDeclarativeMeta):
-    __tablename__ = 'Sensor'
+    __tablename__ = "Sensor"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     sid = Column(Integer, nullable=False, default=0x00)
     stale_time = Column(Float, nullable=True)
     data = Column(BLOB, nullable=True)
     synthesized = Column(Boolean, default=False)
-    telemeter_id: Mapped[int] = mapped_column(ForeignKey('Telemeter.id'))
-    telemeter = relationship("Telemeter", back_populates='sensors')
+    telemeter_id: Mapped[int] = mapped_column(ForeignKey("Telemeter.id"))
+    telemeter = relationship("Telemeter", back_populates="sensors")
 
-    def __init__(self, stale_time=None, data=None, active=False, synthesized=False, last_update=0, last_read=0):
+    def __init__(
+        self,
+        stale_time=None,
+        data=None,
+        active=False,
+        synthesized=False,
+        last_update=0,
+        last_read=0,
+    ):
         self.stale_time = stale_time
         self.data = data
         self.active = active

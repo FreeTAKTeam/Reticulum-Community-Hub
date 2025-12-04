@@ -4,4 +4,3 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import T
 class FieldTelemetryStream:
 
     telemeters: list[Telemeter]
-    

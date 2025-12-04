@@ -1,8 +1,6 @@
 import time
 
-import LXMF
 import RNS
-from msgpack import unpackb
 
 from reticulum_telemetry_hub.lxmf_telemetry.sampler import (
     TelemetrySample,
