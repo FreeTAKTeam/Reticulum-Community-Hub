@@ -341,7 +341,7 @@ class ReticulumTelemetryHub:
 
         # Reason: the prefix signals that the body should be treated as a command
         # payload even when the `Commands` field is unavailable.
-        body = content_text[len(ESCAPED_COMMAND_PREFIX):].strip()
+        body = content_text[len(ESCAPED_COMMAND_PREFIX) :].strip()
         if not body:
             RNS.log(
                 "Ignored escape-prefixed command payload with no body.",
@@ -815,9 +815,7 @@ if __name__ == "__main__":
         help="Path to a unified config.ini file",
         default=None,
     )
-    ap.add_argument(
-        "-s", "--storage_dir", help="Storage directory path", default=None
-    )
+    ap.add_argument("-s", "--storage_dir", help="Storage directory path", default=None)
     ap.add_argument("--display_name", help="Display name for the server", default=None)
     ap.add_argument(
         "--announce-interval",
@@ -829,7 +827,7 @@ if __name__ == "__main__":
         "--hub-telemetry-interval",
         type=int,
         default=None,
-        help="Seconds between local telemetry snapshots."
+        help="Seconds between local telemetry snapshots.",
     )
     ap.add_argument(
         "--service-telemetry-interval",
@@ -893,8 +891,7 @@ if __name__ == "__main__":
     )
     service_interval = _resolve_interval(
         args.service_telemetry_interval,
-        runtime_config.service_telemetry_interval
-        or DEFAULT_SERVICE_TELEMETRY_INTERVAL,
+        runtime_config.service_telemetry_interval or DEFAULT_SERVICE_TELEMETRY_INTERVAL,
     )
 
     log_level_name = (

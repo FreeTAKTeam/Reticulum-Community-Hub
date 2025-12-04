@@ -308,12 +308,8 @@ class HubConfigurationManager:
             defaults.poll_interval_seconds,
         )
 
-        tak_proto = self._coerce_int(
-            section.get("tak_proto"), defaults.tak_proto
-        )
-        fts_compat = self._coerce_int(
-            section.get("fts_compat"), defaults.fts_compat
-        )
+        tak_proto = self._coerce_int(section.get("tak_proto"), defaults.tak_proto)
+        fts_compat = self._coerce_int(section.get("fts_compat"), defaults.fts_compat)
 
         return TakConnectionConfig(
             cot_url=section.get("cot_url", defaults.cot_url),
@@ -322,9 +318,7 @@ class HubConfigurationManager:
             tls_client_cert=section.get("tls_client_cert"),
             tls_client_key=section.get("tls_client_key"),
             tls_ca=section.get("tls_ca"),
-            tls_insecure=self._get_bool(
-                section, "tls_insecure", defaults.tls_insecure
-            ),
+            tls_insecure=self._get_bool(section, "tls_insecure", defaults.tls_insecure),
             tak_proto=tak_proto,
             fts_compat=fts_compat,
         )

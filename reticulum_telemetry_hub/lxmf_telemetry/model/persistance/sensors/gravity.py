@@ -1,4 +1,5 @@
 """SQLAlchemy model for the Gravity sensor."""
+
 from __future__ import annotations
 
 from typing import Any, Optional

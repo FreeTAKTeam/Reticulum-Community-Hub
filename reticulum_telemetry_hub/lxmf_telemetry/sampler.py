@@ -13,14 +13,15 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TIME,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterManager
-from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import TelemetryController
+from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
+    TelemetryController,
+)
 
 
 class TelemetryCollector(Protocol):
     """Protocol describing callables that return telemetry payloads."""
 
-    def __call__(self) -> "TelemetrySample | dict | None":
-        ...
+    def __call__(self) -> "TelemetrySample | dict | None": ...
 
 
 @dataclass
@@ -53,8 +54,12 @@ class TelemetrySampler:
         connections: dict[bytes, RNS.Destination] | None = None,
         hub_interval: float | None = None,
         service_interval: float | None = None,
-        hub_collectors: Sequence[TelemetryCollector | Callable[[], object]] | None = None,
-        service_collectors: Sequence[TelemetryCollector | Callable[[], object]] | None = None,
+        hub_collectors: (
+            Sequence[TelemetryCollector | Callable[[], object]] | None
+        ) = None,
+        service_collectors: (
+            Sequence[TelemetryCollector | Callable[[], object]] | None
+        ) = None,
         telemeter_manager: TelemeterManager | None = None,
         broadcast_updates: bool = False,
     ) -> None:
@@ -90,7 +95,9 @@ class TelemetrySampler:
                 )
 
         if service_interval is not None and service_interval > 0:
-            collectors = list(service_collectors) if service_collectors is not None else []
+            collectors = (
+                list(service_collectors) if service_collectors is not None else []
+            )
             if collectors:
                 interval = float(service_interval)
                 self._jobs.append(
@@ -132,7 +139,9 @@ class TelemetrySampler:
                     self._execute_job(job)
                     job.last_run = time.monotonic()
                     remaining = job.interval
-                next_wake = remaining if next_wake is None else min(next_wake, remaining)
+                next_wake = (
+                    remaining if next_wake is None else min(next_wake, remaining)
+                )
             if next_wake is None:
                 break
             self._stop_event.wait(next_wake)
@@ -169,7 +178,9 @@ class TelemetrySampler:
 
     def _process_sample(self, sample: TelemetrySample) -> None:
         peer_dest = sample.peer_dest or self._local_peer_dest
-        encoded = self._controller.ingest_local_payload(sample.payload, peer_dest=peer_dest)
+        encoded = self._controller.ingest_local_payload(
+            sample.payload, peer_dest=peer_dest
+        )
         if not encoded:
             return
 
@@ -194,7 +205,9 @@ class TelemetrySampler:
                     fields={LXMF.FIELD_TELEMETRY: encoded},
                     desired_method=LXMF.LXMessage.DIRECT,
                 )
-                if hasattr(destination, "identity") and hasattr(destination.identity, "hash"):
+                if hasattr(destination, "identity") and hasattr(
+                    destination.identity, "hash"
+                ):
                     message.destination_hash = destination.identity.hash
                 self._router.handle_outbound(message)
             except Exception as exc:  # pragma: no cover - defensive logging

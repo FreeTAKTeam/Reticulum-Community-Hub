@@ -14,6 +14,6 @@ class Appearance(Base):
     peer_id = Column(String, ForeignKey("Peer.destination_hash"))
     peer = relationship("Peer", back_populates="appearance")
 
-    def __init__(self, peer, icon = "Default"):
+    def __init__(self, peer, icon="Default"):
         self.peer = peer
         self.icon = icon

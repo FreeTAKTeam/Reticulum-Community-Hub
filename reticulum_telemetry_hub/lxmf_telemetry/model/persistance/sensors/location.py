@@ -1,5 +1,7 @@
 from sqlalchemy import Column
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import Sensor
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import (
+    Sensor,
+)
 from .sensor_enum import SID_LOCATION
 import struct
 import RNS
@@ -8,10 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 from typing import Optional
 from datetime import datetime
 
-class Location(Sensor):
-    __tablename__ = 'Location'
 
-    id: Mapped[int] = mapped_column(ForeignKey('Sensor.id'), primary_key=True)
+class Location(Sensor):
+    __tablename__ = "Location"
+
+    id: Mapped[int] = mapped_column(ForeignKey("Sensor.id"), primary_key=True)
     latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     altitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -104,7 +107,4 @@ class Location(Sensor):
             return 0.0
         return altitude
 
-    __mapper_args__ = {
-        'polymorphic_identity': SID_LOCATION,
-        'with_polymorphic': '*'
-    }
+    __mapper_args__ = {"polymorphic_identity": SID_LOCATION, "with_polymorphic": "*"}

@@ -35,7 +35,9 @@ class RNSTransport(Sensor):
 
     SID = SID_RNS_TRANSPORT
 
-    id: Mapped[int] = mapped_column(ForeignKey("Sensor.id", ondelete="CASCADE"), primary_key=True)
+    id: Mapped[int] = mapped_column(
+        ForeignKey("Sensor.id", ondelete="CASCADE"), primary_key=True
+    )
     transport_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     transport_identity: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     transport_uptime: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -131,7 +133,9 @@ class RNSTransport(Sensor):
         payload.update(
             {
                 "transport_enabled": bool(self.transport_enabled),
-                "transport_identity": bytes(self.transport_identity) if self.transport_identity else None,
+                "transport_identity": (
+                    bytes(self.transport_identity) if self.transport_identity else None
+                ),
                 "transport_uptime": self.transport_uptime,
                 "traffic_rxb": self.traffic_rxb,
                 "traffic_txb": self.traffic_txb,
@@ -173,8 +177,12 @@ class RNSTransport(Sensor):
         self.ifstats = ifstats
         self.path_table = path_table
 
-        self.transport_enabled = bool(data.pop("transport_enabled", self.transport_enabled))
-        self.transport_identity = data.pop("transport_identity", self.transport_identity)
+        self.transport_enabled = bool(
+            data.pop("transport_enabled", self.transport_enabled)
+        )
+        self.transport_identity = data.pop(
+            "transport_identity", self.transport_identity
+        )
         self.transport_uptime = data.pop("transport_uptime", self.transport_uptime)
         self.traffic_rxb = data.pop("traffic_rxb", self.traffic_rxb)
         self.traffic_txb = data.pop("traffic_txb", self.traffic_txb)
@@ -199,4 +207,3 @@ class RNSTransport(Sensor):
 
 
 __all__ = ["RNSTransport"]
-

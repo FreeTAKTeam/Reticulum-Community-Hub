@@ -34,7 +34,9 @@ class ConnectionMap(Sensor):
         super().__init__()
         self.sid = SID_CONNECTION_MAP
 
-    def ensure_map(self, map_name: str, label: Optional[str] = None) -> "ConnectionMapMap":
+    def ensure_map(
+        self, map_name: str, label: Optional[str] = None
+    ) -> "ConnectionMapMap":
         """Return an existing map entry or create a new one."""
 
         for entry in self.maps:
@@ -132,7 +134,9 @@ class ConnectionMap(Sensor):
 
             if isinstance(points_data, dict):
                 for point_hash, point_payload in points_data.items():
-                    if not isinstance(point_hash, str) or not isinstance(point_payload, dict):
+                    if not isinstance(point_hash, str) or not isinstance(
+                        point_payload, dict
+                    ):
                         continue
                     point = ConnectionMapPoint.from_payload(point_hash, point_payload)
                     point.map = entry
@@ -153,7 +157,9 @@ class ConnectionMapMap(Base):
     __table_args__ = (UniqueConstraint("sensor_id", "map_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    sensor_id: Mapped[int] = mapped_column(ForeignKey("ConnectionMap.id", ondelete="CASCADE"))
+    sensor_id: Mapped[int] = mapped_column(
+        ForeignKey("ConnectionMap.id", ondelete="CASCADE")
+    )
     map_name: Mapped[str] = mapped_column(String, nullable=False)
     label: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
@@ -188,7 +194,9 @@ class ConnectionMapPoint(Base):
     __table_args__ = (UniqueConstraint("map_id", "point_hash"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    map_id: Mapped[int] = mapped_column(ForeignKey("ConnectionMapMap.id", ondelete="CASCADE"))
+    map_id: Mapped[int] = mapped_column(
+        ForeignKey("ConnectionMapMap.id", ondelete="CASCADE")
+    )
     point_hash: Mapped[str] = mapped_column(String, nullable=False)
     latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -197,7 +205,9 @@ class ConnectionMapPoint(Base):
     name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     signals: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
-    map: Mapped[ConnectionMapMap] = relationship("ConnectionMapMap", back_populates="points")
+    map: Mapped[ConnectionMapMap] = relationship(
+        "ConnectionMapMap", back_populates="points"
+    )
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {}
@@ -216,7 +226,9 @@ class ConnectionMapPoint(Base):
         return payload
 
     @classmethod
-    def from_payload(cls, point_hash: str, payload: dict[str, Any]) -> "ConnectionMapPoint":
+    def from_payload(
+        cls, point_hash: str, payload: dict[str, Any]
+    ) -> "ConnectionMapPoint":
         signals: dict[str, Any] = {}
         latitude = payload.get("lat")
         longitude = payload.get("lon")

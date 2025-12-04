@@ -186,7 +186,9 @@ class CotTelemetryService(HubService):
         super().__init__(name="tak_cot")
         self._connector = connector
         self._interval = interval if interval > 0 else 1.0
-        self._keepalive_interval = keepalive_interval if keepalive_interval > 0 else 60.0
+        self._keepalive_interval = (
+            keepalive_interval if keepalive_interval > 0 else 60.0
+        )
 
     def is_supported(self) -> bool:
         return self._connector is not None and self._interval > 0

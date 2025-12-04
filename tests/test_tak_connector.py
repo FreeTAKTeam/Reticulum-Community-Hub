@@ -356,8 +356,12 @@ def test_cot_service_sends_keepalive_on_schedule():
     finally:
         service.stop()
 
-    keepalives = [payload for payload, _, _ in client.sent if isinstance(payload, bytes)]
-    locations = [payload for payload, _, _ in client.sent if not isinstance(payload, bytes)]
+    keepalives = [
+        payload for payload, _, _ in client.sent if isinstance(payload, bytes)
+    ]
+    locations = [
+        payload for payload, _, _ in client.sent if not isinstance(payload, bytes)
+    ]
 
     assert len(keepalives) >= 2
     assert len(locations) >= 1

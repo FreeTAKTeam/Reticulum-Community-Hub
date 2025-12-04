@@ -180,14 +180,10 @@ class ReticulumTelemetryHubAPI:
         topic = self.retrieve_topic(topic_id)
         update_fields = {}
         if "topic_name" in updates or "TopicName" in updates:
-            topic.topic_name = updates.get("topic_name") or updates.get(
-                "TopicName"
-            )
+            topic.topic_name = updates.get("topic_name") or updates.get("TopicName")
             update_fields["topic_name"] = topic.topic_name
         if "topic_path" in updates or "TopicPath" in updates:
-            topic.topic_path = updates.get("topic_path") or updates.get(
-                "TopicPath"
-            )
+            topic.topic_path = updates.get("topic_path") or updates.get("TopicPath")
             update_fields["topic_path"] = topic.topic_path
         if "topic_description" in updates or "TopicDescription" in updates:
             if "topic_description" in updates:
@@ -198,9 +194,7 @@ class ReticulumTelemetryHubAPI:
             update_fields["topic_description"] = topic.topic_description
         if not update_fields:
             return topic
-        updated_topic = self._storage.update_topic(
-            topic.topic_id, **update_fields
-        )
+        updated_topic = self._storage.update_topic(topic.topic_id, **update_fields)
         if not updated_topic:
             raise KeyError(f"Topic '{topic_id}' not found")
         return updated_topic
@@ -339,9 +333,7 @@ class ReticulumTelemetryHubAPI:
                 "Destination"
             )
         if "topic_id" in updates or "TopicID" in updates:
-            subscriber.topic_id = updates.get("topic_id") or updates.get(
-                "TopicID"
-            )
+            subscriber.topic_id = updates.get("topic_id") or updates.get("TopicID")
         if "reject_tests" in updates:
             subscriber.reject_tests = updates["reject_tests"]
         elif "RejectTests" in updates:

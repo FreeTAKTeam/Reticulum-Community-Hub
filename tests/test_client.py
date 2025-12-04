@@ -8,6 +8,7 @@ STORAGE_PATH = "./tmp2"  # Path to store temporary files
 IDENTITY_PATH = os.path.join(STORAGE_PATH, "identity")  # Path to store identity file
 APP_NAME = LXMF.APP_NAME + ".delivery"  # Application name for LXMF
 
+
 class AnnounceHandler:
     def __init__(self, connections, my_lxmf_dest, lxm_router):
         self.aspect_filter = APP_NAME  # Filter for LXMF announcements
@@ -32,15 +33,19 @@ class AnnounceHandler:
         )
         self.connections.append(dest)  # Add the new destination to connections
 
+
 def command_handler(commands: list, message: LXMF.LXMessage, lxm_router, my_lxmf_dest):
     for command in commands:
         print(f"Command: {command}")
+
 
 def delivery_callback(message: LXMF.LXMessage, connections, my_lxmf_dest, lxm_router):
     # Format the timestamp of the message
     try:
         RNS.log("Delivery callback triggered")
-        time_string = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp))
+        time_string = time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp)
+        )
         signature_string = "Signature is invalid, reason undetermined"
 
         # Determine the signature validation status
@@ -52,9 +57,14 @@ def delivery_callback(message: LXMF.LXMessage, connections, my_lxmf_dest, lxm_ro
             signature_string = "Cannot verify, source is unknown"
 
         if message.signature_validated and LXMF.FIELD_COMMANDS in message.fields:
-            command_handler(message.fields[LXMF.FIELD_COMMANDS], message, lxm_router, my_lxmf_dest)
+            command_handler(
+                message.fields[LXMF.FIELD_COMMANDS], message, lxm_router, my_lxmf_dest
+            )
 
-        if message.signature_validated and LXMF.FIELD_TELEMETRY_STREAM in message.fields:
+        if (
+            message.signature_validated
+            and LXMF.FIELD_TELEMETRY_STREAM in message.fields
+        ):
             print("Telemetry stream received")
 
         # Log the delivery details
@@ -64,7 +74,7 @@ def delivery_callback(message: LXMF.LXMessage, connections, my_lxmf_dest, lxm_ro
         RNS.log(
             f"\t| Destination hash       : {RNS.prettyhexrep(message.destination_hash)}"
         )
-        #RNS.log(f"\t| Destination identity   : {message.source_identity}")
+        # RNS.log(f"\t| Destination identity   : {message.source_identity}")
         RNS.log(f"\t| Destination instance   : {message.get_destination()}")
         RNS.log(f"\t| Transport Encryption   : {message.transport_encryption}")
         RNS.log(f"\t| Timestamp              : {time_string}")
@@ -76,13 +86,14 @@ def delivery_callback(message: LXMF.LXMessage, connections, my_lxmf_dest, lxm_ro
     except Exception as e:
         RNS.log(f"Error: {e}")
 
+
 def load_or_generate_identity(identity_path):
     # Load existing identity or generate a new one
     if os.path.exists(identity_path):
         try:
             RNS.log("Loading existing identity")
             return RNS.Identity.from_file(identity_path)
-        except:
+        except Exception:
             RNS.log("Failed to load existing identity, generating new")
     else:
         RNS.log("Generating new identity")
@@ -92,10 +103,9 @@ def load_or_generate_identity(identity_path):
     return identity
 
 
-
 def main():
     connections = []  # List to store connections
-    r = RNS.Reticulum()  # Initialize Reticulum
+    RNS.Reticulum()  # Initialize Reticulum
     lxm_router = LXMF.LXMRouter(storagepath=STORAGE_PATH)  # Initialize LXMF router
     # lxm_router.enable_propagation()
     identity = load_or_generate_identity(IDENTITY_PATH)  # Load or generate identity
@@ -125,7 +135,7 @@ def main():
     # Periodically announce the LXMF identity
     while True:
         choice = input("Enter your choice (exit/announce/telemetry): ")
-        
+
         if choice == "exit":
             break
         elif choice == "announce":
@@ -136,11 +146,11 @@ def main():
             for connection in connections:
                 if connection.hexhash == connection_hash:
                     message = LXMF.LXMessage(
-                    connection,
-                    my_lxmf_dest,
-                    "Requesting telemetry",
-                    desired_method=LXMF.LXMessage.DIRECT,
-                    fields={LXMF.FIELD_COMMANDS: [{1: 1000000000}]}
+                        connection,
+                        my_lxmf_dest,
+                        "Requesting telemetry",
+                        desired_method=LXMF.LXMessage.DIRECT,
+                        fields={LXMF.FIELD_COMMANDS: [{1: 1000000000}]},
                     )
                     lxm_router.handle_outbound(message)
                     found = True

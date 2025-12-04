@@ -9,7 +9,6 @@ from reticulum_telemetry_hub.atak_cot import ChatHierarchyContact
 from reticulum_telemetry_hub.atak_cot import ChatHierarchyGroup
 from reticulum_telemetry_hub.atak_cot import Detail
 from reticulum_telemetry_hub.atak_cot import Event
-from reticulum_telemetry_hub.atak_cot import Group
 from reticulum_telemetry_hub.atak_cot import Link
 from reticulum_telemetry_hub.atak_cot import Point
 from reticulum_telemetry_hub.atak_cot import Remarks

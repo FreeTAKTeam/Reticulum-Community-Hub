@@ -17,7 +17,14 @@ def _make_service(monkeypatch, payloads):
 def test_gps_service_populates_location_sensor(monkeypatch):
     payloads = [
         {"lat": None, "lon": 20.0},
-        {"lat": 42.1234, "lon": -71.9876, "alt": "12.5", "speed": 3.2, "track": 180, "eps": 5},
+        {
+            "lat": 42.1234,
+            "lon": -71.9876,
+            "alt": "12.5",
+            "speed": 3.2,
+            "track": 180,
+            "eps": 5,
+        },
     ]
     service, manager = _make_service(monkeypatch, payloads)
 

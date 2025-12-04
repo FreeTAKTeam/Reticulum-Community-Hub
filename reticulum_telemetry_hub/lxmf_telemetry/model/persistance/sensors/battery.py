@@ -1,4 +1,5 @@
 """SQLAlchemy model for the Battery sensor."""
+
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -41,7 +42,9 @@ class Battery(Sensor):
             return None
 
         try:
-            self.charge_percent = None if packed[0] is None else round(float(packed[0]), 1)
+            self.charge_percent = (
+                None if packed[0] is None else round(float(packed[0]), 1)
+            )
             self.charging = packed[1] if len(packed) > 1 else None
             if len(packed) > 2:
                 self.temperature = packed[2]

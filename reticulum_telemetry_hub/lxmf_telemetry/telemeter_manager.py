@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, MutableMapping, Protocol
 
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import Sensor
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import (
+    Sensor,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_ACCELERATION,
     SID_AMBIENT_LIGHT,
@@ -49,8 +51,7 @@ SnapshotMutator = Callable[[Telemeter, dict[int, Any]], None]
 class TelemetryPlugin(Protocol):
     """Protocol describing telemetry plugins that can customize snapshots."""
 
-    def setup(self, manager: "TelemeterManager") -> None:
-        ...
+    def setup(self, manager: "TelemeterManager") -> None: ...
 
 
 @dataclass
@@ -292,7 +293,9 @@ class TelemeterManager:
         elif callable(plugin):
             plugin(self)
         else:  # pragma: no cover - defensive guard
-            raise TypeError("Telemetry plugins must be callables or expose a setup() method")
+            raise TypeError(
+                "Telemetry plugins must be callables or expose a setup() method"
+            )
 
     def snapshot(self) -> dict[int, Any]:
         """Pack enabled sensors and return a telemetry snapshot."""
@@ -379,10 +382,23 @@ class TelemeterManager:
         }
         setattr(sensor, "latitude", cfg.latitude)
         setattr(sensor, "longitude", cfg.longitude)
-        setattr(sensor, "altitude", cfg.altitude if cfg.altitude is not None else defaults["altitude"])
-        setattr(sensor, "speed", cfg.speed if cfg.speed is not None else defaults["speed"])
-        setattr(sensor, "bearing", cfg.bearing if cfg.bearing is not None else defaults["bearing"])
-        setattr(sensor, "accuracy", cfg.accuracy if cfg.accuracy is not None else defaults["accuracy"])
+        setattr(
+            sensor,
+            "altitude",
+            cfg.altitude if cfg.altitude is not None else defaults["altitude"],
+        )
+        setattr(
+            sensor, "speed", cfg.speed if cfg.speed is not None else defaults["speed"]
+        )
+        setattr(
+            sensor,
+            "bearing",
+            cfg.bearing if cfg.bearing is not None else defaults["bearing"],
+        )
+        setattr(
+            sensor,
+            "accuracy",
+            cfg.accuracy if cfg.accuracy is not None else defaults["accuracy"],
+        )
         setattr(sensor, "last_update", timestamp)
         setattr(sensor, "synthesized", True)
-

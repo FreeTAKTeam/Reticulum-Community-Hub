@@ -18,7 +18,9 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propa
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_LXMF_PROPAGATION,
 )
-from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import TelemetryController
+from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
+    TelemetryController,
+)
 
 
 @dataclass
@@ -157,9 +159,7 @@ class EmbeddedLxmd:
             "destination_hash": destination_hash,
             "identity_hash": identity_hash,
             "uptime": None,
-            "delivery_limit": getattr(
-                self.router, "delivery_per_transfer_limit", None
-            ),
+            "delivery_limit": getattr(self.router, "delivery_per_transfer_limit", None),
             "propagation_limit": getattr(
                 self.router, "propagation_per_transfer_limit", None
             ),
@@ -188,7 +188,9 @@ class EmbeddedLxmd:
             "peers": {},
         }
 
-    def _normalize_propagation_stats(self, stats: dict[str, Any] | None) -> dict[str, Any]:
+    def _normalize_propagation_stats(
+        self, stats: dict[str, Any] | None
+    ) -> dict[str, Any]:
         payload = self._baseline_propagation_payload()
         if not stats:
             return payload
@@ -197,8 +199,7 @@ class EmbeddedLxmd:
             {
                 "destination_hash": stats.get("destination_hash")
                 or payload["destination_hash"],
-                "identity_hash": stats.get("identity_hash")
-                or payload["identity_hash"],
+                "identity_hash": stats.get("identity_hash") or payload["identity_hash"],
                 "uptime": stats.get("uptime"),
                 "delivery_limit": stats.get("delivery_limit"),
                 "propagation_limit": stats.get("propagation_limit"),
@@ -223,7 +224,9 @@ class EmbeddedLxmd:
         max_unhandled = 0
 
         peer_stats = stats.get("peers") or {}
-        for peer_hash, peer_data in sorted(peer_stats.items(), key=lambda item: item[0]):
+        for peer_hash, peer_data in sorted(
+            peer_stats.items(), key=lambda item: item[0]
+        ):
             if not isinstance(peer_hash, (bytes, bytearray, memoryview)):
                 continue
             key = bytes(peer_hash)
@@ -313,7 +316,9 @@ class EmbeddedLxmd:
         comparison_payload = dict(payload)
         uptime = comparison_payload.get("uptime")
         if uptime is not None:
-            comparison_payload["uptime"] = int(uptime) // self.PROPAGATION_UPTIME_GRANULARITY
+            comparison_payload["uptime"] = (
+                int(uptime) // self.PROPAGATION_UPTIME_GRANULARITY
+            )
 
         packed = packb(comparison_payload, use_bin_type=True)
 

@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from reticulum_telemetry_hub.config import HubConfigurationManager
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import Sensor
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import (
+    Sensor,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_BATTERY,
     SID_INFORMATION,

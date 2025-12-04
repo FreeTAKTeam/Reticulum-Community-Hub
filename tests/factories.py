@@ -1,4 +1,5 @@
 """Test helpers for constructing representative telemetry sensors and payloads."""
+
 from __future__ import annotations
 
 from typing import Dict
@@ -181,7 +182,9 @@ def create_connection_map_sensor() -> ConnectionMap:
     return sensor
 
 
-def build_complex_telemeter_payload(*, timestamp: int | None = None) -> Dict[int, dict | int]:
+def build_complex_telemeter_payload(
+    *, timestamp: int | None = None
+) -> Dict[int, dict | int]:
     """Return a telemetry payload covering complex/nested sensors."""
 
     sensors = [
@@ -213,4 +216,3 @@ def build_connection_map_payload() -> dict:
 
 def complex_sensor_sids() -> tuple[int, int, int]:
     return SID_RNS_TRANSPORT, SID_LXMF_PROPAGATION, SID_CONNECTION_MAP
-

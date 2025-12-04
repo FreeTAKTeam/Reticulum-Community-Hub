@@ -48,11 +48,11 @@ from reticulum_telemetry_hub.lxmf_daemon.LXMF import APP_NAME
 
 from RNS.vendor.configobj import ConfigObj
 
-configpath     = None
-ignoredpath    = None
-identitypath   = None
-storagedir     = None
-lxmdir         = None
+configpath = None
+ignoredpath = None
+identitypath = None
+storagedir = None
+lxmdir = None
 targetloglevel = None
 
 identity = None
@@ -71,10 +71,12 @@ def _default_config_directory() -> str:
     storage_path = HubConfigurationManager().storage_path
     return str(storage_path / "lxmd")
 
+
 def create_default_config(configpath):
     lxmd_config = ConfigObj(__default_lxmd_config__.splitlines())
     lxmd_config.filename = configpath
     lxmd_config.write()
+
 
 def apply_config():
     global active_configuration, targetloglevel
@@ -86,17 +88,26 @@ def apply_config():
             active_configuration["display_name"] = "Anonymous Peer"
 
         if "lxmf" in lxmd_config and "announce_at_start" in lxmd_config["lxmf"]:
-            active_configuration["peer_announce_at_start"] = lxmd_config["lxmf"].as_bool("announce_at_start")
+            active_configuration["peer_announce_at_start"] = lxmd_config[
+                "lxmf"
+            ].as_bool("announce_at_start")
         else:
             active_configuration["peer_announce_at_start"] = False
 
         if "lxmf" in lxmd_config and "announce_interval" in lxmd_config["lxmf"]:
-            active_configuration["peer_announce_interval"] = lxmd_config["lxmf"].as_int("announce_interval")*60
+            active_configuration["peer_announce_interval"] = (
+                lxmd_config["lxmf"].as_int("announce_interval") * 60
+            )
         else:
             active_configuration["peer_announce_interval"] = None
-        
-        if "lxmf" in lxmd_config and "delivery_transfer_max_accepted_size" in lxmd_config["lxmf"]:
-            active_configuration["delivery_transfer_max_accepted_size"] = lxmd_config["lxmf"].as_float("delivery_transfer_max_accepted_size")
+
+        if (
+            "lxmf" in lxmd_config
+            and "delivery_transfer_max_accepted_size" in lxmd_config["lxmf"]
+        ):
+            active_configuration["delivery_transfer_max_accepted_size"] = lxmd_config[
+                "lxmf"
+            ].as_float("delivery_transfer_max_accepted_size")
             if active_configuration["delivery_transfer_max_accepted_size"] < 0.38:
                 active_configuration["delivery_transfer_max_accepted_size"] = 0.38
         else:
@@ -109,107 +120,201 @@ def apply_config():
 
         # Load propagation node settings
         if "propagation" in lxmd_config and "enable_node" in lxmd_config["propagation"]:
-            active_configuration["enable_propagation_node"] = lxmd_config["propagation"].as_bool("enable_node")
+            active_configuration["enable_propagation_node"] = lxmd_config[
+                "propagation"
+            ].as_bool("enable_node")
         else:
             active_configuration["enable_propagation_node"] = False
 
         if "propagation" in lxmd_config and "node_name" in lxmd_config["propagation"]:
-            active_configuration["node_name"] = lxmd_config["propagation"].get("node_name")
+            active_configuration["node_name"] = lxmd_config["propagation"].get(
+                "node_name"
+            )
         else:
             active_configuration["node_name"] = None
 
-        if "propagation" in lxmd_config and "auth_required" in lxmd_config["propagation"]:
-            active_configuration["auth_required"] = lxmd_config["propagation"].as_bool("auth_required")
+        if (
+            "propagation" in lxmd_config
+            and "auth_required" in lxmd_config["propagation"]
+        ):
+            active_configuration["auth_required"] = lxmd_config["propagation"].as_bool(
+                "auth_required"
+            )
         else:
             active_configuration["auth_required"] = False
 
-        if "propagation" in lxmd_config and "announce_at_start" in lxmd_config["propagation"]:
-            active_configuration["node_announce_at_start"] = lxmd_config["propagation"].as_bool("announce_at_start")
+        if (
+            "propagation" in lxmd_config
+            and "announce_at_start" in lxmd_config["propagation"]
+        ):
+            active_configuration["node_announce_at_start"] = lxmd_config[
+                "propagation"
+            ].as_bool("announce_at_start")
         else:
             active_configuration["node_announce_at_start"] = False
 
         if "propagation" in lxmd_config and "autopeer" in lxmd_config["propagation"]:
-            active_configuration["autopeer"] = lxmd_config["propagation"].as_bool("autopeer")
+            active_configuration["autopeer"] = lxmd_config["propagation"].as_bool(
+                "autopeer"
+            )
         else:
             active_configuration["autopeer"] = True
 
-        if "propagation" in lxmd_config and "autopeer_maxdepth" in lxmd_config["propagation"]:
-            active_configuration["autopeer_maxdepth"] = lxmd_config["propagation"].as_int("autopeer_maxdepth")
+        if (
+            "propagation" in lxmd_config
+            and "autopeer_maxdepth" in lxmd_config["propagation"]
+        ):
+            active_configuration["autopeer_maxdepth"] = lxmd_config[
+                "propagation"
+            ].as_int("autopeer_maxdepth")
         else:
             active_configuration["autopeer_maxdepth"] = None
 
-        if "propagation" in lxmd_config and "announce_interval" in lxmd_config["propagation"]:
-            active_configuration["node_announce_interval"] = lxmd_config["propagation"].as_int("announce_interval")*60
+        if (
+            "propagation" in lxmd_config
+            and "announce_interval" in lxmd_config["propagation"]
+        ):
+            active_configuration["node_announce_interval"] = (
+                lxmd_config["propagation"].as_int("announce_interval") * 60
+            )
         else:
             active_configuration["node_announce_interval"] = None
 
-        if "propagation" in lxmd_config and "message_storage_limit" in lxmd_config["propagation"]:
-            active_configuration["message_storage_limit"] = lxmd_config["propagation"].as_float("message_storage_limit")
+        if (
+            "propagation" in lxmd_config
+            and "message_storage_limit" in lxmd_config["propagation"]
+        ):
+            active_configuration["message_storage_limit"] = lxmd_config[
+                "propagation"
+            ].as_float("message_storage_limit")
             if active_configuration["message_storage_limit"] < 0.005:
                 active_configuration["message_storage_limit"] = 0.005
         else:
             active_configuration["message_storage_limit"] = 500
-        
-        if "propagation" in lxmd_config and "propagation_transfer_max_accepted_size" in lxmd_config["propagation"]:
-            active_configuration["propagation_transfer_max_accepted_size"] = lxmd_config["propagation"].as_float("propagation_transfer_max_accepted_size")
+
+        if (
+            "propagation" in lxmd_config
+            and "propagation_transfer_max_accepted_size" in lxmd_config["propagation"]
+        ):
+            active_configuration["propagation_transfer_max_accepted_size"] = (
+                lxmd_config["propagation"].as_float(
+                    "propagation_transfer_max_accepted_size"
+                )
+            )
             if active_configuration["propagation_transfer_max_accepted_size"] < 0.38:
                 active_configuration["propagation_transfer_max_accepted_size"] = 0.38
         else:
             active_configuration["propagation_transfer_max_accepted_size"] = 256
 
-        if "propagation" in lxmd_config and "propagation_message_max_accepted_size" in lxmd_config["propagation"]:
-            active_configuration["propagation_transfer_max_accepted_size"] = lxmd_config["propagation"].as_float("propagation_message_max_accepted_size")
+        if (
+            "propagation" in lxmd_config
+            and "propagation_message_max_accepted_size" in lxmd_config["propagation"]
+        ):
+            active_configuration["propagation_transfer_max_accepted_size"] = (
+                lxmd_config["propagation"].as_float(
+                    "propagation_message_max_accepted_size"
+                )
+            )
             if active_configuration["propagation_transfer_max_accepted_size"] < 0.38:
                 active_configuration["propagation_transfer_max_accepted_size"] = 0.38
         else:
             active_configuration["propagation_transfer_max_accepted_size"] = 256
-        
-        if "propagation" in lxmd_config and "propagation_sync_max_accepted_size" in lxmd_config["propagation"]:
-            active_configuration["propagation_sync_max_accepted_size"] = lxmd_config["propagation"].as_float("propagation_sync_max_accepted_size")
+
+        if (
+            "propagation" in lxmd_config
+            and "propagation_sync_max_accepted_size" in lxmd_config["propagation"]
+        ):
+            active_configuration["propagation_sync_max_accepted_size"] = lxmd_config[
+                "propagation"
+            ].as_float("propagation_sync_max_accepted_size")
             if active_configuration["propagation_sync_max_accepted_size"] < 0.38:
                 active_configuration["propagation_sync_max_accepted_size"] = 0.38
         else:
-            active_configuration["propagation_sync_max_accepted_size"] = 256*40
-        
-        if "propagation" in lxmd_config and "propagation_stamp_cost_target" in lxmd_config["propagation"]:
-            active_configuration["propagation_stamp_cost_target"] = lxmd_config["propagation"].as_int("propagation_stamp_cost_target")
-            if active_configuration["propagation_stamp_cost_target"] < LXMF.LXMRouter.PROPAGATION_COST_MIN:
-                active_configuration["propagation_stamp_cost_target"] = LXMF.LXMRouter.PROPAGATION_COST_MIN
+            active_configuration["propagation_sync_max_accepted_size"] = 256 * 40
+
+        if (
+            "propagation" in lxmd_config
+            and "propagation_stamp_cost_target" in lxmd_config["propagation"]
+        ):
+            active_configuration["propagation_stamp_cost_target"] = lxmd_config[
+                "propagation"
+            ].as_int("propagation_stamp_cost_target")
+            if (
+                active_configuration["propagation_stamp_cost_target"]
+                < LXMF.LXMRouter.PROPAGATION_COST_MIN
+            ):
+                active_configuration["propagation_stamp_cost_target"] = (
+                    LXMF.LXMRouter.PROPAGATION_COST_MIN
+                )
         else:
-            active_configuration["propagation_stamp_cost_target"] = LXMF.LXMRouter.PROPAGATION_COST
-        
-        if "propagation" in lxmd_config and "propagation_stamp_cost_flexibility" in lxmd_config["propagation"]:
-            active_configuration["propagation_stamp_cost_flexibility"] = lxmd_config["propagation"].as_int("propagation_stamp_cost_flexibility")
+            active_configuration["propagation_stamp_cost_target"] = (
+                LXMF.LXMRouter.PROPAGATION_COST
+            )
+
+        if (
+            "propagation" in lxmd_config
+            and "propagation_stamp_cost_flexibility" in lxmd_config["propagation"]
+        ):
+            active_configuration["propagation_stamp_cost_flexibility"] = lxmd_config[
+                "propagation"
+            ].as_int("propagation_stamp_cost_flexibility")
             if active_configuration["propagation_stamp_cost_flexibility"] < 0:
                 active_configuration["propagation_stamp_cost_flexibility"] = 0
         else:
-            active_configuration["propagation_stamp_cost_flexibility"] = LXMF.LXMRouter.PROPAGATION_COST_FLEX
-        
-        if "propagation" in lxmd_config and "peering_cost" in lxmd_config["propagation"]:
-            active_configuration["peering_cost"] = lxmd_config["propagation"].as_int("peering_cost")
+            active_configuration["propagation_stamp_cost_flexibility"] = (
+                LXMF.LXMRouter.PROPAGATION_COST_FLEX
+            )
+
+        if (
+            "propagation" in lxmd_config
+            and "peering_cost" in lxmd_config["propagation"]
+        ):
+            active_configuration["peering_cost"] = lxmd_config["propagation"].as_int(
+                "peering_cost"
+            )
             if active_configuration["peering_cost"] < 0:
                 active_configuration["peering_cost"] = 0
         else:
             active_configuration["peering_cost"] = LXMF.LXMRouter.PEERING_COST
-        
-        if "propagation" in lxmd_config and "remote_peering_cost_max" in lxmd_config["propagation"]:
-            active_configuration["remote_peering_cost_max"] = lxmd_config["propagation"].as_int("remote_peering_cost_max")
+
+        if (
+            "propagation" in lxmd_config
+            and "remote_peering_cost_max" in lxmd_config["propagation"]
+        ):
+            active_configuration["remote_peering_cost_max"] = lxmd_config[
+                "propagation"
+            ].as_int("remote_peering_cost_max")
             if active_configuration["remote_peering_cost_max"] < 0:
                 active_configuration["remote_peering_cost_max"] = 0
         else:
-            active_configuration["remote_peering_cost_max"] = LXMF.LXMRouter.MAX_PEERING_COST
-        
-        if "propagation" in lxmd_config and "prioritise_destinations" in lxmd_config["propagation"]:
-            active_configuration["prioritised_lxmf_destinations"] = lxmd_config["propagation"].as_list("prioritise_destinations")
+            active_configuration["remote_peering_cost_max"] = (
+                LXMF.LXMRouter.MAX_PEERING_COST
+            )
+
+        if (
+            "propagation" in lxmd_config
+            and "prioritise_destinations" in lxmd_config["propagation"]
+        ):
+            active_configuration["prioritised_lxmf_destinations"] = lxmd_config[
+                "propagation"
+            ].as_list("prioritise_destinations")
         else:
             active_configuration["prioritised_lxmf_destinations"] = []
-        
-        if "propagation" in lxmd_config and "control_allowed" in lxmd_config["propagation"]:
-            active_configuration["control_allowed_identities"] = lxmd_config["propagation"].as_list("control_allowed")
+
+        if (
+            "propagation" in lxmd_config
+            and "control_allowed" in lxmd_config["propagation"]
+        ):
+            active_configuration["control_allowed_identities"] = lxmd_config[
+                "propagation"
+            ].as_list("control_allowed")
         else:
             active_configuration["control_allowed_identities"] = []
 
-        if "propagation" in lxmd_config and "static_peers" in lxmd_config["propagation"]:
+        if (
+            "propagation" in lxmd_config
+            and "static_peers" in lxmd_config["propagation"]
+        ):
             static_peers = lxmd_config["propagation"].as_list("static_peers")
             active_configuration["static_peers"] = []
             for static_peer in static_peers:
@@ -218,12 +323,19 @@ def apply_config():
             active_configuration["static_peers"] = []
 
         if "propagation" in lxmd_config and "max_peers" in lxmd_config["propagation"]:
-            active_configuration["max_peers"] = lxmd_config["propagation"].as_int("max_peers")
+            active_configuration["max_peers"] = lxmd_config["propagation"].as_int(
+                "max_peers"
+            )
         else:
             active_configuration["max_peers"] = None
 
-        if "propagation" in lxmd_config and "from_static_only" in lxmd_config["propagation"]:
-            active_configuration["from_static_only"] = lxmd_config["propagation"].as_bool("from_static_only")
+        if (
+            "propagation" in lxmd_config
+            and "from_static_only" in lxmd_config["propagation"]
+        ):
+            active_configuration["from_static_only"] = lxmd_config[
+                "propagation"
+            ].as_bool("from_static_only")
         else:
             active_configuration["from_static_only"] = False
 
@@ -241,17 +353,27 @@ def apply_config():
                 ignored_hash_strs = ignored_input.splitlines()
 
                 for hash_str in ignored_hash_strs:
-                    if len(hash_str) == RNS.Identity.TRUNCATED_HASHLENGTH//8*2:
+                    if len(hash_str) == RNS.Identity.TRUNCATED_HASHLENGTH // 8 * 2:
                         try:
                             ignored_hash = bytes.fromhex(hash_str.decode("utf-8"))
-                            active_configuration["ignored_lxmf_destinations"].append(ignored_hash)
+                            active_configuration["ignored_lxmf_destinations"].append(
+                                ignored_hash
+                            )
 
                         except Exception as e:
-                            RNS.log("Could not decode hash from: "+str(hash_str), RNS.LOG_DEBUG)
-                            RNS.log("The contained exception was: "+str(e), RNS.LOG_DEBUG)
+                            RNS.log(
+                                "Could not decode hash from: " + str(hash_str),
+                                RNS.LOG_DEBUG,
+                            )
+                            RNS.log(
+                                "The contained exception was: " + str(e), RNS.LOG_DEBUG
+                            )
 
             except Exception as e:
-                RNS.log("Error while loading list of ignored destinations: "+str(e), RNS.LOG_ERROR)
+                RNS.log(
+                    "Error while loading list of ignored destinations: " + str(e),
+                    RNS.LOG_ERROR,
+                )
 
         active_configuration["allowed_identities"] = []
         if os.path.isfile(allowedpath):
@@ -263,53 +385,88 @@ def apply_config():
                 allowed_hash_strs = allowed_input.splitlines()
 
                 for hash_str in allowed_hash_strs:
-                    if len(hash_str) == RNS.Identity.TRUNCATED_HASHLENGTH//8*2:
+                    if len(hash_str) == RNS.Identity.TRUNCATED_HASHLENGTH // 8 * 2:
                         try:
                             allowed_hash = bytes.fromhex(hash_str.decode("utf-8"))
-                            active_configuration["allowed_identities"].append(allowed_hash)
+                            active_configuration["allowed_identities"].append(
+                                allowed_hash
+                            )
 
                         except Exception as e:
-                            RNS.log("Could not decode hash from: "+str(hash_str), RNS.LOG_DEBUG)
-                            RNS.log("The contained exception was: "+str(e), RNS.LOG_DEBUG)
+                            RNS.log(
+                                "Could not decode hash from: " + str(hash_str),
+                                RNS.LOG_DEBUG,
+                            )
+                            RNS.log(
+                                "The contained exception was: " + str(e), RNS.LOG_DEBUG
+                            )
 
             except Exception as e:
-                RNS.log("Error while loading list of allowed identities: "+str(e), RNS.LOG_ERROR)
+                RNS.log(
+                    "Error while loading list of allowed identities: " + str(e),
+                    RNS.LOG_ERROR,
+                )
 
     except Exception as e:
-        RNS.log("Could not apply LXM Daemon configuration. The contained exception was: "+str(e), RNS.LOG_ERROR)
+        RNS.log(
+            "Could not apply LXM Daemon configuration. The contained exception was: "
+            + str(e),
+            RNS.LOG_ERROR,
+        )
         raise e
         exit(3)
+
 
 def lxmf_delivery(lxm):
     global active_configuration, lxmdir
 
     try:
         written_path = lxm.write_to_directory(lxmdir)
-        RNS.log("Received "+str(lxm)+" written to "+str(written_path), RNS.LOG_DEBUG)
+        RNS.log(
+            "Received " + str(lxm) + " written to " + str(written_path), RNS.LOG_DEBUG
+        )
 
         if active_configuration["on_inbound"]:
             RNS.log("Calling external program to handle message", RNS.LOG_DEBUG)
             command = active_configuration["on_inbound"]
-            processing_command = command+" \""+written_path+"\""
-            return_code = subprocess.call(shlex.split(processing_command), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            processing_command = command + ' "' + written_path + '"'
+            return_code = subprocess.call(
+                shlex.split(processing_command),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 
         else:
             RNS.log("No action defined for inbound messages, ignoring", RNS.LOG_DEBUG)
 
     except Exception as e:
-        RNS.log("Error occurred while processing received message "+str(lxm)+". The contained exception was: "+str(e), RNS.LOG_ERROR)
+        RNS.log(
+            "Error occurred while processing received message "
+            + str(lxm)
+            + ". The contained exception was: "
+            + str(e),
+            RNS.LOG_ERROR,
+        )
 
 
-def program_setup(configdir = None, rnsconfigdir = None, run_pn = False, on_inbound = None, verbosity = 0, quietness = 0, service = False):
+def program_setup(
+    configdir=None,
+    rnsconfigdir=None,
+    run_pn=False,
+    on_inbound=None,
+    verbosity=0,
+    quietness=0,
+    service=False,
+):
     global configpath, ignoredpath, identitypath, allowedpath, storagedir, lxmdir
     global lxmd_config, active_configuration, targetloglevel
     global message_router, lxmf_destination
 
     if service:
-        targetlogdest  = RNS.LOG_FILE
+        targetlogdest = RNS.LOG_FILE
         targetloglevel = None
     else:
-        targetlogdest  = RNS.LOG_STDOUT
+        targetlogdest = RNS.LOG_STDOUT
 
     # Get configuration
     if configdir == None:
@@ -317,12 +474,12 @@ def program_setup(configdir = None, rnsconfigdir = None, run_pn = False, on_inbo
 
     configdir = str(configdir)
 
-    configpath   = configdir+"/config"
-    ignoredpath  = configdir+"/ignored"
-    allowedpath  = configdir+"/allowed"
-    identitypath = configdir+"/identity"
-    storagedir   = configdir+"/storage"
-    lxmdir       = storagedir+"/messages"
+    configpath = configdir + "/config"
+    ignoredpath = configdir + "/ignored"
+    allowedpath = configdir + "/allowed"
+    identitypath = configdir + "/identity"
+    storagedir = configdir + "/storage"
+    lxmdir = storagedir + "/messages"
 
     if not os.path.isdir(storagedir):
         os.makedirs(storagedir)
@@ -333,29 +490,35 @@ def program_setup(configdir = None, rnsconfigdir = None, run_pn = False, on_inbo
     if not os.path.isfile(configpath):
         RNS.log("Could not load config file, creating default configuration file...")
         create_default_config(configpath)
-        RNS.log("Default config file created. Make any necessary changes in "+configpath+" and restart lxmd if needed.")
+        RNS.log(
+            "Default config file created. Make any necessary changes in "
+            + configpath
+            + " and restart lxmd if needed."
+        )
         time.sleep(1.5)
 
     if os.path.isfile(configpath):
         try:
             lxmd_config = ConfigObj(configpath)
         except Exception as e:
-            RNS.log("Could not parse the configuration at "+configpath, RNS.LOG_ERROR)
+            RNS.log("Could not parse the configuration at " + configpath, RNS.LOG_ERROR)
             RNS.log("Check your configuration file for errors!", RNS.LOG_ERROR)
             RNS.panic()
-    
+
     apply_config()
-    RNS.log("Configuration loaded from "+configpath, RNS.LOG_VERBOSE)
+    RNS.log("Configuration loaded from " + configpath, RNS.LOG_VERBOSE)
 
     if targetloglevel == None:
         targetloglevel = 3
 
     if verbosity != 0 or quietness != 0:
-        targetloglevel = targetloglevel+verbosity-quietness
-    
+        targetloglevel = targetloglevel + verbosity - quietness
+
     # Start Reticulum
     RNS.log("Substantiating Reticulum...")
-    reticulum = RNS.Reticulum(configdir=rnsconfigdir, loglevel=targetloglevel, logdest=targetlogdest)
+    reticulum = RNS.Reticulum(
+        configdir=rnsconfigdir, loglevel=targetloglevel, logdest=targetlogdest
+    )
 
     # Generate or load primary identity
     if os.path.isfile(identitypath):
@@ -364,10 +527,16 @@ def program_setup(configdir = None, rnsconfigdir = None, run_pn = False, on_inbo
             if identity != None:
                 RNS.log("Loaded Primary Identity %s" % (str(identity)))
             else:
-                RNS.log("Could not load the Primary Identity from "+identitypath, RNS.LOG_ERROR)
+                RNS.log(
+                    "Could not load the Primary Identity from " + identitypath,
+                    RNS.LOG_ERROR,
+                )
                 exit(4)
         except Exception as e:
-            RNS.log("Could not load the Primary Identity from "+identitypath, RNS.LOG_ERROR)
+            RNS.log(
+                "Could not load the Primary Identity from " + identitypath,
+                RNS.LOG_ERROR,
+            )
             RNS.log("The contained exception was: %s" % (str(e)), RNS.LOG_ERROR)
             exit(1)
     else:
@@ -380,37 +549,44 @@ def program_setup(configdir = None, rnsconfigdir = None, run_pn = False, on_inbo
             RNS.log("Could not create and save a new Primary Identity", RNS.LOG_ERROR)
             RNS.log("The contained exception was: %s" % (str(e)), RNS.LOG_ERROR)
             exit(2)
-        
+
     # Start LXMF
     message_router = LXMF.LXMRouter(
-        identity = identity,
-        storagepath = storagedir,
-        autopeer = active_configuration["autopeer"],
-        autopeer_maxdepth = active_configuration["autopeer_maxdepth"],
-        propagation_limit = active_configuration["propagation_transfer_max_accepted_size"],
-        propagation_cost = active_configuration["propagation_stamp_cost_target"],
-        propagation_cost_flexibility = active_configuration["propagation_stamp_cost_flexibility"],
-        peering_cost = active_configuration["peering_cost"],
-        max_peering_cost = active_configuration["remote_peering_cost_max"],
-        sync_limit = active_configuration["propagation_sync_max_accepted_size"],
-        delivery_limit = active_configuration["delivery_transfer_max_accepted_size"],
-        max_peers = active_configuration["max_peers"],
-        static_peers = active_configuration["static_peers"],
-        from_static_only = active_configuration["from_static_only"],
-        name = active_configuration["node_name"])
-    
+        identity=identity,
+        storagepath=storagedir,
+        autopeer=active_configuration["autopeer"],
+        autopeer_maxdepth=active_configuration["autopeer_maxdepth"],
+        propagation_limit=active_configuration[
+            "propagation_transfer_max_accepted_size"
+        ],
+        propagation_cost=active_configuration["propagation_stamp_cost_target"],
+        propagation_cost_flexibility=active_configuration[
+            "propagation_stamp_cost_flexibility"
+        ],
+        peering_cost=active_configuration["peering_cost"],
+        max_peering_cost=active_configuration["remote_peering_cost_max"],
+        sync_limit=active_configuration["propagation_sync_max_accepted_size"],
+        delivery_limit=active_configuration["delivery_transfer_max_accepted_size"],
+        max_peers=active_configuration["max_peers"],
+        static_peers=active_configuration["static_peers"],
+        from_static_only=active_configuration["from_static_only"],
+        name=active_configuration["node_name"],
+    )
+
     message_router.register_delivery_callback(lxmf_delivery)
 
     for destination_hash in active_configuration["ignored_lxmf_destinations"]:
         message_router.ignore_destination(destination_hash)
 
-    lxmf_destination = message_router.register_delivery_identity(identity, display_name=active_configuration["display_name"])
+    lxmf_destination = message_router.register_delivery_identity(
+        identity, display_name=active_configuration["display_name"]
+    )
 
     RNS.Identity.remember(
         packet_hash=None,
         destination_hash=lxmf_destination.hash,
         public_key=identity.get_public_key(),
-        app_data=None
+        app_data=None,
     )
 
     # Set up authentication
@@ -418,60 +594,111 @@ def program_setup(configdir = None, rnsconfigdir = None, run_pn = False, on_inbo
         message_router.set_authentication(required=True)
 
         if len(active_configuration["allowed_identities"]) == 0:
-            RNS.log("Clint authentication was enabled, but no identity hashes could be loaded from "+str(allowedpath)+". Nobody will be able to sync messages from this propagation node.", RNS.LOG_WARNING)
-            
+            RNS.log(
+                "Clint authentication was enabled, but no identity hashes could be loaded from "
+                + str(allowedpath)
+                + ". Nobody will be able to sync messages from this propagation node.",
+                RNS.LOG_WARNING,
+            )
+
         for identity_hash in active_configuration["allowed_identities"]:
             message_router.allow(identity_hash)
 
-    RNS.log("LXMF Router ready to receive on "+RNS.prettyhexrep(lxmf_destination.hash))
+    RNS.log(
+        "LXMF Router ready to receive on " + RNS.prettyhexrep(lxmf_destination.hash)
+    )
 
     if run_pn or active_configuration["enable_propagation_node"]:
-        message_router.set_message_storage_limit(megabytes=active_configuration["message_storage_limit"])
+        message_router.set_message_storage_limit(
+            megabytes=active_configuration["message_storage_limit"]
+        )
         for dest_str in active_configuration["prioritised_lxmf_destinations"]:
             try:
                 dest_hash = bytes.fromhex(dest_str)
-                if len(dest_hash) == RNS.Reticulum.TRUNCATED_HASHLENGTH//8: message_router.prioritise(dest_hash)
-            except Exception as e: RNS.log("Cannot prioritise "+str(dest_str)+", it is not a valid destination hash", RNS.LOG_ERROR)
+                if len(dest_hash) == RNS.Reticulum.TRUNCATED_HASHLENGTH // 8:
+                    message_router.prioritise(dest_hash)
+            except Exception as e:
+                RNS.log(
+                    "Cannot prioritise "
+                    + str(dest_str)
+                    + ", it is not a valid destination hash",
+                    RNS.LOG_ERROR,
+                )
 
         message_router.enable_propagation()
-        
+
         for ident_str in active_configuration["control_allowed_identities"]:
             try:
                 identity_hash = bytes.fromhex(ident_str)
-                if len(identity_hash) == RNS.Reticulum.TRUNCATED_HASHLENGTH//8: message_router.allow_control(identity_hash)
-            except Exception as e: RNS.log(f"Cannot allow control from {ident_str}, it is not a valid identity hash", RNS.LOG_ERROR)
+                if len(identity_hash) == RNS.Reticulum.TRUNCATED_HASHLENGTH // 8:
+                    message_router.allow_control(identity_hash)
+            except Exception as e:
+                RNS.log(
+                    f"Cannot allow control from {ident_str}, it is not a valid identity hash",
+                    RNS.LOG_ERROR,
+                )
 
-        RNS.log("LXMF Propagation Node started on "+RNS.prettyhexrep(message_router.propagation_destination.hash))
+        RNS.log(
+            "LXMF Propagation Node started on "
+            + RNS.prettyhexrep(message_router.propagation_destination.hash)
+        )
 
-    RNS.log("Started lxmd version {version}".format(version=__version__), RNS.LOG_NOTICE)
+    RNS.log(
+        "Started lxmd version {version}".format(version=__version__), RNS.LOG_NOTICE
+    )
 
     threading.Thread(target=deferred_start_jobs, daemon=True).start()
 
     while True:
         time.sleep(1)
 
+
 def jobs():
     global active_configuration, last_peer_announce, last_node_announce
     global message_router, lxmf_destination
-    
+
     while True:
         try:
-            if "peer_announce_interval" in active_configuration and active_configuration["peer_announce_interval"] != None:
-                if time.time() > last_peer_announce + active_configuration["peer_announce_interval"]:
-                    RNS.log("Sending announce for LXMF delivery destination", RNS.LOG_VERBOSE)
+            if (
+                "peer_announce_interval" in active_configuration
+                and active_configuration["peer_announce_interval"] != None
+            ):
+                if (
+                    time.time()
+                    > last_peer_announce
+                    + active_configuration["peer_announce_interval"]
+                ):
+                    RNS.log(
+                        "Sending announce for LXMF delivery destination",
+                        RNS.LOG_VERBOSE,
+                    )
                     message_router.announce(lxmf_destination.hash)
                     last_peer_announce = time.time()
 
-            if "node_announce_interval" in active_configuration and active_configuration["node_announce_interval"] != None:
-                if time.time() > last_node_announce + active_configuration["node_announce_interval"]:
-                    RNS.log("Sending announce for LXMF Propagation Node", RNS.LOG_VERBOSE)
+            if (
+                "node_announce_interval" in active_configuration
+                and active_configuration["node_announce_interval"] != None
+            ):
+                if (
+                    time.time()
+                    > last_node_announce
+                    + active_configuration["node_announce_interval"]
+                ):
+                    RNS.log(
+                        "Sending announce for LXMF Propagation Node", RNS.LOG_VERBOSE
+                    )
                     message_router.announce_propagation_node()
                     last_node_announce = time.time()
 
         except Exception as e:
-            RNS.log("An error occurred while running periodic jobs. The contained exception was: "+str(e), RNS.LOG_ERROR)
+            RNS.log(
+                "An error occurred while running periodic jobs. The contained exception was: "
+                + str(e),
+                RNS.LOG_ERROR,
+            )
 
         time.sleep(JOBS_INTERVAL)
+
 
 def deferred_start_jobs():
     global active_configuration, last_peer_announce, last_node_announce
@@ -490,10 +717,21 @@ def deferred_start_jobs():
     last_node_announce = time.time()
     threading.Thread(target=jobs, daemon=True).start()
 
-def _request_sync(identity, destination_hash, remote_identity, timeout=15, exit_on_fail=False):
-    control_destination = RNS.Destination(remote_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, APP_NAME, "propagation", "control")
 
-    timeout = time.time()+timeout
+def _request_sync(
+    identity, destination_hash, remote_identity, timeout=15, exit_on_fail=False
+):
+    control_destination = RNS.Destination(
+        remote_identity,
+        RNS.Destination.OUT,
+        RNS.Destination.SINGLE,
+        APP_NAME,
+        "propagation",
+        "control",
+    )
+
+    timeout = time.time() + timeout
+
     def check_timeout():
         if time.time() > timeout:
             if exit_on_fail:
@@ -518,7 +756,12 @@ def _request_sync(identity, destination_hash, remote_identity, timeout=15, exit_
             return tc
 
     link.identify(identity)
-    request_receipt = link.request(LXMF.LXMRouter.SYNC_REQUEST_PATH, data=destination_hash, response_callback=None, failed_callback=None)
+    request_receipt = link.request(
+        LXMF.LXMRouter.SYNC_REQUEST_PATH,
+        data=destination_hash,
+        response_callback=None,
+        failed_callback=None,
+    )
     while not request_receipt.get_status() == RNS.RequestReceipt.READY:
         tc = check_timeout()
         if tc:
@@ -528,19 +771,37 @@ def _request_sync(identity, destination_hash, remote_identity, timeout=15, exit_
     return request_receipt.get_response()
 
 
-def request_sync(target, remote=None, configdir=None, rnsconfigdir=None, verbosity=0, quietness=0, timeout=15, identity_path=None):
+def request_sync(
+    target,
+    remote=None,
+    configdir=None,
+    rnsconfigdir=None,
+    verbosity=0,
+    quietness=0,
+    timeout=15,
+    identity_path=None,
+):
     global configpath, identitypath, storagedir, lxmdir
     global lxmd_config, active_configuration, targetloglevel
 
     try:
         peer_destination_hash = bytes.fromhex(target)
-        if len(peer_destination_hash) != RNS.Identity.TRUNCATED_HASHLENGTH//8: raise ValueError(f"Destination hash length must be {RNS.Identity.TRUNCATED_HASHLENGTH//8*2} characters")
+        if len(peer_destination_hash) != RNS.Identity.TRUNCATED_HASHLENGTH // 8:
+            raise ValueError(
+                f"Destination hash length must be {RNS.Identity.TRUNCATED_HASHLENGTH//8*2} characters"
+            )
     except Exception as e:
         print(f"Invalid peer destination hash: {e}")
         exit(203)
     remote
     _remote_init(configdir, rnsconfigdir, verbosity, quietness, identity_path)
-    response = _request_sync(identity, peer_destination_hash, remote_identity=_get_target_identity(remote), timeout=timeout, exit_on_fail=True)
+    response = _request_sync(
+        identity,
+        peer_destination_hash,
+        remote_identity=_get_target_identity(remote),
+        timeout=timeout,
+        exit_on_fail=True,
+    )
 
     if response == LXMF.LXMPeer.LXMPeer.ERROR_NO_IDENTITY:
         print("Remote received no identity")
@@ -561,17 +822,30 @@ def request_sync(target, remote=None, configdir=None, rnsconfigdir=None, verbosi
         print(f"Sync requested for peer {RNS.prettyhexrep(peer_destination_hash)}")
         exit(0)
 
-def _request_unpeer(identity, destination_hash, remote_identity, timeout=15, exit_on_fail=False):
-    control_destination = RNS.Destination(remote_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, APP_NAME, "propagation", "control")
 
-    timeout = time.time()+timeout
+def _request_unpeer(
+    identity, destination_hash, remote_identity, timeout=15, exit_on_fail=False
+):
+    control_destination = RNS.Destination(
+        remote_identity,
+        RNS.Destination.OUT,
+        RNS.Destination.SINGLE,
+        APP_NAME,
+        "propagation",
+        "control",
+    )
+
+    timeout = time.time() + timeout
+
     def check_timeout():
         if time.time() > timeout:
             if exit_on_fail:
                 print("Requesting lxmd peering break timed out, exiting now")
                 exit(200)
-            else: return LXMF.LXMPeer.LXMPeer.ERROR_TIMEOUT
-        else: time.sleep(0.1)
+            else:
+                return LXMF.LXMPeer.LXMPeer.ERROR_TIMEOUT
+        else:
+            time.sleep(0.1)
 
     if not RNS.Transport.has_path(control_destination.hash):
         RNS.Transport.request_path(control_destination.hash)
@@ -587,7 +861,12 @@ def _request_unpeer(identity, destination_hash, remote_identity, timeout=15, exi
             return tc
 
     link.identify(identity)
-    request_receipt = link.request(LXMF.LXMRouter.UNPEER_REQUEST_PATH, data=destination_hash, response_callback=None, failed_callback=None)
+    request_receipt = link.request(
+        LXMF.LXMRouter.UNPEER_REQUEST_PATH,
+        data=destination_hash,
+        response_callback=None,
+        failed_callback=None,
+    )
     while not request_receipt.get_status() == RNS.RequestReceipt.READY:
         tc = check_timeout()
         if tc:
@@ -597,19 +876,37 @@ def _request_unpeer(identity, destination_hash, remote_identity, timeout=15, exi
     return request_receipt.get_response()
 
 
-def request_unpeer(target, remote=None, configdir=None, rnsconfigdir=None, verbosity=0, quietness=0, timeout=15, identity_path=None):
+def request_unpeer(
+    target,
+    remote=None,
+    configdir=None,
+    rnsconfigdir=None,
+    verbosity=0,
+    quietness=0,
+    timeout=15,
+    identity_path=None,
+):
     global configpath, identitypath, storagedir, lxmdir
     global lxmd_config, active_configuration, targetloglevel
 
     try:
         peer_destination_hash = bytes.fromhex(target)
-        if len(peer_destination_hash) != RNS.Identity.TRUNCATED_HASHLENGTH//8: raise ValueError(f"Destination hash length must be {RNS.Identity.TRUNCATED_HASHLENGTH//8*2} characters")
+        if len(peer_destination_hash) != RNS.Identity.TRUNCATED_HASHLENGTH // 8:
+            raise ValueError(
+                f"Destination hash length must be {RNS.Identity.TRUNCATED_HASHLENGTH//8*2} characters"
+            )
     except Exception as e:
         print(f"Invalid peer destination hash: {e}")
         exit(203)
     remote
     _remote_init(configdir, rnsconfigdir, verbosity, quietness, identity_path)
-    response = _request_unpeer(identity, peer_destination_hash, remote_identity=_get_target_identity(remote), timeout=timeout, exit_on_fail=True)
+    response = _request_unpeer(
+        identity,
+        peer_destination_hash,
+        remote_identity=_get_target_identity(remote),
+        timeout=timeout,
+        exit_on_fail=True,
+    )
 
     if response == LXMF.LXMPeer.LXMPeer.ERROR_NO_IDENTITY:
         print("Remote received no identity")
@@ -630,45 +927,80 @@ def request_unpeer(target, remote=None, configdir=None, rnsconfigdir=None, verbo
         print(f"Broke peering with {RNS.prettyhexrep(peer_destination_hash)}")
         exit(0)
 
-def query_status(identity, remote_identity=None, timeout=5, exit_on_fail=False):
-    if remote_identity == None: remote_identity = identity
-    control_destination = RNS.Destination(remote_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, APP_NAME, "propagation", "control")
 
-    timeout = time.time()+timeout
+def query_status(identity, remote_identity=None, timeout=5, exit_on_fail=False):
+    if remote_identity == None:
+        remote_identity = identity
+    control_destination = RNS.Destination(
+        remote_identity,
+        RNS.Destination.OUT,
+        RNS.Destination.SINGLE,
+        APP_NAME,
+        "propagation",
+        "control",
+    )
+
+    timeout = time.time() + timeout
+
     def check_timeout():
         if time.time() > timeout:
             if exit_on_fail:
                 print("Getting lxmd statistics timed out, exiting now")
                 exit(200)
-            else: return LXMF.LXMPeer.LXMPeer.ERROR_TIMEOUT
-        else: time.sleep(0.1)
+            else:
+                return LXMF.LXMPeer.LXMPeer.ERROR_TIMEOUT
+        else:
+            time.sleep(0.1)
 
     if not RNS.Transport.has_path(control_destination.hash):
         RNS.Transport.request_path(control_destination.hash)
         while not RNS.Transport.has_path(control_destination.hash):
             tc = check_timeout()
-            if tc: return tc
+            if tc:
+                return tc
 
     link = RNS.Link(control_destination)
     while not link.status == RNS.Link.ACTIVE:
         tc = check_timeout()
-        if tc: return tc
+        if tc:
+            return tc
 
     link.identify(identity)
-    request_receipt = link.request(LXMF.LXMRouter.STATS_GET_PATH, data=None, response_callback=None, failed_callback=None)
+    request_receipt = link.request(
+        LXMF.LXMRouter.STATS_GET_PATH,
+        data=None,
+        response_callback=None,
+        failed_callback=None,
+    )
     while not request_receipt.get_status() == RNS.RequestReceipt.READY:
         tc = check_timeout()
-        if tc: return tc
+        if tc:
+            return tc
 
     link.teardown()
     return request_receipt.get_response()
 
-def get_status(remote=None, configdir=None, rnsconfigdir=None, verbosity=0, quietness=0, timeout=5,
-               show_status=False, show_peers=False, identity_path=None):
+
+def get_status(
+    remote=None,
+    configdir=None,
+    rnsconfigdir=None,
+    verbosity=0,
+    quietness=0,
+    timeout=5,
+    show_status=False,
+    show_peers=False,
+    identity_path=None,
+):
 
     global identity
     _remote_init(configdir, rnsconfigdir, verbosity, quietness, identity_path)
-    response = query_status(identity, remote_identity=_get_target_identity(remote), timeout=timeout, exit_on_fail=True)
+    response = query_status(
+        identity,
+        remote_identity=_get_target_identity(remote),
+        timeout=timeout,
+        exit_on_fail=True,
+    )
 
     if response == LXMF.LXMPeer.LXMPeer.ERROR_NO_IDENTITY:
         print("Remote received no identity")
@@ -681,7 +1013,9 @@ def get_status(remote=None, configdir=None, rnsconfigdir=None, verbosity=0, quie
         exit(207)
     else:
         s = response
-        mutil = round((s["messagestore"]["bytes"]/s["messagestore"]["limit"])*100, 2)
+        mutil = round(
+            (s["messagestore"]["bytes"] / s["messagestore"]["limit"]) * 100, 2
+        )
         ms_util = f"{mutil}%"
         if s["from_static_only"]:
             who_str = "static peers only"
@@ -702,27 +1036,47 @@ def get_status(remote=None, configdir=None, rnsconfigdir=None, verbosity=0, quie
             peered_rx_bytes += p["rx_bytes"]
             peered_tx_bytes += p["tx_bytes"]
 
-            if p["alive"]: available_peers   += 1
-            else:          unreachable_peers += 1
+            if p["alive"]:
+                available_peers += 1
+            else:
+                unreachable_peers += 1
 
-        total_incoming = peered_incoming+s["unpeered_propagation_incoming"]+s["clients"]["client_propagation_messages_received"]
-        total_rx_bytes = peered_rx_bytes+s["unpeered_propagation_rx_bytes"]
-        if total_incoming != 0: df = round(peered_outgoing/total_incoming, 2)
-        else:                   df = 0
+        total_incoming = (
+            peered_incoming
+            + s["unpeered_propagation_incoming"]
+            + s["clients"]["client_propagation_messages_received"]
+        )
+        total_rx_bytes = peered_rx_bytes + s["unpeered_propagation_rx_bytes"]
+        if total_incoming != 0:
+            df = round(peered_outgoing / total_incoming, 2)
+        else:
+            df = 0
 
-        dhs = RNS.prettyhexrep(s["destination_hash"]); uts = RNS.prettytime(s["uptime"])
+        dhs = RNS.prettyhexrep(s["destination_hash"])
+        uts = RNS.prettytime(s["uptime"])
         print(f"\nLXMF Propagation Node running on {dhs}, uptime is {uts}")
 
         if show_status:
-            msb   = RNS.prettysize(s["messagestore"]["bytes"]); msl = RNS.prettysize(s["messagestore"]["limit"])
-            ptl   = RNS.prettysize(s["propagation_limit"]*1000); psl = RNS.prettysize(s["sync_limit"]*1000); 
+            msb = RNS.prettysize(s["messagestore"]["bytes"])
+            msl = RNS.prettysize(s["messagestore"]["limit"])
+            ptl = RNS.prettysize(s["propagation_limit"] * 1000)
+            psl = RNS.prettysize(s["sync_limit"] * 1000)
             uprx = RNS.prettysize(s["unpeered_propagation_rx_bytes"])
-            mscnt = s["messagestore"]["count"]; stp = s["total_peers"]; smp = s["max_peers"]; sdp = s["discovered_peers"]
-            ssp   = s["static_peers"]; cprr = s["clients"]["client_propagation_messages_received"]
-            cprs  = s["clients"]["client_propagation_messages_served"]; upi = s["unpeered_propagation_incoming"]
-            psc   = s["target_stamp_cost"]; scf = s["stamp_cost_flexibility"]
-            pc    = s["peering_cost"]; pcm = s["max_peering_cost"]
-            print(f"Messagestore contains {mscnt} messages, {msb} ({ms_util} utilised of {msl})")
+            mscnt = s["messagestore"]["count"]
+            stp = s["total_peers"]
+            smp = s["max_peers"]
+            sdp = s["discovered_peers"]
+            ssp = s["static_peers"]
+            cprr = s["clients"]["client_propagation_messages_received"]
+            cprs = s["clients"]["client_propagation_messages_served"]
+            upi = s["unpeered_propagation_incoming"]
+            psc = s["target_stamp_cost"]
+            scf = s["stamp_cost_flexibility"]
+            pc = s["peering_cost"]
+            pcm = s["max_peering_cost"]
+            print(
+                f"Messagestore contains {mscnt} messages, {msb} ({ms_util} utilised of {msl})"
+            )
             print(f"Required propagation stamp cost is {psc}, flexibility is {scf}")
             print(f"Peering cost is {pc}, max remote peering cost is {pcm}")
             print(f"Accepting propagated messages from {who_str}")
@@ -730,13 +1084,23 @@ def get_status(remote=None, configdir=None, rnsconfigdir=None, verbosity=0, quie
             print(f"")
             print(f"Peers   : {stp} total (peer limit is {smp})")
             print(f"          {sdp} discovered, {ssp} static")
-            print(f"          {available_peers} available, {unreachable_peers} unreachable")
+            print(
+                f"          {available_peers} available, {unreachable_peers} unreachable"
+            )
             print(f"")
-            print(f"Traffic : {total_incoming} messages received in total ({RNS.prettysize(total_rx_bytes)})")
-            print(f"          {peered_incoming} messages received from peered nodes ({RNS.prettysize(peered_rx_bytes)})")
+            print(
+                f"Traffic : {total_incoming} messages received in total ({RNS.prettysize(total_rx_bytes)})"
+            )
+            print(
+                f"          {peered_incoming} messages received from peered nodes ({RNS.prettysize(peered_rx_bytes)})"
+            )
             print(f"          {upi} messages received from unpeered nodes ({uprx})")
-            print(f"          {peered_outgoing} messages transferred to peered nodes ({RNS.prettysize(peered_tx_bytes)})")
-            print(f"          {cprr} propagation messages received directly from clients")
+            print(
+                f"          {peered_outgoing} messages transferred to peered nodes ({RNS.prettysize(peered_tx_bytes)})"
+            )
+            print(
+                f"          {cprr} propagation messages received directly from clients"
+            )
             print(f"          {cprs} propagation messages served to clients")
             print(f"          Distribution factor is {df}")
             print(f"")
@@ -755,76 +1119,124 @@ def get_status(remote=None, configdir=None, rnsconfigdir=None, verbosity=0, quie
                 else:
                     t = "Unknown peer    "
                 a = "Available" if p["alive"] == True else "Unreachable"
-                h = max(time.time()-p["last_heard"], 0)
+                h = max(time.time() - p["last_heard"], 0)
                 hops = p["network_distance"]
-                hs = "hops unknown" if hops == RNS.Transport.PATHFINDER_M else f"{hops} hop away" if hops == 1 else f"{hops} hops away"
-                pm = p["messages"]; pk = p["peering_key"]
-                pc = p["peering_cost"]; psc = p["target_stamp_cost"]; psf = p["stamp_cost_flexibility"]
-                if pc == None: pc = "unknown"
-                if psc == None: psc = "unknown"
-                if psf == None: psf = "unknown"
-                if pk == None: pk = "Not generated"
-                else:          pk = f"Generated, value is {pk}"
+                hs = (
+                    "hops unknown"
+                    if hops == RNS.Transport.PATHFINDER_M
+                    else f"{hops} hop away" if hops == 1 else f"{hops} hops away"
+                )
+                pm = p["messages"]
+                pk = p["peering_key"]
+                pc = p["peering_cost"]
+                psc = p["target_stamp_cost"]
+                psf = p["stamp_cost_flexibility"]
+                if pc == None:
+                    pc = "unknown"
+                if psc == None:
+                    psc = "unknown"
+                if psf == None:
+                    psf = "unknown"
+                if pk == None:
+                    pk = "Not generated"
+                else:
+                    pk = f"Generated, value is {pk}"
                 if p["last_sync_attempt"] != 0:
                     lsa = p["last_sync_attempt"]
                     ls = f"last synced {RNS.prettytime(max(time.time()-lsa, 0))} ago"
                 else:
                     ls = "never synced"
 
-                sstr = RNS.prettyspeed(p["str"]); sler = RNS.prettyspeed(p["ler"])
-                stl = RNS.prettysize(p["transfer_limit"]*1000) if p["transfer_limit"] else "Unknown"
-                ssl = RNS.prettysize(p["sync_limit"]*1000) if p["sync_limit"] else "unknown"
-                srxb = RNS.prettysize(p["rx_bytes"]); stxb = RNS.prettysize(p["tx_bytes"]); pmo = pm["offered"]; pmout = pm["outgoing"]
-                pmi  = pm["incoming"]; pmuh = pm["unhandled"]; ar = round(p["acceptance_rate"]*100, 2)
-                if p["name"] == None: nn = ""
-                else: nn = p["name"].strip().replace("\n", "").replace("\r", "")
-                if len(nn) > 45: nn = f"{nn[:45]}..."
+                sstr = RNS.prettyspeed(p["str"])
+                sler = RNS.prettyspeed(p["ler"])
+                stl = (
+                    RNS.prettysize(p["transfer_limit"] * 1000)
+                    if p["transfer_limit"]
+                    else "Unknown"
+                )
+                ssl = (
+                    RNS.prettysize(p["sync_limit"] * 1000)
+                    if p["sync_limit"]
+                    else "unknown"
+                )
+                srxb = RNS.prettysize(p["rx_bytes"])
+                stxb = RNS.prettysize(p["tx_bytes"])
+                pmo = pm["offered"]
+                pmout = pm["outgoing"]
+                pmi = pm["incoming"]
+                pmuh = pm["unhandled"]
+                ar = round(p["acceptance_rate"] * 100, 2)
+                if p["name"] == None:
+                    nn = ""
+                else:
+                    nn = p["name"].strip().replace("\n", "").replace("\r", "")
+                if len(nn) > 45:
+                    nn = f"{nn[:45]}..."
                 print(f"{ind}{t}{RNS.prettyhexrep(peer_id)}")
-                if len(nn): print(f"{ind*2}Name       : {nn}")
-                print(f"{ind*2}Status     : {a}, {hs}, last heard {RNS.prettytime(h)} ago")
-                print(f"{ind*2}Costs      : Propagation {psc} (flex {psf}), peering {pc}")
+                if len(nn):
+                    print(f"{ind*2}Name       : {nn}")
+                print(
+                    f"{ind*2}Status     : {a}, {hs}, last heard {RNS.prettytime(h)} ago"
+                )
+                print(
+                    f"{ind*2}Costs      : Propagation {psc} (flex {psf}), peering {pc}"
+                )
                 print(f"{ind*2}Sync key   : {pk}")
                 print(f"{ind*2}Speeds     : {sstr} STR, {sler} LER")
                 print(f"{ind*2}Limits     : {stl} message limit, {ssl} sync limit")
-                print(f"{ind*2}Messages   : {pmo} offered, {pmout} outgoing, {pmi} incoming, {ar}% acceptance rate")
+                print(
+                    f"{ind*2}Messages   : {pmo} offered, {pmout} outgoing, {pmi} incoming, {ar}% acceptance rate"
+                )
                 print(f"{ind*2}Traffic    : {srxb} received, {stxb} sent")
                 ms = "" if pm["unhandled"] == 1 else "s"
                 print(f"{ind*2}Sync state : {pmuh} unhandled message{ms}, {ls}")
                 print("")
 
+
 def _get_target_identity(remote=None, timeout=5):
     global identity
-    timeout = time.time()+timeout
+    timeout = time.time() + timeout
+
     def check_timeout():
         if time.time() > timeout:
             print("Resolving remote identity timed out, exiting now")
             exit(200)
-        else: time.sleep(0.1)
+        else:
+            time.sleep(0.1)
 
-    if remote == None: return identity
+    if remote == None:
+        return identity
     else:
         try:
             destination_hash = bytes.fromhex(remote)
-            if len(destination_hash) != RNS.Identity.TRUNCATED_HASHLENGTH//8: raise ValueError(f"Destination hash length must be {RNS.Identity.TRUNCATED_HASHLENGTH//8*2} characters")
+            if len(destination_hash) != RNS.Identity.TRUNCATED_HASHLENGTH // 8:
+                raise ValueError(
+                    f"Destination hash length must be {RNS.Identity.TRUNCATED_HASHLENGTH//8*2} characters"
+                )
         except Exception as e:
             print(f"Invalid remote destination hash: {e}")
             exit(203)
 
         remote_identity = RNS.Identity.recall(destination_hash)
-        if remote_identity: return remote_identity
+        if remote_identity:
+            return remote_identity
         else:
             if not RNS.Transport.has_path(destination_hash):
                 RNS.Transport.request_path(destination_hash)
                 while not RNS.Transport.has_path(destination_hash):
                     tc = check_timeout()
-                    if tc: return tc
+                    if tc:
+                        return tc
 
             return RNS.Identity.recall(destination_hash)
 
-def _remote_init(configdir=None, rnsconfigdir=None, verbosity=0, quietness=0, identity_path=None):
+
+def _remote_init(
+    configdir=None, rnsconfigdir=None, verbosity=0, quietness=0, identity_path=None
+):
     global configpath, identitypath, storagedir, lxmdir, identity
     global lxmd_config, active_configuration, targetloglevel
-    targetlogdest  = RNS.LOG_STDOUT
+    targetlogdest = RNS.LOG_STDOUT
 
     if identity_path == None:
         if configdir == None:
@@ -832,57 +1244,157 @@ def _remote_init(configdir=None, rnsconfigdir=None, verbosity=0, quietness=0, id
 
         configdir = str(configdir)
 
-        configpath   = configdir+"/config"
-        identitypath = configdir+"/identity"
+        configpath = configdir + "/config"
+        identitypath = configdir + "/identity"
         identity = None
 
         if not os.path.isdir(configdir):
-            RNS.log("Specified configuration directory does not exist, exiting now", RNS.LOG_ERROR)
+            RNS.log(
+                "Specified configuration directory does not exist, exiting now",
+                RNS.LOG_ERROR,
+            )
             exit(201)
         if not os.path.isfile(identitypath):
-            RNS.log("Identity file not found in specified configuration directory, exiting now", RNS.LOG_ERROR)
+            RNS.log(
+                "Identity file not found in specified configuration directory, exiting now",
+                RNS.LOG_ERROR,
+            )
             exit(202)
         else:
             identity = RNS.Identity.from_file(identitypath)
             if identity == None:
-                RNS.log("Could not load the Primary Identity from "+identitypath, RNS.LOG_ERROR)
+                RNS.log(
+                    "Could not load the Primary Identity from " + identitypath,
+                    RNS.LOG_ERROR,
+                )
                 exit(4)
 
     else:
         if not os.path.isfile(identity_path):
-            RNS.log("Identity file not found in specified configuration directory, exiting now", RNS.LOG_ERROR)
+            RNS.log(
+                "Identity file not found in specified configuration directory, exiting now",
+                RNS.LOG_ERROR,
+            )
             exit(202)
         else:
             identity = RNS.Identity.from_file(identity_path)
             if identity == None:
-                RNS.log("Could not load the Primary Identity from "+identity_path, RNS.LOG_ERROR)
-                exit(4)        
+                RNS.log(
+                    "Could not load the Primary Identity from " + identity_path,
+                    RNS.LOG_ERROR,
+                )
+                exit(4)
 
-    if targetloglevel == None: targetloglevel = 3
-    if verbosity != 0 or quietness != 0: targetloglevel = targetloglevel+verbosity-quietness
-    
-    reticulum = RNS.Reticulum(configdir=rnsconfigdir, loglevel=targetloglevel, logdest=targetlogdest)
+    if targetloglevel == None:
+        targetloglevel = 3
+    if verbosity != 0 or quietness != 0:
+        targetloglevel = targetloglevel + verbosity - quietness
+
+    reticulum = RNS.Reticulum(
+        configdir=rnsconfigdir, loglevel=targetloglevel, logdest=targetlogdest
+    )
+
 
 def main():
     try:
-        parser = argparse.ArgumentParser(description="Lightweight Extensible Messaging Daemon")
-        parser.add_argument("--config", action="store", default=None, help="path to alternative lxmd config directory", type=str)
-        parser.add_argument("--rnsconfig", action="store", default=None, help="path to alternative Reticulum config directory", type=str)
-        parser.add_argument("-p", "--propagation-node", action="store_true", default=False, help="run an LXMF Propagation Node")
-        parser.add_argument("-i", "--on-inbound", action="store", metavar="PATH", default=None, help="executable to run when a message is received", type=str)
+        parser = argparse.ArgumentParser(
+            description="Lightweight Extensible Messaging Daemon"
+        )
+        parser.add_argument(
+            "--config",
+            action="store",
+            default=None,
+            help="path to alternative lxmd config directory",
+            type=str,
+        )
+        parser.add_argument(
+            "--rnsconfig",
+            action="store",
+            default=None,
+            help="path to alternative Reticulum config directory",
+            type=str,
+        )
+        parser.add_argument(
+            "-p",
+            "--propagation-node",
+            action="store_true",
+            default=False,
+            help="run an LXMF Propagation Node",
+        )
+        parser.add_argument(
+            "-i",
+            "--on-inbound",
+            action="store",
+            metavar="PATH",
+            default=None,
+            help="executable to run when a message is received",
+            type=str,
+        )
         parser.add_argument("-v", "--verbose", action="count", default=0)
         parser.add_argument("-q", "--quiet", action="count", default=0)
-        parser.add_argument("-s", "--service", action="store_true", default=False, help="lxmd is running as a service and should log to file")
-        parser.add_argument("--status", action="store_true", default=False, help="display node status")
-        parser.add_argument("--peers", action="store_true", default=False, help="display peered nodes")
-        parser.add_argument("--sync", action="store", default=None, help="request a sync with the specified peer", type=str)
-        parser.add_argument("-b", "--break", dest="unpeer", action="store", default=None, help="break peering with the specified peer", type=str)
-        parser.add_argument("--timeout", action="store", default=None, help="timeout in seconds for query operations", type=float)
-        parser.add_argument("-r", "--remote", action="store", default=None, help="remote propagation node destination hash", type=str)
-        parser.add_argument("--identity", action="store", default=None, help="path to identity used for remote requests", type=str)
-        parser.add_argument("--exampleconfig", action="store_true", default=False, help="print verbose configuration example to stdout and exit")
-        parser.add_argument("--version", action="version", version="lxmd {version}".format(version=__version__))
-        
+        parser.add_argument(
+            "-s",
+            "--service",
+            action="store_true",
+            default=False,
+            help="lxmd is running as a service and should log to file",
+        )
+        parser.add_argument(
+            "--status", action="store_true", default=False, help="display node status"
+        )
+        parser.add_argument(
+            "--peers", action="store_true", default=False, help="display peered nodes"
+        )
+        parser.add_argument(
+            "--sync",
+            action="store",
+            default=None,
+            help="request a sync with the specified peer",
+            type=str,
+        )
+        parser.add_argument(
+            "-b",
+            "--break",
+            dest="unpeer",
+            action="store",
+            default=None,
+            help="break peering with the specified peer",
+            type=str,
+        )
+        parser.add_argument(
+            "--timeout",
+            action="store",
+            default=None,
+            help="timeout in seconds for query operations",
+            type=float,
+        )
+        parser.add_argument(
+            "-r",
+            "--remote",
+            action="store",
+            default=None,
+            help="remote propagation node destination hash",
+            type=str,
+        )
+        parser.add_argument(
+            "--identity",
+            action="store",
+            default=None,
+            help="path to identity used for remote requests",
+            type=str,
+        )
+        parser.add_argument(
+            "--exampleconfig",
+            action="store_true",
+            default=False,
+            help="print verbose configuration example to stdout and exit",
+        )
+        parser.add_argument(
+            "--version",
+            action="version",
+            version="lxmd {version}".format(version=__version__),
+        )
+
         args = parser.parse_args()
 
         if args.exampleconfig:
@@ -890,53 +1402,65 @@ def main():
             exit()
 
         if args.status or args.peers:
-            if not args.timeout: args.timeout = 5
-            get_status(configdir = args.config,
-                       rnsconfigdir=args.rnsconfig,
-                       verbosity=args.verbose,
-                       quietness=args.quiet,
-                       timeout=args.timeout,
-                       show_status=args.status,
-                       show_peers=args.peers,
-                       identity_path=args.identity,
-                       remote=args.remote)
+            if not args.timeout:
+                args.timeout = 5
+            get_status(
+                configdir=args.config,
+                rnsconfigdir=args.rnsconfig,
+                verbosity=args.verbose,
+                quietness=args.quiet,
+                timeout=args.timeout,
+                show_status=args.status,
+                show_peers=args.peers,
+                identity_path=args.identity,
+                remote=args.remote,
+            )
             exit()
 
         if args.sync:
-            if not args.timeout: args.timeout = 10
-            request_sync(target=args.sync,
-                         configdir = args.config,
-                         rnsconfigdir=args.rnsconfig,
-                         verbosity=args.verbose,
-                         quietness=args.quiet,
-                         timeout=args.timeout,
-                         identity_path=args.identity,
-                         remote=args.remote)
+            if not args.timeout:
+                args.timeout = 10
+            request_sync(
+                target=args.sync,
+                configdir=args.config,
+                rnsconfigdir=args.rnsconfig,
+                verbosity=args.verbose,
+                quietness=args.quiet,
+                timeout=args.timeout,
+                identity_path=args.identity,
+                remote=args.remote,
+            )
             exit()
 
         if args.unpeer:
-            if not args.timeout: args.timeout = 10
-            request_unpeer(target=args.unpeer,
-                           configdir = args.config,
-                           rnsconfigdir=args.rnsconfig,
-                           verbosity=args.verbose,
-                           quietness=args.quiet,
-                           timeout=args.timeout,
-                           identity_path=args.identity,
-                           remote=args.remote)
+            if not args.timeout:
+                args.timeout = 10
+            request_unpeer(
+                target=args.unpeer,
+                configdir=args.config,
+                rnsconfigdir=args.rnsconfig,
+                verbosity=args.verbose,
+                quietness=args.quiet,
+                timeout=args.timeout,
+                identity_path=args.identity,
+                remote=args.remote,
+            )
             exit()
 
-        program_setup(configdir = args.config,
-                      rnsconfigdir=args.rnsconfig,
-                      run_pn=args.propagation_node,
-                      on_inbound=args.on_inbound,
-                      verbosity=args.verbose,
-                      quietness=args.quiet,
-                      service=args.service)
+        program_setup(
+            configdir=args.config,
+            rnsconfigdir=args.rnsconfig,
+            run_pn=args.propagation_node,
+            on_inbound=args.on_inbound,
+            verbosity=args.verbose,
+            quietness=args.quiet,
+            service=args.service,
+        )
 
     except KeyboardInterrupt:
         print("")
         exit()
+
 
 __default_lxmd_config__ = """# This is an example LXM Daemon config file.
 # You should probably edit it to suit your
