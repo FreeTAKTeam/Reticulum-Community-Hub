@@ -34,3 +34,4 @@
 - 2025-12-03: ✅ Ensure TAK COR events use TCP unicast with TAK_PROTO=0 and FTS_COMPAT=1 defaults.
 - 2025-12-03: ✅ Wrap CoT JSON payloads with the event root type to match ATAK expectations.
 - 2025-12-03: ✅ Ensure TAK connector emits a takPong keepalive every 60 seconds.
+- 2025-12-03: ✅ Maintain overall test coverage at or above 90%.
