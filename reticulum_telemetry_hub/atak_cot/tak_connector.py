@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 import json
+import uuid
 
 import RNS
 from sqlalchemy.orm.exc import DetachedInstanceError
@@ -64,6 +65,20 @@ def _utc_iso(dt: datetime) -> str:
     """
 
     return dt.replace(microsecond=0).isoformat() + "Z"
+
+
+def _utc_iso_millis(dt: datetime) -> str:
+    """Format a ``datetime`` in UTC with millisecond precision.
+
+    Args:
+        dt (datetime): Datetime to normalise.
+
+    Returns:
+        str: ISO-8601 timestamp with milliseconds and a ``Z`` suffix.
+    """
+
+    normalized = dt.replace(microsecond=int(dt.microsecond / 1000) * 1000)
+    return normalized.isoformat(timespec="milliseconds") + "Z"
 
 
 class TakConnector:
@@ -281,6 +296,7 @@ class TakConnector:
         topic_id: str | None = None,
         source_hash: str | None = None,
         timestamp: datetime | None = None,
+        message_uuid: str | None = None,
     ) -> Event:
         """Construct a CoT chat :class:`Event` for LXMF message content.
 
@@ -291,6 +307,8 @@ class TakConnector:
             source_hash (str | None): Optional sender hash used to derive the
                 UID.
             timestamp (datetime | None): Time the LXMF message was created.
+            message_uuid (str | None): Optional UUID for the chat message
+                allowing deterministic testing.
 
         Returns:
             Event: Populated CoT chat event ready for transmission.
@@ -299,37 +317,39 @@ class TakConnector:
         if not content:
             raise ValueError("Chat content is required to build a CoT event.")
 
-        now = datetime.utcnow()
-        start_time = timestamp or now
-        stale = start_time + timedelta(minutes=1)
-
-        identifier = self._identifier_from_hash(source_hash)
-        uid = self._uid_from_hash(source_hash)
+        event_time = timestamp or datetime.utcnow()
+        stale = event_time + timedelta(hours=24)
         chatroom = str(topic_id) if topic_id else "All Chat Rooms"
-        server_uid = self._config.callsign or "RTH"
+        sender_uid = self._normalize_hash(source_hash) or self._config.callsign
+        message_id = message_uuid or str(uuid.uuid4())
+        event_uid = f"GeoChat.{sender_uid}.{chatroom}.{message_id}"
 
         chat_group = ChatGroup(
-            chatroom=chatroom,
-            chat_id=server_uid,
-            uid0=server_uid,
+            chatroom=None,
+            chat_id=chatroom,
+            uid0=sender_uid,
             uid1=chatroom,
         )
         chat = Chat(
             id=chatroom,
             chatroom=chatroom,
+            sender_callsign=sender_label,
             group_owner="false",
+            message_id=message_id,
             chat_group=chat_group,
         )
         link = Link(
-            uid=identifier,
+            uid=sender_uid,
             type=self.CHAT_LINK_TYPE,
             relation="p-p",
         )
+        remarks_source = f"LXMF.CLIENT.{sender_uid}" if sender_uid else "LXMF.CLIENT"
         remarks = Remarks(
             text=content.strip(),
-            source=sender_label or identifier,
+            source=remarks_source,
+            source_id=sender_uid,
             to=chatroom,
-            time=_utc_iso(start_time),
+            time=_utc_iso_millis(event_time),
         )
         detail = Detail(
             chat=chat,
@@ -341,13 +361,13 @@ class TakConnector:
 
         event_dict = {
             "version": "2.0",
-            "uid": uid,
+            "uid": event_uid,
             "type": self.CHAT_EVENT_TYPE,
             "how": self.CHAT_EVENT_HOW,
             "access": "Undefined",
-            "time": _utc_iso(now),
-            "start": _utc_iso(start_time),
-            "stale": _utc_iso(stale),
+            "time": _utc_iso_millis(event_time),
+            "start": _utc_iso_millis(event_time),
+            "stale": _utc_iso_millis(stale),
             "point": {
                 "lat": 0.0,
                 "lon": 0.0,
@@ -367,6 +387,7 @@ class TakConnector:
         topic_id: str | None = None,
         source_hash: str | None = None,
         timestamp: datetime | None = None,
+        message_uuid: str | None = None,
     ) -> bool:
         """Send a CoT chat event derived from LXMF payloads.
 
@@ -377,6 +398,8 @@ class TakConnector:
             source_hash (str | None): Optional sender hash used to derive the
                 UID.
             timestamp (datetime | None): Time the LXMF message was created.
+            message_uuid (str | None): Optional UUID for the chat message to
+                allow deterministic testing.
 
         Returns:
             bool: ``True`` when a message was dispatched.
@@ -388,6 +411,7 @@ class TakConnector:
             topic_id=topic_id,
             source_hash=source_hash,
             timestamp=timestamp,
+            message_uuid=message_uuid,
         )
         event_payload = json.dumps(event.to_dict())
         RNS.log(

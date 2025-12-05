@@ -107,11 +107,11 @@ class AnnounceHandler:
         self.identities = identities
 
     def received_announce(self, destination_hash, announced_identity, app_data):
-        #RNS.log("\t+--- LXMF Announcement -----------------------------------------")
-        #RNS.log(f"\t| Source hash            : {RNS.prettyhexrep(destination_hash)}")
-        #RNS.log(f"\t| Announced identity     : {announced_identity}")
-       # RNS.log(f"\t| App data               : {app_data}")
-        #RNS.log("\t+---------------------------------------------------------------")
+        # RNS.log("\t+--- LXMF Announcement -----------------------------------------")
+        # RNS.log(f"\t| Source hash            : {RNS.prettyhexrep(destination_hash)}")
+        # RNS.log(f"\t| Announced identity     : {announced_identity}")
+        # RNS.log(f"\t| App data               : {app_data}")
+        # RNS.log("\t+---------------------------------------------------------------")
         label = self._decode_app_data(app_data)
         hash_key = (
             destination_hash.hex()

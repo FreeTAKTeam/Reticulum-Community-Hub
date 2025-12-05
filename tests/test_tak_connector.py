@@ -230,9 +230,9 @@ def test_connector_build_event_generates_expected_xml():
     takv_el = detail.find("takv")
     assert takv_el is not None
     assert takv_el.get("version") == "0.44.0"
-    assert takv_el.get("platform") == "RTH"
-    assert takv_el.get("os") == "ubuntu 24.04"
-    assert takv_el.get("device") == "Anonimous Device"
+    assert takv_el.get("platform") == connector.TAKV_PLATFORM
+    assert takv_el.get("os") == connector.TAKV_OS
+    assert takv_el.get("device") == connector.TAKV_DEVICE
 
     group_el = detail.find("__group")
     assert group_el is not None
@@ -539,6 +539,7 @@ def test_cot_service_sends_keepalive_on_schedule():
 
 def test_build_chat_event_includes_topic():
     connector = TakConnector(config=TakConnectionConfig(callsign="RTH"))
+    message_uuid = "11111111-2222-3333-4444-555555555555"
 
     event = connector.build_chat_event(
         content="Hello team",
@@ -546,6 +547,7 @@ def test_build_chat_event_includes_topic():
         topic_id="ops",
         source_hash=b"\xaa" * 8,
         timestamp=datetime(2025, 1, 2, 3, 4, 5),
+        message_uuid=message_uuid,
     )
 
     assert event.type == connector.CHAT_EVENT_TYPE
@@ -553,12 +555,14 @@ def test_build_chat_event_includes_topic():
     assert event.detail.chat is not None
     assert event.detail.chat.chatroom == "ops"
     assert event.detail.chat.chat_group is not None
+    assert event.detail.chat.message_id == message_uuid
     assert event.detail.marti is not None
     assert event.detail.server_destination is True
     assert isinstance(event.detail.remarks, Remarks)
     assert event.detail.remarks.text == "Hello team"
     assert event.detail.remarks.to == "ops"
-    assert event.uid == connector._uid_from_hash(b"\xaa" * 8)
+    sender_uid = connector._normalize_hash(b"\xaa" * 8)
+    assert event.uid == f"GeoChat.{sender_uid}.ops.{message_uuid}"
 
 
 def test_send_chat_event_dispatches_payload():
@@ -574,6 +578,7 @@ def test_send_chat_event_dispatches_payload():
             topic_id="status",
             source_hash="feed",
             timestamp=datetime(2025, 1, 1, 0, 0, 0),
+            message_uuid="22222222-2222-3333-4444-555555555555",
         )
     )
 
@@ -662,6 +667,7 @@ def test_send_chat_event_logs_payload(monkeypatch):
 
 def test_chat_event_uid_uses_source_identifier():
     connector = TakConnector(config=TakConnectionConfig(callsign="RTH"))
+    message_uuid = "33333333-2222-3333-4444-555555555555"
 
     event = connector.build_chat_event(
         content="Hello there",
@@ -669,13 +675,16 @@ def test_chat_event_uid_uses_source_identifier():
         topic_id="ops",
         source_hash=b"\x01" * 8,
         timestamp=datetime(2025, 1, 1, 0, 0, 0),
+        message_uuid=message_uuid,
     )
 
-    assert event.uid == connector._uid_from_hash(b"\x01" * 8)
+    sender_uid = connector._normalize_hash(b"\x01" * 8)
+    assert event.uid == f"GeoChat.{sender_uid}.ops.{message_uuid}"
 
 
 def test_chat_event_matches_geochat_payload(monkeypatch):
     connector = TakConnector(config=TakConnectionConfig(callsign="RTH"))
+    message_uuid = "7b3e0f52-0a96-4d5f-8a17-67df54df0021"
 
     class FixedDateTime(datetime):
         @classmethod
@@ -689,10 +698,9 @@ def test_chat_event_matches_geochat_payload(monkeypatch):
     start_time = datetime(2025, 1, 2, 3, 4, 5)
     topic_id = "ops"
     content = "Hello team"
-    identifier = connector._identifier_from_hash(b"\x01" * 8)
-    uid = connector._uid_from_hash(b"\x01" * 8)
-    now = FixedDateTime.utcnow()
-    stale = start_time + timedelta(minutes=1)
+    sender_uid = connector._normalize_hash(b"\x01" * 8)
+    now = start_time
+    stale = start_time + timedelta(hours=24)
 
     event = connector.build_chat_event(
         content=content,
@@ -700,23 +708,27 @@ def test_chat_event_matches_geochat_payload(monkeypatch):
         topic_id=topic_id,
         source_hash=b"\x01" * 8,
         timestamp=start_time,
+        message_uuid=message_uuid,
     )
 
     expected_xml = (
-        f'<event version="2.0" uid="{uid}" type="{connector.CHAT_EVENT_TYPE}" '
+        f'<event version="2.0" '
+        f'uid="GeoChat.{sender_uid}.{topic_id}.{message_uuid}" '
+        f'type="{connector.CHAT_EVENT_TYPE}" '
         f'how="{connector.CHAT_EVENT_HOW}" '
-        f'time="{now.replace(microsecond=0).isoformat()}Z" '
-        f'start="{start_time.replace(microsecond=0).isoformat()}Z" '
-        f'stale="{stale.replace(microsecond=0).isoformat()}Z" '
+        f'time="{start_time.isoformat(timespec="milliseconds")}Z" '
+        f'start="{start_time.isoformat(timespec="milliseconds")}Z" '
+        f'stale="{stale.isoformat(timespec="milliseconds")}Z" '
         'access="Undefined">'
         '<point lat="0.0" lon="0.0" hae="9999999.0" ce="9999999.0" le="9999999.0" />'
         "<detail>"
-        f'<__chat id="{topic_id}" chatroom="{topic_id}" groupOwner="false">'
-        f'<chatgrp chatroom="{topic_id}" id="RTH" uid0="RTH" uid1="{topic_id}" />'
+        f'<__chat id="{topic_id}" chatroom="{topic_id}" senderCallsign="Alpha" '
+        f'groupOwner="false" messageId="{message_uuid}">'
+        f'<chatgrp id="{topic_id}" uid0="{sender_uid}" uid1="{topic_id}" />'
         "</__chat>"
-        f'<link uid="{identifier}" type="{connector.CHAT_LINK_TYPE}" relation="p-p" />'
-        f'<remarks source="Alpha" to="{topic_id}" '
-        f'time="{start_time.replace(microsecond=0).isoformat()}Z">{content}</remarks>'
+        f'<link uid="{sender_uid}" type="{connector.CHAT_LINK_TYPE}" relation="p-p" />'
+        f'<remarks source="LXMF.CLIENT.{sender_uid}" sourceID="{sender_uid}" '
+        f'to="{topic_id}" time="{start_time.isoformat(timespec="milliseconds")}Z">{content}</remarks>'
         "<marti><dest /></marti>"
         "<__serverdestination />"
         "</detail>"
