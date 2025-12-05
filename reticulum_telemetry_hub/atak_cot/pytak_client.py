@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
-from contextlib import suppress
-from typing import Union, Optional, Any, cast
-import xml.etree.ElementTree as ET
-from configparser import ConfigParser, SectionProxy
-
-try:
-    import pytak
-except ImportError as exc:  # pragma: no cover - dependency guidance
-    raise ImportError(
-        "PyTAK is required. Install it with 'python -m pip install pytak'. "
-        "See https://pypi.org/project/pytak/ for release details."
-    ) from exc
-
 import logging
+import xml.etree.ElementTree as ET
+from collections.abc import Iterable
+from configparser import ConfigParser, SectionProxy
+from contextlib import suppress
+from typing import Any
+from typing import Optional
+from typing import Union
+from typing import cast
+
+import pytak
 
 from . import Event
 
