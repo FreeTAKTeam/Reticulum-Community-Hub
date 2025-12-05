@@ -69,12 +69,13 @@ class MySender(pytak.QueueWorker):
     async def handle_data(self, data: bytes):
         await self.put_queue(data)
 
-    async def run(self):
-        while True:
+    async def run(self, number_of_iterations: int = -1):
+        while number_of_iterations != 0:
             event = make_cot()
             self._logger.info("Sending:\n%s\n", event.decode())
             await self.handle_data(event)
             await asyncio.sleep(5)  # send every 5 seconds
+            number_of_iterations -= 1
 
 
 async def main():
