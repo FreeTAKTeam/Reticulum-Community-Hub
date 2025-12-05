@@ -15,6 +15,13 @@ from reticulum_telemetry_hub.atak_cot.tak_connector import LocationSnapshot
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.atak_cot import Remarks
 from reticulum_telemetry_hub.config.models import TakConnectionConfig
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.location import (
+    Location,
+)
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
+    SID_LOCATION,
+    SID_TIME,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import (
     TelemeterManager,
 )
@@ -139,6 +146,27 @@ def _telemetry_payload() -> dict:
             "last_update_iso": "2025-11-29T20:36:02",
         },
     }
+
+
+def _persist_telemeter_location(
+    telemetry_controller,
+    peer_dest: str,
+    latitude: float,
+    longitude: float,
+    timestamp: datetime,
+) -> None:
+    location_sensor = Location()
+    location_sensor.latitude = latitude
+    location_sensor.longitude = longitude
+    location_sensor.altitude = 1.0
+    location_sensor.speed = 0.5
+    location_sensor.bearing = 90.0
+    location_sensor.accuracy = 1.0
+    location_sensor.last_update = timestamp
+    packed_location = location_sensor.pack()
+    assert packed_location is not None
+    payload = {SID_TIME: int(timestamp.timestamp()), SID_LOCATION: packed_location}
+    telemetry_controller.save_telemetry(payload, peer_dest)
 
 
 def test_connector_builds_cot_event_from_location():
@@ -320,7 +348,7 @@ def test_send_latest_location_uses_snapshot(monkeypatch):
         accuracy=1.0,
         updated_at=datetime(2025, 1, 1, 0, 0, 0),
     )
-    monkeypatch.setattr(connector, "_latest_location", lambda: snapshot)
+    monkeypatch.setattr(connector, "_latest_location_snapshots", lambda: [snapshot])
 
     result = asyncio.run(connector.send_latest_location())
 
@@ -331,6 +359,54 @@ def test_send_latest_location_uses_snapshot(monkeypatch):
     assert message.point.lon == pytest.approx(2.0)
     assert cfg["fts"]["CALLSIGN"] == "HUB"
     assert parse_flag is False
+
+
+def test_send_latest_location_dispatches_unique_telemeter_entries(
+    telemetry_controller,
+):
+    client = DummyPytakClient()
+    connector = TakConnector(
+        config=TakConnectionConfig(callsign="HUB"),
+        pytak_client=client,
+        telemetry_controller=telemetry_controller,
+        telemeter_manager=None,
+    )
+    stale_time = datetime(2025, 1, 1, 12, 0, 0)
+    fresh_time = datetime(2025, 1, 2, 12, 0, 0)
+    other_time = datetime(2025, 1, 2, 12, 5, 0)
+
+    _persist_telemeter_location(
+        telemetry_controller,
+        "peer_a",
+        10.0,
+        20.0,
+        stale_time,
+    )
+    _persist_telemeter_location(
+        telemetry_controller,
+        "peer_b",
+        30.0,
+        40.0,
+        other_time,
+    )
+    _persist_telemeter_location(
+        telemetry_controller,
+        "peer_a",
+        11.0,
+        21.0,
+        fresh_time,
+    )
+
+    asyncio.run(connector.send_latest_location())
+
+    assert len(client.sent) == 2
+    events = [entry[0] for entry in client.sent]
+    peer_uids = {event.uid for event in events}
+    assert peer_uids == {"peer_a", "peer_b"}
+    peer_a_event = next(event for event in events if event.uid == "peer_a")
+    assert peer_a_event.point.lat == pytest.approx(11.0)
+    assert peer_a_event.point.lon == pytest.approx(21.0)
+    assert peer_a_event.start.startswith("2025-01-02T12:00:00")
 
 
 def test_build_event_from_telemetry_uses_sender_uid():
@@ -477,9 +553,12 @@ def test_build_chat_event_includes_topic():
     assert event.detail.chat is not None
     assert event.detail.chat.chatroom == "ops"
     assert event.detail.chat.chat_group is not None
+    assert event.detail.marti is not None
+    assert event.detail.server_destination is True
     assert isinstance(event.detail.remarks, Remarks)
     assert event.detail.remarks.text == "Hello team"
     assert event.detail.remarks.to == "ops"
+    assert event.uid == connector._uid_from_hash(b"\xaa" * 8)
 
 
 def test_send_chat_event_dispatches_payload():
@@ -504,6 +583,8 @@ def test_send_chat_event_dispatches_payload():
     assert event.detail is not None
     assert event.detail.chat is not None
     assert event.detail.chat.chatroom == "status"
+    assert event.detail.server_destination is True
+    assert event.detail.marti is not None
     assert isinstance(event.detail.remarks, Remarks)
     assert event.detail.remarks.text == "Status update"
     assert cfg["fts"]["CALLSIGN"] == "HUB"
@@ -579,17 +660,10 @@ def test_send_chat_event_logs_payload(monkeypatch):
     assert payload_event.get("type") == connector.CHAT_EVENT_TYPE
 
 
-def test_chat_uids_remain_unique():
+def test_chat_event_uid_uses_source_identifier():
     connector = TakConnector(config=TakConnectionConfig(callsign="RTH"))
 
-    first = connector.build_chat_event(
-        content="Hello there",
-        sender_label="Alpha",
-        topic_id="ops",
-        source_hash=b"\x01" * 8,
-        timestamp=datetime(2025, 1, 1, 0, 0, 0),
-    )
-    second = connector.build_chat_event(
+    event = connector.build_chat_event(
         content="Hello there",
         sender_label="Alpha",
         topic_id="ops",
@@ -597,7 +671,7 @@ def test_chat_uids_remain_unique():
         timestamp=datetime(2025, 1, 1, 0, 0, 0),
     )
 
-    assert first.uid != second.uid
+    assert event.uid == connector._uid_from_hash(b"\x01" * 8)
 
 
 def test_chat_event_matches_geochat_payload(monkeypatch):
@@ -608,27 +682,17 @@ def test_chat_event_matches_geochat_payload(monkeypatch):
         def utcnow(cls) -> datetime:  # type: ignore[override]
             return datetime(2025, 1, 2, 3, 4, 6)
 
-    class FixedUUID:
-        hex = "abcdefabcdefabcdefabcdefabcdefab"
-
     monkeypatch.setattr(
         "reticulum_telemetry_hub.atak_cot.tak_connector.datetime", FixedDateTime
-    )
-    monkeypatch.setattr(
-        "reticulum_telemetry_hub.atak_cot.tak_connector.uuid.uuid4",
-        lambda: FixedUUID(),
     )
 
     start_time = datetime(2025, 1, 2, 3, 4, 5)
     topic_id = "ops"
     content = "Hello team"
     identifier = connector._identifier_from_hash(b"\x01" * 8)
-    timestamp_ms = int(start_time.timestamp() * 1000)
-    uid_suffix = FixedUUID.hex[:6]
-    uid = f"GeoChat.{identifier}-chat-{timestamp_ms}-{uid_suffix}"
+    uid = connector._uid_from_hash(b"\x01" * 8)
     now = FixedDateTime.utcnow()
-    stale_delta = max(connector.config.poll_interval_seconds, 1.0)
-    stale = now + timedelta(seconds=stale_delta * 2)
+    stale = start_time + timedelta(minutes=1)
 
     event = connector.build_chat_event(
         content=content,
@@ -640,24 +704,21 @@ def test_chat_event_matches_geochat_payload(monkeypatch):
 
     expected_xml = (
         f'<event version="2.0" uid="{uid}" type="{connector.CHAT_EVENT_TYPE}" '
-        f'how="{connector.CHAT_EVENT_HOW}" time="{now.replace(microsecond=0).isoformat()}Z" '
+        f'how="{connector.CHAT_EVENT_HOW}" '
+        f'time="{now.replace(microsecond=0).isoformat()}Z" '
         f'start="{start_time.replace(microsecond=0).isoformat()}Z" '
-        f'stale="{stale.replace(microsecond=0).isoformat()}Z">'
-        '<point lat="0.0" lon="0.0" hae="0.0" ce="0.0" le="0.0" />'
+        f'stale="{stale.replace(microsecond=0).isoformat()}Z" '
+        'access="Undefined">'
+        '<point lat="0.0" lon="0.0" hae="9999999.0" ce="9999999.0" le="9999999.0" />'
         "<detail>"
-        f'<__chat id="{topic_id}" chatroom="{topic_id}" senderCallsign="Alpha" groupOwner="false">'
-        f'<chatgrp chatroom="{topic_id}" id="{topic_id}" uid0="{identifier}" uid1="" />'
-        "<hierarchy>"
-        '<group uid="TeamGroups" name="Teams">'
-        f'<group uid="{topic_id}" name="{topic_id}">'
-        f'<contact uid="{identifier}" name="Alpha" />'
-        "</group>"
-        "</group>"
-        "</hierarchy>"
+        f'<__chat id="{topic_id}" chatroom="{topic_id}" groupOwner="false">'
+        f'<chatgrp chatroom="{topic_id}" id="RTH" uid0="RTH" uid1="{topic_id}" />'
         "</__chat>"
         f'<link uid="{identifier}" type="{connector.CHAT_LINK_TYPE}" relation="p-p" />'
-        f'<remarks source="BAO.F.Alpha.{identifier}" sourceID="{identifier}" to="{topic_id}" '
+        f'<remarks source="Alpha" to="{topic_id}" '
         f'time="{start_time.replace(microsecond=0).isoformat()}Z">{content}</remarks>'
+        "<marti><dest /></marti>"
+        "<__serverdestination />"
         "</detail>"
         "</event>"
     )

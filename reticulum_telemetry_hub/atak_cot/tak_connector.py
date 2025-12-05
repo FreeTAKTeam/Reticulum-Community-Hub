@@ -5,21 +5,20 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 import json
-import uuid
 
 import RNS
+from sqlalchemy.orm.exc import DetachedInstanceError
 from pytak import hello_event
 from pytak.functions import tak_pong
 from reticulum_telemetry_hub.atak_cot import Chat
 from reticulum_telemetry_hub.atak_cot import ChatGroup
-from reticulum_telemetry_hub.atak_cot import ChatHierarchy
-from reticulum_telemetry_hub.atak_cot import ChatHierarchyContact
-from reticulum_telemetry_hub.atak_cot import ChatHierarchyGroup
 from reticulum_telemetry_hub.atak_cot import Contact
 from reticulum_telemetry_hub.atak_cot import Detail
 from reticulum_telemetry_hub.atak_cot import Event
 from reticulum_telemetry_hub.atak_cot import Group
 from reticulum_telemetry_hub.atak_cot import Link
+from reticulum_telemetry_hub.atak_cot import Marti
+from reticulum_telemetry_hub.atak_cot import MartiDest
 from reticulum_telemetry_hub.atak_cot import Remarks
 from reticulum_telemetry_hub.atak_cot import Status
 from reticulum_telemetry_hub.atak_cot import Takv
@@ -136,26 +135,32 @@ class TakConnector:
             location was available.
         """
 
-        event = self.build_event()
-        if event is None:
+        snapshots = self._latest_location_snapshots()
+        if not snapshots:
             RNS.log(
                 "TAK connector skipped CoT send because no location is " "available",
                 RNS.LOG_WARNING,
             )
             return False
-        event_payload = json.dumps(event.to_dict())
-        RNS.log(
-            f"TAK connector sending event type {event.type} with payload: {event_payload}",
-            RNS.LOG_INFO,
-        )
-        await self._pytak_client.create_and_send_message(
-            event, config=self._config_parser, parse_inbound=False
-        )
-        RNS.log(
-            f"TAK connector  CoT event with payload: {event_payload}",
-            RNS.LOG_INFO,
-        )
-        return True
+
+        dispatched = False
+        for snapshot in snapshots:
+            uid = self._uid_from_hash(snapshot.peer_hash)
+            callsign = self._callsign_from_hash(snapshot.peer_hash)
+            event = self._build_event_from_snapshot(
+                snapshot, uid=uid, callsign=callsign
+            )
+            event_payload = json.dumps(event.to_dict())
+            RNS.log(
+                "TAK connector sending event type "
+                f"{event.type} with payload: {event_payload}",
+                RNS.LOG_INFO,
+            )
+            await self._pytak_client.create_and_send_message(
+                event, config=self._config_parser, parse_inbound=False
+            )
+            dispatched = True
+        return dispatched
 
     def build_event(self) -> Event | None:
         """Construct a CoT :class:`Event` from available telemetry.
@@ -296,67 +301,42 @@ class TakConnector:
 
         now = datetime.utcnow()
         start_time = timestamp or now
-        stale_delta = max(self._config.poll_interval_seconds, 1.0)
-        stale = now + timedelta(seconds=stale_delta * 2)
-
-        snapshot = self._latest_location()
-        latitude = snapshot.latitude if snapshot else 0.0
-        longitude = snapshot.longitude if snapshot else 0.0
-        altitude = snapshot.altitude if snapshot else 0.0
-        accuracy = snapshot.accuracy if snapshot else 0.0
+        stale = start_time + timedelta(minutes=1)
 
         identifier = self._identifier_from_hash(source_hash)
-        timestamp_ms = int(start_time.timestamp() * 1000)
-        uid_suffix = uuid.uuid4().hex[:6]
-        uid = f"GeoChat.{identifier}-chat-{timestamp_ms}-{uid_suffix}"
+        uid = self._uid_from_hash(source_hash)
+        chatroom = str(topic_id) if topic_id else "All Chat Rooms"
+        server_uid = self._config.callsign or "RTH"
 
-        chatroom = str(topic_id) if topic_id else "GeoChat"
         chat_group = ChatGroup(
             chatroom=chatroom,
-            chat_id=chatroom,
-            uid0=identifier,
-            uid1="",
+            chat_id=server_uid,
+            uid0=server_uid,
+            uid1=chatroom,
         )
-        hierarchy_contact = ChatHierarchyContact(
-            uid=identifier, name=sender_label or identifier
-        )
-        chat_hierarchy_group = ChatHierarchyGroup(
-            uid=chatroom,
-            name=chatroom,
-            contacts=[hierarchy_contact],
-        )
-        hierarchy_root = ChatHierarchyGroup(
-            uid="TeamGroups",
-            name="Teams",
-            groups=[chat_hierarchy_group],
-        )
-        hierarchy = ChatHierarchy(groups=[hierarchy_root])
         chat = Chat(
             id=chatroom,
             chatroom=chatroom,
-            sender_callsign=sender_label or identifier,
             group_owner="false",
             chat_group=chat_group,
-            hierarchy=hierarchy,
         )
         link = Link(
             uid=identifier,
             type=self.CHAT_LINK_TYPE,
             relation="p-p",
         )
-
         remarks = Remarks(
             text=content.strip(),
-            source=f"BAO.F.{sender_label}.{identifier}",
-            source_id=identifier,
+            source=sender_label or identifier,
             to=chatroom,
             time=_utc_iso(start_time),
         )
-
         detail = Detail(
             chat=chat,
             links=[link],
             remarks=remarks,
+            marti=Marti(dest=MartiDest(callsign=None)),
+            server_destination=True,
         )
 
         event_dict = {
@@ -364,15 +344,16 @@ class TakConnector:
             "uid": uid,
             "type": self.CHAT_EVENT_TYPE,
             "how": self.CHAT_EVENT_HOW,
+            "access": "Undefined",
             "time": _utc_iso(now),
             "start": _utc_iso(start_time),
             "stale": _utc_iso(stale),
             "point": {
-                "lat": latitude,
-                "lon": longitude,
-                "hae": altitude,
-                "ce": accuracy,
-                "le": accuracy,
+                "lat": 0.0,
+                "lon": 0.0,
+                "hae": 9999999.0,
+                "ce": 9999999.0,
+                "le": 9999999.0,
             },
             "detail": detail.to_dict(),
         }
@@ -425,10 +406,35 @@ class TakConnector:
             LocationSnapshot | None: Most recent location if available.
         """
 
-        location = self._latest_location_from_manager()
-        if location is not None:
-            return location
-        return self._latest_location_from_controller()
+        snapshots = self._latest_location_snapshots()
+        if not snapshots:
+            return None
+        return snapshots[0]
+
+    def _latest_location_snapshots(self) -> list[LocationSnapshot]:
+        """Return location snapshots for the latest telemetry per peer.
+
+        The returned list is sorted by ``updated_at`` with the newest snapshot
+        first.
+
+        Returns:
+            list[LocationSnapshot]: Unique location snapshots keyed by peer.
+        """
+
+        snapshots: list[LocationSnapshot] = []
+        seen_hashes: set[str] = set()
+
+        manager_snapshot = self._latest_location_from_manager()
+        if manager_snapshot is not None:
+            normalized = self._normalize_hash(manager_snapshot.peer_hash)
+            seen_hashes.add(normalized)
+            snapshots.append(manager_snapshot)
+
+        controller_snapshots = self._latest_locations_from_controller(seen_hashes)
+        snapshots.extend(controller_snapshots)
+
+        snapshots.sort(key=lambda snapshot: snapshot.updated_at, reverse=True)
+        return snapshots
 
     def _cot_endpoint(self) -> str | None:
         """Return the contact endpoint derived from the configured COT URL."""
@@ -438,6 +444,41 @@ class TakConnector:
             return None
         port = f":{parsed.port}" if parsed.port else ""
         return f"{parsed.hostname}{port}:{parsed.scheme}"
+
+    def _latest_locations_from_controller(
+        self, seen_hashes: set[str]
+    ) -> list[LocationSnapshot]:
+        """Return unique snapshots derived from stored telemetry entries.
+
+        Args:
+            seen_hashes (set[str]): Normalized peer hashes already captured.
+
+        Returns:
+            list[LocationSnapshot]: Unique snapshots sorted newest to oldest.
+        """
+
+        if self._telemetry_controller is None:
+            return []
+
+        telemetry_controller = self._telemetry_controller
+        snapshots: list[LocationSnapshot] = []
+        with telemetry_controller._session_cls() as session:  # type: ignore[attr-defined]
+            telemetry = telemetry_controller._load_telemetry(session)
+            for telemeter in telemetry:
+                peer_hash = getattr(telemeter, "peer_dest", None)
+                normalized_peer = self._normalize_hash(peer_hash)
+                if normalized_peer in seen_hashes:
+                    continue
+                snapshot = self._snapshot_from_telemeter(telemeter)
+                if snapshot is None:
+                    continue
+                snapshot.peer_hash = (
+                    peer_hash if peer_hash is not None else snapshot.peer_hash
+                )
+                snapshots.append(snapshot)
+                seen_hashes.add(normalized_peer)
+        snapshots.sort(key=lambda snap: snap.updated_at, reverse=True)
+        return snapshots
 
     def _latest_location_from_manager(self) -> LocationSnapshot | None:
         """Extract the latest location data from the telemeter manager.
@@ -496,7 +537,22 @@ class TakConnector:
         if not telemetry:
             return None
 
-        telemeter = telemetry[0]
+        snapshot = self._snapshot_from_telemeter(telemetry[0])
+        if snapshot is None:
+            return None
+        snapshot.peer_hash = getattr(telemetry[0], "peer_dest", None)
+        return snapshot
+
+    def _snapshot_from_telemeter(self, telemeter: Any) -> LocationSnapshot | None:
+        """Convert a stored telemeter entry into a location snapshot.
+
+        Args:
+            telemeter (Any): Telemeter ORM instance containing sensors.
+
+        Returns:
+            LocationSnapshot | None: Snapshot when location data exists.
+        """
+
         location_sensor = None
         for sensor in getattr(telemeter, "sensors", []):
             if getattr(sensor, "sid", None) == SID_LOCATION:
@@ -506,18 +562,45 @@ class TakConnector:
         if location_sensor is None:
             return None
 
-        latitude = getattr(location_sensor, "latitude", None)
-        longitude = getattr(location_sensor, "longitude", None)
+        try:
+            latitude = getattr(location_sensor, "latitude", None)
+            longitude = getattr(location_sensor, "longitude", None)
+            altitude = getattr(location_sensor, "altitude", 0.0) or 0.0
+            speed = getattr(location_sensor, "speed", 0.0) or 0.0
+            bearing = getattr(location_sensor, "bearing", 0.0) or 0.0
+            accuracy = getattr(location_sensor, "accuracy", 0.0) or 0.0
+            updated_at = getattr(location_sensor, "last_update", None)
+        except DetachedInstanceError:
+            sensor_state = getattr(location_sensor, "__dict__", {}) or {}
+            latitude = sensor_state.get("latitude")
+            longitude = sensor_state.get("longitude")
+            altitude = sensor_state.get("altitude", 0.0) or 0.0
+            speed = sensor_state.get("speed", 0.0) or 0.0
+            bearing = sensor_state.get("bearing", 0.0) or 0.0
+            accuracy = sensor_state.get("accuracy", 0.0) or 0.0
+            updated_at = sensor_state.get("last_update")
+
+        if (latitude is None or longitude is None) and hasattr(
+            location_sensor, "unpack"
+        ):
+            packed_payload = getattr(location_sensor, "data", None)
+            if packed_payload is not None:
+                try:
+                    location_sensor.unpack(packed_payload)
+                    latitude = getattr(location_sensor, "latitude", latitude)
+                    longitude = getattr(location_sensor, "longitude", longitude)
+                    altitude = getattr(location_sensor, "altitude", altitude)
+                    speed = getattr(location_sensor, "speed", speed)
+                    bearing = getattr(location_sensor, "bearing", bearing)
+                    accuracy = getattr(location_sensor, "accuracy", accuracy)
+                    updated_at = getattr(location_sensor, "last_update", updated_at)
+                except Exception:
+                    return None
+
         if latitude is None or longitude is None:
             return None
 
-        altitude = getattr(location_sensor, "altitude", 0.0) or 0.0
-        speed = getattr(location_sensor, "speed", 0.0) or 0.0
-        bearing = getattr(location_sensor, "bearing", 0.0) or 0.0
-        accuracy = getattr(location_sensor, "accuracy", 0.0) or 0.0
-        updated_at = getattr(location_sensor, "last_update", None) or getattr(
-            telemeter, "time", datetime.utcnow()
-        )
+        updated_at = updated_at or getattr(telemeter, "time", datetime.utcnow())
 
         return LocationSnapshot(
             latitude=float(latitude),
