@@ -261,7 +261,7 @@ class Remarks:
 class MartiDest:
     """Represents a MARTI destination element."""
 
-    callsign: str
+    callsign: Optional[str] = None
 
     @classmethod
     def from_xml(cls, elem: ET.Element) -> "MartiDest":
@@ -272,7 +272,10 @@ class MartiDest:
     def to_element(self) -> ET.Element:
         """Return an XML element representing the destination."""
 
-        return ET.Element("dest", {"callsign": self.callsign})
+        attrib: dict[str, str] = {}
+        if self.callsign:
+            attrib["callsign"] = self.callsign
+        return ET.Element("dest", attrib)
 
     def to_dict(self) -> dict:
         """Return a serialisable representation of the destination."""
@@ -283,7 +286,7 @@ class MartiDest:
     def from_dict(cls, data: dict) -> "MartiDest":
         """Create a :class:`MartiDest` from a dictionary."""
 
-        return cls(callsign=data.get("callsign", ""))
+        return cls(callsign=data.get("callsign"))
 
 
 @dataclass
@@ -320,8 +323,25 @@ class Marti:
         """Create a :class:`Marti` from a dictionary."""
 
         dest_data = data.get("dest")
-        dest = MartiDest.from_dict(dest_data) if dest_data else None
+        dest = MartiDest.from_dict(dest_data) if isinstance(dest_data, dict) else None
         return cls(dest=dest)
+
+
+@dataclass
+class ServerDestination:
+    """Represents an empty ``__serverdestination`` marker element."""
+
+    @staticmethod
+    def to_element() -> ET.Element:
+        """Return an empty ``__serverdestination`` element."""
+
+        return ET.Element("__serverdestination")
+
+    @staticmethod
+    def to_dict() -> dict:
+        """Return an empty mapping representing the marker."""
+
+        return {}
 
 
 @dataclass

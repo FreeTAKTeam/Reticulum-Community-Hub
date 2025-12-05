@@ -14,6 +14,7 @@ from reticulum_telemetry_hub.atak_cot.chat import Chat
 from reticulum_telemetry_hub.atak_cot.chat import ChatGroup
 from reticulum_telemetry_hub.atak_cot.chat import Link
 from reticulum_telemetry_hub.atak_cot.chat import Marti
+from reticulum_telemetry_hub.atak_cot.chat import ServerDestination
 from reticulum_telemetry_hub.atak_cot.chat import Remarks
 
 
@@ -33,6 +34,7 @@ class Detail:
     remarks: Optional[Union[str, Remarks]] = None
     marti: Optional[Marti] = None
     status: Optional[Status] = None
+    server_destination: bool = False
 
     @classmethod
     def from_xml(cls, elem: ET.Element) -> "Detail":
@@ -48,6 +50,7 @@ class Detail:
         link_elems = elem.findall("link")
         remarks_el = elem.find("remarks")
         marti_el = elem.find("marti")
+        server_destination_el = elem.find("__serverdestination")
         status_el = elem.find("status")
         groups = [Group.from_xml(item) for item in group_elems]
         primary_group = groups[0] if groups else None
@@ -73,6 +76,7 @@ class Detail:
             remarks=remarks,
             marti=Marti.from_xml(marti_el) if marti_el is not None else None,
             status=Status.from_xml(status_el) if status_el is not None else None,
+            server_destination=server_destination_el is not None,
         )
 
     def to_element(self) -> Optional[ET.Element]:
@@ -92,6 +96,7 @@ class Detail:
                 self.remarks,
                 self.marti,
                 self.status,
+                self.server_destination,
             ]
         ):
             return None
@@ -124,6 +129,8 @@ class Detail:
             marti_element = self.marti.to_element()
             if marti_element is not None:
                 detail_el.append(marti_element)
+        if self.server_destination:
+            detail_el.append(ServerDestination.to_element())
         if self.status:
             detail_el.append(self.status.to_element())
         return detail_el
@@ -162,6 +169,8 @@ class Detail:
                 data["marti"] = marti_dict
         if self.status:
             data["status"] = self.status.to_dict()
+        if self.server_destination:
+            data["server_destination"] = True
         return data
 
     @classmethod
@@ -205,6 +214,7 @@ class Detail:
         status = None
         if "status" in data:
             status = Status.from_dict(data.get("status", {}))
+        server_destination = data.get("server_destination", False) is True
         return cls(
             contact=contact,
             group=group,
@@ -218,4 +228,5 @@ class Detail:
             remarks=remarks,
             marti=marti,
             status=status,
+            server_destination=server_destination,
         )
