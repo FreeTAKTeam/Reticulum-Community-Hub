@@ -17,6 +17,7 @@
   - Provides `create_and_send_message(...)` which spins up PyTAK TX/RX queue workers and accepts `Event`, XML `Element`, bytes, strings, or dicts.
   - `SendWorker` converts payloads to XML bytes; `ReceiveWorker` can parse inbound CoT into `Event` objects when `parse_inbound=True` (the connector sets `False` because only TX is needed).
   - Defaults to an internal `ConfigParser` if none is provided; normally the connector passes `TakConnectionConfig.to_config_parser()`.
+  - Runs a dedicated background asyncio loop to keep the PyTAK session alive across repeated calls (including from synchronous threads) and logs connection success/failure through both the PyTAK logger and the RNS console.
 
 - `TakConnector` (`reticulum_telemetry_hub/atak_cot/tak_connector.py`)
   - Location source: prefers live `TelemeterManager` sensors, falls back to the persisted `TelemetryController` store. Produces a `LocationSnapshot` with lat/lon/altitude/speed/bearing/accuracy.
