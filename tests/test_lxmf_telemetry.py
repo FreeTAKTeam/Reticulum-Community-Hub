@@ -305,6 +305,43 @@ def test_stream_ingest_followed_by_command_returns_valid_response(
     assert returned_payload == expected_payload
 
 
+def test_handle_command_omits_body_payload(telemetry_controller, session_factory):
+    controller = telemetry_controller
+    Session = session_factory
+
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    timestamp = int(time.time())
+    payload = build_complex_telemeter_payload(timestamp=timestamp)
+    packed_telemeter = packb(payload, use_bin_type=True)
+    peer_hash = bytes.fromhex("24" * 16)
+    stream_payload = [peer_hash, timestamp, packed_telemeter]
+    stream = packb([stream_payload], use_bin_type=True)
+
+    message = LXMF.LXMessage(dst, src, fields={LXMF.FIELD_TELEMETRY_STREAM: stream})
+
+    assert controller.handle_message(message)
+
+    with Session() as ses:
+        assert ses.query(Telemeter).count() == 1
+
+    command_msg = LXMF.LXMessage(src, dst)
+    command = {TelemetryController.TELEMETRY_REQUEST: timestamp - 1}
+
+    reply = controller.handle_command(command, command_msg, dst)
+
+    assert reply is not None
+    assert reply.fields.get(LXMF.FIELD_TELEMETRY_STREAM)
+    assert not reply.content
+
+
 def test_handle_command_accepts_sideband_collector_format(
     telemetry_controller, session_factory
 ):
