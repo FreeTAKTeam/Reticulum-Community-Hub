@@ -135,9 +135,9 @@ class ChatHierarchy:
 class ChatGroup:
     """Participants and identifiers for a GeoChat room."""
 
-    chatroom: str
     chat_id: str
     uid0: str
+    chatroom: Optional[str] = None
     uid1: str = ""
     uid2: str = ""
 
@@ -146,7 +146,7 @@ class ChatGroup:
         """Create a :class:`ChatGroup` from a ``<chatgrp>`` element."""
 
         return cls(
-            chatroom=elem.get("chatroom", ""),
+            chatroom=elem.get("chatroom"),
             chat_id=elem.get("id", ""),
             uid0=elem.get("uid0", ""),
             uid1=elem.get("uid1", ""),
@@ -157,11 +157,12 @@ class ChatGroup:
         """Return an XML element describing the chat group."""
 
         attrib = {
-            "chatroom": self.chatroom,
             "id": self.chat_id,
             "uid0": self.uid0,
             "uid1": self.uid1,
         }
+        if self.chatroom:
+            attrib["chatroom"] = self.chatroom
         if self.uid2:
             attrib["uid2"] = self.uid2
         return ET.Element("chatgrp", attrib)
@@ -170,11 +171,12 @@ class ChatGroup:
         """Return a serialisable representation of the chat group."""
 
         data = {
-            "chatroom": self.chatroom,
             "chat_id": self.chat_id,
             "uid0": self.uid0,
             "uid1": self.uid1,
         }
+        if self.chatroom:
+            data["chatroom"] = self.chatroom
         if self.uid2:
             data["uid2"] = self.uid2
         return data
@@ -184,7 +186,7 @@ class ChatGroup:
         """Create a :class:`ChatGroup` from a dictionary."""
 
         return cls(
-            chatroom=data.get("chatroom", ""),
+            chatroom=data.get("chatroom"),
             chat_id=data.get("chat_id", ""),
             uid0=data.get("uid0", ""),
             uid1=data.get("uid1", ""),
@@ -353,6 +355,7 @@ class Chat:
     chatroom: Optional[str] = None
     sender_callsign: Optional[str] = None
     group_owner: Optional[str] = None
+    message_id: Optional[str] = None
     chat_group: Optional[ChatGroup] = None
     hierarchy: Optional[ChatHierarchy] = None
 
@@ -368,6 +371,7 @@ class Chat:
             chatroom=elem.get("chatroom"),
             sender_callsign=elem.get("senderCallsign"),
             group_owner=elem.get("groupOwner"),
+            message_id=elem.get("messageId"),
             chat_group=(
                 ChatGroup.from_xml(chat_group_el) if chat_group_el is not None else None
             ),
@@ -392,6 +396,8 @@ class Chat:
             attrib["senderCallsign"] = self.sender_callsign
         if self.group_owner is not None:
             attrib["groupOwner"] = self.group_owner
+        if self.message_id is not None:
+            attrib["messageId"] = self.message_id
         element = ET.Element("__chat", attrib)
         if self.chat_group:
             element.append(self.chat_group.to_element())
@@ -413,6 +419,8 @@ class Chat:
             data["sender_callsign"] = self.sender_callsign
         if self.group_owner is not None:
             data["group_owner"] = self.group_owner
+        if self.message_id is not None:
+            data["message_id"] = self.message_id
         if self.chat_group:
             data["chat_group"] = self.chat_group.to_dict()
         if self.hierarchy:
@@ -435,6 +443,7 @@ class Chat:
             chatroom=data.get("chatroom"),
             sender_callsign=data.get("sender_callsign"),
             group_owner=data.get("group_owner"),
+            message_id=data.get("message_id"),
             chat_group=chat_group,
             hierarchy=hierarchy,
         )

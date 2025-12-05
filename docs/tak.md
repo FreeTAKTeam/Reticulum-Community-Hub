@@ -25,7 +25,7 @@
   - Location / telemetry CoT (`a-f-G-U-C`): `send_latest_location()` and `send_telemetry_event(...)` call `_build_event_from_snapshot(...)`, which sets:
     - `how=h-g-i-g-o`, start/stale timestamps based on last update and `poll_interval_seconds`
     - `detail`: `contact` (callsign + endpoint), default group (`Yellow` / `Team Member`), `track` (course/speed), `takv` (platform metadata constants; version set to the current RTH release, e.g., `0.44.0`), `uid` (Droid callsign), and `status` (battery currently `0.0`)
-  - Chat CoT (`b-t-f`): `send_chat_event(...)` wraps LXMF message text in a GeoChat payload with `Chat`, `ChatGroup`, `ChatHierarchy`, `Link`, and `Remarks` detail. Uses current hub location if available; builds a unique `GeoChat.<identifier>-chat-<ts>-<suffix>` UID.
+- Chat CoT (`b-t-f`): `send_chat_event(...)` wraps LXMF message text in a GeoChat payload with `Chat`, `ChatGroup`, `ChatHierarchy`, `Link`, and `Remarks` detail. UIDs follow the LXMF sender identity: `GeoChat.<lxmf_destination>.<chatroom_name>.<message_uuid>`. The chat detail mirrors LXMF fields (`senderCallsign`, `messageId`, `chatroom`/`id`), links back to the sender UID, and stamps remarks with `source="LXMF.CLIENT.<lxmf_destination>"`, `sourceID`, and millisecond UTC timestamps (`time`, `start`, `stale` set +24h).
   - Keepalive: `send_keepalive()` emits `tak_pong()` from PyTAK to keep the TAK session alive.
 
 ## Runtime wiring
