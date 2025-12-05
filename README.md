@@ -338,6 +338,12 @@ Signed chat messages delivered over LXMF are also mirrored into CoT chat events
 when they include non-telemetry content. Remarks carry the chat body and topic
 identifier to maintain topic-aware routing inside TAK tools.
 
+PyTAK connections reuse a single persistent CLI session with shared queues so
+chat and telemetry dispatches do not restart sockets on every send. The
+connector also schedules both takPong and hello/ping keepalives using the
+``keepalive_interval_seconds`` option (or ``--keepalive`` flag) to keep TAK
+endpoints responsive.
+
 Example: `python -m reticulum_telemetry_hub.reticulum_server --daemon --service tak_cot`.
 
 #### Configuring the TAK integration

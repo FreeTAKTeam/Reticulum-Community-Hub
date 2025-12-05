@@ -180,14 +180,29 @@ class CotTelemetryService(HubService):
         self,
         *,
         connector: TakConnector,
-        interval: float,
-        keepalive_interval: float = 60.0,
+        interval: float | None,
+        keepalive_interval: float | None = None,
+        ping_interval: float | None = None,
     ) -> None:
         super().__init__(name="tak_cot")
         self._connector = connector
-        self._interval = interval if interval > 0 else 1.0
+        connector_interval = connector.config.poll_interval_seconds
+        default_keepalive = connector.config.keepalive_interval_seconds
+        self._interval = interval if interval and interval > 0 else connector_interval
+        if self._interval <= 0:
+            self._interval = 1.0
+        resolved_keepalive = (
+            keepalive_interval
+            if keepalive_interval is not None and keepalive_interval > 0
+            else default_keepalive
+        )
         self._keepalive_interval = (
-            keepalive_interval if keepalive_interval > 0 else 60.0
+            resolved_keepalive if resolved_keepalive > 0 else 60.0
+        )
+        self._ping_interval = (
+            ping_interval
+            if ping_interval is not None and ping_interval > 0
+            else self._keepalive_interval
         )
 
     def is_supported(self) -> bool:
@@ -199,8 +214,18 @@ class CotTelemetryService(HubService):
     def _run(self) -> None:
         last_keepalive = time.monotonic() - self._keepalive_interval
         last_location = time.monotonic() - self._interval
+        last_ping = time.monotonic() - self._ping_interval
         while not self._stop_event.is_set():
             now = time.monotonic()
+            if now - last_ping >= self._ping_interval:
+                try:
+                    asyncio.run(self._connector.send_ping())
+                    last_ping = time.monotonic()
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    RNS.log(
+                        f"TAK connector failed to send hello keepalive: {exc}",
+                        RNS.LOG_ERROR,
+                    )
             if now - last_keepalive >= self._keepalive_interval:
                 try:
                     asyncio.run(self._connector.send_keepalive())
@@ -223,7 +248,10 @@ class CotTelemetryService(HubService):
                 time.monotonic() - last_keepalive
             )
             remaining_location = self._interval - (time.monotonic() - last_location)
-            wait_time = max(min(remaining_keepalive, remaining_location), 0.01)
+            remaining_ping = self._ping_interval - (time.monotonic() - last_ping)
+            wait_time = max(
+                min(remaining_keepalive, remaining_location, remaining_ping), 0.01
+            )
             self._stop_event.wait(wait_time)
 
 
@@ -252,7 +280,10 @@ def _cot_factory(hub: "ReticulumTelemetryHub") -> HubService:
             identity_lookup=hub._lookup_identity_label,
         )
     interval = connector.config.poll_interval_seconds
-    return CotTelemetryService(connector=connector, interval=interval)
+    keepalive = connector.config.keepalive_interval_seconds
+    return CotTelemetryService(
+        connector=connector, interval=interval, keepalive_interval=keepalive
+    )
 
 
 SERVICE_FACTORIES: dict[str, Callable[["ReticulumTelemetryHub"], HubService]] = {

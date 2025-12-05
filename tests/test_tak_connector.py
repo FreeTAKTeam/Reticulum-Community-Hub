@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from configparser import ConfigParser
 from datetime import datetime, timedelta
 
 import xml.etree.ElementTree as ET
@@ -8,6 +9,8 @@ import xml.etree.ElementTree as ET
 import pytest
 import RNS
 
+from reticulum_telemetry_hub.atak_cot.pytak_client import FTSCLITool
+from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
 from reticulum_telemetry_hub.atak_cot.tak_connector import LocationSnapshot
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.atak_cot import Remarks
@@ -26,6 +29,86 @@ class DummyPytakClient:
 
     async def create_and_send_message(self, message, config=None, parse_inbound=True):
         self.sent.append((message, config, parse_inbound))
+
+
+def test_connector_reuses_cli_tool(monkeypatch):
+    parser = ConfigParser()
+    parser["fts"] = {
+        "COT_URL": "tcp://example:9000",
+        "CALLSIGN": "RTH",
+        "TAK_PROTO": "0",
+        "FTS_COMPAT": "1",
+    }
+    created_tools: list[FTSCLITool] = []
+
+    async def fake_setup(self):
+        created_tools.append(self)
+
+    def fake_run_tasks(self):
+        self.running_tasks = []
+
+    async def fake_run(self, number_of_iterations: int = 0):
+        self.run_tasks()
+        self.run_c_tasks()
+        await asyncio.sleep(0.1)
+        for task in list(self.running_c_tasks):
+            task.cancel()
+        return None
+
+    monkeypatch.setattr(FTSCLITool, "setup", fake_setup)
+    monkeypatch.setattr(FTSCLITool, "run_tasks", fake_run_tasks)
+    monkeypatch.setattr(FTSCLITool, "run", fake_run)
+
+    manager = _build_manager()
+    client = PytakClient(parser)
+    tak_config = TakConnectionConfig(
+        cot_url="tcp://example:9000", callsign="HUB", tak_proto=0, fts_compat=1
+    )
+    connector = TakConnector(
+        config=tak_config, pytak_client=client, telemeter_manager=manager
+    )
+
+    async def _exercise_connector() -> None:
+        await connector.send_latest_location()
+        await asyncio.sleep(0.05)
+        await connector.send_chat_event(
+            content="Hello team",
+            sender_label="Alpha",
+            topic_id="ops",
+            source_hash="feed",
+            timestamp=datetime(2025, 1, 1, 0, 0, 0),
+        )
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_exercise_connector())
+
+    worker_manager = client._worker_manager
+    assert worker_manager is not None
+    unique_cli_instances = {id(tool) for tool in created_tools}
+    assert len(unique_cli_instances) == 1
+    assert isinstance(worker_manager.cli_tool.config_parser, ConfigParser)
+    assert (
+        worker_manager.cli_tool.config_parser["fts"]["COT_URL"]
+        == parser["fts"]["COT_URL"]
+    )
+    assert worker_manager.section.get("COT_URL") == parser["fts"].get("COT_URL")
+
+    tx_queue = worker_manager.cli_tool.tx_queue
+    assert tx_queue is not None
+    payloads: list[bytes] = []
+    while True:
+        try:
+            payloads.append(tx_queue.get_nowait())
+        except asyncio.QueueEmpty:
+            break
+
+    assert any(
+        ET.fromstring(data).get("type") == connector.EVENT_TYPE for data in payloads
+    )
+    assert any(
+        ET.fromstring(data).get("type") == connector.CHAT_EVENT_TYPE
+        for data in payloads
+    )
 
 
 def _build_manager() -> TelemeterManager:
@@ -341,7 +424,9 @@ def test_cot_service_sends_keepalive_on_schedule():
     manager = _build_manager()
     client = DummyPytakClient()
     connector = TakConnector(
-        config=TakConnectionConfig(poll_interval_seconds=0.2),
+        config=TakConnectionConfig(
+            poll_interval_seconds=0.2, keepalive_interval_seconds=0.05
+        ),
         pytak_client=client,
         telemeter_manager=manager,
     )
@@ -356,13 +441,22 @@ def test_cot_service_sends_keepalive_on_schedule():
     finally:
         service.stop()
 
-    keepalives = [
-        payload for payload, _, _ in client.sent if isinstance(payload, bytes)
+    parsed = [
+        ET.fromstring(payload)
+        for payload, _, _ in client.sent
+        if isinstance(payload, bytes)
+    ]
+    keepalives = [node for node in parsed if node.get("uid") == "takPong"]
+    hellos = [
+        node
+        for node in parsed
+        if node.get("uid", "").startswith("tak") and node.get("uid") != "takPong"
     ]
     locations = [
         payload for payload, _, _ in client.sent if not isinstance(payload, bytes)
     ]
 
+    assert len(hellos) >= 1
     assert len(keepalives) >= 2
     assert len(locations) >= 1
 

@@ -42,6 +42,7 @@ FTS_PORT = 8087
 MIN_SLEEP = 1.0
 MAX_SLEEP = 3.0
 
+
 async def send_hello_loop(host: str, port: int) -> None:
     """Continuously connect to the server and send Hello events.
 
@@ -77,7 +78,11 @@ async def send_hello_loop(host: str, port: int) -> None:
                 delay = random.uniform(MIN_SLEEP, MAX_SLEEP)
                 await asyncio.sleep(delay)
 
-        except (asyncio.IncompleteReadError, ConnectionResetError, ConnectionRefusedError) as exc:
+        except (
+            asyncio.IncompleteReadError,
+            ConnectionResetError,
+            ConnectionRefusedError,
+        ) as exc:
             # Connection lost or refused; report the error and retry after a pause.
             print(f"Connection error: {exc} – reconnecting in 5 seconds…")
             await asyncio.sleep(5)
@@ -86,9 +91,11 @@ async def send_hello_loop(host: str, port: int) -> None:
             print(f"Unexpected error: {exc} – reconnecting in 5 seconds…")
             await asyncio.sleep(5)
 
+
 async def main() -> None:
     """Entry point for the asyncio event loop."""
     await send_hello_loop(FTS_HOST, FTS_PORT)
+
 
 if __name__ == "__main__":
     try:
