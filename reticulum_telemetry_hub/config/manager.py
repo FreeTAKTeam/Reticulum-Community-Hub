@@ -308,6 +308,13 @@ class HubConfigurationManager:
             defaults.poll_interval_seconds,
         )
 
+        keepalive_interval = self._coerce_float(
+            section.get("keepalive_interval_seconds")
+            or section.get("keepalive_interval")
+            or section.get("keepalive"),
+            defaults.keepalive_interval_seconds,
+        )
+
         tak_proto = self._coerce_int(section.get("tak_proto"), defaults.tak_proto)
         fts_compat = self._coerce_int(section.get("fts_compat"), defaults.fts_compat)
 
@@ -315,6 +322,7 @@ class HubConfigurationManager:
             cot_url=section.get("cot_url", defaults.cot_url),
             callsign=section.get("callsign", defaults.callsign),
             poll_interval_seconds=interval,
+            keepalive_interval_seconds=keepalive_interval,
             tls_client_cert=section.get("tls_client_cert"),
             tls_client_key=section.get("tls_client_key"),
             tls_ca=section.get("tls_ca"),

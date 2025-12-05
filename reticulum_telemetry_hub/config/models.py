@@ -155,6 +155,7 @@ class TakConnectionConfig:
     cot_url: str = "tcp://127.0.0.1:8087"
     callsign: str = "RTH"
     poll_interval_seconds: float = 30.0
+    keepalive_interval_seconds: float = 60.0
     tls_client_cert: str | None = None
     tls_client_key: str | None = None
     tls_ca: str | None = None
@@ -193,6 +194,7 @@ class TakConnectionConfig:
             "cot_url": self.cot_url,
             "callsign": self.callsign,
             "poll_interval_seconds": self.poll_interval_seconds,
+            "keepalive_interval_seconds": self.keepalive_interval_seconds,
             "tls_client_cert": self.tls_client_cert,
             "tls_client_key": self.tls_client_key,
             "tls_ca": self.tls_ca,

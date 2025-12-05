@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
+from contextlib import suppress
 from typing import Union, Optional, Any, cast
 import xml.etree.ElementTree as ET
 from configparser import ConfigParser, SectionProxy
@@ -13,6 +14,8 @@ except ImportError as exc:  # pragma: no cover - dependency guidance
         "PyTAK is required. Install it with 'python -m pip install pytak'. "
         "See https://pypi.org/project/pytak/ for release details."
     ) from exc
+
+import logging
 
 from . import Event
 
@@ -90,6 +93,30 @@ class ReceiveWorker(pytak.QueueWorker):
         return None
 
 
+class StreamSendWorker(SendWorker):
+    """Continuous send worker that drains an outbound queue."""
+
+    def __init__(
+        self,
+        queue: asyncio.Queue,
+        config: SectionProxy,
+        outbound_queue: asyncio.Queue,
+        stop_event: asyncio.Event,
+    ) -> None:
+        super().__init__(queue, config, [])
+        self._outbound_queue = outbound_queue
+        self._stop_event = stop_event
+
+    async def run(self, number_of_iterations: int = 0):
+        iterations = 0
+        while not self._stop_event.is_set():
+            if number_of_iterations and iterations >= number_of_iterations:
+                return None
+            payload = await self._outbound_queue.get()
+            await self.handle_data(payload)
+            iterations += 1
+
+
 class FTSCLITool(pytak.CLITool):
     def __init__(
         self,
@@ -97,7 +124,16 @@ class FTSCLITool(pytak.CLITool):
         tx_queue: Union[asyncio.Queue, None] = None,
         rx_queue: Union[asyncio.Queue, None] = None,
     ) -> None:
-        super().__init__(config, tx_queue, rx_queue)
+        self.config_parser = config if isinstance(config, ConfigParser) else None
+        section: ConfigParser | SectionProxy
+        if isinstance(config, ConfigParser):
+            section = (
+                config[config.sections()[0]] if config.sections() else config["DEFAULT"]
+            )
+        else:
+            section = config
+        super().__init__(section, tx_queue, rx_queue)
+        self.section = section
         self.tasks_to_complete = set()
         self.running_c_tasks = set()
         # store results from the last run here
@@ -159,11 +195,108 @@ class FTSCLITool(pytak.CLITool):
         return None
 
 
+class PytakWorkerManager:
+    """Manage a persistent PyTAK CLI tool and worker queue."""
+
+    def __init__(
+        self, cli_tool: FTSCLITool, section: SectionProxy, parse_inbound: bool
+    ) -> None:
+        self.cli_tool = cli_tool
+        self.section = section
+        self.parse_inbound = parse_inbound
+        self._outbound: asyncio.Queue = asyncio.Queue()
+        self._stop_event = asyncio.Event()
+        self._results: list[Any] = []
+        self._task: Optional[asyncio.Task] = None
+        self._session_task: Optional[asyncio.Task] = None
+        self._logger = getattr(cli_tool, "_logger", logging.getLogger(__name__))
+        self._backoff_seconds = 1.0
+
+    async def start(self) -> None:
+        """Start the long-running PyTAK session if it is not active."""
+
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._run_session())
+
+    async def stop(self) -> None:
+        """Stop the PyTAK session and cancel worker tasks."""
+
+        self._stop_event.set()
+        if self._task is not None:
+            self._task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def enqueue(self, message: CotPayload) -> None:
+        """Queue a payload for transmission over the active session."""
+
+        await self._outbound.put(message)
+
+    def results(self) -> list[Any]:
+        """Return results collected from the most recent receive worker."""
+
+        return list(self._results)
+
+    async def _run_session(self) -> None:
+        while not self._stop_event.is_set():
+            send_stop = asyncio.Event()
+            try:
+                await self.cli_tool.setup()
+                self.cli_tool.tasks_to_complete.clear()
+                self.cli_tool.running_c_tasks.clear()
+
+                send_worker = StreamSendWorker(
+                    cast(asyncio.Queue, self.cli_tool.tx_queue),
+                    self.section,
+                    self._outbound,
+                    send_stop,
+                )
+                receive_worker = ReceiveWorker(
+                    cast(asyncio.Queue, self.cli_tool.rx_queue),
+                    self.section,
+                    parse=self.parse_inbound,
+                )
+
+                self.cli_tool.add_c_task(send_worker)
+                self.cli_tool.add_c_task(receive_worker)
+                self._results.clear()
+
+                self._session_task = asyncio.create_task(self.cli_tool.run())
+                try:
+                    await self._session_task
+                finally:
+                    send_stop.set()
+                    if self._session_task:
+                        self._session_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await self._session_task
+
+                if getattr(receive_worker, "result", None) is not None:
+                    self._results.append(receive_worker.result)
+            except asyncio.CancelledError:
+                send_stop.set()
+                if self._session_task is not None:
+                    self._session_task.cancel()
+                raise
+            except Exception as exc:  # pragma: no cover - defensive logging
+                send_stop.set()
+                self._logger.error("PyTAK session error: %s", exc)
+                await asyncio.sleep(self._backoff_seconds)
+                self._backoff_seconds = min(self._backoff_seconds * 2, 30.0)
+            else:
+                send_stop.set()
+                self._backoff_seconds = 1.0
+        return None
+
+
 class PytakClient:
     """Utility wrapper that wires ATAK Event payloads into pyTAK workers."""
 
     def __init__(self, config: Optional[ConfigParser] = None) -> None:
         self._config = config
+        self._cli_tool: Optional[FTSCLITool] = None
+        self._worker_manager: Optional[PytakWorkerManager] = None
 
     def _setup_config(self) -> ConfigParser:
         """Create config if a custom one is not passed."""
@@ -178,6 +311,8 @@ class PytakClient:
 
     def _ensure_config(self, config: Optional[ConfigParser]) -> ConfigParser:
         if config is not None:
+            if self._config is None:
+                self._config = config
             return config
         if self._config is None:
             self._config = self._setup_config()
@@ -193,6 +328,28 @@ class PytakClient:
             return config[sections[0]]
         raise ValueError("Configuration must contain at least one section.")
 
+    def _ensure_cli_tool(self, config: ConfigParser) -> FTSCLITool:
+        """Create or return a cached CLI tool backed by shared queues."""
+
+        if self._cli_tool is None:
+            tx_queue: asyncio.Queue = asyncio.Queue()
+            rx_queue: asyncio.Queue = asyncio.Queue()
+            self._cli_tool = FTSCLITool(config, tx_queue, rx_queue)
+        return self._cli_tool
+
+    def _ensure_manager(
+        self, config: ConfigParser, parse_inbound: bool
+    ) -> "PytakWorkerManager":
+        """Return a running worker manager with the provided configuration."""
+
+        cli_tool = self._ensure_cli_tool(config)
+        if self._worker_manager is None:
+            section = self._config_section(config)
+            self._worker_manager = PytakWorkerManager(cli_tool, section, parse_inbound)
+        else:
+            self._worker_manager.parse_inbound = parse_inbound
+        return self._worker_manager
+
     async def create_and_send_message(
         self,
         message: Union[CotPayload, Iterable[CotPayload]],
@@ -200,25 +357,10 @@ class PytakClient:
         parse_inbound: bool = True,
     ):
         cfg = self._ensure_config(config)
-        section = self._config_section(cfg)
-
-        # pyTAK's CLITool expects a section-level view so option lookups do not
-        # require a section name. Passing the SectionProxy avoids calling
-        # ConfigParser.get(section, option) with missing arguments.
-        cli_tool = FTSCLITool(section)
-        await cli_tool.setup()
-
-        cli_tool.add_c_task(
-            SendWorker(cast(asyncio.Queue, cli_tool.tx_queue), section, message)
-        )
-        cli_tool.add_c_task(
-            ReceiveWorker(
-                cast(asyncio.Queue, cli_tool.rx_queue), section, parse=parse_inbound
-            )
-        )
-
-        await cli_tool.run()
-        return cli_tool.results
+        manager = self._ensure_manager(cfg, parse_inbound)
+        await manager.start()
+        await manager.enqueue(message)
+        return manager.results()
 
     async def send_event(
         self,

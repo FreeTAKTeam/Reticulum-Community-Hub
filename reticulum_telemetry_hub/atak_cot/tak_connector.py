@@ -8,6 +8,7 @@ import json
 import uuid
 
 import RNS
+from pytak import hello_event
 from pytak.functions import tak_pong
 from reticulum_telemetry_hub.atak_cot import Chat
 from reticulum_telemetry_hub.atak_cot import ChatGroup
@@ -255,6 +256,15 @@ class TakConnector:
         RNS.log("TAK connector sending keepalive takPong", RNS.LOG_DEBUG)
         await self._pytak_client.create_and_send_message(
             tak_pong(), config=self._config_parser, parse_inbound=False
+        )
+        return True
+
+    async def send_ping(self) -> bool:
+        """Send a TAK hello/ping keepalive event."""
+
+        RNS.log("TAK connector sending hello/ping keepalive", RNS.LOG_DEBUG)
+        await self._pytak_client.create_and_send_message(
+            hello_event(), config=self._config_parser, parse_inbound=False
         )
         return True
 
