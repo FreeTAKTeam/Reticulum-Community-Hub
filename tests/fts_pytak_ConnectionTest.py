@@ -38,7 +38,7 @@ FTS_HOST = "137.184.101.250"
 FTS_PORT = 8087
 
 # Delay range (in seconds) between CoT transmissions.  FTS enforces rate
-# limits; using a random back‑off helps avoid tripping the anti‑DoS logic
+# limits; using a random back‑off helps avoid tripping the anti‑DoS logicmodify the scr
 MIN_SLEEP = 1.0
 MAX_SLEEP = 3.0
 
