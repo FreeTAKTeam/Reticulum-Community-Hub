@@ -82,7 +82,7 @@ async def main():
     config = ConfigParser()
     config["mycottool"] = {
         # FTS clear CoT port is 8087 by default
-        "COT_URL": "tcp://your-fts-host-or-ip:8087",
+        "COT_URL": "tcp://137.184.101.250:8087",
         # avoid FTS DoS protections by inserting random delay
         "FTS_COMPAT": "1",
         # keep TAK_PROTO=0 (XML) – default, but explicit is fine too
