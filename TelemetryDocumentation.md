@@ -7,6 +7,7 @@ This document describes how Sideband structures telemetry over LXMF and how Reti
 - Telemetry is carried in LXMF message fields: a single snapshot is placed in `FIELD_TELEMETRY` (0x02) and streams or batches in `FIELD_TELEMETRY_STREAM` (0x03) (`reticulum_telemetry_hub/lxmf_daemon/LXMF.py:9`).
 - `FIELD_TELEMETRY` is msgpack-encoded; RTH unpacks it, persists the decoded sensors, and logs a human-readable view (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:180`).
 - `FIELD_TELEMETRY_STREAM` is a plain list; each entry is `[peer_hash_bytes, unix_timestamp, packed_payload, appearance?]` assembled in `handle_command()` when RTH serves a telemetry request (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:231`). Sideband accepts an optional appearance element; RTH currently sends `None`.
+- Telemetry replies intentionally leave the LXMF body empty so telemetry data is transported exclusively via the structured fields.
 
 ## Sensor map payload
 

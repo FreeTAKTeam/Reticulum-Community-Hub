@@ -96,6 +96,7 @@ def test_sampler_can_broadcast_when_enabled(telemetry_controller):
     sampler.stop()
 
     assert router.messages
+    assert not router.messages[0].content
 
 
 def test_sampler_schedules_service_collectors_independently(telemetry_controller):
