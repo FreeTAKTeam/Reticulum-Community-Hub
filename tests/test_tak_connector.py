@@ -202,9 +202,9 @@ def test_connector_build_event_generates_expected_xml():
     takv_el = detail.find("takv")
     assert takv_el is not None
     assert takv_el.get("version") == "0.44.0"
-    assert takv_el.get("platform") == "WinTAK-CIV"
-    assert takv_el.get("os") == "Microsoft Windows 11 Pro"
-    assert takv_el.get("device") == "LENOVO 20XW003LUS"
+    assert takv_el.get("platform") == "RTH"
+    assert takv_el.get("os") == "ubuntu 24.04"
+    assert takv_el.get("device") == "Anonimous Device"
 
     group_el = detail.find("__group")
     assert group_el is not None

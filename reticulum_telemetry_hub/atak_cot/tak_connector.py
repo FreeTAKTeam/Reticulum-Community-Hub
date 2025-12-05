@@ -76,9 +76,9 @@ class TakConnector:
     CHAT_EVENT_TYPE = "b-t-f"
     CHAT_EVENT_HOW = "h-g-i-g-o"
     TAKV_VERSION = "0.44.0"
-    TAKV_PLATFORM = "WinTAK-CIV"
-    TAKV_OS = "Microsoft Windows 11 Pro"
-    TAKV_DEVICE = "LENOVO 20XW003LUS"
+    TAKV_PLATFORM = "RetTAK"
+    TAKV_OS = "ubuntu"
+    TAKV_DEVICE = "not your business"
     GROUP_NAME = "Yellow"
     GROUP_ROLE = "Team Member"
     STATUS_BATTERY = 0.0
@@ -262,7 +262,7 @@ class TakConnector:
     async def send_ping(self) -> bool:
         """Send a TAK hello/ping keepalive event."""
 
-        RNS.log("TAK connector sending hello/ping keepalive", RNS.LOG_DEBUG)
+        RNS.log("TAK connector sending ping", RNS.LOG_DEBUG)
         await self._pytak_client.create_and_send_message(
             hello_event(), config=self._config_parser, parse_inbound=False
         )
