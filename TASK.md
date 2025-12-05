@@ -39,3 +39,4 @@
 - 2025-12-05: ✅ Persist PyTAK sessions with shared queues, add hello/ping keepalives, and extend TAK connector coverage.
 - 2025-12-05: ✅ Keep telemetry payloads out of LXMF message bodies and rely on field delivery only.
 - 2025-12-05: ✅ Restore TAK connector keepalive delivery and connection visibility by running PyTAK in a persistent background loop.
+- 2025-12-05: ✅ Periodically dispatch the latest unique telemetry as CoT updates from the TAK connector.
