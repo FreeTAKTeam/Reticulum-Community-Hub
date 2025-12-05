@@ -43,8 +43,6 @@ class _SamplerJob:
 class TelemetrySampler:
     """Background worker that periodically emits telemetry snapshots."""
 
-    TELEMETRY_TITLE = "Telemetry update"
-
     def __init__(
         self,
         controller: TelemetryController,
@@ -201,7 +199,6 @@ class TelemetrySampler:
                 message = LXMF.LXMessage(
                     destination,
                     self._source_destination,
-                    self.TELEMETRY_TITLE,
                     fields={LXMF.FIELD_TELEMETRY: encoded},
                     desired_method=LXMF.LXMessage.DIRECT,
                 )

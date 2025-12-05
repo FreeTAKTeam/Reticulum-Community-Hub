@@ -37,3 +37,4 @@
 - 2025-12-03: ✅ Maintain overall test coverage at or above 90%.
 - 2025-12-04: ✅ Format codebase and resolve lint configuration issues identified during testing.
 - 2025-12-05: ✅ Persist PyTAK sessions with shared queues, add hello/ping keepalives, and extend TAK connector coverage.
+- 2025-12-05: ✅ Keep telemetry payloads out of LXMF message bodies and rely on field delivery only.

@@ -301,11 +301,9 @@ class TelemetryController:
                             None,
                         ]
                     )
-                content_payload = {"telemetry": self._json_safe(human_readable_entries)}
                 message = LXMF.LXMessage(
                     dest,
                     my_lxm_dest,
-                    json.dumps(content_payload),
                     desired_method=LXMF.LXMessage.DIRECT,
                 )
             # Sideband expects telemetry streams as plain lists; avoid
