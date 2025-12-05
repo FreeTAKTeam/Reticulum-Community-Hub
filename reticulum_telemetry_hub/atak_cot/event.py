@@ -49,6 +49,7 @@ class Event:
     start: str
     stale: str
     point: Point
+    access: str | None = None
     detail: Detail | None = None
 
     @classmethod
@@ -78,6 +79,7 @@ class Event:
             start=root.get("start", ""),
             stale=root.get("stale", ""),
             point=point,
+            access=root.get("access"),
             detail=detail,
         )
 
@@ -98,6 +100,7 @@ class Event:
             start=event_obj.get("start", ""),
             stale=event_obj.get("stale", ""),
             point=point,
+            access=event_obj.get("access"),
             detail=detail,
         )
 
@@ -119,6 +122,8 @@ class Event:
             "start": self.start,
             "stale": self.stale,
         }
+        if self.access:
+            attrib["access"] = self.access
         event_el = ET.Element("event", attrib)
         event_el.append(self.point.to_element())
         detail_el = self.detail.to_element() if self.detail else None
@@ -149,6 +154,8 @@ class Event:
             "stale": self.stale,
             "point": self.point.to_dict(),
         }
+        if self.access:
+            event_data["access"] = self.access
         if self.detail:
             event_data["detail"] = self.detail.to_dict()
         return {"event": event_data}

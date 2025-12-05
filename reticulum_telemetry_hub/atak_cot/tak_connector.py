@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 import json
-import uuid
 
 import RNS
 from sqlalchemy.orm.exc import DetachedInstanceError
@@ -13,14 +12,13 @@ from pytak import hello_event
 from pytak.functions import tak_pong
 from reticulum_telemetry_hub.atak_cot import Chat
 from reticulum_telemetry_hub.atak_cot import ChatGroup
-from reticulum_telemetry_hub.atak_cot import ChatHierarchy
-from reticulum_telemetry_hub.atak_cot import ChatHierarchyContact
-from reticulum_telemetry_hub.atak_cot import ChatHierarchyGroup
 from reticulum_telemetry_hub.atak_cot import Contact
 from reticulum_telemetry_hub.atak_cot import Detail
 from reticulum_telemetry_hub.atak_cot import Event
 from reticulum_telemetry_hub.atak_cot import Group
 from reticulum_telemetry_hub.atak_cot import Link
+from reticulum_telemetry_hub.atak_cot import Marti
+from reticulum_telemetry_hub.atak_cot import MartiDest
 from reticulum_telemetry_hub.atak_cot import Remarks
 from reticulum_telemetry_hub.atak_cot import Status
 from reticulum_telemetry_hub.atak_cot import Takv
@@ -303,67 +301,42 @@ class TakConnector:
 
         now = datetime.utcnow()
         start_time = timestamp or now
-        stale_delta = max(self._config.poll_interval_seconds, 1.0)
-        stale = now + timedelta(seconds=stale_delta * 2)
-
-        snapshot = self._latest_location()
-        latitude = snapshot.latitude if snapshot else 0.0
-        longitude = snapshot.longitude if snapshot else 0.0
-        altitude = snapshot.altitude if snapshot else 0.0
-        accuracy = snapshot.accuracy if snapshot else 0.0
+        stale = start_time + timedelta(minutes=1)
 
         identifier = self._identifier_from_hash(source_hash)
-        timestamp_ms = int(start_time.timestamp() * 1000)
-        uid_suffix = uuid.uuid4().hex[:6]
-        uid = f"GeoChat.{identifier}-chat-{timestamp_ms}-{uid_suffix}"
+        uid = self._uid_from_hash(source_hash)
+        chatroom = str(topic_id) if topic_id else "All Chat Rooms"
+        server_uid = self._config.callsign or "RTH"
 
-        chatroom = str(topic_id) if topic_id else "GeoChat"
         chat_group = ChatGroup(
             chatroom=chatroom,
-            chat_id=chatroom,
-            uid0=identifier,
-            uid1="",
+            chat_id=server_uid,
+            uid0=server_uid,
+            uid1=chatroom,
         )
-        hierarchy_contact = ChatHierarchyContact(
-            uid=identifier, name=sender_label or identifier
-        )
-        chat_hierarchy_group = ChatHierarchyGroup(
-            uid=chatroom,
-            name=chatroom,
-            contacts=[hierarchy_contact],
-        )
-        hierarchy_root = ChatHierarchyGroup(
-            uid="TeamGroups",
-            name="Teams",
-            groups=[chat_hierarchy_group],
-        )
-        hierarchy = ChatHierarchy(groups=[hierarchy_root])
         chat = Chat(
             id=chatroom,
             chatroom=chatroom,
-            sender_callsign=sender_label or identifier,
             group_owner="false",
             chat_group=chat_group,
-            hierarchy=hierarchy,
         )
         link = Link(
             uid=identifier,
             type=self.CHAT_LINK_TYPE,
             relation="p-p",
         )
-
         remarks = Remarks(
             text=content.strip(),
-            source=f"BAO.F.{sender_label}.{identifier}",
-            source_id=identifier,
+            source=sender_label or identifier,
             to=chatroom,
             time=_utc_iso(start_time),
         )
-
         detail = Detail(
             chat=chat,
             links=[link],
             remarks=remarks,
+            marti=Marti(dest=MartiDest(callsign=None)),
+            server_destination=True,
         )
 
         event_dict = {
@@ -371,15 +344,16 @@ class TakConnector:
             "uid": uid,
             "type": self.CHAT_EVENT_TYPE,
             "how": self.CHAT_EVENT_HOW,
+            "access": "Undefined",
             "time": _utc_iso(now),
             "start": _utc_iso(start_time),
             "stale": _utc_iso(stale),
             "point": {
-                "lat": latitude,
-                "lon": longitude,
-                "hae": altitude,
-                "ce": accuracy,
-                "le": accuracy,
+                "lat": 0.0,
+                "lon": 0.0,
+                "hae": 9999999.0,
+                "ce": 9999999.0,
+                "le": 9999999.0,
             },
             "detail": detail.to_dict(),
         }
