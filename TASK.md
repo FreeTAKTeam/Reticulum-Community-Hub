@@ -41,3 +41,4 @@
 - 2025-12-05: ✅ Restore TAK connector keepalive delivery and connection visibility by running PyTAK in a persistent background loop.
 - 2025-12-05: ✅ Periodically dispatch the latest unique telemetry as CoT updates from the TAK connector.
 - 2025-12-05: ✅ Mirror LXMF chat messages to TAK servers using the required CoT chat template.
+- 2025-12-05: ✅ Refresh README and documentation under `docs/`.

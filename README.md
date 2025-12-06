@@ -3,7 +3,7 @@
 ![image](https://github.com/user-attachments/assets/ba29799c-7194-4052-aedf-1b5e1c8648d5)
 
 Reticulum-Telemetry-Hub (RTH) is an independent component within the [Reticulum](https://reticulum.network/) / [lXMF](https://github.com/markqvist/LXMF) ecosystem, designed to manage a complete TCP node across a Reticulum-based network.
-The RTH  enable communication and data sharing between clients like [Sideband](https://github.com/markqvist/Sideband) or Meshchat, enhancing situational awareness and operational efficiency in distributed networks.
+RTH enables communication and data sharing between clients like [Sideband](https://github.com/markqvist/Sideband) or Meshchat, enhancing situational awareness and operational efficiency in distributed networks.
 
 ## Core Functionalities
 
@@ -11,44 +11,54 @@ The Reticulum-Telemetry-Hub can perform the following key functions:
 
 - **One to Many & Topic-Targeted Messages**: RTH supports broadcasting messages to all connected clients or filtering the fan-out by topic tags maintained in the hub's subscriber registry.
 - By sending a message to the hub, it will be distributed to all clients connected to the network or, when the payload includes a `TopicID`, only to the peers subscribed to that topic. *(Initial implementation - Experimental)*
-- **Telemetry Collector**: RTH acts as a telemetry data repository, collecting data from all connected clients.
-  Currently, this functionality is focused on Sideband clients that have enabled their Reticulum identity. By  rewriting the code we hope to see a wider implementation of Telemetry in other applications.
+- **Telemetry Collector**: RTH acts as a telemetry data repository, collecting data from all connected clients. Currently, this functionality is focused on Sideband clients that have enabled their Reticulum identity. By rewriting the code we hope to see a wider implementation of telemetry in other applications.
 - **Replication Node**: RTH uses the LXMF router to ensure message delivery even when the target client is offline. If a message's destination is not available at the time of sending, RTH will save the message and deliver it once the client comes online.
-- **Reticulum Transport**: RTH uses Reticulum  as a transport node, routing traffic to other peers, passing network announcements, and fulfilling path requests.
+- **Reticulum Transport**: RTH uses Reticulum as a transport node, routing traffic to other peers, passing network announcements, and fulfilling path requests.
+
+## Documentation
+
+- Command payload formats and examples: [`docs/supportedCommands.md`](docs/supportedCommands.md)
+- TAK / Cursor-on-Target relay details: [`docs/tak.md`](docs/tak.md)
+
+## Quickstart
+
+Follow these steps to bring up a local hub using the bundled defaults:
+
+1. Clone the repository and enter it.
+   ```bash
+   git clone https://github.com/FreeTAKTeam/Reticulum-Telemetry-Hub.git
+   cd Reticulum-Telemetry-Hub
+   ```
+2. Create and activate a virtual environment.
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+   You should see `(.venv)` in your shell prompt after activation.
+3. Install dependencies in editable mode (or use Poetry if you prefer).
+   ```bash
+   pip install --upgrade pip
+   pip install -e .
+   ```
+   The editable install pulls every dependency declared in `pyproject.toml` (including runtime services and the bundled tests). If you prefer Poetry, run `pip install poetry` once and then use `poetry install` to create and manage the virtual environment instead.
+4. Prepare a storage directory and unified config (the defaults live under `RTH_Store`).
+   - Copy `config.ini` into `RTH_Store` or point the `--storage_dir` flag at another directory.
+   - See the [Configuration](#configuration) section below for the available options and defaults.
+5. Run the lightweight smoke checks to confirm the entry point and daemon wiring.
+   ```bash
+   python -m reticulum_telemetry_hub.reticulum_server --help
+   pytest tests/test_reticulum_server_daemon.py -q
+   ```
+6. Start the hub.
+   ```bash
+   python -m reticulum_telemetry_hub.reticulum_server \
+       --storage_dir ./RTH_Store \
+       --display_name "RTH"
+   ```
 
 ## Installation
 
-To install Reticulum-Telemetry-Hub, clone the repository and proceed with the following steps:
-
-```bash
-git clone https://github.com/FreeTAKTeam/Reticulum-Telemetry-Hub.git
-cd Reticulum-Telemetry-Hub
-```
-
-Create the environment
-
-Choose a directory where you want the Telemetry Hub to live:
-
-```bash
-python3 -m venv .venv
-```
-
- Activate it
-
-```bash
-source .venv/bin/activate
-```
-
-You will now see (.venv) in your shell prompt. you can now
-
-```bash
-pip install --upgrade pip
-pip install -e .
-```
-
-The editable install pulls every dependency declared in ``pyproject.toml`` (including runtime services and the bundled tests). If you prefer Poetry, run ``pip install poetry`` once and then use ``poetry install`` to create and manage the virtual environment instead.
-
-*Optional extras*: No extras are currently defined, so the commands above install the complete feature set out of the box.
+If you want the full installation steps outside the quickstart, follow the same commands above. *Optional extras*: No extras are currently defined, so the commands above install the complete feature set out of the box.
 
 ### Verify the setup
 

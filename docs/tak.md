@@ -43,3 +43,18 @@
 - Ensure a location sensor is enabled (e.g., via `TelemeterManager` or the optional `gpsd` service); otherwise `send_latest_location()` and `send_telemetry_event()` no-op and log a warning.
 - When pointing at a remote TAK server, set the TLS fields in `TakConnectionConfig`; PyTAK reads them directly from the generated `ConfigParser`.
 - For debugging, you can inspect the `Event.to_xml()` output (see `tests/test_tak_connector.py` for expectations) to verify UID, contact endpoint, group, track, and takv metadata before sending.
+
+## Running the TAK connector
+
+1. Enable the `tak_cot` service when starting the hub:
+   ```bash
+   python -m reticulum_telemetry_hub.reticulum_server \
+       --storage_dir ./RTH_Store \
+       --service tak_cot
+   ```
+2. Confirm that `RTH_Store/config.ini` includes a `[TAK]` section. The `tak_cot` daemon reads these values on startup and reuses them across keepalive and telemetry dispatches.
+3. Watch for the following log signals:
+   - `PyTAK TX/RX queue workers started` indicates the connector’s background loop is healthy.
+   - `Sending takPong keepalive` appears roughly every 60 seconds while connected.
+   - `send_latest_location` or `send_telemetry_event` warnings call out when no location data is available.
+4. When testing against ATAK or WinTAK, verify that the `detail.contact` endpoint matches the `<host>:<port>:<scheme>` derived from your `COT_URL` and that the `takv` block shows the current RTH version from `pyproject.toml`.
