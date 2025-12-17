@@ -1,4 +1,5 @@
 import struct
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -753,3 +754,34 @@ def test_location_pack_strips_invalid_altitude_sentinel():
     packed = sensor.pack()
     altitude_raw = struct.unpack("!I", packed[2])[0]
     assert altitude_raw == 0
+
+
+def test_concurrent_telemetry_writes(tmp_path):
+    db_path = tmp_path / "telemetry_threads.db"
+    controller = TelemetryController(db_path=db_path)
+
+    worker_count = 12
+    iterations = 5
+    errors: list[Exception] = []
+    barrier = threading.Barrier(worker_count)
+
+    def worker(index: int):
+        try:
+            barrier.wait()
+            for j in range(iterations):
+                payload = {SID_TIME: int(time.time()) + j}
+                controller.save_telemetry(payload, f"peer-{index}")
+        except Exception as exc:  # pragma: no cover - defensive capture
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(worker_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+
+    with controller._session_scope() as session:
+        assert session.query(Telemeter).count() == worker_count * iterations
+    controller._engine.dispose()
