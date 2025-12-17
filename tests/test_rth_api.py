@@ -1,4 +1,7 @@
+import threading
+
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api import Subscriber
@@ -99,6 +102,59 @@ def test_client_join_leave(tmp_path):
     assert len(api.list_clients()) == 1
     assert api.leave("identity1")
     assert api.list_clients() == []
+
+
+def test_concurrent_client_join_and_leave(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    worker_count = 20
+    iterations = 4
+    barrier = threading.Barrier(worker_count)
+    errors: list[Exception] = []
+
+    def worker(idx: int):
+        identity = f"identity-{idx}"
+        try:
+            barrier.wait()
+            for _ in range(iterations):
+                api.join(identity)
+            if idx % 2 == 0:
+                api.leave(identity)
+        except Exception as exc:  # pragma: no cover - defensive capture
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(worker_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    expected_clients = worker_count // 2
+    assert len(api.list_clients()) == expected_clients
+
+
+def test_storage_session_retries_close_failed_sessions(tmp_path, monkeypatch):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    storage = api._storage
+    storage._SESSION_RETRIES = 2
+    storage._SESSION_BACKOFF = 0
+
+    closed_sessions: list[bool] = []
+
+    class FailingSession:
+        def execute(self, _):
+            raise OperationalError("SELECT 1", {}, Exception("locked"))
+
+        def close(self):
+            closed_sessions.append(True)
+
+    monkeypatch.setattr(storage, "_Session", lambda: FailingSession())
+
+    with pytest.raises(OperationalError):
+        storage._acquire_session_with_retry()
+
+    assert len(closed_sessions) == storage._SESSION_RETRIES
 
 
 def test_get_app_info(tmp_path):

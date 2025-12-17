@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
+import time
 from typing import List, Optional
 import uuid
 
-from sqlalchemy import JSON, Column, DateTime, Integer, String, create_engine
+from sqlalchemy import JSON, Column, DateTime, Integer, String, create_engine, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import QueuePool
 
 from .models import Client, Subscriber, Topic
 
@@ -49,10 +55,17 @@ class ClientRecord(Base):
 class HubStorage:
     """SQLAlchemy-backed persistence layer for the RTH API."""
 
+    _POOL_SIZE = 25
+    _POOL_OVERFLOW = 50
+    _CONNECT_TIMEOUT_SECONDS = 30
+    _SESSION_RETRIES = 3
+    _SESSION_BACKOFF = 0.1
+
     def __init__(self, db_path: Path):
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._engine = create_engine(f"sqlite:///{db_path}")
+        self._engine = self._create_engine(db_path)
+        self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
         self._Session = sessionmaker(bind=self._engine, expire_on_commit=False)
 
@@ -60,7 +73,7 @@ class HubStorage:
     # Topic helpers
     # ------------------------------------------------------------------ #
     def create_topic(self, topic: Topic) -> Topic:
-        with self._Session() as session:
+        with self._session_scope() as session:
             record = TopicRecord(
                 id=topic.topic_id or uuid.uuid4().hex,
                 name=topic.topic_name,
@@ -77,7 +90,7 @@ class HubStorage:
             )
 
     def list_topics(self) -> List[Topic]:
-        with self._Session() as session:
+        with self._session_scope() as session:
             records = session.query(TopicRecord).all()
             return [
                 Topic(
@@ -90,7 +103,7 @@ class HubStorage:
             ]
 
     def get_topic(self, topic_id: str) -> Optional[Topic]:
-        with self._Session() as session:
+        with self._session_scope() as session:
             record = session.get(TopicRecord, topic_id)
             if not record:
                 return None
@@ -102,7 +115,7 @@ class HubStorage:
             )
 
     def delete_topic(self, topic_id: str) -> Optional[Topic]:
-        with self._Session() as session:
+        with self._session_scope() as session:
             record = session.get(TopicRecord, topic_id)
             if not record:
                 return None
@@ -123,7 +136,7 @@ class HubStorage:
         topic_path: Optional[str] = None,
         topic_description: Optional[str] = None,
     ) -> Optional[Topic]:
-        with self._Session() as session:
+        with self._session_scope() as session:
             record = session.get(TopicRecord, topic_id)
             if not record:
                 return None
@@ -145,7 +158,7 @@ class HubStorage:
     # Subscriber helpers
     # ------------------------------------------------------------------ #
     def create_subscriber(self, subscriber: Subscriber) -> Subscriber:
-        with self._Session() as session:
+        with self._session_scope() as session:
             record = SubscriberRecord(
                 id=subscriber.subscriber_id or uuid.uuid4().hex,
                 destination=subscriber.destination,
@@ -158,17 +171,17 @@ class HubStorage:
             return self._subscriber_from_record(record)
 
     def list_subscribers(self) -> List[Subscriber]:
-        with self._Session() as session:
+        with self._session_scope() as session:
             records = session.query(SubscriberRecord).all()
             return [self._subscriber_from_record(r) for r in records]
 
     def get_subscriber(self, subscriber_id: str) -> Optional[Subscriber]:
-        with self._Session() as session:
+        with self._session_scope() as session:
             record = session.get(SubscriberRecord, subscriber_id)
             return self._subscriber_from_record(record) if record else None
 
     def delete_subscriber(self, subscriber_id: str) -> Optional[Subscriber]:
-        with self._Session() as session:
+        with self._session_scope() as session:
             record = session.get(SubscriberRecord, subscriber_id)
             if not record:
                 return None
@@ -183,7 +196,7 @@ class HubStorage:
     # Client helpers
     # ------------------------------------------------------------------ #
     def upsert_client(self, identity: str) -> Client:
-        with self._Session() as session:
+        with self._session_scope() as session:
             record = session.get(ClientRecord, identity)
             if record:
                 record.last_seen = _utcnow()
@@ -194,7 +207,7 @@ class HubStorage:
             return self._client_from_record(record)
 
     def remove_client(self, identity: str) -> bool:
-        with self._Session() as session:
+        with self._session_scope() as session:
             record = session.get(ClientRecord, identity)
             if not record:
                 return False
@@ -203,9 +216,73 @@ class HubStorage:
             return True
 
     def list_clients(self) -> List[Client]:
-        with self._Session() as session:
+        with self._session_scope() as session:
             records = session.query(ClientRecord).all()
             return [self._client_from_record(r) for r in records]
+
+    # ------------------------------------------------------------------ #
+    # engine/session helpers
+    # ------------------------------------------------------------------ #
+    def _create_engine(self, db_path: Path) -> Engine:
+        return create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={
+                "check_same_thread": False,
+                "timeout": self._CONNECT_TIMEOUT_SECONDS,
+            },
+            poolclass=QueuePool,
+            pool_size=self._POOL_SIZE,
+            max_overflow=self._POOL_OVERFLOW,
+            pool_pre_ping=True,
+        )
+
+    def _enable_wal_mode(self) -> None:
+        try:
+            with self._engine.connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as conn:
+                conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
+        except OperationalError as exc:
+            logging.warning("Failed to enable WAL mode: %s", exc)
+
+    @contextmanager
+    def _session_scope(self):
+        """Yield a database session with automatic cleanup."""
+
+        session = self._acquire_session_with_retry()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _acquire_session_with_retry(self):
+        """Return a SQLite session, retrying on lock contention."""
+
+        last_exc: OperationalError | None = None
+        for attempt in range(1, self._SESSION_RETRIES + 1):
+            session = None
+            try:
+                session = self._Session()
+                session.execute(text("SELECT 1"))
+                return session
+            except OperationalError as exc:
+                last_exc = exc
+                lock_detail = str(exc).strip() or "database is locked"
+                if session is not None:
+                    session.close()
+                logging.warning(
+                    "SQLite session acquisition failed (attempt %d/%d): %s",
+                    attempt,
+                    self._SESSION_RETRIES,
+                    lock_detail,
+                )
+                time.sleep(self._SESSION_BACKOFF * attempt)
+        logging.error(
+            "Unable to obtain SQLite session after %d attempts", self._SESSION_RETRIES
+        )
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("Failed to create SQLite session")
 
     # ------------------------------------------------------------------ #
     # helpers

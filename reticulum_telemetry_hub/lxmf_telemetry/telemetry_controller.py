@@ -1,7 +1,9 @@
+from contextlib import contextmanager
 from datetime import datetime
 import json
 from pathlib import Path
 import string
+import time
 from typing import Callable, Optional
 
 import LXMF
@@ -46,9 +48,11 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TEMPERATURE,
     SID_TIME,
 )
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, joinedload, sessionmaker
+from sqlalchemy.pool import QueuePool
 
 
 class TelemetryController:
@@ -84,6 +88,12 @@ class TelemetryController:
         SID_CUSTOM: "custom",
     }
 
+    _POOL_SIZE = 30
+    _POOL_OVERFLOW = 60
+    _CONNECT_TIMEOUT_SECONDS = 30
+    _SESSION_RETRIES = 3
+    _SESSION_BACKOFF = 0.1
+
     def __init__(
         self,
         *,
@@ -95,14 +105,79 @@ class TelemetryController:
 
         if engine is None:
             db_location = Path(db_path) if db_path is not None else Path("telemetry.db")
-            engine = create_engine(f"sqlite:///{db_location}")
+            engine = self._create_engine(db_location)
 
         self._engine = engine
+        self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
         self._session_cls = sessionmaker(bind=self._engine, expire_on_commit=False)
         self._telemetry_listener: (
             Callable[[dict, str | bytes | None, Optional[datetime]], None] | None
         ) = None
+
+    def _create_engine(self, db_location: Path) -> Engine:
+        return create_engine(
+            f"sqlite:///{db_location}",
+            connect_args={
+                "check_same_thread": False,
+                "timeout": self._CONNECT_TIMEOUT_SECONDS,
+            },
+            poolclass=QueuePool,
+            pool_size=self._POOL_SIZE,
+            max_overflow=self._POOL_OVERFLOW,
+            pool_pre_ping=True,
+        )
+
+    def _enable_wal_mode(self) -> None:
+        if self._engine.url.get_backend_name() != "sqlite":
+            return
+        try:
+            with self._engine.connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as conn:
+                conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
+        except OperationalError as exc:
+            RNS.log(f"Failed enabling WAL mode: {exc}", RNS.LOG_WARNING)
+
+    @contextmanager
+    def _session_scope(self):
+        """Yield a telemetry DB session that always closes."""
+
+        session = self._acquire_session_with_retry()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _acquire_session_with_retry(self):
+        """Return a database session, retrying on transient OperationalError."""
+
+        last_exc: OperationalError | None = None
+        for attempt in range(1, self._SESSION_RETRIES + 1):
+            session = None
+            try:
+                session = self._session_cls()
+                session.execute(text("SELECT 1"))
+                return session
+            except OperationalError as exc:
+                last_exc = exc
+                if session is not None:
+                    session.close()
+                RNS.log(
+                    (
+                        "SQLite session acquisition failed "
+                        f"(attempt {attempt}/{self._SESSION_RETRIES}): {exc}"
+                    ),
+                    RNS.LOG_WARNING,
+                )
+                time.sleep(self._SESSION_BACKOFF * attempt)
+        RNS.log(
+            "Unable to obtain telemetry database session after retries",
+            RNS.LOG_ERROR,
+        )
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("Failed to acquire telemetry session")
 
     def _load_telemetry(
         self,
@@ -128,7 +203,7 @@ class TelemetryController:
         self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
     ) -> list[Telemeter]:
         """Get the telemetry data."""
-        with self._session_cls() as ses:
+        with self._session_scope() as ses:
             return self._load_telemetry(ses, start_time, end_time)
 
     def register_listener(
@@ -162,7 +237,7 @@ class TelemetryController:
 
         if not has_sensor_timestamp and timestamp is not None:
             tel.time = timestamp
-        with self._session_cls() as ses:
+        with self._session_scope() as ses:
             ses.add(tel)
             ses.commit()
 
@@ -268,7 +343,7 @@ class TelemetryController:
 
             timebase = int(timebase_raw)
             human_readable_entries: list[dict[str, object]] = []
-            with self._session_cls() as ses:
+            with self._session_scope() as ses:
                 timebase_dt = datetime.fromtimestamp(timebase)
                 teles = self._load_telemetry(ses, start_time=timebase_dt)
                 # Return one snapshot per peer using the most recent entry.
