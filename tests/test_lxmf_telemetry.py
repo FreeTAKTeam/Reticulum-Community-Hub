@@ -7,6 +7,7 @@ import LXMF
 import RNS
 import pytest
 from msgpack import packb, unpackb
+from sqlalchemy.exc import OperationalError
 
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -173,6 +174,28 @@ def test_handle_message_stream_without_sid_time_uses_entry_timestamp(
         stored = ses.query(Telemeter).one()
         assert stored.time == datetime.fromtimestamp(timestamp)
         assert len(stored.sensors) > 0
+
+
+def test_telemetry_session_retries_close_failed_sessions(
+    telemetry_controller, monkeypatch
+):
+    telemetry_controller._SESSION_RETRIES = 2
+    telemetry_controller._SESSION_BACKOFF = 0
+    closed_sessions: list[bool] = []
+
+    class FailingSession:
+        def execute(self, _):
+            raise OperationalError("SELECT 1", {}, Exception("locked"))
+
+        def close(self):
+            closed_sessions.append(True)
+
+    monkeypatch.setattr(telemetry_controller, "_session_cls", lambda: FailingSession())
+
+    with pytest.raises(OperationalError):
+        telemetry_controller._acquire_session_with_retry()
+
+    assert len(closed_sessions) == telemetry_controller._SESSION_RETRIES
 
 
 def test_humanize_returns_time_and_location_values(telemetry_controller):

@@ -141,6 +141,8 @@ class TelemetryController:
 
     @contextmanager
     def _session_scope(self):
+        """Yield a telemetry DB session that always closes."""
+
         session = self._acquire_session_with_retry()
         try:
             yield session
@@ -148,14 +150,19 @@ class TelemetryController:
             session.close()
 
     def _acquire_session_with_retry(self):
+        """Return a database session, retrying on transient OperationalError."""
+
         last_exc: OperationalError | None = None
         for attempt in range(1, self._SESSION_RETRIES + 1):
+            session = None
             try:
                 session = self._session_cls()
                 session.execute(text("SELECT 1"))
                 return session
             except OperationalError as exc:
                 last_exc = exc
+                if session is not None:
+                    session.close()
                 RNS.log(
                     (
                         "SQLite session acquisition failed "

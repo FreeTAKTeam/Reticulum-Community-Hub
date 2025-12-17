@@ -1,6 +1,7 @@
 import threading
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api import Subscriber
@@ -131,6 +132,29 @@ def test_concurrent_client_join_and_leave(tmp_path):
     assert not errors
     expected_clients = worker_count // 2
     assert len(api.list_clients()) == expected_clients
+
+
+def test_storage_session_retries_close_failed_sessions(tmp_path, monkeypatch):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    storage = api._storage
+    storage._SESSION_RETRIES = 2
+    storage._SESSION_BACKOFF = 0
+
+    closed_sessions: list[bool] = []
+
+    class FailingSession:
+        def execute(self, _):
+            raise OperationalError("SELECT 1", {}, Exception("locked"))
+
+        def close(self):
+            closed_sessions.append(True)
+
+    monkeypatch.setattr(storage, "_Session", lambda: FailingSession())
+
+    with pytest.raises(OperationalError):
+        storage._acquire_session_with_retry()
+
+    assert len(closed_sessions) == storage._SESSION_RETRIES
 
 
 def test_get_app_info(tmp_path):

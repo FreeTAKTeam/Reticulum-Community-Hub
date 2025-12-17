@@ -247,6 +247,8 @@ class HubStorage:
 
     @contextmanager
     def _session_scope(self):
+        """Yield a database session with automatic cleanup."""
+
         session = self._acquire_session_with_retry()
         try:
             yield session
@@ -254,8 +256,11 @@ class HubStorage:
             session.close()
 
     def _acquire_session_with_retry(self):
+        """Return a SQLite session, retrying on lock contention."""
+
         last_exc: OperationalError | None = None
         for attempt in range(1, self._SESSION_RETRIES + 1):
+            session = None
             try:
                 session = self._Session()
                 session.execute(text("SELECT 1"))
@@ -263,6 +268,8 @@ class HubStorage:
             except OperationalError as exc:
                 last_exc = exc
                 lock_detail = str(exc).strip() or "database is locked"
+                if session is not None:
+                    session.close()
                 logging.warning(
                     "SQLite session acquisition failed (attempt %d/%d): %s",
                     attempt,
