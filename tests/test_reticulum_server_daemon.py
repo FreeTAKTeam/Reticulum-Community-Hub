@@ -156,6 +156,7 @@ def test_subscriber_cache_refresh_after_subscribe(tmp_path):
     try:
         hub._refresh_topic_registry()
         hub.send_message("Hello", topic=topic_id)
+        hub.wait_for_outbound_flush()
 
         assert {msg.destination_hash for msg in sent} == {dest_one.identity.hash}
 
@@ -175,6 +176,7 @@ def test_subscriber_cache_refresh_after_subscribe(tmp_path):
         sent.clear()
         hub.delivery_callback(subscribe_message)
         hub.send_message("Hello again", topic=topic_id)
+        hub.wait_for_outbound_flush()
 
         destinations = {msg.destination_hash for msg in sent}
         assert dest_two.identity.hash in destinations

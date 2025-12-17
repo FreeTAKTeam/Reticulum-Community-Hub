@@ -51,6 +51,9 @@ from reticulum_telemetry_hub.reticulum_server.services import (
     HubService,
 )
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
+from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
+    OutboundMessageQueue,
+)
 from .command_manager import CommandManager
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
@@ -72,6 +75,11 @@ LOG_LEVELS = {
 }
 TOPIC_REGISTRY_TTL_SECONDS = 5
 ESCAPED_COMMAND_PREFIX = "\\\\\\"
+DEFAULT_OUTBOUND_QUEUE_SIZE = 64
+DEFAULT_OUTBOUND_WORKERS = 2
+DEFAULT_OUTBOUND_SEND_TIMEOUT = 5.0
+DEFAULT_OUTBOUND_BACKOFF = 0.5
+DEFAULT_OUTBOUND_MAX_ATTEMPTS = 3
 
 
 def _resolve_interval(value: int | None, fallback: int) -> int:
@@ -181,6 +189,11 @@ class ReticulumTelemetryHub:
         service_telemetry_interval: float | None = DEFAULT_SERVICE_TELEMETRY_INTERVAL,
         config_manager: HubConfigurationManager | None = None,
         config_path: Path | None = None,
+        outbound_queue_size: int = DEFAULT_OUTBOUND_QUEUE_SIZE,
+        outbound_workers: int = DEFAULT_OUTBOUND_WORKERS,
+        outbound_send_timeout: float = DEFAULT_OUTBOUND_SEND_TIMEOUT,
+        outbound_backoff: float = DEFAULT_OUTBOUND_BACKOFF,
+        outbound_max_attempts: int = DEFAULT_OUTBOUND_MAX_ATTEMPTS,
     ):
         """Initialize the telemetry hub runtime container.
 
@@ -195,6 +208,11 @@ class ReticulumTelemetryHub:
             service_telemetry_interval (float | None): Interval for remote service sampling.
             config_manager (HubConfigurationManager | None): Optional preloaded configuration manager.
             config_path (Path | None): Path to ``config.ini`` when creating a manager internally.
+            outbound_queue_size (int): Maximum queued outbound LXMF payloads before applying backpressure.
+            outbound_workers (int): Number of outbound worker threads to spin up.
+            outbound_send_timeout (float): Seconds to wait before timing out a send attempt.
+            outbound_backoff (float): Base number of seconds to wait between retry attempts.
+            outbound_max_attempts (int): Number of attempts before an outbound message is dropped.
         """
         # Normalize paths early so downstream helpers can rely on Path objects.
         self.storage_path = Path(storage_path)
@@ -205,6 +223,11 @@ class ReticulumTelemetryHub:
         self.hub_telemetry_interval = hub_telemetry_interval
         self.service_telemetry_interval = service_telemetry_interval
         self.loglevel = loglevel
+        self.outbound_queue_size = outbound_queue_size
+        self.outbound_workers = outbound_workers
+        self.outbound_send_timeout = outbound_send_timeout
+        self.outbound_backoff = outbound_backoff
+        self.outbound_max_attempts = outbound_max_attempts
 
         # Reuse an existing Reticulum instance when running in-process tests
         # to avoid triggering the single-instance guard in the RNS library.
@@ -226,6 +249,7 @@ class ReticulumTelemetryHub:
         self.connections: dict[bytes, RNS.Destination] = {}
         self._daemon_started = False
         self._active_services = {}
+        self._outbound_queue: OutboundMessageQueue | None = None
 
         identity = self.load_or_generate_identity(self.identity_path)
 
@@ -498,6 +522,14 @@ class ReticulumTelemetryHub:
                 hashes that should not receive the broadcast.
         """
 
+        queue = self._ensure_outbound_queue()
+        if queue is None:
+            RNS.log(
+                "Outbound queue unavailable; dropping message broadcast request.",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return
+
         available = (
             list(self.connections.values())
             if hasattr(self.connections, "values")
@@ -515,15 +547,88 @@ class ReticulumTelemetryHub:
             connection_hex = self._connection_hex(connection)
             if excluded and connection_hex and connection_hex in excluded:
                 continue
-            response = LXMF.LXMessage(
+            identity = getattr(connection, "identity", None)
+            destination_hash = getattr(identity, "hash", None)
+            enqueued = queue.queue_message(
                 connection,
-                self.my_lxmf_dest,
                 message,
-                desired_method=LXMF.LXMessage.DIRECT,
+                destination_hash
+                if isinstance(destination_hash, (bytes, bytearray))
+                else None,
+                connection_hex,
             )
-            if hasattr(connection, "identity") and hasattr(connection.identity, "hash"):
-                response.destination_hash = connection.identity.hash
-            self.lxm_router.handle_outbound(response)
+            if not enqueued:
+                RNS.log(
+                    (
+                        "Failed to enqueue outbound LXMF message for"
+                        f" {connection_hex or 'unknown destination'}"
+                    ),
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
+
+    def _ensure_outbound_queue(self) -> OutboundMessageQueue | None:
+        """
+        Initialize and start the outbound worker queue.
+
+        Returns:
+            OutboundMessageQueue | None: Active outbound queue instance when available.
+        """
+
+        if self.my_lxmf_dest is None:
+            return None
+
+        if not hasattr(self, "_outbound_queue"):
+            self._outbound_queue = None
+
+        if self._outbound_queue is None:
+            self._outbound_queue = OutboundMessageQueue(
+                self.lxm_router,
+                self.my_lxmf_dest,
+                queue_size=getattr(
+                    self, "outbound_queue_size", DEFAULT_OUTBOUND_QUEUE_SIZE
+                )
+                or DEFAULT_OUTBOUND_QUEUE_SIZE,
+                worker_count=getattr(
+                    self, "outbound_workers", DEFAULT_OUTBOUND_WORKERS
+                )
+                or DEFAULT_OUTBOUND_WORKERS,
+                send_timeout=getattr(
+                    self, "outbound_send_timeout", DEFAULT_OUTBOUND_SEND_TIMEOUT
+                )
+                or DEFAULT_OUTBOUND_SEND_TIMEOUT,
+                backoff_seconds=getattr(
+                    self, "outbound_backoff", DEFAULT_OUTBOUND_BACKOFF
+                )
+                or DEFAULT_OUTBOUND_BACKOFF,
+                max_attempts=getattr(
+                    self, "outbound_max_attempts", DEFAULT_OUTBOUND_MAX_ATTEMPTS
+                )
+                or DEFAULT_OUTBOUND_MAX_ATTEMPTS,
+            )
+        self._outbound_queue.start()
+        return self._outbound_queue
+
+    def wait_for_outbound_flush(self, timeout: float = 1.0) -> bool:
+        """
+        Wait until outbound messages clear the queue.
+
+        Args:
+            timeout (float): Seconds to wait before giving up.
+
+        Returns:
+            bool: ``True`` when the queue drained before the timeout elapsed.
+        """
+
+        queue = getattr(self, "_outbound_queue", None)
+        if queue is None:
+            return True
+        return queue.wait_for_flush(timeout=timeout)
+
+    @property
+    def outbound_queue(self) -> OutboundMessageQueue | None:
+        """Return the active outbound queue instance for diagnostics/testing."""
+
+        return self._outbound_queue
 
     def log_delivery_details(self, message, time_string, signature_string):
         RNS.log("\t+--- LXMF Delivery ---------------------------------------------")
@@ -748,6 +853,8 @@ class ReticulumTelemetryHub:
         if self._daemon_started:
             return
 
+        self._ensure_outbound_queue()
+
         if self.telemetry_sampler is not None:
             self.telemetry_sampler.start()
 
@@ -763,20 +870,23 @@ class ReticulumTelemetryHub:
         self._daemon_started = True
 
     def stop_daemon_workers(self) -> None:
-        if not self._daemon_started:
-            return
+        if self._daemon_started:
+            for key, service in list(self._active_services.items()):
+                try:
+                    service.stop()
+                finally:
+                    # Ensure the registry is cleared even if ``stop`` raises.
+                    self._active_services.pop(key, None)
 
-        for key, service in list(self._active_services.items()):
-            try:
-                service.stop()
-            finally:
-                # Ensure the registry is cleared even if ``stop`` raises.
-                self._active_services.pop(key, None)
+            if self.telemetry_sampler is not None:
+                self.telemetry_sampler.stop()
 
-        if self.telemetry_sampler is not None:
-            self.telemetry_sampler.stop()
+            self._daemon_started = False
 
-        self._daemon_started = False
+        if self._outbound_queue is not None:
+            self.wait_for_outbound_flush(timeout=1.0)
+            # Reason: ensure outbound thread exits cleanly between daemon runs.
+            self._outbound_queue.stop()
 
     def _create_service(self, name: str) -> HubService | None:
         factory = SERVICE_FACTORIES.get(name)
