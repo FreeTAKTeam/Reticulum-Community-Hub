@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from configparser import ConfigParser
+import os
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -15,6 +16,19 @@ from .models import (
     TakConnectionConfig,
 )
 from reticulum_telemetry_hub.config.constants import DEFAULT_STORAGE_PATH
+
+
+def _expand_user_path(value: Path | str) -> Path:
+    """Expand user paths honoring HOME overrides on Windows."""
+    value_str = str(value)
+    if value_str.startswith("~"):
+        home = os.environ.get("HOME")
+        if home:
+            tail = value_str[1:]
+            if tail.startswith(("/", "\\")):
+                tail = tail[1:]
+            return Path(home) / tail
+    return Path(value_str).expanduser()
 
 
 class HubConfigurationManager:
@@ -37,26 +51,26 @@ class HubConfigurationManager:
                 LXMF router configuration file.
         """
         load_env()
-        self.storage_path = Path(storage_path or DEFAULT_STORAGE_PATH).expanduser()
-        self.config_path = Path(
+        self.storage_path = _expand_user_path(storage_path or DEFAULT_STORAGE_PATH)
+        self.config_path = _expand_user_path(
             config_path or self.storage_path / "config.ini"
-        ).expanduser()
+        )
         self._config_parser = self._load_config_parser(self.config_path)
         self.runtime_config = self._load_runtime_config()
 
         reticulum_path_override = self.runtime_config.reticulum_config_path
         lxmf_path_override = self.runtime_config.lxmf_router_config_path
 
-        self.reticulum_config_path = Path(
+        self.reticulum_config_path = _expand_user_path(
             reticulum_config_path
             or reticulum_path_override
             or Path.home() / ".reticulum" / "config"
-        ).expanduser()
-        self.lxmf_router_config_path = Path(
+        )
+        self.lxmf_router_config_path = _expand_user_path(
             lxmf_router_config_path
             or lxmf_path_override
             or Path.home() / ".lxmd" / "config"
-        ).expanduser()
+        )
         self._tak_config = self._load_tak_config()
         self._config = self._load()
 
@@ -152,10 +166,10 @@ class HubConfigurationManager:
             gpsd_host=gps_host,
             gpsd_port=gps_port,
             reticulum_config_path=(
-                Path(reticulum_path).expanduser() if reticulum_path else None
+                _expand_user_path(reticulum_path) if reticulum_path else None
             ),
             lxmf_router_config_path=(
-                Path(lxmf_path).expanduser() if lxmf_path else None
+                _expand_user_path(lxmf_path) if lxmf_path else None
             ),
             telemetry_filename=telemetry_filename,
         )

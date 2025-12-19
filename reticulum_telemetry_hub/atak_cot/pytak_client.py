@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
@@ -15,12 +16,20 @@ from typing import Optional
 from typing import Union
 from typing import cast
 from typing import Awaitable
+import weakref
 
 import pytak
 
 from . import Event
 
 CotPayload = Union[Event, ET.Element, str, bytes, dict]
+
+
+def _shutdown_weak(ref: "weakref.ReferenceType[PytakClient]") -> None:
+    client = ref()
+    if client is None:
+        return
+    client._shutdown_sync()
 
 
 def _is_iterable_payload(obj: Any) -> bool:
@@ -83,7 +92,10 @@ class ReceiveWorker(pytak.QueueWorker):
         self.result: Optional[Any] = None
 
     async def run(self, number_of_iterations: int = 0) -> None:
-        data = await self.queue.get()
+        try:
+            data = await self.queue.get()
+        except (asyncio.CancelledError, RuntimeError):
+            return None
         if not self._parse:
             self.result = data
             return None
@@ -113,7 +125,14 @@ class StreamSendWorker(SendWorker):
         while not self._stop_event.is_set():
             if number_of_iterations and iterations >= number_of_iterations:
                 return None
-            payload = await self._outbound_queue.get()
+            try:
+                payload = await asyncio.wait_for(
+                    self._outbound_queue.get(), timeout=0.2
+                )
+            except asyncio.TimeoutError:
+                continue
+            except (asyncio.CancelledError, RuntimeError):
+                return None
             await self.handle_data(payload)
             iterations += 1
 
@@ -310,6 +329,13 @@ class PytakClient:
         self._loop_thread: Optional[Thread] = None
         self._loop_ready = ThreadEvent()
         self._loop_lock = Lock()
+        atexit.register(_shutdown_weak, weakref.ref(self))
+
+    def __del__(self) -> None:
+        try:
+            self._shutdown_sync()
+        except Exception:
+            pass
 
     def _setup_config(self) -> ConfigParser:
         """Create config if a custom one is not passed."""
@@ -386,9 +412,12 @@ class PytakClient:
             event, config=config, parse_inbound=parse_inbound
         )
 
-    def _start_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+    @staticmethod
+    def _start_loop(
+        loop: asyncio.AbstractEventLoop, ready_event: ThreadEvent
+    ) -> None:
         asyncio.set_event_loop(loop)
-        self._loop_ready.set()
+        ready_event.set()
         loop.run_forever()
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
@@ -400,7 +429,9 @@ class PytakClient:
             loop = asyncio.new_event_loop()
             self._loop = loop
             self._loop_ready.clear()
-            thread = Thread(target=self._start_loop, args=(loop,), daemon=True)
+            thread = Thread(
+                target=self._start_loop, args=(loop, self._loop_ready), daemon=True
+            )
             self._loop_thread = thread
             thread.start()
         self._loop_ready.wait()
@@ -429,5 +460,30 @@ class PytakClient:
             self._loop.call_soon_threadsafe(self._loop.stop)
             if self._loop_thread is not None:
                 self._loop_thread.join(timeout=1.0)
+        self._loop = None
+        self._loop_thread = None
+
+    def _shutdown_sync(self) -> None:
+        """Best-effort cleanup for interpreter shutdown or GC."""
+
+        if self._loop is None or not self._loop.is_running():
+            self._loop = None
+            self._loop_thread = None
+            self._worker_manager = None
+            return
+
+        if self._worker_manager is not None:
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._worker_manager.stop(), self._loop
+                )
+                future.result(timeout=1.0)
+            except Exception:
+                pass
+            self._worker_manager = None
+
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._loop_thread is not None:
+            self._loop_thread.join(timeout=1.0)
         self._loop = None
         self._loop_thread = None

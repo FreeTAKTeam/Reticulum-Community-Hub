@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 
@@ -77,7 +77,10 @@ class Client:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def touch(self) -> None:
-        self.last_seen = _now()
+        now = _now()
+        if now <= self.last_seen:
+            now = self.last_seen + timedelta(microseconds=1)
+        self.last_seen = now
 
     def to_dict(self) -> dict:
         data = asdict(self)

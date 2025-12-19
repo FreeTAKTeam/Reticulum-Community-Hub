@@ -38,6 +38,7 @@ import RNS
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
+from reticulum_telemetry_hub.config.manager import _expand_user_path
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
@@ -869,10 +870,10 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
-    storage_path = Path(args.storage_dir or STORAGE_PATH).expanduser()
+    storage_path = _expand_user_path(args.storage_dir or STORAGE_PATH)
     identity_path = storage_path / "identity"
     config_path = (
-        Path(args.config_path).expanduser()
+        _expand_user_path(args.config_path)
         if args.config_path
         else storage_path / "config.ini"
     )
