@@ -1,4 +1,5 @@
 import struct
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -6,6 +7,7 @@ import LXMF
 import RNS
 import pytest
 from msgpack import packb, unpackb
+from sqlalchemy.exc import OperationalError
 
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -172,6 +174,28 @@ def test_handle_message_stream_without_sid_time_uses_entry_timestamp(
         stored = ses.query(Telemeter).one()
         assert stored.time == datetime.fromtimestamp(timestamp)
         assert len(stored.sensors) > 0
+
+
+def test_telemetry_session_retries_close_failed_sessions(
+    telemetry_controller, monkeypatch
+):
+    telemetry_controller._SESSION_RETRIES = 2
+    telemetry_controller._SESSION_BACKOFF = 0
+    closed_sessions: list[bool] = []
+
+    class FailingSession:
+        def execute(self, _):
+            raise OperationalError("SELECT 1", {}, Exception("locked"))
+
+        def close(self):
+            closed_sessions.append(True)
+
+    monkeypatch.setattr(telemetry_controller, "_session_cls", lambda: FailingSession())
+
+    with pytest.raises(OperationalError):
+        telemetry_controller._acquire_session_with_retry()
+
+    assert len(closed_sessions) == telemetry_controller._SESSION_RETRIES
 
 
 def test_humanize_returns_time_and_location_values(telemetry_controller):
@@ -753,3 +777,34 @@ def test_location_pack_strips_invalid_altitude_sentinel():
     packed = sensor.pack()
     altitude_raw = struct.unpack("!I", packed[2])[0]
     assert altitude_raw == 0
+
+
+def test_concurrent_telemetry_writes(tmp_path):
+    db_path = tmp_path / "telemetry_threads.db"
+    controller = TelemetryController(db_path=db_path)
+
+    worker_count = 12
+    iterations = 5
+    errors: list[Exception] = []
+    barrier = threading.Barrier(worker_count)
+
+    def worker(index: int):
+        try:
+            barrier.wait()
+            for j in range(iterations):
+                payload = {SID_TIME: int(time.time()) + j}
+                controller.save_telemetry(payload, f"peer-{index}")
+        except Exception as exc:  # pragma: no cover - defensive capture
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(worker_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+
+    with controller._session_scope() as session:
+        assert session.query(Telemeter).count() == worker_count * iterations
+    controller._engine.dispose()

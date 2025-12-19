@@ -102,6 +102,7 @@ def test_hub_send_and_log():
     hub.lxm_router = DummyRouter()
 
     ReticulumTelemetryHub.send_message(hub, "hi")
+    hub.wait_for_outbound_flush()
     assert sent
 
     msg = LXMF.LXMessage(hub.connections[0], hub.my_lxmf_dest, "hello")

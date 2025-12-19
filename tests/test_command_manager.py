@@ -550,6 +550,7 @@ def test_send_message_uses_connection_values(tmp_path):
     }
 
     hub.send_message("Hello")
+    hub.wait_for_outbound_flush()
 
     assert len(sent) == 2
     destinations = {msg.destination_hash for msg in sent}
@@ -577,6 +578,7 @@ def test_send_message_filters_by_topic(tmp_path):
     hub.topic_subscribers = {topic_id: {dest_one.identity.hash.hex().lower()}}
 
     hub.send_message("Hello", topic=topic_id)
+    hub.wait_for_outbound_flush()
 
     assert len(sent) == 1
     assert sent[0].destination_hash == dest_one.identity.hash
@@ -619,6 +621,7 @@ def test_send_message_refreshes_topic_registry(tmp_path):
     hub.topic_subscribers = {}
 
     hub.send_message("Hello", topic=topic_id)
+    hub.wait_for_outbound_flush()
 
     assert len(sent) == 1
     assert sent[0].destination_hash == dest_two.identity.hash
@@ -740,6 +743,7 @@ def test_delivery_callback_handles_commands_and_broadcasts():
     incoming.signature_validated = True
 
     hub.delivery_callback(incoming)
+    hub.wait_for_outbound_flush()
 
     assert command_reply in router_messages
     command_responses = [msg for msg in router_messages if msg is command_reply]
@@ -801,6 +805,7 @@ def test_delivery_callback_emits_cot_chat_for_valid_message():
     incoming.signature_validated = True
 
     hub.delivery_callback(incoming)
+    hub.wait_for_outbound_flush()
 
     assert client.sent
     event, config, parse_flag = client.sent[0]
@@ -866,6 +871,8 @@ def test_delivery_callback_honors_topic_field():
     incoming.signature_validated = True
 
     hub.delivery_callback(incoming)
+    hub.wait_for_outbound_flush()
+    hub.wait_for_outbound_flush()
 
     assert len(router_messages) == 1
     assert router_messages[0].destination_hash == dest_one.identity.hash
@@ -923,6 +930,7 @@ def test_delivery_callback_skips_sender_echo():
     incoming.signature_validated = True
 
     hub.delivery_callback(incoming)
+    hub.wait_for_outbound_flush()
 
     assert len(router_messages) == 1
     assert router_messages[0].destination_hash == dest_two.identity.hash
@@ -981,6 +989,7 @@ def test_delivery_callback_skips_telemetry_only_messages():
     incoming.signature_validated = True
 
     hub.delivery_callback(incoming)
+    hub.wait_for_outbound_flush()
 
     assert not router_messages
 
@@ -1026,6 +1035,7 @@ def test_delivery_callback_skips_cot_chat_for_telemetry():
     incoming.signature_validated = True
 
     hub.delivery_callback(incoming)
+    hub.wait_for_outbound_flush()
 
     assert not client.sent
 

@@ -699,7 +699,6 @@ def test_chat_event_matches_geochat_payload(monkeypatch):
     topic_id = "ops"
     content = "Hello team"
     sender_uid = connector._normalize_hash(b"\x01" * 8)
-    now = start_time
     stale = start_time + timedelta(hours=24)
 
     event = connector.build_chat_event(
