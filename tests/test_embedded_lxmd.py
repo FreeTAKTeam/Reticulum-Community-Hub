@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -104,7 +104,7 @@ def test_embedded_lxmd_deduplicates_snapshots(embedded_lxmd_factory):
 
     def observer(payload: dict[str, Any]) -> None:
         with lock:
-            calls.append(datetime.utcnow())
+            calls.append(datetime.now(timezone.utc).replace(tzinfo=None))
 
     harness.embedded.add_propagation_observer(observer)
 

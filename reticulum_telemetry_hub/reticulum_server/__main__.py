@@ -30,7 +30,7 @@ import argparse
 import asyncio
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import LXMF
@@ -63,6 +63,10 @@ from reticulum_telemetry_hub.config.constants import (
     DEFAULT_SERVICE_TELEMETRY_INTERVAL,
     DEFAULT_STORAGE_PATH,
 )
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # Constants
 STORAGE_PATH = DEFAULT_STORAGE_PATH  # Path to store temporary files
@@ -478,11 +482,12 @@ class ReticulumTelemetryHub:
             tak_connector = getattr(self, "tak_connector", None)
             if tak_connector is not None and content_text:
                 try:
-                    message_time = datetime.utcfromtimestamp(
-                        getattr(message, "timestamp", time.time())
-                    )
+                    message_time = datetime.fromtimestamp(
+                        getattr(message, "timestamp", time.time()),
+                        tz=timezone.utc,
+                    ).replace(tzinfo=None)
                 except Exception:
-                    message_time = datetime.utcnow()
+                    message_time = _utcnow()
                 try:
                     asyncio.run(
                         tak_connector.send_chat_event(

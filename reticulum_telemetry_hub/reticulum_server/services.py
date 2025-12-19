@@ -6,7 +6,7 @@ import asyncio
 import time
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping
 
 import RNS
@@ -26,6 +26,10 @@ if TYPE_CHECKING:
     from reticulum_telemetry_hub.reticulum_server.__main__ import (
         ReticulumTelemetryHub,
     )
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @dataclass
@@ -159,7 +163,7 @@ class GpsTelemetryService(HubService):
         sensor.speed = self._coerce_float(payload.get("speed"), sensor.speed)
         sensor.bearing = self._coerce_float(payload.get("track"), sensor.bearing)
         sensor.accuracy = self._coerce_float(payload.get("eps"), sensor.accuracy)
-        sensor.last_update = datetime.utcnow()
+        sensor.last_update = _utcnow()
 
     @staticmethod
     def _coerce_float(

@@ -4,7 +4,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import LXMF
@@ -18,6 +18,10 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propa
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_LXMF_PROPAGATION,
 )
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
@@ -359,7 +363,7 @@ class EmbeddedLxmd:
             self.telemetry_controller.save_telemetry(
                 {SID_LXMF_PROPAGATION: packed_payload},
                 peer_hash,
-                datetime.utcnow(),
+                _utcnow(),
             )
         except Exception as exc:  # pragma: no cover - defensive logging
             RNS.log(

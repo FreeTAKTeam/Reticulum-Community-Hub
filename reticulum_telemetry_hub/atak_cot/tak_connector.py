@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 import json
@@ -64,7 +64,8 @@ def _utc_iso(dt: datetime) -> str:
         str: ISO-8601 timestamp suffixed with ``Z``.
     """
 
-    return dt.replace(microsecond=0).isoformat() + "Z"
+    normalized = _normalize_utc(dt).replace(microsecond=0)
+    return normalized.isoformat() + "Z"
 
 
 def _utc_iso_millis(dt: datetime) -> str:
@@ -77,8 +78,19 @@ def _utc_iso_millis(dt: datetime) -> str:
         str: ISO-8601 timestamp with milliseconds and a ``Z`` suffix.
     """
 
-    normalized = dt.replace(microsecond=int(dt.microsecond / 1000) * 1000)
+    normalized = _normalize_utc(dt)
+    normalized = normalized.replace(microsecond=int(normalized.microsecond / 1000) * 1000)
     return normalized.isoformat(timespec="milliseconds") + "Z"
+
+
+def _normalize_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class TakConnector:
@@ -317,7 +329,7 @@ class TakConnector:
         if not content:
             raise ValueError("Chat content is required to build a CoT event.")
 
-        event_time = timestamp or datetime.utcnow()
+        event_time = timestamp or _utcnow()
         stale = event_time + timedelta(hours=24)
         chatroom = str(topic_id) if topic_id else "All Chat Rooms"
         sender_uid = self._normalize_hash(source_hash) or self._config.callsign
@@ -528,7 +540,7 @@ class TakConnector:
         speed = getattr(sensor, "speed", 0.0) or 0.0
         bearing = getattr(sensor, "bearing", 0.0) or 0.0
         accuracy = getattr(sensor, "accuracy", 0.0) or 0.0
-        updated_at = getattr(sensor, "last_update", None) or datetime.utcnow()
+        updated_at = getattr(sensor, "last_update", None) or _utcnow()
         peer_hash = getattr(
             getattr(self._telemeter_manager, "telemeter", None),
             "peer_dest",
@@ -624,7 +636,7 @@ class TakConnector:
         if latitude is None or longitude is None:
             return None
 
-        updated_at = updated_at or getattr(telemeter, "time", datetime.utcnow())
+        updated_at = updated_at or getattr(telemeter, "time", _utcnow())
 
         return LocationSnapshot(
             latitude=float(latitude),
@@ -651,7 +663,7 @@ class TakConnector:
             Event: A populated CoT event ready for serialization.
         """
 
-        now = datetime.utcnow()
+        now = _utcnow()
         stale_delta = max(self._config.poll_interval_seconds, 1.0)
         stale = now + timedelta(seconds=stale_delta * 2)
 
@@ -724,7 +736,7 @@ class TakConnector:
         if updated_at is None:
             updated_at = self._coerce_datetime(location.get("last_update_timestamp"))
         if updated_at is None:
-            updated_at = timestamp or datetime.utcnow()
+            updated_at = timestamp or _utcnow()
 
         return LocationSnapshot(
             latitude=latitude,

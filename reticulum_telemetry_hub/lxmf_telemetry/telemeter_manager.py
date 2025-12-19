@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from configparser import ConfigParser
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, MutableMapping, Protocol
 
@@ -40,6 +40,10 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TEMPERATURE,
     SID_TIME,
 )
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import (
     sid_mapping,
 )
@@ -301,7 +305,7 @@ class TelemeterManager:
         """Pack enabled sensors and return a telemetry snapshot."""
 
         payload: dict[int, Any] = {}
-        now = datetime.utcnow()
+        now = _utcnow()
         self._synthesize_information()
         self._synthesize_location(now)
 
