@@ -56,6 +56,7 @@ Not supported:
 If you are not sure which command to use, type \\\help.
 
 ### Send a group message
+
 1. Select the topic or group in your client.
 2. Write your message.
 3. Send regularly
@@ -63,7 +64,9 @@ If you are not sure which command to use, type \\\help.
 RTH will deliver the message only to other users who are subscribed to that topic.
 
 ### Telemetry (Sideband only)
+
 If you use Sideband and telemetry is enabled:
+
 - select  RTH as the telmetry Hub
 - RTH can collect your telemetry data (for example, location).
 - RTH can share recent telemetry when requested.
@@ -71,7 +74,9 @@ If you use Sideband and telemetry is enabled:
 Telemetry will not work in MeshChat or Columba (as Dec 2025).
 
 ### TAK integration (optional)
+
 If the TAK service is enabled by your administrator:
+
 - Location updates can be forwarded to a TAK server.
 - Chat messages can be mirrored into TAK chat.
 
@@ -100,6 +105,7 @@ If you are unsure whether TAK is enabled, ask your administrator.
 ## Getting help
 
 If you need help:
-- create an issue on the github : https://github.com/FreeTAKTeam/Reticulum-Telemetry-Hub 
+
+- create an issue on github : https://github.com/FreeTAKTeam/Reticulum-Telemetry-Hub 
 - Provide your client name (Sideband, MeshChat, or Columba).
 - Share the time and a short description of the issue.

@@ -45,3 +45,4 @@
 - 2025-12-17: ✅ Introduce a bounded LXMF outbound queue with worker fan-out and backpressure.
 - 2025-12-17: ✅ Resolve flake8 unused variable warning in TAK connector tests.
 - 2025-12-17: ✅ Close SQLite retry sessions to avoid leaks when lock contention occurs.
+- 2025-12-24: ✅ Update README installation instructions for PyPI virtual environment setup.

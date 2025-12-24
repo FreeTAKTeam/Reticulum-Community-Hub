@@ -59,7 +59,27 @@ Follow these steps to bring up a local hub using the bundled defaults:
 
 ## Installation
 
-If you want the full installation steps outside the quickstart, follow the same commands above. *Optional extras*: No extras are currently defined, so the commands above install the complete feature set out of the box.
+Install RTH from PyPI inside a virtual environment:
+
+1. Create the virtual environment.
+   ```bash
+   python -m venv .venv
+   ```
+2. Activate it.
+   ```bash
+   # Linux/macOS
+   source .venv/bin/activate
+
+   # Windows (PowerShell)
+   .venv\Scripts\Activate.ps1
+   ```
+3. Install from PyPI.
+   ```bash
+   python -m pip install --upgrade pip
+   python -m pip install ReticulumTelemetryHub
+   ```
+
+If you want the full installation steps outside the quickstart (for example, installing from source), follow the commands above. *Optional extras*: No extras are currently defined, so the commands above install the complete feature set out of the box.
 
 ### Verify the setup
 
