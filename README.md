@@ -18,7 +18,8 @@ The Reticulum-Telemetry-Hub can perform the following key functions:
 ## Documentation
 
 - Command payload formats and examples: [`docs/supportedCommands.md`](docs/supportedCommands.md)
-- TAK / Cursor-on-Target relay details: [`docs/tak.md`](docs/tak.md)
+- [User Manual](/docs/userManual.md)
+- TAK / Cursor-on-Target integration: [`docs/tak.md`](docs/tak.md)
 
 ## Quickstart
 
@@ -392,5 +393,6 @@ You can help support the continued development of open, free and private communi
 * Ethereum: 0xFDabC71AC4c0C78C95aDDDe3B4FA19d6273c5E73
 * Bitcoin: 35G9uWVzrpJJibzUwpNUQGQNFzLirhrYAH
 * Ko-Fi: https://ko-fi.com/markqvist
+
 
 
