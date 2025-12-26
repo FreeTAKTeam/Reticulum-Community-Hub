@@ -13,6 +13,12 @@ from reticulum_telemetry_hub.config import HubConfigurationManager
 def make_config_manager(tmp_path):
     storage = tmp_path / "storage"
     storage.mkdir()
+    (storage / "config.ini").write_text(
+        "[app]\n"
+        "name = TestHub\n"
+        "version = 9.9.9\n"
+        "description = Test hub instance\n"
+    )
     reticulum_cfg = tmp_path / "reticulum.ini"
     reticulum_cfg.write_text(
         "[reticulum]\n"
@@ -161,7 +167,9 @@ def test_get_app_info(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     info = api.get_app_info()
     assert info.storage_path.endswith("storage")
-    assert info.app_version
+    assert info.app_name == "TestHub"
+    assert info.app_version == "9.9.9"
+    assert info.app_description == "Test hub instance"
 
 
 def test_persistence_between_instances(tmp_path):

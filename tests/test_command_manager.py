@@ -994,6 +994,63 @@ def test_delivery_callback_skips_telemetry_only_messages():
     assert not router_messages
 
 
+def test_delivery_callback_replies_app_info_when_not_joined():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    router_messages: list[LXMF.LXMessage] = []
+
+    class DummyRouter:
+        def handle_outbound(self, message):
+            router_messages.append(message)
+
+    hub.lxm_router = DummyRouter()
+    hub.my_lxmf_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    hub.connections = {}
+    hub.identities = {}
+    hub.topic_subscribers = {}
+    hub.api = type(
+        "DummyAPI",
+        (),
+        {
+            "list_subscribers": lambda self: [],
+            "has_client": lambda self, identity: False,
+        },
+    )()
+    hub.tel_controller = type(
+        "DummyController",
+        (),
+        {"handle_message": lambda self, message: False},
+    )()
+
+    def build_app_info(message):
+        return LXMF.LXMessage(sender, hub.my_lxmf_dest, "app-info")
+
+    hub.command_manager = type(
+        "DummyCommands",
+        (),
+        {
+            "handle_commands": lambda self, commands, message: [],
+            "_handle_get_app_info": lambda self, message: build_app_info(message),
+        },
+    )()
+    hub.send_message = lambda *args, **kwargs: None
+
+    incoming = LXMF.LXMessage(hub.my_lxmf_dest, sender, "hello app")
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+    hub.wait_for_outbound_flush()
+
+    assert any(msg.content_as_string() == "app-info" for msg in router_messages)
+
+
 def test_delivery_callback_skips_cot_chat_for_telemetry():
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()

@@ -220,6 +220,20 @@ class HubStorage:
             records = session.query(ClientRecord).all()
             return [self._client_from_record(r) for r in records]
 
+    def get_client(self, identity: str) -> Client | None:
+        """Return a client by identity when it exists.
+
+        Args:
+            identity (str): Unique identity hash for the client.
+
+        Returns:
+            Client | None: Stored client or ``None`` when unknown.
+        """
+
+        with self._session_scope() as session:
+            record = session.get(ClientRecord, identity)
+            return self._client_from_record(record) if record else None
+
     # ------------------------------------------------------------------ #
     # engine/session helpers
     # ------------------------------------------------------------------ #

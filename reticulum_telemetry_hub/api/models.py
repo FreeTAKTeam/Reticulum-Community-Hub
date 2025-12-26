@@ -95,9 +95,11 @@ class ReticulumInfo:
     reticulum_config_path: str
     database_path: str
     storage_path: str
+    app_name: str
     rns_version: str
     lxmf_version: str
     app_version: str
+    app_description: str
 
     def to_dict(self) -> dict:
         return asdict(self)

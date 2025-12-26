@@ -88,6 +88,19 @@ class ReticulumTelemetryHubAPI:
         """
         return self._storage.list_clients()
 
+    def has_client(self, identity: str) -> bool:
+        """Return ``True`` when the client is registered with the hub.
+
+        Args:
+            identity (str): Identity to look up.
+
+        Returns:
+            bool: ``True`` if the identity exists in the client registry.
+        """
+        if not identity:
+            return False
+        return self._storage.get_client(identity) is not None
+
     # ------------------------------------------------------------------ #
     # Topic operations
     # ------------------------------------------------------------------ #
@@ -367,7 +380,7 @@ class ReticulumTelemetryHubAPI:
 
         Returns:
             ReticulumInfo: Configuration values sourced from the configuration
-            manager.
+            manager, including the app name, version, and description.
         """
         info_dict = self._config_manager.reticulum_info_snapshot()
         return ReticulumInfo(**info_dict)

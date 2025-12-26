@@ -71,11 +71,11 @@ paths:
       tags:
        - Reticulum
       description: >-
-        returns the component and reticulum version
+        returns the configured application metadata and component versions
       operationId: getAppInfo
       responses:
         '200':
-          description: simple text based return value
+          description: Application info including Reticulum and LXMF versions.
           content:
             text/plain:
               schema:
@@ -276,6 +276,9 @@ components:
         storage_path:
           type: string
           description: Root path where Reticulum stores persistent data.
+        app_name:
+          type: string
+          description: Application display name configured in ``config.ini``.
         rns_version:
           type: string
           description: Installed Reticulum (RNS) version string.
@@ -285,6 +288,9 @@ components:
         app_version:
           type: string
           description: Version of the Reticulum Telemetry Hub application.
+        app_description:
+          type: string
+          description: Human readable description for the Telemetry Hub.
   parameters:
     identity:
       name: identity
@@ -451,4 +457,3 @@ components:
       required: true
 x-uml-relationships:
   
-

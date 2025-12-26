@@ -185,6 +185,7 @@ class HubConfigurationManager:
         """Assemble the high level hub configuration object."""
         reticulum = self._load_reticulum_config(self.reticulum_config_path)
         lxmf = self._load_lxmf_config(self.lxmf_router_config_path)
+        app_name, app_version, app_description = self._load_app_metadata()
         storage_path = self.storage_path
         database_path = storage_path / "reticulum.db"
         hub_db_path = storage_path / "rth_api.sqlite"
@@ -195,6 +196,9 @@ class HubConfigurationManager:
             runtime=self.runtime_config,
             reticulum=reticulum,
             lxmf_router=lxmf,
+            app_name=app_name,
+            app_version=app_version,
+            app_description=app_description,
             tak_connection=self._tak_config,
         )
 
@@ -307,6 +311,32 @@ class HubConfigurationManager:
         if candidate_sections:
             return parser[candidate_sections[0]]
         return {}
+
+    def _load_app_metadata(self) -> tuple[str, str | None, str]:
+        """Return human-readable application metadata from ``config.ini``.
+
+        Returns:
+            tuple[str, str | None, str]: Name, version, and description for the
+            application, preferring the ``[app]`` section when present.
+        """
+
+        section = self._get_section("app")
+        default_name = "ReticulumTelemetryHub"
+        default_version = HubAppConfig._safe_get_version(default_name)
+        name = section.get("name") or section.get("app_name") or default_name
+        version = (
+            section.get("version")
+            or section.get("app_version")
+            or section.get("build")
+            or default_version
+        )
+        description = (
+            section.get("description")
+            or section.get("app_description")
+            or section.get("summary")
+            or ""
+        )
+        return name, version, description
 
     def _load_tak_config(self) -> TakConnectionConfig:
         """Construct the TAK configuration using ``config.ini`` values."""
