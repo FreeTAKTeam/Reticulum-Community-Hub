@@ -445,6 +445,7 @@ class ReticulumTelemetryHub:
             self.log_delivery_details(message, time_string, signature_string)
 
             command_payload_present = False
+            sender_joined = False
             # Handle the commands
             if message.signature_validated:
                 if LXMF.FIELD_COMMANDS in message.fields:
@@ -459,9 +460,13 @@ class ReticulumTelemetryHub:
                     if escape_commands:
                         self.command_handler(escape_commands, message)
 
+            sender_joined = self._sender_is_joined(message)
             telemetry_handled = self.tel_controller.handle_message(message)
             if telemetry_handled:
                 RNS.log("Telemetry data saved")
+
+            if not sender_joined:
+                self._reply_with_app_info(message)
 
             # Skip if the message content is empty
             if message.content is None or message.content == b"":
@@ -788,6 +793,81 @@ class ReticulumTelemetryHub:
         if isinstance(source_hash, (bytes, bytearray)) and source_hash:
             return source_hash.hex().lower()
         return None
+
+    def _sender_is_joined(self, message: LXMF.LXMessage) -> bool:
+        """Return True when the message sender has previously joined.
+
+        Args:
+            message (LXMF.LXMessage): Incoming LXMF message.
+
+        Returns:
+            bool: ``True`` if the sender exists in the connection cache or the
+            persisted client registry.
+        """
+
+        connections = getattr(self, "connections", {}) or {}
+        source = None
+        try:
+            source = message.get_source()
+        except Exception:
+            source = None
+        identity = getattr(source, "identity", None)
+        hash_bytes = getattr(identity, "hash", None)
+        if isinstance(hash_bytes, (bytes, bytearray)) and hash_bytes:
+            if hash_bytes in connections:
+                return True
+
+        sender_hex = self._message_source_hex(message)
+        if not sender_hex:
+            return False
+        api = getattr(self, "api", None)
+        if api is None:
+            return False
+        try:
+            if hasattr(api, "has_client"):
+                return bool(api.has_client(sender_hex))
+            if hasattr(api, "list_clients"):
+                lower_hex = sender_hex.lower()
+                return any(
+                    getattr(client, "identity", "").lower() == lower_hex
+                    for client in api.list_clients()
+                )
+        except Exception as exc:  # pragma: no cover - defensive log
+            RNS.log(
+                f"Failed to determine join status for {sender_hex}: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+        return False
+
+    def _reply_with_app_info(self, message: LXMF.LXMessage) -> None:
+        """Send an application info reply to the given message source.
+
+        Args:
+            message (LXMF.LXMessage): Message requiring an informational reply.
+        """
+
+        command_manager = getattr(self, "command_manager", None)
+        router = getattr(self, "lxm_router", None)
+        if command_manager is None or router is None:
+            return
+        handler = getattr(command_manager, "_handle_get_app_info", None)
+        if handler is None:
+            return
+        try:
+            response = handler(message)
+        except Exception as exc:  # pragma: no cover - defensive log
+            RNS.log(
+                f"Unable to build app info reply: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return
+        try:
+            router.handle_outbound(response)
+        except Exception as exc:  # pragma: no cover - defensive log
+            RNS.log(
+                f"Unable to send app info reply: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
 
     def _is_telemetry_only(
         self, message: LXMF.LXMessage, telemetry_handled: bool

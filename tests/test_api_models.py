@@ -43,9 +43,11 @@ def test_reticulum_info_to_dict_returns_all_fields():
         reticulum_config_path="/tmp/r.cfg",
         database_path="/tmp/db",
         storage_path="/tmp/storage",
+        app_name="RTH",
         rns_version="1.0",
         lxmf_version="0.9",
         app_version="0.0.0",
+        app_description="Reticulum Telemetry Hub instance",
     )
 
     result = info.to_dict()
@@ -53,3 +55,5 @@ def test_reticulum_info_to_dict_returns_all_fields():
     assert result["rns_version"] == "1.0"
     assert result["app_version"] == "0.0.0"
     assert result["storage_path"] == "/tmp/storage"
+    assert result["app_name"] == "RTH"
+    assert result["app_description"] == "Reticulum Telemetry Hub instance"

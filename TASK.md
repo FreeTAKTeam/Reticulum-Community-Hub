@@ -46,3 +46,4 @@
 - 2025-12-17: ✅ Resolve flake8 unused variable warning in TAK connector tests.
 - 2025-12-17: ✅ Close SQLite retry sessions to avoid leaks when lock contention occurs.
 - 2025-12-24: ✅ Update README installation instructions for PyPI virtual environment setup.
+- 2025-12-26: ✅ Expand getAppInfo to return configured metadata and auto-respond to unjoined LXMF clients.

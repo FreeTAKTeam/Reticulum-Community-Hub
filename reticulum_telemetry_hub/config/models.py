@@ -115,7 +115,9 @@ class HubAppConfig:
     runtime: "HubRuntimeConfig"
     reticulum: ReticulumConfig
     lxmf_router: LXMFRouterConfig
+    app_name: str = "ReticulumTelemetryHub"
     app_version: Optional[str] = None
+    app_description: str = ""
     tak_connection: "TakConnectionConfig | None" = None
 
     def to_reticulum_info_dict(self) -> dict:
@@ -132,8 +134,10 @@ class HubAppConfig:
             "storage_path": str(self.storage_path),
             "rns_version": self._safe_get_version("RNS"),
             "lxmf_version": self._safe_get_version("LXMF"),
+            "app_name": self.app_name or "ReticulumTelemetryHub",
             "app_version": self.app_version
             or self._safe_get_version("ReticulumTelemetryHub"),
+            "app_description": self.app_description or "",
         }
 
     @staticmethod

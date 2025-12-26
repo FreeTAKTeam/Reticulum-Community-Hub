@@ -14,7 +14,7 @@ the following commands are supported by RTH
 | `join` | Register your LXMF destination with the hub so you can receive replies. | ``\\\[{"Command":"join"}]`` |
 | `leave` | Remove your destination from the hub's connection list. | ``\\\[{"Command":"leave"}]`` |
 | `ListClients` | List the LXMF destinations currently joined to the hub. | ``\\\[{"Command":"ListClients"}]`` |
-| `getAppInfo` | Return the hub name so you can confirm connectivity. | ``\\\[{"Command":"getAppInfo"}]`` |
+| `getAppInfo` | Return the configured app name, version, and description from `config.ini`. | ``\\\[{"Command":"getAppInfo"}]`` |
 | `ListTopic` | List every registered topic and its ID. | ``\\\[{"Command":"ListTopic"}]`` |
 | `CreateTopic` | Create a topic with a name and path. | ``\\\[{"Command":"CreateTopic","TopicName":"Weather","TopicPath":"environment/weather"}]`` |
 | `RetrieveTopic` | Fetch a topic by `TopicID`. | ``\\\[{"Command":"RetrieveTopic","TopicID":"<TopicID>"}]`` |

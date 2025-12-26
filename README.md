@@ -207,6 +207,10 @@ RTH consumes LXMF commands from the `Commands` field (numeric field ID `9`). Eac
   - Plain text: ``\\\join`` (RTH wraps this as `[{"Command":"join"}]`)
   - JSON: ``\\\{"Command":"CreateTopic","TopicName":"Weather","TopicPath":"environment/weather"}``
 
+Unregistered LXMF senders automatically receive a ``getAppInfo`` reply containing
+the app name, version, and description from the ``[app]`` section of
+``config.ini`` so they can identify the hub before joining.
+
 Parameters are provided alongside the command name in the same object. RTH tolerates common casing differences (`TopicID`, `topic_id`, `topic_id`, etc.) and will prompt for anything still missing.
 
 **Typical commands with parameters**
@@ -263,6 +267,11 @@ RTH reads defaults from a single ``config.ini`` file located in the storage dire
 Example configuration:
 
 ```ini
+[app]
+name = Reticulum Telemetry Hub
+version = 0.60.0
+description = Public-facing hub for the mesh network
+
 [hub]
 display_name = RTH
 announce_interval = 60

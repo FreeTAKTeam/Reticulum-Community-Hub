@@ -74,7 +74,9 @@ def command_reference(command_manager: Any) -> List[dict]:
         },
         {
             "title": command_manager.CMD_GET_APP_INFO,
-            "description": "Return the hub name so you can confirm connectivity.",
+            "description": (
+                "Return the app name, version, and description from config.ini."
+            ),
             "example": example(command_manager.CMD_GET_APP_INFO),
         },
         {

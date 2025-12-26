@@ -46,3 +46,20 @@ def test_tak_config_includes_proto_and_compat(tmp_path):
     assert manager.tak_config.cot_url == "tcp://example:8087"
     assert manager.tak_config.tak_proto == 0
     assert manager.tak_config.fts_compat == 1
+
+
+def test_app_metadata_comes_from_config(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[app]\n"
+        "name = Sample Hub\n"
+        "version = 1.2.3\n"
+        "description = Demo instance\n"
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+    info = manager.reticulum_info_snapshot()
+
+    assert info["app_name"] == "Sample Hub"
+    assert info["app_version"] == "1.2.3"
+    assert info["app_description"] == "Demo instance"

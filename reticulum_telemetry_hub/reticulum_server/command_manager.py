@@ -362,8 +362,13 @@ class CommandManager:
         return self._reply(message, ",".join(client_hashes) or "")
 
     def _handle_get_app_info(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
-        info = "ReticulumTelemetryHub"
-        return self._reply(message, info)
+        app_info = self.api.get_app_info()
+        payload = {
+            "name": getattr(app_info, "app_name", ""),
+            "version": getattr(app_info, "app_version", ""),
+            "description": getattr(app_info, "app_description", ""),
+        }
+        return self._reply(message, json.dumps(payload, sort_keys=True))
 
     def _handle_list_topics(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         topics = self.api.list_topics()
