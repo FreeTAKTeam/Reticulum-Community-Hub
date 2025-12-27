@@ -30,23 +30,23 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-DEFFERED_JOBS_DELAY = 10
-JOBS_INTERVAL = 5
+import argparse
+import os
+import shlex
+import subprocess
+import threading
+import time
 
 import RNS
-import argparse
-import threading
-import subprocess
-import shlex
-import time
-import os
+from RNS.vendor.configobj import ConfigObj
 
 from reticulum_telemetry_hub import lxmf_daemon as LXMF
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
-from reticulum_telemetry_hub.lxmf_daemon._version import __version__
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import APP_NAME
+from reticulum_telemetry_hub.lxmf_daemon._version import __version__
 
-from RNS.vendor.configobj import ConfigObj
+DEFFERED_JOBS_DELAY = 10
+JOBS_INTERVAL = 5
 
 configpath = None
 ignoredpath = None

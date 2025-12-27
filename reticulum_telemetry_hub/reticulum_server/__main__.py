@@ -68,6 +68,7 @@ from reticulum_telemetry_hub.config.constants import (
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+
 # Constants
 STORAGE_PATH = DEFAULT_STORAGE_PATH  # Path to store temporary files
 APP_NAME = LXMF.APP_NAME + ".delivery"  # Application name for LXMF
