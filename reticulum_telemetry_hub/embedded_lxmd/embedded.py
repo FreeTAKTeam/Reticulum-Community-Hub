@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import LXMF
 import RNS
@@ -19,12 +19,14 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_LXMF_PROPAGATION,
 )
 
+if TYPE_CHECKING:
+    from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
+        TelemetryController,
+    )
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
-    TelemetryController,
-)
 
 
 @dataclass
