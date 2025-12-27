@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-
-_UNSET = object()
-
 from sqlalchemy import Float, ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .. import Base
 from .sensor import Sensor
 from .sensor_enum import SID_CONNECTION_MAP
+
+
+_UNSET = object()
 
 
 class ConnectionMap(Sensor):

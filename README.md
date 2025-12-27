@@ -269,7 +269,7 @@ Example configuration:
 ```ini
 [app]
 name = Reticulum Telemetry Hub
-version = 0.61.0
+version = 0.62.0
 description = Public-facing hub for the mesh network
 
 [hub]
