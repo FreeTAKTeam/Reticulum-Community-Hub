@@ -17,10 +17,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pylint
-    - name: Install test dependencies
-      run: |
-       pip install pytest sqlalchemy pytak RNS LXMF msgpack
+        pip install pylint pytest sqlalchemy pytak RNS LXMF msgpack
     - name: Analysing the code with pylint
       run: |
         pylint $(git ls-files '*.py')
