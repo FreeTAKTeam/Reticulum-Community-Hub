@@ -60,3 +60,4 @@
 - 2025-12-28: ✅ Address gpsdclient import handling and lint cleanups.
 - 2025-12-28: ✅ Add LXMF attachment listing/retrieval commands and persist inbound LXMF file/image fields.
 - 2025-12-28: ✅ Resolve TAK connector test cleanup to avoid unraisable exceptions.
+- 2025-12-28: ✅ Switch linting to Ruff and retire flake8 configuration.
