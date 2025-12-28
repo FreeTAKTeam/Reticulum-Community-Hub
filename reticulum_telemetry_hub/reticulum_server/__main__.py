@@ -34,6 +34,7 @@ import mimetypes
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import LXMF
 import RNS
@@ -265,7 +266,12 @@ class ReticulumTelemetryHub:
             ReticulumTelemetryHub._shared_lxm_router = LXMF.LXMRouter(
                 storagepath=str(self.storage_path)
             )
-        self.lxm_router = ReticulumTelemetryHub._shared_lxm_router
+        shared_router = ReticulumTelemetryHub._shared_lxm_router
+        if shared_router is None:
+            msg = "Shared LXMF router failed to initialize"
+            raise RuntimeError(msg)
+
+        self.lxm_router = cast(LXMF.LXMRouter, shared_router)
 
         self.my_lxmf_dest = self.lxm_router.register_delivery_identity(
             identity, display_name=display_name
