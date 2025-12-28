@@ -1,12 +1,15 @@
+"""Helpers for reading and merging hub configuration files."""
+
 from __future__ import annotations
 
-from configparser import ConfigParser
 import os
+from configparser import ConfigParser
 from pathlib import Path
 from typing import Mapping, Optional
 
 from dotenv import load_dotenv as load_env
 
+from reticulum_telemetry_hub.config.constants import DEFAULT_STORAGE_PATH
 from .models import (
     HubAppConfig,
     HubRuntimeConfig,
@@ -15,7 +18,6 @@ from .models import (
     ReticulumConfig,
     TakConnectionConfig,
 )
-from reticulum_telemetry_hub.config.constants import DEFAULT_STORAGE_PATH
 
 
 def _expand_user_path(value: Path | str) -> Path:
@@ -31,7 +33,7 @@ def _expand_user_path(value: Path | str) -> Path:
     return Path(value_str).expanduser()
 
 
-class HubConfigurationManager:
+class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
     """Load hub related configuration files and expose them as Python objects."""
 
     def __init__(
@@ -125,7 +127,7 @@ class HubConfigurationManager:
             parser.read(path)
         return parser
 
-    def _load_runtime_config(self) -> HubRuntimeConfig:
+    def _load_runtime_config(self) -> HubRuntimeConfig:  # pylint: disable=too-many-locals
         """Construct the runtime configuration from ``config.ini``."""
 
         defaults = HubRuntimeConfig()
@@ -362,7 +364,7 @@ class HubConfigurationManager:
 
         section = self._get_section("app")
         default_name = "ReticulumTelemetryHub"
-        default_version = HubAppConfig._safe_get_version(default_name)
+        default_version = HubAppConfig._safe_get_version(default_name)  # pylint: disable=protected-access
         name = section.get("name") or section.get("app_name") or default_name
         version = (
             section.get("version")

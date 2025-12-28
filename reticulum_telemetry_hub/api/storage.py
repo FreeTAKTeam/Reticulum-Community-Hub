@@ -38,7 +38,7 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class TopicRecord(Base):
+class TopicRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for topics."""
 
     __tablename__ = "topics"
@@ -50,7 +50,7 @@ class TopicRecord(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
-class SubscriberRecord(Base):
+class SubscriberRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for subscribers."""
 
     __tablename__ = "subscribers"
@@ -63,7 +63,7 @@ class SubscriberRecord(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
-class ClientRecord(Base):
+class ClientRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for clients."""
 
     __tablename__ = "clients"
@@ -94,7 +94,9 @@ class HubStorage:
         self._engine = self._create_engine(db_path)
         self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
-        self._Session = sessionmaker(bind=self._engine, expire_on_commit=False)
+        self._Session = sessionmaker(  # pylint: disable=invalid-name
+            bind=self._engine, expire_on_commit=False
+        )
         self._session_factory = self._Session
 
     @property

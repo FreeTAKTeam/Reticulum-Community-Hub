@@ -13,7 +13,6 @@ from threading import Event as ThreadEvent
 from threading import Lock
 from threading import Thread
 from typing import Any, Awaitable, Iterable, Optional, Union, cast
-import weakref
 
 import RNS
 import pytak

@@ -1,16 +1,18 @@
+"""Utilities for building and transmitting ATAK Cursor-on-Target events."""
+
 from __future__ import annotations
 
+import json
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
-import json
-import uuid
 
 import RNS
-from sqlalchemy.orm.exc import DetachedInstanceError
 from pytak import hello_event
 from pytak.functions import tak_pong
+from sqlalchemy.orm.exc import DetachedInstanceError
 from reticulum_telemetry_hub.atak_cot import Chat
 from reticulum_telemetry_hub.atak_cot import ChatGroup
 from reticulum_telemetry_hub.atak_cot import Contact
@@ -41,7 +43,7 @@ SID_LOCATION = sensor_enum.SID_LOCATION
 
 
 @dataclass
-class LocationSnapshot:
+class LocationSnapshot:  # pylint: disable=too-many-instance-attributes
     """Represents the latest known position of the hub."""
 
     latitude: float
@@ -93,7 +95,7 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-class TakConnector:
+class TakConnector:  # pylint: disable=too-many-instance-attributes
     """Build and transmit CoT events describing the hub's location."""
 
     EVENT_TYPE = "a-f-G-U-C"
@@ -109,7 +111,7 @@ class TakConnector:
     GROUP_ROLE = "Team Member"
     STATUS_BATTERY = 0.0
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         *,
         config: TakConnectionConfig | None = None,
@@ -165,7 +167,7 @@ class TakConnector:
         snapshots = self._latest_location_snapshots()
         if not snapshots:
             RNS.log(
-                "TAK connector skipped CoT send because no location is " "available",
+                "TAK connector skipped CoT send because no location is available",
                 RNS.LOG_WARNING,
             )
             return False
@@ -300,7 +302,7 @@ class TakConnector:
         )
         return True
 
-    def build_chat_event(
+    def build_chat_event(  # pylint: disable=too-many-arguments,too-many-locals
         self,
         *,
         content: str,
@@ -391,7 +393,7 @@ class TakConnector:
         }
         return Event.from_dict(event_dict)
 
-    async def send_chat_event(
+    async def send_chat_event(  # pylint: disable=too-many-arguments
         self,
         *,
         content: str,
@@ -498,6 +500,7 @@ class TakConnector:
 
         telemetry_controller = self._telemetry_controller
         snapshots: list[LocationSnapshot] = []
+        # pylint: disable=protected-access
         with telemetry_controller._session_cls() as session:  # type: ignore[attr-defined]
             telemetry = telemetry_controller._load_telemetry(session)
             for telemeter in telemetry:
@@ -630,7 +633,7 @@ class TakConnector:
                     bearing = getattr(location_sensor, "bearing", bearing)
                     accuracy = getattr(location_sensor, "accuracy", accuracy)
                     updated_at = getattr(location_sensor, "last_update", updated_at)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     return None
 
         if latitude is None or longitude is None:
@@ -803,7 +806,7 @@ class TakConnector:
             return None
         try:
             label = self._identity_lookup(peer_hash)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             return None
         if label is None:
             return None
