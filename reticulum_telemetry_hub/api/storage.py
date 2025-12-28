@@ -94,7 +94,8 @@ class HubStorage:
         self._engine = self._create_engine(db_path)
         self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
-        self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
+        self._Session = sessionmaker(bind=self._engine, expire_on_commit=False)
+        self._session_factory = self._Session
 
     # ------------------------------------------------------------------ #
     # Topic helpers
