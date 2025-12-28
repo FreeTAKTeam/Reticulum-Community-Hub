@@ -101,6 +101,8 @@ RTH now uses a unified runtime configuration file alongside the Reticulum/LXMF c
 
 Create `RTH_Store/config.ini` (or place it in your chosen storage directory). CLI flags always override the file, and the file overrides built-in defaults.
 
+If you do not set explicit locations, RTH creates `files/` and `images/` folders inside the storage directory for general file storage and decoded imagery. Override them in the `[files]` or `[images]` sections if you want to place them elsewhere.
+
 ```ini
 [hub]
 display_name = RTH
@@ -136,6 +138,12 @@ display_name = RTH_router
 host = 127.0.0.1
 port = 2947
 
+[files]
+# path = /var/lib/rth/files     # defaults to <storage_dir>/files
+
+[images]
+# directory = /var/lib/rth/img  # defaults to <storage_dir>/images
+
 [TAK]
 cot_url = tcp://127.0.0.1:8087
 callsign = RTH
@@ -150,6 +158,7 @@ How the unified config is used:
 
 - `HubConfigurationManager` loads `config.ini` into a single runtime view (`HubRuntimeConfig` stored on `HubAppConfig`).
 - Reticulum and LXMF settings can be supplied directly in `config.ini`, or you can point to existing config files via `[hub].reticulum_config_path` / `[hub].lxmf_router_config_path`.
+- File and image storage directories default to `<storage_dir>/files` and `<storage_dir>/images`, but can be overridden via the `[files]` and `[images]` sections.
 - TAK, GPSD, announce/telemetry intervals, default services, log level, and embedded/external LXMF choices are all centralized here.
 - CLI flags (`--storage_dir`, `--config`, `--display-name`, `--announce-interval`, `--embedded`, `--service`, etc.) override any values loaded from the file.
 
@@ -269,7 +278,7 @@ Example configuration:
 ```ini
 [app]
 name = Reticulum Telemetry Hub
-version = 0.62.0
+version = 0.63.0
 description = Public-facing hub for the mesh network
 
 [hub]
@@ -305,6 +314,12 @@ location_altitude = 10.0
 location_accuracy = 5.0
 static_information = Callsign RTH
 enable_battery = yes
+
+[files]
+path = /var/lib/rth/files
+
+[images]
+directory = /var/lib/rth/images
 ```
 
 TAK servers typically expect TCP unicast connections. Keep ``cot_url`` in the

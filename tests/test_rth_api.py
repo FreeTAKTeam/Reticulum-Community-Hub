@@ -167,6 +167,8 @@ def test_get_app_info(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     info = api.get_app_info()
     assert info.storage_path.endswith("storage")
+    assert info.file_storage_path.endswith("files")
+    assert info.image_storage_path.endswith("images")
     assert info.app_name == "TestHub"
     assert info.app_version == "9.9.9"
     assert info.app_description == "Test hub instance"

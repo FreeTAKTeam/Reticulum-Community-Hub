@@ -129,6 +129,7 @@ class HubConfigurationManager:
         """Construct the runtime configuration from ``config.ini``."""
 
         defaults = HubRuntimeConfig()
+        self._ensure_directory(self.storage_path)
         hub_section = self._get_section("hub")
         services_value = hub_section.get("services", "")
         services = tuple(
@@ -144,6 +145,22 @@ class HubConfigurationManager:
         gps_section = self._get_section("gpsd")
         gps_host = gps_section.get("host", defaults.gpsd_host)
         gps_port = self._coerce_int(gps_section.get("port"), defaults.gpsd_port)
+
+        file_section = self._get_section("files")
+        image_section = self._get_section("images")
+
+        files_path_value = file_section.get("path") or file_section.get("directory")
+        images_path_value = image_section.get("path") or image_section.get("directory")
+
+        file_storage_path = _expand_user_path(
+            files_path_value or (self.storage_path / "files")
+        )
+        image_storage_path = _expand_user_path(
+            images_path_value or (self.storage_path / "images")
+        )
+
+        file_storage_path = self._ensure_directory(file_storage_path)
+        image_storage_path = self._ensure_directory(image_storage_path)
 
         return HubRuntimeConfig(
             display_name=hub_section.get("display_name", defaults.display_name),
@@ -172,6 +189,8 @@ class HubConfigurationManager:
                 _expand_user_path(lxmf_path) if lxmf_path else None
             ),
             telemetry_filename=telemetry_filename,
+            file_storage_path=file_storage_path,
+            image_storage_path=image_storage_path,
         )
 
     def _get_section(self, name: str) -> Mapping[str, str]:
@@ -193,6 +212,12 @@ class HubConfigurationManager:
             storage_path=storage_path,
             database_path=database_path,
             hub_database_path=hub_db_path,
+            file_storage_path=self.runtime_config.file_storage_path
+            or storage_path
+            / "files",
+            image_storage_path=self.runtime_config.image_storage_path
+            or storage_path
+            / "images",
             runtime=self.runtime_config,
             reticulum=reticulum,
             lxmf_router=lxmf,
@@ -311,6 +336,21 @@ class HubConfigurationManager:
         if candidate_sections:
             return parser[candidate_sections[0]]
         return {}
+
+    @staticmethod
+    def _ensure_directory(path: Path) -> Path:
+        """
+        Guarantee that a directory exists.
+
+        Args:
+            path (Path): Directory to create when missing.
+
+        Returns:
+            Path: The original path for chaining.
+        """
+
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def _load_app_metadata(self) -> tuple[str, str | None, str]:
         """Return human-readable application metadata from ``config.ini``.

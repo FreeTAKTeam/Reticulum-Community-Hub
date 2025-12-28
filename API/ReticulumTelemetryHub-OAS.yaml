@@ -267,15 +267,20 @@ components:
           type: boolean
           description: True when the node is linked to a shared Reticulum instance.
         reticulum_config_path:
-          type: integer
-          format: int64
-          description: Filesystem path handle or identifier for the Reticulum configuration (Int64).
+          type: string
+          description: Filesystem path to the Reticulum configuration.
         database_path:
           type: string
           description: Filesystem path to the Reticulum database.
         storage_path:
           type: string
           description: Root path where Reticulum stores persistent data.
+        file_storage_path:
+          type: string
+          description: Folder where file attachments are stored (defaults to ``<storage_dir>/files``).
+        image_storage_path:
+          type: string
+          description: Folder where image artifacts are stored (defaults to ``<storage_dir>/images``).
         app_name:
           type: string
           description: Application display name configured in ``config.ini``.
