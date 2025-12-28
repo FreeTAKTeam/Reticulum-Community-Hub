@@ -1,13 +1,11 @@
-"""
-Cursor-on-Target event helpers for ATAK integrations.
-"""
+"""ATAK Cursor on Target event container and serialization helpers."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import gzip
 import json
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from typing import Union, cast
 
 import msgpack
@@ -42,8 +40,8 @@ def unpack_data(data: bytes) -> dict:
     return msgpack.unpackb(gzip.decompress(data), strict_map_key=False)
 
 
-@dataclass  # pylint: disable=too-many-instance-attributes
-class Event:
+@dataclass
+class Event:  # pylint: disable=too-many-instance-attributes
     """Top level CoT event object."""
 
     version: str

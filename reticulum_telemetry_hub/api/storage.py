@@ -97,6 +97,12 @@ class HubStorage:
         self._Session = sessionmaker(bind=self._engine, expire_on_commit=False)
         self._session_factory = self._Session
 
+    @property
+    def _Session(self):  # pylint: disable=invalid-name
+        """Return a session factory for backward compatibility in tests."""
+
+        return self._session_factory
+
     # ------------------------------------------------------------------ #
     # Topic helpers
     # ------------------------------------------------------------------ #
