@@ -64,4 +64,5 @@
 - 2025-12-28: ✅ Replace CI flake8 linting with Ruff and remove the flake8 configuration file.
 - 2025-12-28: ✅ Improve test coverage and resolve Ruff lint findings.
 - 2025-12-28: ✅ Resolve reported pylint import and undefined variable errors.
+- 2025-12-28: ✅ Resolve pylint not-callable warnings for LXMF router hooks.
 - 2025-12-29: ✅ Resolve DummyRouter pylint no-member warnings in Reticulum server initialization.
