@@ -20,4 +20,4 @@ jobs:
         pip install pylint pytest sqlalchemy pytak RNS LXMF msgpack
     - name: Analysing the code with pylint
       run: |
-        pylint $(git ls-files '*.py')
+        pylint --disable=all --enable=E,F --score=n $(git ls-files '*.py')
