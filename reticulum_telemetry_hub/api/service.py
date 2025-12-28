@@ -1,3 +1,5 @@
+"""Reticulum Telemetry Hub API service operations."""
+
 from __future__ import annotations
 
 import uuid
@@ -199,10 +201,9 @@ class ReticulumTelemetryHubAPI:
             topic.topic_path = updates.get("topic_path") or updates.get("TopicPath")
             update_fields["topic_path"] = topic.topic_path
         if "topic_description" in updates or "TopicDescription" in updates:
-            if "topic_description" in updates:
-                description = updates["topic_description"]
-            else:
-                description = updates["TopicDescription"]
+            description = updates.get(
+                "topic_description", updates.get("TopicDescription")
+            )
             topic.topic_description = description or ""
             update_fields["topic_description"] = topic.topic_description
         if not update_fields:
