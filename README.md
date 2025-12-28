@@ -93,6 +93,21 @@ python -m reticulum_telemetry_hub.reticulum_server --help
 pytest tests/test_reticulum_server_daemon.py -q
 ```
 
+### Linting
+
+RTH uses [Ruff](https://docs.astral.sh/ruff/) for linting with a 120-character line length and ignores `E203` to align with Black-style slicing.
+
+- With Poetry (installs dev dependencies, including Ruff):
+  ```bash
+  poetry install --with dev
+  poetry run ruff check .
+  ```
+- With a plain virtual environment:
+  ```bash
+  python -m pip install ruff
+  ruff check .
+  ```
+
 ## Configuration
 
 RTH now uses a unified runtime configuration file alongside the Reticulum/LXMF configs. Defaults live under `RTH_Store`, but you can point at another storage directory with `--storage_dir` (the hub will look for `config.ini` there).
