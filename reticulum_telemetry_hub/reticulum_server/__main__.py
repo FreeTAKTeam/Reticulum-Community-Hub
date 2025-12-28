@@ -209,7 +209,23 @@ class ReticulumTelemetryHub:
         if not callable(hook):
             msg = f"LXMF router is missing required callable '{attribute}'"
             raise AttributeError(msg)
-        return hook
+        return cast(Callable[..., Any], hook)
+
+    def _invoke_router_hook(self, attribute: str, *args: Any, **kwargs: Any) -> Any:
+        """
+        Invoke a callable hook on the LXMF router.
+
+        Args:
+            attribute (str): Name of the callable attribute to invoke.
+            *args: Positional arguments forwarded to the callable.
+            **kwargs: Keyword arguments forwarded to the callable.
+
+        Returns:
+            Any: Response from the invoked callable.
+        """
+
+        router_callable = self._get_router_callable(self.lxm_router, attribute)
+        return router_callable(*args, **kwargs)
 
     def __init__(
         self,
@@ -299,21 +315,14 @@ class ReticulumTelemetryHub:
 
         self.lxm_router = cast(LXMF.LXMRouter, shared_router)
 
-        register_identity = self._get_router_callable(
-            self.lxm_router, "register_delivery_identity"
+        self.my_lxmf_dest = self._invoke_router_hook(
+            "register_delivery_identity", identity, display_name=display_name
         )
-        self.my_lxmf_dest = register_identity(identity, display_name=display_name)
 
         self.identities: dict[str, str] = {}
 
-        set_storage_limit = self._get_router_callable(
-            self.lxm_router, "set_message_storage_limit"
-        )
-        set_storage_limit(megabytes=5)
-        register_callback = self._get_router_callable(
-            self.lxm_router, "register_delivery_callback"
-        )
-        register_callback(self.delivery_callback)
+        self._invoke_router_hook("set_message_storage_limit", megabytes=5)
+        self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
         RNS.Transport.register_announce_handler(AnnounceHandler(self.identities))
 
         if self.config_manager is None:
