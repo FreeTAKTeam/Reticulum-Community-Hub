@@ -35,7 +35,7 @@ def _is_iterable_payload(obj: Any) -> bool:
     """Return True when the object should be treated as a payload collection."""
     if isinstance(obj, (Event, ET.Element, str, bytes, dict)):
         return False
-    return isinstance(obj, Iterable)
+    return isinstance(obj, IterableABC)
 
 
 def _payload_to_xml_bytes(payload: CotPayload) -> bytes:
@@ -185,6 +185,8 @@ class FTSCLITool(pytak.CLITool):
             self.run_c_task(task)
 
     async def setup(self) -> None:
+        """Connect to the configured TAK server and log outcomes."""
+
         cot_url = self.config.get("COT_URL", "")
         try:
             await super().setup()
@@ -235,7 +237,7 @@ class FTSCLITool(pytak.CLITool):
         return None
 
 
-class PytakWorkerManager:
+class PytakWorkerManager:  # pylint: disable=too-many-instance-attributes
     """Manage a persistent PyTAK CLI tool and worker queue."""
 
     def __init__(
