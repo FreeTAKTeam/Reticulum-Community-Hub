@@ -1,23 +1,20 @@
+"""PyTAK client helpers for sending and receiving Cursor on Target events."""
+
 from __future__ import annotations
 
 import asyncio
 import atexit
 import logging
+import weakref
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable
 from configparser import ConfigParser, SectionProxy
 from contextlib import suppress
-import RNS
 from threading import Event as ThreadEvent
 from threading import Lock
 from threading import Thread
-from typing import Any
-from typing import Optional
-from typing import Union
-from typing import cast
-from typing import Awaitable
-import weakref
+from typing import Any, Awaitable, Iterable, Optional, Union, cast
 
+import RNS
 import pytak
 
 from . import Event
@@ -26,10 +23,12 @@ CotPayload = Union[Event, ET.Element, str, bytes, dict]
 
 
 def _shutdown_weak(ref: "weakref.ReferenceType[PytakClient]") -> None:
+    """Invoke shutdown on a weakly referenced :class:`PytakClient`."""
+
     client = ref()
     if client is None:
         return
-    client._shutdown_sync()
+    client._shutdown_sync()  # pylint: disable=protected-access
 
 
 def _is_iterable_payload(obj: Any) -> bool:
@@ -76,6 +75,7 @@ class SendWorker(pytak.QueueWorker):
         await self.put_queue(_payload_to_xml_bytes(data))
 
     async def run(self, number_of_iterations: int = 0):
+        _ = number_of_iterations
         for payload in self._messages:
             await self.handle_data(payload)
 
@@ -91,18 +91,24 @@ class ReceiveWorker(pytak.QueueWorker):
         # store parsed or raw data here so callers can inspect worker instances
         self.result: Optional[Any] = None
 
+    async def handle_data(self, data: Any) -> None:
+        """Parse queue data into an Event when requested."""
+
+        if not self._parse:
+            self.result = data
+            return
+        try:
+            self.result = Event.from_xml(data)
+        except (ET.ParseError, TypeError, ValueError, AttributeError):
+            self.result = data
+
     async def run(self, number_of_iterations: int = 0) -> None:
+        _ = number_of_iterations
         try:
             data = await self.queue.get()
         except (asyncio.CancelledError, RuntimeError):
             return None
-        if not self._parse:
-            self.result = data
-            return None
-        try:
-            self.result = Event.from_xml(data)
-        except Exception:
-            self.result = data
+        await self.handle_data(data)
         return None
 
 
@@ -138,6 +144,8 @@ class StreamSendWorker(SendWorker):
 
 
 class FTSCLITool(pytak.CLITool):
+    """PyTAK CLI tool wrapper that tracks coroutine tasks for testing."""
+
     def __init__(
         self,
         config: ConfigParser,
@@ -160,12 +168,18 @@ class FTSCLITool(pytak.CLITool):
         self.results: list[Any] = []
 
     def add_c_task(self, task):
+        """Register a coroutine worker task to run alongside pyTAK tasks."""
+
         self.tasks_to_complete.add(task)
 
     def run_c_task(self, task):
+        """Schedule a coroutine worker task and keep a handle for teardown."""
+
         self.running_c_tasks.add(asyncio.ensure_future(task.run()))
 
     def run_c_tasks(self, tasks=None):
+        """Schedule all coroutine worker tasks."""
+
         tasks = tasks or self.tasks_to_complete
         for task in tasks:
             self.run_c_task(task)
@@ -174,7 +188,7 @@ class FTSCLITool(pytak.CLITool):
         cot_url = self.config.get("COT_URL", "")
         try:
             await super().setup()
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             self._logger.error(
                 "Failed to connect to TAK server at %s: %s", cot_url or "unknown", exc
             )
@@ -188,12 +202,13 @@ class FTSCLITool(pytak.CLITool):
 
     async def run(self, number_of_iterations: int = 0) -> None:
         """Runs this Thread and its associated coroutine tasks."""
+        _ = number_of_iterations
         self._logger.info("Run: %s", self.__class__)
 
         self.run_tasks()
         self.run_c_tasks()
 
-        done, _ = await asyncio.wait(
+        _done, _ = await asyncio.wait(
             self.running_c_tasks, return_when=asyncio.ALL_COMPLETED
         )
 
@@ -267,6 +282,7 @@ class PytakWorkerManager:
         return list(self._results)
 
     async def _run_session(self) -> None:
+        """Run a PyTAK session with exponential backoff on failures."""
         while not self._stop_event.is_set():
             send_stop = asyncio.Event()
             try:
@@ -307,7 +323,7 @@ class PytakWorkerManager:
                 if self._session_task is not None:
                     self._session_task.cancel()
                 raise
-            except Exception as exc:  # pragma: no cover - defensive logging
+            except Exception as exc:  # pragma: no cover - defensive logging  # pylint: disable=broad-exception-caught
                 send_stop.set()
                 self._logger.error("PyTAK session error: %s", exc)
                 await asyncio.sleep(self._backoff_seconds)
@@ -318,7 +334,7 @@ class PytakWorkerManager:
         return None
 
 
-class PytakClient:
+class PytakClient:  # pylint: disable=too-many-instance-attributes
     """Utility wrapper that wires ATAK Event payloads into pyTAK workers."""
 
     def __init__(self, config: Optional[ConfigParser] = None) -> None:
@@ -333,8 +349,8 @@ class PytakClient:
 
     def __del__(self) -> None:
         try:
-            self._shutdown_sync()
-        except Exception:
+            self._shutdown_sync()  # pylint: disable=protected-access
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     def _setup_config(self) -> ConfigParser:
@@ -349,6 +365,15 @@ class PytakClient:
         return config
 
     def _ensure_config(self, config: Optional[ConfigParser]) -> ConfigParser:
+        """
+        Ensure a configuration object is present for PyTAK workers.
+
+        Args:
+            config (ConfigParser | None): Custom configuration provided by the caller.
+
+        Returns:
+            ConfigParser: The configuration to use for PyTAK interactions.
+        """
         if config is not None:
             if self._config is None:
                 self._config = config
@@ -360,6 +385,19 @@ class PytakClient:
     def _config_section(
         self, config: ConfigParser, section: str = "fts"
     ) -> SectionProxy:
+        """
+        Return the requested section or a fallback from a configuration object.
+
+        Args:
+            config (ConfigParser): Configuration containing PyTAK settings.
+            section (str): Desired section name. Defaults to ``"fts"``.
+
+        Returns:
+            SectionProxy: Section with connection parameters.
+
+        Raises:
+            ValueError: If the configuration has no sections.
+        """
         if config.has_section(section):
             return config[section]
         sections = config.sections()
@@ -379,7 +417,16 @@ class PytakClient:
     def _ensure_manager(
         self, config: ConfigParser, parse_inbound: bool
     ) -> "PytakWorkerManager":
-        """Return a running worker manager with the provided configuration."""
+        """
+        Return a running worker manager with the provided configuration.
+
+        Args:
+            config (ConfigParser): PyTAK configuration to apply.
+            parse_inbound (bool): Whether inbound CoT data should be parsed.
+
+        Returns:
+            PytakWorkerManager: The configured worker manager.
+        """
 
         cli_tool = self._ensure_cli_tool(config)
         if self._worker_manager is None:
@@ -394,7 +441,18 @@ class PytakClient:
         message: Union[CotPayload, Iterable[CotPayload]],
         config: Optional[ConfigParser] = None,
         parse_inbound: bool = True,
-    ):
+    ) -> list[Any]:
+        """
+        Send one or more CoT payloads through a PyTAK worker session.
+
+        Args:
+            message (CotPayload | Iterable[CotPayload]): Payload(s) to dispatch.
+            config (ConfigParser | None): Optional configuration override.
+            parse_inbound (bool): Whether to parse inbound data into :class:`Event`.
+
+        Returns:
+            list[Any]: Parsed or raw results from the receive worker.
+        """
         cfg = self._ensure_config(config)
         manager = self._ensure_manager(cfg, parse_inbound)
         await self._run_in_loop(manager.start())
@@ -416,6 +474,13 @@ class PytakClient:
     def _start_loop(
         loop: asyncio.AbstractEventLoop, ready_event: ThreadEvent
     ) -> None:
+        """
+        Start the event loop on a dedicated thread and signal readiness.
+
+        Args:
+            loop (asyncio.AbstractEventLoop): Event loop to run.
+            ready_event (ThreadEvent): Event set once the loop is running.
+        """
         asyncio.set_event_loop(loop)
         ready_event.set()
         loop.run_forever()
@@ -478,7 +543,7 @@ class PytakClient:
                     self._worker_manager.stop(), self._loop
                 )
                 future.result(timeout=1.0)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
             self._worker_manager = None
 

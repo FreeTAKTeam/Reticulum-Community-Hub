@@ -1,5 +1,8 @@
+"""Core data structures shared across ATAK Cursor on Target payloads."""
+
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 
@@ -27,8 +30,6 @@ class Point:
 
     def to_element(self):
         """Return an XML element representing this point."""
-
-        from xml.etree import ElementTree as ET
 
         attrib = {
             "lat": str(self.lat),
@@ -79,8 +80,6 @@ class Contact:
     def to_element(self):
         """Return an XML element for the contact."""
 
-        from xml.etree import ElementTree as ET
-
         attrib = {"callsign": self.callsign}
         if self.endpoint:
             attrib["endpoint"] = self.endpoint
@@ -117,8 +116,6 @@ class Group:
     def to_element(self):
         """Return an XML element for the group affiliation."""
 
-        from xml.etree import ElementTree as ET
-
         return ET.Element("__group", {"name": self.name, "role": self.role})
 
     def to_dict(self) -> dict:
@@ -151,11 +148,7 @@ class Track:
     def to_element(self):
         """Return an XML element for the movement details."""
 
-        from xml.etree import ElementTree as ET
-
-        return ET.Element(
-            "track", {"course": str(self.course), "speed": str(self.speed)}
-        )
+        return ET.Element("track", {"course": str(self.course), "speed": str(self.speed)})
 
     def to_dict(self) -> dict:
         """Return a serialisable representation."""
@@ -193,8 +186,6 @@ class Takv:
 
     def to_element(self):
         """Return an XML element representing this TAK client."""
-
-        from xml.etree import ElementTree as ET
 
         return ET.Element(
             "takv",
@@ -243,8 +234,6 @@ class Uid:
     def to_element(self):
         """Return an XML element representing the UID."""
 
-        from xml.etree import ElementTree as ET
-
         return ET.Element("uid", {"Droid": self.droid})
 
     def to_dict(self) -> dict:
@@ -273,8 +262,6 @@ class Status:
 
     def to_element(self):
         """Return an XML element representing status."""
-
-        from xml.etree import ElementTree as ET
 
         return ET.Element("status", {"battery": str(self.battery)})
 
