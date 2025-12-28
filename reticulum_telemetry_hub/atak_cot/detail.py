@@ -39,9 +39,8 @@ class Detail:  # pylint: disable=too-many-instance-attributes
     server_destination: bool = False
 
     @classmethod
-    def from_xml(
-        cls, elem: ET.Element
-    ) -> "Detail":  # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals,too-many-branches
+    def from_xml(cls, elem: ET.Element) -> "Detail":
         """Create a :class:`Detail` from a ``<detail>`` element."""
 
         contact_el = elem.find("contact")
