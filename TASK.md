@@ -56,3 +56,4 @@
 - 2025-12-28: ✅ Resolve pylint warnings in ATAK CoT helpers and refresh package metadata.
 - 2025-12-28: ✅ Fix Iterable import for PyTAK client to resolve pylint error.
 - 2025-12-28: ✅ Analyze code with pylint and fix issues.
+- 2025-12-28: ✅ Add file and image attachment storage APIs and tests.

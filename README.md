@@ -162,6 +162,17 @@ How the unified config is used:
 - TAK, GPSD, announce/telemetry intervals, default services, log level, and embedded/external LXMF choices are all centralized here.
 - CLI flags (`--storage_dir`, `--config`, `--display-name`, `--announce-interval`, `--embedded`, `--service`, etc.) override any values loaded from the file.
 
+### File and image metadata API
+
+The Python API exposes helpers to track stored files and images alongside their metadata (paths, MIME types, categories, sizes, and timestamps). Use these calls after you place files under the configured storage directories:
+
+- `ReticulumTelemetryHubAPI.store_file(path, name=None, media_type=None)` records a file in the default `files/` directory.
+- `ReticulumTelemetryHubAPI.store_image(path, name=None, media_type=None)` records an image in the `images/` directory.
+- `list_files()` / `list_images()` return stored metadata filtered by category.
+- `retrieve_file(id)` / `retrieve_image(id)` return a single record by ID, raising `KeyError` when the category does not match.
+
+File and image directories still default to `<storage_dir>/files` and `<storage_dir>/images`, but you can point them elsewhere via the `[files]` and `[images]` sections as shown above.
+
 ## Service
 
 In order to start the RTH   automatically on startup, we will need to install a /etc/systemd/system/RTH.service file:
