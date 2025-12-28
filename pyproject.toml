@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ReticulumTelemetryHub"
-version = "0.73.0"
+version = "0.74.0"
 description = "Reticulum-Telemetry-Hub (RTH) manages a complete TCP node across a Reticulum-based network, enabling communication and data sharing between clients like Sideband or Meshchat."
 authors = ["naman108, corvo"]
 readme = "README.md"
@@ -31,6 +31,12 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+exclude = [
+    "venv_linux",
+    "venv",
+    "reticulum_telemetry_hub/lxmf_daemon",
+    "reticulum_telemetry_hub/lxmf_telemetry/model/persistance",
+]
 
 [tool.ruff.lint]
-extend-ignore = ["E203", "W503"]
+ignore = ["E203"]

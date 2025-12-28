@@ -61,3 +61,4 @@
 - 2025-12-28: ✅ Add LXMF attachment listing/retrieval commands and persist inbound LXMF file/image fields.
 - 2025-12-28: ✅ Resolve TAK connector test cleanup to avoid unraisable exceptions.
 - 2025-12-28: ✅ Switch linting to Ruff and retire flake8 configuration.
+- 2025-12-28: ✅ Replace CI flake8 linting with Ruff and remove the flake8 configuration file.

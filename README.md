@@ -95,7 +95,7 @@ pytest tests/test_reticulum_server_daemon.py -q
 
 ### Linting
 
-RTH uses [Ruff](https://docs.astral.sh/ruff/) for linting with a 120-character line length and the standard `E203` / `W503` exceptions.
+RTH uses [Ruff](https://docs.astral.sh/ruff/) for linting with a 120-character line length and ignores `E203` to align with Black-style slicing.
 
 - With Poetry (installs dev dependencies, including Ruff):
   ```bash
