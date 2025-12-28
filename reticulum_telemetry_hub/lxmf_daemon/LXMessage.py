@@ -5,6 +5,7 @@ import os
 import time
 import base64
 import multiprocessing
+from typing import Any
 
 from . import LXStamper
 from .LXMF import APP_NAME
@@ -553,9 +554,13 @@ class LXMessage:
 
         if self.method == LXMessage.OPPORTUNISTIC:
             lxm_packet = self.__as_packet()
-            receipt = lxm_packet.send()
-            if receipt and hasattr(receipt, "set_delivery_callback"):
-                receipt.set_delivery_callback(self.__mark_delivered)
+            receipt: Any = lxm_packet.send()
+            if not isinstance(receipt, bool) and hasattr(
+                receipt, "set_delivery_callback"
+            ):
+                receipt.set_delivery_callback(  # pylint: disable=no-member
+                    self.__mark_delivered
+                )
             self.progress = 0.50
             self.ratchet_id = lxm_packet.ratchet_id
             self.state = LXMessage.SENT
@@ -565,11 +570,16 @@ class LXMessage:
 
             if self.representation == LXMessage.PACKET:
                 lxm_packet = self.__as_packet()
-                receipt = lxm_packet.send()
+                receipt: Any = lxm_packet.send()
+                receipt_obj: Any | None = None
+                if not isinstance(receipt, bool):
+                    receipt_obj = receipt
                 self.ratchet_id = self.__delivery_destination.link_id
-                if receipt:
-                    receipt.set_delivery_callback(self.__mark_delivered)
-                    receipt.set_timeout_callback(self.__link_packet_timed_out)
+                if receipt_obj:
+                    receipt_obj.set_delivery_callback(  # pylint: disable=no-member
+                        self.__mark_delivered
+                    )
+                    receipt_obj.set_timeout_callback(self.__link_packet_timed_out)
                     self.progress = 0.50
                 else:
                     if self.__delivery_destination:
