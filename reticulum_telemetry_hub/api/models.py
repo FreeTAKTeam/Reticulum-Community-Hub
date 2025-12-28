@@ -95,6 +95,8 @@ class ReticulumInfo:
     reticulum_config_path: str
     database_path: str
     storage_path: str
+    file_storage_path: str
+    image_storage_path: str
     app_name: str
     rns_version: str
     lxmf_version: str

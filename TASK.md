@@ -49,3 +49,4 @@
 - 2025-12-26: ✅ Expand getAppInfo to return configured metadata and auto-respond to unjoined LXMF clients.
 - 2025-12-27: ✅ Review and test the code and fix linter issues.
 - 2025-12-27: ✅ Reorder LXMF daemon imports to satisfy flake8 and bump version to 0.62.0.
+- 2025-12-28: ✅ Add file and image storage configuration paths and tests.

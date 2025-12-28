@@ -63,3 +63,35 @@ def test_app_metadata_comes_from_config(tmp_path):
     assert info["app_name"] == "Sample Hub"
     assert info["app_version"] == "1.2.3"
     assert info["app_description"] == "Demo instance"
+
+
+def test_default_file_and_image_paths_created(tmp_path):
+    manager = HubConfigurationManager(storage_path=tmp_path)
+
+    assert manager.runtime_config.file_storage_path == tmp_path / "files"
+    assert manager.runtime_config.image_storage_path == tmp_path / "images"
+    assert manager.runtime_config.file_storage_path.is_dir()
+    assert manager.runtime_config.image_storage_path.is_dir()
+
+
+def test_file_and_image_overrides_expand_and_create(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[files]\n"
+        "path = ~/custom/files\n"
+        "\n"
+        "[images]\n"
+        "directory = ~/custom/images\n"
+    )
+
+    manager = HubConfigurationManager(
+        storage_path="~/store", config_path=config_path
+    )
+
+    expected_storage = tmp_path / "store"
+    assert manager.storage_path == expected_storage
+    assert manager.runtime_config.file_storage_path == tmp_path / "custom/files"
+    assert manager.runtime_config.image_storage_path == tmp_path / "custom/images"
+    assert manager.runtime_config.file_storage_path.is_dir()
+    assert manager.runtime_config.image_storage_path.is_dir()

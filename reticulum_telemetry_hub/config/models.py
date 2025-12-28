@@ -103,6 +103,8 @@ class HubRuntimeConfig:
     reticulum_config_path: Path | None = None
     lxmf_router_config_path: Path | None = None
     telemetry_filename: str = "telemetry.ini"
+    file_storage_path: Path | None = None
+    image_storage_path: Path | None = None
 
 
 @dataclass
@@ -112,6 +114,8 @@ class HubAppConfig:
     storage_path: Path
     database_path: Path
     hub_database_path: Path
+    file_storage_path: Path
+    image_storage_path: Path
     runtime: "HubRuntimeConfig"
     reticulum: ReticulumConfig
     lxmf_router: LXMFRouterConfig
@@ -132,6 +136,8 @@ class HubAppConfig:
             "reticulum_config_path": str(self.reticulum.path),
             "database_path": str(self.database_path),
             "storage_path": str(self.storage_path),
+            "file_storage_path": str(self.file_storage_path),
+            "image_storage_path": str(self.image_storage_path),
             "rns_version": self._safe_get_version("RNS"),
             "lxmf_version": self._safe_get_version("LXMF"),
             "app_name": self.app_name or "ReticulumTelemetryHub",
