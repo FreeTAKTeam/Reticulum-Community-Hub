@@ -8,7 +8,7 @@ import asyncio
 import atexit
 import logging
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable as IterableABC
+from collections.abc import Iterable
 from configparser import ConfigParser, SectionProxy
 from contextlib import suppress
 from threading import Event as ThreadEvent
@@ -16,7 +16,6 @@ from threading import Lock
 from threading import Thread
 from typing import Any
 from typing import Awaitable
-from typing import Iterable
 from typing import Optional
 from typing import Union
 from typing import cast
@@ -45,7 +44,7 @@ def _is_iterable_payload(obj: Any) -> bool:
     """Return True when the object should be treated as a payload collection."""
     if isinstance(obj, (Event, ET.Element, str, bytes, dict)):
         return False
-    return isinstance(obj, IterableABC)
+    return isinstance(obj, Iterable)
 
 
 def _payload_to_xml_bytes(payload: CotPayload) -> bytes:
