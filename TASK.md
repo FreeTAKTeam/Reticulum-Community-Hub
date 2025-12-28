@@ -62,3 +62,4 @@
 - 2025-12-28: ✅ Resolve TAK connector test cleanup to avoid unraisable exceptions.
 - 2025-12-28: ✅ Switch linting to Ruff and retire flake8 configuration.
 - 2025-12-28: ✅ Replace CI flake8 linting with Ruff and remove the flake8 configuration file.
+- 2025-12-28: ✅ Improve test coverage and resolve Ruff lint findings.

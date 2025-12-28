@@ -1,10 +1,12 @@
 import time
 
+import pytest
 import RNS
 
 from reticulum_telemetry_hub.lxmf_telemetry.sampler import (
     TelemetrySample,
     TelemetrySampler,
+    _SamplerJob,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_TIME,
@@ -162,3 +164,97 @@ def test_sampler_uses_telemeter_manager_snapshot(telemetry_controller):
     assert stored
     sensor_ids = {sensor.sid for sensor in stored[-1].sensors}
     assert SID_TIME in sensor_ids
+
+
+def test_sampler_handles_no_jobs_and_safe_stop(telemetry_controller):
+    router = DummyRouter()
+    server_dest = _destination()
+    sampler = TelemetrySampler(telemetry_controller, router, server_dest)
+
+    sampler.start()
+    sampler._run()  # run loop exits immediately when no jobs are scheduled
+    sampler.stop()
+
+    assert sampler._thread is None
+
+
+def test_sampler_stop_is_idempotent(telemetry_controller):
+    router = DummyRouter()
+    server_dest = _destination()
+    sampler = TelemetrySampler(telemetry_controller, router, server_dest)
+
+    sampler.stop()
+
+
+def test_invoke_collector_enforces_return_type(telemetry_controller):
+    router = DummyRouter()
+    server_dest = _destination()
+    sampler = TelemetrySampler(telemetry_controller, router, server_dest)
+
+    with pytest.raises(TypeError):
+        sampler._invoke_collector(lambda: "not-a-sample")
+
+
+def test_execute_job_skips_none_samples(telemetry_controller):
+    router = DummyRouter()
+    server_dest = _destination()
+    sampler = TelemetrySampler(telemetry_controller, router, server_dest)
+
+    job = _SamplerJob(name="noop", interval=0, collectors=[lambda: None])
+
+    sampler._execute_job(job)
+
+
+def test_process_sample_exits_on_missing_encoding():
+    class NullController:
+        def ingest_local_payload(self, payload, peer_dest):
+            self.last_payload = payload
+            self.last_peer = peer_dest
+            return None
+
+    router = DummyRouter()
+    server_dest = _destination()
+    controller = NullController()
+    sampler = TelemetrySampler(controller, router, server_dest)
+
+    sampler._process_sample(TelemetrySample(payload={"foo": "bar"}))
+
+    assert not router.messages
+
+
+def test_process_sample_handles_empty_destinations_with_broadcast_enabled():
+    class Controller:
+        def ingest_local_payload(self, payload, peer_dest):
+            self.calls = getattr(self, "calls", [])
+            self.calls.append((payload, peer_dest))
+            return b"encoded"
+
+    router = DummyRouter()
+    server_dest = _destination()
+    controller = Controller()
+    sampler = TelemetrySampler(
+        controller, router, server_dest, connections=[], broadcast_updates=True
+    )
+
+    sampler._process_sample(TelemetrySample(payload={"one": 1}))
+
+    assert controller.calls
+    assert not router.messages
+
+
+def test_telemeter_snapshot_collectors_include_timestamp(monkeypatch, telemetry_controller):
+    router = DummyRouter()
+    server_dest = _destination()
+    manager = type("Manager", (), {"snapshot": lambda self: {}})()
+    sampler = TelemetrySampler(
+        telemetry_controller,
+        router,
+        server_dest,
+        telemeter_manager=manager,
+    )
+    monkeypatch.setattr("time.time", lambda: 1700000000.0)
+
+    sample = sampler._collect_telemeter_snapshot()
+
+    assert sample.payload[SID_TIME] == 1700000000.0
+    assert sample.peer_dest == RNS.hexrep(server_dest.hash, False)

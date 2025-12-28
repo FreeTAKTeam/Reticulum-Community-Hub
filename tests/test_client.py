@@ -17,6 +17,7 @@ class AnnounceHandler:
         self.lxm_router = lxm_router  # LXMF router
 
     def received_announce(self, destination_hash, announced_identity, app_data):
+        """Handle an inbound LXMF announce message."""
         # Log the received announcement details
         RNS.log("\t+--- LXMF Announcement -----------------------------------------")
         RNS.log(f"\t| Source hash            : {RNS.prettyhexrep(destination_hash)}")
@@ -35,11 +36,13 @@ class AnnounceHandler:
 
 
 def command_handler(commands: list, message: LXMF.LXMessage, lxm_router, my_lxmf_dest):
+    """Process received LXMF commands."""
     for command in commands:
         print(f"Command: {command}")
 
 
 def delivery_callback(message: LXMF.LXMessage, connections, my_lxmf_dest, lxm_router):
+    """Handle LXMF deliveries for commands and telemetry."""
     # Format the timestamp of the message
     try:
         RNS.log("Delivery callback triggered")
@@ -88,6 +91,7 @@ def delivery_callback(message: LXMF.LXMessage, connections, my_lxmf_dest, lxm_ro
 
 
 def load_or_generate_identity(identity_path):
+    """Load a previously stored identity or generate a new one."""
     # Load existing identity or generate a new one
     if os.path.exists(identity_path):
         try:
@@ -103,7 +107,8 @@ def load_or_generate_identity(identity_path):
     return identity
 
 
-def main():
+def main():  # pragma: no cover
+    """Run an interactive LXMF client loop."""
     connections = []  # List to store connections
     RNS.Reticulum()  # Initialize Reticulum
     lxm_router = LXMF.LXMRouter(storagepath=STORAGE_PATH)  # Initialize LXMF router
@@ -159,5 +164,5 @@ def main():
                 print("Connection not found")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
