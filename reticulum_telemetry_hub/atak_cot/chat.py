@@ -1,3 +1,7 @@
+"""
+Helpers for building ATAK GeoChat detail elements.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -346,7 +350,7 @@ class ServerDestination:
         return {}
 
 
-@dataclass
+@dataclass  # pylint: disable=too-many-instance-attributes
 class Chat:
     """Metadata describing the GeoChat parent and room."""
 

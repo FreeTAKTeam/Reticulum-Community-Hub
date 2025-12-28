@@ -1,11 +1,16 @@
+"""
+Cursor-on-Target event helpers for ATAK integrations.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Union, cast
 import gzip
 import json
-import msgpack
 import xml.etree.ElementTree as ET
+from typing import Union, cast
+
+import msgpack
 
 from reticulum_telemetry_hub.atak_cot.base import Point
 from reticulum_telemetry_hub.atak_cot.detail import Detail
@@ -37,7 +42,7 @@ def unpack_data(data: bytes) -> dict:
     return msgpack.unpackb(gzip.decompress(data), strict_map_key=False)
 
 
-@dataclass
+@dataclass  # pylint: disable=too-many-instance-attributes
 class Event:
     """Top level CoT event object."""
 

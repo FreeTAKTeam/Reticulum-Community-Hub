@@ -1,23 +1,28 @@
+"""
+Utilities for managing PyTAK workers and ATAK CoT payload delivery.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import atexit
 import logging
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable
+from collections.abc import Iterable as IterableABC
 from configparser import ConfigParser, SectionProxy
 from contextlib import suppress
-import RNS
 from threading import Event as ThreadEvent
 from threading import Lock
 from threading import Thread
 from typing import Any
+from typing import Awaitable
+from typing import Iterable
 from typing import Optional
 from typing import Union
 from typing import cast
-from typing import Awaitable
 import weakref
 
+import RNS
 import pytak
 
 from . import Event
@@ -26,17 +31,21 @@ CotPayload = Union[Event, ET.Element, str, bytes, dict]
 
 
 def _shutdown_weak(ref: "weakref.ReferenceType[PytakClient]") -> None:
+    """
+    Invoke a best-effort shutdown on the referenced client during interpreter exit.
+    """
+
     client = ref()
     if client is None:
         return
-    client._shutdown_sync()
+    client._shutdown_sync()  # pylint: disable=protected-access
 
 
 def _is_iterable_payload(obj: Any) -> bool:
     """Return True when the object should be treated as a payload collection."""
     if isinstance(obj, (Event, ET.Element, str, bytes, dict)):
         return False
-    return isinstance(obj, Iterable)
+    return isinstance(obj, IterableABC)
 
 
 def _payload_to_xml_bytes(payload: CotPayload) -> bytes:
@@ -91,18 +100,23 @@ class ReceiveWorker(pytak.QueueWorker):
         # store parsed or raw data here so callers can inspect worker instances
         self.result: Optional[Any] = None
 
+    async def handle_data(self, data: CotPayload) -> None:
+        """Parse inbound data when enabled and store it on ``result``."""
+
+        if not self._parse:
+            self.result = data
+            return
+        try:
+            self.result = Event.from_xml(data)
+        except (ET.ParseError, TypeError, ValueError):
+            self.result = data
+
     async def run(self, number_of_iterations: int = 0) -> None:
         try:
             data = await self.queue.get()
         except (asyncio.CancelledError, RuntimeError):
             return None
-        if not self._parse:
-            self.result = data
-            return None
-        try:
-            self.result = Event.from_xml(data)
-        except Exception:
-            self.result = data
+        await self.handle_data(data)
         return None
 
 
@@ -138,6 +152,8 @@ class StreamSendWorker(SendWorker):
 
 
 class FTSCLITool(pytak.CLITool):
+    """Thin wrapper around :class:`pytak.CLITool` that collects worker results."""
+
     def __init__(
         self,
         config: ConfigParser,
@@ -160,17 +176,25 @@ class FTSCLITool(pytak.CLITool):
         self.results: list[Any] = []
 
     def add_c_task(self, task):
+        """Track a coroutine task for execution."""
+
         self.tasks_to_complete.add(task)
 
     def run_c_task(self, task):
+        """Schedule a coroutine task on the underlying event loop."""
+
         self.running_c_tasks.add(asyncio.ensure_future(task.run()))
 
     def run_c_tasks(self, tasks=None):
+        """Schedule multiple coroutine tasks at once."""
+
         tasks = tasks or self.tasks_to_complete
         for task in tasks:
             self.run_c_task(task)
 
     async def setup(self) -> None:
+        """Connect to the configured TAK server and log outcomes."""
+
         cot_url = self.config.get("COT_URL", "")
         try:
             await super().setup()
@@ -188,14 +212,18 @@ class FTSCLITool(pytak.CLITool):
 
     async def run(self, number_of_iterations: int = 0) -> None:
         """Runs this Thread and its associated coroutine tasks."""
+        if number_of_iterations:
+            self._logger.debug(
+                "number_of_iterations is not used by %s (value=%s)",
+                self.__class__.__name__,
+                number_of_iterations,
+            )
         self._logger.info("Run: %s", self.__class__)
 
         self.run_tasks()
         self.run_c_tasks()
 
-        done, _ = await asyncio.wait(
-            self.running_c_tasks, return_when=asyncio.ALL_COMPLETED
-        )
+        await asyncio.wait(self.running_c_tasks, return_when=asyncio.ALL_COMPLETED)
 
         # Give the TX/RX workers a moment to drain the queues before cancelling
         # them. Without this pause, the main loop could cancel the TX worker
@@ -220,7 +248,7 @@ class FTSCLITool(pytak.CLITool):
         return None
 
 
-class PytakWorkerManager:
+class PytakWorkerManager:  # pylint: disable=too-many-instance-attributes
     """Manage a persistent PyTAK CLI tool and worker queue."""
 
     def __init__(
@@ -308,6 +336,7 @@ class PytakWorkerManager:
                     self._session_task.cancel()
                 raise
             except Exception as exc:  # pragma: no cover - defensive logging
+                # pylint: disable=broad-exception-caught
                 send_stop.set()
                 self._logger.error("PyTAK session error: %s", exc)
                 await asyncio.sleep(self._backoff_seconds)
@@ -334,7 +363,7 @@ class PytakClient:
     def __del__(self) -> None:
         try:
             self._shutdown_sync()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     def _setup_config(self) -> ConfigParser:
@@ -478,7 +507,7 @@ class PytakClient:
                     self._worker_manager.stop(), self._loop
                 )
                 future.result(timeout=1.0)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
             self._worker_manager = None
 
