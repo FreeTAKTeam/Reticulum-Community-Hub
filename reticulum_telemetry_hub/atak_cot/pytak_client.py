@@ -13,6 +13,7 @@ from threading import Event as ThreadEvent
 from threading import Lock
 from threading import Thread
 from typing import Any, Awaitable, Iterable, Optional, Union, cast
+import weakref
 
 import RNS
 import pytak
@@ -35,7 +36,7 @@ def _is_iterable_payload(obj: Any) -> bool:
     """Return True when the object should be treated as a payload collection."""
     if isinstance(obj, (Event, ET.Element, str, bytes, dict)):
         return False
-    return isinstance(obj, IterableABC)
+    return isinstance(obj, Iterable)
 
 
 def _payload_to_xml_bytes(payload: CotPayload) -> bytes:
