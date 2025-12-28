@@ -1,12 +1,10 @@
-"""
-Helpers for parsing and serialising CoT <detail> payloads.
-"""
+"""Detail payload helpers for ATAK Cursor on Target events."""
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Optional, Union
-import xml.etree.ElementTree as ET
 
 from reticulum_telemetry_hub.atak_cot.base import Contact
 from reticulum_telemetry_hub.atak_cot.base import Group
@@ -22,8 +20,8 @@ from reticulum_telemetry_hub.atak_cot.chat import ServerDestination
 from reticulum_telemetry_hub.atak_cot.chat import Remarks
 
 
-@dataclass  # pylint: disable=too-many-instance-attributes
-class Detail:
+@dataclass
+class Detail:  # pylint: disable=too-many-instance-attributes
     """Additional information such as contact, group, and movement."""
 
     contact: Optional[Contact] = None
@@ -41,7 +39,9 @@ class Detail:
     server_destination: bool = False
 
     @classmethod
-    def from_xml(cls, elem: ET.Element) -> "Detail":  # pylint: disable=too-many-branches,too-many-locals
+    def from_xml(
+        cls, elem: ET.Element
+    ) -> "Detail":  # pylint: disable=too-many-locals,too-many-branches
         """Create a :class:`Detail` from a ``<detail>`` element."""
 
         contact_el = elem.find("contact")
@@ -139,7 +139,7 @@ class Detail:
             detail_el.append(self.status.to_element())
         return detail_el
 
-    def to_dict(self) -> dict:  # pylint: disable=too-many-branches,too-many-locals
+    def to_dict(self) -> dict:  # pylint: disable=too-many-branches
         """Return a dictionary containing populated fields only."""
 
         data: dict = {}
@@ -178,7 +178,7 @@ class Detail:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Detail":
+    def from_dict(cls, data: dict) -> "Detail":  # pylint: disable=too-many-locals
         """Create a :class:`Detail` from a dictionary."""
 
         contact = None

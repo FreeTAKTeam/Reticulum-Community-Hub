@@ -1,12 +1,10 @@
-"""
-Helpers for building ATAK GeoChat detail elements.
-"""
+"""GeoChat-specific data structures for ATAK Cursor on Target payloads."""
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Optional
-import xml.etree.ElementTree as ET
 
 
 @dataclass
@@ -350,8 +348,8 @@ class ServerDestination:
         return {}
 
 
-@dataclass  # pylint: disable=too-many-instance-attributes
-class Chat:
+@dataclass
+class Chat:  # pylint: disable=too-many-instance-attributes
     """Metadata describing the GeoChat parent and room."""
 
     parent: Optional[str] = None

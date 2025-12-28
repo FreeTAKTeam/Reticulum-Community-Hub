@@ -1,9 +1,11 @@
+"""Core data structures shared across ATAK Cursor on Target payloads."""
 """
 Data classes representing ATAK Cursor-on-Target primitives.
 """
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 import xml.etree.ElementTree as ET
 
@@ -150,9 +152,7 @@ class Track:
     def to_element(self):
         """Return an XML element for the movement details."""
 
-        return ET.Element(
-            "track", {"course": str(self.course), "speed": str(self.speed)}
-        )
+        return ET.Element("track", {"course": str(self.course), "speed": str(self.speed)})
 
     def to_dict(self) -> dict:
         """Return a serialisable representation."""
