@@ -19,7 +19,7 @@ from .models import Topic
 from .storage import HubStorage
 
 
-class ReticulumTelemetryHubAPI:
+class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
     """Persistence-backed implementation of the ReticulumTelemetryHub API."""
 
     def __init__(
@@ -454,7 +454,7 @@ class ReticulumTelemetryHubAPI:
         info_dict = self._config_manager.reticulum_info_snapshot()
         return ReticulumInfo(**info_dict)
 
-    def _store_attachment(
+    def _store_attachment(  # pylint: disable=too-many-arguments
         self,
         *,
         file_path: str | Path,
