@@ -34,6 +34,8 @@ import mimetypes
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from typing import Callable
 from typing import cast
 
 import LXMF
@@ -185,6 +187,30 @@ class ReticulumTelemetryHub:
 
     TELEMETRY_PLACEHOLDERS = {"telemetry data", "telemetry update"}
 
+    @staticmethod
+    def _get_router_callable(
+        router: LXMF.LXMRouter, attribute: str
+    ) -> Callable[..., Any]:
+        """
+        Return a callable attribute from the LXMF router.
+
+        Args:
+            router (LXMF.LXMRouter): Router exposing LXMF hooks.
+            attribute (str): Name of the required callable attribute.
+
+        Returns:
+            Callable[..., Any]: Router hook matching ``attribute``.
+
+        Raises:
+            AttributeError: When the attribute is missing or not callable.
+        """
+
+        hook = getattr(router, attribute, None)
+        if not callable(hook):
+            msg = f"LXMF router is missing required callable '{attribute}'"
+            raise AttributeError(msg)
+        return hook
+
     def __init__(
         self,
         display_name: str,
@@ -273,14 +299,21 @@ class ReticulumTelemetryHub:
 
         self.lxm_router = cast(LXMF.LXMRouter, shared_router)
 
-        self.my_lxmf_dest = self.lxm_router.register_delivery_identity(
-            identity, display_name=display_name
+        register_identity = self._get_router_callable(
+            self.lxm_router, "register_delivery_identity"
         )
+        self.my_lxmf_dest = register_identity(identity, display_name=display_name)
 
         self.identities: dict[str, str] = {}
 
-        self.lxm_router.set_message_storage_limit(megabytes=5)
-        self.lxm_router.register_delivery_callback(self.delivery_callback)
+        set_storage_limit = self._get_router_callable(
+            self.lxm_router, "set_message_storage_limit"
+        )
+        set_storage_limit(megabytes=5)
+        register_callback = self._get_router_callable(
+            self.lxm_router, "register_delivery_callback"
+        )
+        register_callback(self.delivery_callback)
         RNS.Transport.register_announce_handler(AnnounceHandler(self.identities))
 
         if self.config_manager is None:
@@ -585,9 +618,11 @@ class ReticulumTelemetryHub:
             enqueued = queue.queue_message(
                 connection,
                 message,
-                destination_hash
-                if isinstance(destination_hash, (bytes, bytearray))
-                else None,
+                (
+                    destination_hash
+                    if isinstance(destination_hash, (bytes, bytearray))
+                    else None
+                ),
                 connection_hex,
             )
             if not enqueued:
@@ -621,9 +656,7 @@ class ReticulumTelemetryHub:
                     self, "outbound_queue_size", DEFAULT_OUTBOUND_QUEUE_SIZE
                 )
                 or DEFAULT_OUTBOUND_QUEUE_SIZE,
-                worker_count=getattr(
-                    self, "outbound_workers", DEFAULT_OUTBOUND_WORKERS
-                )
+                worker_count=getattr(self, "outbound_workers", DEFAULT_OUTBOUND_WORKERS)
                 or DEFAULT_OUTBOUND_WORKERS,
                 send_timeout=getattr(
                     self, "outbound_send_timeout", DEFAULT_OUTBOUND_SEND_TIMEOUT
@@ -1191,8 +1224,10 @@ class ReticulumTelemetryHub:
         try:
             command_manager = getattr(self, "command_manager", None)
             if command_manager is not None and hasattr(command_manager, "_create_dest"):
-                destination = command_manager._create_dest(  # pylint: disable=protected-access
-                    message.source.identity
+                destination = (
+                    command_manager._create_dest(  # pylint: disable=protected-access
+                        message.source.identity
+                    )
                 )
         except Exception:
             destination = None
