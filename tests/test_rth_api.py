@@ -143,8 +143,8 @@ def test_concurrent_client_join_and_leave(tmp_path):
 def test_storage_session_retries_close_failed_sessions(tmp_path, monkeypatch):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     storage = api._storage
-    storage._SESSION_RETRIES = 2
-    storage._SESSION_BACKOFF = 0
+    storage._session_retries = 2
+    storage._session_backoff = 0
 
     closed_sessions: list[bool] = []
 
@@ -155,12 +155,12 @@ def test_storage_session_retries_close_failed_sessions(tmp_path, monkeypatch):
         def close(self):
             closed_sessions.append(True)
 
-    monkeypatch.setattr(storage, "_Session", lambda: FailingSession())
+    monkeypatch.setattr(storage, "_session_factory", lambda: FailingSession())
 
     with pytest.raises(OperationalError):
         storage._acquire_session_with_retry()
 
-    assert len(closed_sessions) == storage._SESSION_RETRIES
+    assert len(closed_sessions) == storage._session_retries
 
 
 def test_get_app_info(tmp_path):
