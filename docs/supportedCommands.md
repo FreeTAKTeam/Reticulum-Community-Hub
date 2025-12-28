@@ -15,6 +15,8 @@ the following commands are supported by RTH
 | `leave` | Remove your destination from the hub's connection list. | ``\\\[{"Command":"leave"}]`` |
 | `ListClients` | List the LXMF destinations currently joined to the hub. | ``\\\[{"Command":"ListClients"}]`` |
 | `getAppInfo` | Return the configured app name, version, and description from `config.ini`. | ``\\\[{"Command":"getAppInfo"}]`` |
+| `ListFiles` | List file attachments stored by the hub (from API calls or inbound LXMF). | ``\\\[{"Command":"ListFiles"}]`` |
+| `ListImages` | List image attachments stored by the hub (from API calls or inbound LXMF). | ``\\\[{"Command":"ListImages"}]`` |
 | `ListTopic` | List every registered topic and its ID. | ``\\\[{"Command":"ListTopic"}]`` |
 | `CreateTopic` | Create a topic with a name and path. | ``\\\[{"Command":"CreateTopic","TopicName":"Weather","TopicPath":"environment/weather"}]`` |
 | `RetrieveTopic` | Fetch a topic by `TopicID`. | ``\\\[{"Command":"RetrieveTopic","TopicID":"<TopicID>"}]`` |
@@ -26,11 +28,14 @@ the following commands are supported by RTH
 | `RetrieveSubscriber` | Fetch subscriber metadata by `SubscriberID`. | ``[{"Command":"RetrieveSubscriber","SubscriberID":"<SubscriberID>"}]`` |
 | `DeleteSubscriber` / `RemoveSubscriber` | Remove a subscriber mapping. | ``[{"Command":"DeleteSubscriber","SubscriberID":"<SubscriberID>"}]`` |
 | `PatchSubscriber` | Update subscriber metadata by `SubscriberID`. | ``[{"Command":"PatchSubscriber","SubscriberID":"<SubscriberID>","Metadata":{"tag":"updated"}}]`` |
+| `RetrieveFile` | Retrieve a stored file by `FileID`. The response carries metadata in the body and the file bytes under `FIELD_FILE_ATTACHMENTS`. | ``[{"Command":"RetrieveFile","FileID":1}]`` |
+| `RetrieveImage` | Retrieve a stored image by `FileID`. The response includes metadata plus the image bytes under `FIELD_IMAGE`. | ``[{"Command":"RetrieveImage","FileID":1}]`` |
 | `TelemetryRequest` (`1`) | Request telemetry snapshots from all peers since the provided UNIX timestamp. Response includes packed telemetry in `FIELD_TELEMETRY_STREAM` plus a JSON body with human-readable telemetry. | ``[{"1":1700000000}]`` |
 
 Notes:
 - Telemetry responses now mirror the packed stream and also embed a human-readable JSON payload; see `docs/example_telemetry.json` for a sample body.
 - Command casing is permissive (`CreateTopic`, `createtopic`, and `createTopic` are all accepted), but the JSON keys shown above are the clearest to read.
+- Retrieval commands include the binary payload in the LXMF fields listed above so Sideband, Meshchat, and similar clients can save the attachments directly. Incoming LXMF messages that already contain `FIELD_FILE_ATTACHMENTS` or `FIELD_IMAGE` entries are persisted to the configured storage directories and acknowledged with the assigned index.
 
 ### Tips for building command payloads
 

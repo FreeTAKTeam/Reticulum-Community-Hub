@@ -3,16 +3,18 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 import json
+from pathlib import Path
 import re
 import RNS
 import LXMF
 
-from reticulum_telemetry_hub.api.models import Client, Subscriber, Topic
+from reticulum_telemetry_hub.api.models import Client, FileAttachment, Subscriber, Topic
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 
 from .constants import PLUGIN_COMMAND
 from .command_text import (
     build_help_text,
+    format_attachment_list,
     format_subscriber_list,
     format_topic_list,
     topic_subscribe_hint,
@@ -42,6 +44,10 @@ class CommandManager:
     CMD_PATCH_SUBSCRIBER = "PatchSubscriber"
     CMD_REMOVE_SUBSCRIBER = "RemoveSubscriber"
     CMD_GET_APP_INFO = "getAppInfo"
+    CMD_LIST_FILES = "ListFiles"
+    CMD_LIST_IMAGES = "ListImages"
+    CMD_RETRIEVE_FILE = "RetrieveFile"
+    CMD_RETRIEVE_IMAGE = "RetrieveImage"
     POSITIONAL_FIELDS: Dict[str, List[str]] = {
         CMD_CREATE_TOPIC: ["TopicName", "TopicPath"],
         CMD_RETRIEVE_TOPIC: ["TopicID"],
@@ -54,6 +60,8 @@ class CommandManager:
         CMD_DELETE_SUBSCRIBER: ["SubscriberID"],
         CMD_REMOVE_SUBSCRIBER: ["SubscriberID"],
         CMD_PATCH_SUBSCRIBER: ["SubscriberID"],
+        CMD_RETRIEVE_FILE: ["FileID"],
+        CMD_RETRIEVE_IMAGE: ["FileID"],
     }
 
     def __init__(
@@ -68,6 +76,68 @@ class CommandManager:
         self.my_lxmf_dest = my_lxmf_dest
         self.api = api
         self.pending_field_requests: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._command_aliases_cache: Dict[str, str] = {}
+
+    def _all_command_names(self) -> List[str]:
+        """Return the list of supported command names."""
+
+        return [
+            self.CMD_HELP,
+            self.CMD_JOIN,
+            self.CMD_LEAVE,
+            self.CMD_LIST_CLIENTS,
+            self.CMD_RETRIEVE_TOPIC,
+            self.CMD_CREATE_TOPIC,
+            self.CMD_DELETE_TOPIC,
+            self.CMD_LIST_TOPIC,
+            self.CMD_PATCH_TOPIC,
+            self.CMD_SUBSCRIBE_TOPIC,
+            self.CMD_RETRIEVE_SUBSCRIBER,
+            self.CMD_ADD_SUBSCRIBER,
+            self.CMD_CREATE_SUBSCRIBER,
+            self.CMD_DELETE_SUBSCRIBER,
+            self.CMD_REMOVE_SUBSCRIBER,
+            self.CMD_LIST_SUBSCRIBER,
+            self.CMD_PATCH_SUBSCRIBER,
+            self.CMD_GET_APP_INFO,
+            self.CMD_LIST_FILES,
+            self.CMD_LIST_IMAGES,
+            self.CMD_RETRIEVE_FILE,
+            self.CMD_RETRIEVE_IMAGE,
+        ]
+
+    def _command_alias_map(self) -> Dict[str, str]:
+        """Return a mapping of lowercase aliases to canonical commands."""
+
+        if self._command_aliases_cache:
+            return self._command_aliases_cache
+        for command_name in self._all_command_names():
+            aliases = {
+                command_name.lower(),
+                self._lower_camel(command_name).lower(),
+            }
+            for alias in aliases:
+                self._command_aliases_cache.setdefault(alias, command_name)
+        return self._command_aliases_cache
+
+    @staticmethod
+    def _lower_camel(command_name: str) -> str:
+        """Return the command name with a lowercase prefix."""
+
+        if not command_name:
+            return command_name
+        return command_name[0].lower() + command_name[1:]
+
+    def _normalize_command_name(self, name: Optional[str]) -> Optional[str]:
+        """Normalize command names across casing variants."""
+
+        if name is None:
+            return None
+        normalized = name.strip()
+        if not normalized:
+            return None
+        alias_map = self._command_alias_map()
+        return alias_map.get(normalized.lower(), normalized)
 
     # ------------------------------------------------------------------
     # public API
@@ -209,10 +279,11 @@ class CommandManager:
         if not numeric_keys:
             return payload
 
-        command_name = payload.get(0) if 0 in payload else payload.get("0")
-        if not isinstance(command_name, str):
+        command_name_raw = payload.get(0) if 0 in payload else payload.get("0")
+        if not isinstance(command_name_raw, str):
             return payload
 
+        command_name = self._normalize_command_name(command_name_raw) or command_name_raw
         positional_fields = self._positional_fields_for_command(command_name)
         if not positional_fields:
             return payload
@@ -281,6 +352,10 @@ class CommandManager:
     ) -> Optional[LXMF.LXMessage]:
         command = self._merge_pending_fields(command, message)
         name = command.get(PLUGIN_COMMAND) or command.get("Command")
+        name = self._normalize_command_name(name)
+        if name:
+            command[PLUGIN_COMMAND] = name
+            command["Command"] = name
         if name is not None:
             if name == self.CMD_HELP:
                 return self._handle_help(message)
@@ -294,6 +369,10 @@ class CommandManager:
                 return self._handle_get_app_info(message)
             if name == self.CMD_LIST_TOPIC:
                 return self._handle_list_topics(message)
+            if name == self.CMD_LIST_FILES:
+                return self._handle_list_files(message)
+            if name == self.CMD_LIST_IMAGES:
+                return self._handle_list_images(message)
             if name == self.CMD_CREATE_TOPIC:
                 return self._handle_create_topic(command, message)
             if name == self.CMD_RETRIEVE_TOPIC:
@@ -306,6 +385,10 @@ class CommandManager:
                 return self._handle_subscribe_topic(command, message)
             if name == self.CMD_LIST_SUBSCRIBER:
                 return self._handle_list_subscribers(message)
+            if name == self.CMD_RETRIEVE_FILE:
+                return self._handle_retrieve_file(command, message)
+            if name == self.CMD_RETRIEVE_IMAGE:
+                return self._handle_retrieve_image(command, message)
             if name == self.CMD_CREATE_SUBSCRIBER:
                 return self._handle_create_subscriber(command, message)
             if name == self.CMD_ADD_SUBSCRIBER:
@@ -375,6 +458,16 @@ class CommandManager:
         content_lines = format_topic_list(topics)
         content_lines.append(topic_subscribe_hint(self.CMD_SUBSCRIBE_TOPIC))
         return self._reply(message, "\n".join(content_lines))
+
+    def _handle_list_files(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        files = self.api.list_files()
+        lines = format_attachment_list(files, empty_text="No files stored yet.")
+        return self._reply(message, "\n".join(lines))
+
+    def _handle_list_images(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        images = self.api.list_images()
+        lines = format_attachment_list(images, empty_text="No images stored yet.")
+        return self._reply(message, "\n".join(lines))
 
     def _handle_create_topic(
         self, command: dict, message: LXMF.LXMessage
@@ -461,6 +554,54 @@ class CommandManager:
             return self._reply(message, str(exc))
         payload = json.dumps(subscriber.to_dict(), sort_keys=True)
         return self._reply(message, f"Subscribed: {payload}")
+
+    def _handle_retrieve_file(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        file_id_value = self._extract_file_id(command)
+        file_id = self._coerce_int_id(file_id_value)
+        if file_id is None:
+            if file_id_value is None:
+                return self._prompt_for_fields(
+                    self.CMD_RETRIEVE_FILE, ["FileID"], message, command
+                )
+            return self._reply(message, "FileID must be an integer")
+        try:
+            attachment = self.api.retrieve_file(file_id)
+        except KeyError as exc:
+            return self._reply(message, str(exc))
+        try:
+            fields = self._build_attachment_fields(attachment)
+        except FileNotFoundError:
+            return self._reply(
+                message, f"File '{file_id}' not found on disk; remove and re-upload."
+            )
+        payload = json.dumps(attachment.to_dict(), sort_keys=True)
+        return self._reply(message, f"File retrieved: {payload}", fields=fields)
+
+    def _handle_retrieve_image(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        image_id_value = self._extract_file_id(command)
+        image_id = self._coerce_int_id(image_id_value)
+        if image_id is None:
+            if image_id_value is None:
+                return self._prompt_for_fields(
+                    self.CMD_RETRIEVE_IMAGE, ["FileID"], message, command
+                )
+            return self._reply(message, "FileID must be an integer")
+        try:
+            attachment = self.api.retrieve_image(image_id)
+        except KeyError as exc:
+            return self._reply(message, str(exc))
+        try:
+            fields = self._build_attachment_fields(attachment)
+        except FileNotFoundError:
+            return self._reply(
+                message, f"Image '{image_id}' not found on disk; remove and re-upload."
+            )
+        payload = json.dumps(attachment.to_dict(), sort_keys=True)
+        return self._reply(message, f"Image retrieved: {payload}", fields=fields)
 
     def _handle_list_subscribers(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         subscribers = self.api.list_subscribers()
@@ -671,12 +812,15 @@ class CommandManager:
             identity_value = client.identity
         return f"{identity_value}|{metadata_str}"
 
-    def _reply(self, message: LXMF.LXMessage, content: str) -> LXMF.LXMessage:
+    def _reply(
+        self, message: LXMF.LXMessage, content: str, *, fields: Optional[dict] = None
+    ) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
         return LXMF.LXMessage(
             dest,
             self.my_lxmf_dest,
             content,
+            fields=fields,
             desired_method=LXMF.LXMessage.DIRECT,
         )
 
@@ -697,3 +841,48 @@ class CommandManager:
             or command.get("id")
             or command.get("ID")
         )
+
+    @staticmethod
+    def _extract_file_id(command: dict) -> Optional[Any]:
+        return (
+            command.get("FileID")
+            or command.get("file_id")
+            or command.get("ImageID")
+            or command.get("image_id")
+            or command.get("ID")
+            or command.get("id")
+        )
+
+    @staticmethod
+    def _coerce_int_id(value: Any) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _attachment_payload(self, attachment: FileAttachment) -> dict:
+        """Build a payload dictionary including attachment bytes."""
+
+        file_path = Path(attachment.path)
+        data = file_path.read_bytes()
+        payload = {
+            "name": attachment.name,
+            "data": data,
+            "media_type": attachment.media_type,
+            "size": len(data),
+            "file_id": attachment.file_id,
+            "category": attachment.category,
+        }
+        return payload
+
+    def _build_attachment_fields(self, attachment: FileAttachment) -> dict:
+        """Return LXMF fields carrying attachment content."""
+
+        payload = self._attachment_payload(attachment)
+        category = (attachment.category or "").lower()
+        if category == "image":
+            return {
+                LXMF.FIELD_IMAGE: payload,
+                LXMF.FIELD_FILE_ATTACHMENTS: [payload],
+            }
+        return {LXMF.FIELD_FILE_ATTACHMENTS: [payload]}

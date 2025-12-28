@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, List
 
-from reticulum_telemetry_hub.api.models import Subscriber, Topic
+from reticulum_telemetry_hub.api.models import FileAttachment, Subscriber, Topic
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
@@ -80,6 +80,16 @@ def command_reference(command_manager: Any) -> List[dict]:
             "example": example(command_manager.CMD_GET_APP_INFO),
         },
         {
+            "title": command_manager.CMD_LIST_FILES,
+            "description": "List stored file attachments saved on the hub.",
+            "example": example(command_manager.CMD_LIST_FILES),
+        },
+        {
+            "title": command_manager.CMD_LIST_IMAGES,
+            "description": "List stored image attachments saved on the hub.",
+            "example": example(command_manager.CMD_LIST_IMAGES),
+        },
+        {
             "title": command_manager.CMD_LIST_TOPIC,
             "description": "Display every registered topic and its ID.",
             "example": example(command_manager.CMD_LIST_TOPIC),
@@ -92,6 +102,22 @@ def command_reference(command_manager: Any) -> List[dict]:
                 TopicName="Weather",
                 TopicPath="environment/weather",
             ),
+        },
+        {
+            "title": command_manager.CMD_RETRIEVE_FILE,
+            "description": (
+                "Retrieve a stored file by FileID. The hub responds with metadata and "
+                "includes the file bytes in FIELD_FILE_ATTACHMENTS."
+            ),
+            "example": example(command_manager.CMD_RETRIEVE_FILE, FileID="<FileID>"),
+        },
+        {
+            "title": command_manager.CMD_RETRIEVE_IMAGE,
+            "description": (
+                "Retrieve a stored image by FileID. The hub responds with metadata and "
+                "includes the image bytes in FIELD_IMAGE."
+            ),
+            "example": example(command_manager.CMD_RETRIEVE_IMAGE, FileID="<FileID>"),
         },
         {
             "title": command_manager.CMD_RETRIEVE_TOPIC,
@@ -210,4 +236,30 @@ def format_subscriber_list(subscribers: List[Subscriber]) -> List[str]:
     return [
         format_subscriber_entry(idx, subscriber)
         for idx, subscriber in enumerate(subscribers, start=1)
+    ]
+
+
+def format_attachment_entry(index: int, attachment: FileAttachment) -> str:
+    """Create a single line describing a stored file or image."""
+
+    category = attachment.category or "file"
+    attachment_id = attachment.file_id if attachment.file_id is not None else "<pending>"
+    media_suffix = f" ({attachment.media_type})" if attachment.media_type else ""
+    size_text = f", size={attachment.size} bytes" if attachment.size is not None else ""
+    return (
+        f"{index}. {attachment.name}{media_suffix} "
+        f"(ID: {attachment_id}, category={category}{size_text})"
+    )
+
+
+def format_attachment_list(
+    attachments: List[FileAttachment], *, empty_text: str
+) -> List[str]:
+    """Create a formatted list of attachments for LXMF replies."""
+
+    if not attachments:
+        return [empty_text]
+    return [
+        format_attachment_entry(index, attachment)
+        for index, attachment in enumerate(attachments, start=1)
     ]
