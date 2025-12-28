@@ -1,3 +1,7 @@
+"""
+Helpers for parsing and serialising CoT <detail> payloads.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -18,7 +22,7 @@ from reticulum_telemetry_hub.atak_cot.chat import ServerDestination
 from reticulum_telemetry_hub.atak_cot.chat import Remarks
 
 
-@dataclass
+@dataclass  # pylint: disable=too-many-instance-attributes
 class Detail:
     """Additional information such as contact, group, and movement."""
 
@@ -37,7 +41,7 @@ class Detail:
     server_destination: bool = False
 
     @classmethod
-    def from_xml(cls, elem: ET.Element) -> "Detail":
+    def from_xml(cls, elem: ET.Element) -> "Detail":  # pylint: disable=too-many-branches,too-many-locals
         """Create a :class:`Detail` from a ``<detail>`` element."""
 
         contact_el = elem.find("contact")
@@ -79,7 +83,7 @@ class Detail:
             server_destination=server_destination_el is not None,
         )
 
-    def to_element(self) -> Optional[ET.Element]:
+    def to_element(self) -> Optional[ET.Element]:  # pylint: disable=too-many-branches
         """Return an XML detail element or ``None`` if empty."""
 
         if not any(
@@ -135,7 +139,7 @@ class Detail:
             detail_el.append(self.status.to_element())
         return detail_el
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict:  # pylint: disable=too-many-branches,too-many-locals
         """Return a dictionary containing populated fields only."""
 
         data: dict = {}
