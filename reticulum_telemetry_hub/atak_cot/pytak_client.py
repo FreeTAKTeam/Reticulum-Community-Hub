@@ -324,6 +324,8 @@ class PytakWorkerManager:  # pylint: disable=too-many-instance-attributes
                 send_stop.set()
                 if self._session_task is not None:
                     self._session_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await self._session_task
                 raise
             except Exception as exc:  # pragma: no cover - defensive logging  # pylint: disable=broad-exception-caught
                 send_stop.set()

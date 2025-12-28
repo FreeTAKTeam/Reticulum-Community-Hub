@@ -1,7 +1,7 @@
 openapi: 3.0.1
 info:
   title: ReticulumTelemetryHub
-  version: '2025.11.14'
+  version: '2025.12.28'
   description: >-
     Abstract service for Reticulum Telemetry Hub.   This API manages subscribers, topics, client lists,  and provides hub?join/leave functionality over a Reticulum?based network.
   contact:
@@ -80,6 +80,70 @@ paths:
             text/plain:
               schema:
                   $ref: '#/components/schemas/ReticulumInfo'
+  /File:
+    get:
+      x-scope: public
+      tags:
+       - File
+      summary: List stored file attachments.
+      operationId: ListFiles
+      responses:
+        '200':
+          description: Stored file metadata.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FileAttachment'
+  /File/{id}:
+    get:
+      x-scope: public
+      tags:
+       - File
+      summary: Retrieve a stored file by its ID.
+      operationId: RetrieveFile
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: Stored file metadata (binary delivered via LXMF fields for LXMF clients).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileAttachment'
+  /Image:
+    get:
+      x-scope: public
+      tags:
+       - Image
+      summary: List stored images.
+      operationId: ListImages
+      responses:
+        '200':
+          description: Stored image metadata.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FileAttachment'
+  /Image/{id}:
+    get:
+      x-scope: public
+      tags:
+       - Image
+      summary: Retrieve a stored image by its ID.
+      operationId: RetrieveImage
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: Stored image metadata (binary delivered via LXMF fields for LXMF clients).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileAttachment'
   /Topic:
     post:
       x-scope: public
@@ -246,6 +310,36 @@ components:
             TopicID:
               type: string
               description: >-
+    FileAttachment:
+      type: object
+      description: Metadata for a stored file or image attachment.
+      properties:
+        FileID:
+          type: integer
+          description: Numeric identifier assigned by the hub.
+        Name:
+          type: string
+          description: Attachment display name.
+        Path:
+          type: string
+          description: Filesystem path where the attachment is stored.
+        Category:
+          type: string
+          description: Attachment category (file or image).
+        MediaType:
+          type: string
+          description: MIME type when provided.
+        Size:
+          type: integer
+          description: Attachment size in bytes.
+        CreatedAt:
+          type: string
+          format: date-time
+          description: When the attachment metadata was created.
+        UpdatedAt:
+          type: string
+          format: date-time
+          description: When the attachment metadata was last updated.
     Client:
       allOf:
         - type: object
@@ -320,6 +414,13 @@ components:
         TODO
       schema:
         type: string
+      in: path
+    fileId:
+      name: id
+      required: true
+      description: Numeric identifier for a stored file or image.
+      schema:
+        type: integer
       in: path
   responses:
     200Topic_get:
