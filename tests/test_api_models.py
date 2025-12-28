@@ -1,4 +1,5 @@
 from reticulum_telemetry_hub.api.models import Client
+from reticulum_telemetry_hub.api.models import FileAttachment
 from reticulum_telemetry_hub.api.models import ReticulumInfo
 from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.api.models import Topic
@@ -61,3 +62,21 @@ def test_reticulum_info_to_dict_returns_all_fields():
     assert result["image_storage_path"] == "/tmp/storage/images"
     assert result["app_name"] == "RTH"
     assert result["app_description"] == "Reticulum Telemetry Hub instance"
+
+
+def test_file_attachment_to_dict_serializes_fields():
+    attachment = FileAttachment(
+        name="note.txt",
+        path="/tmp/note.txt",
+        category="file",
+        size=10,
+        media_type="text/plain",
+    )
+
+    serialized = attachment.to_dict()
+
+    assert serialized["Name"] == "note.txt"
+    assert serialized["Path"] == "/tmp/note.txt"
+    assert serialized["Category"] == "file"
+    assert serialized["Size"] == 10
+    assert serialized["MediaType"] == "text/plain"

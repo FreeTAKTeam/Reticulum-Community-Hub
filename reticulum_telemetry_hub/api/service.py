@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
+from datetime import timezone
+from pathlib import Path
 from typing import List
 from typing import Optional
 
 from reticulum_telemetry_hub.config import HubConfigurationManager
 
 from .models import Client
+from .models import FileAttachment
 from .models import ReticulumInfo
 from .models import Subscriber
 from .models import Topic
@@ -37,6 +41,8 @@ class ReticulumTelemetryHubAPI:
         self._config_manager = config_manager or HubConfigurationManager()
         hub_db_path = self._config_manager.config.hub_database_path
         self._storage = storage or HubStorage(hub_db_path)
+        self._file_category = "file"
+        self._image_category = "image"
 
     # ------------------------------------------------------------------ #
     # RTH operations
@@ -102,6 +108,68 @@ class ReticulumTelemetryHubAPI:
         if not identity:
             return False
         return self._storage.get_client(identity) is not None
+
+    # ------------------------------------------------------------------ #
+    # File operations
+    # ------------------------------------------------------------------ #
+    def store_file(
+        self, file_path: str | Path, *, name: Optional[str] = None, media_type: str | None = None
+    ) -> FileAttachment:
+        """Persist metadata for a file stored on disk.
+
+        Args:
+            file_path (str | Path): Location of the file to record.
+            name (Optional[str]): Human readable name for the file. Defaults
+                to the filename.
+            media_type (Optional[str]): MIME type if known.
+
+        Returns:
+            FileAttachment: Stored file metadata with an ID.
+
+        Raises:
+            ValueError: If the file path is invalid or cannot be read.
+        """
+
+        return self._store_attachment(
+            file_path=file_path,
+            name=name,
+            media_type=media_type,
+            category=self._file_category,
+            base_path=self._config_manager.config.file_storage_path,
+        )
+
+    def store_image(
+        self, image_path: str | Path, *, name: Optional[str] = None, media_type: str | None = None
+    ) -> FileAttachment:
+        """Persist metadata for an image stored on disk."""
+
+        return self._store_attachment(
+            file_path=image_path,
+            name=name,
+            media_type=media_type,
+            category=self._image_category,
+            base_path=self._config_manager.config.image_storage_path,
+        )
+
+    def list_files(self) -> List[FileAttachment]:
+        """Return stored file records."""
+
+        return self._storage.list_file_records(category=self._file_category)
+
+    def list_images(self) -> List[FileAttachment]:
+        """Return stored image records."""
+
+        return self._storage.list_file_records(category=self._image_category)
+
+    def retrieve_file(self, record_id: int) -> FileAttachment:
+        """Fetch stored file metadata by ID."""
+
+        return self._retrieve_attachment(record_id, expected_category=self._file_category)
+
+    def retrieve_image(self, record_id: int) -> FileAttachment:
+        """Fetch stored image metadata by ID."""
+
+        return self._retrieve_attachment(record_id, expected_category=self._image_category)
 
     # ------------------------------------------------------------------ #
     # Topic operations
@@ -385,3 +453,46 @@ class ReticulumTelemetryHubAPI:
         """
         info_dict = self._config_manager.reticulum_info_snapshot()
         return ReticulumInfo(**info_dict)
+
+    def _store_attachment(
+        self,
+        *,
+        file_path: str | Path,
+        name: Optional[str],
+        media_type: str | None,
+        category: str,
+        base_path: Path,
+    ) -> FileAttachment:
+        """Validate inputs and persist file metadata."""
+
+        if category not in {self._file_category, self._image_category}:
+            raise ValueError("unsupported category")
+        if not file_path:
+            raise ValueError("file_path is required")
+        path_obj = Path(file_path)
+        if not path_obj.is_file():
+            raise ValueError(f"File '{file_path}' does not exist")
+        resolved_name = name or path_obj.name
+        if not resolved_name:
+            raise ValueError("name is required")
+        base_path.mkdir(parents=True, exist_ok=True)
+        stat_result = path_obj.stat()
+        timestamp = datetime.now(timezone.utc)
+        attachment = FileAttachment(
+            name=resolved_name,
+            path=str(path_obj),
+            category=category,
+            size=stat_result.st_size,
+            media_type=media_type,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        return self._storage.create_file_record(attachment)
+
+    def _retrieve_attachment(self, record_id: int, *, expected_category: str) -> FileAttachment:
+        """Return an attachment by ID, ensuring it matches the category."""
+
+        record = self._storage.get_file_record(record_id)
+        if not record or record.category != expected_category:
+            raise KeyError(f"File '{record_id}' not found")
+        return record

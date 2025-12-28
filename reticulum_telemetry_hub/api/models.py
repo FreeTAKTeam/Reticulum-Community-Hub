@@ -154,3 +154,31 @@ class ReticulumInfo:
         """Serialize the info model to a dictionary."""
 
         return asdict(self)
+
+
+@dataclass
+class FileAttachment:
+    """Metadata for files or images stored by the hub."""
+
+    name: str
+    path: str
+    category: str
+    size: int
+    media_type: Optional[str] = None
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+    file_id: Optional[int] = None
+
+    def to_dict(self) -> dict:
+        """Return a serialization friendly representation."""
+
+        return {
+            "FileID": self.file_id,
+            "Name": self.name,
+            "Path": self.path,
+            "Category": self.category,
+            "MediaType": self.media_type,
+            "Size": self.size,
+            "CreatedAt": self.created_at.isoformat(),
+            "UpdatedAt": self.updated_at.isoformat(),
+        }
