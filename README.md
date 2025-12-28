@@ -41,7 +41,7 @@ Follow these steps to bring up a local hub using the bundled defaults:
    pip install --upgrade pip
    pip install -e .
    ```
-   The editable install pulls every dependency declared in `pyproject.toml` (including runtime services, the optional `gpsdclient` GPS integration, and the bundled tests). If you prefer Poetry, run `pip install poetry` once and then use `poetry install` to create and manage the virtual environment instead.
+   The editable install pulls every dependency declared in `pyproject.toml` (including runtime services, the optional `gpsdclient` GPS integration, and the bundled tests). Core dependencies now include `python-dotenv` for environment loading, `qrcode` for QR payload rendering, and `PyNaCl` for stamp generation. If you prefer Poetry, run `pip install poetry` once and then use `poetry install` to create and manage the virtual environment instead.
 4. Prepare a storage directory and unified config (the defaults live under `RTH_Store`).
    - Copy `config.ini` into `RTH_Store` or point the `--storage_dir` flag at another directory.
    - See the [Configuration](#configuration) section below for the available options and defaults.

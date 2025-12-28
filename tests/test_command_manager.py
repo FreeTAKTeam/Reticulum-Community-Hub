@@ -3,6 +3,7 @@ import json
 import RNS
 import pytest
 from msgpack import packb
+from types import MethodType
 
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.atak_cot import Remarks
@@ -799,7 +800,7 @@ def test_handle_command_dispatches_to_handler(
         called.append(True)
         return sentinel
 
-    setattr(manager, handler_attr, stub.__get__(manager, CommandManager))
+    setattr(manager, handler_attr, MethodType(stub, manager))
     message = make_message(
         server_dest,
         client_dest,
@@ -861,9 +862,7 @@ def test_delivery_callback_handles_commands_and_broadcasts():
         },
     )()
 
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
 
     incoming = LXMF.LXMessage(
         hub.my_lxmf_dest,
@@ -924,9 +923,7 @@ def test_delivery_callback_emits_cot_chat_for_valid_message():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
     client = DummyPytakClient()
     hub.tak_connector = TakConnector(pytak_client=client)
 
@@ -989,9 +986,7 @@ def test_delivery_callback_honors_topic_field():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
 
     incoming = LXMF.LXMessage(
         hub.my_lxmf_dest,
@@ -1049,9 +1044,7 @@ def test_delivery_callback_skips_sender_echo():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
 
     incoming = LXMF.LXMessage(
         hub.my_lxmf_dest,
@@ -1106,9 +1099,7 @@ def test_delivery_callback_skips_telemetry_only_messages():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
 
     fields = {LXMF.FIELD_TELEMETRY: packb({"sensor": 1}, use_bin_type=True)}
     incoming = LXMF.LXMessage(
@@ -1210,9 +1201,7 @@ def test_delivery_callback_skips_cot_chat_for_telemetry():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
     client = DummyPytakClient()
     hub.tak_connector = TakConnector(pytak_client=client)
 

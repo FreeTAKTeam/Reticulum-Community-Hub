@@ -1224,9 +1224,7 @@ def _get_target_identity(remote=None, timeout=5):
             if not RNS.Transport.has_path(destination_hash):
                 RNS.Transport.request_path(destination_hash)
                 while not RNS.Transport.has_path(destination_hash):
-                    tc = check_timeout()
-                    if tc:
-                        return tc
+                    check_timeout()
 
             return RNS.Identity.recall(destination_hash)
 
