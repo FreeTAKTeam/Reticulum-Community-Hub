@@ -52,5 +52,6 @@
 - 2025-12-28: ✅ Add file and image storage configuration paths and tests.
 - 2025-12-28: ✅ Ensure the python-app workflow installs all project dependencies.
 - 2025-12-28: ✅ Document API models and storage session helpers to satisfy lint checks.
+- 2025-12-28: ✅ Expose HubStorage session factory to satisfy API topic patch tests.
 - 2025-12-28: ✅ Resolve pylint warnings in ATAK CoT helpers and refresh package metadata.
 - 2025-12-28: ✅ Fix Iterable import for PyTAK client to resolve pylint error.
