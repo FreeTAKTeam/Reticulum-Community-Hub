@@ -12,7 +12,10 @@ from reticulum_telemetry_hub.atak_cot import Event
 from reticulum_telemetry_hub.atak_cot import Link
 from reticulum_telemetry_hub.atak_cot import Point
 from reticulum_telemetry_hub.atak_cot import Remarks
+from reticulum_telemetry_hub.atak_cot import Marti
+from reticulum_telemetry_hub.atak_cot import MartiDest
 from reticulum_telemetry_hub.atak_cot import pack_data, unpack_data
+from reticulum_telemetry_hub.atak_cot.chat import ServerDestination
 
 COT_XML = """
 <event version="2.0" uid="android-001" type="b-m-f" how="m-g"
@@ -160,3 +163,75 @@ def test_geochat_detail_roundtrip():
     assert restored.detail.links[0].type == "a-f-G-U-C-I"
     assert isinstance(restored.detail.remarks, Remarks)
     assert restored.detail.remarks.source_id == "0101010101010101"
+
+
+def test_chat_group_and_hierarchy_serialization():
+    contact = ChatHierarchyContact(uid="u1", name="Alpha")
+    subgroup = ChatHierarchyGroup(uid="sub", name="SubGroup", contacts=[contact])
+    root_group = ChatHierarchyGroup(uid="root", name="Root", groups=[subgroup])
+    chat_group = ChatGroup(chat_id="chat-1", uid0="u0", uid1="u1", uid2="u2", chatroom="ops")
+    hierarchy = ChatHierarchy(groups=[root_group])
+    chat = Chat(
+        parent="parent-chat",
+        id="chat-1",
+        chatroom="ops",
+        sender_callsign="Alpha",
+        group_owner="true",
+        message_id="m-1",
+        chat_group=chat_group,
+        hierarchy=hierarchy,
+    )
+
+    xml_element = chat.to_element()
+    restored = Chat.from_xml(xml_element)
+    restored_dict = restored.to_dict()
+
+    assert restored.chat_group is not None
+    assert restored.chat_group.uid2 == "u2"
+    assert restored.chat_group.chatroom == "ops"
+    assert restored.hierarchy is not None
+    assert restored.hierarchy.groups[0].groups[0].contacts[0].name == "Alpha"
+    assert restored_dict["parent"] == "parent-chat"
+    assert restored_dict["message_id"] == "m-1"
+    assert restored_dict["chat_group"]["uid2"] == "u2"
+
+
+def test_remarks_to_and_from_dict_include_optional_fields():
+    remarks = Remarks(
+        text="Note",
+        source="source-1",
+        source_id="sid",
+        to="dest",
+        time="2025-01-01T00:00:00Z",
+    )
+
+    data = remarks.to_dict()
+    restored = Remarks.from_dict(data)
+
+    assert data["source"] == "source-1"
+    assert data["source_id"] == "sid"
+    assert data["to"] == "dest"
+    assert data["time"] == "2025-01-01T00:00:00Z"
+    assert restored.text == "Note"
+    assert restored.source_id == "sid"
+
+
+def test_marti_serialization_handles_missing_destinations():
+    marti = Marti()
+    assert marti.to_element() is None
+    assert marti.to_dict() == {}
+
+    marti_with_dest = Marti(dest=MartiDest(callsign="Alpha"))
+    element = marti_with_dest.to_element()
+    restored = Marti.from_xml(element)
+
+    assert restored.dest is not None
+    assert restored.dest.callsign == "Alpha"
+    assert marti_with_dest.to_dict() == {"dest": {"callsign": "Alpha"}}
+
+
+def test_server_destination_helpers_return_empty_marker():
+    element = ServerDestination.to_element()
+
+    assert element.tag == "__serverdestination"
+    assert ServerDestination.to_dict() == {}
