@@ -469,7 +469,7 @@ def program_setup(
         targetlogdest = RNS.LOG_STDOUT
 
     # Get configuration
-    if configdir == None:
+    if configdir is None:
         configdir = _default_config_directory()
 
     configdir = str(configdir)
@@ -508,7 +508,7 @@ def program_setup(
     apply_config()
     RNS.log("Configuration loaded from " + configpath, RNS.LOG_VERBOSE)
 
-    if targetloglevel == None:
+    if targetloglevel is None:
         targetloglevel = 3
 
     if verbosity != 0 or quietness != 0:
@@ -524,7 +524,7 @@ def program_setup(
     if os.path.isfile(identitypath):
         try:
             identity = RNS.Identity.from_file(identitypath)
-            if identity != None:
+            if identity is not None:
                 RNS.log("Loaded Primary Identity %s" % (str(identity)))
             else:
                 RNS.log(
@@ -661,7 +661,7 @@ def jobs():
         try:
             if (
                 "peer_announce_interval" in active_configuration
-                and active_configuration["peer_announce_interval"] != None
+                and active_configuration["peer_announce_interval"] is not None
             ):
                 if (
                     time.time()
@@ -677,7 +677,7 @@ def jobs():
 
             if (
                 "node_announce_interval" in active_configuration
-                and active_configuration["node_announce_interval"] != None
+                and active_configuration["node_announce_interval"] is not None
             ):
                 if (
                     time.time()
@@ -815,7 +815,7 @@ def request_sync(
     elif response == LXMF.LXMPeer.LXMPeer.ERROR_NOT_FOUND:
         print("The requested peer was not found")
         exit(206)
-    elif response == None:
+    elif response is None:
         print("Empty response received")
         exit(207)
     else:
@@ -920,7 +920,7 @@ def request_unpeer(
     elif response == LXMF.LXMPeer.LXMPeer.ERROR_NOT_FOUND:
         print("The requested peer was not found")
         exit(206)
-    elif response == None:
+    elif response is None:
         print("Empty response received")
         exit(207)
     else:
@@ -929,7 +929,7 @@ def request_unpeer(
 
 
 def query_status(identity, remote_identity=None, timeout=5, exit_on_fail=False):
-    if remote_identity == None:
+    if remote_identity is None:
         remote_identity = identity
     control_destination = RNS.Destination(
         remote_identity,
@@ -1008,7 +1008,7 @@ def get_status(
     if response == LXMF.LXMPeer.LXMPeer.ERROR_NO_ACCESS:
         print("Access denied")
         exit(204)
-    elif response == None:
+    elif response is None:
         print("Empty response received")
         exit(207)
     else:
@@ -1131,13 +1131,13 @@ def get_status(
                 pc = p["peering_cost"]
                 psc = p["target_stamp_cost"]
                 psf = p["stamp_cost_flexibility"]
-                if pc == None:
+                if pc is None:
                     pc = "unknown"
-                if psc == None:
+                if psc is None:
                     psc = "unknown"
-                if psf == None:
+                if psf is None:
                     psf = "unknown"
-                if pk == None:
+                if pk is None:
                     pk = "Not generated"
                 else:
                     pk = f"Generated, value is {pk}"
@@ -1166,7 +1166,7 @@ def get_status(
                 pmi = pm["incoming"]
                 pmuh = pm["unhandled"]
                 ar = round(p["acceptance_rate"] * 100, 2)
-                if p["name"] == None:
+                if p["name"] is None:
                     nn = ""
                 else:
                     nn = p["name"].strip().replace("\n", "").replace("\r", "")
@@ -1204,7 +1204,7 @@ def _get_target_identity(remote=None, timeout=5):
         else:
             time.sleep(0.1)
 
-    if remote == None:
+    if remote is None:
         return identity
     else:
         try:
@@ -1238,8 +1238,8 @@ def _remote_init(
     global lxmd_config, active_configuration, targetloglevel
     targetlogdest = RNS.LOG_STDOUT
 
-    if identity_path == None:
-        if configdir == None:
+    if identity_path is None:
+        if configdir is None:
             configdir = _default_config_directory()
 
         configdir = str(configdir)
@@ -1262,7 +1262,7 @@ def _remote_init(
             exit(202)
         else:
             identity = RNS.Identity.from_file(identitypath)
-            if identity == None:
+            if identity is None:
                 RNS.log(
                     "Could not load the Primary Identity from " + identitypath,
                     RNS.LOG_ERROR,
@@ -1278,14 +1278,14 @@ def _remote_init(
             exit(202)
         else:
             identity = RNS.Identity.from_file(identity_path)
-            if identity == None:
+            if identity is None:
                 RNS.log(
                     "Could not load the Primary Identity from " + identity_path,
                     RNS.LOG_ERROR,
                 )
                 exit(4)
 
-    if targetloglevel == None:
+    if targetloglevel is None:
         targetloglevel = 3
     if verbosity != 0 or quietness != 0:
         targetloglevel = targetloglevel + verbosity - quietness
