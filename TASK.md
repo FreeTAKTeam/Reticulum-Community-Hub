@@ -50,4 +50,5 @@
 - 2025-12-27: ✅ Review and test the code and fix linter issues.
 - 2025-12-27: ✅ Reorder LXMF daemon imports to satisfy flake8 and bump version to 0.62.0.
 - 2025-12-28: ✅ Add file and image storage configuration paths and tests.
+- 2025-12-28: ✅ Ensure the python-app workflow installs all project dependencies.
 - 2025-12-28: ✅ Document API models and storage session helpers to satisfy lint checks.
