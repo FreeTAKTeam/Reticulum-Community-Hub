@@ -106,6 +106,6 @@ def test_load_or_generate_identity_reads_existing_file(tmp_path, monkeypatch):
     stored = client_example.load_or_generate_identity(identity_path)
 
     assert identity_path.exists()
-    assert created.name == "new"
-    assert stored.name == "new"
+    assert getattr(created, "name", None) == "new"
+    assert getattr(stored, "name", None) == "new"
     assert "Loading existing identity" in logs[-1]
