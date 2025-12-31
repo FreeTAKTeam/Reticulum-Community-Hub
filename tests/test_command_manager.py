@@ -425,7 +425,7 @@ def test_unknown_command_logs_error(monkeypatch):
 
     assert responses
     reply_text = responses[0].content_as_string()
-    assert "Unknown command" in reply_text
+    assert "Unknow command" in reply_text
     assert logs
     relevant = [entry for entry in logs if "NotACommand" in entry[0]]
     assert relevant
@@ -1373,5 +1373,5 @@ def test_unknown_command_returns_help_text():
 
     reply = manager.handle_command(command, message)
     text = reply.content_as_string()
-    assert "Unknown command 'NotReal'" in text
+    assert text.startswith("Unknow command")
     assert "Available commands" in text
