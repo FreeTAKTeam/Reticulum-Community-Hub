@@ -41,6 +41,7 @@ Follow these steps to bring up a local hub using the bundled defaults:
    pip install --upgrade pip
    pip install -e .
    ```
+
    The editable install pulls every dependency declared in `pyproject.toml` (including runtime services and the bundled tests). If you prefer Poetry, run `pip install poetry` once and then use `poetry install` to create and manage the virtual environment instead.
 4. Prepare a storage directory and unified config (the defaults live under `RTH_Store`).
    - Copy `config.ini` into `RTH_Store` or point the `--storage_dir` flag at another directory.
@@ -413,6 +414,3 @@ You can help support the continued development of open, free and private communi
 * Ethereum: 0xFDabC71AC4c0C78C95aDDDe3B4FA19d6273c5E73
 * Bitcoin: 35G9uWVzrpJJibzUwpNUQGQNFzLirhrYAH
 * Ko-Fi: https://ko-fi.com/markqvist
-
-
-

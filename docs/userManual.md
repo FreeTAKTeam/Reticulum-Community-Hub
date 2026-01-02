@@ -4,6 +4,7 @@ This manual is written for non-technical users. It explains what RTH does,
 how to use it, and what to expect with different LXMF clients.
 
 ## What is RTH?
+
 RTH is a hub that connects LXMF messaging clients. It helps move messages
 between people, keeps simple topic groups, and can share location and other
 telemetry when supported by your client and services.
@@ -21,6 +22,7 @@ Different clients have different capabilities when talking to RTH.
 ### Sideband
 
 Full support:
+
 - Group chat
 - Commands
 - Telemetry
@@ -33,6 +35,7 @@ Supported:
 - TAK integration: chat
 
 Not supported:
+
 - Telemetry
 
 ### Columba

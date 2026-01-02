@@ -4,9 +4,7 @@
 - RTH accepts common field name variants (e.g., `TopicID`, `topicId`, `topic_id`, `TopicPath`, `topic_path`).
 - If required fields are missing, RTH  replies with the missing keys and merges your follow-up payload with the original so you can send only the missing fields.
 
-
 the following commands are supported by RTH
-
 
 | Command | Description | Example in chat|
 | --- | --- | --- |
@@ -29,10 +27,11 @@ the following commands are supported by RTH
 | `TelemetryRequest` (`1`) | Request telemetry snapshots from all peers since the provided UNIX timestamp. Response includes packed telemetry in `FIELD_TELEMETRY_STREAM` plus a JSON body with human-readable telemetry. | ``[{"1":1700000000}]`` |
 
 Notes:
+
 - Telemetry responses now mirror the packed stream and also embed a human-readable JSON payload; see `docs/example_telemetry.json` for a sample body.
 - Command casing is permissive (`CreateTopic`, `createtopic`, and `createTopic` are all accepted), but the JSON keys shown above are the clearest to read.
 
-### Tips for building command payloads
+## Tips for building command payloads
 
 - Wrap multiple actions in a single array to reduce round-trips, for example:
 
