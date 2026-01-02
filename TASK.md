@@ -68,3 +68,4 @@
 - 2025-12-29: ✅ Resolve DummyRouter pylint no-member warnings in Reticulum server initialization.
 - 2025-12-31: ✅ Return help text when an unknown command is received.
 - 2026-01-02: ✅ Add coverage for file and image command CRUD flows (ListFiles/ListImages) and resolve discovered issues.
+- 2026-01-02: ✅ Add Examples command returning detailed help while Help lists commands only.

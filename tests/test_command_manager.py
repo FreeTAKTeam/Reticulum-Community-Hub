@@ -48,6 +48,7 @@ def make_command_manager(api):
 
 COMMAND_HANDLER_MAP = [
     (CommandManager.CMD_HELP, "_handle_help"),
+    (CommandManager.CMD_EXAMPLES, "_handle_examples"),
     (CommandManager.CMD_JOIN, "_handle_join"),
     (CommandManager.CMD_LEAVE, "_handle_leave"),
     (CommandManager.CMD_LIST_CLIENTS, "_handle_list_clients"),
@@ -763,6 +764,9 @@ def test_help_command_lists_examples(tmp_path):
     class DummyAPI:
         pass
 
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
     manager, server_dest = make_command_manager(DummyAPI())
     client_id = RNS.Identity()
     client_dest = RNS.Destination(
@@ -773,7 +777,30 @@ def test_help_command_lists_examples(tmp_path):
     reply = manager.handle_command(help_command, help_msg)
     assert reply is not None
     text = reply.content_as_string()
-    assert "Available commands" in text
+    assert "# Command list" in text
+    assert "- `Help`" in text
+    assert "- `TelemetryRequest` (`1`)" in text
+
+
+def test_examples_command_returns_help_payload(tmp_path):
+    class DummyAPI:
+        pass
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_id = RNS.Identity()
+    client_dest = RNS.Destination(
+        client_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    examples_command = {PLUGIN_COMMAND: CommandManager.CMD_EXAMPLES}
+    examples_msg = make_message(server_dest, client_dest, CommandManager.CMD_EXAMPLES)
+    reply = manager.handle_command(examples_command, examples_msg)
+    assert reply is not None
+    text = reply.content_as_string()
+    assert "# Command examples" in text
+    assert "Description" in text
     assert CommandManager.CMD_CREATE_TOPIC in text
     assert "TelemetryRequest" in text
 
@@ -1374,4 +1401,4 @@ def test_unknown_command_returns_help_text():
     reply = manager.handle_command(command, message)
     text = reply.content_as_string()
     assert text.startswith("Unknow command")
-    assert "Available commands" in text
+    assert "# Command list" in text

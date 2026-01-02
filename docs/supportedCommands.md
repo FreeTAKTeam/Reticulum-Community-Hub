@@ -8,7 +8,8 @@ the following commands are supported by RTH
 
 | Command | Description | Example in chat|
 | --- | --- | --- |
-| `Help` | Returns a short help message with the available commands and examples. | ``\\\[{"Command":"Help"}]`` |
+| `Help` | Returns a Markdown list of available commands (no descriptions). | ``\\\[{"Command":"Help"}]`` |
+| `Examples` | Returns a Markdown list with command descriptions and JSON payload examples. | ``\\\[{"Command":"Examples"}]`` |
 | `join` | Register your LXMF destination with the hub so you can receive replies. | ``\\\[{"Command":"join"}]`` |
 | `leave` | Remove your destination from the hub's connection list. | ``\\\[{"Command":"leave"}]`` |
 | `ListClients` | List the LXMF destinations currently joined to the hub. | ``\\\[{"Command":"ListClients"}]`` |
