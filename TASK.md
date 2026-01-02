@@ -74,3 +74,6 @@
 
 
 - 2026-01-02: バ. Support list-form attachment payloads from Sideband.
+- 2026-01-02: バ. Reply when command handling throws to avoid silent failures.
+- 2026-01-02: バ. Reply to malformed escape-prefixed command payloads.
+

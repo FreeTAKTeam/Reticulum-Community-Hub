@@ -291,6 +291,32 @@ def test_delivery_callback_skips_missing_attachment_data(tmp_path):
         hub.shutdown()
 
 
+def test_delivery_callback_escape_prefixed_invalid_json_replies_error(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        content="\\\\\\[{broken]",
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        assert sent
+        assert any(
+            "Command error" in msg.content_as_string() for msg in sent if msg
+        )
+    finally:
+        hub.shutdown()
+
+
 def test_delivery_callback_stores_image_field(tmp_path):
     hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
     sent: list[LXMF.LXMessage] = []

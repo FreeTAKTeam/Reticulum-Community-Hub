@@ -223,3 +223,28 @@ def test_retrieve_image_missing_from_disk_returns_helpful_message(tmp_path):
     assert "not found on disk" in response.content_as_string()
     assert LXMF.FIELD_IMAGE not in response.fields
     assert LXMF.FIELD_FILE_ATTACHMENTS not in response.fields
+
+
+def test_retrieve_file_exception_returns_error_message(tmp_path):
+    ensure_reticulum()
+
+    class FailingAPI:
+        def retrieve_file(self, record_id: int):  # noqa: ANN001
+            raise RuntimeError("boom")
+
+        def retrieve_image(self, record_id: int):  # noqa: ANN001
+            raise RuntimeError("boom")
+
+    manager, server_dest = build_manager(FailingAPI())
+    client_dest = make_client_destination()
+    retrieve_msg = make_message(
+        server_dest,
+        client_dest,
+        {PLUGIN_COMMAND: CommandManager.CMD_RETRIEVE_FILE, "FileID": 1},
+    )
+    responses = manager.handle_commands(
+        retrieve_msg.fields[LXMF.FIELD_COMMANDS], retrieve_msg
+    )
+
+    assert responses
+    assert any("Command failed" in response.content_as_string() for response in responses)

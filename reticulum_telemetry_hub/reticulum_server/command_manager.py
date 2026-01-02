@@ -158,7 +158,19 @@ class CommandManager:
                 continue
             if normalized is None:
                 continue
-            msg = self.handle_command(normalized, message)
+            try:
+                msg = self.handle_command(normalized, message)
+            except Exception as exc:  # pragma: no cover - defensive log
+                command_name = normalized.get(PLUGIN_COMMAND) or normalized.get(
+                    "Command"
+                )
+                RNS.log(
+                    f"Command '{command_name}' failed: {exc}",
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
+                msg = self._reply(
+                    message, f"Command failed: {command_name or 'unknown'}"
+                )
             if msg:
                 if isinstance(msg, list):
                     responses.extend(msg)
