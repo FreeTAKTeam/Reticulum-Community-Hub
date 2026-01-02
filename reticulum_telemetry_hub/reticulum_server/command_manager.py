@@ -705,6 +705,10 @@ class CommandManager:
         snake_key = re.sub(r"(?<!^)(?=[A-Z])", "_", field).lower()
         alternate_keys.add(snake_key)
         alternate_keys.add(snake_key.replace("_i_d", "_id"))
+        lower_camel = field[:1].lower() + field[1:]
+        alternate_keys.add(lower_camel)
+        alternate_keys.add(field.replace("ID", "Id"))
+        alternate_keys.add(lower_camel.replace("ID", "Id"))
         for key in alternate_keys:
             if key in command:
                 return command.get(key)
@@ -844,14 +848,11 @@ class CommandManager:
 
     @staticmethod
     def _extract_file_id(command: dict) -> Optional[Any]:
-        return (
-            command.get("FileID")
-            or command.get("file_id")
-            or command.get("ImageID")
-            or command.get("image_id")
-            or command.get("ID")
-            or command.get("id")
-        )
+        for field in ("FileID", "ImageID", "ID"):
+            value = CommandManager._field_value(command, field)
+            if value is not None:
+                return value
+        return None
 
     @staticmethod
     def _coerce_int_id(value: Any) -> Optional[int]:
