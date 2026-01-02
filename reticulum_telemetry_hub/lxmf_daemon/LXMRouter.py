@@ -146,8 +146,8 @@ class LXMRouter:
         if propagation_cost < LXMRouter.PROPAGATION_COST_MIN:
             propagation_cost = LXMRouter.PROPAGATION_COST_MIN
 
-        self.message_storage_limit = None
-        self.information_storage_limit = None
+        self._message_storage_limit = None
+        self._information_storage_limit = None
         self.propagation_per_transfer_limit = propagation_limit
         self.propagation_per_sync_limit = sync_limit
         self.delivery_per_transfer_limit = delivery_limit
@@ -650,7 +650,7 @@ class LXMRouter:
                 + " bytes"
             )
 
-    def unprioritise(self, identity_hash=None):
+    def unprioritise(self, destination_hash=None):
         if (
             isinstance(destination_hash, bytes)
             and len(destination_hash) == RNS.Reticulum.TRUNCATED_HASHLENGTH // 8
@@ -1024,7 +1024,7 @@ class LXMRouter:
 
         try:
             if limit_bytes == None or int(limit_bytes) > 0:
-                self.message_storage_limit = int(limit_bytes)
+                self._message_storage_limit = int(limit_bytes)
             else:
                 raise ValueError(
                     "Cannot set LXMF information storage limit to " + str(limit_bytes)
@@ -1035,8 +1035,9 @@ class LXMRouter:
                 "Cannot set LXMF information storage limit to " + str(limit_bytes)
             )
 
+    @property
     def message_storage_limit(self):
-        return self.message_storage_limit
+        return self._message_storage_limit
 
     def message_storage_size(self):
         if self.propagation_node:
@@ -1059,7 +1060,7 @@ class LXMRouter:
 
         try:
             if limit_bytes == None or int(limit_bytes) > 0:
-                self.information_storage_limit = int(limit_bytes)
+                self._information_storage_limit = int(limit_bytes)
             else:
                 raise ValueError(
                     "Cannot set LXMF information storage limit to " + str(limit_bytes)
@@ -1069,8 +1070,9 @@ class LXMRouter:
                 "Cannot set LXMF information storage limit to " + str(limit_bytes)
             )
 
+    @property
     def information_storage_limit(self):
-        return self.information_storage_limit
+        return self._information_storage_limit
 
     def information_storage_size(self):
         pass

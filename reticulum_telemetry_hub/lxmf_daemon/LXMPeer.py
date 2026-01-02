@@ -316,7 +316,7 @@ class LXMPeer:
                     return False
 
                 if self.identity == None:
-                    self.identity = RNS.Identity.recall(destination_hash)
+                    self.identity = RNS.Identity.recall(self.destination_hash)
                     if self.identity == None:
                         RNS.log(
                             f"Could not update peering key for {self} since its identity could not be recalled",
@@ -357,6 +357,7 @@ class LXMPeer:
         sync_checks = sync_time_reached and stamp_costs_known and peering_key_ready
 
         if not sync_checks:
+            postpone_reason = ""
             try:
                 if not sync_time_reached:
                     postpone_reason = " due to previous failures"
@@ -404,7 +405,7 @@ class LXMPeer:
 
             else:
                 if self.identity == None:
-                    self.identity = RNS.Identity.recall(destination_hash)
+                    self.identity = RNS.Identity.recall(self.destination_hash)
                     if self.identity != None:
                         self.destination = RNS.Destination(
                             self.identity,
@@ -576,7 +577,7 @@ class LXMPeer:
                         "Remote peer indicated that no identification was received, retrying...",
                         RNS.LOG_VERBOSE,
                     )
-                    self.link.identify()
+                    self.link.identify(self.router.identity)
                     self.state = LXMPeer.LINK_READY
                     self.sync()
                     return

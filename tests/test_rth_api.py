@@ -13,6 +13,12 @@ from reticulum_telemetry_hub.config import HubConfigurationManager
 def make_config_manager(tmp_path):
     storage = tmp_path / "storage"
     storage.mkdir()
+    (storage / "config.ini").write_text(
+        "[app]\n"
+        "name = TestHub\n"
+        "version = 9.9.9\n"
+        "description = Test hub instance\n"
+    )
     reticulum_cfg = tmp_path / "reticulum.ini"
     reticulum_cfg.write_text(
         "[reticulum]\n"
@@ -137,8 +143,8 @@ def test_concurrent_client_join_and_leave(tmp_path):
 def test_storage_session_retries_close_failed_sessions(tmp_path, monkeypatch):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     storage = api._storage
-    storage._SESSION_RETRIES = 2
-    storage._SESSION_BACKOFF = 0
+    storage._session_retries = 2
+    storage._session_backoff = 0
 
     closed_sessions: list[bool] = []
 
@@ -149,19 +155,23 @@ def test_storage_session_retries_close_failed_sessions(tmp_path, monkeypatch):
         def close(self):
             closed_sessions.append(True)
 
-    monkeypatch.setattr(storage, "_Session", lambda: FailingSession())
+    monkeypatch.setattr(storage, "_session_factory", lambda: FailingSession())
 
     with pytest.raises(OperationalError):
         storage._acquire_session_with_retry()
 
-    assert len(closed_sessions) == storage._SESSION_RETRIES
+    assert len(closed_sessions) == storage._session_retries
 
 
 def test_get_app_info(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     info = api.get_app_info()
     assert info.storage_path.endswith("storage")
-    assert info.app_version
+    assert info.file_storage_path.endswith("files")
+    assert info.image_storage_path.endswith("images")
+    assert info.app_name == "TestHub"
+    assert info.app_version == "9.9.9"
+    assert info.app_description == "Test hub instance"
 
 
 def test_persistence_between_instances(tmp_path):

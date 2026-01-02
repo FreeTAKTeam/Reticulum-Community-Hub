@@ -46,3 +46,52 @@ def test_tak_config_includes_proto_and_compat(tmp_path):
     assert manager.tak_config.cot_url == "tcp://example:8087"
     assert manager.tak_config.tak_proto == 0
     assert manager.tak_config.fts_compat == 1
+
+
+def test_app_metadata_comes_from_config(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[app]\n"
+        "name = Sample Hub\n"
+        "version = 1.2.3\n"
+        "description = Demo instance\n"
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+    info = manager.reticulum_info_snapshot()
+
+    assert info["app_name"] == "Sample Hub"
+    assert info["app_version"] == "1.2.3"
+    assert info["app_description"] == "Demo instance"
+
+
+def test_default_file_and_image_paths_created(tmp_path):
+    manager = HubConfigurationManager(storage_path=tmp_path)
+
+    assert manager.runtime_config.file_storage_path == tmp_path / "files"
+    assert manager.runtime_config.image_storage_path == tmp_path / "images"
+    assert manager.runtime_config.file_storage_path.is_dir()
+    assert manager.runtime_config.image_storage_path.is_dir()
+
+
+def test_file_and_image_overrides_expand_and_create(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[files]\n"
+        "path = ~/custom/files\n"
+        "\n"
+        "[images]\n"
+        "directory = ~/custom/images\n"
+    )
+
+    manager = HubConfigurationManager(
+        storage_path="~/store", config_path=config_path
+    )
+
+    expected_storage = tmp_path / "store"
+    assert manager.storage_path == expected_storage
+    assert manager.runtime_config.file_storage_path == tmp_path / "custom/files"
+    assert manager.runtime_config.image_storage_path == tmp_path / "custom/images"
+    assert manager.runtime_config.file_storage_path.is_dir()
+    assert manager.runtime_config.image_storage_path.is_dir()

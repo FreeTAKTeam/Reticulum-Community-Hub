@@ -1,11 +1,14 @@
+"""ATAK Cursor on Target event container and serialization helpers."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Union, cast
 import gzip
 import json
-import msgpack
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from typing import Union, cast
+
+import msgpack
 
 from reticulum_telemetry_hub.atak_cot.base import Point
 from reticulum_telemetry_hub.atak_cot.detail import Detail
@@ -38,7 +41,7 @@ def unpack_data(data: bytes) -> dict:
 
 
 @dataclass
-class Event:
+class Event:  # pylint: disable=too-many-instance-attributes
     """Top level CoT event object."""
 
     version: str

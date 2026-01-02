@@ -1,7 +1,7 @@
 openapi: 3.0.1
 info:
   title: ReticulumTelemetryHub
-  version: '2025.11.14'
+  version: '2025.12.28'
   description: >-
     Abstract service for Reticulum Telemetry Hub.   This API manages subscribers, topics, client lists,  and provides hub?join/leave functionality over a Reticulum?based network.
   contact:
@@ -71,15 +71,79 @@ paths:
       tags:
        - Reticulum
       description: >-
-        returns the component and reticulum version
+        returns the configured application metadata and component versions
       operationId: getAppInfo
       responses:
         '200':
-          description: simple text based return value
+          description: Application info including Reticulum and LXMF versions.
           content:
             text/plain:
               schema:
                   $ref: '#/components/schemas/ReticulumInfo'
+  /File:
+    get:
+      x-scope: public
+      tags:
+       - File
+      summary: List stored file attachments.
+      operationId: ListFiles
+      responses:
+        '200':
+          description: Stored file metadata.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FileAttachment'
+  /File/{id}:
+    get:
+      x-scope: public
+      tags:
+       - File
+      summary: Retrieve a stored file by its ID.
+      operationId: RetrieveFile
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: Stored file metadata (binary delivered via LXMF fields for LXMF clients).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileAttachment'
+  /Image:
+    get:
+      x-scope: public
+      tags:
+       - Image
+      summary: List stored images.
+      operationId: ListImages
+      responses:
+        '200':
+          description: Stored image metadata.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FileAttachment'
+  /Image/{id}:
+    get:
+      x-scope: public
+      tags:
+       - Image
+      summary: Retrieve a stored image by its ID.
+      operationId: RetrieveImage
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: Stored image metadata (binary delivered via LXMF fields for LXMF clients).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileAttachment'
   /Topic:
     post:
       x-scope: public
@@ -246,6 +310,36 @@ components:
             TopicID:
               type: string
               description: >-
+    FileAttachment:
+      type: object
+      description: Metadata for a stored file or image attachment.
+      properties:
+        FileID:
+          type: integer
+          description: Numeric identifier assigned by the hub.
+        Name:
+          type: string
+          description: Attachment display name.
+        Path:
+          type: string
+          description: Filesystem path where the attachment is stored.
+        Category:
+          type: string
+          description: Attachment category (file or image).
+        MediaType:
+          type: string
+          description: MIME type when provided.
+        Size:
+          type: integer
+          description: Attachment size in bytes.
+        CreatedAt:
+          type: string
+          format: date-time
+          description: When the attachment metadata was created.
+        UpdatedAt:
+          type: string
+          format: date-time
+          description: When the attachment metadata was last updated.
     Client:
       allOf:
         - type: object
@@ -267,15 +361,23 @@ components:
           type: boolean
           description: True when the node is linked to a shared Reticulum instance.
         reticulum_config_path:
-          type: integer
-          format: int64
-          description: Filesystem path handle or identifier for the Reticulum configuration (Int64).
+          type: string
+          description: Filesystem path to the Reticulum configuration.
         database_path:
           type: string
           description: Filesystem path to the Reticulum database.
         storage_path:
           type: string
           description: Root path where Reticulum stores persistent data.
+        file_storage_path:
+          type: string
+          description: Folder where file attachments are stored (defaults to ``<storage_dir>/files``).
+        image_storage_path:
+          type: string
+          description: Folder where image artifacts are stored (defaults to ``<storage_dir>/images``).
+        app_name:
+          type: string
+          description: Application display name configured in ``config.ini``.
         rns_version:
           type: string
           description: Installed Reticulum (RNS) version string.
@@ -285,6 +387,9 @@ components:
         app_version:
           type: string
           description: Version of the Reticulum Telemetry Hub application.
+        app_description:
+          type: string
+          description: Human readable description for the Telemetry Hub.
   parameters:
     identity:
       name: identity
@@ -309,6 +414,13 @@ components:
         TODO
       schema:
         type: string
+      in: path
+    fileId:
+      name: id
+      required: true
+      description: Numeric identifier for a stored file or image.
+      schema:
+        type: integer
       in: path
   responses:
     200Topic_get:
@@ -451,4 +563,3 @@ components:
       required: true
 x-uml-relationships:
   
-

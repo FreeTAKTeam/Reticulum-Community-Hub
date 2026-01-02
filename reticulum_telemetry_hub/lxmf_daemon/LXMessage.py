@@ -5,6 +5,7 @@ import os
 import time
 import base64
 import multiprocessing
+from typing import Any
 
 from . import LXStamper
 from .LXMF import APP_NAME
@@ -458,7 +459,9 @@ class LXMessage:
                 if self.__destination.type == RNS.Destination.SINGLE:
                     if content_size > LXMessage.ENCRYPTED_PACKET_MAX_CONTENT:
                         RNS.log(
-                            f"Opportunistic delivery was requested for {self}, but content of length {content_size} exceeds packet size limit. Falling back to link-based delivery.",
+                            "Opportunistic delivery was requested for "
+                            f"{self}, but content of length {content_size} exceeds packet size limit. "
+                            "Falling back to link-based delivery.",
                             RNS.LOG_DEBUG,
                         )
                         self.desired_method = LXMessage.DIRECT
@@ -469,10 +472,17 @@ class LXMessage:
                     single_packet_content_limit = LXMessage.ENCRYPTED_PACKET_MAX_CONTENT
                 elif self.__destination.type == RNS.Destination.PLAIN:
                     single_packet_content_limit = LXMessage.PLAIN_PACKET_MAX_CONTENT
+                else:
+                    raise TypeError(
+                        "LXMessage desired opportunistic delivery method, but "
+                        f"destination type {self.__destination.type} is unsupported."
+                    )
 
                 if content_size > single_packet_content_limit:
                     raise TypeError(
-                        f"LXMessage desired opportunistic delivery method, but content of length {content_size} exceeds single-packet content limit of {single_packet_content_limit}."
+                        "LXMessage desired opportunistic delivery method, but "
+                        f"content of length {content_size} exceeds single-packet content limit of "
+                        f"{single_packet_content_limit}."
                     )
                 else:
                     self.method = LXMessage.OPPORTUNISTIC
@@ -544,7 +554,13 @@ class LXMessage:
 
         if self.method == LXMessage.OPPORTUNISTIC:
             lxm_packet = self.__as_packet()
-            lxm_packet.send().set_delivery_callback(self.__mark_delivered)
+            receipt: Any = lxm_packet.send()
+            if not isinstance(receipt, bool) and hasattr(
+                receipt, "set_delivery_callback"
+            ):
+                receipt.set_delivery_callback(  # pylint: disable=no-member
+                    self.__mark_delivered
+                )
             self.progress = 0.50
             self.ratchet_id = lxm_packet.ratchet_id
             self.state = LXMessage.SENT
@@ -554,11 +570,16 @@ class LXMessage:
 
             if self.representation == LXMessage.PACKET:
                 lxm_packet = self.__as_packet()
-                receipt = lxm_packet.send()
+                receipt: Any = lxm_packet.send()
+                receipt_obj: Any | None = None
+                if not isinstance(receipt, bool):
+                    receipt_obj = receipt
                 self.ratchet_id = self.__delivery_destination.link_id
-                if receipt:
-                    receipt.set_delivery_callback(self.__mark_delivered)
-                    receipt.set_timeout_callback(self.__link_packet_timed_out)
+                if receipt_obj:
+                    receipt_obj.set_delivery_callback(  # pylint: disable=no-member
+                        self.__mark_delivered
+                    )
+                    receipt_obj.set_timeout_callback(self.__link_packet_timed_out)
                     self.progress = 0.50
                 else:
                     if self.__delivery_destination:

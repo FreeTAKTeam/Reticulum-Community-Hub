@@ -1,0 +1,18 @@
+[MASTER]
+# The LXMF daemon code is vendored from upstream and intentionally diverges
+# from our style guidelines, so skip it during lint runs.
+# The embedded LXMF wrappers, reticulum_server entrypoints, and test suite rely
+# on extensive runtime wiring that is not Pylint-friendly, so we lint the
+# actively maintained packages by default. The telemetry pipeline currently
+# mirrors upstream implementations and will be refactored separately.
+ignore=reticulum_telemetry_hub/lxmf_daemon,reticulum_telemetry_hub/reticulum_server,reticulum_telemetry_hub/embedded_lxmd,reticulum_telemetry_hub/lxmf_telemetry,tests
+
+[TYPECHECK]
+ignored-modules=dotenv,qrcode,nacl,nacl.encoding,nacl.hash
+
+[FORMAT]
+max-line-length=120
+
+[MESSAGES CONTROL]
+# Pylint's duplicate-code heuristic is noisy against our integration tests.
+disable=duplicate-code

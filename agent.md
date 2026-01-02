@@ -39,7 +39,7 @@
 - **Use Python** as the primary language.
 - do not use multiple imports on one line
 - **Follow PEP8**, use type hints, and format with `black`.
-- use flake8 s as a linter before submitting new code
+- use `ruff` as a linter before submitting new code
 
 - **Use `pydantic` for data validation**.
 - Use `FastAPI` for APIs and `SQLAlchemy` or `SQLModel` for ORM if applicable.

@@ -1,5 +1,6 @@
 import asyncio
 import time
+from pathlib import Path
 
 import LXMF
 import RNS
@@ -103,6 +104,70 @@ def test_daemon_service_gating(monkeypatch, tmp_path):
         assert "unsupported" not in hub._active_services
     finally:
         hub.stop_daemon_workers()
+        hub.shutdown()
+
+
+def test_delivery_callback_stores_file_attachments(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = [
+        {"name": "report.txt", "data": b"file-content", "media_type": "text/plain"}
+    ]
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_FILE_ATTACHMENTS: payload},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        stored_files = hub.api.list_files()
+        assert stored_files
+        stored_path = Path(stored_files[0].path)
+        assert stored_path.read_bytes() == b"file-content"
+        assert sent
+        ack_texts = [msg.content_as_string() for msg in sent]
+        assert any("Stored files" in text for text in ack_texts if text)
+        assert any(str(stored_files[0].file_id) in text for text in ack_texts if text)
+    finally:
+        hub.shutdown()
+
+
+def test_delivery_callback_stores_image_field(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    image_payload = {"name": "snapshot.png", "data": b"img-bytes", "mime": "image/png"}
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_IMAGE: image_payload},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        stored_images = hub.api.list_images()
+        assert stored_images
+        stored_path = Path(stored_images[0].path)
+        assert stored_path.read_bytes() == b"img-bytes"
+        assert sent
+        ack_texts = [msg.content_as_string() for msg in sent]
+        assert any("Stored images" in text for text in ack_texts if text)
+        assert any(str(stored_images[0].file_id) in text for text in ack_texts if text)
+    finally:
         hub.shutdown()
 
 

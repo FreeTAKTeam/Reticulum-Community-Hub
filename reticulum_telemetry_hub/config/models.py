@@ -1,10 +1,12 @@
+"""Data models representing configuration shapes for the hub."""
+
 from __future__ import annotations
 
+from configparser import ConfigParser
 from dataclasses import dataclass, field
+from importlib import metadata
 from pathlib import Path
 from typing import Optional, Tuple
-
-from configparser import ConfigParser
 
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
@@ -88,7 +90,7 @@ class LXMFRouterConfig:
 
 
 @dataclass
-class HubRuntimeConfig:
+class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     """Configuration values that guide the hub runtime defaults."""
 
     display_name: str = "RTH"
@@ -103,19 +105,25 @@ class HubRuntimeConfig:
     reticulum_config_path: Path | None = None
     lxmf_router_config_path: Path | None = None
     telemetry_filename: str = "telemetry.ini"
+    file_storage_path: Path | None = None
+    image_storage_path: Path | None = None
 
 
 @dataclass
-class HubAppConfig:
+class HubAppConfig:  # pylint: disable=too-many-instance-attributes
     """Aggregated configuration for the telemetry hub runtime."""
 
     storage_path: Path
     database_path: Path
     hub_database_path: Path
+    file_storage_path: Path
+    image_storage_path: Path
     runtime: "HubRuntimeConfig"
     reticulum: ReticulumConfig
     lxmf_router: LXMFRouterConfig
+    app_name: str = "ReticulumTelemetryHub"
     app_version: Optional[str] = None
+    app_description: str = ""
     tak_connection: "TakConnectionConfig | None" = None
 
     def to_reticulum_info_dict(self) -> dict:
@@ -130,26 +138,29 @@ class HubAppConfig:
             "reticulum_config_path": str(self.reticulum.path),
             "database_path": str(self.database_path),
             "storage_path": str(self.storage_path),
+            "file_storage_path": str(self.file_storage_path),
+            "image_storage_path": str(self.image_storage_path),
             "rns_version": self._safe_get_version("RNS"),
             "lxmf_version": self._safe_get_version("LXMF"),
+            "app_name": self.app_name or "ReticulumTelemetryHub",
             "app_version": self.app_version
             or self._safe_get_version("ReticulumTelemetryHub"),
+            "app_description": self.app_description or "",
         }
 
     @staticmethod
     def _safe_get_version(distribution: str) -> str:
         try:
-            from importlib.metadata import version
-        except Exception:  # pragma: no cover - importlib metadata shouldn't fail
+            return metadata.version(distribution)
+        except metadata.PackageNotFoundError:
             return "unknown"
-        try:
-            return version(distribution)
-        except Exception:
+        # Reason: metadata providers may raise unexpected runtime errors in constrained environments.
+        except Exception:  # pylint: disable=broad-exception-caught
             return "unknown"
 
 
 @dataclass
-class TakConnectionConfig:
+class TakConnectionConfig:  # pylint: disable=too-many-instance-attributes
     """Settings that control TAK/CoT connectivity."""
 
     cot_url: str = "tcp://127.0.0.1:8087"

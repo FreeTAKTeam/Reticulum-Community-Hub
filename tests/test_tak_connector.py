@@ -3,6 +3,7 @@ import json
 import time
 from configparser import ConfigParser
 from datetime import datetime, timedelta
+from contextlib import suppress
 
 import xml.etree.ElementTree as ET
 
@@ -55,11 +56,19 @@ def test_connector_reuses_cli_tool(monkeypatch):
         self.running_tasks = []
 
     async def fake_run(self, number_of_iterations: int = 0):
-        self.run_tasks()
-        self.run_c_tasks()
-        await asyncio.sleep(0.1)
-        for task in list(self.running_c_tasks):
-            task.cancel()
+        try:
+            self.run_tasks()
+            self.run_c_tasks()
+            await asyncio.sleep(0.1)
+        finally:
+            for task in list(self.running_c_tasks):
+                task.cancel()
+            if self.running_c_tasks:
+                with suppress(asyncio.CancelledError):
+                    await asyncio.gather(
+                        *self.running_c_tasks, return_exceptions=True
+                    )
+            self.running_c_tasks.clear()
         return None
 
     monkeypatch.setattr(FTSCLITool, "setup", fake_setup)
@@ -87,35 +96,38 @@ def test_connector_reuses_cli_tool(monkeypatch):
         )
         await asyncio.sleep(0.05)
 
-    asyncio.run(_exercise_connector())
+    try:
+        asyncio.run(_exercise_connector())
 
-    worker_manager = client._worker_manager
-    assert worker_manager is not None
-    unique_cli_instances = {id(tool) for tool in created_tools}
-    assert len(unique_cli_instances) == 1
-    assert isinstance(worker_manager.cli_tool.config_parser, ConfigParser)
-    assert (
-        worker_manager.cli_tool.config_parser["fts"]["COT_URL"]
-        == parser["fts"]["COT_URL"]
-    )
-    assert worker_manager.section.get("COT_URL") == parser["fts"].get("COT_URL")
+        worker_manager = client._worker_manager
+        assert worker_manager is not None
+        unique_cli_instances = {id(tool) for tool in created_tools}
+        assert len(unique_cli_instances) == 1
+        assert isinstance(worker_manager.cli_tool.config_parser, ConfigParser)
+        assert (
+            worker_manager.cli_tool.config_parser["fts"]["COT_URL"]
+            == parser["fts"]["COT_URL"]
+        )
+        assert worker_manager.section.get("COT_URL") == parser["fts"].get("COT_URL")
 
-    tx_queue = worker_manager.cli_tool.tx_queue
-    assert tx_queue is not None
-    payloads: list[bytes] = []
-    while True:
-        try:
-            payloads.append(tx_queue.get_nowait())
-        except asyncio.QueueEmpty:
-            break
+        tx_queue = worker_manager.cli_tool.tx_queue
+        assert tx_queue is not None
+        payloads: list[bytes] = []
+        while True:
+            try:
+                payloads.append(tx_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
 
-    assert any(
-        ET.fromstring(data).get("type") == connector.EVENT_TYPE for data in payloads
-    )
-    assert any(
-        ET.fromstring(data).get("type") == connector.CHAT_EVENT_TYPE
-        for data in payloads
-    )
+        assert any(
+            ET.fromstring(data).get("type") == connector.EVENT_TYPE for data in payloads
+        )
+        assert any(
+            ET.fromstring(data).get("type") == connector.CHAT_EVENT_TYPE
+            for data in payloads
+        )
+    finally:
+        asyncio.run(client.stop())
 
 
 def _build_manager() -> TelemeterManager:

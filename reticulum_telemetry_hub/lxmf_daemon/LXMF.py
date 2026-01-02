@@ -1,3 +1,6 @@
+import RNS
+import RNS.vendor.umsgpack as msgpack
+
 APP_NAME = "lxmf"
 
 ##########################################################
@@ -107,9 +110,6 @@ PN_META_CUSTOM = 0xFF
 # The following helper functions makes it easier to      #
 # handle and operate on LXMF data in client programs     #
 ##########################################################
-
-import RNS
-import RNS.vendor.umsgpack as msgpack
 
 
 def display_name_from_app_data(app_data=None):

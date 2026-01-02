@@ -13,7 +13,7 @@ import RNS
 
 try:  # pragma: no cover - optional dependency
     from gpsdclient import GPSDClient  # type: ignore
-except Exception:  # pragma: no cover - gpsdclient is optional
+except ImportError:  # pragma: no cover - gpsdclient is optional
     GPSDClient = None  # type: ignore
 
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 
 
 def _utcnow() -> datetime:
+    """
+    Return a timezone-aware UTC timestamp with the tzinfo stripped.
+
+    Returns:
+        datetime: The current UTC timestamp without timezone information.
+    """
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
@@ -39,10 +45,23 @@ class HubService:
     name: str
 
     def __post_init__(self) -> None:
+        """
+        Initialize thread synchronization primitives for the service.
+
+        Sets up the stop event and placeholder thread handle used by the
+        lifecycle helpers.
+        """
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> bool:
+        """
+        Start the service in a background thread if supported.
+
+        Returns:
+            bool: ``True`` if the service was started; ``False`` if it was
+            already running or unsupported on this host.
+        """
         if self._thread is not None:
             return False
         if not self.is_supported():
@@ -60,6 +79,7 @@ class HubService:
         return True
 
     def stop(self) -> None:
+        """Stop the background thread and reset lifecycle flags."""
         if self._thread is None:
             return
         self._stop_event.set()
@@ -71,18 +91,38 @@ class HubService:
     # overridable hooks
     # ------------------------------------------------------------------
     def is_supported(self) -> bool:  # pragma: no cover - trivial default
+        """
+        Determine whether the service can run on the current host.
+
+        Returns:
+            bool: ``True`` when the dependencies are available, otherwise
+            ``False``.
+        """
         return True
 
     def poll_interval(self) -> float:  # pragma: no cover - trivial default
+        """
+        Return the preferred polling interval in seconds.
+
+        Returns:
+            float: Number of seconds to wait between iterations.
+        """
         return 1.0
 
     def _run(self) -> None:  # pragma: no cover - interface method
+        """
+        Execute the service logic.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
+        """
         raise NotImplementedError
 
     # ------------------------------------------------------------------
     # internal helpers
     # ------------------------------------------------------------------
     def _run_wrapper(self) -> None:
+        """Wrap ``_run`` with crash logging and cleanup handling."""
         try:
             self._run()
         except Exception as exc:  # pragma: no cover - defensive logging
@@ -106,6 +146,17 @@ class GpsTelemetryService(HubService):
         host: str | None = None,
         port: int | None = None,
     ) -> None:
+        """
+        Initialize the gpsd-backed telemetry service.
+
+        Args:
+            telemeter_manager (TelemeterManager): Manager providing the location
+                sensor to update.
+            client_factory (Callable[..., GPSDClient] | None): Factory used to
+                create GPSD clients. Defaults to ``GPSDClient`` when available.
+            host (str | None): gpsd host, defaults to ``127.0.0.1``.
+            port (int | None): gpsd TCP port, defaults to ``2947``.
+        """
         super().__init__(name="gpsd")
         self._telemeter_manager = telemeter_manager
         self._client_factory = client_factory or (
@@ -115,9 +166,17 @@ class GpsTelemetryService(HubService):
         self._port = port or 2947
 
     def is_supported(self) -> bool:
+        """
+        Check whether gpsd dependencies are present.
+
+        Returns:
+            bool: ``True`` when gpsdclient is available and a telemeter manager
+            has been configured.
+        """
         return GPSDClient is not None and self._telemeter_manager is not None
 
     def _run(self) -> None:
+        """Continuously poll gpsd and apply updates to the location sensor."""
         manager = self._telemeter_manager
         if manager is None:
             return
@@ -150,9 +209,25 @@ class GpsTelemetryService(HubService):
     def _iter_gps_stream(
         self, client: GPSDClient
     ) -> Iterator[dict]:  # pragma: no cover - passthrough
+        """
+        Yield GPS samples from the gpsdclient stream.
+
+        Args:
+            client (GPSDClient): Connected gpsd client.
+
+        Returns:
+            Iterator[dict]: Iterable of GPS payload dictionaries.
+        """
         return client.dict_stream(convert_datetime=False)
 
     def _apply_gps_payload(self, sensor, payload: Mapping[str, Any]) -> None:
+        """
+        Map gpsd payload fields onto the hub's location sensor.
+
+        Args:
+            sensor: Location sensor instance to mutate.
+            payload (Mapping[str, Any]): Raw gpsd payload dictionary.
+        """
         lat = payload.get("lat")
         lon = payload.get("lon")
         if lat is None or lon is None:
@@ -169,6 +244,17 @@ class GpsTelemetryService(HubService):
     def _coerce_float(
         value: Any, current: float | None, *, default: float = 0.0
     ) -> float:
+        """
+        Convert a value to float, falling back to the current or default value.
+
+        Args:
+            value (Any): Candidate value to convert.
+            current (float | None): Current sensor value to preserve on failure.
+            default (float): Default when neither the value nor current is set.
+
+        Returns:
+            float: Coerced float value.
+        """
         if value is None:
             return current if current is not None else default
         try:
@@ -188,6 +274,15 @@ class CotTelemetryService(HubService):
         keepalive_interval: float | None = None,
         ping_interval: float | None = None,
     ) -> None:
+        """
+        Initialize the TAK connector scheduler.
+
+        Args:
+            connector (TakConnector): Connected TAK connector instance.
+            interval (float | None): Desired CoT send interval in seconds.
+            keepalive_interval (float | None): Override for keepalive cadence.
+            ping_interval (float | None): Override for ping cadence.
+        """
         super().__init__(name="tak_cot")
         self._connector = connector
         connector_interval = connector.config.poll_interval_seconds
@@ -210,12 +305,25 @@ class CotTelemetryService(HubService):
         )
 
     def is_supported(self) -> bool:
+        """
+        Confirm the TAK connector is configured.
+
+        Returns:
+            bool: ``True`` when the connector exists and the interval is valid.
+        """
         return self._connector is not None and self._interval > 0
 
     def poll_interval(self) -> float:
+        """
+        Return the configured CoT polling interval.
+
+        Returns:
+            float: Seconds between location pushes.
+        """
         return self._interval
 
     def _run(self) -> None:
+        """Send periodic location updates, keepalives, and pings."""
         last_keepalive = time.monotonic() - self._keepalive_interval
         last_location = time.monotonic() - self._interval
         last_ping = time.monotonic() - self._ping_interval
@@ -260,6 +368,15 @@ class CotTelemetryService(HubService):
 
 
 def _gps_factory(hub: "ReticulumTelemetryHub") -> HubService:
+    """
+    Build the GPS daemon service from hub configuration.
+
+    Args:
+        hub (ReticulumTelemetryHub): Active hub instance.
+
+    Returns:
+        HubService: Configured GPS telemetry service.
+    """
     config_manager = hub.config_manager or HubConfigurationManager(
         storage_path=hub.storage_path
     )
@@ -272,6 +389,15 @@ def _gps_factory(hub: "ReticulumTelemetryHub") -> HubService:
 
 
 def _cot_factory(hub: "ReticulumTelemetryHub") -> HubService:
+    """
+    Build the TAK CoT scheduler from hub configuration.
+
+    Args:
+        hub (ReticulumTelemetryHub): Active hub instance.
+
+    Returns:
+        HubService: Configured CoT telemetry service.
+    """
     config_manager = hub.config_manager or HubConfigurationManager(
         storage_path=hub.storage_path
     )

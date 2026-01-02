@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from datetime import datetime
@@ -156,4 +157,7 @@ def test_command_manager_extra(monkeypatch, tmp_path):
     assert cm.handle_command(join_cmd, msg)
     assert cm.handle_command(leave_cmd, msg)
     reply = cm.handle_command(info_cmd, msg)
-    assert reply.content_as_string() == "ReticulumTelemetryHub"
+    content = json.loads(reply.content_as_string())
+    assert content["name"] == "ReticulumTelemetryHub"
+    assert content["description"] == ""
+    assert content["version"]

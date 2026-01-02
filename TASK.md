@@ -46,3 +46,25 @@
 - 2025-12-17: ✅ Resolve flake8 unused variable warning in TAK connector tests.
 - 2025-12-17: ✅ Close SQLite retry sessions to avoid leaks when lock contention occurs.
 - 2025-12-24: ✅ Update README installation instructions for PyPI virtual environment setup.
+- 2025-12-26: ✅ Expand getAppInfo to return configured metadata and auto-respond to unjoined LXMF clients.
+- 2025-12-27: ✅ Review and test the code and fix linter issues.
+- 2025-12-27: ✅ Reorder LXMF daemon imports to satisfy flake8 and bump version to 0.62.0.
+- 2025-12-28: ✅ Add file and image storage configuration paths and tests.
+- 2025-12-28: ✅ Ensure the python-app workflow installs all project dependencies.
+- 2025-12-28: ✅ Document API models and storage session helpers to satisfy lint checks.
+- 2025-12-28: ✅ Expose HubStorage session factory to satisfy API topic patch tests.
+- 2025-12-28: ✅ Resolve pylint warnings in ATAK CoT helpers and refresh package metadata.
+- 2025-12-28: ✅ Fix Iterable import for PyTAK client to resolve pylint error.
+- 2025-12-28: ✅ Analyze code with pylint and fix issues.
+- 2025-12-28: ✅ Add file and image attachment storage APIs and tests.
+- 2025-12-28: ✅ Address gpsdclient import handling and lint cleanups.
+- 2025-12-28: ✅ Add LXMF attachment listing/retrieval commands and persist inbound LXMF file/image fields.
+- 2025-12-28: ✅ Resolve TAK connector test cleanup to avoid unraisable exceptions.
+- 2025-12-28: ✅ Switch linting to Ruff and retire flake8 configuration.
+- 2025-12-28: ✅ Replace CI flake8 linting with Ruff and remove the flake8 configuration file.
+- 2025-12-28: ✅ Improve test coverage and resolve Ruff lint findings.
+- 2025-12-28: ✅ Resolve reported pylint import and undefined variable errors.
+- 2025-12-28: ✅ Resolve pylint not-callable warnings for LXMF router hooks.
+- 2025-12-29: ✅ Resolve DummyRouter pylint no-member warnings in Reticulum server initialization.
+- 2025-12-31: ✅ Return help text when an unknown command is received.
+- 2026-01-02: ✅ Add coverage for file and image command CRUD flows (ListFiles/ListImages) and resolve discovered issues.

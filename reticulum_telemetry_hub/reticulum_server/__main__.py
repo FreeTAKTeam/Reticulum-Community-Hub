@@ -30,8 +30,13 @@ import argparse
 import asyncio
 import json
 import time
+import mimetypes
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from typing import Callable
+from typing import cast
 
 import LXMF
 import RNS
@@ -67,6 +72,7 @@ from reticulum_telemetry_hub.config.constants import (
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 # Constants
 STORAGE_PATH = DEFAULT_STORAGE_PATH  # Path to store temporary files
@@ -181,6 +187,46 @@ class ReticulumTelemetryHub:
 
     TELEMETRY_PLACEHOLDERS = {"telemetry data", "telemetry update"}
 
+    @staticmethod
+    def _get_router_callable(
+        router: LXMF.LXMRouter, attribute: str
+    ) -> Callable[..., Any]:
+        """
+        Return a callable attribute from the LXMF router.
+
+        Args:
+            router (LXMF.LXMRouter): Router exposing LXMF hooks.
+            attribute (str): Name of the required callable attribute.
+
+        Returns:
+            Callable[..., Any]: Router hook matching ``attribute``.
+
+        Raises:
+            AttributeError: When the attribute is missing or not callable.
+        """
+
+        hook = getattr(router, attribute, None)
+        if not callable(hook):
+            msg = f"LXMF router is missing required callable '{attribute}'"
+            raise AttributeError(msg)
+        return cast(Callable[..., Any], hook)
+
+    def _invoke_router_hook(self, attribute: str, *args: Any, **kwargs: Any) -> Any:
+        """
+        Invoke a callable hook on the LXMF router.
+
+        Args:
+            attribute (str): Name of the callable attribute to invoke.
+            *args: Positional arguments forwarded to the callable.
+            **kwargs: Keyword arguments forwarded to the callable.
+
+        Returns:
+            Any: Response from the invoked callable.
+        """
+
+        router_callable = self._get_router_callable(self.lxm_router, attribute)
+        return router_callable(*args, **kwargs)
+
     def __init__(
         self,
         display_name: str,
@@ -262,16 +308,21 @@ class ReticulumTelemetryHub:
             ReticulumTelemetryHub._shared_lxm_router = LXMF.LXMRouter(
                 storagepath=str(self.storage_path)
             )
-        self.lxm_router = ReticulumTelemetryHub._shared_lxm_router
+        shared_router = ReticulumTelemetryHub._shared_lxm_router
+        if shared_router is None:
+            msg = "Shared LXMF router failed to initialize"
+            raise RuntimeError(msg)
 
-        self.my_lxmf_dest = self.lxm_router.register_delivery_identity(
-            identity, display_name=display_name
+        self.lxm_router = cast(LXMF.LXMRouter, shared_router)
+
+        self.my_lxmf_dest = self._invoke_router_hook(
+            "register_delivery_identity", identity, display_name=display_name
         )
 
         self.identities: dict[str, str] = {}
 
-        self.lxm_router.set_message_storage_limit(megabytes=5)
-        self.lxm_router.register_delivery_callback(self.delivery_callback)
+        self._invoke_router_hook("set_message_storage_limit", megabytes=5)
+        self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
         RNS.Transport.register_announce_handler(AnnounceHandler(self.identities))
 
         if self.config_manager is None:
@@ -445,8 +496,11 @@ class ReticulumTelemetryHub:
             self.log_delivery_details(message, time_string, signature_string)
 
             command_payload_present = False
+            sender_joined = False
+            attachment_replies: list[LXMF.LXMessage] = []
             # Handle the commands
             if message.signature_validated:
+                attachment_replies = self._persist_attachments_from_fields(message)
                 if LXMF.FIELD_COMMANDS in message.fields:
                     command_payload_present = True
                     self.command_handler(message.fields[LXMF.FIELD_COMMANDS], message)
@@ -459,9 +513,24 @@ class ReticulumTelemetryHub:
                     if escape_commands:
                         self.command_handler(escape_commands, message)
 
+            for attachment_reply in attachment_replies:
+                try:
+                    self.lxm_router.handle_outbound(attachment_reply)
+                except Exception as exc:  # pragma: no cover - defensive log
+                    RNS.log(
+                        f"Failed to send attachment acknowledgement: {exc}",
+                        getattr(RNS, "LOG_WARNING", 2),
+                    )
+            if attachment_replies:
+                command_payload_present = True
+
+            sender_joined = self._sender_is_joined(message)
             telemetry_handled = self.tel_controller.handle_message(message)
             if telemetry_handled:
                 RNS.log("Telemetry data saved")
+
+            if not sender_joined:
+                self._reply_with_app_info(message)
 
             # Skip if the message content is empty
             if message.content is None or message.content == b"":
@@ -558,9 +627,11 @@ class ReticulumTelemetryHub:
             enqueued = queue.queue_message(
                 connection,
                 message,
-                destination_hash
-                if isinstance(destination_hash, (bytes, bytearray))
-                else None,
+                (
+                    destination_hash
+                    if isinstance(destination_hash, (bytes, bytearray))
+                    else None
+                ),
                 connection_hex,
             )
             if not enqueued:
@@ -594,9 +665,7 @@ class ReticulumTelemetryHub:
                     self, "outbound_queue_size", DEFAULT_OUTBOUND_QUEUE_SIZE
                 )
                 or DEFAULT_OUTBOUND_QUEUE_SIZE,
-                worker_count=getattr(
-                    self, "outbound_workers", DEFAULT_OUTBOUND_WORKERS
-                )
+                worker_count=getattr(self, "outbound_workers", DEFAULT_OUTBOUND_WORKERS)
                 or DEFAULT_OUTBOUND_WORKERS,
                 send_timeout=getattr(
                     self, "outbound_send_timeout", DEFAULT_OUTBOUND_SEND_TIMEOUT
@@ -788,6 +857,411 @@ class ReticulumTelemetryHub:
         if isinstance(source_hash, (bytes, bytearray)) and source_hash:
             return source_hash.hex().lower()
         return None
+
+    def _sender_is_joined(self, message: LXMF.LXMessage) -> bool:
+        """Return True when the message sender has previously joined.
+
+        Args:
+            message (LXMF.LXMessage): Incoming LXMF message.
+
+        Returns:
+            bool: ``True`` if the sender exists in the connection cache or the
+            persisted client registry.
+        """
+
+        connections = getattr(self, "connections", {}) or {}
+        source = None
+        try:
+            source = message.get_source()
+        except Exception:
+            source = None
+        identity = getattr(source, "identity", None)
+        hash_bytes = getattr(identity, "hash", None)
+        if isinstance(hash_bytes, (bytes, bytearray)) and hash_bytes:
+            if hash_bytes in connections:
+                return True
+
+        sender_hex = self._message_source_hex(message)
+        if not sender_hex:
+            return False
+        api = getattr(self, "api", None)
+        if api is None:
+            return False
+        try:
+            if hasattr(api, "has_client"):
+                return bool(api.has_client(sender_hex))
+            if hasattr(api, "list_clients"):
+                lower_hex = sender_hex.lower()
+                return any(
+                    getattr(client, "identity", "").lower() == lower_hex
+                    for client in api.list_clients()
+                )
+        except Exception as exc:  # pragma: no cover - defensive log
+            RNS.log(
+                f"Failed to determine join status for {sender_hex}: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+        return False
+
+    def _reply_with_app_info(self, message: LXMF.LXMessage) -> None:
+        """Send an application info reply to the given message source.
+
+        Args:
+            message (LXMF.LXMessage): Message requiring an informational reply.
+        """
+
+        command_manager = getattr(self, "command_manager", None)
+        router = getattr(self, "lxm_router", None)
+        if command_manager is None or router is None:
+            return
+        handler = getattr(command_manager, "_handle_get_app_info", None)
+        if handler is None:
+            return
+        try:
+            response = handler(message)
+        except Exception as exc:  # pragma: no cover - defensive log
+            RNS.log(
+                f"Unable to build app info reply: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return
+        try:
+            router.handle_outbound(response)
+        except Exception as exc:  # pragma: no cover - defensive log
+            RNS.log(
+                f"Unable to send app info reply: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+
+    def _persist_attachments_from_fields(
+        self, message: LXMF.LXMessage
+    ) -> list[LXMF.LXMessage]:
+        """
+        Persist file and image attachments from LXMF fields.
+
+        Args:
+            message (LXMF.LXMessage): Incoming LXMF message that may include
+                ``FIELD_FILE_ATTACHMENTS`` or ``FIELD_IMAGE`` entries.
+
+        Returns:
+            list[LXMF.LXMessage]: Replies acknowledging stored attachments.
+        """
+
+        if not message.fields:
+            return []
+        stored_files = self._store_attachment_payloads(
+            message.fields.get(LXMF.FIELD_FILE_ATTACHMENTS),
+            category="file",
+            default_prefix="file",
+        )
+        stored_images = self._store_attachment_payloads(
+            message.fields.get(LXMF.FIELD_IMAGE),
+            category="image",
+            default_prefix="image",
+        )
+        acknowledgements: list[LXMF.LXMessage] = []
+        if stored_files:
+            reply = self._build_attachment_reply(
+                message, stored_files, heading="Stored files:"
+            )
+            if reply:
+                acknowledgements.append(reply)
+        if stored_images:
+            reply = self._build_attachment_reply(
+                message, stored_images, heading="Stored images:"
+            )
+            if reply:
+                acknowledgements.append(reply)
+        return acknowledgements
+
+    def _store_attachment_payloads(
+        self, payload, *, category: str, default_prefix: str
+    ) -> list:
+        """
+        Normalize and store incoming attachments.
+
+        Args:
+            payload: Raw LXMF field payload (bytes, dict, or list).
+            category (str): Attachment category ("file" or "image").
+            default_prefix (str): Filename prefix when no name is supplied.
+
+        Returns:
+            list: Stored attachment records from the API.
+        """
+
+        if payload in (None, {}, []):
+            return []
+        api = getattr(self, "api", None)
+        base_path = self._attachment_base_path(category)
+        if api is None or base_path is None:
+            return []
+        entries = self._normalize_attachment_payloads(
+            payload, category=category, default_prefix=default_prefix
+        )
+        stored = []
+        for entry in entries:
+            stored_entry = self._write_and_record_attachment(
+                data=entry["data"],
+                name=entry["name"],
+                media_type=entry.get("media_type"),
+                category=category,
+                base_path=base_path,
+            )
+            if stored_entry is not None:
+                stored.append(stored_entry)
+        return stored
+
+    def _normalize_attachment_payloads(
+        self, payload, *, category: str, default_prefix: str
+    ) -> list[dict]:
+        """
+        Convert the raw LXMF payload into attachment dictionaries.
+
+        Args:
+            payload: Raw LXMF field value.
+            category (str): Attachment category ("file" or "image").
+            default_prefix (str): Prefix for generated filenames.
+
+        Returns:
+            list[dict]: Normalized payload entries.
+        """
+
+        entries = payload
+        if not isinstance(payload, (list, tuple)):
+            entries = [payload]
+        normalized: list[dict] = []
+        for index, entry in enumerate(entries):
+            parsed = self._parse_attachment_entry(
+                entry, category=category, default_prefix=default_prefix, index=index
+            )
+            if parsed is not None:
+                normalized.append(parsed)
+        return normalized
+
+    def _parse_attachment_entry(
+        self, entry, *, category: str, default_prefix: str, index: int
+    ) -> dict | None:
+        """
+        Extract attachment data, name, and media type from an entry.
+
+        Args:
+            entry: Raw attachment value (dict, bytes, or string).
+            category (str): Attachment category ("file" or "image").
+            default_prefix (str): Prefix for generated filenames.
+            index (int): Entry index for uniqueness.
+
+        Returns:
+            dict | None: Parsed attachment info when data is available.
+        """
+
+        data = None
+        media_type = None
+        name = None
+        if isinstance(entry, dict):
+            data = (
+                entry.get("data")
+                or entry.get("bytes")
+                or entry.get("content")
+                or entry.get("blob")
+            )
+            media_type = (
+                entry.get("media_type")
+                or entry.get("mime")
+                or entry.get("mime_type")
+                or entry.get("type")
+            )
+            name = (
+                entry.get("name")
+                or entry.get("filename")
+                or entry.get("file_name")
+                or entry.get("title")
+            )
+        elif isinstance(entry, (bytes, bytearray, memoryview)):
+            data = bytes(entry)
+        elif isinstance(entry, str):
+            data = entry.encode("utf-8")
+
+        if data is None:
+            RNS.log(
+                f"Ignoring attachment without data (category={category}).",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return None
+
+        safe_name = self._sanitize_attachment_name(
+            name or self._default_attachment_name(default_prefix, index, media_type)
+        )
+        media_type = media_type or self._guess_media_type(safe_name, category)
+        return {"data": data, "name": safe_name, "media_type": media_type}
+
+    @staticmethod
+    def _sanitize_attachment_name(name: str) -> str:
+        """Return a filename-safe attachment name."""
+
+        candidate = Path(name).name or "attachment"
+        return candidate
+
+    def _default_attachment_name(
+        self, prefix: str, index: int, media_type: str | None
+    ) -> str:
+        """Return a unique attachment name using the prefix and media type."""
+
+        suffix = ""
+        guessed = self._guess_media_type_extension(media_type)
+        if guessed:
+            suffix = guessed
+        unique_id = uuid.uuid4().hex[:8]
+        return f"{prefix}-{int(time.time())}-{index}-{unique_id}{suffix}"
+
+    @staticmethod
+    def _guess_media_type(name: str, category: str) -> str | None:
+        """Guess the media type from the name or category."""
+
+        guessed, _ = mimetypes.guess_type(name)
+        if guessed:
+            return guessed
+        if category == "image":
+            return "image/octet-stream"
+        return "application/octet-stream"
+
+    @staticmethod
+    def _guess_media_type_extension(media_type: str | None) -> str:
+        """Guess a file extension from the supplied media type."""
+
+        if not media_type:
+            return ""
+        guessed = mimetypes.guess_extension(media_type) or ""
+        return guessed
+
+    def _write_and_record_attachment(
+        self,
+        *,
+        data: bytes,
+        name: str,
+        media_type: str | None,
+        category: str,
+        base_path: Path,
+    ):
+        """
+        Write an attachment to disk and record it via the API.
+
+        Args:
+            data (bytes): Raw attachment data.
+            name (str): Attachment filename.
+            media_type (str | None): Optional MIME type.
+            category (str): Attachment category ("file" or "image").
+            base_path (Path): Directory to write the attachment.
+
+        Returns:
+            FileAttachment | None: Stored record or None on failure.
+        """
+
+        api = getattr(self, "api", None)
+        if api is None:
+            return None
+        try:
+            target_path = self._unique_path(base_path, name)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(data)
+            if category == "image":
+                return api.store_image(
+                    target_path, name=target_path.name, media_type=media_type
+                )
+            return api.store_file(
+                target_path, name=target_path.name, media_type=media_type
+            )
+        except Exception as exc:  # pragma: no cover - defensive log
+            RNS.log(
+                f"Failed to persist {category} attachment '{name}': {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return None
+
+    @staticmethod
+    def _unique_path(base_path: Path, name: str) -> Path:
+        """Return a unique, non-existing path for the attachment."""
+
+        candidate = base_path / name
+        if not candidate.exists():
+            return candidate
+        index = 1
+        stem = candidate.stem
+        suffix = candidate.suffix
+        while True:
+            next_candidate = candidate.with_name(f"{stem}_{index}{suffix}")
+            if not next_candidate.exists():
+                return next_candidate
+            index += 1
+
+    def _attachment_base_path(self, category: str) -> Path | None:
+        """Return the configured base path for the given category."""
+
+        api = getattr(self, "api", None)
+        if api is None:
+            return None
+        config_manager = getattr(api, "_config_manager", None)
+        if config_manager is None:
+            return None
+        config = getattr(config_manager, "config", None)
+        if config is None:
+            return None
+        if category == "image":
+            return config.image_storage_path
+        return config.file_storage_path
+
+    def _build_attachment_reply(
+        self, message: LXMF.LXMessage, attachments, *, heading: str
+    ) -> LXMF.LXMessage | None:
+        """Create an acknowledgement LXMF message for stored attachments."""
+
+        lines = [heading]
+        for index, attachment in enumerate(attachments, start=1):
+            attachment_id = getattr(attachment, "file_id", None)
+            name = getattr(attachment, "name", "<file>")
+            id_text = attachment_id if attachment_id is not None else "<pending>"
+            lines.append(f"{index}. {name} (ID: {id_text})")
+        return self._reply_message(message, "\n".join(lines))
+
+    def _reply_message(
+        self, message: LXMF.LXMessage, content: str, fields: dict | None = None
+    ) -> LXMF.LXMessage | None:
+        """Construct a reply LXMF message to the sender."""
+
+        if self.my_lxmf_dest is None:
+            return None
+        destination = None
+        try:
+            command_manager = getattr(self, "command_manager", None)
+            if command_manager is not None and hasattr(command_manager, "_create_dest"):
+                destination = (
+                    command_manager._create_dest(  # pylint: disable=protected-access
+                        message.source.identity
+                    )
+                )
+        except Exception:
+            destination = None
+        if destination is None:
+            try:
+                destination = RNS.Destination(
+                    message.source.identity,
+                    RNS.Destination.OUT,
+                    RNS.Destination.SINGLE,
+                    "lxmf",
+                    "delivery",
+                )
+            except Exception as exc:  # pragma: no cover - defensive log
+                RNS.log(
+                    f"Unable to build reply destination: {exc}",
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
+                return None
+        return LXMF.LXMessage(
+            destination,
+            self.my_lxmf_dest,
+            content,
+            fields=fields or {},
+            desired_method=LXMF.LXMessage.DIRECT,
+        )
 
     def _is_telemetry_only(
         self, message: LXMF.LXMessage, telemetry_handled: bool

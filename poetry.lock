@@ -105,7 +105,7 @@ description = "Cross-platform colored terminal text."
 optional = false
 python-versions = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
 groups = ["main"]
-markers = "sys_platform == \"win32\""
+markers = "sys_platform == \"win32\" or platform_system == \"Windows\""
 files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
@@ -326,6 +326,18 @@ files = [
 test = ["pytest (>=6)"]
 
 [[package]]
+name = "gpsdclient"
+version = "1.3.2"
+description = "A simple gpsd client."
+optional = false
+python-versions = ">=3.6,<4.0"
+groups = ["main"]
+files = [
+    {file = "gpsdclient-1.3.2-py3-none-any.whl", hash = "sha256:35a7f781ae69a04f2d80278a6ae94564e524efaf061646c0a9bbb6ba4ffbcac8"},
+    {file = "gpsdclient-1.3.2.tar.gz", hash = "sha256:70a496550a9747dff5e0e50b3c95a6e1dcab9d842860997e95120767e2060a7a"},
+]
+
+[[package]]
 name = "greenlet"
 version = "3.0.3"
 description = "Lightweight in-process concurrent programming"
@@ -533,6 +545,62 @@ files = [
 ]
 
 [[package]]
+name = "pynacl"
+version = "1.6.1"
+description = "Python binding to the Networking and Cryptography (NaCl) library"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "pynacl-1.6.1-cp314-cp314t-macosx_10_10_universal2.whl", hash = "sha256:7d7c09749450c385301a3c20dca967a525152ae4608c0a096fe8464bfc3df93d"},
+    {file = "pynacl-1.6.1-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:fc734c1696ffd49b40f7c1779c89ba908157c57345cf626be2e0719488a076d3"},
+    {file = "pynacl-1.6.1-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:3cd787ec1f5c155dc8ecf39b1333cfef41415dc96d392f1ce288b4fe970df489"},
+    {file = "pynacl-1.6.1-cp314-cp314t-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6b35d93ab2df03ecb3aa506be0d3c73609a51449ae0855c2e89c7ed44abde40b"},
+    {file = "pynacl-1.6.1-cp314-cp314t-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:dece79aecbb8f4640a1adbb81e4aa3bfb0e98e99834884a80eb3f33c7c30e708"},
+    {file = "pynacl-1.6.1-cp314-cp314t-manylinux_2_34_aarch64.whl", hash = "sha256:c2228054f04bf32d558fb89bb99f163a8197d5a9bf4efa13069a7fa8d4b93fc3"},
+    {file = "pynacl-1.6.1-cp314-cp314t-manylinux_2_34_x86_64.whl", hash = "sha256:2b12f1b97346f177affcdfdc78875ff42637cb40dcf79484a97dae3448083a78"},
+    {file = "pynacl-1.6.1-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:e735c3a1bdfde3834503baf1a6d74d4a143920281cb724ba29fb84c9f49b9c48"},
+    {file = "pynacl-1.6.1-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:3384a454adf5d716a9fadcb5eb2e3e72cd49302d1374a60edc531c9957a9b014"},
+    {file = "pynacl-1.6.1-cp314-cp314t-win32.whl", hash = "sha256:d8615ee34d01c8e0ab3f302dcdd7b32e2bcf698ba5f4809e7cc407c8cdea7717"},
+    {file = "pynacl-1.6.1-cp314-cp314t-win_amd64.whl", hash = "sha256:5f5b35c1a266f8a9ad22525049280a600b19edd1f785bccd01ae838437dcf935"},
+    {file = "pynacl-1.6.1-cp314-cp314t-win_arm64.whl", hash = "sha256:d984c91fe3494793b2a1fb1e91429539c6c28e9ec8209d26d25041ec599ccf63"},
+    {file = "pynacl-1.6.1-cp38-abi3-macosx_10_10_universal2.whl", hash = "sha256:a6f9fd6d6639b1e81115c7f8ff16b8dedba1e8098d2756275d63d208b0e32021"},
+    {file = "pynacl-1.6.1-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:e49a3f3d0da9f79c1bec2aa013261ab9fa651c7da045d376bd306cf7c1792993"},
+    {file = "pynacl-1.6.1-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7713f8977b5d25f54a811ec9efa2738ac592e846dd6e8a4d3f7578346a841078"},
+    {file = "pynacl-1.6.1-cp38-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5a3becafc1ee2e5ea7f9abc642f56b82dcf5be69b961e782a96ea52b55d8a9fc"},
+    {file = "pynacl-1.6.1-cp38-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4ce50d19f1566c391fedc8dc2f2f5be265ae214112ebe55315e41d1f36a7f0a9"},
+    {file = "pynacl-1.6.1-cp38-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:543f869140f67d42b9b8d47f922552d7a967e6c116aad028c9bfc5f3f3b3a7b7"},
+    {file = "pynacl-1.6.1-cp38-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:a2bb472458c7ca959aeeff8401b8efef329b0fc44a89d3775cffe8fad3398ad8"},
+    {file = "pynacl-1.6.1-cp38-abi3-musllinux_1_1_aarch64.whl", hash = "sha256:3206fa98737fdc66d59b8782cecc3d37d30aeec4593d1c8c145825a345bba0f0"},
+    {file = "pynacl-1.6.1-cp38-abi3-musllinux_1_1_x86_64.whl", hash = "sha256:53543b4f3d8acb344f75fd4d49f75e6572fce139f4bfb4815a9282296ff9f4c0"},
+    {file = "pynacl-1.6.1-cp38-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:319de653ef84c4f04e045eb250e6101d23132372b0a61a7acf91bac0fda8e58c"},
+    {file = "pynacl-1.6.1-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:262a8de6bba4aee8a66f5edf62c214b06647461c9b6b641f8cd0cb1e3b3196fe"},
+    {file = "pynacl-1.6.1-cp38-abi3-win32.whl", hash = "sha256:9fd1a4eb03caf8a2fe27b515a998d26923adb9ddb68db78e35ca2875a3830dde"},
+    {file = "pynacl-1.6.1-cp38-abi3-win_amd64.whl", hash = "sha256:a569a4069a7855f963940040f35e87d8bc084cb2d6347428d5ad20550a0a1a21"},
+    {file = "pynacl-1.6.1-cp38-abi3-win_arm64.whl", hash = "sha256:5953e8b8cfadb10889a6e7bd0f53041a745d1b3d30111386a1bb37af171e6daf"},
+    {file = "pynacl-1.6.1.tar.gz", hash = "sha256:8d361dac0309f2b6ad33b349a56cd163c98430d409fa503b10b70b3ad66eaa1d"},
+]
+
+[package.dependencies]
+cffi = {version = ">=2.0.0", markers = "platform_python_implementation != \"PyPy\" and python_version >= \"3.9\""}
+
+[package.extras]
+docs = ["sphinx (<7)", "sphinx_rtd_theme"]
+tests = ["hypothesis (>=3.27.0)", "pytest (>=7.4.0)", "pytest-cov (>=2.10.1)", "pytest-xdist (>=3.5.0)"]
+
+[[package]]
+name = "pypng"
+version = "0.20220715.0"
+description = "Pure Python library for saving and loading PNG images"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "pypng-0.20220715.0-py3-none-any.whl", hash = "sha256:4a43e969b8f5aaafb2a415536c1a8ec7e341cd6a3f957fd5b5f32a4cfeed902c"},
+    {file = "pypng-0.20220715.0.tar.gz", hash = "sha256:739c433ba96f078315de54c0db975aee537cbc3e1d0ae4ed9aab0ca1e427e2c1"},
+]
+
+[[package]]
 name = "pyserial"
 version = "3.5"
 description = "Python Serial Port Extension"
@@ -623,6 +691,30 @@ files = [
 cli = ["click (>=5.0)"]
 
 [[package]]
+name = "qrcode"
+version = "7.4.2"
+description = "QR Code image generator"
+optional = false
+python-versions = ">=3.7"
+groups = ["main"]
+files = [
+    {file = "qrcode-7.4.2-py3-none-any.whl", hash = "sha256:581dca7a029bcb2deef5d01068e39093e80ef00b4a61098a2182eac59d01643a"},
+    {file = "qrcode-7.4.2.tar.gz", hash = "sha256:9dd969454827e127dbd93696b20747239e6d540e082937c90f14ac95b30f5845"},
+]
+
+[package.dependencies]
+colorama = {version = "*", markers = "platform_system == \"Windows\""}
+pypng = "*"
+typing-extensions = "*"
+
+[package.extras]
+all = ["pillow (>=9.1.0)", "pytest", "pytest-cov", "tox", "zest.releaser[recommended]"]
+dev = ["pytest", "pytest-cov", "tox"]
+maintainer = ["zest.releaser[recommended]"]
+pil = ["pillow (>=9.1.0)"]
+test = ["coverage", "pytest"]
+
+[[package]]
 name = "rns"
 version = "1.0.2"
 description = "Self-configuring, encrypted and resilient mesh networking stack for LoRa, packet radio, WiFi and everything in between"
@@ -637,6 +729,34 @@ files = [
 [package.dependencies]
 cryptography = ">=3.4.7"
 pyserial = ">=3.5"
+
+[[package]]
+name = "ruff"
+version = "0.7.4"
+description = "An extremely fast Python linter and code formatter, written in Rust."
+optional = false
+python-versions = ">=3.7"
+groups = ["dev"]
+files = [
+    {file = "ruff-0.7.4-py3-none-linux_armv6l.whl", hash = "sha256:a4919925e7684a3f18e18243cd6bea7cfb8e968a6eaa8437971f681b7ec51478"},
+    {file = "ruff-0.7.4-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:cfb365c135b830778dda8c04fb7d4280ed0b984e1aec27f574445231e20d6c63"},
+    {file = "ruff-0.7.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:63a569b36bc66fbadec5beaa539dd81e0527cb258b94e29e0531ce41bacc1f20"},
+    {file = "ruff-0.7.4-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0d06218747d361d06fd2fdac734e7fa92df36df93035db3dc2ad7aa9852cb109"},
+    {file = "ruff-0.7.4-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:e0cea28d0944f74ebc33e9f934238f15c758841f9f5edd180b5315c203293452"},
+    {file = "ruff-0.7.4-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:80094ecd4793c68b2571b128f91754d60f692d64bc0d7272ec9197fdd09bf9ea"},
+    {file = "ruff-0.7.4-py3-none-manylinux_2_17_ppc64.manylinux2014_ppc64.whl", hash = "sha256:997512325c6620d1c4c2b15db49ef59543ef9cd0f4aa8065ec2ae5103cedc7e7"},
+    {file = "ruff-0.7.4-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:00b4cf3a6b5fad6d1a66e7574d78956bbd09abfd6c8a997798f01f5da3d46a05"},
+    {file = "ruff-0.7.4-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:7dbdc7d8274e1422722933d1edddfdc65b4336abf0b16dfcb9dedd6e6a517d06"},
+    {file = "ruff-0.7.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0e92dfb5f00eaedb1501b2f906ccabfd67b2355bdf117fea9719fc99ac2145bc"},
+    {file = "ruff-0.7.4-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:3bd726099f277d735dc38900b6a8d6cf070f80828877941983a57bca1cd92172"},
+    {file = "ruff-0.7.4-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:2e32829c429dd081ee5ba39aef436603e5b22335c3d3fff013cd585806a6486a"},
+    {file = "ruff-0.7.4-py3-none-musllinux_1_2_i686.whl", hash = "sha256:662a63b4971807623f6f90c1fb664613f67cc182dc4d991471c23c541fee62dd"},
+    {file = "ruff-0.7.4-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:876f5e09eaae3eb76814c1d3b68879891d6fde4824c015d48e7a7da4cf066a3a"},
+    {file = "ruff-0.7.4-py3-none-win32.whl", hash = "sha256:75c53f54904be42dd52a548728a5b572344b50d9b2873d13a3f8c5e3b91f5cac"},
+    {file = "ruff-0.7.4-py3-none-win_amd64.whl", hash = "sha256:745775c7b39f914238ed1f1b0bebed0b9155a17cd8bc0b08d3c87e4703b990d6"},
+    {file = "ruff-0.7.4-py3-none-win_arm64.whl", hash = "sha256:11bff065102c3ae9d3ea4dc9ecdfe5a5171349cdd0787c1fc64761212fc9cf1f"},
+    {file = "ruff-0.7.4.tar.gz", hash = "sha256:cd12e35031f5af6b9b93715d8c4f40360070b2041f81273d0527683d5708fce2"},
+]
 
 [[package]]
 name = "sqlalchemy"
@@ -754,4 +874,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "2417068c1f796e1506a54e6e0fb37be4f0e058a87cbf29fb2cadb7a958dee670"
+content-hash = "07f0c7a724fd21ae2183fa720831bc48dd30ddbf6d96f5c83f604abbcc793906"

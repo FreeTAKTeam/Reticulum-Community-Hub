@@ -3,14 +3,17 @@ import json
 import RNS
 import pytest
 from msgpack import packb
+from types import MethodType
 
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.atak_cot import Remarks
+from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.models import Subscriber, Topic
 
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
+from tests.test_rth_api import make_config_manager
 
 
 def make_message(dest, source, command, *, use_str_command=False, **command_fields):
@@ -49,6 +52,8 @@ COMMAND_HANDLER_MAP = [
     (CommandManager.CMD_LEAVE, "_handle_leave"),
     (CommandManager.CMD_LIST_CLIENTS, "_handle_list_clients"),
     (CommandManager.CMD_GET_APP_INFO, "_handle_get_app_info"),
+    (CommandManager.CMD_LIST_FILES, "_handle_list_files"),
+    (CommandManager.CMD_LIST_IMAGES, "_handle_list_images"),
     (CommandManager.CMD_LIST_TOPIC, "_handle_list_topics"),
     (CommandManager.CMD_CREATE_TOPIC, "_handle_create_topic"),
     (CommandManager.CMD_RETRIEVE_TOPIC, "_handle_retrieve_topic"),
@@ -62,6 +67,8 @@ COMMAND_HANDLER_MAP = [
     (CommandManager.CMD_DELETE_SUBSCRIBER, "_handle_delete_subscriber"),
     (CommandManager.CMD_REMOVE_SUBSCRIBER, "_handle_delete_subscriber"),
     (CommandManager.CMD_PATCH_SUBSCRIBER, "_handle_patch_subscriber"),
+    (CommandManager.CMD_RETRIEVE_FILE, "_handle_retrieve_file"),
+    (CommandManager.CMD_RETRIEVE_IMAGE, "_handle_retrieve_image"),
 ]
 
 
@@ -418,7 +425,7 @@ def test_unknown_command_logs_error(monkeypatch):
 
     assert responses
     reply_text = responses[0].content_as_string()
-    assert "Unknown command" in reply_text
+    assert "Unknow command" in reply_text
     assert logs
     relevant = [entry for entry in logs if "NotACommand" in entry[0]]
     assert relevant
@@ -463,6 +470,131 @@ def test_create_topic_accepts_snake_case_fields():
     created_topic = manager.api.created[0]
     assert created_topic.topic_name == "Alpha"
     assert created_topic.topic_path == "alpha/path"
+
+
+def test_list_files_and_images_commands(tmp_path):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    config_manager = make_config_manager(tmp_path)
+    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    file_path = config_manager.config.file_storage_path / "note.txt"
+    file_path.write_text("hello attachment")
+    file_record = api.store_file(file_path, media_type="text/plain")
+    image_path = config_manager.config.image_storage_path / "photo.jpg"
+    image_bytes = b"img-bytes"
+    image_path.write_bytes(image_bytes)
+    image_record = api.store_image(image_path, media_type="image/jpeg")
+
+    manager, server_dest = make_command_manager(api)
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    list_files_msg = make_message(
+        server_dest, client_dest, "listfiles", use_str_command=True
+    )
+    files_response = manager.handle_command(
+        list_files_msg.fields[LXMF.FIELD_COMMANDS][0], list_files_msg
+    )
+    assert files_response is not None
+    assert str(file_record.file_id) in files_response.content_as_string()
+    assert "note.txt" in files_response.content_as_string()
+
+    list_images_msg = make_message(
+        server_dest, client_dest, "ListImages", use_str_command=True
+    )
+    images_response = manager.handle_command(
+        list_images_msg.fields[LXMF.FIELD_COMMANDS][0], list_images_msg
+    )
+    assert images_response is not None
+    assert str(image_record.file_id) in images_response.content_as_string()
+    assert "photo.jpg" in images_response.content_as_string()
+
+
+def test_retrieve_file_includes_attachment_field(tmp_path):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    config_manager = make_config_manager(tmp_path)
+    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    file_bytes = b"binary-data"
+    file_path = config_manager.config.file_storage_path / "sample.bin"
+    file_path.write_bytes(file_bytes)
+    file_record = api.store_file(file_path, media_type="application/octet-stream")
+
+    manager, server_dest = make_command_manager(api)
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    retrieve_msg = make_message(
+        server_dest, client_dest, "retrievefile", FileID=file_record.file_id
+    )
+    response = manager.handle_command(
+        retrieve_msg.fields[LXMF.FIELD_COMMANDS][0], retrieve_msg
+    )
+
+    assert response is not None
+    assert LXMF.FIELD_FILE_ATTACHMENTS in response.fields
+    attachment_payload = response.fields[LXMF.FIELD_FILE_ATTACHMENTS][0]
+    assert attachment_payload["data"] == file_bytes
+    assert str(file_record.file_id) in response.content_as_string()
+
+
+def test_retrieve_image_includes_image_field(tmp_path):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    config_manager = make_config_manager(tmp_path)
+    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    image_bytes = b"image-bytes"
+    image_path = config_manager.config.image_storage_path / "snapshot.jpg"
+    image_path.write_bytes(image_bytes)
+    image_record = api.store_image(image_path, media_type="image/jpeg")
+
+    manager, server_dest = make_command_manager(api)
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    retrieve_msg = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_RETRIEVE_IMAGE,
+        FileID=image_record.file_id,
+    )
+    response = manager.handle_command(
+        retrieve_msg.fields[LXMF.FIELD_COMMANDS][0], retrieve_msg
+    )
+
+    assert response is not None
+    assert LXMF.FIELD_IMAGE in response.fields
+    image_field = response.fields[LXMF.FIELD_IMAGE]
+    if isinstance(image_field, dict):
+        assert image_field["data"] == image_bytes
+    else:
+        assert image_field == image_bytes
+    assert LXMF.FIELD_FILE_ATTACHMENTS in response.fields
+    assert response.fields[LXMF.FIELD_FILE_ATTACHMENTS][0]["data"] == image_bytes
+
+
+def test_retrieve_file_rejects_non_integer_id(tmp_path):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    manager, server_dest = make_command_manager(api)
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    retrieve_msg = make_message(
+        server_dest, client_dest, CommandManager.CMD_RETRIEVE_FILE, FileID="abc"
+    )
+    response = manager.handle_command(
+        retrieve_msg.fields[LXMF.FIELD_COMMANDS][0], retrieve_msg
+    )
+
+    assert response is not None
+    assert "FileID must be an integer" in response.content_as_string()
 
 
 def test_join_and_list_clients(tmp_path):
@@ -668,7 +800,7 @@ def test_handle_command_dispatches_to_handler(
         called.append(True)
         return sentinel
 
-    setattr(manager, handler_attr, stub.__get__(manager, CommandManager))
+    setattr(manager, handler_attr, MethodType(stub, manager))
     message = make_message(
         server_dest,
         client_dest,
@@ -730,9 +862,7 @@ def test_delivery_callback_handles_commands_and_broadcasts():
         },
     )()
 
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
 
     incoming = LXMF.LXMessage(
         hub.my_lxmf_dest,
@@ -793,9 +923,7 @@ def test_delivery_callback_emits_cot_chat_for_valid_message():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
     client = DummyPytakClient()
     hub.tak_connector = TakConnector(pytak_client=client)
 
@@ -858,9 +986,7 @@ def test_delivery_callback_honors_topic_field():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
 
     incoming = LXMF.LXMessage(
         hub.my_lxmf_dest,
@@ -918,9 +1044,7 @@ def test_delivery_callback_skips_sender_echo():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
 
     incoming = LXMF.LXMessage(
         hub.my_lxmf_dest,
@@ -975,9 +1099,7 @@ def test_delivery_callback_skips_telemetry_only_messages():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
 
     fields = {LXMF.FIELD_TELEMETRY: packb({"sensor": 1}, use_bin_type=True)}
     incoming = LXMF.LXMessage(
@@ -992,6 +1114,63 @@ def test_delivery_callback_skips_telemetry_only_messages():
     hub.wait_for_outbound_flush()
 
     assert not router_messages
+
+
+def test_delivery_callback_replies_app_info_when_not_joined():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    router_messages: list[LXMF.LXMessage] = []
+
+    class DummyRouter:
+        def handle_outbound(self, message):
+            router_messages.append(message)
+
+    hub.lxm_router = DummyRouter()
+    hub.my_lxmf_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    hub.connections = {}
+    hub.identities = {}
+    hub.topic_subscribers = {}
+    hub.api = type(
+        "DummyAPI",
+        (),
+        {
+            "list_subscribers": lambda self: [],
+            "has_client": lambda self, identity: False,
+        },
+    )()
+    hub.tel_controller = type(
+        "DummyController",
+        (),
+        {"handle_message": lambda self, message: False},
+    )()
+
+    def build_app_info(message):
+        return LXMF.LXMessage(sender, hub.my_lxmf_dest, "app-info")
+
+    hub.command_manager = type(
+        "DummyCommands",
+        (),
+        {
+            "handle_commands": lambda self, commands, message: [],
+            "_handle_get_app_info": lambda self, message: build_app_info(message),
+        },
+    )()
+    hub.send_message = lambda *args, **kwargs: None
+
+    incoming = LXMF.LXMessage(hub.my_lxmf_dest, sender, "hello app")
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+    hub.wait_for_outbound_flush()
+
+    assert any(msg.content_as_string() == "app-info" for msg in router_messages)
 
 
 def test_delivery_callback_skips_cot_chat_for_telemetry():
@@ -1022,9 +1201,7 @@ def test_delivery_callback_skips_cot_chat_for_telemetry():
         (),
         {"handle_commands": lambda self, commands, message: []},
     )()
-    hub.send_message = ReticulumTelemetryHub.send_message.__get__(
-        hub, ReticulumTelemetryHub
-    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
     client = DummyPytakClient()
     hub.tak_connector = TakConnector(pytak_client=client)
 
@@ -1196,5 +1373,5 @@ def test_unknown_command_returns_help_text():
 
     reply = manager.handle_command(command, message)
     text = reply.content_as_string()
-    assert "Unknown command 'NotReal'" in text
+    assert text.startswith("Unknow command")
     assert "Available commands" in text

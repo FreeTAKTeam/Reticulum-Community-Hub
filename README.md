@@ -36,6 +36,7 @@ Follow these steps to bring up a local hub using the bundled defaults:
    source .venv/bin/activate
    ```
    You should see `(.venv)` in your shell prompt after activation.
+<<<<<<< HEAD
 3. Install dependencies in editable mode (or use Poetry if you prefer).
    ```bash
    pip install --upgrade pip
@@ -43,6 +44,14 @@ Follow these steps to bring up a local hub using the bundled defaults:
    ```
 
    The editable install pulls every dependency declared in `pyproject.toml` (including runtime services and the bundled tests). If you prefer Poetry, run `pip install poetry` once and then use `poetry install` to create and manage the virtual environment instead.
+=======
+3. Install dependencies in editable mode (or use Poetry if you prefer).
+   ```bash
+   pip install --upgrade pip
+   pip install -e .
+   ```
+   The editable install pulls every dependency declared in `pyproject.toml` (including runtime services, the optional `gpsdclient` GPS integration, and the bundled tests). Core dependencies now include `python-dotenv` for environment loading, `qrcode` for QR payload rendering, and `PyNaCl` for stamp generation. If you prefer Poetry, run `pip install poetry` once and then use `poetry install` to create and manage the virtual environment instead.
+>>>>>>> a655a4d6b09af4270755019d0e7252ba3af95530
 4. Prepare a storage directory and unified config (the defaults live under `RTH_Store`).
    - Copy `config.ini` into `RTH_Store` or point the `--storage_dir` flag at another directory.
    - See the [Configuration](#configuration) section below for the available options and defaults.
@@ -94,6 +103,21 @@ python -m reticulum_telemetry_hub.reticulum_server --help
 pytest tests/test_reticulum_server_daemon.py -q
 ```
 
+### Linting
+
+RTH uses [Ruff](https://docs.astral.sh/ruff/) for linting with a 120-character line length and ignores `E203` to align with Black-style slicing.
+
+- With Poetry (installs dev dependencies, including Ruff):
+  ```bash
+  poetry install --with dev
+  poetry run ruff check .
+  ```
+- With a plain virtual environment:
+  ```bash
+  python -m pip install ruff
+  ruff check .
+  ```
+
 ## Configuration
 
 RTH now uses a unified runtime configuration file alongside the Reticulum/LXMF configs. Defaults live under `RTH_Store`, but you can point at another storage directory with `--storage_dir` (the hub will look for `config.ini` there).
@@ -101,6 +125,8 @@ RTH now uses a unified runtime configuration file alongside the Reticulum/LXMF c
 ### Unified runtime config (`config.ini`)
 
 Create `RTH_Store/config.ini` (or place it in your chosen storage directory). CLI flags always override the file, and the file overrides built-in defaults.
+
+If you do not set explicit locations, RTH creates `files/` and `images/` folders inside the storage directory for general file storage and decoded imagery. Override them in the `[files]` or `[images]` sections if you want to place them elsewhere.
 
 ```ini
 [hub]
@@ -137,6 +163,12 @@ display_name = RTH_router
 host = 127.0.0.1
 port = 2947
 
+[files]
+# path = /var/lib/rth/files     # defaults to <storage_dir>/files
+
+[images]
+# directory = /var/lib/rth/img  # defaults to <storage_dir>/images
+
 [TAK]
 cot_url = tcp://127.0.0.1:8087
 callsign = RTH
@@ -151,8 +183,26 @@ How the unified config is used:
 
 - `HubConfigurationManager` loads `config.ini` into a single runtime view (`HubRuntimeConfig` stored on `HubAppConfig`).
 - Reticulum and LXMF settings can be supplied directly in `config.ini`, or you can point to existing config files via `[hub].reticulum_config_path` / `[hub].lxmf_router_config_path`.
+- File and image storage directories default to `<storage_dir>/files` and `<storage_dir>/images`, but can be overridden via the `[files]` and `[images]` sections.
 - TAK, GPSD, announce/telemetry intervals, default services, log level, and embedded/external LXMF choices are all centralized here.
+- GPSD integration relies on the `gpsdclient` dependency (bundled in the install) and an accessible gpsd instance at the configured host/port.
 - CLI flags (`--storage_dir`, `--config`, `--display-name`, `--announce-interval`, `--embedded`, `--service`, etc.) override any values loaded from the file.
+
+### File and image metadata API
+
+The Python API exposes helpers to track stored files and images alongside their metadata (paths, MIME types, categories, sizes, and timestamps). Use these calls after you place files under the configured storage directories:
+
+- `ReticulumTelemetryHubAPI.store_file(path, name=None, media_type=None)` records a file in the default `files/` directory.
+- `ReticulumTelemetryHubAPI.store_image(path, name=None, media_type=None)` records an image in the `images/` directory.
+- `list_files()` / `list_images()` return stored metadata filtered by category.
+- `retrieve_file(id)` / `retrieve_image(id)` return a single record by ID, raising `KeyError` when the category does not match.
+
+File and image directories still default to `<storage_dir>/files` and `<storage_dir>/images`, but you can point them elsewhere via the `[files]` and `[images]` sections as shown above.
+
+### Exchanging attachments over LXMF
+
+- LXMF clients can discover stored artifacts with `ListFiles` and `ListImages` commands and fetch them with `RetrieveFile` / `RetrieveImage`. Retrieval replies include metadata in the message body **and** ship the binary payloads in the LXMF-standard fields (`FIELD_FILE_ATTACHMENTS` for files, `FIELD_IMAGE` for images) so Sideband, Meshchat, and similar tools can save them without extra parsing.
+- Incoming LXMF messages that already include `FIELD_FILE_ATTACHMENTS` or `FIELD_IMAGE` fields are persisted automatically to the configured storage directories. The hub replies with the assigned index so you can reference the attachment in subsequent retrievals.
 
 ## Service
 
@@ -207,6 +257,10 @@ RTH consumes LXMF commands from the `Commands` field (numeric field ID `9`). Eac
 - An escape-prefixed message body when you cannot populate the `Commands` field:
   - Plain text: ``\\\join`` (RTH wraps this as `[{"Command":"join"}]`)
   - JSON: ``\\\{"Command":"CreateTopic","TopicName":"Weather","TopicPath":"environment/weather"}``
+
+Unregistered LXMF senders automatically receive a ``getAppInfo`` reply containing
+the app name, version, and description from the ``[app]`` section of
+``config.ini`` so they can identify the hub before joining.
 
 Parameters are provided alongside the command name in the same object. RTH tolerates common casing differences (`TopicID`, `topic_id`, `topic_id`, etc.) and will prompt for anything still missing.
 
@@ -264,6 +318,11 @@ RTH reads defaults from a single ``config.ini`` file located in the storage dire
 Example configuration:
 
 ```ini
+[app]
+name = Reticulum Telemetry Hub
+version = 0.63.0
+description = Public-facing hub for the mesh network
+
 [hub]
 display_name = RTH
 announce_interval = 60
@@ -297,6 +356,12 @@ location_altitude = 10.0
 location_accuracy = 5.0
 static_information = Callsign RTH
 enable_battery = yes
+
+[files]
+path = /var/lib/rth/files
+
+[images]
+directory = /var/lib/rth/images
 ```
 
 TAK servers typically expect TCP unicast connections. Keep ``cot_url`` in the

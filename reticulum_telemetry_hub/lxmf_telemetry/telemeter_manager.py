@@ -12,6 +12,9 @@ from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor import (
     Sensor,
 )
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import (
+    sid_mapping,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_ACCELERATION,
     SID_AMBIENT_LIGHT,
@@ -40,14 +43,12 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TEMPERATURE,
     SID_TIME,
 )
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_mapping import (
-    sid_mapping,
-)
-from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
+
 
 SnapshotMutator = Callable[[Telemeter, dict[int, Any]], None]
 
