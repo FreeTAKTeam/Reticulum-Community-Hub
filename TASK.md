@@ -67,3 +67,4 @@
 - 2025-12-28: ✅ Resolve pylint not-callable warnings for LXMF router hooks.
 - 2025-12-29: ✅ Resolve DummyRouter pylint no-member warnings in Reticulum server initialization.
 - 2025-12-31: ✅ Return help text when an unknown command is received.
+- 2026-01-02: ✅ Add coverage for file and image command CRUD flows (ListFiles/ListImages) and resolve discovered issues.
