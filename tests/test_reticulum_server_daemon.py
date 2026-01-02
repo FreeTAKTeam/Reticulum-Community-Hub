@@ -205,8 +205,39 @@ def test_delivery_callback_accepts_integer_list_payload(tmp_path):
         hub.shutdown()
 
 
+def test_delivery_callback_accepts_case_insensitive_payload_keys(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    raw_bytes = b"caps"
+    payload = [{"Name": "caps.bin", "Data": raw_bytes}]
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_FILE_ATTACHMENTS: payload},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        stored_files = hub.api.list_files()
+        assert stored_files
+        stored_path = Path(stored_files[0].path)
+        assert stored_path.read_bytes() == raw_bytes
+        assert sent
+    finally:
+        hub.shutdown()
+
+
 def test_delivery_callback_skips_missing_attachment_data(tmp_path):
     hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
 
     sender = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
@@ -223,6 +254,10 @@ def test_delivery_callback_skips_missing_attachment_data(tmp_path):
     try:
         hub.delivery_callback(message)
         assert hub.api.list_files() == []
+        assert sent
+        assert any(
+            "Attachment errors" in msg.content_as_string() for msg in sent if msg
+        )
     finally:
         hub.shutdown()
 

@@ -70,3 +70,5 @@
 - 2026-01-02: âœ… Add coverage for file and image command CRUD flows (ListFiles/ListImages) and resolve discovered issues.
 - 2026-01-02: âœ… Add Examples command returning detailed help while Help lists commands only.
 - 2026-01-02: バ. Decode base64/list attachment payloads when storing inbound files.
+- 2026-01-02: バ. Reply to attachment errors and accept case-insensitive payload keys.
+

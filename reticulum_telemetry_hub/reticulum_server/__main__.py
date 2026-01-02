@@ -952,16 +952,17 @@ class ReticulumTelemetryHub:
 
         if not message.fields:
             return []
-        stored_files = self._store_attachment_payloads(
+        stored_files, file_errors = self._store_attachment_payloads(
             message.fields.get(LXMF.FIELD_FILE_ATTACHMENTS),
             category="file",
             default_prefix="file",
         )
-        stored_images = self._store_attachment_payloads(
+        stored_images, image_errors = self._store_attachment_payloads(
             message.fields.get(LXMF.FIELD_IMAGE),
             category="image",
             default_prefix="image",
         )
+        attachment_errors = file_errors + image_errors
         acknowledgements: list[LXMF.LXMessage] = []
         if stored_files:
             reply = self._build_attachment_reply(
@@ -975,11 +976,17 @@ class ReticulumTelemetryHub:
             )
             if reply:
                 acknowledgements.append(reply)
+        if attachment_errors:
+            reply = self._build_attachment_error_reply(
+                message, attachment_errors, heading="Attachment errors:"
+            )
+            if reply:
+                acknowledgements.append(reply)
         return acknowledgements
 
     def _store_attachment_payloads(
         self, payload, *, category: str, default_prefix: str
-    ) -> list:
+    ) -> tuple[list, list[str]]:
         """
         Normalize and store incoming attachments.
 
@@ -989,20 +996,25 @@ class ReticulumTelemetryHub:
             default_prefix (str): Filename prefix when no name is supplied.
 
         Returns:
-            list: Stored attachment records from the API.
+            tuple[list, list[str]]: Stored attachment records from the API and
+                any errors encountered while parsing.
         """
 
         if payload in (None, {}, []):
-            return []
+            return [], []
         api = getattr(self, "api", None)
         base_path = self._attachment_base_path(category)
         if api is None or base_path is None:
-            return []
+            return [], []
         entries = self._normalize_attachment_payloads(
             payload, category=category, default_prefix=default_prefix
         )
         stored = []
+        errors: list[str] = []
         for entry in entries:
+            if entry.get("error"):
+                errors.append(entry["error"])
+                continue
             stored_entry = self._write_and_record_attachment(
                 data=entry["data"],
                 name=entry["name"],
@@ -1012,7 +1024,7 @@ class ReticulumTelemetryHub:
             )
             if stored_entry is not None:
                 stored.append(stored_entry)
-        return stored
+        return stored, errors
 
     def _normalize_attachment_payloads(
         self, payload, *, category: str, default_prefix: str
@@ -1076,11 +1088,13 @@ class ReticulumTelemetryHub:
             data = entry
 
         if data is None:
+            reason = "Missing attachment data"
+            attachment_name = name or f"{category}-{index + 1}"
             RNS.log(
                 f"Ignoring attachment without data (category={category}).",
                 getattr(RNS, "LOG_WARNING", 2),
             )
-            return None
+            return {"error": f"{reason}: {attachment_name}"}
 
         if isinstance(media_type, str):
             media_type = media_type.strip() or None
@@ -1090,11 +1104,13 @@ class ReticulumTelemetryHub:
         media_type = media_type or self._guess_media_type(safe_name, category)
         data = self._coerce_attachment_data(data, media_type=media_type)
         if data is None:
+            reason = "Unsupported attachment data format"
+            attachment_name = name or f"{category}-{index + 1}"
             RNS.log(
                 f"Ignoring attachment with unsupported data format (category={category}).",
                 getattr(RNS, "LOG_WARNING", 2),
             )
-            return None
+            return {"error": f"{reason}: {attachment_name}"}
         return {"data": data, "name": safe_name, "media_type": media_type}
 
     @staticmethod
@@ -1148,9 +1164,16 @@ class ReticulumTelemetryHub:
             Any: The first matching value or ``None`` when absent.
         """
 
+        lower_lookup = {}
+        for key in entry:
+            if isinstance(key, str):
+                lower_lookup.setdefault(key.lower(), key)
         for key in keys:
             if key in entry:
                 return entry.get(key)
+            lookup_key = lower_lookup.get(key.lower())
+            if lookup_key is not None:
+                return entry.get(lookup_key)
         return None
 
     @staticmethod
@@ -1311,6 +1334,16 @@ class ReticulumTelemetryHub:
             name = getattr(attachment, "name", "<file>")
             id_text = attachment_id if attachment_id is not None else "<pending>"
             lines.append(f"{index}. {name} (ID: {id_text})")
+        return self._reply_message(message, "\n".join(lines))
+
+    def _build_attachment_error_reply(
+        self, message: LXMF.LXMessage, errors: list[str], *, heading: str
+    ) -> LXMF.LXMessage | None:
+        """Create an acknowledgement LXMF message for attachment errors."""
+
+        lines = [heading]
+        for index, error in enumerate(errors, start=1):
+            lines.append(f"{index}. {error}")
         return self._reply_message(message, "\n".join(lines))
 
     def _reply_message(
