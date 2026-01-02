@@ -122,7 +122,10 @@ def test_retrieve_file_supports_camel_case_id(tmp_path):
 
     assert response is not None
     attachment_payload = response.fields[LXMF.FIELD_FILE_ATTACHMENTS][0]
-    assert attachment_payload["data"] == file_bytes
+    if isinstance(attachment_payload, dict):
+        assert attachment_payload["data"] == file_bytes
+    else:
+        assert attachment_payload[1] == file_bytes
     assert str(file_record.file_id) in response.content_as_string()
 
 
@@ -151,9 +154,15 @@ def test_retrieve_image_supports_camel_case_id(tmp_path):
     image_field = response.fields[LXMF.FIELD_IMAGE]
     if isinstance(image_field, dict):
         assert image_field["data"] == image_bytes
+    elif isinstance(image_field, (list, tuple)):
+        assert image_field[1] == image_bytes
     else:
         assert image_field == image_bytes
-    assert response.fields[LXMF.FIELD_FILE_ATTACHMENTS][0]["data"] == image_bytes
+    attachment_payload = response.fields[LXMF.FIELD_FILE_ATTACHMENTS][0]
+    if isinstance(attachment_payload, dict):
+        assert attachment_payload["data"] == image_bytes
+    else:
+        assert attachment_payload[1] == image_bytes
 
 
 def test_retrieve_file_missing_record_returns_error(tmp_path):

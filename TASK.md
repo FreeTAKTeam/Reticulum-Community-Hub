@@ -79,3 +79,4 @@
 
 - 2026-01-02: バ. Send fallback text when attachment responses fail to deliver.
 - 2026-01-02: バ. Send text-only mirrors for attachment command replies.
+- 2026-01-02: バ. Send list-form attachment payloads for RetrieveFile/RetrieveImage responses.

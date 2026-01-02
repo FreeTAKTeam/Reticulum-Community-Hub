@@ -881,20 +881,14 @@ class CommandManager:
         except (TypeError, ValueError):
             return None
 
-    def _attachment_payload(self, attachment: FileAttachment) -> dict:
-        """Build a payload dictionary including attachment bytes."""
+    def _attachment_payload(self, attachment: FileAttachment) -> list:
+        """Build a list payload compatible with Sideband/MeshChat clients."""
 
         file_path = Path(attachment.path)
         data = file_path.read_bytes()
-        payload = {
-            "name": attachment.name,
-            "data": data,
-            "media_type": attachment.media_type,
-            "size": len(data),
-            "file_id": attachment.file_id,
-            "category": attachment.category,
-        }
-        return payload
+        if attachment.media_type:
+            return [attachment.name, data, attachment.media_type]
+        return [attachment.name, data]
 
     def _build_attachment_fields(self, attachment: FileAttachment) -> dict:
         """Return LXMF fields carrying attachment content."""
