@@ -12,33 +12,70 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 
 
 def build_help_text(command_manager: Any) -> str:
-    """Assemble human-friendly help text for LXMF clients.
+    """Assemble a Markdown list of supported commands for LXMF clients.
 
     Args:
         command_manager (Any): An object exposing the command name constants.
 
     Returns:
-        str: A formatted help payload describing each supported command.
+        str: Markdown-formatted list of supported commands.
+    """
+
+    command_names = command_manager._all_command_names()  # noqa: SLF001
+    lines = [
+        "# Command list",
+        "",
+        "Use the `Command` field (`0`) to choose an action when building payloads.",
+        "",
+        "## Supported commands",
+    ]
+    for command_name in command_names:
+        lines.append(f"- `{command_name}`")
+    lines.append("- `TelemetryRequest` (`1`)")
+    return "\n".join(lines)
+
+
+def build_examples_text(command_manager: Any) -> str:
+    """Assemble Markdown examples for LXMF clients.
+
+    Args:
+        command_manager (Any): An object exposing the command name constants.
+
+    Returns:
+        str: Markdown-formatted description and payload examples for commands.
     """
 
     lines = [
-        "Available commands:",
-        "  Use the 'Command' field (numeric key 0 / PLUGIN_COMMAND) to choose an action.",
+        "# Command examples",
+        "",
+        "Use the `Command` field (`0`) to choose an action when building payloads.",
+        "",
+        "## Examples",
     ]
     for entry in command_reference(command_manager):
-        lines.append(f"- {entry['title']}: {entry['description']}")
-        lines.append(f"  Example: {entry['example']}")
-    telemetry_example = json.dumps(
+        lines.append(f"- **{entry['title']}**")
+        lines.append(f"  - Description: {entry['description']}")
+        lines.append(f"  - Example: `{entry['example']}`")
+    telemetry_example = _telemetry_request_example()
+    lines.append("- **TelemetryRequest (numeric key `1`)**")
+    lines.append(
+        "  - Description: Request telemetry snapshots using the `TelemetryRequest` numeric key."
+    )
+    lines.append(
+        "  - Example: `"
+        f"{telemetry_example}"
+        "` (timestamp = earliest UNIX time to include)"
+    )
+    return "\n".join(lines)
+
+
+def _telemetry_request_example() -> str:
+    """Return an example telemetry request payload."""
+
+    return json.dumps(
         {str(TelemetryController.TELEMETRY_REQUEST): "<unix timestamp>"},
         sort_keys=True,
     )
-    lines.append(
-        "- TelemetryRequest: Request telemetry snapshots using numeric key 1 (TelemetryController.TELEMETRY_REQUEST)."
-    )
-    lines.append(
-        f"  Example: {telemetry_example} (timestamp = earliest UNIX time to include)"
-    )
-    return "\n".join(lines)
 
 
 def command_reference(command_manager: Any) -> List[dict]:

@@ -14,6 +14,7 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from .constants import PLUGIN_COMMAND
 from .command_text import (
     build_help_text,
+    build_examples_text,
     format_attachment_list,
     format_subscriber_list,
     format_topic_list,
@@ -27,6 +28,7 @@ class CommandManager:
 
     # Command names based on the API specification
     CMD_HELP = "Help"
+    CMD_EXAMPLES = "Examples"
     CMD_JOIN = "join"
     CMD_LEAVE = "leave"
     CMD_LIST_CLIENTS = "ListClients"
@@ -83,6 +85,7 @@ class CommandManager:
 
         return [
             self.CMD_HELP,
+            self.CMD_EXAMPLES,
             self.CMD_JOIN,
             self.CMD_LEAVE,
             self.CMD_LIST_CLIENTS,
@@ -359,6 +362,8 @@ class CommandManager:
         if name is not None:
             if name == self.CMD_HELP:
                 return self._handle_help(message)
+            if name == self.CMD_EXAMPLES:
+                return self._handle_examples(message)
             if name == self.CMD_JOIN:
                 return self._handle_join(message)
             if name == self.CMD_LEAVE:
@@ -610,6 +615,9 @@ class CommandManager:
 
     def _handle_help(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         return self._reply(message, build_help_text(self))
+
+    def _handle_examples(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        return self._reply(message, build_examples_text(self))
 
     def _handle_unknown_command(
         self, name: str, message: LXMF.LXMessage
