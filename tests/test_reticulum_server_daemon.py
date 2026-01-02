@@ -348,6 +348,35 @@ def test_delivery_callback_stores_image_field(tmp_path):
         hub.shutdown()
 
 
+def test_delivery_callback_infers_image_extension(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    png_bytes = b"\x89PNG\r\n\x1a\npayload"
+    image_payload = {"data": png_bytes}
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_IMAGE: image_payload},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        stored_images = hub.api.list_images()
+        assert stored_images
+        stored_path = Path(stored_images[0].path)
+        assert stored_path.suffix == ".png"
+        assert stored_path.read_bytes() == png_bytes
+    finally:
+        hub.shutdown()
+
+
 def test_subscriber_cache_refresh_after_subscribe(tmp_path):
     hub = ReticulumTelemetryHub(
         "Daemon",

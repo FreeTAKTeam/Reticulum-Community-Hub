@@ -1157,10 +1157,6 @@ class ReticulumTelemetryHub:
 
         if isinstance(media_type, str):
             media_type = media_type.strip() or None
-        safe_name = self._sanitize_attachment_name(
-            name or self._default_attachment_name(default_prefix, index, media_type)
-        )
-        media_type = media_type or self._guess_media_type(safe_name, category)
         data = self._coerce_attachment_data(data, media_type=media_type)
         if data is None:
             reason = "Unsupported attachment data format"
@@ -1170,6 +1166,16 @@ class ReticulumTelemetryHub:
                 getattr(RNS, "LOG_WARNING", 2),
             )
             return {"error": f"{reason}: {attachment_name}"}
+        if not media_type and category == "image":
+            media_type = self._infer_image_media_type(data)
+        safe_name = self._sanitize_attachment_name(
+            name or self._default_attachment_name(default_prefix, index, media_type)
+        )
+        if media_type and not Path(safe_name).suffix:
+            extension = self._guess_media_type_extension(media_type)
+            if extension:
+                safe_name = f"{safe_name}{extension}"
+        media_type = media_type or self._guess_media_type(safe_name, category)
         return {"data": data, "name": safe_name, "media_type": media_type}
 
     @staticmethod
@@ -1201,6 +1207,29 @@ class ReticulumTelemetryHub:
         if category == "image":
             return "image/octet-stream"
         return "application/octet-stream"
+
+    @staticmethod
+    def _infer_image_media_type(data: bytes) -> str | None:
+        """Infer an image media type from raw bytes.
+
+        Args:
+            data (bytes): Raw image bytes.
+
+        Returns:
+            str | None: MIME type when recognized, otherwise ``None``.
+        """
+
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if data.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return "image/gif"
+        if data.startswith(b"BM"):
+            return "image/bmp"
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return "image/webp"
+        return None
 
     @staticmethod
     def _guess_media_type_extension(media_type: str | None) -> str:
