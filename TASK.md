@@ -73,3 +73,4 @@
 - 2026-01-02: バ. Create PLANNING.md with goals, style, and architecture guidance.
 
 
+- 2026-01-02: バ. Support list-form attachment payloads from Sideband.

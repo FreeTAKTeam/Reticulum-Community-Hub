@@ -1086,6 +1086,14 @@ class ReticulumTelemetryHub:
             data = bytes(entry)
         elif isinstance(entry, str):
             data = entry
+        elif isinstance(entry, (list, tuple)):
+            if len(entry) >= 2:
+                name = entry[0] if isinstance(entry[0], str) else name
+                data = entry[1]
+                if len(entry) >= 3 and isinstance(entry[2], str):
+                    media_type = entry[2]
+            elif entry:
+                data = entry[0]
 
         if data is None:
             reason = "Missing attachment data"
