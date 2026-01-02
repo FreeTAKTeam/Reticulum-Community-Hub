@@ -81,3 +81,4 @@
 - 2026-01-02: バ. Send text-only mirrors for attachment command replies.
 - 2026-01-02: バ. Send list-form attachment payloads for RetrieveFile/RetrieveImage responses.
 - 2026-01-02: バ. Infer image media types to preserve file extensions.
+- 2026-01-02: バ. Document file/image attachment workflows in README.

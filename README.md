@@ -14,12 +14,14 @@ The Reticulum-Telemetry-Hub can perform the following key functions:
 - **Telemetry Collector**: RTH acts as a telemetry data repository, collecting data from all connected clients. Currently, this functionality is focused on Sideband clients that have enabled their Reticulum identity. By rewriting the code we hope to see a wider implementation of telemetry in other applications.
 - **Replication Node**: RTH uses the LXMF router to ensure message delivery even when the target client is offline. If a message's destination is not available at the time of sending, RTH will save the message and deliver it once the client comes online.
 - **Reticulum Transport**: RTH uses Reticulum as a transport node, routing traffic to other peers, passing network announcements, and fulfilling path requests.
+- **File and Image Attachments**: RTH stores inbound files/images sent over LXMF, catalogs them by ID, and serves them back on demand. Clients can list stored items (`ListFiles`, `ListImages`) and retrieve them (`RetrieveFile`, `RetrieveImage`) with the binary payload delivered in LXMF fields so Sideband, Meshchat, and similar tools can save them directly.
 
 ## Documentation
 
 - Command payload formats and examples: [`docs/supportedCommands.md`](docs/supportedCommands.md)
 - [User Manual](/docs/userManual.md)
 - TAK / Cursor-on-Target integration: [`docs/tak.md`](docs/tak.md)
+- File and image workflows: see the "Exchanging attachments over LXMF" section below.
 
 ## Quickstart
 
@@ -36,22 +38,12 @@ Follow these steps to bring up a local hub using the bundled defaults:
    source .venv/bin/activate
    ```
    You should see `(.venv)` in your shell prompt after activation.
-<<<<<<< HEAD
-3. Install dependencies in editable mode (or use Poetry if you prefer).
-   ```bash
-   pip install --upgrade pip
-   pip install -e .
-   ```
-
-   The editable install pulls every dependency declared in `pyproject.toml` (including runtime services and the bundled tests). If you prefer Poetry, run `pip install poetry` once and then use `poetry install` to create and manage the virtual environment instead.
-=======
 3. Install dependencies in editable mode (or use Poetry if you prefer).
    ```bash
    pip install --upgrade pip
    pip install -e .
    ```
    The editable install pulls every dependency declared in `pyproject.toml` (including runtime services, the optional `gpsdclient` GPS integration, and the bundled tests). Core dependencies now include `python-dotenv` for environment loading, `qrcode` for QR payload rendering, and `PyNaCl` for stamp generation. If you prefer Poetry, run `pip install poetry` once and then use `poetry install` to create and manage the virtual environment instead.
->>>>>>> a655a4d6b09af4270755019d0e7252ba3af95530
 4. Prepare a storage directory and unified config (the defaults live under `RTH_Store`).
    - Copy `config.ini` into `RTH_Store` or point the `--storage_dir` flag at another directory.
    - See the [Configuration](#configuration) section below for the available options and defaults.
@@ -202,6 +194,7 @@ File and image directories still default to `<storage_dir>/files` and `<storage_
 ### Exchanging attachments over LXMF
 
 - LXMF clients can discover stored artifacts with `ListFiles` and `ListImages` commands and fetch them with `RetrieveFile` / `RetrieveImage`. Retrieval replies include metadata in the message body **and** ship the binary payloads in the LXMF-standard fields (`FIELD_FILE_ATTACHMENTS` for files, `FIELD_IMAGE` for images) so Sideband, Meshchat, and similar tools can save them without extra parsing.
+- Attachment payloads are sent in list form for client compatibility: `["filename.ext", <bytes>, "mime/type"]`. Images include `FIELD_IMAGE` and are also mirrored in `FIELD_FILE_ATTACHMENTS`.
 - Incoming LXMF messages that already include `FIELD_FILE_ATTACHMENTS` or `FIELD_IMAGE` fields are persisted automatically to the configured storage directories. The hub replies with the assigned index so you can reference the attachment in subsequent retrievals.
 
 ## Service
