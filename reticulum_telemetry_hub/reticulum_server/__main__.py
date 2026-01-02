@@ -28,9 +28,12 @@ or run in headless mode for unattended deployments.
 
 import argparse
 import asyncio
+import base64
+import binascii
 import json
-import time
 import mimetypes
+import re
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1058,28 +1061,19 @@ class ReticulumTelemetryHub:
         media_type = None
         name = None
         if isinstance(entry, dict):
-            data = (
-                entry.get("data")
-                or entry.get("bytes")
-                or entry.get("content")
-                or entry.get("blob")
+            data = self._first_present_value(
+                entry, ["data", "bytes", "content", "blob"]
             )
-            media_type = (
-                entry.get("media_type")
-                or entry.get("mime")
-                or entry.get("mime_type")
-                or entry.get("type")
+            media_type = self._first_present_value(
+                entry, ["media_type", "mime", "mime_type", "type"]
             )
-            name = (
-                entry.get("name")
-                or entry.get("filename")
-                or entry.get("file_name")
-                or entry.get("title")
+            name = self._first_present_value(
+                entry, ["name", "filename", "file_name", "title"]
             )
         elif isinstance(entry, (bytes, bytearray, memoryview)):
             data = bytes(entry)
         elif isinstance(entry, str):
-            data = entry.encode("utf-8")
+            data = entry
 
         if data is None:
             RNS.log(
@@ -1088,10 +1082,19 @@ class ReticulumTelemetryHub:
             )
             return None
 
+        if isinstance(media_type, str):
+            media_type = media_type.strip() or None
         safe_name = self._sanitize_attachment_name(
             name or self._default_attachment_name(default_prefix, index, media_type)
         )
         media_type = media_type or self._guess_media_type(safe_name, category)
+        data = self._coerce_attachment_data(data, media_type=media_type)
+        if data is None:
+            RNS.log(
+                f"Ignoring attachment with unsupported data format (category={category}).",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return None
         return {"data": data, "name": safe_name, "media_type": media_type}
 
     @staticmethod
@@ -1132,6 +1135,94 @@ class ReticulumTelemetryHub:
             return ""
         guessed = mimetypes.guess_extension(media_type) or ""
         return guessed
+
+    @staticmethod
+    def _first_present_value(entry: dict, keys: list[str]):
+        """Return the first key value present in a dictionary.
+
+        Args:
+            entry (dict): Attachment metadata map.
+            keys (list[str]): Keys to check in order.
+
+        Returns:
+            Any: The first matching value or ``None`` when absent.
+        """
+
+        for key in keys:
+            if key in entry:
+                return entry.get(key)
+        return None
+
+    @staticmethod
+    def _decode_base64_payload(payload: str) -> bytes | None:
+        """Decode base64 content safely.
+
+        Args:
+            payload (str): Base64-encoded string.
+
+        Returns:
+            bytes | None: Decoded bytes or ``None`` if decoding fails.
+        """
+
+        compact = "".join(payload.split())
+        try:
+            return base64.b64decode(compact, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+
+    @staticmethod
+    def _should_decode_base64(payload: str) -> bool:
+        """Heuristically determine whether a string looks base64 encoded."""
+
+        compact = "".join(payload.split())
+        if compact.startswith("data:") and "base64," in compact:
+            return True
+        if any(marker in compact for marker in ("=", "+", "/")):
+            return True
+        if len(compact) >= 12 and len(compact) % 4 == 0:
+            return bool(re.fullmatch(r"[A-Za-z0-9+/=]+", compact))
+        return False
+
+    def _coerce_attachment_data(
+        self, data, *, media_type: str | None
+    ) -> bytes | None:
+        """Normalize attachment data into bytes.
+
+        Args:
+            data (Any): Raw attachment data.
+            media_type (str | None): Attachment media type.
+
+        Returns:
+            bytes | None: Normalized bytes or ``None`` when unsupported.
+        """
+
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            return bytes(data)
+
+        if isinstance(data, (list, tuple)):
+            if all(isinstance(item, int) for item in data):
+                try:
+                    return bytes(data)
+                except ValueError:
+                    return None
+
+        if isinstance(data, str):
+            payload = data.strip()
+            if not payload:
+                return b""
+            if payload.startswith("data:") and "base64," in payload:
+                encoded = payload.split("base64,", 1)[1]
+                decoded = self._decode_base64_payload(encoded)
+                if decoded is not None:
+                    return decoded
+            # Reason: attachments may arrive as base64 when sent from JSON-only clients.
+            if self._should_decode_base64(payload):
+                decoded = self._decode_base64_payload(payload)
+                if decoded is not None:
+                    return decoded
+            return payload.encode("utf-8")
+
+        return None
 
     def _write_and_record_attachment(
         self,

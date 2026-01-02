@@ -1,71 +1,72 @@
-# TASKS
+﻿# TASKS
 
-- 2025-02-14: ✅ Make messaging more robust by limiting telemetry broadcasts, suppressing echo replies, and listing commands for bad requests.
-- 2025-11-19: ✅ Preserve `RejectTests=0` values when subscribing or patching subscribers.
-- 2025-11-19: ✅ Decode announce metadata using LXMF helper and ensure identity labels follow msgpack names.
-- 2025-11-19: ✅ Ensure create-subscriber commands preserve `RejectTests=0` values.
-- 2025-11-19: ✅ Refresh topic subscriber cache after subscription changes to deliver messages immediately.
-- 2025-11-19: ✅ Persist joined client list across Reticulum Telemetry Hub sessions.
-- 2025-11-19: ✅ Handle string-wrapped LXMF commands and prompt for missing command parameters interactively.
-- 2025-11-19: ✅ Accept snake_case command fields when prompting for missing data.
-- 2025-11-20: ✅ Normalize Sideband-wrapped commands to preserve telemetry commands.
-- 2025-11-20: ✅ Normalize Sideband-wrapped command payloads carrying JSON objects.
-- 2025-11-20: ✅ Accept positional LXMF command parameters and log unknown commands.
-- 2025-11-20: ✅ Stop unsolicited "Telemetry data" LXMF broadcasts to known identities.
-- 2025-11-20: ✅ Detect escape-prefixed telemetry payloads and normalize commands before broadcasting.
-- 2025-11-20: ✅ Suppress broadcasts when escape-prefixed commands are detected in plaintext bodies.
-- 2025-11-28: ✅ Add TAK CoT connector service for broadcasting location updates.
-- 2025-11-28: ✅ Convert LXMF chat traffic into CoT chat events with topic-aware routing.
-- 2025-11-28: ✅ Ensure CoT chat events generate unique UIDs for rapid messages.
-- 2025-11-28: ✅ Consolidate hub configuration (including TAK) into a unified ``config.ini`` while preserving CLI flag overrides.
-- 2025-11-29: ✅ Add Google-style docstrings to API service methods to clarify IDs, metadata defaults, and error handling.
-- 2025-11-29: ✅ Refresh README installation steps, dependency guidance, and link targets.
-- 2025-11-29: ✅ Assign TAK location events to the originating Reticulum identity using display names when available or LXMF addresses otherwise.
-- 2025-11-29: ✅ Normalize TAK connector identifiers derived from pretty-formatted hashes.
-- 2025-11-29: ✅ Raise coverage to at least 90% and correct formatting issues.
-- 2025-11-29: ✅ Add RNS import to TAK connector and test send_latest_location to avoid NameError.
-- 2025-11-29: ✅ Extend TakConnector.build_event to include group defaults and track metadata.
-- 2025-11-29: ✅ Add GeoChat detail construction for chat events including hierarchy links.
-- 2025-11-29: ✅ Log TAK event types and JSON payloads before transmission.
-- 2025-11-29: ✅ Convert incoming telemetry to TAK CoT events using sender UIDs and display names.
-- 2025-11-30: ✅ Avoid rerunning event loops when dispatching telemetry CoT events.
-- 2025-11-30: ✅ Fix TAK GeoChat payload structure and hierarchy.
-- 2025-12-02: ✅ Ensure TAK connection status logging and keepalive pongs.
-- 2025-12-03: ✅ Ensure TAK COR events use TCP unicast with TAK_PROTO=0 and FTS_COMPAT=1 defaults.
-- 2025-12-03: ✅ Wrap CoT JSON payloads with the event root type to match ATAK expectations.
-- 2025-12-03: ✅ Ensure TAK connector emits a takPong keepalive every 60 seconds.
-- 2025-12-03: ✅ Maintain overall test coverage at or above 90%.
-- 2025-12-04: ✅ Format codebase and resolve lint configuration issues identified during testing.
-- 2025-12-05: ✅ Persist PyTAK sessions with shared queues, add hello/ping keepalives, and extend TAK connector coverage.
-- 2025-12-05: ✅ Keep telemetry payloads out of LXMF message bodies and rely on field delivery only.
-- 2025-12-05: ✅ Restore TAK connector keepalive delivery and connection visibility by running PyTAK in a persistent background loop.
-- 2025-12-05: ✅ Periodically dispatch the latest unique telemetry as CoT updates from the TAK connector.
-- 2025-12-05: ✅ Mirror LXMF chat messages to TAK servers using the required CoT chat template.
-- 2025-12-05: ✅ Refresh README and documentation under `docs/`.
-- 2025-12-17: ✅ Introduce a bounded LXMF outbound queue with worker fan-out and backpressure.
-- 2025-12-17: ✅ Resolve flake8 unused variable warning in TAK connector tests.
-- 2025-12-17: ✅ Close SQLite retry sessions to avoid leaks when lock contention occurs.
-- 2025-12-24: ✅ Update README installation instructions for PyPI virtual environment setup.
-- 2025-12-26: ✅ Expand getAppInfo to return configured metadata and auto-respond to unjoined LXMF clients.
-- 2025-12-27: ✅ Review and test the code and fix linter issues.
-- 2025-12-27: ✅ Reorder LXMF daemon imports to satisfy flake8 and bump version to 0.62.0.
-- 2025-12-28: ✅ Add file and image storage configuration paths and tests.
-- 2025-12-28: ✅ Ensure the python-app workflow installs all project dependencies.
-- 2025-12-28: ✅ Document API models and storage session helpers to satisfy lint checks.
-- 2025-12-28: ✅ Expose HubStorage session factory to satisfy API topic patch tests.
-- 2025-12-28: ✅ Resolve pylint warnings in ATAK CoT helpers and refresh package metadata.
-- 2025-12-28: ✅ Fix Iterable import for PyTAK client to resolve pylint error.
-- 2025-12-28: ✅ Analyze code with pylint and fix issues.
-- 2025-12-28: ✅ Add file and image attachment storage APIs and tests.
-- 2025-12-28: ✅ Address gpsdclient import handling and lint cleanups.
-- 2025-12-28: ✅ Add LXMF attachment listing/retrieval commands and persist inbound LXMF file/image fields.
-- 2025-12-28: ✅ Resolve TAK connector test cleanup to avoid unraisable exceptions.
-- 2025-12-28: ✅ Switch linting to Ruff and retire flake8 configuration.
-- 2025-12-28: ✅ Replace CI flake8 linting with Ruff and remove the flake8 configuration file.
-- 2025-12-28: ✅ Improve test coverage and resolve Ruff lint findings.
-- 2025-12-28: ✅ Resolve reported pylint import and undefined variable errors.
-- 2025-12-28: ✅ Resolve pylint not-callable warnings for LXMF router hooks.
-- 2025-12-29: ✅ Resolve DummyRouter pylint no-member warnings in Reticulum server initialization.
-- 2025-12-31: ✅ Return help text when an unknown command is received.
-- 2026-01-02: ✅ Add coverage for file and image command CRUD flows (ListFiles/ListImages) and resolve discovered issues.
-- 2026-01-02: ✅ Add Examples command returning detailed help while Help lists commands only.
+- 2025-02-14: âœ… Make messaging more robust by limiting telemetry broadcasts, suppressing echo replies, and listing commands for bad requests.
+- 2025-11-19: âœ… Preserve `RejectTests=0` values when subscribing or patching subscribers.
+- 2025-11-19: âœ… Decode announce metadata using LXMF helper and ensure identity labels follow msgpack names.
+- 2025-11-19: âœ… Ensure create-subscriber commands preserve `RejectTests=0` values.
+- 2025-11-19: âœ… Refresh topic subscriber cache after subscription changes to deliver messages immediately.
+- 2025-11-19: âœ… Persist joined client list across Reticulum Telemetry Hub sessions.
+- 2025-11-19: âœ… Handle string-wrapped LXMF commands and prompt for missing command parameters interactively.
+- 2025-11-19: âœ… Accept snake_case command fields when prompting for missing data.
+- 2025-11-20: âœ… Normalize Sideband-wrapped commands to preserve telemetry commands.
+- 2025-11-20: âœ… Normalize Sideband-wrapped command payloads carrying JSON objects.
+- 2025-11-20: âœ… Accept positional LXMF command parameters and log unknown commands.
+- 2025-11-20: âœ… Stop unsolicited "Telemetry data" LXMF broadcasts to known identities.
+- 2025-11-20: âœ… Detect escape-prefixed telemetry payloads and normalize commands before broadcasting.
+- 2025-11-20: âœ… Suppress broadcasts when escape-prefixed commands are detected in plaintext bodies.
+- 2025-11-28: âœ… Add TAK CoT connector service for broadcasting location updates.
+- 2025-11-28: âœ… Convert LXMF chat traffic into CoT chat events with topic-aware routing.
+- 2025-11-28: âœ… Ensure CoT chat events generate unique UIDs for rapid messages.
+- 2025-11-28: âœ… Consolidate hub configuration (including TAK) into a unified ``config.ini`` while preserving CLI flag overrides.
+- 2025-11-29: âœ… Add Google-style docstrings to API service methods to clarify IDs, metadata defaults, and error handling.
+- 2025-11-29: âœ… Refresh README installation steps, dependency guidance, and link targets.
+- 2025-11-29: âœ… Assign TAK location events to the originating Reticulum identity using display names when available or LXMF addresses otherwise.
+- 2025-11-29: âœ… Normalize TAK connector identifiers derived from pretty-formatted hashes.
+- 2025-11-29: âœ… Raise coverage to at least 90% and correct formatting issues.
+- 2025-11-29: âœ… Add RNS import to TAK connector and test send_latest_location to avoid NameError.
+- 2025-11-29: âœ… Extend TakConnector.build_event to include group defaults and track metadata.
+- 2025-11-29: âœ… Add GeoChat detail construction for chat events including hierarchy links.
+- 2025-11-29: âœ… Log TAK event types and JSON payloads before transmission.
+- 2025-11-29: âœ… Convert incoming telemetry to TAK CoT events using sender UIDs and display names.
+- 2025-11-30: âœ… Avoid rerunning event loops when dispatching telemetry CoT events.
+- 2025-11-30: âœ… Fix TAK GeoChat payload structure and hierarchy.
+- 2025-12-02: âœ… Ensure TAK connection status logging and keepalive pongs.
+- 2025-12-03: âœ… Ensure TAK COR events use TCP unicast with TAK_PROTO=0 and FTS_COMPAT=1 defaults.
+- 2025-12-03: âœ… Wrap CoT JSON payloads with the event root type to match ATAK expectations.
+- 2025-12-03: âœ… Ensure TAK connector emits a takPong keepalive every 60 seconds.
+- 2025-12-03: âœ… Maintain overall test coverage at or above 90%.
+- 2025-12-04: âœ… Format codebase and resolve lint configuration issues identified during testing.
+- 2025-12-05: âœ… Persist PyTAK sessions with shared queues, add hello/ping keepalives, and extend TAK connector coverage.
+- 2025-12-05: âœ… Keep telemetry payloads out of LXMF message bodies and rely on field delivery only.
+- 2025-12-05: âœ… Restore TAK connector keepalive delivery and connection visibility by running PyTAK in a persistent background loop.
+- 2025-12-05: âœ… Periodically dispatch the latest unique telemetry as CoT updates from the TAK connector.
+- 2025-12-05: âœ… Mirror LXMF chat messages to TAK servers using the required CoT chat template.
+- 2025-12-05: âœ… Refresh README and documentation under `docs/`.
+- 2025-12-17: âœ… Introduce a bounded LXMF outbound queue with worker fan-out and backpressure.
+- 2025-12-17: âœ… Resolve flake8 unused variable warning in TAK connector tests.
+- 2025-12-17: âœ… Close SQLite retry sessions to avoid leaks when lock contention occurs.
+- 2025-12-24: âœ… Update README installation instructions for PyPI virtual environment setup.
+- 2025-12-26: âœ… Expand getAppInfo to return configured metadata and auto-respond to unjoined LXMF clients.
+- 2025-12-27: âœ… Review and test the code and fix linter issues.
+- 2025-12-27: âœ… Reorder LXMF daemon imports to satisfy flake8 and bump version to 0.62.0.
+- 2025-12-28: âœ… Add file and image storage configuration paths and tests.
+- 2025-12-28: âœ… Ensure the python-app workflow installs all project dependencies.
+- 2025-12-28: âœ… Document API models and storage session helpers to satisfy lint checks.
+- 2025-12-28: âœ… Expose HubStorage session factory to satisfy API topic patch tests.
+- 2025-12-28: âœ… Resolve pylint warnings in ATAK CoT helpers and refresh package metadata.
+- 2025-12-28: âœ… Fix Iterable import for PyTAK client to resolve pylint error.
+- 2025-12-28: âœ… Analyze code with pylint and fix issues.
+- 2025-12-28: âœ… Add file and image attachment storage APIs and tests.
+- 2025-12-28: âœ… Address gpsdclient import handling and lint cleanups.
+- 2025-12-28: âœ… Add LXMF attachment listing/retrieval commands and persist inbound LXMF file/image fields.
+- 2025-12-28: âœ… Resolve TAK connector test cleanup to avoid unraisable exceptions.
+- 2025-12-28: âœ… Switch linting to Ruff and retire flake8 configuration.
+- 2025-12-28: âœ… Replace CI flake8 linting with Ruff and remove the flake8 configuration file.
+- 2025-12-28: âœ… Improve test coverage and resolve Ruff lint findings.
+- 2025-12-28: âœ… Resolve reported pylint import and undefined variable errors.
+- 2025-12-28: âœ… Resolve pylint not-callable warnings for LXMF router hooks.
+- 2025-12-29: âœ… Resolve DummyRouter pylint no-member warnings in Reticulum server initialization.
+- 2025-12-31: âœ… Return help text when an unknown command is received.
+- 2026-01-02: âœ… Add coverage for file and image command CRUD flows (ListFiles/ListImages) and resolve discovered issues.
+- 2026-01-02: âœ… Add Examples command returning detailed help while Help lists commands only.
+- 2026-01-02: バ. Decode base64/list attachment payloads when storing inbound files.
