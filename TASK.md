@@ -78,3 +78,4 @@
 - 2026-01-02: バ. Reply to malformed escape-prefixed command payloads.
 
 - 2026-01-02: バ. Send fallback text when attachment responses fail to deliver.
+- 2026-01-02: バ. Send text-only mirrors for attachment command replies.

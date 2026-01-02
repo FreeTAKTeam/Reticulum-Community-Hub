@@ -532,6 +532,20 @@ class ReticulumTelemetryHub:
                         command_replies = self.command_handler(escape_commands, message)
 
             responses = attachment_replies + command_replies
+            text_only_replies: list[LXMF.LXMessage] = []
+            for response in command_replies:
+                response_fields = getattr(response, "fields", None) or {}
+                if isinstance(response_fields, dict) and any(
+                    key in response_fields
+                    for key in (LXMF.FIELD_FILE_ATTACHMENTS, LXMF.FIELD_IMAGE)
+                ):
+                    text_only = self._reply_message(
+                        message, response.content_as_string(), fields={}
+                    )
+                    if text_only is not None:
+                        text_only_replies.append(text_only)
+
+            responses.extend(text_only_replies)
             for response in responses:
                 try:
                     self.lxm_router.handle_outbound(response)
