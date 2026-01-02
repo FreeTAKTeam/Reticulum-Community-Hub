@@ -1,5 +1,4 @@
 ﻿# TASKS
-
 - 2025-02-14: âœ… Make messaging more robust by limiting telemetry broadcasts, suppressing echo replies, and listing commands for bad requests.
 - 2025-11-19: âœ… Preserve `RejectTests=0` values when subscribing or patching subscribers.
 - 2025-11-19: âœ… Decode announce metadata using LXMF helper and ensure identity labels follow msgpack names.
@@ -71,4 +70,6 @@
 - 2026-01-02: âœ… Add Examples command returning detailed help while Help lists commands only.
 - 2026-01-02: バ. Decode base64/list attachment payloads when storing inbound files.
 - 2026-01-02: バ. Reply to attachment errors and accept case-insensitive payload keys.
+- 2026-01-02: バ. Create PLANNING.md with goals, style, and architecture guidance.
+
 

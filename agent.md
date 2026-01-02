@@ -18,7 +18,7 @@
 
 ### 🧪 Testing & Reliability
 
-- **Always create Pytest unit tests for new features** (functions, classes, routes, etc).
+- **Always create Pytest unit tests for new features** (functions, classes, routes, etc). very piece of logic should have corresponding tests.
 - - Coverage must remain above 90%.
 - **After updating any logic**, check whether existing unit tests need to be updated. If so, do it.
 - **Tests should live in a `/tests` folder** mirroring the  app structure. 
