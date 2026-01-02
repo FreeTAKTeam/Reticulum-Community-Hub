@@ -77,3 +77,4 @@
 - 2026-01-02: バ. Reply when command handling throws to avoid silent failures.
 - 2026-01-02: バ. Reply to malformed escape-prefixed command payloads.
 
+- 2026-01-02: バ. Send fallback text when attachment responses fail to deliver.

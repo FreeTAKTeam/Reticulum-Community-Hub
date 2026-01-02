@@ -373,17 +373,20 @@ class ReticulumTelemetryHub:
         self._topic_registry_last_refresh: float = 0.0
         self._refresh_topic_registry()
 
-    def command_handler(self, commands: list, message: LXMF.LXMessage):
-        """Handles commands received from the client and sends responses back.
+    def command_handler(self, commands: list, message: LXMF.LXMessage) -> list[LXMF.LXMessage]:
+        """Handles commands received from the client and returns responses.
 
         Args:
             commands (list): List of commands received from the client
             message (LXMF.LXMessage): LXMF message object
+
+        Returns:
+            list[LXMF.LXMessage]: Responses generated for the commands.
         """
-        for response in self.command_manager.handle_commands(commands, message):
-            self.lxm_router.handle_outbound(response)
+        responses = self.command_manager.handle_commands(commands, message)
         if self._commands_affect_subscribers(commands):
             self._refresh_topic_registry()
+        return responses
 
     def _parse_escape_prefixed_commands(
         self, message: LXMF.LXMessage
@@ -505,11 +508,14 @@ class ReticulumTelemetryHub:
             sender_joined = False
             attachment_replies: list[LXMF.LXMessage] = []
             # Handle the commands
+            command_replies: list[LXMF.LXMessage] = []
             if message.signature_validated:
                 attachment_replies = self._persist_attachments_from_fields(message)
                 if LXMF.FIELD_COMMANDS in message.fields:
                     command_payload_present = True
-                    self.command_handler(message.fields[LXMF.FIELD_COMMANDS], message)
+                    command_replies = self.command_handler(
+                        message.fields[LXMF.FIELD_COMMANDS], message
+                    )
                 else:
                     escape_commands, escape_detected, escape_error = (
                         self._parse_escape_prefixed_commands(message)
@@ -523,17 +529,39 @@ class ReticulumTelemetryHub:
                         if error_reply is not None:
                             attachment_replies.append(error_reply)
                     if escape_commands:
-                        self.command_handler(escape_commands, message)
+                        command_replies = self.command_handler(escape_commands, message)
 
-            for attachment_reply in attachment_replies:
+            responses = attachment_replies + command_replies
+            for response in responses:
                 try:
-                    self.lxm_router.handle_outbound(attachment_reply)
+                    self.lxm_router.handle_outbound(response)
                 except Exception as exc:  # pragma: no cover - defensive log
+                    has_attachment = False
+                    response_fields = getattr(response, "fields", None) or {}
+                    if isinstance(response_fields, dict):
+                        has_attachment = any(
+                            key in response_fields
+                            for key in (LXMF.FIELD_FILE_ATTACHMENTS, LXMF.FIELD_IMAGE)
+                        )
                     RNS.log(
-                        f"Failed to send attachment acknowledgement: {exc}",
+                        f"Failed to send response: {exc}",
                         getattr(RNS, "LOG_WARNING", 2),
                     )
-            if attachment_replies:
+                    if has_attachment:
+                        fallback = self._reply_message(
+                            message,
+                            "Failed to send attachment response; the file may be too large.",
+                        )
+                        if fallback is None:
+                            continue
+                        try:
+                            self.lxm_router.handle_outbound(fallback)
+                        except Exception as retry_exc:  # pragma: no cover - defensive log
+                            RNS.log(
+                                f"Failed to send fallback response: {retry_exc}",
+                                getattr(RNS, "LOG_WARNING", 2),
+                            )
+            if responses:
                 command_payload_present = True
 
             sender_joined = self._sender_is_joined(message)
