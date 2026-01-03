@@ -513,8 +513,9 @@ class ReticulumTelemetryHub:
                 attachment_replies = self._persist_attachments_from_fields(message)
                 if LXMF.FIELD_COMMANDS in message.fields:
                     command_payload_present = True
-                    command_replies = self.command_handler(
-                        message.fields[LXMF.FIELD_COMMANDS], message
+                    command_replies = (
+                        self.command_handler(message.fields[LXMF.FIELD_COMMANDS], message)
+                        or []
                     )
                 else:
                     escape_commands, escape_detected, escape_error = (
@@ -529,7 +530,7 @@ class ReticulumTelemetryHub:
                         if error_reply is not None:
                             attachment_replies.append(error_reply)
                     if escape_commands:
-                        command_replies = self.command_handler(escape_commands, message)
+                        command_replies = self.command_handler(escape_commands, message) or []
 
             responses = attachment_replies + command_replies
             text_only_replies: list[LXMF.LXMessage] = []
