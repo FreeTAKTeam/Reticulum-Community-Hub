@@ -82,3 +82,5 @@
 - 2026-01-02: バ. Send list-form attachment payloads for RetrieveFile/RetrieveImage responses.
 - 2026-01-02: バ. Infer image media types to preserve file extensions.
 - 2026-01-02: バ. Document file/image attachment workflows in README.
+- 2026-01-03: ✅ Test project and fix lint issues.
+- 2026-01-03: ✅ Resolve command handler lint warnings in delivery callback.
