@@ -458,7 +458,7 @@ We welcome and encourage contributions from the community! To contribute, please
 
 ## License
 
-This project is licensed under the Creative Commons License Attribution-NonCommercial-ShareAlike 4.0 International. For more details, refer to the `LICENSE` file in the repository.
+This project is licensed under the Eclipse Public License (EPL). For more details, refer to the `LICENSE` file in the repository.
 
 ## Support
 
