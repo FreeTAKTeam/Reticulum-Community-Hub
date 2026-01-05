@@ -12,9 +12,11 @@ The Reticulum-Telemetry-Hub can perform the following key functions:
 - **One to Many & Topic-Targeted Messages**: RTH supports broadcasting messages to all connected clients or filtering the fan-out by topic tags maintained in the hub's subscriber registry.
 - By sending a message to the hub, it will be distributed to all clients connected to the network or, when the payload includes a `TopicID`, only to the peers subscribed to that topic. *(Initial implementation - Experimental)*
 - **Telemetry Collector**: RTH acts as a telemetry data repository, collecting data from all connected clients. Currently, this functionality is focused on Sideband clients that have enabled their Reticulum identity. By rewriting the code we hope to see a wider implementation of telemetry in other applications.
+- **Lightweight Topic Managemnt** : Ability to create topics and to distribute messages to users subscribed to the topic
 - **Replication Node**: RTH uses the LXMF router to ensure message delivery even when the target client is offline. If a message's destination is not available at the time of sending, RTH will save the message and deliver it once the client comes online.
 - **Reticulum Transport**: RTH uses Reticulum as a transport node, routing traffic to other peers, passing network announcements, and fulfilling path requests.
 - **File and Image Attachments**: RTH stores inbound files/images sent over LXMF, catalogs them by ID, and serves them back on demand. Clients can list stored items (`ListFiles`, `ListImages`) and retrieve them (`RetrieveFile`, `RetrieveImage`) with the binary payload delivered in LXMF fields so Sideband, Meshchat, and similar tools can save them directly.
+- **TAK Server Integration**: if configured, RTH sends chat and telemetry to a TAK server. 
 
 ## Documentation
 
@@ -95,20 +97,7 @@ python -m reticulum_telemetry_hub.reticulum_server --help
 pytest tests/test_reticulum_server_daemon.py -q
 ```
 
-### Linting
 
-RTH uses [Ruff](https://docs.astral.sh/ruff/) for linting with a 120-character line length and ignores `E203` to align with Black-style slicing.
-
-- With Poetry (installs dev dependencies, including Ruff):
-  ```bash
-  poetry install --with dev
-  poetry run ruff check .
-  ```
-- With a plain virtual environment:
-  ```bash
-  python -m pip install ruff
-  ruff check .
-  ```
 
 ## Configuration
 
@@ -456,9 +445,24 @@ Example: `python -m reticulum_telemetry_hub.reticulum_server --daemon --service 
 
 We welcome and encourage contributions from the community! To contribute, please fork the repository and submit a pull request. Make sure that your contributions adhere to the project's coding standards and include appropriate tests.
 
+### Linting
+
+RTH uses [Ruff](https://docs.astral.sh/ruff/) for linting with a 120-character line length and ignores `E203` to align with Black-style slicing.
+
+- With Poetry (installs dev dependencies, including Ruff):
+  ```bash
+  poetry install --with dev
+  poetry run ruff check .
+  ```
+- With a plain virtual environment:
+  ```bash
+  python -m pip install ruff
+  ruff check .
+  ```
+
 ## License
 
-This project is licensed under the Creative Commons License Attribution-NonCommercial-ShareAlike 4.0 International. For more details, refer to the `LICENSE` file in the repository.
+This project is licensed under the Eclipse Public License, refer to the `LICENSE` file in the repository.
 
 ## Support
 
@@ -472,3 +476,4 @@ You can help support the continued development of open, free and private communi
 * Ethereum: 0xFDabC71AC4c0C78C95aDDDe3B4FA19d6273c5E73
 * Bitcoin: 35G9uWVzrpJJibzUwpNUQGQNFzLirhrYAH
 * Ko-Fi: https://ko-fi.com/markqvist
+
