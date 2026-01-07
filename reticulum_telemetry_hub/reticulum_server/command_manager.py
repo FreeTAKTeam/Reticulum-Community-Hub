@@ -32,7 +32,7 @@ class CommandManager:
     CMD_JOIN = "join"
     CMD_LEAVE = "leave"
     CMD_LIST_CLIENTS = "ListClients"
-    CMD_RETRIEVE_TOPIC = "RetreiveTopic"
+    CMD_RETRIEVE_TOPIC = "RetrieveTopic"
     CMD_CREATE_TOPIC = "CreateTopic"
     CMD_DELETE_TOPIC = "DeleteTopic"
     CMD_LIST_TOPIC = "ListTopic"
@@ -637,7 +637,7 @@ class CommandManager:
         sender = self._identity_hex(message.source.identity)
         RNS.log(f"Unknown command '{name}' from {sender}", getattr(RNS, "LOG_ERROR", 1))
         help_text = build_help_text(self)
-        payload = f"Unknow command\n\n{help_text}"
+        payload = f"Unknown command\n\n{help_text}"
         return self._reply(message, payload)
 
     def _prompt_for_fields(
