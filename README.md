@@ -462,7 +462,11 @@ RTH uses [Ruff](https://docs.astral.sh/ruff/) for linting with a 120-character l
 
 ## License
 
+<<<<<<< HEAD
+This project is licensed under the Eclipse Public License (EPL). For more details, refer to the `LICENSE` file in the repository.
+=======
 This project is licensed under the Eclipse Public License, refer to the `LICENSE` file in the repository.
+>>>>>>> 3562022f1971d6a19e82853bab5f7d3d8c72896b
 
 ## Support
 
