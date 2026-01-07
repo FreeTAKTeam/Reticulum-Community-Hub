@@ -48,7 +48,7 @@ paths:
        - Topic
       description: >-
       summary: retrieve an existing Topic record based on the provided ID.
-      operationId: RetreiveTopic
+      operationId: RetrieveTopic
       parameters:
         - $ref: '#/components/parameters/id'
       responses:

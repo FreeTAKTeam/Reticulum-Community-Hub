@@ -84,3 +84,4 @@
 - 2026-01-02: バ. Document file/image attachment workflows in README.
 - 2026-01-03: ✅ Test project and fix lint issues.
 - 2026-01-03: ✅ Resolve command handler lint warnings in delivery callback.
+- 2026-01-05: ✅ Fix unknown command response typo and rename RetrieveTopic command.
