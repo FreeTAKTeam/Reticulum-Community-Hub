@@ -14,8 +14,8 @@ the following commands are supported by RTH
 | `leave` | Remove your destination from the hub's connection list. | ``\\\[{"Command":"leave"}]`` |
 | `ListClients` | List the LXMF destinations currently joined to the hub. | ``\\\[{"Command":"ListClients"}]`` |
 | `getAppInfo` | Return the configured app name, version, and description from `config.ini`. | ``\\\[{"Command":"getAppInfo"}]`` |
-| `ListFiles` | List file attachments stored by the hub (from API calls or inbound LXMF). | ``\\\[{"Command":"ListFiles"}]`` |
-| `ListImages` | List image attachments stored by the hub (from API calls or inbound LXMF). | ``\\\[{"Command":"ListImages"}]`` |
+| `ListFiles` | List file attachments stored by the hub (from API calls or inbound LXMF). List responses include `TopicID` when available; tag attachments by including `TopicID` in the upload command or by sending `AssociateTopicID`. | ``\\\[{"Command":"ListFiles"}]`` |
+| `ListImages` | List image attachments stored by the hub (from API calls or inbound LXMF). List responses include `TopicID` when available; tag attachments by including `TopicID` in the upload command or by sending `AssociateTopicID`. | ``\\\[{"Command":"ListImages"}]`` |
 | `ListTopic` | List every registered topic and its ID. | ``\\\[{"Command":"ListTopic"}]`` |
 | `CreateTopic` | Create a topic with a name and path. | ``\\\[{"Command":"CreateTopic","TopicName":"Weather","TopicPath":"environment/weather"}]`` |
 | `RetrieveTopic` | Fetch a topic by `TopicID`. | ``\\\[{"Command":"RetrieveTopic","TopicID":"<TopicID>"}]`` |
