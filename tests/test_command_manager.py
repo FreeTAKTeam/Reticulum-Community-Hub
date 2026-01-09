@@ -857,6 +857,40 @@ def test_handle_command_dispatches_to_handler(
     assert called
 
 
+def test_handle_command_accepts_retrieve_subscriber_alias():
+    class DummyAPI:
+        pass
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    sentinel = object()
+    called: list[bool] = []
+
+    def stub(*args, **kwargs):
+        called.append(True)
+        return sentinel
+
+    manager._handle_retrieve_subscriber = MethodType(stub, manager)
+    message = make_message(
+        server_dest,
+        client_dest,
+        "RetrieveSubscriber",
+        use_str_command=True,
+    )
+    command = message.fields[LXMF.FIELD_COMMANDS][0]
+
+    response = manager.handle_command(command, message)
+
+    assert response is sentinel
+    assert called
+    assert command["Command"] == CommandManager.CMD_RETRIEVE_SUBSCRIBER
+
+
 def test_delivery_callback_handles_commands_and_broadcasts():
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()

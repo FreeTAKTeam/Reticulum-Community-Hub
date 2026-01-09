@@ -124,6 +124,9 @@ class CommandManager:
             }
             for alias in aliases:
                 self._command_aliases_cache.setdefault(alias, command_name)
+        self._command_aliases_cache.setdefault(
+            "retrievesubscriber", self.CMD_RETRIEVE_SUBSCRIBER
+        )
         return self._command_aliases_cache
 
     @staticmethod
