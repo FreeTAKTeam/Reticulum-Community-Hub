@@ -288,7 +288,11 @@ def format_attachment_entry(index: int, attachment: FileAttachment) -> str:
     attachment_id = attachment.file_id if attachment.file_id is not None else "<pending>"
     media_suffix = f" ({attachment.media_type})" if attachment.media_type else ""
     size_text = f", size={attachment.size} bytes" if attachment.size is not None else ""
-    topic_text = f", TopicID={attachment.topic_id}" if attachment.topic_id else ""
+    topic_text = (
+        f", TopicID={attachment.topic_id}"
+        if attachment.topic_id is not None and attachment.topic_id != ""
+        else ""
+    )
     return (
         f"{index}. {attachment.name}{media_suffix} "
         f"(ID: {attachment_id}, category={category}{size_text}{topic_text})"
