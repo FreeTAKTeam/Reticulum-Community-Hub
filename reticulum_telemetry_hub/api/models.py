@@ -165,6 +165,7 @@ class FileAttachment:
     category: str
     size: int
     media_type: Optional[str] = None
+    topic_id: Optional[str] = None
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
     file_id: Optional[int] = None
@@ -178,6 +179,7 @@ class FileAttachment:
             "Path": self.path,
             "Category": self.category,
             "MediaType": self.media_type,
+            "TopicID": self.topic_id,
             "Size": self.size,
             "CreatedAt": self.created_at.isoformat(),
             "UpdatedAt": self.updated_at.isoformat(),

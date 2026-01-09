@@ -50,6 +50,7 @@ class CommandManager:
     CMD_LIST_IMAGES = "ListImages"
     CMD_RETRIEVE_FILE = "RetrieveFile"
     CMD_RETRIEVE_IMAGE = "RetrieveImage"
+    CMD_ASSOCIATE_TOPIC_ID = "AssociateTopicID"
     POSITIONAL_FIELDS: Dict[str, List[str]] = {
         CMD_CREATE_TOPIC: ["TopicName", "TopicPath"],
         CMD_RETRIEVE_TOPIC: ["TopicID"],
@@ -64,6 +65,7 @@ class CommandManager:
         CMD_PATCH_SUBSCRIBER: ["SubscriberID"],
         CMD_RETRIEVE_FILE: ["FileID"],
         CMD_RETRIEVE_IMAGE: ["FileID"],
+        CMD_ASSOCIATE_TOPIC_ID: ["TopicID"],
     }
 
     def __init__(
@@ -107,6 +109,7 @@ class CommandManager:
             self.CMD_LIST_IMAGES,
             self.CMD_RETRIEVE_FILE,
             self.CMD_RETRIEVE_IMAGE,
+            self.CMD_ASSOCIATE_TOPIC_ID,
         ]
 
     def _command_alias_map(self) -> Dict[str, str]:
@@ -406,6 +409,8 @@ class CommandManager:
                 return self._handle_retrieve_file(command, message)
             if name == self.CMD_RETRIEVE_IMAGE:
                 return self._handle_retrieve_image(command, message)
+            if name == self.CMD_ASSOCIATE_TOPIC_ID:
+                return self._handle_associate_topic_id(command, message)
             if name == self.CMD_CREATE_SUBSCRIBER:
                 return self._handle_create_subscriber(command, message)
             if name == self.CMD_ADD_SUBSCRIBER:
@@ -485,6 +490,17 @@ class CommandManager:
         images = self.api.list_images()
         lines = format_attachment_list(images, empty_text="No images stored yet.")
         return self._reply(message, "\n".join(lines))
+
+    def _handle_associate_topic_id(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        topic_id = self._extract_topic_id(command)
+        if not topic_id:
+            return self._prompt_for_fields(
+                self.CMD_ASSOCIATE_TOPIC_ID, ["TopicID"], message, command
+            )
+        payload = json.dumps({"TopicID": topic_id}, sort_keys=True)
+        return self._reply(message, f"Attachment TopicID set: {payload}")
 
     def _handle_create_topic(
         self, command: dict, message: LXMF.LXMessage

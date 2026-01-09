@@ -113,7 +113,12 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
     # File operations
     # ------------------------------------------------------------------ #
     def store_file(
-        self, file_path: str | Path, *, name: Optional[str] = None, media_type: str | None = None
+        self,
+        file_path: str | Path,
+        *,
+        name: Optional[str] = None,
+        media_type: str | None = None,
+        topic_id: Optional[str] = None,
     ) -> FileAttachment:
         """Persist metadata for a file stored on disk.
 
@@ -134,12 +139,18 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             file_path=file_path,
             name=name,
             media_type=media_type,
+            topic_id=topic_id,
             category=self._file_category,
             base_path=self._config_manager.config.file_storage_path,
         )
 
     def store_image(
-        self, image_path: str | Path, *, name: Optional[str] = None, media_type: str | None = None
+        self,
+        image_path: str | Path,
+        *,
+        name: Optional[str] = None,
+        media_type: str | None = None,
+        topic_id: Optional[str] = None,
     ) -> FileAttachment:
         """Persist metadata for an image stored on disk."""
 
@@ -147,6 +158,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             file_path=image_path,
             name=name,
             media_type=media_type,
+            topic_id=topic_id,
             category=self._image_category,
             base_path=self._config_manager.config.image_storage_path,
         )
@@ -460,6 +472,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         file_path: str | Path,
         name: Optional[str],
         media_type: str | None,
+        topic_id: Optional[str],
         category: str,
         base_path: Path,
     ) -> FileAttachment:
@@ -484,6 +497,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             category=category,
             size=stat_result.st_size,
             media_type=media_type,
+            topic_id=topic_id,
             created_at=timestamp,
             updated_at=timestamp,
         )
