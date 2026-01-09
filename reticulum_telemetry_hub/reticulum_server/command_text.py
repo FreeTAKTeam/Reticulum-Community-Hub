@@ -26,6 +26,8 @@ def build_help_text(command_manager: Any) -> str:
         "# Command list",
         "",
         "Use the `Command` field (`0`) to choose an action when building payloads.",
+        "Tip: tag file/image attachments with a `TopicID` (or send `AssociateTopicID`) "
+        "to link them to a topic.",
         "",
         "## Supported commands",
     ]
@@ -118,12 +120,20 @@ def command_reference(command_manager: Any) -> List[dict]:
         },
         {
             "title": command_manager.CMD_LIST_FILES,
-            "description": "List stored file attachments saved on the hub.",
+            "description": (
+                "List stored file attachments saved on the hub. Tagged attachments include "
+                "a TopicID in the listing (set it via `TopicID`, `topic_id`, `topic`, or "
+                "`Topic`, or send `AssociateTopicID`)."
+            ),
             "example": example(command_manager.CMD_LIST_FILES),
         },
         {
             "title": command_manager.CMD_LIST_IMAGES,
-            "description": "List stored image attachments saved on the hub.",
+            "description": (
+                "List stored image attachments saved on the hub. Tagged attachments include "
+                "a TopicID in the listing (set it via `TopicID`, `topic_id`, `topic`, or "
+                "`Topic`, or send `AssociateTopicID`)."
+            ),
             "example": example(command_manager.CMD_LIST_IMAGES),
         },
         {
@@ -158,8 +168,13 @@ def command_reference(command_manager: Any) -> List[dict]:
         },
         {
             "title": command_manager.CMD_ASSOCIATE_TOPIC_ID,
-            "description": "Associate uploaded attachments with a TopicID.",
-            "example": example(command_manager.CMD_ASSOCIATE_TOPIC_ID, TopicID="<TopicID>"),
+            "description": (
+                "Associate uploaded attachments with a TopicID. Accepted keys: `TopicID`, "
+                "`topic_id`, `topic`, or `Topic`."
+            ),
+            "example": example(
+                command_manager.CMD_ASSOCIATE_TOPIC_ID, TopicID="weather"
+            ),
         },
         {
             "title": command_manager.CMD_RETRIEVE_TOPIC,
