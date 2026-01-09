@@ -262,6 +262,7 @@ class OutboundMessageQueue:
                 ),
                 getattr(RNS, "LOG_WARNING", 2),
             )
+            self._propagate_failed_message(payload)
             return
 
         payload.next_attempt_at = (
@@ -269,3 +270,36 @@ class OutboundMessageQueue:
         )
         # Reason: requeue with backoff so slower destinations do not halt others.
         self._enqueue_payload(payload)
+
+    def _propagate_failed_message(self, payload: OutboundPayload) -> None:
+        if not getattr(self._lxm_router, "propagation_node", False):
+            return
+
+        try:
+            message = LXMF.LXMessage(
+                payload.connection,
+                self._sender,
+                payload.message_text,
+                desired_method=LXMF.LXMessage.DIRECT,
+            )
+            if payload.destination_hash:
+                message.destination_hash = payload.destination_hash
+            message.pack()
+            if not message.packed:
+                return
+            self._lxm_router.lxmf_propagation(message.packed)
+            RNS.log(
+                (
+                    "Stored failed outbound message for propagation to"
+                    f" {payload.destination_hex or 'unknown destination'}"
+                ),
+                getattr(RNS, "LOG_INFO", 4),
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            RNS.log(
+                (
+                    "Failed to store outbound message for propagation to"
+                    f" {payload.destination_hex or 'unknown destination'}: {exc}"
+                ),
+                getattr(RNS, "LOG_WARNING", 2),
+            )
