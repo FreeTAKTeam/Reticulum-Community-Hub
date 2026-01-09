@@ -79,6 +79,7 @@ class FileRecord(Base):  # pylint: disable=too-few-public-methods
     media_type = Column(String, nullable=True)
     category = Column(String, nullable=False)
     size = Column(Integer, nullable=False)
+    topic_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
@@ -104,6 +105,7 @@ class HubStorage:
         self._engine = self._create_engine(db_path)
         self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
+        self._ensure_file_topic_column()
         self._session_factory = sessionmaker(  # pylint: disable=invalid-name
             bind=self._engine, expire_on_commit=False
         )
@@ -356,6 +358,7 @@ class HubStorage:
                 media_type=attachment.media_type,
                 category=attachment.category,
                 size=attachment.size,
+                topic_id=attachment.topic_id,
                 created_at=attachment.created_at,
                 updated_at=attachment.updated_at,
             )
@@ -409,6 +412,21 @@ class HubStorage:
                 conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
         except OperationalError as exc:
             logging.warning("Failed to enable WAL mode: %s", exc)
+
+    def _ensure_file_topic_column(self) -> None:
+        """Ensure the file_records table includes the topic_id column."""
+        try:
+            with self._engine.connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as conn:
+                result = conn.execute(text("PRAGMA table_info(file_records);"))
+                column_names = {row[1] for row in result if row and len(row) > 1}
+                if "topic_id" not in column_names:
+                    conn.execute(
+                        text("ALTER TABLE file_records ADD COLUMN topic_id VARCHAR;")
+                    )
+        except OperationalError as exc:
+            logging.warning("Failed to ensure file_records.topic_id column: %s", exc)
 
     @contextmanager
     def _session_scope(self):
@@ -479,6 +497,7 @@ class HubStorage:
             media_type=record.media_type,
             category=record.category,
             size=record.size,
+            topic_id=record.topic_id,
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

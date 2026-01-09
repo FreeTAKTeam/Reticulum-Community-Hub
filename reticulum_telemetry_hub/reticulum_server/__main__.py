@@ -510,27 +510,33 @@ class ReticulumTelemetryHub:
             # Handle the commands
             command_replies: list[LXMF.LXMessage] = []
             if message.signature_validated:
-                attachment_replies = self._persist_attachments_from_fields(message)
+                commands: list[dict] | None = None
+                escape_error: str | None = None
                 if LXMF.FIELD_COMMANDS in message.fields:
                     command_payload_present = True
-                    command_replies = (
-                        self.command_handler(message.fields[LXMF.FIELD_COMMANDS], message)
-                        or []
-                    )
+                    commands = message.fields[LXMF.FIELD_COMMANDS]
                 else:
                     escape_commands, escape_detected, escape_error = (
                         self._parse_escape_prefixed_commands(message)
                     )
                     if escape_detected:
                         command_payload_present = True
-                    if escape_error:
-                        error_reply = self._reply_message(
-                            message, f"Command error: {escape_error}"
-                        )
-                        if error_reply is not None:
-                            attachment_replies.append(error_reply)
                     if escape_commands:
-                        command_replies = self.command_handler(escape_commands, message) or []
+                        commands = escape_commands
+
+                topic_id = self._extract_attachment_topic_id(commands)
+                attachment_replies = self._persist_attachments_from_fields(
+                    message, topic_id=topic_id
+                )
+                if escape_error:
+                    error_reply = self._reply_message(
+                        message, f"Command error: {escape_error}"
+                    )
+                    if error_reply is not None:
+                        attachment_replies.append(error_reply)
+
+                if commands:
+                    command_replies = self.command_handler(commands, message) or []
 
             responses = attachment_replies + command_replies
             text_only_replies: list[LXMF.LXMessage] = []
@@ -989,7 +995,7 @@ class ReticulumTelemetryHub:
             )
 
     def _persist_attachments_from_fields(
-        self, message: LXMF.LXMessage
+        self, message: LXMF.LXMessage, *, topic_id: str | None = None
     ) -> list[LXMF.LXMessage]:
         """
         Persist file and image attachments from LXMF fields.
@@ -1008,11 +1014,13 @@ class ReticulumTelemetryHub:
             message.fields.get(LXMF.FIELD_FILE_ATTACHMENTS),
             category="file",
             default_prefix="file",
+            topic_id=topic_id,
         )
         stored_images, image_errors = self._store_attachment_payloads(
             message.fields.get(LXMF.FIELD_IMAGE),
             category="image",
             default_prefix="image",
+            topic_id=topic_id,
         )
         attachment_errors = file_errors + image_errors
         acknowledgements: list[LXMF.LXMessage] = []
@@ -1037,7 +1045,7 @@ class ReticulumTelemetryHub:
         return acknowledgements
 
     def _store_attachment_payloads(
-        self, payload, *, category: str, default_prefix: str
+        self, payload, *, category: str, default_prefix: str, topic_id: str | None = None
     ) -> tuple[list, list[str]]:
         """
         Normalize and store incoming attachments.
@@ -1073,6 +1081,7 @@ class ReticulumTelemetryHub:
                 media_type=entry.get("media_type"),
                 category=category,
                 base_path=base_path,
+                topic_id=topic_id,
             )
             if stored_entry is not None:
                 stored.append(stored_entry)
@@ -1344,6 +1353,7 @@ class ReticulumTelemetryHub:
         media_type: str | None,
         category: str,
         base_path: Path,
+        topic_id: str | None,
     ):
         """
         Write an attachment to disk and record it via the API.
@@ -1368,10 +1378,16 @@ class ReticulumTelemetryHub:
             target_path.write_bytes(data)
             if category == "image":
                 return api.store_image(
-                    target_path, name=target_path.name, media_type=media_type
+                    target_path,
+                    name=target_path.name,
+                    media_type=media_type,
+                    topic_id=topic_id,
                 )
             return api.store_file(
-                target_path, name=target_path.name, media_type=media_type
+                target_path,
+                name=target_path.name,
+                media_type=media_type,
+                topic_id=topic_id,
             )
         except Exception as exc:  # pragma: no cover - defensive log
             RNS.log(
@@ -1379,6 +1395,30 @@ class ReticulumTelemetryHub:
                 getattr(RNS, "LOG_WARNING", 2),
             )
             return None
+
+    def _extract_attachment_topic_id(self, commands: list[dict] | None) -> str | None:
+        """Return the TopicID from an AssociateTopicID command if provided."""
+
+        if not commands:
+            return None
+        command_manager = getattr(self, "command_manager", None)
+        normalizer = (
+            getattr(command_manager, "_normalize_command_name", None)
+            if command_manager is not None
+            else None
+        )
+        for command in commands:
+            if not isinstance(command, dict):
+                continue
+            name = command.get(PLUGIN_COMMAND) or command.get("Command")
+            if not name:
+                continue
+            normalized = normalizer(name) if callable(normalizer) else name
+            if normalized == CommandManager.CMD_ASSOCIATE_TOPIC_ID:
+                topic_id = CommandManager._extract_topic_id(command)
+                if topic_id:
+                    return str(topic_id)
+        return None
 
     @staticmethod
     def _unique_path(base_path: Path, name: str) -> Path:
