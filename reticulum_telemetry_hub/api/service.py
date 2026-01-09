@@ -489,11 +489,19 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         if not resolved_name:
             raise ValueError("name is required")
         base_path.mkdir(parents=True, exist_ok=True)
-        stat_result = path_obj.stat()
+        resolved_base_path = base_path.resolve()
+        resolved_path = path_obj.resolve()
+        try:
+            resolved_path.relative_to(resolved_base_path)
+        except ValueError as exc:
+            raise ValueError(
+                f"File '{file_path}' must be stored within '{resolved_base_path}'"
+            ) from exc
+        stat_result = resolved_path.stat()
         timestamp = datetime.now(timezone.utc)
         attachment = FileAttachment(
             name=resolved_name,
-            path=str(path_obj),
+            path=str(resolved_path),
             category=category,
             size=stat_result.st_size,
             media_type=media_type,
