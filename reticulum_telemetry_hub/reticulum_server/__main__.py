@@ -63,6 +63,7 @@ from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
     OutboundMessageQueue,
 )
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from .command_manager import CommandManager
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
@@ -294,7 +295,11 @@ class ReticulumTelemetryHub:
             RNS.loglevel = self.loglevel
 
         telemetry_db_path = self.storage_path / "telemetry.db"
-        self.tel_controller = TelemetryController(db_path=telemetry_db_path)
+        self.event_log = EventLog()
+        self.tel_controller = TelemetryController(
+            db_path=telemetry_db_path,
+            event_log=self.event_log,
+        )
         self.config_manager: HubConfigurationManager | None = config_manager
         self.embedded_lxmd: EmbeddedLxmd | None = None
         self.telemetry_sampler: TelemetrySampler | None = None
@@ -344,6 +349,7 @@ class ReticulumTelemetryHub:
             self.embedded_lxmd.start()
 
         self.api = ReticulumTelemetryHubAPI(config_manager=self.config_manager)
+        self.tel_controller.set_api(self.api)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
         tak_config_manager = self.config_manager
         self.tak_connector = TakConnector(
@@ -368,6 +374,8 @@ class ReticulumTelemetryHub:
             self.tel_controller,
             self.my_lxmf_dest,
             self.api,
+            config_manager=self.config_manager,
+            event_log=self.event_log,
         )
         self.topic_subscribers: dict[str, set[str]] = {}
         self._topic_registry_last_refresh: float = 0.0

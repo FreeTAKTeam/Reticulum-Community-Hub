@@ -73,7 +73,10 @@ def _telemetry_request_example() -> str:
     """Return an example telemetry request payload."""
 
     return json.dumps(
-        {str(TelemetryController.TELEMETRY_REQUEST): "<unix timestamp>"},
+        {
+            str(TelemetryController.TELEMETRY_REQUEST): "<unix timestamp>",
+            "TopicID": "<TopicID>",
+        },
         sort_keys=True,
     )
 
@@ -227,6 +230,75 @@ def command_reference(command_manager: Any) -> List[dict]:
                 SubscriberID="<SubscriberID>",
                 Metadata={"tag": "updated"},
             ),
+        },
+        {
+            "title": command_manager.CMD_STATUS,
+            "description": "Return dashboard metrics and telemetry counts.",
+            "example": example(command_manager.CMD_STATUS),
+        },
+        {
+            "title": command_manager.CMD_LIST_EVENTS,
+            "description": "Return recent hub events for dashboards.",
+            "example": example(command_manager.CMD_LIST_EVENTS),
+        },
+        {
+            "title": command_manager.CMD_BAN_IDENTITY,
+            "description": "Ban an identity from the hub.",
+            "example": example(command_manager.CMD_BAN_IDENTITY, Identity="<IdentityHash>"),
+        },
+        {
+            "title": command_manager.CMD_UNBAN_IDENTITY,
+            "description": "Remove bans/blackholes for an identity.",
+            "example": example(command_manager.CMD_UNBAN_IDENTITY, Identity="<IdentityHash>"),
+        },
+        {
+            "title": command_manager.CMD_BLACKHOLE_IDENTITY,
+            "description": "Blackhole an identity for routing suppression.",
+            "example": example(
+                command_manager.CMD_BLACKHOLE_IDENTITY, Identity="<IdentityHash>"
+            ),
+        },
+        {
+            "title": command_manager.CMD_LIST_IDENTITIES,
+            "description": "List identity moderation status entries.",
+            "example": example(command_manager.CMD_LIST_IDENTITIES),
+        },
+        {
+            "title": command_manager.CMD_GET_CONFIG,
+            "description": "Fetch the raw config.ini content.",
+            "example": example(command_manager.CMD_GET_CONFIG),
+        },
+        {
+            "title": command_manager.CMD_VALIDATE_CONFIG,
+            "description": "Validate config.ini payloads without applying.",
+            "example": example(
+                command_manager.CMD_VALIDATE_CONFIG, ConfigText="<ini content>"
+            ),
+        },
+        {
+            "title": command_manager.CMD_APPLY_CONFIG,
+            "description": "Apply a new config.ini payload.",
+            "example": example(command_manager.CMD_APPLY_CONFIG, ConfigText="<ini content>"),
+        },
+        {
+            "title": command_manager.CMD_ROLLBACK_CONFIG,
+            "description": "Rollback configuration to the latest backup.",
+            "example": example(command_manager.CMD_ROLLBACK_CONFIG),
+        },
+        {
+            "title": command_manager.CMD_FLUSH_TELEMETRY,
+            "description": "Delete all stored telemetry snapshots.",
+            "example": example(command_manager.CMD_FLUSH_TELEMETRY),
+        },
+        {
+            "title": command_manager.CMD_RELOAD_CONFIG,
+            "description": "Reload config.ini from disk.",
+            "example": example(command_manager.CMD_RELOAD_CONFIG),
+        },
+        {
+            "title": command_manager.CMD_DUMP_ROUTING,
+            "description": "Return connected destinations.",
+            "example": example(command_manager.CMD_DUMP_ROUTING),
         },
     ]
 

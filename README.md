@@ -21,9 +21,24 @@ The Reticulum-Telemetry-Hub can perform the following key functions:
 ## Documentation
 
 - Command payload formats and examples: [`docs/supportedCommands.md`](docs/supportedCommands.md)
+- REST/OpenAPI reference (REST maps to LXMF commands): [`API/ReticulumTelemetryHub-OAS.yaml`](API/ReticulumTelemetryHub-OAS.yaml)
 - [User Manual](/docs/userManual.md)
 - TAK / Cursor-on-Target integration: [`docs/tak.md`](docs/tak.md)
 - File and image workflows: see the "Exchanging attachments over LXMF" section below.
+
+## Admin UI API
+
+The admin UI uses REST + WebSocket endpoints. Every REST endpoint maps to an
+LXMF command, and all LXMF commands are exposed over REST. Commands are split
+into **Public** (end users) and **Protected** (admin UI).
+
+See the OpenAPI document in `API/ReticulumTelemetryHub-OAS.yaml` for the
+complete REST surface, including:
+
+- `GET /Status`, `GET /Events`
+- `GET /Telemetry?since=<unix>&topic_id=<TopicID>`
+- `GET /Config`, `PUT /Config`, `POST /Config/Validate`, `POST /Config/Rollback`
+- `GET /Identities`, `POST /Client/{id}/Ban`, `POST /Client/{id}/Unban`, `POST /Client/{id}/Blackhole`
 
 ## Quickstart
 
@@ -286,7 +301,10 @@ Any message sent to the hub that includes a `TopicID` (in the LXMF fields or a c
 
 ### Telemetry requests
 
-Send `TelemetryRequest` (numeric key `1`) to fetch recent telemetry snapshots. The hub replies with:
+Send `TelemetryRequest` (numeric key `1`) to fetch recent telemetry snapshots.
+You may include `TopicID` to scope results; the hub will only return telemetry
+for peers subscribed to that topic and will deny requests from non-subscribers.
+The hub replies with:
 
 - A `FIELD_TELEMETRY_STREAM` field containing msgpack-encoded snapshots (Sideband-compatible).
 - A message body containing JSON with a human-readable `telemetry` array (peer hash, timestamp, decoded sensors).

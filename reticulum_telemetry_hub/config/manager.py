@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from configparser import ConfigParser
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Mapping, Optional
 
 from dotenv import load_dotenv as load_env
@@ -115,6 +116,66 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
     def reticulum_info_snapshot(self) -> dict:
         """Return a summary of Reticulum runtime configuration."""
         return self._config.to_reticulum_info_dict()
+
+    def get_config_text(self) -> str:
+        """Return the raw config.ini content when present."""
+
+        if not self.config_path.exists():
+            return ""
+        return self.config_path.read_text(encoding="utf-8")
+
+    def validate_config_text(self, config_text: str) -> dict:
+        """Validate a config.ini payload without applying it.
+
+        Args:
+            config_text (str): Raw ini contents to validate.
+
+        Returns:
+            dict: Validation result with ``valid`` and ``errors`` keys.
+        """
+
+        parser = ConfigParser()
+        errors: list[str] = []
+        try:
+            parser.read_string(config_text)
+        except Exception as exc:  # pragma: no cover - defensive parsing
+            errors.append(str(exc))
+        return {"valid": not errors, "errors": errors}
+
+    def apply_config_text(self, config_text: str) -> dict:
+        """Persist the provided config.ini content and keep a backup.
+
+        Args:
+            config_text (str): Raw ini content to persist.
+
+        Returns:
+            dict: Details about the persisted backup and target path.
+        """
+
+        backup_path = self._backup_config()
+        self.config_path.write_text(config_text, encoding="utf-8")
+        return {
+            "applied": True,
+            "config_path": str(self.config_path),
+            "backup_path": str(backup_path) if backup_path else None,
+        }
+
+    def rollback_config_text(self, backup_path: str | None = None) -> dict:
+        """Restore the config.ini file from a backup.
+
+        Args:
+            backup_path (str | None): Optional backup path override.
+
+        Returns:
+            dict: Details about the restored backup.
+        """
+
+        target_backup = Path(backup_path) if backup_path else self._latest_backup()
+        if target_backup is None or not target_backup.exists():
+            return {"rolled_back": False, "error": "No backup available"}
+        content = target_backup.read_text(encoding="utf-8")
+        self.config_path.write_text(content, encoding="utf-8")
+        return {"rolled_back": True, "backup_path": str(target_backup)}
 
     # ------------------------------------------------------------------ #
     # private helpers
@@ -425,3 +486,22 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             tak_proto=tak_proto,
             fts_compat=fts_compat,
         )
+
+    def _backup_config(self) -> Path | None:
+        """Create a timestamped backup of config.ini when it exists."""
+
+        if not self.config_path.exists():
+            return None
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        backup_path = self.config_path.with_suffix(f".ini.bak.{timestamp}")
+        content = self.config_path.read_text(encoding="utf-8")
+        backup_path.write_text(content, encoding="utf-8")
+        return backup_path
+
+    def _latest_backup(self) -> Path | None:
+        """Return the most recent config.ini backup file."""
+
+        backups = sorted(self.config_path.parent.glob("config.ini.bak.*"))
+        if not backups:
+            return None
+        return backups[-1]

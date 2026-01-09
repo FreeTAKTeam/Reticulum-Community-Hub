@@ -1,4 +1,7 @@
 ﻿# TASKS
+- 2026-01-09: âœ… Fix config backup timestamp timezone usage.
+- 2026-01-09: âœ… Add protected/public commands, REST docs, telemetry topic filtering, and config management.
+- 2026-01-09: âœ… Align UI design doc with current command/API surface.
 - 2025-02-14: âœ… Make messaging more robust by limiting telemetry broadcasts, suppressing echo replies, and listing commands for bad requests.
 - 2025-11-19: âœ… Preserve `RejectTests=0` values when subscribing or patching subscribers.
 - 2025-11-19: âœ… Decode announce metadata using LXMF helper and ensure identity labels follow msgpack names.

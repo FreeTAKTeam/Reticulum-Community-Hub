@@ -13,6 +13,7 @@ from reticulum_telemetry_hub.config import HubConfigurationManager
 
 from .models import Client
 from .models import FileAttachment
+from .models import IdentityStatus
 from .models import ReticulumInfo
 from .models import Subscriber
 from .models import Topic
@@ -366,6 +367,41 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """
         return self._storage.list_subscribers()
 
+    def list_subscribers_for_topic(self, topic_id: str) -> List[Subscriber]:
+        """Return subscribers for a specific topic.
+
+        Args:
+            topic_id (str): Topic identifier to filter by.
+
+        Returns:
+            List[Subscriber]: Subscribers attached to the topic.
+
+        Raises:
+            KeyError: If the topic does not exist.
+        """
+        self.retrieve_topic(topic_id)
+        return [
+            subscriber
+            for subscriber in self._storage.list_subscribers()
+            if subscriber.topic_id == topic_id
+        ]
+
+    def list_topics_for_destination(self, destination: str) -> List[Topic]:
+        """Return topics a destination is subscribed to.
+
+        Args:
+            destination (str): Destination identity hash to query.
+
+        Returns:
+            List[Topic]: Topics matching the destination's subscriptions.
+        """
+        topic_ids = {
+            subscriber.topic_id
+            for subscriber in self._storage.list_subscribers()
+            if subscriber.destination == destination and subscriber.topic_id
+        }
+        return [topic for topic in self.list_topics() if topic.topic_id in topic_ids]
+
     def retrieve_subscriber(self, subscriber_id: str) -> Subscriber:
         """Fetch a subscriber by identifier.
 
@@ -465,6 +501,117 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """
         info_dict = self._config_manager.reticulum_info_snapshot()
         return ReticulumInfo(**info_dict)
+
+    def get_config_text(self) -> str:
+        """Return the raw hub configuration file content."""
+
+        return self._config_manager.get_config_text()
+
+    def validate_config_text(self, config_text: str) -> dict:
+        """Validate the provided configuration payload."""
+
+        return self._config_manager.validate_config_text(config_text)
+
+    def apply_config_text(self, config_text: str) -> dict:
+        """Persist a new configuration payload and reload."""
+
+        result = self._config_manager.apply_config_text(config_text)
+        self._config_manager.reload()
+        return result
+
+    def rollback_config_text(self, backup_path: str | None = None) -> dict:
+        """Rollback configuration from the latest backup."""
+
+        result = self._config_manager.rollback_config_text(backup_path=backup_path)
+        self._config_manager.reload()
+        return result
+
+    def reload_config(self) -> ReticulumInfo:
+        """Reload the configuration from disk."""
+
+        config = self._config_manager.reload()
+        return ReticulumInfo(**config.to_reticulum_info_dict())
+
+    def list_identity_statuses(self) -> List[IdentityStatus]:
+        """Return identity statuses merged with client data."""
+
+        clients = {client.identity: client for client in self._storage.list_clients()}
+        states = {
+            state.identity: state for state in self._storage.list_identity_states()
+        }
+        identities = sorted(set(clients.keys()) | set(states.keys()))
+        statuses: List[IdentityStatus] = []
+        for identity in identities:
+            client = clients.get(identity)
+            state = states.get(identity)
+            is_banned = bool(state.is_banned) if state else False
+            is_blackholed = bool(state.is_blackholed) if state else False
+            status = "active"
+            if is_blackholed:
+                status = "blackholed"
+            elif is_banned:
+                status = "banned"
+            statuses.append(
+                IdentityStatus(
+                    identity=identity,
+                    status=status,
+                    last_seen=client.last_seen if client else None,
+                    metadata=client.metadata if client else {},
+                    is_banned=is_banned,
+                    is_blackholed=is_blackholed,
+                )
+            )
+        return statuses
+
+    def ban_identity(self, identity: str) -> IdentityStatus:
+        """Mark an identity as banned."""
+
+        if not identity:
+            raise ValueError("identity is required")
+        state = self._storage.upsert_identity_state(identity, is_banned=True)
+        client = self._storage.get_client(identity)
+        return IdentityStatus(
+            identity=identity,
+            status="banned",
+            last_seen=client.last_seen if client else None,
+            metadata=client.metadata if client else {},
+            is_banned=state.is_banned,
+            is_blackholed=state.is_blackholed,
+        )
+
+    def unban_identity(self, identity: str) -> IdentityStatus:
+        """Clear ban/blackhole flags for an identity."""
+
+        if not identity:
+            raise ValueError("identity is required")
+        state = self._storage.upsert_identity_state(
+            identity, is_banned=False, is_blackholed=False
+        )
+        client = self._storage.get_client(identity)
+        return IdentityStatus(
+            identity=identity,
+            status="active",
+            last_seen=client.last_seen if client else None,
+            metadata=client.metadata if client else {},
+            is_banned=state.is_banned,
+            is_blackholed=state.is_blackholed,
+        )
+
+    def blackhole_identity(self, identity: str) -> IdentityStatus:
+        """Mark an identity as blackholed."""
+
+        if not identity:
+            raise ValueError("identity is required")
+        state = self._storage.upsert_identity_state(identity, is_blackholed=True)
+        client = self._storage.get_client(identity)
+        return IdentityStatus(
+            identity=identity,
+            status="blackholed",
+            last_seen=client.last_seen if client else None,
+            metadata=client.metadata if client else {},
+            is_banned=state.is_banned,
+            is_blackholed=state.is_blackholed,
+        )
 
     def _store_attachment(  # pylint: disable=too-many-arguments
         self,

@@ -11,9 +11,252 @@ info:
   license:
     name: EPL
 paths:
+  /Help:
+    get:
+      x-scope: public
+      x-lxmf-command: Help
+      tags:
+       - Command
+      summary: Return the list of supported commands.
+      responses:
+        '200':
+          description: Markdown formatted command list.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /Examples:
+    get:
+      x-scope: public
+      x-lxmf-command: Examples
+      tags:
+       - Command
+      summary: Return command descriptions and JSON payload examples.
+      responses:
+        '200':
+          description: Markdown formatted command examples.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /Status:
+    get:
+      x-scope: protected
+      x-lxmf-command: GetStatus
+      tags:
+       - Status
+      summary: Return dashboard status metrics.
+      responses:
+        '200':
+          description: Status snapshot for admin dashboards.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /Events:
+    get:
+      x-scope: protected
+      x-lxmf-command: ListEvents
+      tags:
+       - Status
+      summary: Return recent hub events.
+      responses:
+        '200':
+          description: Recent event entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Event'
+  /Telemetry:
+    get:
+      x-scope: public
+      x-lxmf-command: TelemetryRequest
+      tags:
+       - Telemetry
+      summary: Retrieve telemetry snapshots since a timestamp.
+      parameters:
+        - $ref: '#/components/parameters/telemetrySince'
+        - $ref: '#/components/parameters/topicId'
+      responses:
+        '200':
+          description: Telemetry stream entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelemetryResponse'
+  /Config:
+    get:
+      x-scope: protected
+      x-lxmf-command: GetConfig
+      tags:
+       - Config
+      summary: Return the raw config.ini content.
+      responses:
+        '200':
+          description: Config content.
+          content:
+            text/plain:
+              schema:
+                type: string
+    put:
+      x-scope: protected
+      x-lxmf-command: ApplyConfig
+      tags:
+       - Config
+      summary: Apply a new config.ini payload.
+      requestBody:
+        $ref: '#/components/requestBodies/ConfigPayload'
+      responses:
+        '200':
+          description: Apply result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigApplyResult'
+  /Config/Validate:
+    post:
+      x-scope: protected
+      x-lxmf-command: ValidateConfig
+      tags:
+       - Config
+      summary: Validate a config.ini payload without applying.
+      requestBody:
+        $ref: '#/components/requestBodies/ConfigPayload'
+      responses:
+        '200':
+          description: Validation result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigValidation'
+  /Config/Rollback:
+    post:
+      x-scope: protected
+      x-lxmf-command: RollbackConfig
+      tags:
+       - Config
+      summary: Roll back config.ini using a backup.
+      requestBody:
+        $ref: '#/components/requestBodies/ConfigRollback'
+      responses:
+        '200':
+          description: Rollback result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigRollbackResult'
+  /Command/FlushTelemetry:
+    post:
+      x-scope: protected
+      x-lxmf-command: FlushTelemetry
+      tags:
+       - Command
+      summary: Delete stored telemetry snapshots.
+      responses:
+        '200':
+          description: Deletion result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlushTelemetryResult'
+  /Command/ReloadConfig:
+    post:
+      x-scope: protected
+      x-lxmf-command: ReloadConfig
+      tags:
+       - Command
+      summary: Reload config.ini from disk.
+      responses:
+        '200':
+          description: Reloaded configuration snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReticulumInfo'
+  /Command/DumpRouting:
+    get:
+      x-scope: protected
+      x-lxmf-command: DumpRouting
+      tags:
+       - Command
+      summary: Return connected destination hashes.
+      responses:
+        '200':
+          description: Routing summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutingSummary'
+  /Identities:
+    get:
+      x-scope: protected
+      x-lxmf-command: ListIdentities
+      tags:
+       - Identity
+      summary: List identity moderation status entries.
+      responses:
+        '200':
+          description: Identity statuses.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IdentityStatus'
+  /Client/{id}/Ban:
+    post:
+      x-scope: protected
+      x-lxmf-command: BanIdentity
+      tags:
+       - Identity
+      summary: Ban an identity.
+      parameters:
+        - $ref: '#/components/parameters/identityPath'
+      responses:
+        '200':
+          description: Updated identity status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityStatus'
+  /Client/{id}/Unban:
+    post:
+      x-scope: protected
+      x-lxmf-command: UnbanIdentity
+      tags:
+       - Identity
+      summary: Remove ban/blackhole for an identity.
+      parameters:
+        - $ref: '#/components/parameters/identityPath'
+      responses:
+        '200':
+          description: Updated identity status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityStatus'
+  /Client/{id}/Blackhole:
+    post:
+      x-scope: protected
+      x-lxmf-command: BlackholeIdentity
+      tags:
+       - Identity
+      summary: Blackhole an identity.
+      parameters:
+        - $ref: '#/components/parameters/identityPath'
+      responses:
+        '200':
+          description: Updated identity status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityStatus'
   /RTH:
     post:
       x-scope: public
+      x-lxmf-command: join
       tags:
        - RTH
       description: >-
@@ -30,6 +273,7 @@ paths:
                 type: boolean
     put:
       x-scope: public
+      x-lxmf-command: leave
       tags:
        - RTH
       description: >-
@@ -44,6 +288,7 @@ paths:
   /Topic/{id}:
     get:
       x-scope: public
+      x-lxmf-command: RetrieveTopic
       tags:
        - Topic
       description: >-
@@ -56,7 +301,8 @@ paths:
           $ref: '#/components/responses/200Topic_get'
   /Client:
     get:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: ListClients
       tags:
        - Client
       description: >-
@@ -68,6 +314,7 @@ paths:
   /api/v1/app/info:
     get:
       x-scope: public
+      x-lxmf-command: getAppInfo
       tags:
        - Reticulum
       description: >-
@@ -83,6 +330,7 @@ paths:
   /File:
     get:
       x-scope: public
+      x-lxmf-command: ListFiles
       tags:
        - File
       summary: List stored file attachments.
@@ -99,6 +347,7 @@ paths:
   /File/{id}:
     get:
       x-scope: public
+      x-lxmf-command: RetrieveFile
       tags:
        - File
       summary: Retrieve a stored file by its ID.
@@ -115,6 +364,7 @@ paths:
   /Image:
     get:
       x-scope: public
+      x-lxmf-command: ListImages
       tags:
        - Image
       summary: List stored images.
@@ -131,6 +381,7 @@ paths:
   /Image/{id}:
     get:
       x-scope: public
+      x-lxmf-command: RetrieveImage
       tags:
        - Image
       summary: Retrieve a stored image by its ID.
@@ -146,7 +397,8 @@ paths:
                 $ref: '#/components/schemas/FileAttachment'
   /Topic:
     post:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: CreateTopic
       tags:
        - Topic
       description: >-
@@ -158,7 +410,8 @@ paths:
         '200':
           $ref: '#/components/responses/200Topic_post'
     delete:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: DeleteTopic
       tags:
        - Topic
       description: >-
@@ -171,6 +424,7 @@ paths:
           $ref: '#/components/responses/200Topic_delete'
     get:
       x-scope: public
+      x-lxmf-command: ListTopic
       tags:
        - Topic
       description: >-
@@ -180,7 +434,8 @@ paths:
         '200':
           $ref: '#/components/responses/200Topic_get'
     patch:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: PatchTopic
       tags:
        - Topic
       description: >-
@@ -194,6 +449,7 @@ paths:
   /Topic//Subscribe:
     post:
       x-scope: public
+      x-lxmf-command: SubscribeTopic
       tags:
        - SubscribeTopic
       description: >-
@@ -206,9 +462,26 @@ paths:
             text/plain:
               schema:         
                 $ref: '#/components/schemas/Subscriber'
+  /Topic/Associate:
+    post:
+      x-scope: protected
+      x-lxmf-command: AssociateTopicID
+      tags:
+       - Topic
+      summary: Associate an attachment upload with a TopicID.
+      requestBody:
+        $ref: '#/components/requestBodies/Topic'
+      responses:
+        '200':
+          description: Association acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Topic'
   /Subscriber/{id}:
     get:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: RetreiveSubscriber
       tags:
        - Subscriber
       description: >-
@@ -221,7 +494,8 @@ paths:
           $ref: '#/components/responses/200Subscriber_get'
   /Subscriber/Add:
     post:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: AddSubscriber
       tags:
        - Subscriber
       description: >-
@@ -235,7 +509,8 @@ paths:
                 $ref: '#/components/schemas/Subscriber'
   /Subscriber:
     post:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: CreateSubscriber
       tags:
        - Subscriber
       description: >-
@@ -247,7 +522,8 @@ paths:
         '200':
           $ref: '#/components/responses/200Subscriber_post'
     delete:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: DeleteSubscriber
       tags:
        - Subscriber
       description: >-
@@ -259,7 +535,8 @@ paths:
         '200':
           $ref: '#/components/responses/200Subscriber_delete'
     get:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: ListSubscriber
       tags:
        - Subscriber
       description: >-
@@ -269,7 +546,8 @@ paths:
         '200':
           $ref: '#/components/responses/200Subscriber_get'
     patch:
-      x-scope: public
+      x-scope: protected
+      x-lxmf-command: PatchSubscriber
       tags:
        - Subscriber
       description: >-
@@ -390,6 +668,121 @@ components:
         app_description:
           type: string
           description: Human readable description for the Telemetry Hub.
+    Status:
+      type: object
+      description: Dashboard status snapshot.
+      properties:
+        uptime_seconds:
+          type: integer
+        clients:
+          type: integer
+        topics:
+          type: integer
+        subscribers:
+          type: integer
+        files:
+          type: integer
+        images:
+          type: integer
+        telemetry:
+          $ref: '#/components/schemas/TelemetryStats'
+    TelemetryStats:
+      type: object
+      description: Telemetry ingestion counters.
+      properties:
+        ingest_count:
+          type: integer
+        last_ingest_at:
+          type: string
+          nullable: true
+    Event:
+      type: object
+      description: Recent event entry.
+      properties:
+        timestamp:
+          type: string
+        type:
+          type: string
+        message:
+          type: string
+        metadata:
+          type: object
+    TelemetryResponse:
+      type: object
+      description: Telemetry stream response payload.
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/TelemetryEntry'
+    TelemetryEntry:
+      type: object
+      properties:
+        peer_destination:
+          type: string
+        timestamp:
+          type: integer
+        telemetry:
+          type: object
+    IdentityStatus:
+      type: object
+      description: Identity moderation status.
+      properties:
+        Identity:
+          type: string
+        Status:
+          type: string
+        LastSeen:
+          type: string
+          nullable: true
+        Metadata:
+          type: object
+        IsBanned:
+          type: boolean
+        IsBlackholed:
+          type: boolean
+    ConfigValidation:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+    ConfigApplyResult:
+      type: object
+      properties:
+        applied:
+          type: boolean
+        config_path:
+          type: string
+        backup_path:
+          type: string
+          nullable: true
+    ConfigRollbackResult:
+      type: object
+      properties:
+        rolled_back:
+          type: boolean
+        backup_path:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+    FlushTelemetryResult:
+      type: object
+      properties:
+        deleted:
+          type: integer
+    RoutingSummary:
+      type: object
+      properties:
+        destinations:
+          type: array
+          items:
+            type: string
   parameters:
     identity:
       name: identity
@@ -421,6 +814,27 @@ components:
       description: Numeric identifier for a stored file or image.
       schema:
         type: integer
+      in: path
+    telemetrySince:
+      name: since
+      required: true
+      description: Unix timestamp (seconds) to start telemetry snapshots from.
+      schema:
+        type: integer
+      in: query
+    topicId:
+      name: topic_id
+      required: false
+      description: Optional topic identifier to scope telemetry results.
+      schema:
+        type: string
+      in: query
+    identityPath:
+      name: id
+      required: true
+      description: Identity hash to modify.
+      schema:
+        type: string
       in: path
   responses:
     200Topic_get:
@@ -561,5 +975,22 @@ components:
           schema:
             $ref: '#/components/schemas/Topic'
       required: true
+    ConfigPayload:
+      description: Raw config.ini payload.
+      content:
+        text/plain:
+          schema:
+            type: string
+      required: true
+    ConfigRollback:
+      description: Optional rollback payload specifying a backup path.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              backup_path:
+                type: string
+      required: false
 x-uml-relationships:
   

@@ -174,6 +174,35 @@ def test_get_app_info(tmp_path):
     assert info.app_description == "Test hub instance"
 
 
+def test_config_apply_and_rollback(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    new_config = "[app]\nname = UpdatedHub\n"
+    apply_result = api.apply_config_text(new_config)
+    assert apply_result["applied"]
+
+    current = api.get_config_text()
+    assert "UpdatedHub" in current
+
+    rollback_result = api.rollback_config_text()
+    assert rollback_result["rolled_back"]
+
+
+def test_identity_status_crud(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.join("identity-1")
+    banned = api.ban_identity("identity-1")
+    assert banned.is_banned
+
+    blackholed = api.blackhole_identity("identity-2")
+    assert blackholed.is_blackholed
+
+    statuses = api.list_identity_statuses()
+    identity_map = {status.identity: status for status in statuses}
+    assert identity_map["identity-1"].status == "banned"
+    assert identity_map["identity-2"].status == "blackholed"
+
+
 def test_persistence_between_instances(tmp_path):
     cfg = make_config_manager(tmp_path)
     api1 = ReticulumTelemetryHubAPI(config_manager=cfg)

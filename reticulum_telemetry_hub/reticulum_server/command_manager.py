@@ -5,11 +5,14 @@ from typing import Any, Dict, List, Optional
 import json
 from pathlib import Path
 import re
+import time
 import RNS
 import LXMF
 
 from reticulum_telemetry_hub.api.models import Client, FileAttachment, Subscriber, Topic
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.config.manager import HubConfigurationManager
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 
 from .constants import PLUGIN_COMMAND
 from .command_text import (
@@ -51,6 +54,19 @@ class CommandManager:
     CMD_RETRIEVE_FILE = "RetrieveFile"
     CMD_RETRIEVE_IMAGE = "RetrieveImage"
     CMD_ASSOCIATE_TOPIC_ID = "AssociateTopicID"
+    CMD_STATUS = "GetStatus"
+    CMD_LIST_EVENTS = "ListEvents"
+    CMD_BAN_IDENTITY = "BanIdentity"
+    CMD_UNBAN_IDENTITY = "UnbanIdentity"
+    CMD_BLACKHOLE_IDENTITY = "BlackholeIdentity"
+    CMD_LIST_IDENTITIES = "ListIdentities"
+    CMD_GET_CONFIG = "GetConfig"
+    CMD_VALIDATE_CONFIG = "ValidateConfig"
+    CMD_APPLY_CONFIG = "ApplyConfig"
+    CMD_ROLLBACK_CONFIG = "RollbackConfig"
+    CMD_FLUSH_TELEMETRY = "FlushTelemetry"
+    CMD_RELOAD_CONFIG = "ReloadConfig"
+    CMD_DUMP_ROUTING = "DumpRouting"
     POSITIONAL_FIELDS: Dict[str, List[str]] = {
         CMD_CREATE_TOPIC: ["TopicName", "TopicPath"],
         CMD_RETRIEVE_TOPIC: ["TopicID"],
@@ -74,13 +90,19 @@ class CommandManager:
         tel_controller: TelemetryController,
         my_lxmf_dest: RNS.Destination,
         api: ReticulumTelemetryHubAPI,
+        *,
+        config_manager: HubConfigurationManager | None = None,
+        event_log: EventLog | None = None,
     ):
         self.connections = connections
         self.tel_controller = tel_controller
         self.my_lxmf_dest = my_lxmf_dest
         self.api = api
+        self.config_manager = config_manager
+        self.event_log = event_log
         self.pending_field_requests: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._command_aliases_cache: Dict[str, str] = {}
+        self._start_time = time.time()
 
     def _all_command_names(self) -> List[str]:
         """Return the list of supported command names."""
@@ -110,6 +132,19 @@ class CommandManager:
             self.CMD_RETRIEVE_FILE,
             self.CMD_RETRIEVE_IMAGE,
             self.CMD_ASSOCIATE_TOPIC_ID,
+            self.CMD_STATUS,
+            self.CMD_LIST_EVENTS,
+            self.CMD_BAN_IDENTITY,
+            self.CMD_UNBAN_IDENTITY,
+            self.CMD_BLACKHOLE_IDENTITY,
+            self.CMD_LIST_IDENTITIES,
+            self.CMD_GET_CONFIG,
+            self.CMD_VALIDATE_CONFIG,
+            self.CMD_APPLY_CONFIG,
+            self.CMD_ROLLBACK_CONFIG,
+            self.CMD_FLUSH_TELEMETRY,
+            self.CMD_RELOAD_CONFIG,
+            self.CMD_DUMP_ROUTING,
         ]
 
     def _command_alias_map(self) -> Dict[str, str]:
@@ -421,6 +456,32 @@ class CommandManager:
                 return self._handle_delete_subscriber(command, message)
             if name == self.CMD_PATCH_SUBSCRIBER:
                 return self._handle_patch_subscriber(command, message)
+            if name == self.CMD_STATUS:
+                return self._handle_status(message)
+            if name == self.CMD_LIST_EVENTS:
+                return self._handle_list_events(message)
+            if name == self.CMD_BAN_IDENTITY:
+                return self._handle_ban_identity(command, message)
+            if name == self.CMD_UNBAN_IDENTITY:
+                return self._handle_unban_identity(command, message)
+            if name == self.CMD_BLACKHOLE_IDENTITY:
+                return self._handle_blackhole_identity(command, message)
+            if name == self.CMD_LIST_IDENTITIES:
+                return self._handle_list_identities(message)
+            if name == self.CMD_GET_CONFIG:
+                return self._handle_get_config(message)
+            if name == self.CMD_VALIDATE_CONFIG:
+                return self._handle_validate_config(command, message)
+            if name == self.CMD_APPLY_CONFIG:
+                return self._handle_apply_config(command, message)
+            if name == self.CMD_ROLLBACK_CONFIG:
+                return self._handle_rollback_config(command, message)
+            if name == self.CMD_FLUSH_TELEMETRY:
+                return self._handle_flush_telemetry(message)
+            if name == self.CMD_RELOAD_CONFIG:
+                return self._handle_reload_config(message)
+            if name == self.CMD_DUMP_ROUTING:
+                return self._handle_dump_routing(message)
             return self._handle_unknown_command(name, message)
         # Delegate to telemetry controller for telemetry related commands
         return self.tel_controller.handle_command(command, message, self.my_lxmf_dest)
@@ -442,6 +503,10 @@ class CommandManager:
         self.connections[dest.identity.hash] = dest
         self.api.join(self._identity_hex(dest.identity))
         RNS.log(f"Connection added: {message.source}")
+        self._record_event(
+            "client_join",
+            f"Client joined: {self._identity_hex(dest.identity)}",
+        )
         return LXMF.LXMessage(
             dest,
             self.my_lxmf_dest,
@@ -454,6 +519,10 @@ class CommandManager:
         self.connections.pop(dest.identity.hash, None)
         self.api.leave(self._identity_hex(dest.identity))
         RNS.log(f"Connection removed: {message.source}")
+        self._record_event(
+            "client_leave",
+            f"Client left: {self._identity_hex(dest.identity)}",
+        )
         return LXMF.LXMessage(
             dest,
             self.my_lxmf_dest,
@@ -513,6 +582,7 @@ class CommandManager:
         topic = Topic.from_dict(command)
         created = self.api.create_topic(topic)
         payload = json.dumps(created.to_dict(), sort_keys=True)
+        self._record_event("topic_created", f"Topic created: {created.topic_id}")
         return self._reply(message, f"Topic created: {payload}")
 
     def _handle_retrieve_topic(
@@ -543,6 +613,7 @@ class CommandManager:
         except KeyError as exc:
             return self._reply(message, str(exc))
         payload = json.dumps(topic.to_dict(), sort_keys=True)
+        self._record_event("topic_deleted", f"Topic deleted: {topic.topic_id}")
         return self._reply(message, f"Topic deleted: {payload}")
 
     def _handle_patch_topic(
@@ -559,6 +630,7 @@ class CommandManager:
         except KeyError as exc:
             return self._reply(message, str(exc))
         payload = json.dumps(topic.to_dict(), sort_keys=True)
+        self._record_event("topic_updated", f"Topic updated: {topic.topic_id}")
         return self._reply(message, f"Topic updated: {payload}")
 
     def _handle_subscribe_topic(
@@ -586,6 +658,10 @@ class CommandManager:
         except KeyError as exc:
             return self._reply(message, str(exc))
         payload = json.dumps(subscriber.to_dict(), sort_keys=True)
+        self._record_event(
+            "topic_subscribed",
+            f"Destination subscribed to {topic_id}",
+        )
         return self._reply(message, f"Subscribed: {payload}")
 
     def _handle_retrieve_file(
@@ -788,6 +864,10 @@ class CommandManager:
             subscriber.destination = self._identity_hex(message.source.identity)
         created = self.api.create_subscriber(subscriber)
         payload = json.dumps(created.to_dict(), sort_keys=True)
+        self._record_event(
+            "subscriber_created",
+            f"Subscriber created: {created.subscriber_id}",
+        )
         return self._reply(message, f"Subscriber created: {payload}")
 
     def _handle_retrieve_subscriber(
@@ -818,6 +898,10 @@ class CommandManager:
         except KeyError as exc:
             return self._reply(message, str(exc))
         payload = json.dumps(subscriber.to_dict(), sort_keys=True)
+        self._record_event(
+            "subscriber_deleted",
+            f"Subscriber deleted: {subscriber.subscriber_id}",
+        )
         return self._reply(message, f"Subscriber deleted: {payload}")
 
     def _handle_patch_subscriber(
@@ -834,7 +918,160 @@ class CommandManager:
         except KeyError as exc:
             return self._reply(message, str(exc))
         payload = json.dumps(subscriber.to_dict(), sort_keys=True)
+        self._record_event(
+            "subscriber_updated",
+            f"Subscriber updated: {subscriber.subscriber_id}",
+        )
         return self._reply(message, f"Subscriber updated: {payload}")
+
+    def _handle_status(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        """Return the dashboard status snapshot."""
+
+        uptime_seconds = int(time.time() - self._start_time)
+        status = {
+            "uptime_seconds": uptime_seconds,
+            "clients": len(self.connections),
+            "topics": len(self.api.list_topics()),
+            "subscribers": len(self.api.list_subscribers()),
+            "files": len(self.api.list_files()),
+            "images": len(self.api.list_images()),
+            "telemetry": self.tel_controller.telemetry_stats(),
+        }
+        payload = json.dumps(status, sort_keys=True)
+        return self._reply(message, payload)
+
+    def _handle_list_events(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        """Return recent event entries for the dashboard."""
+
+        events = []
+        if self.event_log is not None:
+            events = self.event_log.list_events(limit=50)
+        payload = json.dumps(events, sort_keys=True)
+        return self._reply(message, payload)
+
+    def _handle_ban_identity(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        """Mark an identity as banned."""
+
+        identity = self._extract_identity(command)
+        if not identity:
+            return self._prompt_for_fields(
+                self.CMD_BAN_IDENTITY, ["Identity"], message, command
+            )
+        status = self.api.ban_identity(identity)
+        payload = json.dumps(status.to_dict(), sort_keys=True)
+        self._record_event("identity_banned", f"Identity banned: {identity}")
+        return self._reply(message, payload)
+
+    def _handle_unban_identity(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        """Remove a ban/blackhole from an identity."""
+
+        identity = self._extract_identity(command)
+        if not identity:
+            return self._prompt_for_fields(
+                self.CMD_UNBAN_IDENTITY, ["Identity"], message, command
+            )
+        status = self.api.unban_identity(identity)
+        payload = json.dumps(status.to_dict(), sort_keys=True)
+        self._record_event("identity_unbanned", f"Identity unbanned: {identity}")
+        return self._reply(message, payload)
+
+    def _handle_blackhole_identity(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        """Mark an identity as blackholed."""
+
+        identity = self._extract_identity(command)
+        if not identity:
+            return self._prompt_for_fields(
+                self.CMD_BLACKHOLE_IDENTITY, ["Identity"], message, command
+            )
+        status = self.api.blackhole_identity(identity)
+        payload = json.dumps(status.to_dict(), sort_keys=True)
+        self._record_event("identity_blackholed", f"Identity blackholed: {identity}")
+        return self._reply(message, payload)
+
+    def _handle_list_identities(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        """Return identity status entries for admin tools."""
+
+        identities = self.api.list_identity_statuses()
+        payload = json.dumps([entry.to_dict() for entry in identities], sort_keys=True)
+        return self._reply(message, payload)
+
+    def _handle_get_config(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        """Return the current config.ini content."""
+
+        config_text = self.api.get_config_text()
+        return self._reply(message, config_text)
+
+    def _handle_validate_config(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        """Validate config content without applying changes."""
+
+        config_text = command.get("ConfigText") or command.get("config_text")
+        if not config_text:
+            return self._prompt_for_fields(
+                self.CMD_VALIDATE_CONFIG, ["ConfigText"], message, command
+            )
+        result = self.api.validate_config_text(str(config_text))
+        payload = json.dumps(result, sort_keys=True)
+        return self._reply(message, payload)
+
+    def _handle_apply_config(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        """Apply a new config.ini payload."""
+
+        config_text = command.get("ConfigText") or command.get("config_text")
+        if not config_text:
+            return self._prompt_for_fields(
+                self.CMD_APPLY_CONFIG, ["ConfigText"], message, command
+            )
+        result = self.api.apply_config_text(str(config_text))
+        payload = json.dumps(result, sort_keys=True)
+        self._record_event("config_applied", "Configuration updated")
+        return self._reply(message, payload)
+
+    def _handle_rollback_config(
+        self, command: dict, message: LXMF.LXMessage
+    ) -> LXMF.LXMessage:
+        """Rollback configuration using the latest backup."""
+
+        backup_path = command.get("BackupPath") or command.get("backup_path")
+        backup_value = str(backup_path) if backup_path else None
+        result = self.api.rollback_config_text(backup_path=backup_value)
+        payload = json.dumps(result, sort_keys=True)
+        self._record_event("config_rollback", "Configuration rollback applied")
+        return self._reply(message, payload)
+
+    def _handle_flush_telemetry(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        """Clear stored telemetry records."""
+
+        deleted = self.tel_controller.clear_telemetry()
+        payload = json.dumps({"deleted": deleted}, sort_keys=True)
+        self._record_event("telemetry_flushed", f"Telemetry flushed ({deleted} rows)")
+        return self._reply(message, payload)
+
+    def _handle_reload_config(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        """Reload configuration from disk."""
+
+        config = self.api.reload_config()
+        payload = json.dumps(config.to_dict(), sort_keys=True)
+        self._record_event("config_reloaded", "Configuration reloaded")
+        return self._reply(message, payload)
+
+    def _handle_dump_routing(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        """Return a summary of connected destinations."""
+
+        destinations = [
+            self._identity_hex(dest.identity) for dest in self.connections.values()
+        ]
+        payload = json.dumps({"destinations": destinations}, sort_keys=True)
+        return self._reply(message, payload)
 
     @staticmethod
     def _identity_hex(identity: RNS.Identity) -> str:
@@ -891,6 +1128,17 @@ class CommandManager:
         return None
 
     @staticmethod
+    def _extract_identity(command: dict) -> Optional[str]:
+        """Return identity hash from a command payload."""
+
+        return (
+            command.get("Identity")
+            or command.get("identity")
+            or command.get("Destination")
+            or command.get("destination")
+        )
+
+    @staticmethod
     def _coerce_int_id(value: Any) -> Optional[int]:
         try:
             return int(value)
@@ -917,3 +1165,10 @@ class CommandManager:
                 LXMF.FIELD_FILE_ATTACHMENTS: [payload],
             }
         return {LXMF.FIELD_FILE_ATTACHMENTS: [payload]}
+
+    def _record_event(self, event_type: str, message: str) -> None:
+        """Emit an event log entry when a log sink is configured."""
+
+        if self.event_log is None:
+            return
+        self.event_log.add_event(event_type, message)

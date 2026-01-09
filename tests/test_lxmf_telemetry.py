@@ -2,6 +2,7 @@ import struct
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import LXMF
 import RNS
@@ -9,6 +10,9 @@ import pytest
 from msgpack import packb, unpackb
 from sqlalchemy.exc import OperationalError
 
+from reticulum_telemetry_hub.api.models import Topic
+from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
@@ -38,6 +42,15 @@ from tests.factories import (
     create_lxmf_propagation_sensor,
     create_rns_transport_sensor,
 )
+
+
+def _make_config_manager(tmp_path: Path) -> HubConfigurationManager:
+    """Create a minimal configuration manager for API-backed tests."""
+
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "config.ini").write_text("[app]\nname = TelemetryTest\n")
+    return HubConfigurationManager(storage_path=storage)
 
 
 def _decode_stream_entries(stream_field):
@@ -196,6 +209,74 @@ def test_telemetry_session_retries_close_failed_sessions(
         telemetry_controller._acquire_session_with_retry()
 
     assert len(closed_sessions) == telemetry_controller._SESSION_RETRIES
+
+
+def test_telemetry_request_filters_by_topic(tmp_path, telemetry_db_engine):
+    api = ReticulumTelemetryHubAPI(config_manager=_make_config_manager(tmp_path))
+    controller = TelemetryController(engine=telemetry_db_engine, api=api)
+
+    topic = api.create_topic(Topic(topic_name="Ops", topic_path="/ops"))
+
+    sender_identity = RNS.Identity()
+    peer_identity = RNS.Identity()
+    other_identity = RNS.Identity()
+
+    sender_dest = sender_identity.hash.hex()
+    peer_dest = peer_identity.hash.hex()
+    other_dest = other_identity.hash.hex()
+
+    api.subscribe_topic(topic.topic_id, destination=sender_dest)
+    api.subscribe_topic(topic.topic_id, destination=peer_dest)
+
+    timestamp = int(time.time())
+    payload = build_complex_telemeter_payload(timestamp=timestamp)
+
+    controller.save_telemetry(payload, peer_dest)
+    controller.save_telemetry(payload, other_dest)
+
+    src = RNS.Destination(
+        sender_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    command_msg = LXMF.LXMessage(dst, src)
+    cmd = {TelemetryController.TELEMETRY_REQUEST: int(time.time()) - 5, "TopicID": topic.topic_id}
+
+    reply = controller.handle_command(cmd, command_msg, dst)
+    stream = reply.fields[LXMF.FIELD_TELEMETRY_STREAM]
+    unpacked = _decode_stream_entries(stream)
+    assert len(unpacked) == 1
+    assert unpacked[0][0] == bytes.fromhex(peer_dest)
+
+
+def test_telemetry_request_denies_unsubscribed_sender(tmp_path, telemetry_db_engine):
+    api = ReticulumTelemetryHubAPI(config_manager=_make_config_manager(tmp_path))
+    controller = TelemetryController(engine=telemetry_db_engine, api=api)
+
+    topic = api.create_topic(Topic(topic_name="Ops", topic_path="/ops"))
+
+    sender_identity = RNS.Identity()
+    peer_identity = RNS.Identity()
+
+    peer_dest = peer_identity.hash.hex()
+
+    api.subscribe_topic(topic.topic_id, destination=peer_dest)
+
+    payload = build_complex_telemeter_payload(timestamp=int(time.time()))
+    controller.save_telemetry(payload, peer_dest)
+
+    src = RNS.Destination(
+        sender_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    command_msg = LXMF.LXMessage(dst, src)
+    cmd = {TelemetryController.TELEMETRY_REQUEST: int(time.time()) - 5, "TopicID": topic.topic_id}
+
+    reply = controller.handle_command(cmd, command_msg, dst)
+    assert reply.content_as_string().startswith("Telemetry request denied")
 
 
 def test_humanize_returns_time_and_location_values(telemetry_controller):

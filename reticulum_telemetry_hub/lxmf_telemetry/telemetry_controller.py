@@ -6,6 +6,9 @@ import string
 import time
 from typing import Callable, Optional
 
+from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+
 import LXMF
 import RNS
 from msgpack import packb, unpackb
@@ -99,6 +102,8 @@ class TelemetryController:
         *,
         engine: Engine | None = None,
         db_path: str | Path | None = None,
+        api: ReticulumTelemetryHubAPI | None = None,
+        event_log: EventLog | None = None,
     ) -> None:
         if engine is not None and db_path is not None:
             raise ValueError("Provide either 'engine' or 'db_path', not both")
@@ -114,6 +119,20 @@ class TelemetryController:
         self._telemetry_listener: (
             Callable[[dict, str | bytes | None, Optional[datetime]], None] | None
         ) = None
+        self._api = api
+        self._event_log = event_log
+        self._ingest_count = 0
+        self._last_ingest_at: datetime | None = None
+
+    def set_api(self, api: ReticulumTelemetryHubAPI | None) -> None:
+        """Attach an API service for topic-aware telemetry filtering."""
+
+        self._api = api
+
+    def set_event_log(self, event_log: EventLog | None) -> None:
+        """Attach an event log for telemetry activity updates."""
+
+        self._event_log = event_log
 
     def _create_engine(self, db_location: Path) -> Engine:
         return create_engine(
@@ -240,6 +259,28 @@ class TelemetryController:
         with self._session_scope() as ses:
             ses.add(tel)
             ses.commit()
+        self._record_ingest(tel)
+
+    def clear_telemetry(self) -> int:
+        """Remove all telemetry entries from storage.
+
+        Returns:
+            int: Number of rows removed from the telemetry table.
+        """
+
+        with self._session_scope() as ses:
+            deleted = ses.query(Telemeter).delete()
+            ses.commit()
+        return int(deleted or 0)
+
+    def telemetry_stats(self) -> dict:
+        """Return basic telemetry ingestion statistics."""
+
+        last_ingest = self._last_ingest_at.isoformat() if self._last_ingest_at else None
+        return {
+            "ingest_count": self._ingest_count,
+            "last_ingest_at": last_ingest,
+        }
 
     def ingest_local_payload(
         self,
@@ -273,6 +314,10 @@ class TelemetryController:
             RNS.log(f"Telemetry decoded: {readable}")
             self.save_telemetry(tel_data, RNS.hexrep(message.source_hash, False))
             self._notify_listener(readable, message.source_hash, timestamp)
+            self._record_event(
+                "telemetry_received",
+                f"Telemetry received from {RNS.hexrep(message.source_hash, False)}",
+            )
             handled = True
         if LXMF.FIELD_TELEMETRY_STREAM in message.fields:
             tels_data = message.fields[LXMF.FIELD_TELEMETRY_STREAM]
@@ -312,6 +357,10 @@ class TelemetryController:
                 self.save_telemetry(payload, peer_dest, timestamp)
                 stream_timestamp = timestamp or self._extract_timestamp(readable)
                 self._notify_listener(readable, peer_hash, stream_timestamp)
+                self._record_event(
+                    "telemetry_stream",
+                    f"Telemetry stream entry from {peer_dest}",
+                )
             handled = True
 
         return handled
@@ -322,6 +371,7 @@ class TelemetryController:
         """Handle the incoming command."""
         if TelemetryController.TELEMETRY_REQUEST in command:
             request_value = command[TelemetryController.TELEMETRY_REQUEST]
+            topic_id = self._extract_topic_id(command)
 
             # Sideband (and compatible clients) send telemetry requests either as a
             # standalone timestamp or as ``[timestamp, collector_flag]``.  The
@@ -348,6 +398,13 @@ class TelemetryController:
                 teles = self._load_telemetry(ses, start_time=timebase_dt)
                 # Return one snapshot per peer using the most recent entry.
                 teles = self._latest_by_peer(teles)
+                teles = self._filter_by_topic(teles, topic_id, message)
+                if teles is None:
+                    return self._reply(
+                        message,
+                        my_lxm_dest,
+                        "Telemetry request denied: sender is not subscribed to the topic.",
+                    )
                 packed_tels = []
                 dest = RNS.Destination(
                     message.source.identity,
@@ -389,6 +446,11 @@ class TelemetryController:
             )
             print(f"Sending telemetry of {len(human_readable_entries)} clients")
             print("Telemetry response in human readeble format: " f"{readable_json}")
+            self._record_event(
+                "telemetry_request",
+                f"Telemetry request served ({len(human_readable_entries)} entries)",
+                metadata={"topic_id": topic_id} if topic_id else None,
+            )
             return message
         else:
             return None
@@ -481,6 +543,85 @@ class TelemetryController:
             self._telemetry_listener(telemetry, peer_hash, timestamp)
         except Exception as exc:  # pragma: no cover - defensive logging
             RNS.log(f"Telemetry listener raised an exception: {exc}", RNS.LOG_WARNING)
+
+    def _record_event(
+        self,
+        event_type: str,
+        message: str,
+        *,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """Emit a telemetry event to the shared event log."""
+
+        if self._event_log is None:
+            return
+        self._event_log.add_event(event_type, message, metadata=metadata)
+
+    def _record_ingest(self, telemeter: Telemeter) -> None:
+        """Update telemetry ingestion statistics."""
+
+        self._ingest_count += 1
+        if telemeter.time:
+            self._last_ingest_at = telemeter.time
+
+    @staticmethod
+    def _reply(
+        message: LXMF.LXMessage, my_lxm_dest, content: str
+    ) -> LXMF.LXMessage:
+        """Return an LXMF reply message to the sender."""
+
+        dest = RNS.Destination(
+            message.source.identity,
+            RNS.Destination.OUT,
+            RNS.Destination.SINGLE,
+            "lxmf",
+            "delivery",
+        )
+        return LXMF.LXMessage(
+            dest,
+            my_lxm_dest,
+            content,
+            desired_method=LXMF.LXMessage.DIRECT,
+        )
+
+    @staticmethod
+    def _extract_topic_id(command: dict) -> Optional[str]:
+        """Return a topic id from a telemetry command payload."""
+
+        return (
+            command.get("TopicID")
+            or command.get("topic_id")
+            or command.get("topicId")
+        )
+
+    def _filter_by_topic(
+        self,
+        telemeters: list[Telemeter],
+        topic_id: str | None,
+        message: LXMF.LXMessage,
+    ) -> list[Telemeter] | None:
+        """Filter telemetry entries to those subscribed to a topic."""
+
+        if topic_id is None:
+            return telemeters
+        if self._api is None:
+            return telemeters
+        try:
+            subscribers = self._api.list_subscribers_for_topic(topic_id)
+        except KeyError:
+            return []
+        destination = self._identity_hex(message.source.identity)
+        allowed = {sub.destination for sub in subscribers}
+        if destination not in allowed:
+            return None
+        return [tel for tel in telemeters if tel.peer_dest in allowed]
+
+    @staticmethod
+    def _identity_hex(identity: RNS.Identity) -> str:
+        """Return the identity hash as a lowercase hex string."""
+
+        hash_bytes = getattr(identity, "hash", b"") or b""
+        return hash_bytes.hex()
 
     def _extract_timestamp(self, telemetry: dict) -> Optional[datetime]:
         """Return a datetime parsed from a telemetry payload when available."""

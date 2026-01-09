@@ -2,6 +2,7 @@
 
 from .models import Client
 from .models import FileAttachment
+from .models import IdentityStatus
 from .models import ReticulumInfo
 from .models import Subscriber
 from .models import Topic
@@ -12,6 +13,7 @@ __all__ = [
     "Subscriber",
     "Client",
     "FileAttachment",
+    "IdentityStatus",
     "ReticulumInfo",
     "ReticulumTelemetryHubAPI",
 ]

@@ -11,6 +11,7 @@ from typing import List
 from typing import Optional
 import uuid
 
+from sqlalchemy import Boolean
 from sqlalchemy import Column
 from sqlalchemy import DateTime
 from sqlalchemy import Integer
@@ -84,6 +85,17 @@ class FileRecord(Base):  # pylint: disable=too-few-public-methods
     updated_at = Column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
+
+class IdentityStateRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for identity moderation state."""
+
+    __tablename__ = "identity_states"
+
+    identity = Column(String, primary_key=True)
+    is_banned = Column(Boolean, nullable=False, default=False)
+    is_blackholed = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
 class HubStorage:
@@ -381,6 +393,40 @@ class HubStorage:
         with self._session_scope() as session:
             record = session.get(FileRecord, record_id)
             return self._file_from_record(record) if record else None
+
+    def upsert_identity_state(
+        self,
+        identity: str,
+        *,
+        is_banned: bool | None = None,
+        is_blackholed: bool | None = None,
+    ) -> IdentityStateRecord:
+        """Insert or update the moderation state for an identity."""
+
+        with self._session_scope() as session:
+            record = session.get(IdentityStateRecord, identity)
+            if record is None:
+                record = IdentityStateRecord(identity=identity)
+                session.add(record)
+            if is_banned is not None:
+                record.is_banned = bool(is_banned)
+            if is_blackholed is not None:
+                record.is_blackholed = bool(is_blackholed)
+            record.updated_at = _utcnow()
+            session.commit()
+            return record
+
+    def get_identity_state(self, identity: str) -> IdentityStateRecord | None:
+        """Return the moderation state for an identity when present."""
+
+        with self._session_scope() as session:
+            return session.get(IdentityStateRecord, identity)
+
+    def list_identity_states(self) -> List[IdentityStateRecord]:
+        """Return all identity moderation state records."""
+
+        with self._session_scope() as session:
+            return session.query(IdentityStateRecord).all()
 
     def _create_engine(self, db_path: Path) -> Engine:
         """Build a SQLite engine configured for concurrency.

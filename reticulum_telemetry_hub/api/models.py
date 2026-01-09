@@ -184,3 +184,27 @@ class FileAttachment:
             "CreatedAt": self.created_at.isoformat(),
             "UpdatedAt": self.updated_at.isoformat(),
         }
+
+
+@dataclass
+class IdentityStatus:
+    """Current identity status for admin tooling."""
+
+    identity: str
+    status: str
+    last_seen: Optional[datetime] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    is_banned: bool = False
+    is_blackholed: bool = False
+
+    def to_dict(self) -> dict:
+        """Serialize the identity status into JSON-friendly values."""
+
+        return {
+            "Identity": self.identity,
+            "Status": self.status,
+            "LastSeen": self.last_seen.isoformat() if self.last_seen else None,
+            "Metadata": self.metadata or {},
+            "IsBanned": self.is_banned,
+            "IsBlackholed": self.is_blackholed,
+        }
