@@ -197,9 +197,9 @@ File and image directories still default to `<storage_dir>/files` and `<storage_
 
 ### Exchanging attachments over LXMF
 
-- LXMF clients can discover stored artifacts with `ListFiles` and `ListImages` commands and fetch them with `RetrieveFile` / `RetrieveImage`. Retrieval replies include metadata in the message body **and** ship the binary payloads in the LXMF-standard fields (`FIELD_FILE_ATTACHMENTS` for files, `FIELD_IMAGE` for images) so Sideband, Meshchat, and similar tools can save them without extra parsing.
+- LXMF clients can discover stored artifacts with `ListFiles` and `ListImages` commands and fetch them with `RetrieveFile` / `RetrieveImage`. List responses include `TopicID` when one is tagged, and retrieval replies include metadata in the message body **and** ship the binary payloads in the LXMF-standard fields (`FIELD_FILE_ATTACHMENTS` for files, `FIELD_IMAGE` for images) so Sideband, Meshchat, and similar tools can save them without extra parsing.
 - Attachment payloads are sent in list form for client compatibility: `["filename.ext", <bytes>, "mime/type"]`. Images include `FIELD_IMAGE` and are also mirrored in `FIELD_FILE_ATTACHMENTS`.
-- Incoming LXMF messages that already include `FIELD_FILE_ATTACHMENTS` or `FIELD_IMAGE` fields are persisted automatically to the configured storage directories. The hub replies with the assigned index so you can reference the attachment in subsequent retrievals.
+- Incoming LXMF messages that already include `FIELD_FILE_ATTACHMENTS` or `FIELD_IMAGE` fields are persisted automatically to the configured storage directories. Tag attachments by including `TopicID` in the command payload or by sending `AssociateTopicID`. The hub replies with the assigned index so you can reference the attachment in subsequent retrievals.
 
 ## Service
 

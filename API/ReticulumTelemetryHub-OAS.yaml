@@ -337,7 +337,7 @@ paths:
       operationId: ListFiles
       responses:
         '200':
-          description: Stored file metadata.
+          description: Stored file metadata (includes TopicID when tagged via the upload command or AssociateTopicID).
           content:
             application/json:
               schema:
@@ -371,7 +371,7 @@ paths:
       operationId: ListImages
       responses:
         '200':
-          description: Stored image metadata.
+          description: Stored image metadata (includes TopicID when tagged via the upload command or AssociateTopicID).
           content:
             application/json:
               schema:

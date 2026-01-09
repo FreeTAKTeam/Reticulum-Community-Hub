@@ -13,8 +13,8 @@ Public commands:
 | `ListTopic` | List every registered topic and its ID. | ``\\\[{"Command":"ListTopic"}]`` |
 | `RetrieveTopic` | Fetch a topic by `TopicID`. | ``\\\[{"Command":"RetrieveTopic","TopicID":"<TopicID>"}]`` |
 | `SubscribeTopic` | Subscribe the sending destination to a topic. Supports optional `RejectTests` and `Metadata`. | ``\\\[{"Command":"SubscribeTopic","TopicID":"<TopicID>","RejectTests":true,"Metadata":{"role":"field-station"}}]`` |
-| `ListFiles` | List file attachments stored by the hub. | ``\\\[{"Command":"ListFiles"}]`` |
-| `ListImages` | List image attachments stored by the hub. | ``\\\[{"Command":"ListImages"}]`` |
+| `ListFiles` | List file attachments stored by the hub. List responses include `TopicID` when available. | ``\\\[{"Command":"ListFiles"}]`` |
+| `ListImages` | List image attachments stored by the hub. List responses include `TopicID` when available. | ``\\\[{"Command":"ListImages"}]`` |
 | `RetrieveFile` | Retrieve a stored file by `FileID`. Response includes `FIELD_FILE_ATTACHMENTS`. | ``[{"Command":"RetrieveFile","FileID":1}]`` |
 | `RetrieveImage` | Retrieve a stored image by `FileID`. Response includes `FIELD_IMAGE`. | ``[{"Command":"RetrieveImage","FileID":1}]`` |
 | `getAppInfo` | Return the configured app name, version, and description from `config.ini`. | ``\\\[{"Command":"getAppInfo"}]`` |

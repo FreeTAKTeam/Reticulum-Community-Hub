@@ -36,6 +36,15 @@ def test_store_file_validates_path(tmp_path: Path):
         api.store_file(tmp_path / "missing.bin")
 
 
+def test_store_file_rejects_outside_base_path(tmp_path: Path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    outside_path = tmp_path / "outside.bin"
+    outside_path.write_text("outside")
+
+    with pytest.raises(ValueError):
+        api.store_file(outside_path)
+
+
 def test_retrieve_image_rejects_file_category(tmp_path: Path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     file_path = api._config_manager.config.file_storage_path / "not-image.txt"  # pylint: disable=protected-access

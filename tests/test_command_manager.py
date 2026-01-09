@@ -481,11 +481,15 @@ def test_list_files_and_images_commands(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=config_manager)
     file_path = config_manager.config.file_storage_path / "note.txt"
     file_path.write_text("hello attachment")
-    file_record = api.store_file(file_path, media_type="text/plain")
+    file_record = api.store_file(
+        file_path, media_type="text/plain", topic_id="topic-file-123"
+    )
     image_path = config_manager.config.image_storage_path / "photo.jpg"
     image_bytes = b"img-bytes"
     image_path.write_bytes(image_bytes)
-    image_record = api.store_image(image_path, media_type="image/jpeg")
+    image_record = api.store_image(
+        image_path, media_type="image/jpeg", topic_id="topic-image-456"
+    )
 
     manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
@@ -501,6 +505,7 @@ def test_list_files_and_images_commands(tmp_path):
     assert files_response is not None
     assert str(file_record.file_id) in files_response.content_as_string()
     assert "note.txt" in files_response.content_as_string()
+    assert "TopicID=topic-file-123" in files_response.content_as_string()
 
     list_images_msg = make_message(
         server_dest, client_dest, "ListImages", use_str_command=True
@@ -511,6 +516,7 @@ def test_list_files_and_images_commands(tmp_path):
     assert images_response is not None
     assert str(image_record.file_id) in images_response.content_as_string()
     assert "photo.jpg" in images_response.content_as_string()
+    assert "TopicID=topic-image-456" in images_response.content_as_string()
 
 
 def test_retrieve_file_includes_attachment_field(tmp_path):
@@ -849,6 +855,40 @@ def test_handle_command_dispatches_to_handler(
 
     assert response is sentinel
     assert called
+
+
+def test_handle_command_accepts_retrieve_subscriber_alias():
+    class DummyAPI:
+        pass
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    sentinel = object()
+    called: list[bool] = []
+
+    def stub(*args, **kwargs):
+        called.append(True)
+        return sentinel
+
+    manager._handle_retrieve_subscriber = MethodType(stub, manager)
+    message = make_message(
+        server_dest,
+        client_dest,
+        "RetrieveSubscriber",
+        use_str_command=True,
+    )
+    command = message.fields[LXMF.FIELD_COMMANDS][0]
+
+    response = manager.handle_command(command, message)
+
+    assert response is sentinel
+    assert called
+    assert command["Command"] == CommandManager.CMD_RETRIEVE_SUBSCRIBER
 
 
 def test_delivery_callback_handles_commands_and_broadcasts():
