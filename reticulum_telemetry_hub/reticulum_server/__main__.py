@@ -1402,17 +1402,18 @@ class ReticulumTelemetryHub:
         if not commands:
             return None
         command_manager = getattr(self, "command_manager", None)
+        normalizer = (
+            getattr(command_manager, "_normalize_command_name", None)
+            if command_manager is not None
+            else None
+        )
         for command in commands:
             if not isinstance(command, dict):
                 continue
             name = command.get(PLUGIN_COMMAND) or command.get("Command")
             if not name:
                 continue
-            normalized = (
-                command_manager._normalize_command_name(name)  # noqa: SLF001
-                if command_manager is not None
-                else name
-            )
+            normalized = normalizer(name) if callable(normalizer) else name
             if normalized == CommandManager.CMD_ASSOCIATE_TOPIC_ID:
                 topic_id = CommandManager._extract_topic_id(command)
                 if topic_id:
