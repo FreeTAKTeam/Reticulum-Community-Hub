@@ -285,7 +285,16 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         cfg_lxmf_section = dict(self._get_section("lxmf"))
         lxmf_section = {**file_lxmf_section, **cfg_lxmf_section}
 
-        enable_node = self._get_bool(propagation_section, "enable_node", True)
+        enable_node_value = propagation_section.get("enable_node")
+        if enable_node_value is None:
+            enable_node_value = propagation_section.get("propagation_node")
+        if enable_node_value is None:
+            enable_node_value = lxmf_section.get("enable_node")
+        if enable_node_value is None:
+            enable_node_value = lxmf_section.get("propagation_node")
+        enable_node = self._get_bool(
+            {"enable_node": enable_node_value}, "enable_node", True
+        )
         announce_interval = self._coerce_int(
             propagation_section.get("announce_interval"), 10
         )
