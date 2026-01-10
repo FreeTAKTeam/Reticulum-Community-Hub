@@ -1176,6 +1176,14 @@ class ReticulumTelemetryHub:
                 getattr(RNS, "LOG_WARNING", 2),
             )
             return {"error": f"{reason}: {attachment_name}"}
+        if not data:
+            reason = "Empty attachment data"
+            attachment_name = name or f"{category}-{index + 1}"
+            RNS.log(
+                f"Ignoring empty attachment payload (category={category}).",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return {"error": f"{reason}: {attachment_name}"}
         if not media_type and category == "image":
             media_type = self._infer_image_media_type(data)
         safe_name = self._sanitize_attachment_name(
