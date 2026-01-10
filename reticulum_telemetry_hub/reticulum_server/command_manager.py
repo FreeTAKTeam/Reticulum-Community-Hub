@@ -419,7 +419,7 @@ class CommandManager:
             if name == self.CMD_ADD_SUBSCRIBER:
                 return self._handle_create_subscriber(command, message)
             if name == self.CMD_RETRIEVE_SUBSCRIBER:
-                return self._handle_retrieve_subscriber(command, message)
+                return self._handle_retrieve_subscriber(command, message)  # pylint: disable=not-callable
             if name in (self.CMD_DELETE_SUBSCRIBER, self.CMD_REMOVE_SUBSCRIBER):
                 return self._handle_delete_subscriber(command, message)
             if name == self.CMD_PATCH_SUBSCRIBER:
