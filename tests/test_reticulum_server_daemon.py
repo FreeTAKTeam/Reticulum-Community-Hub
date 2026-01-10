@@ -291,6 +291,34 @@ def test_delivery_callback_skips_missing_attachment_data(tmp_path):
         hub.shutdown()
 
 
+def test_delivery_callback_skips_empty_attachment_data(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = {"name": "empty.webp", "data": ""}
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_IMAGE: payload},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        assert hub.api.list_images() == []
+        assert sent
+        assert any(
+            "Attachment errors" in msg.content_as_string() for msg in sent if msg
+        )
+    finally:
+        hub.shutdown()
+
+
 def test_delivery_callback_escape_prefixed_invalid_json_replies_error(tmp_path):
     hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
     sent: list[LXMF.LXMessage] = []
