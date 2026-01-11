@@ -155,7 +155,11 @@ class HubStorage:
     def list_topics(self) -> List[Topic]:
         """Return all topics ordered by insertion."""
         with self._session_scope() as session:
-            records = session.query(TopicRecord).all()
+            records = (
+                session.query(TopicRecord)
+                .order_by(TopicRecord.created_at, TopicRecord.id)
+                .all()
+            )
             return [
                 Topic(
                     topic_id=r.id,
