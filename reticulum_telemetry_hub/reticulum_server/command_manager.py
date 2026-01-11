@@ -41,7 +41,7 @@ class CommandManager:
     CMD_LIST_TOPIC = "ListTopic"
     CMD_PATCH_TOPIC = "PatchTopic"
     CMD_SUBSCRIBE_TOPIC = "SubscribeTopic"
-    CMD_RETRIEVE_SUBSCRIBER = "RetreiveSubscriber"
+    CMD_RETRIEVE_SUBSCRIBER = "RetrieveSubscriber"
     CMD_ADD_SUBSCRIBER = "AddSubscriber"
     CMD_CREATE_SUBSCRIBER = "CreateSubscriber"
     CMD_DELETE_SUBSCRIBER = "DeleteSubscriber"
@@ -161,6 +161,9 @@ class CommandManager:
                 self._command_aliases_cache.setdefault(alias, command_name)
         self._command_aliases_cache.setdefault(
             "retrievesubscriber", self.CMD_RETRIEVE_SUBSCRIBER
+        )
+        self._command_aliases_cache.setdefault(
+            "retreivesubscriber", self.CMD_RETRIEVE_SUBSCRIBER
         )
         return self._command_aliases_cache
 
