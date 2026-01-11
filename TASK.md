@@ -1,4 +1,5 @@
 ﻿# TASKS
+- 2026-01-11: ✅ Implement RTH Core UI application as documented.
 - 2026-01-09: âœ… Fix config backup timestamp timezone usage.
 - 2026-01-09: âœ… Add protected/public commands, REST docs, telemetry topic filtering, and config management.
 - 2026-01-09: âœ… Align UI design doc with current command/API surface.
@@ -89,4 +90,3 @@
 - 2026-01-03: ✅ Test project and fix lint issues.
 - 2026-01-03: ✅ Resolve command handler lint warnings in delivery callback.
 - 2026-01-05: ✅ Fix unknown command response typo and rename RetrieveTopic command.
-
