@@ -862,10 +862,16 @@ class CommandManager:
     def _handle_create_subscriber(
         self, command: dict, message: LXMF.LXMessage
     ) -> LXMF.LXMessage:
+        missing = self._missing_fields(command, ["Destination"])
+        if missing:
+            return self._prompt_for_fields(
+                self.CMD_CREATE_SUBSCRIBER, missing, message, command
+            )
         subscriber = Subscriber.from_dict(command)
-        if not subscriber.destination:
-            subscriber.destination = self._identity_hex(message.source.identity)
-        created = self.api.create_subscriber(subscriber)
+        try:
+            created = self.api.create_subscriber(subscriber)
+        except ValueError as exc:
+            return self._reply(message, f"Subscriber creation failed: {exc}")
         payload = json.dumps(created.to_dict(), sort_keys=True)
         self._record_event(
             "subscriber_created",
