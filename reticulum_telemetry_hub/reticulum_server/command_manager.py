@@ -1,7 +1,7 @@
 # Command management for Reticulum Telemetry Hub
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional
 import json
 from pathlib import Path
 import re
@@ -416,10 +416,9 @@ class CommandManager:
             command[PLUGIN_COMMAND] = name
             command["Command"] = name
         if name is not None:
-            retrieve_subscriber_handler = cast(
-                Callable[[dict, LXMF.LXMessage], LXMF.LXMessage],
-                self._handle_retrieve_subscriber,
-            )
+            def retrieve_subscriber_handler() -> LXMF.LXMessage:
+                return self._handle_retrieve_subscriber(command, message)
+
             dispatch_map = {
                 self.CMD_HELP: lambda: self._handle_help(message),
                 self.CMD_EXAMPLES: lambda: self._handle_examples(message),
@@ -463,9 +462,7 @@ class CommandManager:
                 self.CMD_ADD_SUBSCRIBER: lambda: self._handle_create_subscriber(
                     command, message
                 ),
-                self.CMD_RETRIEVE_SUBSCRIBER: lambda: retrieve_subscriber_handler(
-                    command, message
-                ),
+                self.CMD_RETRIEVE_SUBSCRIBER: retrieve_subscriber_handler,
                 self.CMD_DELETE_SUBSCRIBER: lambda: self._handle_delete_subscriber(
                     command, message
                 ),
