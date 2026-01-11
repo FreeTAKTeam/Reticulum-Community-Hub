@@ -10,8 +10,6 @@ from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
 import RNS
-from pytak import hello_event
-from pytak.functions import tak_pong
 from sqlalchemy.orm.exc import DetachedInstanceError
 from reticulum_telemetry_hub.atak_cot import Chat
 from reticulum_telemetry_hub.atak_cot import ChatGroup
@@ -287,6 +285,8 @@ class TakConnector:  # pylint: disable=too-many-instance-attributes
             bool: ``True`` when the keepalive is dispatched.
         """
 
+        from pytak.functions import tak_pong
+
         RNS.log("TAK connector sending keepalive takPong", RNS.LOG_DEBUG)
         await self._pytak_client.create_and_send_message(
             tak_pong(), config=self._config_parser, parse_inbound=False
@@ -295,6 +295,8 @@ class TakConnector:  # pylint: disable=too-many-instance-attributes
 
     async def send_ping(self) -> bool:
         """Send a TAK hello/ping keepalive event."""
+
+        from pytak import hello_event
 
         RNS.log("TAK connector sending ping", RNS.LOG_DEBUG)
         await self._pytak_client.create_and_send_message(
