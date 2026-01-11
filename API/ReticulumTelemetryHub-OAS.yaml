@@ -1,9 +1,9 @@
 openapi: 3.0.1
 info:
   title: ReticulumTelemetryHub
-  version: '2025.12.28'
+  version: '2026.01.11'
   description: >-
-    Abstract service for Reticulum Telemetry Hub.   This API manages subscribers, topics, client lists,  and provides hub?join/leave functionality over a Reticulum?based network.
+    Abstract service for Reticulum Telemetry Hub. This API manages subscribers, topics, client lists, and provides hub join/leave functionality over a Reticulum-based network.
   contact:
     name: FTTeam
     url: https://github.com/FreeTAKTeam
@@ -46,6 +46,9 @@ paths:
       tags:
        - Status
       summary: Return dashboard status metrics.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
           description: Status snapshot for admin dashboards.
@@ -60,6 +63,9 @@ paths:
       tags:
        - Status
       summary: Return recent hub events.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
           description: Recent event entries.
@@ -69,6 +75,32 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Event'
+  /events/system:
+    get:
+      x-scope: protected
+      x-websocket: true
+      tags:
+       - WebSocket
+      summary: WebSocket stream for system status + events.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: >-
+        WebSocket endpoint using the RTH-WS v1 envelope. See docs/ui-design.md.
+      x-ws-protocol: rth-ws-v1
+      x-ws-server-messages:
+        - $ref: '#/components/schemas/WsAuthOkMessage'
+        - $ref: '#/components/schemas/WsSystemStatusMessage'
+        - $ref: '#/components/schemas/WsSystemEventMessage'
+        - $ref: '#/components/schemas/WsPingMessage'
+        - $ref: '#/components/schemas/WsErrorMessage'
+      x-ws-client-messages:
+        - $ref: '#/components/schemas/WsAuthMessage'
+        - $ref: '#/components/schemas/WsPongMessage'
+        - $ref: '#/components/schemas/WsSystemSubscribeMessage'
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket upgrade).
   /Telemetry:
     get:
       x-scope: public
@@ -86,6 +118,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TelemetryResponse'
+  /telemetry/stream:
+    get:
+      x-scope: public
+      x-websocket: true
+      tags:
+       - WebSocket
+      summary: WebSocket stream for live telemetry.
+      description: >-
+        WebSocket endpoint using the RTH-WS v1 envelope. See docs/ui-design.md.
+      x-ws-protocol: rth-ws-v1
+      x-ws-server-messages:
+        - $ref: '#/components/schemas/WsAuthOkMessage'
+        - $ref: '#/components/schemas/WsTelemetrySnapshotMessage'
+        - $ref: '#/components/schemas/WsTelemetryUpdateMessage'
+        - $ref: '#/components/schemas/WsPingMessage'
+        - $ref: '#/components/schemas/WsErrorMessage'
+      x-ws-client-messages:
+        - $ref: '#/components/schemas/WsAuthMessage'
+        - $ref: '#/components/schemas/WsTelemetrySubscribeMessage'
+        - $ref: '#/components/schemas/WsPongMessage'
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket upgrade).
   /Config:
     get:
       x-scope: protected
@@ -93,6 +148,9 @@ paths:
       tags:
        - Config
       summary: Return the raw config.ini content.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
           description: Config content.
@@ -106,6 +164,9 @@ paths:
       tags:
        - Config
       summary: Apply a new config.ini payload.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       requestBody:
         $ref: '#/components/requestBodies/ConfigPayload'
       responses:
@@ -122,6 +183,9 @@ paths:
       tags:
        - Config
       summary: Validate a config.ini payload without applying.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       requestBody:
         $ref: '#/components/requestBodies/ConfigPayload'
       responses:
@@ -138,6 +202,9 @@ paths:
       tags:
        - Config
       summary: Roll back config.ini using a backup.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       requestBody:
         $ref: '#/components/requestBodies/ConfigRollback'
       responses:
@@ -154,6 +221,9 @@ paths:
       tags:
        - Command
       summary: Delete stored telemetry snapshots.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
           description: Deletion result.
@@ -168,6 +238,9 @@ paths:
       tags:
        - Command
       summary: Reload config.ini from disk.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
           description: Reloaded configuration snapshot.
@@ -182,6 +255,9 @@ paths:
       tags:
        - Command
       summary: Return connected destination hashes.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
           description: Routing summary.
@@ -196,6 +272,9 @@ paths:
       tags:
        - Identity
       summary: List identity moderation status entries.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
           description: Identity statuses.
@@ -212,6 +291,9 @@ paths:
       tags:
        - Identity
       summary: Ban an identity.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - $ref: '#/components/parameters/identityPath'
       responses:
@@ -228,6 +310,9 @@ paths:
       tags:
        - Identity
       summary: Remove ban/blackhole for an identity.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - $ref: '#/components/parameters/identityPath'
       responses:
@@ -244,6 +329,9 @@ paths:
       tags:
        - Identity
       summary: Blackhole an identity.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - $ref: '#/components/parameters/identityPath'
       responses:
@@ -260,15 +348,15 @@ paths:
       tags:
        - RTH
       description: >-
-        join a RTH server
+        Join an RTH instance as the supplied identity.
       operationId: RTHjoin
       parameters:
         - $ref: '#/components/parameters/identity'
       responses:
         '200':
-          description: simple text based return value
+          description: True when the identity is recorded or updated.
           content:
-            text/plain:
+            application/json:
               schema:
                 type: boolean
     put:
@@ -277,12 +365,15 @@ paths:
       tags:
        - RTH
       description: >-
+        Leave an RTH instance as the supplied identity.
       operationId: RTHLeave
+      parameters:
+        - $ref: '#/components/parameters/identity'
       responses:
         '200':
-          description: simple text based return value
+          description: True when the identity existed and was removed.
           content:
-            text/plain:
+            application/json:
               schema:
                 type: boolean
   /Topic/{id}:
@@ -298,7 +389,11 @@ paths:
         - $ref: '#/components/parameters/id'
       responses:
         '200':
-          $ref: '#/components/responses/200Topic_get'
+          description: Topic record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Topic'
   /Client:
     get:
       x-scope: protected
@@ -308,6 +403,9 @@ paths:
       description: >-
         Lists all clients currently connected to RTH, including their Reticulum identities and connection metadata
       operationId: ListClients
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
           $ref: '#/components/responses/200Client_get'
@@ -324,9 +422,9 @@ paths:
         '200':
           description: Application info including Reticulum and LXMF versions.
           content:
-            text/plain:
+            application/json:
               schema:
-                  $ref: '#/components/schemas/ReticulumInfo'
+                $ref: '#/components/schemas/ReticulumInfo'
   /File:
     get:
       x-scope: public
@@ -361,6 +459,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FileAttachment'
+  /File/{id}/raw:
+    get:
+      x-scope: public
+      x-lxmf-command: RetrieveFile
+      tags:
+       - File
+      summary: Download a stored file by its ID (raw bytes).
+      operationId: RetrieveFileRaw
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: Raw file bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
   /Image:
     get:
       x-scope: public
@@ -395,6 +511,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FileAttachment'
+  /Image/{id}/raw:
+    get:
+      x-scope: public
+      x-lxmf-command: RetrieveImage
+      tags:
+       - Image
+      summary: Download a stored image by its ID (raw bytes).
+      operationId: RetrieveImageRaw
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: Raw image bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
   /Topic:
     post:
       x-scope: protected
@@ -404,6 +538,9 @@ paths:
       description: >-
       summary: Creates a new Topic record.
       operationId: CreateTopic
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       requestBody:
         $ref: '#/components/requestBodies/Topic'
       responses:
@@ -417,6 +554,9 @@ paths:
       description: >-
       summary: Deletes an existing Topic record based on the provided ID.
       operationId: DeleteTopic
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - $ref: '#/components/parameters/ID'
       responses:
@@ -441,26 +581,31 @@ paths:
       description: >-
       summary: Updates an existing Topic record.
       operationId: PatchTopic
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       requestBody:
         $ref: '#/components/requestBodies/Topic'
       responses:
         '200':
           $ref: '#/components/responses/200Topic_patch'
-  /Topic//Subscribe:
+  /Topic/Subscribe:
     post:
       x-scope: public
       x-lxmf-command: SubscribeTopic
       tags:
-       - SubscribeTopic
+       - Topic
       description: >-
-        allow clients to subscribe or unsubscribe to specific message topics or telemetry streams,
+        Subscribe a destination to a topic (Destination defaults to the authenticated identity when omitted).
       operationId: SubscribeTopic
+      requestBody:
+        $ref: '#/components/requestBodies/SubscribeTopicRequest'
       responses:
         '200':
-          description: simple text based return value
+          description: Subscriber record for the subscription.
           content:
-            text/plain:
-              schema:         
+            application/json:
+              schema:
                 $ref: '#/components/schemas/Subscriber'
   /Topic/Associate:
     post:
@@ -469,6 +614,9 @@ paths:
       tags:
        - Topic
       summary: Associate an attachment upload with a TopicID.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       requestBody:
         $ref: '#/components/requestBodies/Topic'
       responses:
@@ -481,17 +629,24 @@ paths:
   /Subscriber/{id}:
     get:
       x-scope: protected
-      x-lxmf-command: RetreiveSubscriber
+      x-lxmf-command: RetrieveSubscriber
       tags:
        - Subscriber
       description: >-
       summary: retrieve an existing Subscriber record based on the provided ID.
-      operationId: RetreiveSubscriber
+      operationId: RetrieveSubscriber
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - $ref: '#/components/parameters/id'
       responses:
         '200':
-          $ref: '#/components/responses/200Subscriber_get'
+          description: Subscriber record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscriber'
   /Subscriber/Add:
     post:
       x-scope: protected
@@ -499,12 +654,18 @@ paths:
       tags:
        - Subscriber
       description: >-
+      summary: Add a destination/topic subscriber mapping (admin).
       operationId: AddSubscriber
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        $ref: '#/components/requestBodies/Subscriber'
       responses:
         '200':
-          description: simple text based return value
+          description: Subscriber record.
           content:
-            text/plain:
+            application/json:
               schema:
                 $ref: '#/components/schemas/Subscriber'
   /Subscriber:
@@ -516,6 +677,9 @@ paths:
       description: >-
       summary: Creates a new Subscriber record.
       operationId: CreateSubscriber
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       requestBody:
         $ref: '#/components/requestBodies/Subscriber'
       responses:
@@ -529,6 +693,9 @@ paths:
       description: >-
       summary: Deletes an existing Subscriber record based on the provided ID.
       operationId: DeleteSubscriber
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - $ref: '#/components/parameters/ID'
       responses:
@@ -542,6 +709,9 @@ paths:
       description: >-
       summary: Retrieves a list of all Subscriber
       operationId: ListSubscriber
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
           $ref: '#/components/responses/200Subscriber_get'
@@ -553,6 +723,9 @@ paths:
       description: >-
       summary: Updates an existing Subscriber record.
       operationId: PatchSubscriber
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       requestBody:
         $ref: '#/components/requestBodies/Subscriber'
       responses:
@@ -562,32 +735,51 @@ paths:
 components:
   schemas:
     Subscriber:
-      allOf:
-        - type: object
-          properties:
-            Destination:
-              type: integer
-              description: >-
-                the destination hash
-            RejectTests:
-              type: integer
-              description: >-
+      type: object
+      description: Subscription details linking destinations to topics.
+      properties:
+        SubscriberID:
+          type: string
+          nullable: true
+          description: Unique identifier for the subscriber mapping.
+        Destination:
+          type: string
+          description: Destination hash (hex string).
+        TopicID:
+          type: string
+          nullable: true
+          description: Topic identifier for the subscription.
+        RejectTests:
+          type: integer
+          nullable: true
+          description: Optional reject-tests flag (0/1) or numeric mode.
+        Metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Optional subscriber metadata.
+      required:
+        - Destination
     Topic:
-      allOf:
-        - type: object
-          properties:
-            TopicName:
-              type: string
-              description: >-
-            TopicPath:
-              type: string
-              description: >-
-            TopicDescription:
-              type: string
-              description: >-
-            TopicID:
-              type: string
-              description: >-
+      type: object
+      description: Topic subscription metadata.
+      properties:
+        TopicID:
+          type: string
+          nullable: true
+          description: Unique topic identifier.
+        TopicName:
+          type: string
+          description: Human friendly topic name.
+        TopicPath:
+          type: string
+          description: Stable topic path (used by clients for routing).
+        TopicDescription:
+          type: string
+          description: Optional topic description.
+      required:
+        - TopicName
+        - TopicPath
     FileAttachment:
       type: object
       description: Metadata for a stored file or image attachment.
@@ -603,10 +795,15 @@ components:
           description: Filesystem path where the attachment is stored.
         Category:
           type: string
-          description: Attachment category (file or image).
+          description: Attachment category ("file" or "image").
         MediaType:
           type: string
+          nullable: true
           description: MIME type when provided.
+        TopicID:
+          type: string
+          nullable: true
+          description: Optional topic identifier associated with the attachment.
         Size:
           type: integer
           description: Attachment size in bytes.
@@ -619,15 +816,36 @@ components:
           format: date-time
           description: When the attachment metadata was last updated.
     Client:
-      allOf:
-        - type: object
-          properties:
-            lastSeen:
-              type: string
-              format: date
-              description: >-
+      type: object
+      description: Connected client state and metadata.
+      properties:
+        identity:
+          type: string
+          description: Client identity hash (hex string).
+        last_seen:
+          type: string
+          format: date-time
+          description: Last seen timestamp (UTC RFC3339).
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional client metadata.
+      required:
+        - identity
+        - last_seen
     Error:
-      description: Error
+      type: object
+      description: Error response payload.
+      properties:
+        detail:
+          type: string
+          description: Human-readable error message.
+        errors:
+          type: array
+          items:
+            type: string
+          description: Optional list of validation errors.
+      additionalProperties: true
     ReticulumInfo:
       type: object
       description: Summarizes the  Reticulum node and application configuration.
@@ -783,12 +1001,220 @@ components:
           type: array
           items:
             type: string
+    SubscribeTopicRequest:
+      type: object
+      description: Payload for SubscribeTopic (topic subscription request).
+      properties:
+        TopicID:
+          type: string
+          description: Topic identifier to subscribe to.
+        Destination:
+          type: string
+          nullable: true
+          description: Destination hash to subscribe (defaults to authenticated identity when omitted).
+        RejectTests:
+          type: integer
+          nullable: true
+          description: Optional reject-tests flag (0/1) or numeric mode.
+        Metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Optional subscriber metadata.
+      required:
+        - TopicID
+    WsEnvelope:
+      type: object
+      description: RTH-WS v1 envelope.
+      properties:
+        type:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        data:
+          type: object
+      required:
+        - type
+        - ts
+        - data
+    WsAuthMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [auth]
+            data:
+              type: object
+              properties:
+                token:
+                  type: string
+                  nullable: true
+                api_key:
+                  type: string
+                  nullable: true
+              additionalProperties: false
+    WsSystemSubscribeMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [system.subscribe]
+            data:
+              type: object
+              properties:
+                include_status:
+                  type: boolean
+                include_events:
+                  type: boolean
+                events_limit:
+                  type: integer
+              additionalProperties: false
+    WsAuthOkMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [auth.ok]
+            data:
+              type: object
+              additionalProperties: true
+    WsErrorMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [error]
+            data:
+              type: object
+              properties:
+                code:
+                  type: string
+                message:
+                  type: string
+              additionalProperties: true
+    WsPingMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [ping]
+            data:
+              type: object
+              properties:
+                nonce:
+                  type: string
+              additionalProperties: false
+    WsPongMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [pong]
+            data:
+              type: object
+              properties:
+                nonce:
+                  type: string
+              additionalProperties: false
+    WsSystemStatusMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [system.status]
+            data:
+              $ref: '#/components/schemas/Status'
+    WsSystemEventMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [system.event]
+            data:
+              $ref: '#/components/schemas/Event'
+    WsTelemetrySubscribeMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [telemetry.subscribe]
+            data:
+              type: object
+              required:
+                - since
+              properties:
+                since:
+                  type: integer
+                topic_id:
+                  type: string
+                  nullable: true
+                follow:
+                  type: boolean
+              additionalProperties: false
+    WsTelemetrySnapshotMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [telemetry.snapshot]
+            data:
+              type: object
+              properties:
+                entries:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/TelemetryEntry'
+              additionalProperties: false
+    WsTelemetryUpdateMessage:
+      allOf:
+        - $ref: '#/components/schemas/WsEnvelope'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [telemetry.update]
+            data:
+              type: object
+              properties:
+                entry:
+                  $ref: '#/components/schemas/TelemetryEntry'
+              additionalProperties: false
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
   parameters:
     identity:
       name: identity
       required: true
       description: >-
-        TODO
+        Reticulum identity string (usually a hex destination hash) to act on.
       schema:
         type: string
       in: query
@@ -796,7 +1222,7 @@ components:
       name: id
       required: true
       description: >-
-        TODO
+        Record identifier (for example TopicID or SubscriberID).
       schema:
         type: string
       in: query
@@ -804,7 +1230,7 @@ components:
       name: id
       required: true
       description: >-
-        TODO
+        Record identifier (path parameter).
       schema:
         type: string
       in: path
@@ -838,17 +1264,21 @@ components:
       in: path
   responses:
     200Topic_get:
-      description: Success
+      description: Topic list.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Topic'
+            type: array
+            items:
+              $ref: '#/components/schemas/Topic'
     200Client_get:
-      description: Success
+      description: Client list.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Client'
+            type: array
+            items:
+              $ref: '#/components/schemas/Client'
     200Topic_post:
       description: Success
       content:
@@ -868,11 +1298,13 @@ components:
           schema:
             $ref: '#/components/schemas/Topic'
     200Subscriber_get:
-      description: Success
+      description: Subscriber list.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Subscriber'
+            type: array
+            items:
+              $ref: '#/components/schemas/Subscriber'
     200Subscriber_post:
       description: Success
       content:
@@ -974,6 +1406,13 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Topic'
+      required: true
+    SubscribeTopicRequest:
+      description: SubscribeTopic request payload.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SubscribeTopicRequest'
       required: true
     ConfigPayload:
       description: Raw config.ini payload.
