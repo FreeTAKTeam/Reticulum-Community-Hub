@@ -6,7 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 from urllib.parse import urlparse
 
 import RNS
@@ -25,7 +25,6 @@ from reticulum_telemetry_hub.atak_cot import Status
 from reticulum_telemetry_hub.atak_cot import Takv
 from reticulum_telemetry_hub.atak_cot import Track
 from reticulum_telemetry_hub.atak_cot import Uid
-from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
 from reticulum_telemetry_hub.config.models import TakConnectionConfig
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors import (
     sensor_enum,
@@ -38,6 +37,9 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 
 SID_LOCATION = sensor_enum.SID_LOCATION
+
+if TYPE_CHECKING:
+    from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
 
 
 @dataclass
@@ -136,9 +138,11 @@ class TakConnector:  # pylint: disable=too-many-instance-attributes
         """
 
         self._config = config or TakConnectionConfig()
-        self._pytak_client = pytak_client or PytakClient(
-            self._config.to_config_parser()
-        )
+        if pytak_client is None:
+            from reticulum_telemetry_hub.atak_cot.pytak_client import PytakClient
+
+            pytak_client = PytakClient(self._config.to_config_parser())
+        self._pytak_client = pytak_client
         self._config_parser = self._config.to_config_parser()
         self._telemeter_manager = telemeter_manager
         self._telemetry_controller = telemetry_controller

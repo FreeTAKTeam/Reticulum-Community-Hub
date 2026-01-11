@@ -865,6 +865,10 @@ class CommandManager:
     def _handle_create_subscriber(
         self, command: dict, message: LXMF.LXMessage
     ) -> LXMF.LXMessage:
+        destination = self._field_value(command, "Destination")
+        if not destination:
+            command = dict(command)
+            command["Destination"] = self._sender_key(message)
         missing = self._missing_fields(command, ["Destination"])
         if missing:
             return self._prompt_for_fields(
