@@ -41,7 +41,7 @@ class CommandManager:
     CMD_LIST_TOPIC = "ListTopic"
     CMD_PATCH_TOPIC = "PatchTopic"
     CMD_SUBSCRIBE_TOPIC = "SubscribeTopic"
-    CMD_RETRIEVE_SUBSCRIBER = "RetreiveSubscriber"
+    CMD_RETRIEVE_SUBSCRIBER = "RetrieveSubscriber"
     CMD_ADD_SUBSCRIBER = "AddSubscriber"
     CMD_CREATE_SUBSCRIBER = "CreateSubscriber"
     CMD_DELETE_SUBSCRIBER = "DeleteSubscriber"
@@ -161,6 +161,9 @@ class CommandManager:
                 self._command_aliases_cache.setdefault(alias, command_name)
         self._command_aliases_cache.setdefault(
             "retrievesubscriber", self.CMD_RETRIEVE_SUBSCRIBER
+        )
+        self._command_aliases_cache.setdefault(
+            "retreivesubscriber", self.CMD_RETRIEVE_SUBSCRIBER
         )
         return self._command_aliases_cache
 
@@ -862,10 +865,20 @@ class CommandManager:
     def _handle_create_subscriber(
         self, command: dict, message: LXMF.LXMessage
     ) -> LXMF.LXMessage:
+        destination = self._field_value(command, "Destination")
+        if not destination:
+            command = dict(command)
+            command["Destination"] = self._sender_key(message)
+        missing = self._missing_fields(command, ["Destination"])
+        if missing:
+            return self._prompt_for_fields(
+                self.CMD_CREATE_SUBSCRIBER, missing, message, command
+            )
         subscriber = Subscriber.from_dict(command)
-        if not subscriber.destination:
-            subscriber.destination = self._identity_hex(message.source.identity)
-        created = self.api.create_subscriber(subscriber)
+        try:
+            created = self.api.create_subscriber(subscriber)
+        except ValueError as exc:
+            return self._reply(message, f"Subscriber creation failed: {exc}")
         payload = json.dumps(created.to_dict(), sort_keys=True)
         self._record_event(
             "subscriber_created",

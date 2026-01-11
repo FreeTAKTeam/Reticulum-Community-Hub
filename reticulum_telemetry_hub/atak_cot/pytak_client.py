@@ -5,16 +5,27 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
+import sys
+import types
 import weakref
 import xml.etree.ElementTree as ET
 from configparser import ConfigParser, SectionProxy
 from contextlib import suppress
+from importlib.util import find_spec
 from threading import Event as ThreadEvent
 from threading import Lock
 from threading import Thread
 from typing import Any, Awaitable, Iterable, Optional, Union, cast
 
 import RNS
+if find_spec("aiohttp") is None:
+    aiohttp_stub = types.ModuleType("aiohttp")
+
+    class ClientSession:  # pylint: disable=too-few-public-methods
+        """Fallback aiohttp ClientSession used for pytak import-time typing."""
+
+    aiohttp_stub.ClientSession = ClientSession
+    sys.modules.setdefault("aiohttp", aiohttp_stub)
 import pytak
 
 from . import Event
