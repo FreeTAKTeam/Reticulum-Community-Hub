@@ -1,6 +1,7 @@
 # Command management for Reticulum Telemetry Hub
 from __future__ import annotations
 
+from functools import partial
 from typing import Any, Dict, List, Optional
 import json
 from pathlib import Path
@@ -416,78 +417,90 @@ class CommandManager:
             command[PLUGIN_COMMAND] = name
             command["Command"] = name
         if name is not None:
-            if name == self.CMD_HELP:
-                return self._handle_help(message)
-            if name == self.CMD_EXAMPLES:
-                return self._handle_examples(message)
-            if name == self.CMD_JOIN:
-                return self._handle_join(message)
-            if name == self.CMD_LEAVE:
-                return self._handle_leave(message)
-            if name == self.CMD_LIST_CLIENTS:
-                return self._handle_list_clients(message)
-            if name == self.CMD_GET_APP_INFO:
-                return self._handle_get_app_info(message)
-            if name == self.CMD_LIST_TOPIC:
-                return self._handle_list_topics(message)
-            if name == self.CMD_LIST_FILES:
-                return self._handle_list_files(message)
-            if name == self.CMD_LIST_IMAGES:
-                return self._handle_list_images(message)
-            if name == self.CMD_CREATE_TOPIC:
-                return self._handle_create_topic(command, message)
-            if name == self.CMD_RETRIEVE_TOPIC:
-                return self._handle_retrieve_topic(command, message)
-            if name == self.CMD_DELETE_TOPIC:
-                return self._handle_delete_topic(command, message)
-            if name == self.CMD_PATCH_TOPIC:
-                return self._handle_patch_topic(command, message)
-            if name == self.CMD_SUBSCRIBE_TOPIC:
-                return self._handle_subscribe_topic(command, message)
-            if name == self.CMD_LIST_SUBSCRIBER:
-                return self._handle_list_subscribers(message)
-            if name == self.CMD_RETRIEVE_FILE:
-                return self._handle_retrieve_file(command, message)
-            if name == self.CMD_RETRIEVE_IMAGE:
-                return self._handle_retrieve_image(command, message)
-            if name == self.CMD_ASSOCIATE_TOPIC_ID:
-                return self._handle_associate_topic_id(command, message)
-            if name == self.CMD_CREATE_SUBSCRIBER:
-                return self._handle_create_subscriber(command, message)
-            if name == self.CMD_ADD_SUBSCRIBER:
-                return self._handle_create_subscriber(command, message)
-            if name == self.CMD_RETRIEVE_SUBSCRIBER:
-                return self._handle_retrieve_subscriber(command, message)  # pylint: disable=not-callable
-            if name in (self.CMD_DELETE_SUBSCRIBER, self.CMD_REMOVE_SUBSCRIBER):
-                return self._handle_delete_subscriber(command, message)
-            if name == self.CMD_PATCH_SUBSCRIBER:
-                return self._handle_patch_subscriber(command, message)
-            if name == self.CMD_STATUS:
-                return self._handle_status(message)
-            if name == self.CMD_LIST_EVENTS:
-                return self._handle_list_events(message)
-            if name == self.CMD_BAN_IDENTITY:
-                return self._handle_ban_identity(command, message)
-            if name == self.CMD_UNBAN_IDENTITY:
-                return self._handle_unban_identity(command, message)
-            if name == self.CMD_BLACKHOLE_IDENTITY:
-                return self._handle_blackhole_identity(command, message)
-            if name == self.CMD_LIST_IDENTITIES:
-                return self._handle_list_identities(message)
-            if name == self.CMD_GET_CONFIG:
-                return self._handle_get_config(message)
-            if name == self.CMD_VALIDATE_CONFIG:
-                return self._handle_validate_config(command, message)
-            if name == self.CMD_APPLY_CONFIG:
-                return self._handle_apply_config(command, message)
-            if name == self.CMD_ROLLBACK_CONFIG:
-                return self._handle_rollback_config(command, message)
-            if name == self.CMD_FLUSH_TELEMETRY:
-                return self._handle_flush_telemetry(message)
-            if name == self.CMD_RELOAD_CONFIG:
-                return self._handle_reload_config(message)
-            if name == self.CMD_DUMP_ROUTING:
-                return self._handle_dump_routing(message)
+            dispatch_map = {
+                self.CMD_HELP: lambda: self._handle_help(message),
+                self.CMD_EXAMPLES: lambda: self._handle_examples(message),
+                self.CMD_JOIN: lambda: self._handle_join(message),
+                self.CMD_LEAVE: lambda: self._handle_leave(message),
+                self.CMD_LIST_CLIENTS: lambda: self._handle_list_clients(message),
+                self.CMD_GET_APP_INFO: lambda: self._handle_get_app_info(message),
+                self.CMD_LIST_TOPIC: lambda: self._handle_list_topics(message),
+                self.CMD_LIST_FILES: lambda: self._handle_list_files(message),
+                self.CMD_LIST_IMAGES: lambda: self._handle_list_images(message),
+                self.CMD_CREATE_TOPIC: lambda: self._handle_create_topic(
+                    command, message
+                ),
+                self.CMD_RETRIEVE_TOPIC: lambda: self._handle_retrieve_topic(
+                    command, message
+                ),
+                self.CMD_DELETE_TOPIC: lambda: self._handle_delete_topic(
+                    command, message
+                ),
+                self.CMD_PATCH_TOPIC: lambda: self._handle_patch_topic(
+                    command, message
+                ),
+                self.CMD_SUBSCRIBE_TOPIC: lambda: self._handle_subscribe_topic(
+                    command, message
+                ),
+                self.CMD_LIST_SUBSCRIBER: lambda: self._handle_list_subscribers(
+                    message
+                ),
+                self.CMD_RETRIEVE_FILE: lambda: self._handle_retrieve_file(
+                    command, message
+                ),
+                self.CMD_RETRIEVE_IMAGE: lambda: self._handle_retrieve_image(
+                    command, message
+                ),
+                self.CMD_ASSOCIATE_TOPIC_ID: lambda: self._handle_associate_topic_id(
+                    command, message
+                ),
+                self.CMD_CREATE_SUBSCRIBER: lambda: self._handle_create_subscriber(
+                    command, message
+                ),
+                self.CMD_ADD_SUBSCRIBER: lambda: self._handle_create_subscriber(
+                    command, message
+                ),
+                self.CMD_RETRIEVE_SUBSCRIBER: partial(
+                    self._handle_retrieve_subscriber, command, message
+                ),
+                self.CMD_DELETE_SUBSCRIBER: lambda: self._handle_delete_subscriber(
+                    command, message
+                ),
+                self.CMD_REMOVE_SUBSCRIBER: lambda: self._handle_delete_subscriber(
+                    command, message
+                ),
+                self.CMD_PATCH_SUBSCRIBER: lambda: self._handle_patch_subscriber(
+                    command, message
+                ),
+                self.CMD_STATUS: lambda: self._handle_status(message),
+                self.CMD_LIST_EVENTS: lambda: self._handle_list_events(message),
+                self.CMD_BAN_IDENTITY: lambda: self._handle_ban_identity(
+                    command, message
+                ),
+                self.CMD_UNBAN_IDENTITY: lambda: self._handle_unban_identity(
+                    command, message
+                ),
+                self.CMD_BLACKHOLE_IDENTITY: lambda: self._handle_blackhole_identity(
+                    command, message
+                ),
+                self.CMD_LIST_IDENTITIES: lambda: self._handle_list_identities(message),
+                self.CMD_GET_CONFIG: lambda: self._handle_get_config(message),
+                self.CMD_VALIDATE_CONFIG: lambda: self._handle_validate_config(
+                    command, message
+                ),
+                self.CMD_APPLY_CONFIG: lambda: self._handle_apply_config(
+                    command, message
+                ),
+                self.CMD_ROLLBACK_CONFIG: lambda: self._handle_rollback_config(
+                    command, message
+                ),
+                self.CMD_FLUSH_TELEMETRY: lambda: self._handle_flush_telemetry(message),
+                self.CMD_RELOAD_CONFIG: lambda: self._handle_reload_config(message),
+                self.CMD_DUMP_ROUTING: lambda: self._handle_dump_routing(message),
+            }
+            handler = dispatch_map.get(name)
+            if handler is not None:
+                return handler()
             return self._handle_unknown_command(name, message)
         # Delegate to telemetry controller for telemetry related commands
         return self.tel_controller.handle_command(command, message, self.my_lxmf_dest)

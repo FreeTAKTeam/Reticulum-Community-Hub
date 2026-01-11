@@ -1,6 +1,7 @@
 import LXMF
 import RNS
 
+from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from tests.test_command_manager import make_command_manager, make_message
 
@@ -33,3 +34,35 @@ def test_create_subscriber_preserves_zero_reject_tests():
 
     assert captured["subscriber"].reject_tests == 0
     assert "Subscriber created" in reply.content_as_string()
+
+
+def test_retrieve_subscriber_returns_payload():
+    captured = {}
+
+    class DummyAPI:
+        def retrieve_subscriber(self, subscriber_id):
+            captured["subscriber_id"] = subscriber_id
+            return Subscriber(
+                destination="dest-01",
+                topic_id="topic-01",
+                subscriber_id=subscriber_id,
+            )
+
+    manager, server_dest = make_command_manager(DummyAPI())
+    client_identity = RNS.Identity()
+    client_dest = RNS.Destination(
+        client_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_RETRIEVE_SUBSCRIBER,
+        SubscriberID="sub-123",
+    )
+    command = message.fields[LXMF.FIELD_COMMANDS][0]
+
+    reply = manager.handle_command(command, message)
+
+    assert captured["subscriber_id"] == "sub-123"
+    assert '"SubscriberID": "sub-123"' in reply.content_as_string()
