@@ -40,6 +40,19 @@ complete REST surface, including:
 - `GET /Config`, `PUT /Config`, `POST /Config/Validate`, `POST /Config/Rollback`
 - `GET /Identities`, `POST /Client/{id}/Ban`, `POST /Client/{id}/Unban`, `POST /Client/{id}/Blackhole`
 
+## Admin UI
+
+The RTH Core UI lives in `ui/` and provides the administrative control plane described in
+`docs/ui-design.md` and `docs/ui-wireframe.md`. To run it locally:
+
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+Set `VITE_RTH_BASE_URL` when you want to target a hub that is not served from the same origin.
+
 ## Quickstart
 
 Follow these steps to bring up a local hub using the bundled defaults:
