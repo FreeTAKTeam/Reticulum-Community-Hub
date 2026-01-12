@@ -1,4 +1,5 @@
 ﻿# TASKS
+- 2026-01-12: ✅ Add northbound file/image route tests and bump version.
 - 2026-01-12: ✅ Create venv_linux for running tests.
 - 2026-01-13: ✅ Address websocket broadcaster test coverage and sync execution.
 - 2026-01-13: ✅ Fix northbound websocket topic filtering and event dispatch.
