@@ -1,0 +1,80 @@
+name: Codex Auto-Fix on Failure
+
+on:
+  workflow_run:
+    workflows:
+      - "Python application"
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-fix-ci:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      !startsWith(github.event.workflow_run.head_branch, 'codex/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      FAILED_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+      FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+      FAILED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      FAILED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Checkout failing ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FAILED_HEAD_SHA }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+          pip install ruff pytest pytest-cov
+
+      - name: Skip if OpenAI API Key missing
+        if: ${{ env.OPENAI_API_KEY == '' }}
+        run: echo "OPENAI_API_KEY is not available (likely a fork PR). Skipping Codex auto-fix."
+
+      - name: Run Codex
+        if: ${{ env.OPENAI_API_KEY != '' }}
+        uses: openai/codex-action@v1
+        id: codex
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/codex/prompts/autofix-ci.md
+          sandbox: workspace-write
+
+      - name: Verify ruff
+        if: ${{ env.OPENAI_API_KEY != '' }}
+        run: |
+          ruff check .
+
+      - name: Verify tests
+        if: ${{ env.OPENAI_API_KEY != '' }}
+        run: |
+          pytest
+
+      - name: Create pull request with fixes
+        if: ${{ success() && env.OPENAI_API_KEY != '' }}
+        uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: "fix(ci): auto-fix failing tests via Codex"
+          branch: codex/auto-fix-ci-${{ github.event.workflow_run.run_id }}
+          base: ${{ env.FAILED_HEAD_BRANCH }}
+          title: "Auto-fix failing CI via Codex"
+          body: |
+            Codex automatically generated this PR in response to a CI failure on workflow `${{ env.FAILED_WORKFLOW_NAME }}`.
+            Failed run: ${{ env.FAILED_RUN_URL }}
+            Head branch: `${{ env.FAILED_HEAD_BRANCH }}`
+            This PR contains minimal changes intended solely to make the CI pass.
