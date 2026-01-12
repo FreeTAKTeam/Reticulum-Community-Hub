@@ -1,4 +1,5 @@
 """Pydantic models for the northbound API."""
+# pylint: disable=import-error
 
 from __future__ import annotations
 

@@ -1,4 +1,5 @@
 """FastAPI application for the northbound interface."""
+# pylint: disable=import-error
 
 from __future__ import annotations
 

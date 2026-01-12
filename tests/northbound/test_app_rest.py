@@ -1,4 +1,5 @@
 """REST API tests for the northbound FastAPI app."""
+# pylint: disable=import-error
 
 from datetime import datetime
 from datetime import timezone
