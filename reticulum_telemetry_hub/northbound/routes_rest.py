@@ -21,6 +21,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 
 from .models import ConfigRollbackPayload
+from .models import MessagePayload
 from .services import NorthboundServices
 
 
@@ -203,6 +204,31 @@ def register_core_routes(
         info = services.reload_config()
         services.record_event("config_reloaded", "Configuration reloaded")
         return info.to_dict()
+
+    @app.post("/Message", dependencies=[Depends(require_protected)])
+    def send_message(payload: MessagePayload) -> dict:
+        """Send a message into the Reticulum Telemetry Hub."""
+
+        try:
+            services.send_message(
+                payload.content,
+                topic_id=payload.topic_id,
+                destination=payload.destination,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        services.record_event(
+            "message_sent",
+            "Northbound message dispatched",
+            metadata={
+                "topic_id": payload.topic_id,
+                "destination": payload.destination,
+            },
+        )
+        return {"sent": True}
 
     @app.get("/Command/DumpRouting", dependencies=[Depends(require_protected)])
     def dump_routing() -> dict:

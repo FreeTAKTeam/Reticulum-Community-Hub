@@ -67,3 +67,17 @@ class ConfigRollbackPayload(BaseModel):
 
         allow_population_by_field_name = True
         allow_population_by_alias = True
+
+
+class MessagePayload(BaseModel):
+    """Payload for sending chat messages into the hub."""
+
+    content: str = Field(alias="Content")
+    topic_id: Optional[str] = Field(default=None, alias="TopicID")
+    destination: Optional[str] = Field(default=None, alias="Destination")
+
+    class Config:
+        """Pydantic configuration."""
+
+        allow_population_by_field_name = True
+        allow_population_by_alias = True

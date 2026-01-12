@@ -28,6 +28,7 @@ from .routes_topics import register_topic_routes
 from .routes_ws import register_ws_routes
 from .services import NorthboundServices
 from .websocket import EventBroadcaster
+from .websocket import MessageBroadcaster
 from .websocket import TelemetryBroadcaster
 
 
@@ -54,6 +55,10 @@ def create_app(
     routing_provider: Optional[Callable[[], list[str]]] = None,
     started_at: Optional[datetime] = None,
     auth: Optional[ApiAuth] = None,
+    message_dispatcher: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
+    message_listener: Optional[
+        Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
+    ] = None,
 ) -> FastAPI:
     """Create the northbound FastAPI application.
 
@@ -84,6 +89,7 @@ def create_app(
         started_at=started_at or datetime.now(timezone.utc),
         command_manager=command_manager,
         routing_provider=routing_provider,
+        message_dispatcher=message_dispatcher,
     )
     auth = auth or ApiAuth()
     require_protected = build_protected_dependency(auth)
@@ -91,6 +97,7 @@ def create_app(
     app = FastAPI(title="ReticulumTelemetryHub", version="northbound")
     event_broadcaster = EventBroadcaster(event_log)
     telemetry_broadcaster = TelemetryBroadcaster(telemetry_controller, api)
+    message_broadcaster = MessageBroadcaster(message_listener)
 
     register_core_routes(
         app,
@@ -119,6 +126,7 @@ def create_app(
         auth=auth,
         event_broadcaster=event_broadcaster,
         telemetry_broadcaster=telemetry_broadcaster,
+        message_broadcaster=message_broadcaster,
     )
 
     return app

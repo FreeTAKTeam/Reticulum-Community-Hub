@@ -34,6 +34,15 @@ class _TelemetrySubscriber:
     allowed_destinations: Optional[frozenset[str]]
 
 
+@dataclass(frozen=True)
+class _MessageSubscriber:
+    """Configuration for a message WebSocket subscriber."""
+
+    callback: Callable[[Dict[str, object]], Awaitable[None]]
+    topic_id: Optional[str]
+    source_hash: Optional[str]
+
+
 class EventBroadcaster:
     """Fan out events to active WebSocket subscribers."""
 
@@ -222,6 +231,93 @@ class TelemetryBroadcaster:
             if subscriber.allowed_destinations is not None:
                 if peer_dest not in subscriber.allowed_destinations:
                     continue
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(subscriber.callback(entry))
+                continue
+            except RuntimeError:
+                pass
+            if self._loop is None or not self._loop.is_running():
+                # Reason: skip async dispatch when no loop is running.
+                continue
+            self._loop.call_soon_threadsafe(
+                self._create_task,
+                subscriber.callback,
+                entry,
+            )
+
+
+class MessageBroadcaster:
+    """Fan out inbound messages to WebSocket subscribers."""
+
+    def __init__(
+        self,
+        register_listener: Optional[
+            Callable[[Callable[[Dict[str, object]], None]], Callable[[], None]]
+        ] = None,
+    ) -> None:
+        """Initialize the message broadcaster."""
+
+        self._subscribers: set[_MessageSubscriber] = set()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._unsubscribe_source: Optional[Callable[[], None]] = None
+        if register_listener is not None:
+            self._unsubscribe_source = register_listener(self._handle_message)
+
+    def subscribe(
+        self,
+        callback: Callable[[Dict[str, object]], Awaitable[None]],
+        *,
+        topic_id: Optional[str] = None,
+        source_hash: Optional[str] = None,
+    ) -> Callable[[], None]:
+        """Register a message callback."""
+
+        subscriber = _MessageSubscriber(
+            callback=callback,
+            topic_id=topic_id,
+            source_hash=_normalize_peer(source_hash) if source_hash else None,
+        )
+        self._subscribers.add(subscriber)
+        self._capture_loop()
+
+        def _unsubscribe() -> None:
+            """Remove the message callback subscription."""
+
+            self._subscribers.discard(subscriber)
+
+        return _unsubscribe
+
+    def _capture_loop(self) -> None:
+        """Capture the running event loop for cross-thread dispatch."""
+
+        if self._loop is not None and self._loop.is_running():
+            return
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+
+    def _create_task(
+        self,
+        callback: Callable[[Dict[str, object]], Awaitable[None]],
+        entry: Dict[str, object],
+    ) -> None:
+        """Create an asyncio task for a callback on the current loop."""
+
+        loop = asyncio.get_running_loop()
+        loop.create_task(callback(entry))
+
+    def _handle_message(self, entry: Dict[str, object]) -> None:
+        """Dispatch inbound messages to subscribers."""
+
+        entry_topic = entry.get("topic_id")
+        entry_source = _normalize_peer(entry.get("source_hash"))
+        for subscriber in list(self._subscribers):
+            if subscriber.topic_id and subscriber.topic_id != entry_topic:
+                continue
+            if subscriber.source_hash and subscriber.source_hash != entry_source:
+                continue
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(subscriber.callback(entry))
@@ -438,6 +534,29 @@ def _get_telemetry_subscription(data: Dict[str, Any]) -> tuple[int, Optional[str
     return since, topic_id, follow_flag
 
 
+def _get_message_subscription(data: Dict[str, Any]) -> tuple[Optional[str], Optional[str], bool]:
+    """Return message subscription settings."""
+
+    topic_id = data.get("topic_id")
+    source_hash = data.get("source_hash") or data.get("source")
+    follow = data.get("follow")
+    follow_flag = True if follow is None else bool(follow)
+    return topic_id, source_hash, follow_flag
+
+
+def _get_message_send_payload(data: Dict[str, Any]) -> tuple[str, Optional[str], Optional[str]]:
+    """Return message send parameters from the payload."""
+
+    content = data.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Message send requires non-empty 'content'")
+    topic_id = data.get("topic_id")
+    destination = data.get("destination")
+    if destination is not None and not isinstance(destination, str):
+        raise ValueError("Message destination must be a string")
+    return content, topic_id, destination
+
+
 async def authenticate_websocket(
     websocket: WebSocket,
     *,
@@ -639,6 +758,85 @@ async def handle_telemetry_socket(
                 continue
             else:
                 await websocket.send_json(build_error_message("bad_request", "Unsupported message"))
+    except Exception:  # pragma: no cover - websocket disconnects vary
+        return
+    finally:
+        if unsubscribe:
+            unsubscribe()
+        ping_task.cancel()
+
+
+async def handle_message_socket(
+    websocket: WebSocket,
+    *,
+    auth: ApiAuth,
+    message_broadcaster: MessageBroadcaster,
+    message_sender: Callable[[str, Optional[str], Optional[str]], None],
+) -> None:
+    """Handle the messages WebSocket."""
+
+    await websocket.accept()
+    if not await authenticate_websocket(websocket, auth=auth):
+        return
+
+    ping_task = asyncio.create_task(ping_loop(websocket))
+    unsubscribe = None
+
+    try:
+        while True:
+            payload = await websocket.receive_text()
+            message = parse_ws_message(payload)
+            msg_type = _get_message_type(message)
+            if msg_type == "message.subscribe":
+                data = _get_message_data(message)
+                topic_id, source_hash, follow = _get_message_subscription(data)
+                if follow:
+                    if unsubscribe:
+                        unsubscribe()
+
+                    async def _send_update(entry: Dict[str, object]) -> None:
+                        """Send message updates to the WebSocket client."""
+
+                        await websocket.send_json(
+                            build_ws_message("message.receive", {"entry": entry})
+                        )
+
+                    unsubscribe = message_broadcaster.subscribe(
+                        _send_update,
+                        topic_id=topic_id,
+                        source_hash=source_hash,
+                    )
+                await websocket.send_json(
+                    build_ws_message(
+                        "message.subscribed",
+                        {
+                            "topic_id": topic_id,
+                            "source_hash": source_hash,
+                            "follow": follow,
+                        },
+                    )
+                )
+            elif msg_type == "message.send":
+                data = _get_message_data(message)
+                try:
+                    content, topic_id, destination = _get_message_send_payload(data)
+                    message_sender(content, topic_id=topic_id, destination=destination)
+                except RuntimeError as exc:
+                    await websocket.send_json(
+                        build_error_message("service_unavailable", str(exc))
+                    )
+                except ValueError as exc:
+                    await websocket.send_json(build_error_message("bad_request", str(exc)))
+                else:
+                    await websocket.send_json(
+                        build_ws_message("message.sent", {"ok": True})
+                    )
+            elif msg_type == "pong":
+                continue
+            else:
+                await websocket.send_json(
+                    build_error_message("bad_request", "Unsupported message")
+                )
     except Exception:  # pragma: no cover - websocket disconnects vary
         return
     finally:
