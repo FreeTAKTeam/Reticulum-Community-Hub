@@ -37,6 +37,7 @@ complete REST surface, including:
 
 - `GET /Status`, `GET /Events`
 - `GET /Telemetry?since=<unix>&topic_id=<TopicID>`
+- `POST /Message` (send a hub broadcast, optionally filtered by `TopicID`)
 - `GET /Config`, `PUT /Config`, `POST /Config/Validate`, `POST /Config/Rollback`
 - `GET /Identities`, `POST /Client/{id}/Ban`, `POST /Client/{id}/Unban`, `POST /Client/{id}/Blackhole`
 

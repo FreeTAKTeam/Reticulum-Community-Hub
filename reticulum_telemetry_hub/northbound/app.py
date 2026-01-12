@@ -52,6 +52,9 @@ def create_app(
     event_log: Optional[EventLog] = None,
     command_manager: Optional[Any] = None,
     routing_provider: Optional[Callable[[], list[str]]] = None,
+    message_sender: Optional[
+        Callable[[str, Optional[str], Optional[set[str]]], None]
+    ] = None,
     started_at: Optional[datetime] = None,
     auth: Optional[ApiAuth] = None,
 ) -> FastAPI:
@@ -63,6 +66,8 @@ def create_app(
         event_log (Optional[EventLog]): Event log instance.
         command_manager (Optional[Any]): Command manager for help/examples text.
         routing_provider (Optional[Callable[[], list[str]]]): Provider for routing destinations.
+        message_sender (Optional[Callable[[str, Optional[str], Optional[set[str]]], None]]):
+            Callback used to fan out outbound messages to LXMF clients.
         started_at (Optional[datetime]): Start time for uptime calculations.
         auth (Optional[ApiAuth]): Auth validator.
 
@@ -84,6 +89,7 @@ def create_app(
         started_at=started_at or datetime.now(timezone.utc),
         command_manager=command_manager,
         routing_provider=routing_provider,
+        message_sender=message_sender,
     )
     auth = auth or ApiAuth()
     require_protected = build_protected_dependency(auth)

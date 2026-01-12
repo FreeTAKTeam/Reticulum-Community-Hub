@@ -1,4 +1,5 @@
 ﻿# TASKS
+- 2026-01-12: ✅ Add northbound message bridge and LXMF event logging.
 - 2026-01-12: ✅ Adjust Codex auto-fix workflow to match repository CI.
 - 2026-01-12: ✅ Add northbound file/image route tests and bump version.
 - 2026-01-12: ✅ Create venv_linux for running tests.

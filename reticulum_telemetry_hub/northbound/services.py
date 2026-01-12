@@ -35,6 +35,9 @@ class NorthboundServices:
     started_at: datetime
     command_manager: Optional[Any] = None
     routing_provider: Optional[Callable[[], List[str]]] = None
+    message_sender: Optional[
+        Callable[[str, Optional[str], Optional[set[str]]], None]
+    ] = None
 
     def help_text(self) -> str:
         """Return the Help command text.
@@ -201,3 +204,39 @@ class NorthboundServices:
         """
 
         return self.api.reload_config()
+
+    def send_message(
+        self,
+        message: str,
+        *,
+        topic_id: Optional[str] = None,
+        exclude: Optional[list[str]] = None,
+    ) -> Dict[str, object]:
+        """Send a message to connected LXMF clients.
+
+        Args:
+            message (str): Message content to send.
+            topic_id (Optional[str]): Optional topic to filter recipients.
+            exclude (Optional[list[str]]): Optional destination hashes to skip.
+
+        Returns:
+            Dict[str, object]: Summary payload for the send request.
+
+        Raises:
+            RuntimeError: If no message sender is configured.
+        """
+
+        if not self.message_sender:
+            raise RuntimeError("Message sender is not configured")
+        exclude_set = {entry.lower() for entry in exclude} if exclude else None
+        self.message_sender(message, topic_id=topic_id, exclude=exclude_set)
+        self.record_event(
+            "northbound_message_sent",
+            "Northbound message sent",
+            metadata={
+                "topic_id": topic_id,
+                "exclude": exclude or [],
+                "message": message,
+            },
+        )
+        return {"status": "sent"}

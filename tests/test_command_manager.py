@@ -13,6 +13,7 @@ from reticulum_telemetry_hub.api.models import Subscriber, Topic
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from tests.test_rth_api import make_config_manager
 
 
@@ -959,6 +960,53 @@ def test_delivery_callback_handles_commands_and_broadcasts():
     assert all("broadcast" not in payload for payload in broadcast_payloads)
     assert len(router_messages) == 1
     assert telemetry_calls == [incoming]
+
+
+def test_delivery_callback_records_inbound_event() -> None:
+    """Ensure inbound messages are recorded in the event log."""
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    hub.event_log = EventLog()
+    hub.lxm_router = type(
+        "DummyRouter", (), {"handle_outbound": lambda self, msg: None}
+    )()
+    hub.my_lxmf_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    hub.connections = {sender.identity.hash: sender}
+    hub.identities = {sender.hash.hex(): "peer-one"}
+    hub.topic_subscribers = {}
+    hub.api = type("DummyAPI", (), {"list_subscribers": lambda self: []})()
+    hub.tel_controller = type(
+        "DummyController",
+        (),
+        {"handle_message": lambda self, message: False},
+    )()
+    hub.command_manager = type(
+        "DummyCommands",
+        (),
+        {"handle_commands": lambda self, commands, message: []},
+    )()
+    hub.send_message = lambda *args, **kwargs: None
+
+    incoming = LXMF.LXMessage(
+        hub.my_lxmf_dest, sender, "Hello world", fields={"TopicID": "chat"}
+    )
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+
+    events = hub.event_log.list_events()
+    assert events
+    assert events[0]["type"] == "lxmf_message_received"
+    assert events[0]["metadata"]["topic_id"] == "chat"
 
 
 class DummyPytakClient:

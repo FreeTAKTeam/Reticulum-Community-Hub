@@ -93,3 +93,67 @@ def test_protected_endpoint_requires_api_key(tmp_path) -> None:
     response = client.get("/Status")
 
     assert response.status_code == 401
+
+
+def test_message_endpoint_sends_payload(tmp_path) -> None:
+    """Ensure message endpoint forwards payload to the message sender."""
+
+    api = _build_api(tmp_path)
+    telemetry_controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
+    event_log = EventLog()
+    captured = {}
+
+    def _message_sender(message: str, topic_id: str | None, exclude: set[str] | None) -> None:
+        """Capture outbound messages for assertions.
+
+        Args:
+            message (str): Outbound content.
+            topic_id (str | None): Optional topic id.
+            exclude (set[str] | None): Excluded destinations.
+        """
+
+        captured["message"] = message
+        captured["topic_id"] = topic_id
+        captured["exclude"] = exclude
+
+    app = create_app(
+        api=api,
+        telemetry_controller=telemetry_controller,
+        event_log=event_log,
+        message_sender=_message_sender,
+        auth=ApiAuth(api_key="secret"),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/Message",
+        headers={"X-API-Key": "secret"},
+        json={"Message": "Hello", "TopicID": "topic-1", "Exclude": ["ABC"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "sent"
+    assert captured == {"message": "Hello", "topic_id": "topic-1", "exclude": {"abc"}}
+    events = event_log.list_events()
+    assert events[0]["type"] == "northbound_message_sent"
+
+
+def test_message_endpoint_requires_sender(tmp_path) -> None:
+    """Ensure message endpoint returns an error when no sender is configured."""
+
+    api = _build_api(tmp_path)
+    telemetry_controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
+    app = create_app(
+        api=api,
+        telemetry_controller=telemetry_controller,
+        auth=ApiAuth(api_key="secret"),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/Message",
+        headers={"X-API-Key": "secret"},
+        json={"Message": "Hello"},
+    )
+
+    assert response.status_code == 501

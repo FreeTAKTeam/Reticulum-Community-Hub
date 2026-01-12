@@ -75,6 +75,26 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Event'
+  /Message:
+    post:
+      x-scope: protected
+      tags:
+       - Message
+      summary: Send a message to connected LXMF clients.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        $ref: '#/components/requestBodies/MessageSend'
+      responses:
+        '200':
+          description: Message dispatched.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageSendResult'
+        '501':
+          $ref: '#/components/responses/501'
   /events/system:
     get:
       x-scope: protected
@@ -925,6 +945,31 @@ components:
           type: string
         metadata:
           type: object
+    MessageSendRequest:
+      type: object
+      description: Outbound message payload for the hub.
+      properties:
+        Message:
+          type: string
+          description: Message content to broadcast.
+        TopicID:
+          type: string
+          nullable: true
+          description: Optional topic identifier to scope the broadcast.
+        Exclude:
+          type: array
+          nullable: true
+          description: Destination hashes to omit from delivery.
+          items:
+            type: string
+      required:
+        - Message
+    MessageSendResult:
+      type: object
+      description: Result for a send request.
+      properties:
+        status:
+          type: string
     TelemetryResponse:
       type: object
       description: Telemetry stream response payload.
@@ -1392,6 +1437,13 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   requestBodies:
+    MessageSend:
+      description: Outbound message payload.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MessageSendRequest'
+      required: true
     Subscriber:
       description: >-
       content:

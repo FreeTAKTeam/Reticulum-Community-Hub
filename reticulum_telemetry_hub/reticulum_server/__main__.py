@@ -511,6 +511,10 @@ class ReticulumTelemetryHub:
 
             # Log the delivery details
             self.log_delivery_details(message, time_string, signature_string)
+            self._record_inbound_message_event(
+                message,
+                signature_status=signature_string,
+            )
 
             command_payload_present = False
             sender_joined = False
@@ -790,6 +794,58 @@ class ReticulumTelemetryHub:
         RNS.log(f"\t| Fields                 : {message.fields}")
         RNS.log(f"\t| Message signature      : {signature_string}")
         RNS.log("\t+---------------------------------------------------------------")
+
+    def _record_inbound_message_event(
+        self,
+        message: LXMF.LXMessage,
+        *,
+        signature_status: str,
+    ) -> None:
+        """Record inbound LXMF messages to the event log.
+
+        Args:
+            message (LXMF.LXMessage): Incoming LXMF message.
+            signature_status (str): Signature validation status text.
+
+        Returns:
+            None: Event is recorded when an event log is configured.
+        """
+
+        event_log = getattr(self, "event_log", None)
+        if event_log is None:
+            return
+        fields = message.fields if isinstance(message.fields, dict) else {}
+        topic_id = self._extract_target_topic(fields)
+        source_hash = getattr(message, "source_hash", None)
+        source_label = self._lookup_identity_label(source_hash)
+        destination_hash = getattr(message, "destination_hash", None)
+        destination_hex = None
+        if isinstance(destination_hash, (bytes, bytearray)):
+            destination_hex = destination_hash.hex()
+        content = self._message_text(message)
+        metadata = {
+            "source": self._message_source_hex(message),
+            "source_label": source_label,
+            "destination": destination_hex,
+            "topic_id": topic_id,
+            "signature": signature_status,
+            "signature_validated": bool(message.signature_validated),
+            "has_commands": LXMF.FIELD_COMMANDS in fields,
+            "has_attachments": any(
+                key in fields
+                for key in (LXMF.FIELD_FILE_ATTACHMENTS, LXMF.FIELD_IMAGE)
+            ),
+            "has_telemetry": any(
+                key in fields
+                for key in (LXMF.FIELD_TELEMETRY, LXMF.FIELD_TELEMETRY_STREAM)
+            ),
+            "content": content,
+        }
+        event_log.add_event(
+            "lxmf_message_received",
+            f"LXMF message received from {source_label}",
+            metadata=metadata,
+        )
 
     def _lookup_identity_label(self, source_hash) -> str:
         if isinstance(source_hash, (bytes, bytearray)):

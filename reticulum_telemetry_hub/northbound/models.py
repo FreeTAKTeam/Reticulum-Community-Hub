@@ -67,3 +67,17 @@ class ConfigRollbackPayload(BaseModel):
 
         allow_population_by_field_name = True
         allow_population_by_alias = True
+
+
+class MessageSendPayload(BaseModel):
+    """Payload for sending a message to the hub."""
+
+    message: str = Field(alias="Message")
+    topic_id: Optional[str] = Field(default=None, alias="TopicID")
+    exclude: Optional[list[str]] = Field(default=None, alias="Exclude")
+
+    class Config:
+        """Pydantic configuration."""
+
+        allow_population_by_field_name = True
+        allow_population_by_alias = True

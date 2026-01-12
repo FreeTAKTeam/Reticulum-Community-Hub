@@ -21,6 +21,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 
 from .models import ConfigRollbackPayload
+from .models import MessageSendPayload
 from .services import NorthboundServices
 
 
@@ -203,6 +204,29 @@ def register_core_routes(
         info = services.reload_config()
         services.record_event("config_reloaded", "Configuration reloaded")
         return info.to_dict()
+
+    @app.post("/Message", dependencies=[Depends(require_protected)])
+    def send_message(payload: MessageSendPayload) -> dict:
+        """Send a message to connected LXMF clients.
+
+        Args:
+            payload (MessageSendPayload): Message payload.
+
+        Returns:
+            dict: Send status payload.
+        """
+
+        try:
+            return services.send_message(
+                payload.message,
+                topic_id=payload.topic_id,
+                exclude=payload.exclude,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=str(exc),
+            ) from exc
 
     @app.get("/Command/DumpRouting", dependencies=[Depends(require_protected)])
     def dump_routing() -> dict:
