@@ -40,6 +40,24 @@ complete REST surface, including:
 - `GET /Config`, `PUT /Config`, `POST /Config/Validate`, `POST /Config/Rollback`
 - `GET /Identities`, `POST /Client/{id}/Ban`, `POST /Client/{id}/Unban`, `POST /Client/{id}/Blackhole`
 
+### Running the northbound API
+
+The northbound interface is implemented with FastAPI. Run it with an ASGI
+server such as `uvicorn`:
+
+```bash
+uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
+```
+
+Protected endpoints accept either the `X-API-Key` header or a bearer token in
+the `Authorization` header. Set `RTH_API_KEY` to enable protection:
+
+```bash
+export RTH_API_KEY="replace-with-a-secret"
+```
+
+The OpenAPI YAML is exposed at `/openapi.yaml` when the repository is available.
+
 ## Admin UI
 
 The RTH Core UI lives in `ui/` and provides the administrative control plane described in

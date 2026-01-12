@@ -225,6 +225,53 @@ class TelemetryController:
         with self._session_scope() as ses:
             return self._load_telemetry(ses, start_time, end_time)
 
+    def list_telemetry_entries(
+        self, *, since: int, topic_id: str | None = None
+    ) -> list[dict[str, object]]:
+        """Return telemetry entries as JSON-friendly dictionaries.
+
+        Args:
+            since (int): Unix timestamp (seconds) for the earliest telemetry
+                records to include.
+            topic_id (str | None): Optional topic identifier for filtering.
+
+        Returns:
+            list[dict[str, object]]: Telemetry entries formatted for the
+                northbound API.
+
+        Raises:
+            KeyError: If ``topic_id`` is provided but does not exist.
+            ValueError: If topic filtering is requested without an API service.
+        """
+
+        timebase_dt = datetime.fromtimestamp(int(since))
+        with self._session_scope() as ses:
+            telemeters = self._load_telemetry(ses, start_time=timebase_dt)
+            telemeters = self._latest_by_peer(telemeters)
+            if topic_id:
+                if self._api is None:
+                    raise ValueError("Topic filtering requires an API service")
+                subscribers = self._api.list_subscribers_for_topic(topic_id)
+                allowed = {sub.destination for sub in subscribers}
+                telemeters = [
+                    telemeter
+                    for telemeter in telemeters
+                    if telemeter.peer_dest in allowed
+                ]
+
+        entries: list[dict[str, object]] = []
+        for telemeter in telemeters:
+            timestamp = int(telemeter.time.timestamp()) if telemeter.time else 0
+            payload = self._serialize_telemeter(telemeter)
+            entries.append(
+                {
+                    "peer_destination": telemeter.peer_dest,
+                    "timestamp": timestamp,
+                    "telemetry": self._humanize_telemetry(payload),
+                }
+            )
+        return entries
+
     def register_listener(
         self,
         listener: Callable[[dict, str | bytes | None, Optional[datetime]], None],
