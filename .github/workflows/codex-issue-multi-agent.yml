@@ -1,0 +1,268 @@
+name: Codex Issue Multi-Agent
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to process"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  multi-agent-issue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve issue number
+        id: issue
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ inputs.issue_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch issue details (title + body)
+        id: issue_data
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          num="${{ steps.issue.outputs.number }}"
+          gh issue view "$num" --json title,body,number,url,labels > issue.json
+          echo "Issue JSON saved to issue.json"
+          jq -r '.title' issue.json > ISSUE_TITLE.txt
+          jq -r '.body' issue.json > ISSUE_BODY.md
+          echo "url=$(jq -r '.url' issue.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare shared agent context
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .codex
+          cat > .codex/SHARED_CONTEXT.md <<'EOF'
+          # Shared Context for Agents
+
+          ## Repo rules
+          - Follow repository standards (linting, formatting, typing, test patterns).
+          - Prefer minimal diffs and high test coverage.
+          - Do not introduce new tooling unless justified.
+          - Never commit secrets.
+
+          ## How to work
+          - Produce a plan first (Architect).
+          - Implement exactly against acceptance criteria (Developer).
+          - Validate with tests and add missing tests (Tester).
+          - If failing, propose specific fixes and iterate.
+
+          EOF
+
+          # If you have an AGENTS.md in your repo, include it automatically:
+          if [ -f "AGENTS.md" ]; then
+            echo -e "\n## AGENTS.md\n" >> .codex/SHARED_CONTEXT.md
+            cat AGENTS.md >> .codex/SHARED_CONTEXT.md
+          fi
+
+      # ---------------------------
+      # 1) ARCHITECT / PLANNER
+      # ---------------------------
+      - name: Architect Agent (plan + task breakdown)
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          model: gpt-5.2-codex
+          effort: xhigh
+          # If your org uses a different model name for Codex action, adjust here.
+          # model: "gpt-5.2"   # optional; depends on your setup
+          instructions: |
+            You are the Architect/Planner.
+            Read:
+            - .codex/SHARED_CONTEXT.md
+            - ISSUE_TITLE.txt
+            - ISSUE_BODY.md
+
+            Output:
+            1) .codex/PLAN.md
+               - Summary of requirement
+               - Non-goals
+               - Architecture decisions
+               - Step-by-step tasks
+               - File-level change list
+               - Test strategy
+               - Risks & mitigations
+            2) .codex/AC_TRACE.md
+               - A checklist mapping each acceptance criterion -> planned tests and code areas
+
+            Constraints:
+            - Keep plan actionable and concrete.
+            - Assume CI uses: lint + tests. Make sure plan will satisfy CI.
+
+      - name: Sanity check plan files exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .codex/PLAN.md
+          test -s .codex/AC_TRACE.md
+
+      # ---------------------------
+      # 2) DEVELOPER
+      # ---------------------------
+      - name: Developer Agent (implement plan + tests)
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          model: gpt-5.2-codex
+          effort: high
+          instructions: |
+            You are the Developer.
+            Read:
+            - .codex/SHARED_CONTEXT.md
+            - ISSUE_TITLE.txt
+            - ISSUE_BODY.md
+            - .codex/PLAN.md
+            - .codex/AC_TRACE.md
+
+            Do:
+            - Implement the feature exactly per the plan.
+            - Add/update unit/integration tests to cover acceptance criteria.
+            - Keep changes minimal and consistent with repo style.
+
+            Output:
+            - Apply code changes directly in the repo workspace.
+            - Update .codex/DEV_NOTES.md:
+              - What you implemented
+              - Files changed
+              - How to run tests locally
+              - Any assumptions
+
+      # Optional: set up Python if you need it for tests/lint in this job.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "pyproject.toml" ]; then
+            python -m pip install --upgrade pip
+            python -m pip install uv
+            uv sync --all-extras
+          else
+            echo "No pyproject.toml found; skipping install step."
+          fi
+
+      - name: Run lint (best effort)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v uv >/dev/null 2>&1; then
+            uv run ruff check .
+          else
+            echo "uv not installed; skipping."
+          fi
+
+      - name: Run tests (best effort)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v uv >/dev/null 2>&1; then
+            uv run pytest -q
+          else
+            echo "uv not installed; skipping."
+          fi
+
+      # ---------------------------
+      # 3) TESTER
+      # ---------------------------
+      - name: Tester Agent (verify + add missing tests + suggest fixes)
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          model: gpt-5.2-codex
+          effort: medium
+          instructions: |
+            You are the Tester.
+            Read:
+            - .codex/SHARED_CONTEXT.md
+            - ISSUE_TITLE.txt
+            - ISSUE_BODY.md
+            - .codex/PLAN.md
+            - .codex/AC_TRACE.md
+            - .codex/DEV_NOTES.md (if present)
+
+            Your tasks:
+            1) Review the implementation for completeness vs acceptance criteria.
+            2) Add any missing tests.
+            3) If any failures are likely, fix them.
+            4) Update .codex/TEST_REPORT.md with:
+               - AC coverage checklist (pass/fail/notes)
+               - Tests added
+               - Remaining risks
+               - Commands to reproduce
+
+            Apply changes directly to the repo workspace.
+
+      - name: Run lint (final)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v uv >/dev/null 2>&1; then
+            uv run ruff check .
+          fi
+
+      - name: Run tests (final)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v uv >/dev/null 2>&1; then
+            uv run pytest -q
+          fi
+
+      # ---------------------------
+      # PR CREATION
+      # ---------------------------
+      - name: Create PR with changes
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "feat: implement issue #${{ steps.issue.outputs.number }} (multi-agent)"
+          branch: "codex/issue-${{ steps.issue.outputs.number }}"
+          title: "AI: Implement issue #${{ steps.issue.outputs.number }}"
+          body: |
+            Implements issue #${{ steps.issue.outputs.number }} via multi-agent pipeline:
+            - Architect plan: `.codex/PLAN.md`
+            - Dev notes: `.codex/DEV_NOTES.md`
+            - Test report: `.codex/TEST_REPORT.md`
+
+            Issue: ${{ steps.issue_data.outputs.url }}
+
+      - name: Comment on issue with PR link
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          num="${{ steps.issue.outputs.number }}"
+          # Find the most recent PR created by this workflow branch
+          pr_url="$(gh pr list --head "codex/issue-${num}" --json url --jq '.[0].url' || true)"
+          if [ -n "${pr_url}" ]; then
+            gh issue comment "$num" --body "Multi-agent run completed. PR: ${pr_url}"
+          else
+            gh issue comment "$num" --body "Multi-agent run completed, but PR URL not found. Check workflow logs."
+          fi
