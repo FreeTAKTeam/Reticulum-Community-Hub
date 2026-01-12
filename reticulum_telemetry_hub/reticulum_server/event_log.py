@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
-from typing import Deque, Dict, List, Optional
+from typing import Callable
+from typing import Deque
+from typing import Dict
+from typing import List
+from typing import Optional
 
 
 def _utcnow() -> datetime:
@@ -24,6 +28,34 @@ class EventLog:
         """
 
         self._events: Deque[Dict[str, object]] = deque(maxlen=max_entries)
+        self._listeners: List[Callable[[Dict[str, object]], None]] = []
+
+    def add_listener(
+        self, listener: Callable[[Dict[str, object]], None]
+    ) -> Callable[[], None]:
+        """Register an event listener.
+
+        Args:
+            listener (Callable[[Dict[str, object]], None]): Callback invoked
+                with newly recorded events.
+
+        Returns:
+            Callable[[], None]: Callback that unregisters the listener.
+        """
+
+        self._listeners.append(listener)
+
+        def _remove_listener() -> None:
+            """Remove the registered listener.
+
+            Returns:
+                None: Removes the listener if registered.
+            """
+
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return _remove_listener
 
     def add_event(
         self,
@@ -50,6 +82,12 @@ class EventLog:
             "metadata": metadata or {},
         }
         self._events.append(entry)
+        for listener in list(self._listeners):
+            try:
+                listener(entry)
+            except Exception:  # pragma: no cover - defensive logging
+                # Reason: event listeners should never break event recording.
+                continue
         return entry
 
     def list_events(self, limit: int | None = None) -> List[Dict[str, object]]:
