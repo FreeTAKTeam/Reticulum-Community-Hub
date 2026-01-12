@@ -1,4 +1,5 @@
 ﻿# TASKS
+- 2026-01-12: ✅ Create venv_linux for running tests.
 - 2026-01-13: ✅ Address websocket broadcaster test coverage and sync execution.
 - 2026-01-13: ✅ Fix northbound websocket topic filtering and event dispatch.
 - 2026-01-12: ✅ Implement northbound FastAPI REST/WebSocket interface for the WebUI.
