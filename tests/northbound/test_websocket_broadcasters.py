@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import threading
+from typing import Awaitable
 from typing import Callable
 from typing import Optional
 
@@ -95,63 +96,99 @@ def test_topic_subscription_requires_api() -> None:
         broadcaster.subscribe(_callback, topic_id="topic")
 
 
-@pytest.mark.asyncio
-async def test_event_broadcaster_dispatches_without_loop() -> None:
+def _run_async(coro: Callable[[], Awaitable[None]]) -> None:
+    """Run an async coroutine in a fresh event loop."""
+
+    asyncio.run(coro())
+
+
+def test_event_broadcaster_dispatches_without_loop() -> None:
     """Ensure event broadcaster uses the captured loop from threads."""
 
-    event_log = EventLog()
-    broadcaster = EventBroadcaster(event_log)
-    received = asyncio.Event()
-    seen: dict[str, object] = {}
+    async def _exercise() -> None:
+        event_log = EventLog()
+        broadcaster = EventBroadcaster(event_log)
+        received = asyncio.Event()
+        seen: dict[str, object] = {}
 
-    async def _callback(entry: dict) -> None:
-        """Store the event entry."""
+        async def _callback(entry: dict) -> None:
+            """Store the event entry."""
 
-        seen.update(entry)
-        received.set()
+            seen.update(entry)
+            received.set()
 
-    broadcaster.subscribe(_callback)
+        broadcaster.subscribe(_callback)
 
-    def _emit() -> None:
-        """Emit an event from a non-async thread."""
+        def _emit() -> None:
+            """Emit an event from a non-async thread."""
 
-        event_log.add_event("test", "message")
+            event_log.add_event("test", "message")
 
-    thread = threading.Thread(target=_emit)
-    thread.start()
-    thread.join()
+        thread = threading.Thread(target=_emit)
+        thread.start()
+        thread.join()
 
-    await asyncio.wait_for(received.wait(), timeout=1.0)
+        await asyncio.wait_for(received.wait(), timeout=1.0)
 
-    assert seen["type"] == "test"
+        assert seen["type"] == "test"
+
+    _run_async(_exercise)
 
 
-@pytest.mark.asyncio
-async def test_telemetry_broadcaster_dispatches_without_loop() -> None:
+def test_telemetry_broadcaster_dispatches_without_loop() -> None:
     """Ensure telemetry broadcaster uses the captured loop from threads."""
 
-    controller = _FakeTelemetryController()
-    broadcaster = TelemetryBroadcaster(controller, None)
-    received = asyncio.Event()
-    result: dict[str, object] = {}
+    async def _exercise() -> None:
+        controller = _FakeTelemetryController()
+        broadcaster = TelemetryBroadcaster(controller, None)
+        received = asyncio.Event()
+        result: dict[str, object] = {}
 
-    async def _callback(entry: dict) -> None:
-        """Store the telemetry entry."""
+        async def _callback(entry: dict) -> None:
+            """Store the telemetry entry."""
 
-        result.update(entry)
-        received.set()
+            result.update(entry)
+            received.set()
 
-    broadcaster.subscribe(_callback)
+        broadcaster.subscribe(_callback)
 
-    def _emit() -> None:
-        """Emit telemetry from a non-async thread."""
+        def _emit() -> None:
+            """Emit telemetry from a non-async thread."""
 
-        controller.emit({"foo": "bar"}, "peer", None)
+            controller.emit({"foo": "bar"}, "peer", None)
 
-    thread = threading.Thread(target=_emit)
-    thread.start()
-    thread.join()
+        thread = threading.Thread(target=_emit)
+        thread.start()
+        thread.join()
 
-    await asyncio.wait_for(received.wait(), timeout=1.0)
+        await asyncio.wait_for(received.wait(), timeout=1.0)
 
-    assert result["peer_destination"] == "peer"
+        assert result["peer_destination"] == "peer"
+
+    _run_async(_exercise)
+
+
+def test_telemetry_subscription_filters_peer_destinations() -> None:
+    """Ensure telemetry filters respect allowed destinations."""
+
+    async def _exercise() -> None:
+        controller = _FakeTelemetryController()
+        api = _FakeApi(["peer-1"])
+        broadcaster = TelemetryBroadcaster(controller, api)
+        received: list[str] = []
+
+        async def _callback(entry: dict) -> None:
+            """Store the peer destination."""
+
+            received.append(str(entry["peer_destination"]))
+
+        broadcaster.subscribe(_callback, topic_id="topic")
+
+        controller.emit({"foo": "bar"}, "peer-1", None)
+        controller.emit({"foo": "bar"}, "peer-2", None)
+
+        await asyncio.sleep(0)
+
+        assert received == ["peer-1"]
+
+    _run_async(_exercise)
