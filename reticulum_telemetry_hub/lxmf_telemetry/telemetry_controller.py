@@ -259,18 +259,18 @@ class TelemetryController:
                     if telemeter.peer_dest in allowed
                 ]
 
-        entries: list[dict[str, object]] = []
-        for telemeter in telemeters:
-            timestamp = int(telemeter.time.timestamp()) if telemeter.time else 0
-            payload = self._serialize_telemeter(telemeter)
-            entries.append(
-                {
-                    "peer_destination": telemeter.peer_dest,
-                    "timestamp": timestamp,
-                    "telemetry": self._humanize_telemetry(payload),
-                }
-            )
-        return entries
+            entries: list[dict[str, object]] = []
+            for telemeter in telemeters:
+                timestamp = int(telemeter.time.timestamp()) if telemeter.time else 0
+                payload = self._serialize_telemeter(telemeter)
+                entries.append(
+                    {
+                        "peer_destination": telemeter.peer_dest,
+                        "timestamp": timestamp,
+                        "telemetry": self._humanize_telemetry(payload),
+                    }
+                )
+            return entries
 
     def register_listener(
         self,
