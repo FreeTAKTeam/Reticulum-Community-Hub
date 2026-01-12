@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ReticulumTelemetryHub"
-version = "0.102.0"
+version = "0.103.0"
 description = "Reticulum-Telemetry-Hub (RTH) manages a complete TCP node across a Reticulum-based network, enabling communication and data sharing between clients like Sideband or Meshchat."
 authors = ["naman108, corvo"]
 readme = "README.md"
@@ -25,6 +25,7 @@ qrcode = "^7.4.2"
 fastapi = "^0.115.0"
 pydantic = "^2.8.2"
 uvicorn = "^0.30.0"
+httpx = "^0.27.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.7.3"
