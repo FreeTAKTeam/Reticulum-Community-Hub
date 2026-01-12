@@ -1,4 +1,5 @@
 ﻿# TASKS
+- 2026-01-13: ✅ Fix northbound websocket topic filtering and event dispatch.
 - 2026-01-12: ✅ Implement northbound FastAPI REST/WebSocket interface for the WebUI.
 - 2026-01-11: ✅ Implement RTH Core UI application as documented.
 - 2026-01-09: âœ… Fix config backup timestamp timezone usage.

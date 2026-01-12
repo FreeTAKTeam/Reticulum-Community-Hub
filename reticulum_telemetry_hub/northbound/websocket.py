@@ -31,7 +31,7 @@ class _TelemetrySubscriber:
     """Configuration for a telemetry WebSocket subscriber."""
 
     callback: Callable[[Dict[str, object]], Awaitable[None]]
-    allowed_destinations: Optional[set[str]]
+    allowed_destinations: Optional[frozenset[str]]
 
 
 class EventBroadcaster:
@@ -46,6 +46,7 @@ class EventBroadcaster:
 
         self._event_log = event_log
         self._subscribers: set[Callable[[Dict[str, object]], Awaitable[None]]] = set()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._event_log.add_listener(self._handle_event)
 
     def subscribe(
@@ -62,6 +63,7 @@ class EventBroadcaster:
         """
 
         self._subscribers.add(callback)
+        self._capture_loop()
 
         def _unsubscribe() -> None:
             """Remove the event callback subscription.
@@ -74,6 +76,26 @@ class EventBroadcaster:
 
         return _unsubscribe
 
+    def _capture_loop(self) -> None:
+        """Capture the running event loop for cross-thread dispatch."""
+
+        if self._loop is not None and self._loop.is_running():
+            return
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+
+    def _create_task(
+        self,
+        callback: Callable[[Dict[str, object]], Awaitable[None]],
+        entry: Dict[str, object],
+    ) -> None:
+        """Create an asyncio task for a callback on the current loop."""
+
+        loop = asyncio.get_running_loop()
+        loop.create_task(callback(entry))
+
     def _handle_event(self, entry: Dict[str, object]) -> None:
         """Dispatch a new event to subscribers.
 
@@ -84,10 +106,14 @@ class EventBroadcaster:
         for callback in list(self._subscribers):
             try:
                 loop = asyncio.get_running_loop()
+                loop.create_task(callback(entry))
+                continue
             except RuntimeError:
+                pass
+            if self._loop is None or not self._loop.is_running():
                 # Reason: skip async dispatch when no loop is running.
                 continue
-            loop.create_task(callback(entry))
+            self._loop.call_soon_threadsafe(self._create_task, callback, entry)
 
 
 class TelemetryBroadcaster:
@@ -109,6 +135,7 @@ class TelemetryBroadcaster:
         self._controller = controller
         self._api = api
         self._subscribers: set[_TelemetrySubscriber] = set()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._controller.register_listener(self._handle_telemetry)
 
     def subscribe(
@@ -133,9 +160,12 @@ class TelemetryBroadcaster:
             if self._api is None:
                 raise ValueError("Topic filtering requires an API service")
             subscribers = self._api.list_subscribers_for_topic(topic_id)
-            allowed = {subscriber.destination for subscriber in subscribers}
+            allowed = frozenset(
+                subscriber.destination for subscriber in subscribers
+            )
         subscriber = _TelemetrySubscriber(callback=callback, allowed_destinations=allowed)
         self._subscribers.add(subscriber)
+        self._capture_loop()
 
         def _unsubscribe() -> None:
             """Remove the telemetry callback subscription.
@@ -147,6 +177,26 @@ class TelemetryBroadcaster:
             self._subscribers.discard(subscriber)
 
         return _unsubscribe
+
+    def _capture_loop(self) -> None:
+        """Capture the running event loop for cross-thread dispatch."""
+
+        if self._loop is not None and self._loop.is_running():
+            return
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+
+    def _create_task(
+        self,
+        callback: Callable[[Dict[str, object]], Awaitable[None]],
+        entry: Dict[str, object],
+    ) -> None:
+        """Create an asyncio task for a callback on the current loop."""
+
+        loop = asyncio.get_running_loop()
+        loop.create_task(callback(entry))
 
     def _handle_telemetry(
         self,
@@ -174,10 +224,18 @@ class TelemetryBroadcaster:
                     continue
             try:
                 loop = asyncio.get_running_loop()
+                loop.create_task(subscriber.callback(entry))
+                continue
             except RuntimeError:
+                pass
+            if self._loop is None or not self._loop.is_running():
                 # Reason: skip async dispatch when no loop is running.
                 continue
-            loop.create_task(subscriber.callback(entry))
+            self._loop.call_soon_threadsafe(
+                self._create_task,
+                subscriber.callback,
+                entry,
+            )
 
 
 def _normalize_peer(peer_hash: str | bytes | None) -> str:
