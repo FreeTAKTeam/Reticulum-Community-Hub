@@ -17,7 +17,10 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       !startsWith(github.event.workflow_run.head_branch, 'codex/')
     runs-on: ubuntu-latest
+
+    # Hard job-level timeout (GitHub enforced)
     timeout-minutes: 60
+
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       FAILED_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
@@ -52,6 +55,16 @@ jobs:
         id: codex
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+
+          # Explicit model selection
+          model: gpt-5.2-codex
+
+          # Reasoning control (low | medium | high)
+          reasoning-effort: medium
+
+          # Defensive timeout at Codex runtime level (seconds)
+          max-runtime-seconds: 3600
+
           prompt-file: .github/codex/prompts/autofix-ci.md
           sandbox: workspace-write
 
