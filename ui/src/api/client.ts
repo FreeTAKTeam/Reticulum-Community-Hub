@@ -35,9 +35,7 @@ const withTimeout = async (promise: Promise<Response>, timeoutMs: number): Promi
 export const request = async <T>(path: string, options: RequestOptions = {}): Promise<T> => {
   const connectionStore = useConnectionStore();
   const url = connectionStore.resolveUrl(path);
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json"
-  };
+  const headers: Record<string, string> = {};
 
   const authHeader = connectionStore.authHeader;
   if (authHeader) {
@@ -52,6 +50,7 @@ export const request = async <T>(path: string, options: RequestOptions = {}): Pr
     headers
   };
   if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
     requestInit.body = JSON.stringify(options.body);
   }
 
