@@ -300,6 +300,7 @@ class ReticulumTelemetryHub:
             db_path=telemetry_db_path,
             event_log=self.event_log,
         )
+        self._message_listeners: list[Callable[[dict[str, object]], None]] = []
         self.config_manager: HubConfigurationManager | None = config_manager
         self.embedded_lxmd: EmbeddedLxmd | None = None
         self.telemetry_sampler: TelemetrySampler | None = None
@@ -395,6 +396,59 @@ class ReticulumTelemetryHub:
         if self._commands_affect_subscribers(commands):
             self._refresh_topic_registry()
         return responses
+
+    def register_message_listener(
+        self, listener: Callable[[dict[str, object]], None]
+    ) -> Callable[[], None]:
+        """Register a callback invoked for inbound LXMF messages."""
+
+        self._message_listeners.append(listener)
+
+        def _remove_listener() -> None:
+            """Remove a previously registered message listener."""
+
+            if listener in self._message_listeners:
+                self._message_listeners.remove(listener)
+
+        return _remove_listener
+
+    def _notify_message_listeners(self, entry: dict[str, object]) -> None:
+        """Dispatch an inbound message entry to registered listeners."""
+
+        for listener in list(self._message_listeners):
+            try:
+                listener(entry)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                RNS.log(
+                    f"Message listener raised an exception: {exc}",
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
+
+    def _record_message_event(
+        self,
+        *,
+        content: str,
+        source_label: str,
+        source_hash: str | None,
+        topic_id: str | None,
+        timestamp: datetime,
+    ) -> None:
+        """Emit an inbound message event for northbound consumers."""
+
+        entry = {
+            "timestamp": timestamp.isoformat(),
+            "source": source_label,
+            "source_hash": source_hash or "",
+            "topic_id": topic_id,
+            "content": content,
+        }
+        self._notify_message_listeners(entry)
+        if self.event_log is not None:
+            self.event_log.add_event(
+                "message_received",
+                f"Message received from {source_label}",
+                metadata=entry,
+            )
 
     def _parse_escape_prefixed_commands(
         self, message: LXMF.LXMessage
@@ -616,16 +670,24 @@ class ReticulumTelemetryHub:
             source_label = self._lookup_identity_label(source_hash)
             topic_id = self._extract_target_topic(message.fields)
             content_text = self._message_text(message)
+            try:
+                message_time = datetime.fromtimestamp(
+                    getattr(message, "timestamp", time.time()),
+                    tz=timezone.utc,
+                ).replace(tzinfo=None)
+            except Exception:
+                message_time = _utcnow()
+
+            self._record_message_event(
+                content=content_text,
+                source_label=source_label,
+                source_hash=self._message_source_hex(message),
+                topic_id=topic_id,
+                timestamp=message_time,
+            )
 
             tak_connector = getattr(self, "tak_connector", None)
             if tak_connector is not None and content_text:
-                try:
-                    message_time = datetime.fromtimestamp(
-                        getattr(message, "timestamp", time.time()),
-                        tz=timezone.utc,
-                    ).replace(tzinfo=None)
-                except Exception:
-                    message_time = _utcnow()
                 try:
                     asyncio.run(
                         tak_connector.send_chat_event(
@@ -655,6 +717,7 @@ class ReticulumTelemetryHub:
         message: str,
         *,
         topic: str | None = None,
+        destination: str | None = None,
         exclude: set[str] | None = None,
     ):
         """Sends a message to connected clients.
@@ -662,6 +725,7 @@ class ReticulumTelemetryHub:
         Args:
             message (str): Text to broadcast.
             topic (str | None): Topic filter limiting recipients.
+            destination (str | None): Optional destination hash for a targeted send.
             exclude (set[str] | None): Optional set of lowercase destination
                 hashes that should not receive the broadcast.
         """
@@ -680,6 +744,7 @@ class ReticulumTelemetryHub:
             else list(self.connections)
         )
         excluded = {value.lower() for value in exclude if value} if exclude else set()
+        normalized_destination = destination.lower() if destination else None
         if topic:
             subscriber_hex = self._subscribers_for_topic(topic)
             available = [
@@ -689,6 +754,8 @@ class ReticulumTelemetryHub:
             ]
         for connection in available:
             connection_hex = self._connection_hex(connection)
+            if normalized_destination and connection_hex != normalized_destination:
+                continue
             if excluded and connection_hex and connection_hex in excluded:
                 continue
             identity = getattr(connection, "identity", None)
@@ -711,6 +778,20 @@ class ReticulumTelemetryHub:
                     ),
                     getattr(RNS, "LOG_WARNING", 2),
                 )
+
+    def dispatch_northbound_message(
+        self,
+        message: str,
+        topic_id: str | None = None,
+        destination: str | None = None,
+    ) -> None:
+        """Dispatch a message originating from the northbound interface."""
+
+        self.send_message(
+            message,
+            topic=topic_id,
+            destination=destination,
+        )
 
     def _ensure_outbound_queue(self) -> OutboundMessageQueue | None:
         """

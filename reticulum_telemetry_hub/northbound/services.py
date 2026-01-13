@@ -35,6 +35,9 @@ class NorthboundServices:
     started_at: datetime
     command_manager: Optional[Any] = None
     routing_provider: Optional[Callable[[], List[str]]] = None
+    message_dispatcher: Optional[
+        Callable[[str, Optional[str], Optional[str]], None]
+    ] = None
 
     def help_text(self) -> str:
         """Return the Help command text.
@@ -192,6 +195,19 @@ class NorthboundServices:
         """
 
         return self.api.get_app_info()
+
+    def send_message(
+        self,
+        content: str,
+        *,
+        topic_id: Optional[str] = None,
+        destination: Optional[str] = None,
+    ) -> None:
+        """Dispatch a message from northbound into the core hub."""
+
+        if not self.message_dispatcher:
+            raise RuntimeError("Message dispatch is not configured")
+        self.message_dispatcher(content, topic_id, destination)
 
     def reload_config(self) -> ReticulumInfo:
         """Reload configuration from disk.

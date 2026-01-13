@@ -9,7 +9,9 @@ from fastapi import WebSocket
 from .auth import ApiAuth
 from .services import NorthboundServices
 from .websocket import EventBroadcaster
+from .websocket import MessageBroadcaster
 from .websocket import TelemetryBroadcaster
+from .websocket import handle_message_socket
 from .websocket import handle_system_socket
 from .websocket import handle_telemetry_socket
 
@@ -21,6 +23,7 @@ def register_ws_routes(
     auth: ApiAuth,
     event_broadcaster: EventBroadcaster,
     telemetry_broadcaster: TelemetryBroadcaster,
+    message_broadcaster: MessageBroadcaster,
 ) -> None:
     """Register WebSocket routes on the FastAPI app.
 
@@ -30,6 +33,7 @@ def register_ws_routes(
         auth (ApiAuth): Auth validator.
         event_broadcaster (EventBroadcaster): Event broadcaster.
         telemetry_broadcaster (TelemetryBroadcaster): Telemetry broadcaster.
+        message_broadcaster (MessageBroadcaster): Message broadcaster.
 
     Returns:
         None: Routes are registered on the application.
@@ -89,4 +93,15 @@ def register_ws_routes(
             auth=auth,
             telemetry_broadcaster=telemetry_broadcaster,
             telemetry_snapshot=_telemetry_snapshot,
+        )
+
+    @app.websocket("/messages/stream")
+    async def message_websocket(websocket: WebSocket) -> None:
+        """WebSocket stream for inbound/outbound messages."""
+
+        await handle_message_socket(
+            websocket,
+            auth=auth,
+            message_broadcaster=message_broadcaster,
+            message_sender=services.send_message,
         )
