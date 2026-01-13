@@ -12,6 +12,7 @@ from typing import Optional
 
 from dotenv import load_dotenv as load_env
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -95,6 +96,14 @@ def create_app(
     require_protected = build_protected_dependency(auth)
 
     app = FastAPI(title="ReticulumTelemetryHub", version="northbound")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        max_age=86400,
+    )
     event_broadcaster = EventBroadcaster(event_log)
     telemetry_broadcaster = TelemetryBroadcaster(telemetry_controller, api)
     message_broadcaster = MessageBroadcaster(message_listener)

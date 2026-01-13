@@ -7,6 +7,27 @@ import { patch } from "../api/client";
 import { post } from "../api/client";
 import type { Topic } from "../api/types";
 
+type TopicApiPayload = {
+  TopicID?: string;
+  TopicName?: string;
+  TopicPath?: string;
+  TopicDescription?: string;
+};
+
+const toApiTopic = (topic: Topic): TopicApiPayload => ({
+  TopicID: topic.id,
+  TopicName: topic.name,
+  TopicPath: topic.path,
+  TopicDescription: topic.description
+});
+
+const fromApiTopic = (payload: TopicApiPayload): Topic => ({
+  id: payload.TopicID,
+  name: payload.TopicName,
+  path: payload.TopicPath,
+  description: payload.TopicDescription
+});
+
 export const useTopicsStore = defineStore("topics", () => {
   const topics = ref<Topic[]>([]);
   const loading = ref(false);
@@ -14,23 +35,25 @@ export const useTopicsStore = defineStore("topics", () => {
   const fetchTopics = async () => {
     loading.value = true;
     try {
-      topics.value = await get<Topic[]>(endpoints.topics);
+      const response = await get<TopicApiPayload[]>(endpoints.topics);
+      topics.value = response.map(fromApiTopic);
     } finally {
       loading.value = false;
     }
   };
 
   const createTopic = async (payload: Topic) => {
-    const created = await post<Topic>(endpoints.topics, payload);
-    topics.value = [...topics.value, created];
+    const created = await post<TopicApiPayload>(endpoints.topics, toApiTopic(payload));
+    topics.value = [...topics.value, fromApiTopic(created)];
   };
 
   const updateTopic = async (payload: Topic) => {
     if (!payload.id) {
       return;
     }
-    const updated = await patch<Topic>(`${endpoints.topics}?id=${payload.id}`, payload);
-    topics.value = topics.value.map((topic) => (topic.id === payload.id ? updated : topic));
+    const updated = await patch<TopicApiPayload>(endpoints.topics, toApiTopic(payload));
+    const mapped = fromApiTopic(updated);
+    topics.value = topics.value.map((topic) => (topic.id === payload.id ? mapped : topic));
   };
 
   const removeTopic = async (id: string) => {
