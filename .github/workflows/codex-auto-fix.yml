@@ -60,10 +60,13 @@ jobs:
           model: gpt-5.2-codex
 
           # Reasoning control (low | medium | high)
-          reasoning-effort: medium
+          effort: medium
 
-          # Defensive timeout at Codex runtime level (seconds)
-          max-runtime-seconds: 3600
+          # Pass arguments directly to Codex CLI
+          # --max-steps limits runaway reasoning loops
+          codex-args: >
+            --max-steps=120
+            --stop-on-success
 
           prompt-file: .github/codex/prompts/autofix-ci.md
           sandbox: workspace-write
