@@ -121,7 +121,7 @@ def register_topic_routes(
                 detail="TopicID is required",
             )
         try:
-            topic = api.patch_topic(payload.topic_id, **payload.dict(by_alias=True, exclude_unset=True))
+            topic = api.patch_topic(payload.topic_id, **payload.model_dump(by_alias=True, exclude_unset=True))
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         services.record_event("topic_updated", f"Topic updated: {topic.topic_id}")
