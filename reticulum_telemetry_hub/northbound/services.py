@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
+from pathlib import Path
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -23,6 +24,59 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 from reticulum_telemetry_hub.reticulum_server import command_text
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+
+
+def _load_supported_commands_doc() -> Optional[str]:
+    doc_path = Path(__file__).resolve().parents[2] / "docs" / "supportedCommands.md"
+    try:
+        return doc_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _build_help_fallback(doc_text: str) -> str:
+    public_commands: list[str] = []
+    protected_commands: list[str] = []
+    section: Optional[str] = None
+    for line in doc_text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("public commands"):
+            section = "public"
+            continue
+        if stripped.lower().startswith("protected commands"):
+            section = "protected"
+            continue
+        if stripped.startswith("| `"):
+            parts = [part.strip() for part in stripped.split("|")]
+            if len(parts) < 2:
+                continue
+            command_cell = parts[1].replace("`", "").strip()
+            if not command_cell:
+                continue
+            if section == "protected":
+                protected_commands.append(command_cell)
+            else:
+                public_commands.append(command_cell)
+    if not public_commands and not protected_commands:
+        return "# Command list\n\nCommand documentation not available."
+    lines = ["# Command list", ""]
+    if public_commands:
+        lines.append("Public:")
+        lines.extend([f"- {command}" for command in public_commands])
+        lines.append("")
+    if protected_commands:
+        lines.append("Protected:")
+        lines.extend([f"- {command}" for command in protected_commands])
+    return "\n".join(lines).strip() + "\n"
+
+
+def _build_examples_fallback(doc_text: str) -> str:
+    marker = "Public commands:"
+    start = doc_text.find(marker)
+    if start == -1:
+        return doc_text
+    snippet = doc_text[start:].strip()
+    return f"# Command examples\n\n{snippet}\n"
 
 
 @dataclass
@@ -47,6 +101,9 @@ class NorthboundServices:
         """
 
         if not self.command_manager:
+            doc_text = _load_supported_commands_doc()
+            if doc_text:
+                return _build_help_fallback(doc_text)
             return "# Command list\n\nCommand manager is not configured."
         return command_text.build_help_text(self.command_manager)
 
@@ -58,6 +115,9 @@ class NorthboundServices:
         """
 
         if not self.command_manager:
+            doc_text = _load_supported_commands_doc()
+            if doc_text:
+                return _build_examples_fallback(doc_text)
             return "# Command examples\n\nCommand manager is not configured."
         return command_text.build_examples_text(self.command_manager)
 

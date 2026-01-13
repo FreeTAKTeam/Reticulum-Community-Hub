@@ -13,14 +13,14 @@ const props = withDefaults(defineProps<{ tone?: "neutral" | "success" | "warning
 
 const badgeClass = computed(() => {
   if (props.tone === "success") {
-    return "bg-emerald-500/20 text-emerald-200";
+    return "bg-[#4db6ff]/15 text-[#8fd4ff]";
   }
   if (props.tone === "warning") {
-    return "bg-amber-500/20 text-amber-200";
+    return "bg-[#f59e0b]/15 text-[#fcd34d]";
   }
   if (props.tone === "danger") {
-    return "bg-rose-500/20 text-rose-200";
+    return "bg-[#ef4444]/15 text-[#fecaca]";
   }
-  return "bg-slate-800 text-slate-200";
+  return "bg-rth-panel-muted text-rth-muted";
 });
 </script>

@@ -6,6 +6,25 @@ import type { EventEntry } from "../api/types";
 import type { StatusResponse } from "../api/types";
 import { useConnectionStore } from "./connection";
 
+type StatusApiPayload = StatusResponse & {
+  uptime_seconds?: number;
+};
+
+const normalizeStatus = (payload: StatusApiPayload): StatusResponse => {
+  const uptime = payload.uptime ?? payload.uptime_seconds;
+  const telemetry = payload.telemetry
+    ? {
+        ...payload.telemetry,
+        total: payload.telemetry.total ?? payload.telemetry.ingest_count
+      }
+    : undefined;
+  return {
+    ...payload,
+    uptime,
+    telemetry
+  };
+};
+
 export const useDashboardStore = defineStore("dashboard", () => {
   const status = ref<StatusResponse | null>(null);
   const events = ref<EventEntry[]>([]);
@@ -15,7 +34,8 @@ export const useDashboardStore = defineStore("dashboard", () => {
     loading.value = true;
     const connectionStore = useConnectionStore();
     try {
-      status.value = await get<StatusResponse>(endpoints.status);
+      const response = await get<StatusApiPayload>(endpoints.status);
+      status.value = normalizeStatus(response);
       events.value = await get<EventEntry[]>(endpoints.events);
       connectionStore.setOnline();
     } finally {
@@ -27,8 +47,8 @@ export const useDashboardStore = defineStore("dashboard", () => {
     events.value = [event, ...events.value].slice(0, 50);
   };
 
-  const updateStatus = (payload: StatusResponse) => {
-    status.value = payload;
+  const updateStatus = (payload: StatusApiPayload) => {
+    status.value = normalizeStatus(payload);
   };
 
   return {

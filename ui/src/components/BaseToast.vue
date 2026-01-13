@@ -1,6 +1,6 @@
 <template>
   <div class="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
-    <div v-for="toast in toastStore.messages" :key="toast.id" class="rounded border border-rth-border bg-slate-900 px-4 py-2 text-sm shadow" :class="toneClass(toast.tone)">
+    <div v-for="toast in toastStore.messages" :key="toast.id" class="rounded border border-rth-border bg-rth-panel-muted px-4 py-2 text-sm" :class="toneClass(toast.tone)">
       {{ toast.message }}
     </div>
   </div>
@@ -13,14 +13,14 @@ const toastStore = useToastStore();
 
 const toneClass = (tone: string) => {
   if (tone === "success") {
-    return "text-emerald-200";
+    return "text-[#8fd4ff]";
   }
-  if (tone === "error") {
-    return "text-rose-200";
+  if (tone === "error" || tone === "danger") {
+    return "text-[#fecaca]";
   }
   if (tone === "warning") {
-    return "text-amber-200";
+    return "text-[#fcd34d]";
   }
-  return "text-slate-200";
+  return "text-rth-text";
 };
 </script>

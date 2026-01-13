@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-col gap-1">
-    <label v-if="label" class="text-xs text-slate-400">{{ label }}</label>
-    <input :type="type" :value="modelValue" class="rounded border border-rth-border bg-slate-900 px-3 py-2 text-sm text-slate-100" @input="onInput" />
+    <label v-if="label" class="text-xs text-rth-muted">{{ label }}</label>
+    <input :type="type" :value="modelValue" class="rounded border border-rth-border bg-rth-panel-muted px-3 py-2 text-sm text-rth-text focus:border-rth-accent focus:outline-none" @input="onInput" />
   </div>
 </template>
 

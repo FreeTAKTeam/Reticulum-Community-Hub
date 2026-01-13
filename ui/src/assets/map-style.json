@@ -1,0 +1,35 @@
+{
+  "version": 8,
+  "name": "RTH Dark",
+  "sources": {
+    "raster-tiles": {
+      "type": "raster",
+      "tiles": [
+        "https://tiles.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+      ],
+      "tileSize": 256,
+      "attribution": "(c) OpenStreetMap contributors (c) CARTO"
+    }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#0f1320"
+      }
+    },
+    {
+      "id": "raster-tiles",
+      "type": "raster",
+      "source": "raster-tiles",
+      "paint": {
+        "raster-opacity": 0.85,
+        "raster-saturation": -0.8,
+        "raster-contrast": 0.2,
+        "raster-brightness-min": 0.15,
+        "raster-brightness-max": 0.65
+      }
+    }
+  ]
+}

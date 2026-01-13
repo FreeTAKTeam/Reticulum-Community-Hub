@@ -7,6 +7,10 @@ import type { TelemetryEntry } from "../api/types";
 import { deriveMarkers } from "../utils/telemetry";
 import type { TelemetryMarker } from "../utils/telemetry";
 
+type TelemetryApiResponse = {
+  entries?: TelemetryEntry[];
+};
+
 export const useTelemetryStore = defineStore("telemetry", () => {
   const entries = ref<TelemetryEntry[]>([]);
   const loading = ref(false);
@@ -21,7 +25,10 @@ export const useTelemetryStore = defineStore("telemetry", () => {
       params.set("topic_id", topicId.value);
     }
     try {
-      entries.value = await get<TelemetryEntry[]>(`${endpoints.telemetry}?${params.toString()}`);
+      const response = await get<TelemetryApiResponse | TelemetryEntry[]>(
+        `${endpoints.telemetry}?${params.toString()}`
+      );
+      entries.value = Array.isArray(response) ? response : response.entries ?? [];
     } finally {
       loading.value = false;
     }

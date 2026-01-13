@@ -15,3 +15,17 @@ export const formatNumber = (value?: number | null): string => {
   }
   return new Intl.NumberFormat().format(value);
 };
+
+export const formatApiPayload = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === undefined) {
+    return "";
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+};

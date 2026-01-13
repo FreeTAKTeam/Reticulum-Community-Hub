@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-6">
     <BaseCard title="App Info">
-      <div class="space-y-2 text-sm text-slate-300">
+      <div class="space-y-2 text-sm text-rth-muted">
         <div>Name: {{ appInfo?.name }}</div>
         <div>Version: {{ appInfo?.version }}</div>
         <div>Description: {{ appInfo?.description }}</div>
@@ -11,15 +11,15 @@
     </BaseCard>
 
     <BaseCard title="Storage Paths">
-      <div v-if="appInfo?.storage_paths" class="space-y-2 text-sm text-slate-300">
+      <div v-if="appInfo?.storage_paths" class="space-y-2 text-sm text-rth-muted">
         <div v-for="(value, key) in appInfo.storage_paths" :key="key">{{ key }}: {{ value }}</div>
       </div>
     </BaseCard>
 
     <BaseCard title="Documentation">
-      <ul class="list-disc space-y-2 pl-5 text-sm text-slate-300">
-        <li><a class="text-sky-300 hover:underline" href="/docs/" target="_blank" rel="noreferrer">Project Docs</a></li>
-        <li><a class="text-sky-300 hover:underline" href="/API/ReticulumTelemetryHub-OAS.yaml" target="_blank" rel="noreferrer">OpenAPI Reference</a></li>
+      <ul class="list-disc space-y-2 pl-5 text-sm text-rth-muted">
+        <li><a class="text-rth-accent hover:underline" href="/docs/" target="_blank" rel="noreferrer">Project Docs</a></li>
+        <li><a class="text-rth-accent hover:underline" href="/API/ReticulumTelemetryHub-OAS.yaml" target="_blank" rel="noreferrer">OpenAPI Reference</a></li>
       </ul>
     </BaseCard>
   </div>

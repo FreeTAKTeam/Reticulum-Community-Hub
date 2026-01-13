@@ -18,19 +18,19 @@ This task list implements the **RTH Core Administrative UI** described in:
 
 ## 0) Repo Scaffolding
 
-- [ ] Create a new frontend workspace folder (recommended: `ui/`).
-- [ ] Add a top-level `ui/README.md` with dev + build instructions.
-- [ ] Decide and document the supported Node version (recommend LTS) and package manager (npm/pnpm).
+- [x] Create a new frontend workspace folder (recommended: `ui/`).
+- [x] Add a top-level `ui/README.md` with dev + build instructions.
+- [x] Decide and document the supported Node version (recommend LTS) and package manager (npm/pnpm).
 
 ---
 
 ## 1) UI Project Setup (Vue 3 + Vite + TS + Tailwind)
 
-- [ ] Scaffold a Vue 3 + TypeScript app (Vite).
-- [ ] Add TailwindCSS (dark theme baseline) and a minimal design-token layer (CSS variables or Tailwind theme extension).
-- [ ] Add Vue Router (SPA routes) and Pinia (state).
-- [ ] Add a small component library layer (shared `Button`, `Input`, `Select`, `Card`, `Table`, `Badge`, `Modal/Drawer`, `Toast`).
-- [ ] Add dev-time API base URL config:
+- [x] Scaffold a Vue 3 + TypeScript app (Vite).
+- [x] Add TailwindCSS (dark theme baseline) and a minimal design-token layer (CSS variables or Tailwind theme extension).
+- [x] Add Vue Router (SPA routes) and Pinia (state).
+- [x] Add a small component library layer (shared `Button`, `Input`, `Select`, `Card`, `Table`, `Badge`, `Modal/Drawer`, `Toast`).
+- [x] Add dev-time API base URL config:
   - `.env` support (e.g., `VITE_RTH_BASE_URL`)
   - optional Vite dev proxy for same-origin local development
 
@@ -42,11 +42,11 @@ Acceptance:
 
 ## 2) Route Map + App Shell
 
-- [ ] Implement app shell layout:
+- [x] Implement app shell layout:
   - fixed left sidebar
   - header with page title + context actions area
   - content area with consistent padding and scrolling behavior
-- [ ] Implement routes (exact paths can vary, but map 1:1 to modules):
+- [x] Implement routes (exact paths can vary, but map 1:1 to modules):
   - Home (Dashboard)
   - WebMap
   - Topics
@@ -55,7 +55,7 @@ Acceptance:
   - Configure (Config + Tools)
   - About
   - (optional) Connect
-- [ ] Add a global error boundary + “offline/connection lost” banner region.
+- [x] Add a global error boundary + “offline/connection lost” banner region.
 
 Acceptance:
 - Navigation matches `docs/ui-wireframe.md` and is keyboard accessible.
@@ -64,16 +64,16 @@ Acceptance:
 
 ## 3) Typed REST Client (OpenAPI-first)
 
-- [ ] Generate TypeScript types from `API/ReticulumTelemetryHub-OAS.yaml` (or hand-author minimal types if generation is skipped).
-- [ ] Implement a small `rthApi` client:
+- [x] Generate TypeScript types from `API/ReticulumTelemetryHub-OAS.yaml` (or hand-author minimal types if generation is skipped).
+- [x] Implement a small `rthApi` client:
   - base URL handling
   - JSON + text/plain endpoints
   - timeout + retry policy for idempotent GETs
   - consistent error shape (status, message, body)
-- [ ] Implement auth injection:
+- [x] Implement auth injection:
   - `Authorization: Bearer <token>` OR `X-API-Key: <key>`
   - allow runtime switching (Connect page)
-- [ ] Implement request helpers for the UI surface:
+- [x] Implement request helpers for the UI surface:
   - status/events
   - topics CRUD
   - subscribers CRUD + add
@@ -90,15 +90,15 @@ Acceptance:
 
 ## 4) WebSocket Client (RTH-WS v1)
 
-- [ ] Implement a reusable WS client wrapper:
+- [x] Implement a reusable WS client wrapper:
   - connect/reconnect with exponential backoff
   - send `auth` message immediately after open
   - ping/pong handling (application-level)
   - clean close + state transitions
-- [ ] Implement `/events/system` stream consumption:
+- [x] Implement `/events/system` stream consumption:
   - handle `system.status` updates → update dashboard store
   - handle `system.event` updates → append to event feed store (bounded buffer)
-- [ ] Implement `/telemetry/stream` stream consumption:
+- [x] Implement `/telemetry/stream` stream consumption:
   - send `telemetry.subscribe` with `since` and optional `topic_id`
   - handle `telemetry.snapshot` → hydrate telemetry store
   - handle `telemetry.update` → incremental marker updates
@@ -110,14 +110,14 @@ Acceptance:
 
 ## 5) Pinia Stores (Single Source of Truth)
 
-- [ ] `connectionStore`: base URL, auth mode, credentials (with secure persistence rules), connection status.
-- [ ] `dashboardStore`: status snapshot + recent events buffer.
-- [ ] `topicsStore`: topics list + CRUD helpers + optimistic UI state.
-- [ ] `subscribersStore`: list + filters + CRUD helpers.
-- [ ] `filesStore`: files/images lists + download/preview state.
-- [ ] `usersStore`: clients + identities + moderation actions.
-- [ ] `configStore`: config text + validate/apply/rollback state.
-- [ ] `telemetryStore`: telemetry entries keyed by identity + derived map marker model.
+- [x] `connectionStore`: base URL, auth mode, credentials (with secure persistence rules), connection status.
+- [x] `dashboardStore`: status snapshot + recent events buffer.
+- [x] `topicsStore`: topics list + CRUD helpers + optimistic UI state.
+- [x] `subscribersStore`: list + filters + CRUD helpers.
+- [x] `filesStore`: files/images lists + download/preview state.
+- [x] `usersStore`: clients + identities + moderation actions.
+- [x] `configStore`: config text + validate/apply/rollback state.
+- [x] `telemetryStore`: telemetry entries keyed by identity + derived map marker model.
 
 Acceptance:
 - Page refresh does not lose navigation; optional persistence only for Connect settings (configurable).
@@ -128,64 +128,64 @@ Acceptance:
 
 ### 6.1 Home (Dashboard)
 
-- [ ] Render status cards from `GET /Status` and live updates from `/events/system`.
-- [ ] Render recent events list from `GET /Events` and live updates.
-- [ ] Add “stale telemetry” indicator based on `telemetry.last_ingest_at`.
+- [x] Render status cards from `GET /Status` and live updates from `/events/system`.
+- [x] Render recent events list from `GET /Events` and live updates.
+- [x] Add “stale telemetry” indicator based on `telemetry.last_ingest_at`.
 
 ### 6.2 WebMap
 
-- [ ] Add MapLibre GL map with dark style (offline-capable style configuration).
-- [ ] Render markers for identities with recent location telemetry.
-- [ ] Implement topic filter (drives REST query + WS subscription).
-- [ ] Implement identity quick-search and selection.
-- [ ] Implement a telemetry inspector panel (raw JSON + key fields).
+- [x] Add MapLibre GL map with dark style (offline-capable style configuration).
+- [x] Render markers for identities with recent location telemetry.
+- [x] Implement topic filter (drives REST query + WS subscription).
+- [x] Implement identity quick-search and selection.
+- [x] Implement a telemetry inspector panel (raw JSON + key fields).
 
 ### 6.3 Topics
 
-- [ ] Topics table (list, create, edit, delete) using `/Topic`.
-- [ ] Subscribers tab:
+- [x] Topics table (list, create, edit, delete) using `/Topic`.
+- [x] Subscribers tab:
   - list subscribers (`GET /Subscriber`)
   - add subscriber (`POST /Subscriber/Add` or `POST /Subscriber`)
   - edit (`PATCH /Subscriber`)
   - delete (`DELETE /Subscriber?id=...`)
-- [ ] Confirm destructive operations and handle 401/403 gracefully.
+- [x] Confirm destructive operations and handle 401/403 gracefully.
 
 ### 6.4 Files
 
-- [ ] Tabs: Files and Images.
-- [ ] List + metadata views (`GET /File`, `GET /Image`).
-- [ ] Download raw bytes (`GET /File/{id}/raw`, `GET /Image/{id}/raw`).
-- [ ] Image preview modal (blob URL) + download.
+- [x] Tabs: Files and Images.
+- [x] List + metadata views (`GET /File`, `GET /Image`).
+- [x] Download raw bytes (`GET /File/{id}/raw`, `GET /Image/{id}/raw`).
+- [x] Image preview modal (blob URL) + download.
 
 ### 6.5 Users
 
-- [ ] Clients tab (`GET /Client`) with last-seen and metadata display.
-- [ ] Identities tab (`GET /Identities`) with moderation status.
-- [ ] Actions: ban/unban/blackhole (`POST /Client/{id}/...`) with optimistic UI + rollback on failure.
-- [ ] Advanced: routing snapshot (`GET /Command/DumpRouting`) shown as a collapsible panel.
+- [x] Clients tab (`GET /Client`) with last-seen and metadata display.
+- [x] Identities tab (`GET /Identities`) with moderation status.
+- [x] Actions: ban/unban/blackhole (`POST /Client/{id}/...`) with optimistic UI + rollback on failure.
+- [x] Advanced: routing snapshot (`GET /Command/DumpRouting`) shown as a collapsible panel.
 
 ### 6.6 Configure
 
-- [ ] Config editor:
+- [x] Config editor:
   - load (`GET /Config`)
   - validate (`POST /Config/Validate`)
   - apply (`PUT /Config`)
   - rollback (`POST /Config/Rollback`)
   - show apply/rollback results and warnings (restart required)
-- [ ] Tools tab:
+- [x] Tools tab:
   - quick actions for `/Command/*`
   - raw response viewer
   - link to `/Help` and `/Examples`
 
 ### 6.7 About
 
-- [ ] Display `GET /api/v1/app/info` (name/version/description + RNS/LXMF versions + storage paths).
-- [ ] Link to project docs (`docs/`) and OpenAPI reference (`API/ReticulumTelemetryHub-OAS.yaml`).
+- [x] Display `GET /api/v1/app/info` (name/version/description + RNS/LXMF versions + storage paths).
+- [x] Link to project docs (`docs/`) and OpenAPI reference (`API/ReticulumTelemetryHub-OAS.yaml`).
 
 ### 6.8 Connect (Optional)
 
-- [ ] Provide base URL + auth configuration UX.
-- [ ] Implement “Test Connection” using `/api/v1/app/info` and `/Status`.
+- [x] Provide base URL + auth configuration UX.
+- [x] Implement “Test Connection” using `/api/v1/app/info` and `/Status`.
 
 Acceptance:
 - All pages match `docs/ui-wireframe.md` behaviorally (same modules, data sources, and actions).
@@ -194,28 +194,28 @@ Acceptance:
 
 ## 7) UX, Accessibility, and Resilience
 
-- [ ] Loading skeletons for table/map-heavy pages.
-- [ ] Toasts for success/failure; inline error details for validation failures.
-- [ ] Pagination or client-side virtualization for large tables (topics/subscribers/identities/files).
-- [ ] Keyboard navigation and focus management (modals/drawers).
-- [ ] Role/permission messaging: differentiate “not authenticated” vs “forbidden”.
+- [x] Loading skeletons for table/map-heavy pages.
+- [x] Toasts for success/failure; inline error details for validation failures.
+- [x] Pagination or client-side virtualization for large tables (topics/subscribers/identities/files).
+- [x] Keyboard navigation and focus management (modals/drawers).
+- [x] Role/permission messaging: differentiate “not authenticated” vs “forbidden”.
 
 ---
 
 ## 8) QA / Testing
 
-- [ ] Add unit tests for:
+- [x] Add unit tests for:
   - REST client error handling and auth injection
   - WS message parsing and reconnect behavior
   - telemetry-to-marker derivation helpers
-- [ ] Add a mock API mode (fixture JSON + mock WS) so UI can be developed without a live hub.
+- [x] Add a mock API mode (fixture JSON + mock WS) so UI can be developed without a live hub.
 
 ---
 
 ## 9) Packaging / Deployment
 
-- [ ] Document two deployment modes:
+- [x] Document two deployment modes:
   - embedded UI (served by the hub / same-origin)
   - external UI (reverse proxy; Connect screen enabled)
-- [ ] Produce a “build artifact” plan (where `dist/` is published/served from).
+- [x] Produce a “build artifact” plan (where `dist/` is published/served from).
 

@@ -1,5 +1,5 @@
 <template>
-  <button :type="type" class="inline-flex items-center justify-center gap-2 rounded border border-rth-border bg-rth-border px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50" :class="variantClass">
+  <button :type="type" class="inline-flex items-center justify-center gap-2 rounded border border-rth-border px-3 py-2 text-sm font-semibold text-rth-text transition-colors hover:border-rth-accent disabled:cursor-not-allowed disabled:opacity-50" :class="variantClass">
     <slot />
   </button>
 </template>
@@ -14,11 +14,11 @@ const props = withDefaults(defineProps<{ variant?: "primary" | "secondary" | "gh
 
 const variantClass = computed(() => {
   if (props.variant === "ghost") {
-    return "bg-transparent border-transparent hover:bg-rth-border";
+    return "bg-transparent border-transparent text-rth-muted hover:bg-rth-border";
   }
   if (props.variant === "secondary") {
-    return "bg-slate-800";
+    return "bg-rth-panel-muted text-rth-text hover:bg-rth-border";
   }
-  return "bg-rth-accent text-slate-900 hover:bg-sky-300";
+  return "bg-rth-accent text-rth-bg hover:bg-[#67c5ff]";
 });
 </script>

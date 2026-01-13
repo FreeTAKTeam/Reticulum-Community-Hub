@@ -6,11 +6,15 @@ export interface StatusResponse {
   clients?: number;
   topics?: number;
   subscribers?: number;
+  files?: number;
+  images?: number;
   telemetry?: {
     total?: number;
+    ingest_count?: number;
     last_ingest_at?: string;
   };
   uptime?: number;
+  uptime_seconds?: number;
 }
 
 export interface EventEntry {
@@ -47,7 +51,8 @@ export interface FileEntry {
 export interface IdentityEntry {
   id?: string;
   display_name?: string;
-  address?: string;
+  status?: string;
+  last_seen?: string;
   banned?: boolean;
   blackholed?: boolean;
 }

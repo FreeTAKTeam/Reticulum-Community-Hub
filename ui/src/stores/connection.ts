@@ -6,6 +6,7 @@ import { saveJson } from "../utils/storage";
 
 export type AuthMode = "none" | "bearer" | "apiKey" | "both";
 export type ConnectionStatus = "online" | "offline" | "unknown";
+export type AuthStatus = "ok" | "unauthenticated" | "forbidden" | "unknown";
 
 interface ConnectionState {
   baseUrl: string;
@@ -33,6 +34,9 @@ export const useConnectionStore = defineStore("connection", () => {
   const apiKey = ref<string>(stored.apiKey ?? "");
   const status = ref<ConnectionStatus>("unknown");
   const statusMessage = ref<string>("");
+  const authStatus = ref<AuthStatus>("unknown");
+  const authMessage = ref<string>("");
+  const wsConnections = ref(0);
 
   const resolveUrl = (path: string): string => {
     const origin = baseUrl.value || window.location.origin;
@@ -67,6 +71,17 @@ export const useConnectionStore = defineStore("connection", () => {
     return "Unknown";
   });
 
+  const wsLabel = computed(() => (wsConnections.value > 0 ? "Live" : "Polling"));
+  const authLabel = computed(() => {
+    if (authStatus.value === "unauthenticated") {
+      return "Not authenticated";
+    }
+    if (authStatus.value === "forbidden") {
+      return "Forbidden";
+    }
+    return "";
+  });
+
   const setOffline = (message: string) => {
     status.value = "offline";
     statusMessage.value = message;
@@ -75,6 +90,23 @@ export const useConnectionStore = defineStore("connection", () => {
   const setOnline = () => {
     status.value = "online";
     statusMessage.value = "";
+    if (authStatus.value !== "unauthenticated" && authStatus.value !== "forbidden") {
+      authStatus.value = "ok";
+      authMessage.value = "";
+    }
+  };
+
+  const setAuthStatus = (next: AuthStatus, message?: string) => {
+    authStatus.value = next;
+    authMessage.value = message ?? "";
+  };
+
+  const registerWsConnection = () => {
+    wsConnections.value += 1;
+  };
+
+  const unregisterWsConnection = () => {
+    wsConnections.value = Math.max(0, wsConnections.value - 1);
   };
 
   const persist = () => {
@@ -95,13 +127,20 @@ export const useConnectionStore = defineStore("connection", () => {
     apiKey,
     status,
     statusMessage,
+    authStatus,
+    authMessage,
     resolveUrl,
     resolveWsUrl,
     authHeader,
     baseUrlDisplay,
     statusLabel,
+    wsLabel,
+    authLabel,
     setOffline,
     setOnline,
+    setAuthStatus,
+    registerWsConnection,
+    unregisterWsConnection,
     persist
   };
 });

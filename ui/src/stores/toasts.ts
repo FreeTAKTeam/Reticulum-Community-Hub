@@ -4,7 +4,7 @@ import { ref } from "vue";
 export interface ToastMessage {
   id: string;
   message: string;
-  tone: "success" | "error" | "warning" | "info";
+  tone: "success" | "error" | "warning" | "info" | "danger";
 }
 
 export const useToastStore = defineStore("toast", () => {

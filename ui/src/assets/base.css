@@ -1,17 +1,128 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
   color-scheme: dark;
-  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: "Barlow", "IBM Plex Sans", "Source Sans 3", "Segoe UI", sans-serif;
+  background-color: #0f1320;
+  color: #e7ecf5;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
+  background-color: #0f1320;
+  color: inherit;
+}
+
+code,
+pre {
+  font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
 }
 
 .scrollbar-thin {
   scrollbar-width: thin;
+}
+
+.rth-markdown {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: #e7ecf5;
+}
+
+.rth-markdown h1,
+.rth-markdown h2,
+.rth-markdown h3 {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.rth-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.rth-markdown h2 {
+  font-size: 1.125rem;
+}
+
+.rth-markdown h3 {
+  font-size: 1rem;
+}
+
+.rth-markdown p {
+  margin: 0 0 0.5rem;
+}
+
+.rth-markdown ul,
+.rth-markdown ol {
+  margin: 0 0 0.5rem 1rem;
+  padding: 0;
+}
+
+.rth-markdown li {
+  margin: 0.25rem 0;
+}
+
+.rth-markdown a {
+  color: #4db6ff;
+  text-decoration: underline;
+}
+
+.rth-markdown code {
+  background: #141828;
+  border: 1px solid #252a3d;
+  border-radius: 4px;
+  padding: 0 0.25rem;
+  font-size: 0.85em;
+}
+
+.rth-markdown pre {
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  background: #141828;
+  border: 1px solid #252a3d;
+  border-radius: 6px;
+  overflow: auto;
+}
+
+.rth-markdown pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 0.8rem;
+  color: #e7ecf5;
+}
+
+.rth-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+}
+
+.rth-markdown th,
+.rth-markdown td {
+  border: 1px solid #252a3d;
+  padding: 0.5rem;
+  text-align: left;
+}
+
+.rth-markdown th {
+  background: #141828;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  color: #a7b0c4;
+}
+
+.rth-output-code {
+  margin: 0;
+  max-height: 20rem;
+  overflow: auto;
+  font-size: 0.75rem;
+  color: #e7ecf5;
 }

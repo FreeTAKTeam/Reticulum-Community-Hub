@@ -1,6 +1,8 @@
 <template>
   <AppShell>
-    <RouterView />
+    <ErrorBoundary>
+      <RouterView />
+    </ErrorBoundary>
   </AppShell>
   <BaseToast />
 </template>
@@ -9,4 +11,5 @@
 import { RouterView } from "vue-router";
 import AppShell from "./components/AppShell.vue";
 import BaseToast from "./components/BaseToast.vue";
+import ErrorBoundary from "./components/ErrorBoundary.vue";
 </script>

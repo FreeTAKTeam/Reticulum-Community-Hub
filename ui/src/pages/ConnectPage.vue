@@ -12,7 +12,7 @@
         <BaseButton @click="save">Save</BaseButton>
         <BaseButton variant="secondary" @click="testConnection">Test Connection</BaseButton>
       </div>
-      <div v-if="testResult" class="mt-3 text-sm text-slate-300">{{ testResult }}</div>
+      <div v-if="testResult" class="mt-3 text-sm text-rth-muted">{{ testResult }}</div>
     </BaseCard>
   </div>
 </template>

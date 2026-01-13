@@ -1,6 +1,6 @@
 <template>
-  <div v-if="showBanner" class="border-b border-rth-border bg-amber-500/10 px-6 py-2 text-sm text-amber-200">
-    <span class="font-semibold">Connection issue:</span> {{ message }}
+  <div v-if="showBanner" class="border-b border-rth-border px-6 py-2 text-sm" :class="bannerClass">
+    <span class="font-semibold">{{ label }}</span> {{ message }}
   </div>
 </template>
 
@@ -10,6 +10,24 @@ import { useConnectionStore } from "../stores/connection";
 
 const connectionStore = useConnectionStore();
 
-const showBanner = computed(() => connectionStore.status === "offline");
-const message = computed(() => connectionStore.statusMessage || "Unable to reach the hub. Retrying..." );
+const showOffline = computed(() => connectionStore.status === "offline");
+const showAuth = computed(
+  () => connectionStore.authStatus === "unauthenticated" || connectionStore.authStatus === "forbidden"
+);
+const showBanner = computed(() => showOffline.value || showAuth.value);
+
+const bannerClass = computed(() => {
+  if (showAuth.value) {
+    return "bg-[#ef4444]/15 text-[#fecaca]";
+  }
+  return "bg-[#f59e0b]/15 text-[#fcd34d]";
+});
+
+const label = computed(() => (showAuth.value ? "Auth issue:" : "Connection issue:"));
+const message = computed(() => {
+  if (showAuth.value) {
+    return connectionStore.authMessage || connectionStore.authLabel || "Check credentials and permissions.";
+  }
+  return connectionStore.statusMessage || "Unable to reach the hub. Retrying...";
+});
 </script>

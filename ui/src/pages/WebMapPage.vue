@@ -6,37 +6,40 @@
         <BaseInput v-model="search" label="Search Identity" />
         <BaseButton variant="secondary" @click="applyFilters">Apply</BaseButton>
       </div>
+      <LoadingSkeleton v-if="telemetry.loading" />
       <div ref="mapContainer" class="h-[480px] rounded border border-rth-border"></div>
     </BaseCard>
 
     <div class="space-y-4">
       <BaseCard title="Live Markers">
-        <ul class="space-y-2 text-sm">
-          <li v-for="marker in filteredMarkers" :key="marker.id" class="cursor-pointer rounded border border-rth-border bg-slate-900 p-3" @click="selectMarker(marker)">
+        <LoadingSkeleton v-if="telemetry.loading" />
+        <ul v-else class="space-y-2 text-sm">
+          <li v-for="marker in filteredMarkers" :key="marker.id" class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3" @click="selectMarker(marker)">
             <div class="font-semibold">{{ marker.name }}</div>
-            <div class="text-xs text-slate-400">{{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
+            <div class="text-xs text-rth-muted">{{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
           </li>
         </ul>
       </BaseCard>
       <BaseCard title="Telemetry Inspector">
         <div v-if="selected">
-          <div class="text-sm text-slate-300">{{ selected.name }}</div>
-          <pre class="mt-2 max-h-80 overflow-auto rounded bg-slate-900 p-3 text-xs text-slate-200">{{ JSON.stringify(selected.raw, null, 2) }}</pre>
+          <div class="text-sm text-rth-muted">{{ selected.name }}</div>
+          <BaseFormattedOutput class="mt-2" :value="selected.raw" />
         </div>
-        <div v-else class="text-sm text-slate-400">Select a marker to inspect telemetry.</div>
+        <div v-else class="text-sm text-rth-muted">Select a marker to inspect telemetry.</div>
       </BaseCard>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
-import { onMounted } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import { ref } from "vue";
 import maplibregl from "maplibre-gl";
 import BaseButton from "../components/BaseButton.vue";
 import BaseCard from "../components/BaseCard.vue";
+import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import BaseInput from "../components/BaseInput.vue";
+import LoadingSkeleton from "../components/LoadingSkeleton.vue";
 import { WsClient } from "../api/ws";
 import { useTelemetryStore } from "../stores/telemetry";
 import type { TelemetryMarker } from "../utils/telemetry";
@@ -47,6 +50,10 @@ const mapInstance = ref<maplibregl.Map | null>(null);
 const search = ref("");
 const topicFilter = ref("");
 const selected = ref<TelemetryMarker | null>(null);
+const wsClient = ref<WsClient | null>(null);
+const defaultStyleUrl = new URL("../assets/map-style.json", import.meta.url).toString();
+const mapStyle = import.meta.env.VITE_RTH_MAP_STYLE_URL ?? defaultStyleUrl;
+let pollerId: number | undefined;
 
 const filteredMarkers = computed(() => {
   const query = search.value.toLowerCase();
@@ -58,10 +65,28 @@ const filteredMarkers = computed(() => {
   });
 });
 
+const sinceSeconds = () => Math.floor(Date.now() / 1000) - 3600;
+
+const subscribeTelemetry = () => {
+  if (!wsClient.value) {
+    return;
+  }
+  wsClient.value.send({
+    type: "telemetry.subscribe",
+    ts: new Date().toISOString(),
+    data: {
+      since: sinceSeconds(),
+      topic_id: telemetry.topicId || undefined,
+      follow: true
+    }
+  });
+};
+
 const applyFilters = async () => {
   telemetry.topicId = topicFilter.value;
-  await telemetry.fetchTelemetry(Math.floor(Date.now() / 1000) - 3600);
+  await telemetry.fetchTelemetry(sinceSeconds());
   renderMarkers();
+  subscribeTelemetry();
 };
 
 const selectMarker = (marker: TelemetryMarker) => {
@@ -107,8 +132,8 @@ const renderMarkers = () => {
     source: "telemetry",
     paint: {
       "circle-radius": 6,
-      "circle-color": "#38bdf8",
-      "circle-stroke-color": "#0f172a",
+      "circle-color": "#4DB6FF",
+      "circle-stroke-color": "#D946EF",
       "circle-stroke-width": 2
     }
   });
@@ -118,38 +143,45 @@ onMounted(async () => {
   if (mapContainer.value) {
     mapInstance.value = new maplibregl.Map({
       container: mapContainer.value,
-      style: "https://demotiles.maplibre.org/style.json",
+      style: mapStyle,
       center: [0, 0],
       zoom: 1
     });
   }
-  await telemetry.fetchTelemetry(Math.floor(Date.now() / 1000) - 3600);
+  await telemetry.fetchTelemetry(sinceSeconds());
   renderMarkers();
 
   const ws = new WsClient(
     "/telemetry/stream",
     (payload) => {
-    if (payload.type === "telemetry.snapshot") {
-      telemetry.applySnapshot((payload.data as any).entries ?? []);
-      renderMarkers();
-    }
-    if (payload.type === "telemetry.update") {
-      telemetry.applyUpdate((payload.data as any).entry);
-      renderMarkers();
-    }
+      if (payload.type === "telemetry.snapshot") {
+        telemetry.applySnapshot((payload.data as any).entries ?? []);
+        renderMarkers();
+      }
+      if (payload.type === "telemetry.update") {
+        telemetry.applyUpdate((payload.data as any).entry);
+        renderMarkers();
+      }
     },
     () => {
-      ws.send({
-        type: "telemetry.subscribe",
-        ts: new Date().toISOString(),
-        data: {
-          since: Math.floor(Date.now() / 1000) - 3600,
-          topic_id: telemetry.topicId || undefined,
-          follow: true
-        }
-      });
+      subscribeTelemetry();
     }
   );
   ws.connect();
+  wsClient.value = ws;
+
+  pollerId = window.setInterval(async () => {
+    await telemetry.fetchTelemetry(sinceSeconds());
+    renderMarkers();
+  }, 60000);
+});
+
+onUnmounted(() => {
+  if (wsClient.value) {
+    wsClient.value.close();
+  }
+  if (pollerId) {
+    window.clearInterval(pollerId);
+  }
 });
 </script>
