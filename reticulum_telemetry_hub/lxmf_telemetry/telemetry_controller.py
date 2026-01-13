@@ -263,11 +263,12 @@ class TelemetryController:
             for telemeter in telemeters:
                 timestamp = int(telemeter.time.timestamp()) if telemeter.time else 0
                 payload = self._serialize_telemeter(telemeter)
+                readable_payload = self._humanize_telemetry(payload)
                 entries.append(
                     {
                         "peer_destination": telemeter.peer_dest,
                         "timestamp": timestamp,
-                        "telemetry": self._humanize_telemetry(payload),
+                        "telemetry": self._json_safe(readable_payload),
                     }
                 )
             return entries

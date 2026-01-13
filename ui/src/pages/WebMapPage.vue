@@ -132,8 +132,8 @@ const renderMarkers = () => {
     source: "telemetry",
     paint: {
       "circle-radius": 6,
-      "circle-color": "#4DB6FF",
-      "circle-stroke-color": "#D946EF",
+      "circle-color": "#82DBF7",
+      "circle-stroke-color": "#222128",
       "circle-stroke-width": 2
     }
   });

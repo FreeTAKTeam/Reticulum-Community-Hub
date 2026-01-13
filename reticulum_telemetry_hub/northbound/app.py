@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from datetime import timezone
+import os
 from pathlib import Path
 from typing import Any
 from typing import Callable
@@ -15,10 +16,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
 
 from .auth import ApiAuth
 from .auth import build_protected_dependency
@@ -45,6 +48,15 @@ def _resolve_openapi_spec() -> Optional[Path]:
     if spec_path.exists():
         return spec_path
     return None
+
+
+def _resolve_storage_path() -> Path:
+    """Return the storage path from environment defaults."""
+
+    storage_dir = os.environ.get("RTH_STORAGE_DIR")
+    if storage_dir:
+        return Path(storage_dir)
+    return HubConfigurationManager().storage_path
 
 
 def create_app(
@@ -77,12 +89,32 @@ def create_app(
     """
 
     load_env()
-    api = api or ReticulumTelemetryHubAPI()
-    event_log = event_log or EventLog()
-    telemetry_controller = telemetry_controller or TelemetryController(
-        api=api,
-        event_log=event_log,
-    )
+    config_manager = None
+    storage_path = None
+    if api is None:
+        storage_path = _resolve_storage_path()
+        config_manager = HubConfigurationManager(storage_path=storage_path)
+        api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    else:
+        config_manager = getattr(api, "_config_manager", None)
+        storage_path = getattr(config_manager, "storage_path", None)
+
+    if storage_path is None:
+        storage_path = _resolve_storage_path()
+
+    if event_log is None:
+        event_log_path = resolve_event_log_path(storage_path)
+        event_log = EventLog(event_path=event_log_path, tail=True)
+
+    if telemetry_controller is None:
+        telemetry_db_path = storage_path / "telemetry.db"
+        telemetry_controller = TelemetryController(
+            api=api,
+            event_log=event_log,
+            db_path=telemetry_db_path,
+        )
+    else:
+        telemetry_controller.set_event_log(event_log)
     services = NorthboundServices(
         api=api,
         telemetry=telemetry_controller,

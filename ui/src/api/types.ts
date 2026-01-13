@@ -23,6 +23,7 @@ export interface EventEntry {
   message?: string;
   level?: string;
   category?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface Topic {

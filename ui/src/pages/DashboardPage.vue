@@ -32,6 +32,7 @@
             <span class="text-xs text-rth-muted">{{ formatTimestamp(event.created_at) }}</span>
           </div>
           <div class="mt-1 text-xs text-rth-muted">{{ event.category }} - {{ event.level }}</div>
+          <BaseFormattedOutput v-if="hasMetadata(event.metadata)" class="mt-2" :value="event.metadata" />
         </li>
       </ul>
     </BaseCard>
@@ -42,6 +43,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import BaseBadge from "../components/BaseBadge.vue";
 import BaseCard from "../components/BaseCard.vue";
+import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
 import { WsClient } from "../api/ws";
 import { useDashboardStore } from "../stores/dashboard";
@@ -73,6 +75,13 @@ const isTelemetryStale = computed(() => {
   }
   return Date.now() - lastDate > 10 * 60 * 1000;
 });
+
+const hasMetadata = (value?: Record<string, unknown>) => {
+  if (!value) {
+    return false;
+  }
+  return Object.keys(value).length > 0;
+};
 
 onMounted(async () => {
   await dashboard.refresh();

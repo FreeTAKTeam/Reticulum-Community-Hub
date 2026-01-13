@@ -10,6 +10,13 @@ type StatusApiPayload = StatusResponse & {
   uptime_seconds?: number;
 };
 
+type EventApiPayload = {
+  timestamp?: string;
+  type?: string;
+  message?: string;
+  metadata?: Record<string, unknown>;
+};
+
 const normalizeStatus = (payload: StatusApiPayload): StatusResponse => {
   const uptime = payload.uptime ?? payload.uptime_seconds;
   const telemetry = payload.telemetry
@@ -25,6 +32,15 @@ const normalizeStatus = (payload: StatusApiPayload): StatusResponse => {
   };
 };
 
+const normalizeEvent = (payload: EventApiPayload): EventEntry => ({
+  id: payload.timestamp ?? `${Date.now()}`,
+  created_at: payload.timestamp,
+  message: payload.message,
+  level: "info",
+  category: payload.type,
+  metadata: payload.metadata ?? {}
+});
+
 export const useDashboardStore = defineStore("dashboard", () => {
   const status = ref<StatusResponse | null>(null);
   const events = ref<EventEntry[]>([]);
@@ -36,15 +52,17 @@ export const useDashboardStore = defineStore("dashboard", () => {
     try {
       const response = await get<StatusApiPayload>(endpoints.status);
       status.value = normalizeStatus(response);
-      events.value = await get<EventEntry[]>(endpoints.events);
+      const eventResponse = await get<EventApiPayload[]>(endpoints.events);
+      events.value = eventResponse.map(normalizeEvent);
       connectionStore.setOnline();
     } finally {
       loading.value = false;
     }
   };
 
-  const pushEvent = (event: EventEntry) => {
-    events.value = [event, ...events.value].slice(0, 50);
+  const pushEvent = (event: EventApiPayload | EventEntry) => {
+    const mapped = "timestamp" in event || "type" in event ? normalizeEvent(event as EventApiPayload) : (event as EventEntry);
+    events.value = [mapped, ...events.value].slice(0, 50);
   };
 
   const updateStatus = (payload: StatusApiPayload) => {

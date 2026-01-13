@@ -64,6 +64,7 @@ from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
     OutboundMessageQueue,
 )
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
 from .command_manager import CommandManager
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
@@ -295,7 +296,8 @@ class ReticulumTelemetryHub:
             RNS.loglevel = self.loglevel
 
         telemetry_db_path = self.storage_path / "telemetry.db"
-        self.event_log = EventLog()
+        event_log_path = resolve_event_log_path(self.storage_path)
+        self.event_log = EventLog(event_path=event_log_path)
         self.tel_controller = TelemetryController(
             db_path=telemetry_db_path,
             event_log=self.event_log,

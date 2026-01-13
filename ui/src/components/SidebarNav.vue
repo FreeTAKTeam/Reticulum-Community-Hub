@@ -1,6 +1,9 @@
 <template>
   <aside class="flex w-64 flex-col border-r border-rth-border bg-rth-panel p-4 text-rth-text">
-    <div class="mb-6 text-sm font-semibold uppercase tracking-[0.2em] text-rth-text">RTH Core UI</div>
+    <div class="mb-6 flex items-center gap-2 text-xs text-rth-text">
+      <img src="/RCH_small.png" alt="Reticulum Community Hub" class="h-5 w-5" />
+      <span class="uppercase tracking-[0.2em]">R C H</span>
+    </div>
     <nav class="flex flex-col gap-2 text-xs">
       <RouterLink
         v-for="item in navItems"

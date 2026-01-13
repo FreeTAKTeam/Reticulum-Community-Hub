@@ -8,6 +8,7 @@ from dataclasses import field
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import Optional
@@ -17,6 +18,34 @@ def _now() -> datetime:
     """Return the current UTC timestamp with timezone information."""
 
     return datetime.now(timezone.utc)
+
+
+def _json_safe_key(key: Any) -> str:
+    """Return a JSON-safe dictionary key."""
+
+    if isinstance(key, (bytes, bytearray, memoryview)):
+        return bytes(key).hex()
+    if key is None:
+        return "null"
+    return str(key)
+
+
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-safe version of ``value``."""
+
+    if isinstance(value, dict):
+        return {_json_safe_key(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 @dataclass
@@ -78,7 +107,7 @@ class Subscriber:
             "Destination": self.destination,
             "TopicID": self.topic_id,
             "RejectTests": self.reject_tests,
-            "Metadata": self.metadata or None,
+            "Metadata": _json_safe(self.metadata or None),
         }
 
     @classmethod
@@ -129,6 +158,7 @@ class Client:
 
         data = asdict(self)
         data["last_seen"] = self.last_seen.isoformat()
+        data["metadata"] = _json_safe(self.metadata or {})
         return data
 
 
@@ -204,7 +234,7 @@ class IdentityStatus:
             "Identity": self.identity,
             "Status": self.status,
             "LastSeen": self.last_seen.isoformat() if self.last_seen else None,
-            "Metadata": self.metadata or {},
+            "Metadata": _json_safe(self.metadata or {}),
             "IsBanned": self.is_banned,
             "IsBlackholed": self.is_blackholed,
         }
