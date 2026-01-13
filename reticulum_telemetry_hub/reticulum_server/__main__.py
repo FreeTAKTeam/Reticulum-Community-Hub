@@ -415,7 +415,8 @@ class ReticulumTelemetryHub:
     def _notify_message_listeners(self, entry: dict[str, object]) -> None:
         """Dispatch an inbound message entry to registered listeners."""
 
-        for listener in list(self._message_listeners):
+        listeners = list(getattr(self, "_message_listeners", []))
+        for listener in listeners:
             try:
                 listener(entry)
             except Exception as exc:  # pragma: no cover - defensive logging
@@ -443,8 +444,9 @@ class ReticulumTelemetryHub:
             "content": content,
         }
         self._notify_message_listeners(entry)
-        if self.event_log is not None:
-            self.event_log.add_event(
+        event_log = getattr(self, "event_log", None)
+        if event_log is not None:
+            event_log.add_event(
                 "message_received",
                 f"Message received from {source_label}",
                 metadata=entry,
