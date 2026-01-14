@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from reticulum_telemetry_hub.api.models import Client
 from reticulum_telemetry_hub.api.models import FileAttachment
+from reticulum_telemetry_hub.api.models import IdentityStatus
 from reticulum_telemetry_hub.api.models import ReticulumInfo
 from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.api.models import Topic
@@ -126,3 +128,39 @@ def test_file_attachment_to_dict_serializes_fields():
     assert serialized["Category"] == "file"
     assert serialized["Size"] == 10
     assert serialized["MediaType"] == "text/plain"
+
+
+def test_subscriber_to_dict_sanitizes_metadata():
+    subscriber = Subscriber(
+        destination="dest",
+        topic_id="topic-1",
+        metadata={"raw": b"\x01\x02"},
+        subscriber_id="sub-1",
+    )
+
+    payload = subscriber.to_dict()
+
+    assert payload["Metadata"] == {"raw": "0102"}
+
+
+def test_client_to_dict_sanitizes_metadata():
+    client = Client(
+        identity="client-1",
+        metadata={"path": Path("C:/tmp/config.ini")},
+    )
+
+    payload = client.to_dict()
+
+    assert Path(payload["metadata"]["path"]).as_posix().endswith("tmp/config.ini")
+
+
+def test_identity_status_to_dict_sanitizes_metadata():
+    status = IdentityStatus(
+        identity="client-2",
+        status="active",
+        metadata={"raw": b"\xff"},
+    )
+
+    payload = status.to_dict()
+
+    assert payload["Metadata"] == {"raw": "ff"}

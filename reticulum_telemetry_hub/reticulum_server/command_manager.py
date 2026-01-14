@@ -413,6 +413,13 @@ class CommandManager:
         command = self._merge_pending_fields(command, message)
         name = command.get(PLUGIN_COMMAND) or command.get("Command")
         name = self._normalize_command_name(name)
+        telemetry_request_present = (
+            TelemetryController.TELEMETRY_REQUEST in command
+            or str(TelemetryController.TELEMETRY_REQUEST) in command
+        )
+        is_telemetry_command = (
+            isinstance(name, str) and name.strip().lower() == "telemetryrequest"
+        )
         if name:
             command[PLUGIN_COMMAND] = name
             command["Command"] = name
@@ -501,6 +508,10 @@ class CommandManager:
             handler = dispatch_map.get(name)
             if handler is not None:
                 return handler()
+            if telemetry_request_present and is_telemetry_command:
+                return self.tel_controller.handle_command(
+                    command, message, self.my_lxmf_dest
+                )
             return self._handle_unknown_command(name, message)
         # Delegate to telemetry controller for telemetry related commands
         return self.tel_controller.handle_command(command, message, self.my_lxmf_dest)
@@ -1060,7 +1071,10 @@ class CommandManager:
             return self._prompt_for_fields(
                 self.CMD_APPLY_CONFIG, ["ConfigText"], message, command
             )
-        result = self.api.apply_config_text(str(config_text))
+        try:
+            result = self.api.apply_config_text(str(config_text))
+        except ValueError as exc:
+            return self._reply(message, f"Config apply failed: {exc}")
         payload = json.dumps(result, sort_keys=True)
         self._record_event("config_applied", "Configuration updated")
         return self._reply(message, payload)

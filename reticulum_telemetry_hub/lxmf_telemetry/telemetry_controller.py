@@ -417,8 +417,13 @@ class TelemetryController:
         self, command: dict, message: LXMF.LXMessage, my_lxm_dest
     ) -> Optional[LXMF.LXMessage]:
         """Handle the incoming command."""
+        request_key = None
         if TelemetryController.TELEMETRY_REQUEST in command:
-            request_value = command[TelemetryController.TELEMETRY_REQUEST]
+            request_key = TelemetryController.TELEMETRY_REQUEST
+        elif str(TelemetryController.TELEMETRY_REQUEST) in command:
+            request_key = str(TelemetryController.TELEMETRY_REQUEST)
+        if request_key is not None:
+            request_value = command[request_key]
             topic_id = self._extract_topic_id(command)
 
             # Sideband (and compatible clients) send telemetry requests either as a

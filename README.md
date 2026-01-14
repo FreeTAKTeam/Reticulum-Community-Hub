@@ -25,6 +25,14 @@ The Reticulum-Telemetry-Hub can perform the following key functions:
 - [User Manual](/docs/userManual.md)
 - TAK / Cursor-on-Target integration: [`docs/tak.md`](docs/tak.md)
 - File and image workflows: see the "Exchanging attachments over LXMF" section below.
+- Internal API contract (normative): [`internal-api.md`](internal-api.md)
+
+## Internal API (Non-Normative Summary)
+
+The Reticulum Community Hub defines a transport-agnostic internal API between
+Hub Core, the API/UI gateway, and Reticulum-facing adapters. The internal API
+uses command, event, and query channels to keep state changes explicit and
+side-effect free. See `internal-api.md` for the normative contract.
 
 ## Admin UI API
 

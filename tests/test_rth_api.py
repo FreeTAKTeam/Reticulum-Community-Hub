@@ -188,6 +188,19 @@ def test_config_apply_and_rollback(tmp_path):
     assert rollback_result["rolled_back"]
 
 
+def test_config_apply_rejects_invalid_payload(tmp_path):
+    """Reject invalid config payloads without overwriting the current file."""
+
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    original = api.get_config_text()
+
+    with pytest.raises(ValueError) as exc_info:
+        api.apply_config_text("hub]\nname = Broken\n")
+
+    assert "Invalid configuration payload" in str(exc_info.value)
+    assert api.get_config_text() == original
+
+
 def test_identity_status_crud(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     api.join("identity-1")

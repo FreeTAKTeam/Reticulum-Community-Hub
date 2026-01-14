@@ -498,6 +498,41 @@ def test_handle_command_accepts_sideband_collector_format(
     assert returned_payload == expected_payload
 
 
+def test_handle_command_accepts_string_numeric_request_key(
+    telemetry_controller, session_factory
+):
+    controller = telemetry_controller
+    Session = session_factory
+
+    src_identity = RNS.Identity()
+    dst_identity = RNS.Identity()
+    src = RNS.Destination(
+        src_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        dst_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    timestamp = int(time.time())
+    payload = build_complex_telemeter_payload(timestamp=timestamp)
+    peer_dest = "aa" * 16
+    controller.save_telemetry(payload, peer_dest)
+
+    with Session() as ses:
+        assert ses.query(Telemeter).count() == 1
+
+    command_msg = LXMF.LXMessage(src, dst)
+    command = {str(TelemetryController.TELEMETRY_REQUEST): timestamp - 1}
+
+    reply = controller.handle_command(command, command_msg, dst)
+    assert reply is not None
+
+    stream_response = reply.fields[LXMF.FIELD_TELEMETRY_STREAM]
+    unpacked = _decode_stream_entries(stream_response)
+    assert len(unpacked) == 1
+    assert unpacked[0][0] == bytes.fromhex(peer_dest)
+
+
 def test_handle_command_returns_latest_snapshot_per_peer(
     telemetry_controller, session_factory
 ):

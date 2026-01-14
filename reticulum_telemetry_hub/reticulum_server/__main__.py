@@ -65,6 +65,8 @@ from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
 )
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
+from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
+from reticulum_telemetry_hub.reticulum_server.internal_adapter import ReticulumInternalAdapter
 from .command_manager import CommandManager
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
@@ -380,6 +382,7 @@ class ReticulumTelemetryHub:
             config_manager=self.config_manager,
             event_log=self.event_log,
         )
+        self.internal_adapter = ReticulumInternalAdapter(send_message=self.send_message)
         self.topic_subscribers: dict[str, set[str]] = {}
         self._topic_registry_last_refresh: float = 0.0
         self._refresh_topic_registry()
@@ -571,6 +574,7 @@ class ReticulumTelemetryHub:
             self.log_delivery_details(message, time_string, signature_string)
 
             command_payload_present = False
+            adapter_commands: list[dict] = []
             sender_joined = False
             attachment_replies: list[LXMF.LXMessage] = []
             # Handle the commands
@@ -603,6 +607,7 @@ class ReticulumTelemetryHub:
 
                 if commands:
                     command_replies = self.command_handler(commands, message) or []
+                    adapter_commands = list(commands)
 
             responses = attachment_replies + command_replies
             text_only_replies: list[LXMF.LXMessage] = []
@@ -658,6 +663,24 @@ class ReticulumTelemetryHub:
 
             if not sender_joined:
                 self._reply_with_app_info(message)
+
+            adapter = getattr(self, "internal_adapter", None)
+            if adapter is not None and message.signature_validated:
+                try:
+                    inbound = LxmfInbound(
+                        message_id=self._message_id_hex(message),
+                        source_id=self._message_source_hex(message),
+                        topic_id=self._extract_target_topic(message.fields),
+                        text=self._message_text(message),
+                        fields=message.fields or {},
+                        commands=adapter_commands,
+                    )
+                    adapter.handle_inbound(inbound)
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    RNS.log(
+                        f"Internal adapter failed to process inbound message: {exc}",
+                        getattr(RNS, "LOG_WARNING", 2),
+                    )
 
             # Skip if the message content is empty
             if message.content is None or message.content == b"":
@@ -1010,6 +1033,15 @@ class ReticulumTelemetryHub:
         source_hash = getattr(message, "source_hash", None)
         if isinstance(source_hash, (bytes, bytearray)) and source_hash:
             return source_hash.hex().lower()
+        return None
+
+    @staticmethod
+    def _message_id_hex(message: LXMF.LXMessage) -> str | None:
+        message_id = getattr(message, "message_id", None) or getattr(message, "hash", None)
+        if isinstance(message_id, (bytes, bytearray)) and message_id:
+            return message_id.hex().lower()
+        if isinstance(message_id, str) and message_id:
+            return message_id.lower()
         return None
 
     def _sender_is_joined(self, message: LXMF.LXMessage) -> bool:

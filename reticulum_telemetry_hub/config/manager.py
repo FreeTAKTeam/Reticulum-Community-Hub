@@ -152,6 +152,14 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             dict: Details about the persisted backup and target path.
         """
 
+        validation = self.validate_config_text(config_text)
+        if not validation.get("valid"):
+            errors = validation.get("errors") or []
+            details = "; ".join(str(error) for error in errors if error)
+            message = "Invalid configuration payload"
+            if details:
+                message = f"{message}: {details}"
+            raise ValueError(message)
         backup_path = self._backup_config()
         self.config_path.write_text(config_text, encoding="utf-8")
         return {

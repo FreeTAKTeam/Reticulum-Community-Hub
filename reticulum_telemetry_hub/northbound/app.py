@@ -30,6 +30,9 @@ from .routes_rest import register_core_routes
 from .routes_subscribers import register_subscriber_routes
 from .routes_topics import register_topic_routes
 from .routes_ws import register_ws_routes
+from .internal_adapter import build_internal_adapter
+from .internal_adapter import InternalAdapter
+from .internal_adapter import register_internal_adapter
 from .services import NorthboundServices
 from .websocket import EventBroadcaster
 from .websocket import MessageBroadcaster
@@ -72,6 +75,7 @@ def create_app(
     message_listener: Optional[
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
     ] = None,
+    internal_adapter: Optional[InternalAdapter] = None,
 ) -> FastAPI:
     """Create the northbound FastAPI application.
 
@@ -169,6 +173,8 @@ def create_app(
         telemetry_broadcaster=telemetry_broadcaster,
         message_broadcaster=message_broadcaster,
     )
+    adapter = internal_adapter or build_internal_adapter()
+    register_internal_adapter(app, adapter=adapter)
 
     return app
 

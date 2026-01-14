@@ -435,6 +435,54 @@ def test_unknown_command_logs_error(monkeypatch):
     assert logged_level == getattr(RNS, "LOG_ERROR", 1)
 
 
+def test_handle_command_routes_telemetry_request_name():
+    class DummyAPI:
+        pass
+
+    class DummyTelemetryController:
+        def __init__(self) -> None:
+            self.calls: list[tuple[dict, LXMF.LXMessage, RNS.Destination]] = []
+
+        def handle_command(self, command, message, dest):
+            self.calls.append((command, message, dest))
+            return LXMF.LXMessage(
+                dest,
+                dest,
+                "telemetry",
+                desired_method=LXMF.LXMessage.DIRECT,
+            )
+
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    server_dest = RNS.Destination(
+        RNS.Identity(),
+        RNS.Destination.IN,
+        RNS.Destination.SINGLE,
+        "lxmf",
+        "delivery",
+    )
+    telemetry_controller = DummyTelemetryController()
+    manager = CommandManager({}, telemetry_controller, server_dest, DummyAPI())
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    message = make_message(
+        server_dest,
+        client_dest,
+        "TelemetryRequest",
+        use_str_command=True,
+        **{"1": 1_700_000_000},
+    )
+    command = message.fields[LXMF.FIELD_COMMANDS][0]
+
+    reply = manager.handle_command(command, message)
+
+    assert reply is not None
+    assert reply.content_as_string() == "telemetry"
+    assert telemetry_controller.calls
+
+
 def test_create_topic_accepts_snake_case_fields():
     class DummyAPI:
         def __init__(self) -> None:
