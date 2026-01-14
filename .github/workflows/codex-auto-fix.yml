@@ -65,7 +65,7 @@ jobs:
           # Pass arguments directly to Codex CLI
           # --max-steps limits runaway reasoning loops
           codex-args: >
-            --max-steps=120
+           -- --max-steps=120
             --stop-on-success
 
           prompt-file: .github/codex/prompts/autofix-ci.md
