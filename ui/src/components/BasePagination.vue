@@ -2,9 +2,9 @@
   <div v-if="totalPages > 1" class="flex flex-wrap items-center justify-between gap-3 text-xs text-rth-muted">
     <div>Showing {{ start }}-{{ end }} of {{ total }}</div>
     <div class="flex items-center gap-2">
-      <BaseButton variant="secondary" :disabled="page <= 1" @click="goPrevious">Prev</BaseButton>
+      <BaseButton variant="secondary" icon-left="chevron-left" :disabled="page <= 1" @click="goPrevious">Prev</BaseButton>
       <span>Page {{ page }} of {{ totalPages }}</span>
-      <BaseButton variant="secondary" :disabled="page >= totalPages" @click="goNext">Next</BaseButton>
+      <BaseButton variant="secondary" icon-left="chevron-right" :disabled="page >= totalPages" @click="goNext">Next</BaseButton>
     </div>
   </div>
 </template>

@@ -2,7 +2,7 @@
   <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="emit('close')">
     <div
       ref="panelRef"
-      class="w-full max-w-xl rounded border border-rth-border bg-rth-panel p-6"
+      class="cui-modal w-full max-w-xl p-6"
       role="dialog"
       aria-modal="true"
       :aria-labelledby="titleId"
@@ -10,7 +10,7 @@
     >
       <div class="flex items-start justify-between">
         <h3 :id="titleId" class="text-lg font-semibold">{{ title }}</h3>
-        <button class="text-rth-muted hover:text-rth-text" aria-label="Close" @click="emit('close')">X</button>
+        <button class="cui-modal-close" aria-label="Close" @click="emit('close')">X</button>
       </div>
       <div class="mt-4">
         <slot />

@@ -2,7 +2,7 @@
   <div v-if="error" class="space-y-4 rounded border border-rth-border bg-rth-panel p-6 text-rth-text">
     <div class="text-lg font-semibold">Something went wrong</div>
     <div class="text-sm text-rth-muted">{{ error.message }}</div>
-    <BaseButton variant="secondary" @click="reload">Reload</BaseButton>
+    <BaseButton variant="secondary" icon-left="refresh" @click="reload">Reload</BaseButton>
   </div>
   <slot v-else />
 </template>

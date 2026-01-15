@@ -1,44 +1,50 @@
 <template>
   <div class="space-y-6">
-    <BaseCard title="Topics">
-      <div class="mb-4 flex flex-wrap gap-3">
-        <BaseButton @click="openTopicModal(null)">New Topic</BaseButton>
-        <BaseButton variant="secondary" @click="topicsStore.fetchTopics">Refresh</BaseButton>
+    <BaseCard title="Topics & Subscribers">
+      <div class="mb-4 flex flex-wrap gap-2">
+        <BaseButton variant="tab" icon-left="layers" :class="{ 'cui-tab-active': activeTab === 'topics' }" @click="activeTab = 'topics'">
+          Topics
+        </BaseButton>
+        <BaseButton variant="tab" icon-left="users" :class="{ 'cui-tab-active': activeTab === 'subscribers' }" @click="activeTab = 'subscribers'">
+          Subscribers
+        </BaseButton>
       </div>
-      <LoadingSkeleton v-if="topicsStore.loading" />
-      <div v-else class="space-y-3">
-        <div v-for="topic in pagedTopics" :key="topic.id" class="flex flex-wrap items-center justify-between rounded border border-rth-border bg-rth-panel-muted p-3">
-          <div>
-            <div class="font-semibold">{{ topic.name }}</div>
-            <div class="text-xs text-rth-muted">{{ topic.path }}</div>
+      <LoadingSkeleton v-if="activeTab === 'topics' && topicsStore.loading" />
+      <LoadingSkeleton v-else-if="activeTab === 'subscribers' && subscribersStore.loading" />
+      <div v-else>
+        <div v-if="activeTab === 'topics'" class="space-y-3">
+          <div v-for="topic in pagedTopics" :key="topic.id" class="flex flex-wrap items-center justify-between rounded border border-rth-border bg-rth-panel-muted p-3">
+            <div>
+              <div class="font-semibold">{{ topic.name }}</div>
+              <div class="text-xs text-rth-muted">{{ topic.path }}</div>
+            </div>
+            <div class="flex gap-2">
+              <BaseButton variant="secondary" icon-left="edit" @click="openTopicModal(topic)">Edit</BaseButton>
+              <BaseButton variant="danger" icon-left="trash" @click="removeTopic(topic.id)">Delete</BaseButton>
+            </div>
           </div>
-          <div class="flex gap-2">
-            <BaseButton variant="secondary" @click="openTopicModal(topic)">Edit</BaseButton>
-            <BaseButton variant="ghost" @click="removeTopic(topic.id)">Delete</BaseButton>
-          </div>
+          <BasePagination v-model:page="topicsPage" :page-size="topicsPageSize" :total="topicsStore.topics.length" />
         </div>
-        <BasePagination v-model:page="topicsPage" :page-size="topicsPageSize" :total="topicsStore.topics.length" />
-      </div>
-    </BaseCard>
-
-    <BaseCard title="Subscribers">
-      <div class="mb-4 flex flex-wrap gap-3">
-        <BaseButton @click="openSubscriberModal(null)">Add Subscriber</BaseButton>
-        <BaseButton variant="secondary" @click="subscribersStore.fetchSubscribers">Refresh</BaseButton>
-      </div>
-      <LoadingSkeleton v-if="subscribersStore.loading" />
-      <div v-else class="space-y-3">
-        <div v-for="subscriber in pagedSubscribers" :key="subscriber.id" class="flex flex-wrap items-center justify-between rounded border border-rth-border bg-rth-panel-muted p-3">
-          <div>
-            <div class="font-semibold">{{ subscriber.destination }}</div>
-            <div class="text-xs text-rth-muted">Topic: {{ subscriber.topic_id }}</div>
+        <div v-else class="space-y-3">
+          <div v-for="subscriber in pagedSubscribers" :key="subscriber.id" class="flex flex-wrap items-center justify-between rounded border border-rth-border bg-rth-panel-muted p-3">
+            <div>
+              <div class="font-semibold">{{ resolveSourceName(subscriber) || "Unknown source" }}</div>
+              <div class="text-xs text-rth-muted">Topic: {{ resolveTopicName(subscriber.topic_id) }}</div>
+            </div>
+            <div class="flex gap-2">
+              <BaseButton variant="secondary" icon-left="edit" @click="openSubscriberModal(subscriber)">Edit</BaseButton>
+              <BaseButton variant="danger" icon-left="trash" @click="removeSubscriber(subscriber.id)">Delete</BaseButton>
+            </div>
           </div>
-          <div class="flex gap-2">
-            <BaseButton variant="secondary" @click="openSubscriberModal(subscriber)">Edit</BaseButton>
-            <BaseButton variant="ghost" @click="removeSubscriber(subscriber.id)">Delete</BaseButton>
-          </div>
+          <BasePagination v-model:page="subscribersPage" :page-size="subscribersPageSize" :total="subscribersStore.subscribers.length" />
         </div>
-        <BasePagination v-model:page="subscribersPage" :page-size="subscribersPageSize" :total="subscribersStore.subscribers.length" />
+      </div>
+      <div class="mt-4 flex flex-wrap justify-end gap-2">
+        <BaseButton v-if="activeTab === 'topics'" icon-left="plus" @click="openTopicModal(null)">New Topic</BaseButton>
+        <BaseButton v-if="activeTab === 'subscribers'" icon-left="plus" @click="openSubscriberModal(null)">Add Subscriber</BaseButton>
+        <BaseButton variant="secondary" icon-left="refresh" @click="activeTab === 'topics' ? topicsStore.fetchTopics() : subscribersStore.fetchSubscribers()">
+          Refresh
+        </BaseButton>
       </div>
     </BaseCard>
 
@@ -47,7 +53,7 @@
         <BaseInput v-model="topicDraft.name" label="Name" />
         <BaseInput v-model="topicDraft.path" label="Path" />
         <BaseInput v-model="topicDraft.description" label="Description" />
-        <BaseButton @click="saveTopic">Save Topic</BaseButton>
+        <BaseButton icon-left="check" variant="success" @click="saveTopic">Save Topic</BaseButton>
       </div>
     </BaseModal>
 
@@ -56,7 +62,7 @@
         <BaseSelect v-model="subscriberDraft.topic_id" label="Topic ID" :options="topicOptions" />
         <BaseSelect v-model="subscriberDraft.destination" label="Destination" :options="destinationOptions" />
         <BaseInput v-model="subscriberDraft.reject_tests" label="Reject Tests (true/false)" />
-        <BaseButton @click="saveSubscriber">Save Subscriber</BaseButton>
+        <BaseButton icon-left="check" variant="success" @click="saveSubscriber">Save Subscriber</BaseButton>
       </div>
     </BaseModal>
   </div>
@@ -89,6 +95,7 @@ const topicModalOpen = ref(false);
 const subscriberModalOpen = ref(false);
 const topicDraft = ref<Topic>({ name: "", path: "", description: "" });
 const subscriberDraft = ref<Subscriber>({ topic_id: "", destination: "", reject_tests: false });
+const activeTab = ref<"topics" | "subscribers">("topics");
 const topicsPage = ref(1);
 const subscribersPage = ref(1);
 const topicsPageSize = 6;
@@ -108,6 +115,68 @@ const topicPageCount = computed(() => Math.max(1, Math.ceil(topicsStore.topics.l
 const subscriberPageCount = computed(() =>
   Math.max(1, Math.ceil(subscribersStore.subscribers.length / subscribersPageSize))
 );
+
+const topicNameById = computed(() => {
+  const map = new Map<string, string>();
+  topicsStore.topics.forEach((topic) => {
+    if (topic.id && topic.name) {
+      map.set(topic.id, topic.name);
+    }
+  });
+  return map;
+});
+
+const sourceNameById = computed(() => {
+  const map = new Map<string, string>();
+  usersStore.clients.forEach((client) => {
+    if (client.id && client.display_name) {
+      map.set(client.id, client.display_name);
+    }
+  });
+  usersStore.identities.forEach((identity) => {
+    if (identity.id && identity.display_name && !map.has(identity.id)) {
+      map.set(identity.id, identity.display_name);
+    }
+  });
+  return map;
+});
+
+const displayNameFromMetadata = (metadata?: Record<string, unknown>) => {
+  if (!metadata) {
+    return undefined;
+  }
+  const candidate =
+    metadata.display_name ??
+    metadata.displayName ??
+    metadata.DisplayName ??
+    metadata.name ??
+    metadata.label ??
+    metadata.source ??
+    metadata.Source;
+  if (typeof candidate !== "string") {
+    return undefined;
+  }
+  const trimmed = candidate.trim();
+  return trimmed.length ? trimmed : undefined;
+};
+
+const resolveTopicName = (topicId?: string) => {
+  if (!topicId) {
+    return "Unknown topic";
+  }
+  return topicNameById.value.get(topicId) ?? "Unknown topic";
+};
+
+const resolveSourceName = (subscriber: Subscriber) => {
+  const metadataLabel = displayNameFromMetadata(subscriber.metadata);
+  if (metadataLabel) {
+    return metadataLabel;
+  }
+  if (!subscriber.destination) {
+    return undefined;
+  }
+  return sourceNameById.value.get(subscriber.destination);
+};
 
 const topicOptions = computed(() => {
   const options = topicsStore.topics

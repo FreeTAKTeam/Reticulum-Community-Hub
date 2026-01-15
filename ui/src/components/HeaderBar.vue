@@ -2,8 +2,8 @@
   <header class="flex items-center justify-between border-b border-rth-border bg-rth-panel-muted px-6 py-4">
     <div class="text-sm font-semibold uppercase tracking-[0.2em] text-rth-text">{{ title }}</div>
     <div class="flex items-center gap-3 text-xs text-rth-muted">
-      <span class="rounded border border-rth-border bg-rth-panel px-2 py-1">{{ connectionLabel }}</span>
-      <span class="rounded border border-rth-border bg-rth-panel px-2 py-1">{{ wsLabel }}</span>
+      <span class="cui-status-pill" :class="connectionClass">{{ connectionLabel }}</span>
+      <span class="cui-status-pill" :class="wsClass">{{ wsLabel }}</span>
       <span class="text-[11px]">{{ baseUrl }}</span>
     </div>
   </header>
@@ -34,4 +34,21 @@ const title = computed(() => {
 const baseUrl = computed(() => connectionStore.baseUrlDisplay);
 const connectionLabel = computed(() => connectionStore.statusLabel);
 const wsLabel = computed(() => connectionStore.wsLabel);
+
+const connectionClass = computed(() => {
+  if (connectionStore.status === "online") {
+    return "cui-status-success";
+  }
+  if (connectionStore.status === "offline") {
+    return "cui-status-danger";
+  }
+  return "cui-status-accent";
+});
+
+const wsClass = computed(() => {
+  if (connectionStore.wsLabel.toLowerCase() === "live") {
+    return "cui-status-success";
+  }
+  return "cui-status-accent";
+});
 </script>

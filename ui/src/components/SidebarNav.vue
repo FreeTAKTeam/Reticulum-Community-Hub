@@ -1,10 +1,14 @@
 <template>
-  <aside class="flex w-64 flex-col border-r border-rth-border bg-rth-panel p-4 text-rth-text">
-    <div class="mb-6 flex items-center gap-2 text-xs text-rth-text">
-      <img src="/RCH_small.png" alt="Reticulum Community Hub" class="h-5 w-5" />
-      <span class="uppercase tracking-[0.2em]">R C H</span>
+  <aside class="cui-nav flex w-64 flex-col border-r border-rth-border bg-rth-panel p-4 text-rth-text">
+    <div class="mb-6 flex items-center gap-3 text-sm text-rth-text">
+      <div class="cui-logo-spin h-8 w-8">
+        <img src="/RCH_vector.svg" alt="Reticulum Community Hub" class="h-full w-full" />
+      </div>
+      <div class="cui-title-wrap" :class="{ 'cui-title-paused': isTitlePaused }">
+        <span class="cui-title-text" data-title="Reticulum Community Hub">Reticulum Community Hub</span>
+      </div>
     </div>
-    <nav class="flex flex-col gap-2 text-xs">
+    <nav class="flex flex-1 flex-col gap-2 text-xs">
       <RouterLink
         v-for="item in navItems"
         :key="item.to"
@@ -30,8 +34,10 @@
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { RouterLink } from "vue-router";
+import { useConnectionStore } from "../stores/connection";
 
 const route = useRoute();
+const connectionStore = useConnectionStore();
 
 const navItems = [
   { label: "Home", to: "/", icon: "home" },
@@ -40,10 +46,9 @@ const navItems = [
   { label: "Files", to: "/files", icon: "files" },
   { label: "Users", to: "/users", icon: "users" },
   { label: "Configure", to: "/configure", icon: "config" },
-  { label: "About", to: "/about", icon: "about" },
-  { label: "Connect", to: "/connect", icon: "connect" }
+  { label: "Connect", to: "/connect", icon: "connect" },
+  { label: "About", to: "/about", icon: "about" }
 ];
-
 const navIcons: Record<string, string[]> = {
   home: ["M4 10.5L12 4l8 6.5", "M6 20v-6h12v6"],
   map: ["M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2z", "M9 4v14", "M15 6v14"],
@@ -57,5 +62,13 @@ const navIcons: Record<string, string[]> = {
 
 const buildInfo = computed(() => {
   return import.meta.env.VITE_BUILD_ID ?? "local";
+});
+
+const isTitlePaused = computed(() => {
+  return (
+    connectionStore.status === "offline" ||
+    connectionStore.authStatus === "unauthenticated" ||
+    connectionStore.authStatus === "forbidden"
+  );
 });
 </script>

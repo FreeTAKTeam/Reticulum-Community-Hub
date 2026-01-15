@@ -2,9 +2,8 @@
   <div class="space-y-6">
     <BaseCard title="Files & Images">
       <div class="mb-4 flex flex-wrap gap-2">
-        <BaseButton :variant="activeTab === 'files' ? 'primary' : 'secondary'" @click="activeTab = 'files'">Files</BaseButton>
-        <BaseButton :variant="activeTab === 'images' ? 'primary' : 'secondary'" @click="activeTab = 'images'">Images</BaseButton>
-        <BaseButton variant="secondary" @click="filesStore.fetchFiles">Refresh</BaseButton>
+        <BaseButton variant="tab" icon-left="file" :class="{ 'cui-tab-active': activeTab === 'files' }" @click="activeTab = 'files'">Files</BaseButton>
+        <BaseButton variant="tab" icon-left="image" :class="{ 'cui-tab-active': activeTab === 'images' }" @click="activeTab = 'images'">Images</BaseButton>
       </div>
       <LoadingSkeleton v-if="filesStore.loading" />
       <div v-else>
@@ -14,7 +13,7 @@
               <div class="font-semibold">{{ file.name }}</div>
               <div class="text-xs text-rth-muted">{{ file.content_type }} - {{ formatNumber(file.size) }} bytes</div>
             </div>
-            <BaseButton variant="secondary" @click="downloadAttachment(file, 'file')">Download</BaseButton>
+            <BaseButton variant="secondary" icon-left="download" @click="downloadAttachment(file, 'file')">Download</BaseButton>
           </div>
           <BasePagination v-model:page="filesPage" :page-size="filesPageSize" :total="filesStore.files.length" />
         </div>
@@ -25,13 +24,16 @@
               <div class="font-semibold">{{ image.name }}</div>
               <div class="text-xs text-rth-muted">{{ image.content_type }} - {{ formatNumber(image.size) }} bytes</div>
               <div class="mt-3 flex gap-2">
-                <BaseButton variant="secondary" @click="openPreview(image)">Preview</BaseButton>
-                <BaseButton variant="ghost" @click="downloadAttachment(image, 'image')">Download</BaseButton>
+                <BaseButton variant="secondary" icon-left="eye" @click="openPreview(image)">Preview</BaseButton>
+                <BaseButton variant="secondary" icon-left="download" @click="downloadAttachment(image, 'image')">Download</BaseButton>
               </div>
             </div>
           </div>
           <BasePagination v-model:page="imagesPage" :page-size="imagesPageSize" :total="filesStore.images.length" />
         </div>
+      </div>
+      <div class="mt-4 flex flex-wrap justify-end gap-2">
+        <BaseButton variant="secondary" icon-left="refresh" @click="filesStore.fetchFiles">Refresh</BaseButton>
       </div>
     </BaseCard>
 
@@ -40,7 +42,7 @@
       <div v-else-if="previewUrl" class="flex flex-col items-center gap-4">
         <img :src="previewUrl" class="max-h-[400px] rounded" :alt="previewName || 'Preview'" />
         <div class="flex gap-2">
-          <BaseButton variant="secondary" @click="downloadPreview">Download</BaseButton>
+          <BaseButton variant="secondary" icon-left="download" @click="downloadPreview">Download</BaseButton>
           <a class="text-sm text-rth-accent hover:underline" :href="previewUrl" target="_blank" rel="noreferrer">Open raw</a>
         </div>
       </div>

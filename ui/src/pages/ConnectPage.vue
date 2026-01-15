@@ -8,11 +8,11 @@
         <BaseInput v-model="connectionStore.token" label="Bearer Token" />
         <BaseInput v-model="connectionStore.apiKey" label="API Key" />
       </div>
-      <div class="mt-4 flex gap-2">
-        <BaseButton @click="save">Save</BaseButton>
-        <BaseButton variant="secondary" @click="testConnection">Test Connection</BaseButton>
-      </div>
       <div v-if="testResult" class="mt-3 text-sm text-rth-muted">{{ testResult }}</div>
+      <div class="mt-4 flex justify-end gap-2">
+        <BaseButton icon-left="save" @click="save">Save</BaseButton>
+        <BaseButton variant="secondary" icon-left="link" @click="testConnection">Test Connection</BaseButton>
+      </div>
     </BaseCard>
   </div>
 </template>

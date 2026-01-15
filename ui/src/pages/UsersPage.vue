@@ -1,56 +1,66 @@
 <template>
   <div class="space-y-6">
-    <BaseCard title="Clients">
-      <div class="mb-4 flex gap-3">
-        <BaseButton variant="secondary" @click="usersStore.fetchUsers">Refresh</BaseButton>
+    <BaseCard title="Users & Routing">
+      <div class="mb-4 flex flex-wrap gap-2">
+        <BaseButton variant="tab" icon-left="users" :class="{ 'cui-tab-active': activeTab === 'clients' }" @click="activeTab = 'clients'">
+          Users
+        </BaseButton>
+        <BaseButton variant="tab" icon-left="fingerprint" :class="{ 'cui-tab-active': activeTab === 'identities' }" @click="activeTab = 'identities'">
+          Identities
+        </BaseButton>
+        <BaseButton variant="tab" icon-left="route" :class="{ 'cui-tab-active': activeTab === 'routing' }" @click="activeTab = 'routing'">
+          Routing
+        </BaseButton>
       </div>
       <LoadingSkeleton v-if="usersStore.loading" />
-      <div v-else class="space-y-3">
-        <div v-for="client in pagedClients" :key="client.id" class="rounded border border-rth-border bg-rth-panel-muted p-3">
-          <div class="flex flex-wrap items-center justify-between">
-            <div>
-              <div class="font-semibold">{{ client.display_name || client.id }}</div>
-              <div class="text-xs text-rth-muted">Destination: {{ client.id || "-" }}</div>
-              <div class="text-xs text-rth-muted">Last seen: {{ formatTimestamp(client.last_seen_at) }}</div>
-              <div class="text-xs text-rth-muted">Metadata: {{ formatMetadata(client.metadata) }}</div>
-            </div>
-            <div class="flex gap-2">
-              <BaseButton variant="secondary" @click="actOnClient(client.id, 'Ban')">Ban</BaseButton>
-              <BaseButton variant="secondary" @click="actOnClient(client.id, 'Unban')">Unban</BaseButton>
-              <BaseButton variant="ghost" @click="actOnClient(client.id, 'Blackhole')">Blackhole</BaseButton>
+      <div v-else>
+        <div v-if="activeTab === 'clients'" class="space-y-3">
+          <div v-for="client in pagedClients" :key="client.id" class="rounded border border-rth-border bg-rth-panel-muted p-3">
+            <div class="flex flex-wrap items-center justify-between">
+              <div>
+                <div class="font-semibold">{{ client.display_name || client.id }}</div>
+                <div class="text-xs text-rth-muted">Destination: {{ client.id || "-" }}</div>
+                <div class="text-xs text-rth-muted">Last seen: {{ formatTimestamp(client.last_seen_at) }}</div>
+                <div class="text-xs text-rth-muted">Metadata: {{ formatMetadata(client.metadata) }}</div>
+              </div>
+              <div class="flex gap-2">
+                <BaseButton variant="danger" icon-left="ban" @click="actOnClient(client.id, 'Ban')">Ban</BaseButton>
+                <BaseButton variant="success" icon-left="unban" @click="actOnClient(client.id, 'Unban')">Unban</BaseButton>
+                <BaseButton variant="secondary" icon-left="blackhole" @click="actOnClient(client.id, 'Blackhole')">Blackhole</BaseButton>
+              </div>
             </div>
           </div>
+          <BasePagination v-model:page="clientsPage" :page-size="clientsPageSize" :total="usersStore.clients.length" />
         </div>
-        <BasePagination v-model:page="clientsPage" :page-size="clientsPageSize" :total="usersStore.clients.length" />
-      </div>
-    </BaseCard>
-
-    <BaseCard title="Identities">
-      <LoadingSkeleton v-if="usersStore.loading" />
-      <div v-else class="grid gap-3 md:grid-cols-2">
-        <div v-for="identity in pagedIdentities" :key="identity.id" class="rounded border border-rth-border bg-rth-panel-muted p-3">
-          <div class="font-semibold">{{ identity.display_name || identity.id }}</div>
-          <div class="text-xs text-rth-muted">Status: {{ identity.status || "-" }}</div>
-          <div class="text-xs text-rth-muted">Last seen: {{ formatTimestamp(identity.last_seen) }}</div>
-          <div class="mt-2 flex gap-2">
-            <BaseBadge v-if="identity.banned" tone="danger">Banned</BaseBadge>
-            <BaseBadge v-if="identity.blackholed" tone="warning">Blackholed</BaseBadge>
+        <div v-else-if="activeTab === 'identities'" class="grid gap-3 md:grid-cols-2">
+          <div v-for="identity in pagedIdentities" :key="identity.id" class="rounded border border-rth-border bg-rth-panel-muted p-3">
+            <div class="font-semibold">{{ identity.display_name || identity.id }}</div>
+            <div class="text-xs text-rth-muted">Status: {{ identity.status || "-" }}</div>
+            <div class="text-xs text-rth-muted">Last seen: {{ formatTimestamp(identity.last_seen) }}</div>
+            <div class="mt-2 flex gap-2">
+              <BaseBadge v-if="identity.banned" tone="danger">Banned</BaseBadge>
+              <BaseBadge v-if="identity.blackholed" tone="warning">Blackholed</BaseBadge>
+            </div>
           </div>
+          <BasePagination v-model:page="identitiesPage" :page-size="identitiesPageSize" :total="usersStore.identities.length" />
+        </div>
+        <div v-else>
+          <BaseFormattedOutput v-if="routingOpen && routing" class="mt-3" :value="routing" />
+          <div v-else-if="routingOpen" class="mt-3 text-xs text-rth-muted">No routing data loaded.</div>
+          <div v-else class="text-xs text-rth-muted">Routing is hidden. Use the controls below to load a snapshot.</div>
         </div>
       </div>
-      <BasePagination v-model:page="identitiesPage" :page-size="identitiesPageSize" :total="usersStore.identities.length" />
-    </BaseCard>
-
-    <BaseCard title="Routing Snapshot">
-      <div class="flex flex-wrap items-center gap-3">
-        <BaseButton variant="secondary" @click="toggleRouting">
+      <div class="mt-4 flex justify-end gap-3">
+        <BaseButton v-if="activeTab === 'clients' || activeTab === 'identities'" variant="secondary" icon-left="refresh" @click="usersStore.fetchUsers">
+          Refresh
+        </BaseButton>
+        <BaseButton v-if="activeTab === 'routing'" variant="secondary" icon-left="route" @click="toggleRouting">
           {{ routingOpen ? "Hide Routing" : "Show Routing" }}
         </BaseButton>
-        <BaseButton v-if="routingOpen" variant="ghost" @click="loadRouting">Refresh</BaseButton>
+        <BaseButton v-if="activeTab === 'routing' && routingOpen" variant="secondary" icon-left="refresh" @click="loadRouting">Refresh</BaseButton>
       </div>
-      <BaseFormattedOutput v-if="routingOpen && routing" class="mt-3" :value="routing" />
-      <div v-else-if="routingOpen" class="mt-3 text-xs text-rth-muted">No routing data loaded.</div>
     </BaseCard>
+
   </div>
 </template>
 
@@ -74,6 +84,7 @@ const usersStore = useUsersStore();
 const toastStore = useToastStore();
 const routing = ref<unknown>(null);
 const routingOpen = ref(false);
+const activeTab = ref<"clients" | "identities" | "routing">("clients");
 const clientsPage = ref(1);
 const identitiesPage = ref(1);
 const clientsPageSize = 6;

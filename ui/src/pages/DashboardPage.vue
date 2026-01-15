@@ -25,16 +25,18 @@
 
     <BaseCard title="Recent Events">
       <LoadingSkeleton v-if="dashboard.loading" />
-      <ul v-else class="space-y-2 text-sm text-rth-text">
-        <li v-for="event in dashboard.events" :key="event.id" class="rounded border border-rth-border bg-rth-panel-muted p-3">
-          <div class="flex items-center justify-between">
-            <span class="font-semibold">{{ event.message }}</span>
-            <span class="text-xs text-rth-muted">{{ formatTimestamp(event.created_at) }}</span>
-          </div>
-          <div class="mt-1 text-xs text-rth-muted">{{ event.category }} - {{ event.level }}</div>
-          <BaseFormattedOutput v-if="hasMetadata(event.metadata)" class="mt-2" :value="event.metadata" />
-        </li>
-      </ul>
+      <div v-else class="max-h-96 overflow-y-auto pr-1 scrollbar-thin">
+        <ul class="space-y-2 text-sm text-rth-text">
+          <li v-for="event in dashboard.events" :key="event.id" class="rounded border border-rth-border bg-rth-panel-muted p-3">
+            <div class="flex items-center justify-between">
+              <span class="font-semibold">{{ event.message }}</span>
+              <span class="text-xs text-rth-muted">{{ formatTimestamp(event.created_at) }}</span>
+            </div>
+            <div class="mt-1 text-xs text-rth-muted">{{ event.category }} - {{ event.level }}</div>
+            <BaseFormattedOutput v-if="hasMetadata(event.metadata)" class="mt-2" :value="event.metadata" />
+          </li>
+        </ul>
+      </div>
     </BaseCard>
   </div>
 </template>

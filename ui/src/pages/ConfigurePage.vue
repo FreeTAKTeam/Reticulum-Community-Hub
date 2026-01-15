@@ -1,39 +1,47 @@
 <template>
   <div class="space-y-6">
-    <BaseCard title="Configuration">
+    <BaseCard title="Configuration & Tools">
       <div class="mb-4 flex flex-wrap gap-2">
-        <BaseButton variant="secondary" @click="loadConfig">Load</BaseButton>
-        <BaseButton variant="secondary" @click="validateConfig">Validate</BaseButton>
-        <BaseButton @click="applyConfig">Apply</BaseButton>
-        <BaseButton variant="ghost" @click="rollbackConfig">Rollback</BaseButton>
+        <BaseButton variant="tab" icon-left="settings" :class="{ 'cui-tab-active': activeTab === 'config' }" @click="activeTab = 'config'">
+          Configuration
+        </BaseButton>
+        <BaseButton variant="tab" icon-left="tool" :class="{ 'cui-tab-active': activeTab === 'tools' }" @click="activeTab = 'tools'">
+          Tools
+        </BaseButton>
       </div>
-      <textarea v-model="configStore.configText" class="h-64 w-full rounded border border-rth-border bg-rth-panel-muted p-3 text-xs text-rth-text"></textarea>
-      <div class="mt-4 space-y-3 text-xs text-rth-muted">
-        <div v-if="configStore.error" class="text-[#fecaca]">Error: {{ configStore.error }}</div>
-        <div v-if="configStore.validation">
-          <div class="text-xs text-rth-muted">Validation</div>
-          <BaseFormattedOutput class="mt-2" :value="configStore.validation" />
+      <div v-if="activeTab === 'config'">
+        <textarea v-model="configStore.configText" class="h-64 w-full rounded border border-rth-border bg-rth-panel-muted p-3 text-xs text-rth-text"></textarea>
+        <div class="mt-4 space-y-3 text-xs text-rth-muted">
+          <div v-if="configStore.error" class="text-[#fecaca]">Error: {{ configStore.error }}</div>
+          <div v-if="configStore.validation">
+            <div class="text-xs text-rth-muted">Validation</div>
+            <BaseFormattedOutput class="mt-2" :value="configStore.validation" />
+          </div>
+          <div v-if="configStore.applyResult">
+            <div class="text-xs text-rth-muted">Apply result</div>
+            <BaseFormattedOutput class="mt-2" :value="configStore.applyResult" />
+          </div>
+          <div v-if="configStore.rollbackResult">
+            <div class="text-xs text-rth-muted">Rollback result</div>
+            <BaseFormattedOutput class="mt-2" :value="configStore.rollbackResult" />
+          </div>
         </div>
-        <div v-if="configStore.applyResult">
-          <div class="text-xs text-rth-muted">Apply result</div>
-          <BaseFormattedOutput class="mt-2" :value="configStore.applyResult" />
-        </div>
-        <div v-if="configStore.rollbackResult">
-          <div class="text-xs text-rth-muted">Rollback result</div>
-          <BaseFormattedOutput class="mt-2" :value="configStore.rollbackResult" />
+        <div class="mt-4 flex flex-wrap justify-end gap-2">
+          <BaseButton variant="secondary" icon-left="upload" @click="loadConfig">Load</BaseButton>
+          <BaseButton variant="secondary" icon-left="check" @click="validateConfig">Validate</BaseButton>
+          <BaseButton icon-left="check" @click="applyConfig">Apply</BaseButton>
+          <BaseButton variant="secondary" icon-left="undo" @click="rollbackConfig">Rollback</BaseButton>
         </div>
       </div>
-    </BaseCard>
-
-    <BaseCard title="Tools">
-      <div class="flex flex-wrap gap-2">
-        <BaseButton variant="secondary" @click="runTool('Ping')">Ping</BaseButton>
-        <BaseButton variant="secondary" @click="runTool('DumpRouting')">Dump Routing</BaseButton>
-        <BaseButton variant="secondary" @click="runTool('ListClients')">List Clients</BaseButton>
-        <BaseButton variant="secondary" @click="loadHelp">Help</BaseButton>
-        <BaseButton variant="secondary" @click="loadExamples">Examples</BaseButton>
+      <div v-else>
+        <BaseFormattedOutput v-if="toolResponse" class="mt-4" :value="toolResponse" :mode="toolResponseMode" />
+        <div v-else class="text-xs text-rth-muted">Run a tool to see the response.</div>
+        <div class="mt-4 flex flex-wrap justify-end gap-2">
+          <BaseButton variant="secondary" icon-left="send" @click="runTool('Ping')">Ping</BaseButton>
+          <BaseButton variant="secondary" icon-left="route" @click="runTool('DumpRouting')">Dump Routing</BaseButton>
+          <BaseButton variant="secondary" icon-left="users" @click="runTool('ListClients')">List Clients</BaseButton>
+        </div>
       </div>
-      <BaseFormattedOutput v-if="toolResponse" class="mt-4" :value="toolResponse" :mode="toolResponseMode" />
     </BaseCard>
   </div>
 </template>
@@ -52,6 +60,7 @@ const configStore = useConfigStore();
 const toastStore = useToastStore();
 const toolResponse = ref<unknown>(null);
 const toolResponseMode = ref<"auto" | "markdown" | "json" | "html">("auto");
+const activeTab = ref<"config" | "tools">("config");
 
 const toolPaths: Record<string, string> = {
   Ping: endpoints.status,
@@ -98,20 +107,6 @@ const rollbackConfig = async () => {
   } catch (error) {
     toastStore.push("Rollback failed", "danger");
   }
-};
-
-const loadHelp = async () => {
-  const response = await get<unknown>(endpoints.help);
-  setResponse(response, "markdown");
-};
-
-const loadExamples = async () => {
-  const response = await get<unknown>(endpoints.examples);
-  if (typeof response === "string") {
-    setResponse(response, "markdown");
-    return;
-  }
-  setResponse(response, "auto");
 };
 
 const setResponse = (response: unknown, mode: "auto" | "markdown" | "json" | "html") => {
