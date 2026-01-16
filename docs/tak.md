@@ -6,7 +6,7 @@
 - The `tak_cot` daemon service (`reticulum_telemetry_hub/reticulum_server/services.py`) schedules periodic CoT traffic: a takPong keepalive plus the latest location snapshot every `poll_interval_seconds`.
 
 ## Configuration
-- Connector settings live in `TakConnectionConfig` (`reticulum_telemetry_hub/config/models.py`). Defaults: `tcp://127.0.0.1:8087`, callsign `RTH`, poll interval `30s`, TAK protocol `0`, FTS compatibility `1`, TLS options empty.
+- Connector settings live in `TakConnectionConfig` (`reticulum_telemetry_hub/config/models.py`). Defaults: `tcp://127.0.0.1:8087`, callsign `RCH`, poll interval `30s`, TAK protocol `0`, FTS compatibility `1`, TLS options empty.
 - `TakConnectionConfig.to_config_parser()` produces the `fts` config section that PyTAK expects:
   - `COT_URL` (`tcp://` or `udp://`), `CALLSIGN`, `TAK_PROTO`, `FTS_COMPAT`
   - TLS fields: `SSL_CLIENT_CERT`, `SSL_CLIENT_KEY`, `SSL_CLIENT_CAFILE`, `SSL_VERIFY` (set to `false` when `tls_insecure=True`)
@@ -24,7 +24,7 @@
   - Identity mapping: UIDs and callsigns come from the LXMF peer hash when available; optional `identity_lookup` can replace hashes with human-readable labels.
   - Location / telemetry CoT (`a-f-G-U-C`): `send_latest_location()` and `send_telemetry_event(...)` call `_build_event_from_snapshot(...)`, which sets:
     - `how=h-g-i-g-o`, start/stale timestamps based on last update and `poll_interval_seconds`
-    - `detail`: `contact` (callsign + endpoint), default group (`Yellow` / `Team Member`), `track` (course/speed), `takv` (platform metadata constants; version set to the current RTH release, e.g., `0.44.0`), `uid` (Droid callsign), and `status` (battery currently `0.0`)
+    - `detail`: `contact` (callsign + endpoint), default group (`Yellow` / `Team Member`), `track` (course/speed), `takv` (platform metadata constants; version set to the current RCH release, e.g., `0.44.0`), `uid` (Droid callsign), and `status` (battery currently `0.0`)
 - Chat CoT (`b-t-f`): `send_chat_event(...)` wraps LXMF message text in a GeoChat payload with `Chat`, `ChatGroup`, `ChatHierarchy`, `Link`, and `Remarks` detail. UIDs follow the LXMF sender identity: `GeoChat.<lxmf_destination>.<chatroom_name>.<message_uuid>`. The chat detail mirrors LXMF fields (`senderCallsign`, `messageId`, `chatroom`/`id`), links back to the sender UID, and stamps remarks with `source="LXMF.CLIENT.<lxmf_destination>"`, `sourceID`, and millisecond UTC timestamps (`time`, `start`, `stale` set +24h).
   - Keepalive: `send_keepalive()` emits `tak_pong()` from PyTAK to keep the TAK session alive.
 
@@ -37,7 +37,7 @@
   - `TelemetryController.register_listener` calls `_handle_telemetry_for_tak`, which invokes `TakConnector.send_telemetry_event(...)` for every inbound telemetry payload that contains location data.
   - The `tak_cot` daemon service runs `send_latest_location()` every `poll_interval_seconds` and dispatches a keepalive `takPong` every 60 seconds to maintain the session.
 - Chat relay:
-  - Inbound LXMF deliveries handled in `ReticulumTelemetryHub.delivery_callback` are mirrored into TAK via `TakConnector.send_chat_event(...)` when the message body is non-empty.
+  - Inbound LXMF deliveries handled in the hub runtime `delivery_callback` are mirrored into TAK via `TakConnector.send_chat_event(...)` when the message body is non-empty.
 
 ## Usage tips
 - Ensure a location sensor is enabled (e.g., via `TelemeterManager` or the optional `gpsd` service); otherwise `send_latest_location()` and `send_telemetry_event()` no-op and log a warning.
@@ -49,12 +49,12 @@
 1. Enable the `tak_cot` service when starting the hub:
    ```bash
    python -m reticulum_telemetry_hub.reticulum_server \
-       --storage_dir ./RTH_Store \
+       --storage_dir ./RCH_Store \
        --service tak_cot
    ```
-2. Confirm that `RTH_Store/config.ini` includes a `[TAK]` section. The `tak_cot` daemon reads these values on startup and reuses them across keepalive and telemetry dispatches.
+2. Confirm that `RCH_Store/config.ini` includes a `[TAK]` section. The `tak_cot` daemon reads these values on startup and reuses them across keepalive and telemetry dispatches.
 3. Watch for the following log signals:
    - `PyTAK TX/RX queue workers started` indicates the connector’s background loop is healthy.
    - `Sending takPong keepalive` appears roughly every 60 seconds while connected.
    - `send_latest_location` or `send_telemetry_event` warnings call out when no location data is available.
-4. When testing against ATAK or WinTAK, verify that the `detail.contact` endpoint matches the `<host>:<port>:<scheme>` derived from your `COT_URL` and that the `takv` block shows the current RTH version from `pyproject.toml`.
+4. When testing against ATAK or WinTAK, verify that the `detail.contact` endpoint matches the `<host>:<port>:<scheme>` derived from your `COT_URL` and that the `takv` block shows the current RCH version from `pyproject.toml`.

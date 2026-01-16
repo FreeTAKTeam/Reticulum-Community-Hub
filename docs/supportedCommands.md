@@ -51,5 +51,5 @@ Protected commands:
 Notes:
 
 - For clients that do not support `Commands` (e.g. Meshchat), prefix the message body with ``\\\`` so the hub treats it as a command payload (e.g., ``\\\join`` or ``\\\{"Command":"SubscribeTopic","TopicID":"<TopicID>"}``).
-- RTH accepts common field name variants (e.g., `TopicID`, `topicId`, `topic_id`, `TopicPath`, `topic_path`).
-- If required fields are missing, RTH replies with the missing keys and merges your follow-up payload with the original so you can send only the missing fields.
+- RCH accepts common field name variants (e.g., `TopicID`, `topicId`, `topic_id`, `TopicPath`, `topic_path`).
+- If required fields are missing, RCH replies with the missing keys and merges your follow-up payload with the original so you can send only the missing fields.

@@ -19,7 +19,7 @@
     <BaseCard title="Documentation">
       <ul class="list-disc space-y-2 pl-5 text-sm text-rth-muted">
         <li><a class="text-rth-accent hover:underline" href="/docs/" target="_blank" rel="noreferrer">Project Docs</a></li>
-        <li><a class="text-rth-accent hover:underline" href="/API/ReticulumTelemetryHub-OAS.yaml" target="_blank" rel="noreferrer">OpenAPI Reference</a></li>
+        <li><a class="text-rth-accent hover:underline" href="/API/ReticulumCommunityHub-OAS.yaml" target="_blank" rel="noreferrer">OpenAPI Reference</a></li>
       </ul>
     </BaseCard>
 

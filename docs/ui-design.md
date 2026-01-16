@@ -1,12 +1,12 @@
-# RTH Core Administrative UI Design
+# RCH Core Administrative UI Design
 
 ## 1. Purpose and Scope
 
-**RTH Core UI** is the **administrative control plane** for a Reticulum Telemetry Hub (RTH) instance.
+**RCH Core UI** is the **administrative control plane** for a Reticulum Community Hub (RCH) instance.
 
 It is intended for:
 
-- Operators of RTH nodes (fixed, mobile, or gateway)
+- Operators of RCH nodes (fixed, mobile, or gateway)
 - Administrators managing telemetry, topics, subscribers, files/images, identities, and configuration
 - Situational awareness and network hygiene (abuse prevention, bans, blackholing)
 
@@ -19,8 +19,8 @@ This is **not** a Sideband/MeshChat-style client; it is a **server management co
 ### 2.1 High-Level
 
 - UI: single-page app (SPA) in a web browser
-- Backend: RTH REST API + WebSockets
-- Source of truth: RTH storage + runtime state
+- Backend: RCH REST API + WebSockets
+- Source of truth: RCH storage + runtime state
 
 ### 2.2 Communication Model
 
@@ -30,7 +30,7 @@ This is **not** a Sideband/MeshChat-style client; it is a **server management co
 | WebSocket | JSON over WSS | live telemetry + live dashboard events |
 | Auth | API key and/or JWT | required for protected admin operations |
 
-### 2.3 WebSocket Event Contracts (RTH-WS v1)
+### 2.3 WebSocket Event Contracts (RCH-WS v1)
 
 #### 2.3.1 Envelope
 
@@ -124,7 +124,7 @@ Errors are always:
 | Styling | TailwindCSS + custom dark theme |
 | State | Pinia |
 | Transport | REST + WebSocket |
-| Packaging | static build served by RTH or reverse proxy |
+| Packaging | static build served by RCH or reverse proxy |
 
 ---
 

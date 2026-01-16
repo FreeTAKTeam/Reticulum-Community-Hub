@@ -1,7 +1,7 @@
 # UI Architecture
 
 ## Overview
-The Reticulum Telemetry Hub UI is a Vue 3 + Vite + TypeScript single-page application (SPA) that serves as the administrative console for the hub and communicates with REST and WebSocket endpoints for data and live updates.【F:ui/README.md†L1-L4】
+The Reticulum Community Hub UI is a Vue 3 + Vite + TypeScript single-page application (SPA) that serves as the administrative console for the hub and communicates with REST and WebSocket endpoints for data and live updates.【F:ui/README.md†L1-L4】
 
 ## Application Entry and Shell
 - The app boots in `src/main.ts`, which creates the Vue app, registers Pinia for state management and the router, loads base styles, and mounts the app to `#app`.【F:ui/src/main.ts†L1-L11】
@@ -17,7 +17,7 @@ Routing is configured with Vue Router in `src/router/index.ts`. The UI defines r
 
 ## API Layer (REST)
 - REST calls are centralized in `src/api/client.ts`. It builds headers based on the connection store (including bearer or API key auth), applies timeouts/retries, and updates connection/auth status based on responses.【F:ui/src/api/client.ts†L1-L150】
-- Mock responses can be enabled with `VITE_RTH_MOCK=true` for offline development, returning simulated responses from `mockFetch` instead of issuing network requests.【F:ui/src/api/client.ts†L14-L16】【F:ui/src/api/client.ts†L70-L101】
+- Mock responses can be enabled with `VITE_RCH_MOCK=true` for offline development, returning simulated responses from `mockFetch` instead of issuing network requests.【F:ui/src/api/client.ts†L14-L16】【F:ui/src/api/client.ts†L70-L101】
 
 ## WebSocket Layer (Live Updates)
 - Live telemetry/system events use `WsClient` in `src/api/ws.ts`. On connection, it sends authentication info, registers the live connection with the connection store, and listens for messages (including ping/pong handling).【F:ui/src/api/ws.ts†L10-L92】

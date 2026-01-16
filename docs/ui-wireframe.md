@@ -1,4 +1,4 @@
-Below are **low-fidelity UI wireframes** for the **RTH Core Administrative UI**.
+Below are **low-fidelity UI wireframes** for the **RCH Core Administrative UI**.
 They are **structural and behavioral wireframes** (not visual mockups) intended to guide frontend implementation.
 
 ---
@@ -9,7 +9,7 @@ They are **structural and behavioral wireframes** (not visual mockups) intended 
 +----------------------+----------------------------------------------+
 | LEFT SIDEBAR (fixed) | MAIN CONTENT                                  |
 |----------------------|----------------------------------------------|
-| RTH Logo             | Page Title                      [Actions...] |
+| RCH Logo             | Page Title                      [Actions...] |
 |                      |----------------------------------------------|
 | Home                 | Page-specific content                         |
 | WebMap               |                                              |
@@ -34,7 +34,7 @@ Rules:
 
 ## 2. Connect (Optional; external UI deployments)
 
-Purpose: configure how the UI connects/authenticates to an RTH instance when the UI is not embedded.
+Purpose: configure how the UI connects/authenticates to an RCH instance when the UI is not embedded.
 
 ```
 +--------------------------------------------------------------+
@@ -247,7 +247,7 @@ Data:
 +--------------------------------------------------------------+
 | ABOUT                                                        |
 |--------------------------------------------------------------|
-| App: RTH (9.9.9)                                             |
+| App: RCH (9.9.9)                                             |
 | Description: ...                                             |
 | Reticulum: ... | LXMF: ...                                   |
 |--------------------------------------------------------------|

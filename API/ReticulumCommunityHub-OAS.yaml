@@ -1,9 +1,9 @@
 openapi: 3.0.1
 info:
-  title: ReticulumTelemetryHub
+  title: ReticulumCommunityHub
   version: '2026.01.11'
   description: >-
-    Abstract service for Reticulum Telemetry Hub. This API manages subscribers, topics, client lists, and provides hub join/leave functionality over a Reticulum-based network.
+    Abstract service for Reticulum Community Hub. This API manages subscribers, topics, client lists, and provides hub join/leave functionality over a Reticulum-based network.
   contact:
     name: FTTeam
     url: https://github.com/FreeTAKTeam
@@ -86,8 +86,8 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       description: >-
-        WebSocket endpoint using the RTH-WS v1 envelope. See docs/ui-design.md.
-      x-ws-protocol: rth-ws-v1
+        WebSocket endpoint using the RCH-WS v1 envelope. See docs/ui-design.md.
+      x-ws-protocol: rch-ws-v1
       x-ws-server-messages:
         - $ref: '#/components/schemas/WsAuthOkMessage'
         - $ref: '#/components/schemas/WsSystemStatusMessage'
@@ -126,8 +126,8 @@ paths:
        - WebSocket
       summary: WebSocket stream for live telemetry.
       description: >-
-        WebSocket endpoint using the RTH-WS v1 envelope. See docs/ui-design.md.
-      x-ws-protocol: rth-ws-v1
+        WebSocket endpoint using the RCH-WS v1 envelope. See docs/ui-design.md.
+      x-ws-protocol: rch-ws-v1
       x-ws-server-messages:
         - $ref: '#/components/schemas/WsAuthOkMessage'
         - $ref: '#/components/schemas/WsTelemetrySnapshotMessage'
@@ -152,8 +152,8 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       description: >-
-        WebSocket endpoint using the RTH-WS v1 envelope. See docs/ui-design.md.
-      x-ws-protocol: rth-ws-v1
+        WebSocket endpoint using the RCH-WS v1 envelope. See docs/ui-design.md.
+      x-ws-protocol: rch-ws-v1
       x-ws-server-messages:
         - $ref: '#/components/schemas/WsAuthOkMessage'
         - $ref: '#/components/schemas/WsMessageReceiveMessage'
@@ -391,15 +391,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IdentityStatus'
-  /RTH:
+  /RCH:
     post:
       x-scope: public
       x-lxmf-command: join
       tags:
-       - RTH
+       - RCH
       description: >-
-        Join an RTH instance as the supplied identity.
-      operationId: RTHjoin
+        Join an RCH instance as the supplied identity.
+      operationId: RCHjoin
       parameters:
         - $ref: '#/components/parameters/identity'
       responses:
@@ -413,10 +413,10 @@ paths:
       x-scope: public
       x-lxmf-command: leave
       tags:
-       - RTH
+       - RCH
       description: >-
-        Leave an RTH instance as the supplied identity.
-      operationId: RTHLeave
+        Leave an RCH instance as the supplied identity.
+      operationId: RCHLeave
       parameters:
         - $ref: '#/components/parameters/identity'
       responses:
@@ -451,7 +451,7 @@ paths:
       tags:
        - Client
       description: >-
-        Lists all clients currently connected to RTH, including their Reticulum identities and connection metadata
+        Lists all clients currently connected to the Hub, including their Reticulum identities and connection metadata
       operationId: ListClients
       security:
         - bearerAuth: []
@@ -932,10 +932,10 @@ components:
           description: Installed LXMF library version.
         app_version:
           type: string
-          description: Version of the Reticulum Telemetry Hub application.
+          description: Version of the Reticulum Community Hub application.
         app_description:
           type: string
-          description: Human readable description for the Telemetry Hub.
+          description: Human readable description for the Community Hub.
     Status:
       type: object
       description: Dashboard status snapshot.
@@ -1110,7 +1110,7 @@ components:
         - TopicID
     WsEnvelope:
       type: object
-      description: RTH-WS v1 envelope.
+      description: RCH-WS v1 envelope.
       properties:
         type:
           type: string

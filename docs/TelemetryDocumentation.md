@@ -1,18 +1,18 @@
 # Sideband Telemetry Message Format
 
-This document describes how Sideband structures telemetry over LXMF and how Reticulum-Telemetry-Hub (RTH) ingests, stores, and republishes it.
+This document describes how Sideband structures telemetry over LXMF and how Reticulum Community Hub (RCH) ingests, stores, and republishes it.
 
 ## LXMF envelope
 
 - Telemetry is carried in LXMF message fields: a single snapshot is placed in `FIELD_TELEMETRY` (0x02) and streams or batches in `FIELD_TELEMETRY_STREAM` (0x03) (`reticulum_telemetry_hub/lxmf_daemon/LXMF.py:9`).
-- `FIELD_TELEMETRY` is msgpack-encoded; RTH unpacks it, persists the decoded sensors, and logs a human-readable view (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:180`).
-- `FIELD_TELEMETRY_STREAM` is a plain list; each entry is `[peer_hash_bytes, unix_timestamp, packed_payload, appearance?]` assembled in `handle_command()` when RTH serves a telemetry request (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:231`). Sideband accepts an optional appearance element; RTH currently sends `None`.
+- `FIELD_TELEMETRY` is msgpack-encoded; RCH unpacks it, persists the decoded sensors, and logs a human-readable view (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:180`).
+- `FIELD_TELEMETRY_STREAM` is a plain list; each entry is `[peer_hash_bytes, unix_timestamp, packed_payload, appearance?]` assembled in `handle_command()` when RCH serves a telemetry request (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:231`). Sideband accepts an optional appearance element; RCH currently sends `None`.
 - Telemetry replies intentionally leave the LXMF body empty so telemetry data is transported exclusively via the structured fields.
 
 ## Sensor map payload
 
 - The payload under `FIELD_TELEMETRY` (or the third element of each stream entry) is a map keyed by numeric Sensor IDs (SIDs). SIDs are fixed in `reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/sensor_enum.py:1`.
-- Each SID maps to a sensor-specific payload. RTH keeps the wire format identical to Sideband by using each sensor's `pack()`/`unpack()` methods when serializing (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:308`) and deserializing (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:326`).
+- Each SID maps to a sensor-specific payload. RCH keeps the wire format identical to Sideband by using each sensor's `pack()`/`unpack()` methods when serializing (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:308`) and deserializing (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:326`).
 - A `SID_TIME` entry is always ensured on egress so clients can reconstruct the snapshot time (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:315`).
 
 ### Commonly used sensors and payload shapes
@@ -30,20 +30,20 @@ This document describes how Sideband structures telemetry over LXMF and how Reti
 
 The full SID set is enumerated at `reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/sensor_enum.py:1`. Files in `reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/` document each payload shape in code.
 
-## How RTH supports Sideband telemetry
+## How RCH supports Sideband telemetry
 
 - **Sampling and emission** - `TelemeterManager.snapshot()` packs enabled sensors into a SID-to-payload map (`reticulum_telemetry_hub/lxmf_telemetry/telemeter_manager.py:284`). `TelemetrySampler` ingests that snapshot for persistence and, when `broadcast_updates=True`, optionally broadcasts it to connected peers in an LXMF message with `FIELD_TELEMETRY` (`reticulum_telemetry_hub/lxmf_telemetry/sampler.py:189`).
 - **Ingress and storage** - Incoming LXMF telemetry is decoded in `TelemetryController.handle_message()`; the controller persists the unpacked sensors to SQLite and logs a human-readable version (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:167`).
-- **Responding to requests** - When Sideband sends a telemetry command with `TelemetryController.TELEMETRY_REQUEST`, the controller collects the latest snapshot per peer, serializes each payload with `packb()`, and returns a list of telemetry entries in `FIELD_TELEMETRY_STREAM` (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:231` and `.../telemetry_controller.py:295`). If the payload includes `TopicID`, RTH filters results to that topic and denies requests from senders who are not subscribed to it.
-- **Schema fidelity** - Sensor classes mirror Sideband's wire format (for example, signed micro-degree coordinates in `Location.pack()` and timestamp enforcement in `Time.pack()`), keeping RTH's stored snapshots and outbound messages byte-compatible with Sideband.
+- **Responding to requests** - When Sideband sends a telemetry command with `TelemetryController.TELEMETRY_REQUEST`, the controller collects the latest snapshot per peer, serializes each payload with `packb()`, and returns a list of telemetry entries in `FIELD_TELEMETRY_STREAM` (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:231` and `.../telemetry_controller.py:295`). If the payload includes `TopicID`, RCH filters results to that topic and denies requests from senders who are not subscribed to it.
+- **Schema fidelity** - Sensor classes mirror Sideband's wire format (for example, signed micro-degree coordinates in `Location.pack()` and timestamp enforcement in `Time.pack()`), keeping RCH's stored snapshots and outbound messages byte-compatible with Sideband.
 
 ## Live tracking (Sideband "Start Live Tracking")
 
 - When the operator taps **Start Live Tracking** on a contact, Sideband begins polling that peer with `TELEMETRY_REQUEST` commands that carry the last timestamp it has seen (or `[timestamp, collector_flag]`). Each poll expects just the deltas newer than that timestamp.
-- RTH's command handler unwraps that timestamp and loads only telemetry entries at or after it (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:231` -> `.../_load_telemetry`:108). Results are ordered newest-first and collapsed to a single freshest snapshot per peer via `_latest_by_peer()` (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:373`).
-- The reply is placed in `FIELD_TELEMETRY_STREAM` as a plain list of `[peer_hash_bytes, unix_timestamp, packed_payload, None]` entries (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:293`). Sideband consumes that stream directly, updating the live track without any RTH-specific UI logic.
-- RTH ensures each payload always includes a `SID_TIME` sensor so Sideband can animate movement chronologically (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:315`). Location readings ride along unchanged using Sideband's wire format (`reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py:34`), so coordinates/altitude/speed remain compatible with Sideband's tracker.
-- To make live tracking meaningful, keep RTH sampling fresh telemetry: enable `--daemon` (or equivalent service) so `TelemetrySampler` writes new snapshots and forwards them to connected peers, giving Sideband something recent to poll (`reticulum_telemetry_hub/lxmf_telemetry/sampler.py:168`).
+- RCH's command handler unwraps that timestamp and loads only telemetry entries at or after it (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:231` -> `.../_load_telemetry`:108). Results are ordered newest-first and collapsed to a single freshest snapshot per peer via `_latest_by_peer()` (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:373`).
+- The reply is placed in `FIELD_TELEMETRY_STREAM` as a plain list of `[peer_hash_bytes, unix_timestamp, packed_payload, None]` entries (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:293`). Sideband consumes that stream directly, updating the live track without any RCH-specific UI logic.
+- RCH ensures each payload always includes a `SID_TIME` sensor so Sideband can animate movement chronologically (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py:315`). Location readings ride along unchanged using Sideband's wire format (`reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py:34`), so coordinates/altitude/speed remain compatible with Sideband's tracker.
+- To make live tracking meaningful, keep RCH sampling fresh telemetry: enable `--daemon` (or equivalent service) so `TelemetrySampler` writes new snapshots and forwards them to connected peers, giving Sideband something recent to poll (`reticulum_telemetry_hub/lxmf_telemetry/sampler.py:168`).
 
 ### Example (humanized)
 

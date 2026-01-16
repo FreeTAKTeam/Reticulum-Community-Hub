@@ -47,7 +47,7 @@ def _resolve_openapi_spec() -> Optional[Path]:
     """
 
     repo_root = Path(__file__).resolve().parents[2]
-    spec_path = repo_root / "API" / "ReticulumTelemetryHub-OAS.yaml"
+    spec_path = repo_root / "API" / "ReticulumCommunityHub-OAS.yaml"
     if spec_path.exists():
         return spec_path
     return None
@@ -131,7 +131,7 @@ def create_app(
     auth = auth or ApiAuth()
     require_protected = build_protected_dependency(auth)
 
-    app = FastAPI(title="ReticulumTelemetryHub", version="northbound")
+    app = FastAPI(title="ReticulumCommunityHub", version="northbound")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

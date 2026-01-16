@@ -1,16 +1,16 @@
-# RTH Core UI — Implementation Tasks (Codex)
+# RCH Core UI — Implementation Tasks (Codex)
 
-This task list implements the **RTH Core Administrative UI** described in:
+This task list implements the **RCH Core Administrative UI** described in:
 
 - `docs/ui-design.md`
 - `docs/ui-wireframe.md`
-- `API/ReticulumTelemetryHub-OAS.yaml`
+- `API/ReticulumCommunityHub-OAS.yaml`
 
 ## Assumptions / Inputs
 
 - REST base URL is configurable (embedded UI uses same-origin).
-- Protected endpoints require auth (`bearerAuth` and/or `X-API-Key`) as defined in `API/ReticulumTelemetryHub-OAS.yaml`.
-- WebSocket endpoints follow the RTH-WS v1 envelope described in `docs/ui-design.md` and documented (as extensions) in `API/ReticulumTelemetryHub-OAS.yaml`:
+- Protected endpoints require auth (`bearerAuth` and/or `X-API-Key`) as defined in `API/ReticulumCommunityHub-OAS.yaml`.
+- WebSocket endpoints follow the RCH-WS v1 envelope described in `docs/ui-design.md` and documented (as extensions) in `API/ReticulumCommunityHub-OAS.yaml`:
   - `/events/system`
   - `/telemetry/stream`
 
@@ -31,7 +31,7 @@ This task list implements the **RTH Core Administrative UI** described in:
 - [x] Add Vue Router (SPA routes) and Pinia (state).
 - [x] Add a small component library layer (shared `Button`, `Input`, `Select`, `Card`, `Table`, `Badge`, `Modal/Drawer`, `Toast`).
 - [x] Add dev-time API base URL config:
-  - `.env` support (e.g., `VITE_RTH_BASE_URL`)
+  - `.env` support (e.g., `VITE_RCH_BASE_URL`)
   - optional Vite dev proxy for same-origin local development
 
 Acceptance:
@@ -64,7 +64,7 @@ Acceptance:
 
 ## 3) Typed REST Client (OpenAPI-first)
 
-- [x] Generate TypeScript types from `API/ReticulumTelemetryHub-OAS.yaml` (or hand-author minimal types if generation is skipped).
+- [x] Generate TypeScript types from `API/ReticulumCommunityHub-OAS.yaml` (or hand-author minimal types if generation is skipped).
 - [x] Implement a small `rthApi` client:
   - base URL handling
   - JSON + text/plain endpoints
@@ -88,7 +88,7 @@ Acceptance:
 
 ---
 
-## 4) WebSocket Client (RTH-WS v1)
+## 4) WebSocket Client (RCH-WS v1)
 
 - [x] Implement a reusable WS client wrapper:
   - connect/reconnect with exponential backoff
@@ -180,7 +180,7 @@ Acceptance:
 ### 6.7 About
 
 - [x] Display `GET /api/v1/app/info` (name/version/description + RNS/LXMF versions + storage paths).
-- [x] Link to project docs (`docs/`) and OpenAPI reference (`API/ReticulumTelemetryHub-OAS.yaml`).
+- [x] Link to project docs (`docs/`) and OpenAPI reference (`API/ReticulumCommunityHub-OAS.yaml`).
 
 ### 6.8 Connect (Optional)
 

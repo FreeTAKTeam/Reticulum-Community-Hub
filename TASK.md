@@ -1,4 +1,5 @@
 ﻿# TASKS
+- 2026-01-16: バ. Reorganize documentation structure, refresh README, and add architecture/user docs.
 - 2026-01-14: バ. Reject invalid config payloads when applying config.
 - 2026-01-14: バ. Route TelemetryRequest commands when the Command field is used.
 - 2026-01-14: バ. Fix LXMF TelemetryRequest handling for string numeric keys.
