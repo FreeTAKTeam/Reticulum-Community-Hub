@@ -574,8 +574,8 @@
 .cui-map-inspector {
   position: fixed;
   z-index: 4;
-  width: 420px;
-  max-width: 80%;
+  width: 630px;
+  max-width: 90%;
   padding: 16px;
   background: linear-gradient(180deg, rgba(10, 38, 60, 0.96), rgba(7, 24, 40, 0.98));
   border: 1px solid rgba(0, 180, 255, 0.45);

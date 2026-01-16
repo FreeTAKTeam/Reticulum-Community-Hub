@@ -23,7 +23,7 @@
         </div>
         <button class="cui-modal-close" aria-label="Close" @click="closeInspector" @mousedown.stop>X</button>
       </div>
-      <BaseFormattedOutput class="mt-3" :value="selected.raw" />
+      <BaseFormattedOutput class="mt-3" :value="selected.raw" :accordion-open-by-default="false" />
     </div>
 
     <BaseCard title="Live Markers">
@@ -139,7 +139,7 @@ const updateInspectorPosition = (marker?: TelemetryMarker) => {
   }
   const point = mapInstance.value.project([target.lon, target.lat]);
   const rect = mapContainer.value.getBoundingClientRect();
-  const width = 420;
+  const width = 630;
   const height = 300;
   const padding = 12;
   const rawLeft = rect.left + point.x;

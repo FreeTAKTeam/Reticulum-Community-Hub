@@ -48,9 +48,11 @@ const props = withDefaults(
   defineProps<{
     value?: unknown;
     mode?: RenderMode;
+    accordionOpenByDefault?: boolean;
   }>(),
   {
-    mode: "auto"
+    mode: "auto",
+    accordionOpenByDefault: true
   }
 );
 
@@ -220,7 +222,7 @@ const jsonSections = computed<JsonSection[]>(() => {
         title,
         meta: `${rows.length} fields`,
         rows,
-        open: index === 0
+        open: props.accordionOpenByDefault && index === 0
       };
     });
     const singleRow = sections.filter((section) => section.rows.length === 1);
@@ -235,7 +237,7 @@ const jsonSections = computed<JsonSection[]>(() => {
         title: "Details",
         meta: `${mergedRows.length} fields`,
         rows: mergedRows,
-        open: true
+        open: props.accordionOpenByDefault
       };
       return multiRow.length ? [summary, ...multiRow] : [summary];
     }
@@ -256,7 +258,7 @@ const jsonSections = computed<JsonSection[]>(() => {
           title,
           meta: `${rows.length} fields`,
           rows,
-          open: index === 0
+          open: props.accordionOpenByDefault && index === 0
         });
       }
     });
@@ -266,7 +268,7 @@ const jsonSections = computed<JsonSection[]>(() => {
         title: "Details",
         meta: `${mergedRows.length} fields`,
         rows: mergedRows,
-        open: true
+        open: props.accordionOpenByDefault
       });
     }
     return sections;
