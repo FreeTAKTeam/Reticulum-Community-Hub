@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import BaseButton from "../components/BaseButton.vue";
 import BaseCard from "../components/BaseCard.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
@@ -113,4 +113,12 @@ const setResponse = (response: unknown, mode: "auto" | "markdown" | "json" | "ht
   toolResponse.value = response;
   toolResponseMode.value = mode;
 };
+
+onMounted(async () => {
+  try {
+    await configStore.loadConfig();
+  } catch (error) {
+    toastStore.push("Unable to load config", "danger");
+  }
+});
 </script>

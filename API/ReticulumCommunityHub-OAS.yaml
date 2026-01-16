@@ -940,6 +940,20 @@ components:
         app_description:
           type: string
           description: Human readable description for the Community Hub.
+        name:
+          type: string
+          description: Alias for ``app_name`` used by the Web UI.
+        version:
+          type: string
+          description: Alias for ``app_version`` used by the Web UI.
+        description:
+          type: string
+          description: Alias for ``app_description`` used by the Web UI.
+        storage_paths:
+          type: object
+          additionalProperties:
+            type: string
+          description: Grouped storage and config paths for UI display.
     Status:
       type: object
       description: Dashboard status snapshot.

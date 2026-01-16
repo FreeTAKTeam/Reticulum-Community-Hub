@@ -1,37 +1,91 @@
 <template>
   <div class="space-y-6">
-    <BaseCard title="App Info">
-      <div class="space-y-2 text-sm text-rth-muted">
-        <div>Name: {{ appInfo?.name }}</div>
-        <div>Version: {{ appInfo?.version }}</div>
-        <div>Description: {{ appInfo?.description }}</div>
-        <div>RNS: {{ appInfo?.rns_version }}</div>
-        <div>LXMF: {{ appInfo?.lxmf_version }}</div>
-      </div>
-    </BaseCard>
+    <div class="grid gap-4 xl:grid-cols-2">
+      <BaseCard title="App Overview">
+        <div class="cui-json-output">
+          <div class="cui-json-row">
+            <div class="cui-json-key">Name</div>
+            <div class="cui-json-value">{{ formatValue(appInfo?.name) }}</div>
+          </div>
+          <div class="cui-json-row">
+            <div class="cui-json-key">Version</div>
+            <div class="cui-json-value">{{ formatValue(appInfo?.version) }}</div>
+          </div>
+          <div class="cui-json-row">
+            <div class="cui-json-key">Description</div>
+            <div class="cui-json-value">{{ formatValue(appInfo?.description) }}</div>
+          </div>
+        </div>
+      </BaseCard>
+
+      <BaseCard title="Runtime Status">
+        <div class="cui-json-output">
+          <div class="cui-json-row">
+            <div class="cui-json-key">Reticulum</div>
+            <div class="cui-json-value">{{ formatValue(appInfo?.rns_version) }}</div>
+          </div>
+          <div class="cui-json-row">
+            <div class="cui-json-key">LXMF</div>
+            <div class="cui-json-value">{{ formatValue(appInfo?.lxmf_version) }}</div>
+          </div>
+          <div class="cui-json-row">
+            <div class="cui-json-key">Transport</div>
+            <div class="cui-json-value">{{ formatFlag(appInfo?.is_transport_enabled) }}</div>
+          </div>
+          <div class="cui-json-row">
+            <div class="cui-json-key">Shared Instance</div>
+            <div class="cui-json-value">{{ formatFlag(appInfo?.is_connected_to_shared_instance) }}</div>
+          </div>
+        </div>
+      </BaseCard>
+    </div>
 
     <BaseCard title="Storage Paths">
-      <div v-if="appInfo?.storage_paths" class="space-y-2 text-sm text-rth-muted">
-        <div v-for="(value, key) in appInfo.storage_paths" :key="key">{{ key }}: {{ value }}</div>
+      <div v-if="appInfo?.storage_paths" class="cui-json-output">
+        <div v-for="(value, key) in appInfo.storage_paths" :key="key" class="cui-json-row">
+          <div class="cui-json-key">{{ formatStorageKey(key) }}</div>
+          <div class="cui-json-value">{{ formatValue(value) }}</div>
+        </div>
       </div>
+      <div v-else class="text-xs text-rth-muted">Storage paths are not available.</div>
     </BaseCard>
 
-    <BaseCard title="Documentation">
-      <ul class="list-disc space-y-2 pl-5 text-sm text-rth-muted">
-        <li><a class="text-rth-accent hover:underline" href="/docs/" target="_blank" rel="noreferrer">Project Docs</a></li>
-        <li><a class="text-rth-accent hover:underline" href="/API/ReticulumCommunityHub-OAS.yaml" target="_blank" rel="noreferrer">OpenAPI Reference</a></li>
-      </ul>
-    </BaseCard>
+    <div class="grid gap-4 lg:grid-cols-2">
+      <BaseCard title="Documentation">
+        <div class="space-y-2 text-sm">
+          <a
+            class="flex items-center justify-between rounded border border-rth-border bg-rth-panel-muted p-3 text-rth-text transition-colors hover:border-rth-accent"
+            href="/docs/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span class="font-semibold">Project Docs</span>
+            <span class="text-xs text-rth-muted">/docs/</span>
+          </a>
+          <a
+            class="flex items-center justify-between rounded border border-rth-border bg-rth-panel-muted p-3 text-rth-text transition-colors hover:border-rth-accent"
+            href="/API/ReticulumCommunityHub-OAS.yaml"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span class="font-semibold">OpenAPI Reference</span>
+            <span class="text-xs text-rth-muted">/API/ReticulumCommunityHub-OAS.yaml</span>
+          </a>
+        </div>
+      </BaseCard>
 
-    <BaseCard title="Help & Examples">
-      <BaseFormattedOutput v-if="helpContent" class="mt-4" :value="helpContent" mode="markdown" />
-      <BaseFormattedOutput v-if="examplesContent" class="mt-4" :value="examplesContent" mode="markdown" />
-      <div v-if="!helpContent && !examplesContent" class="text-xs text-rth-muted">Load help or examples to view command references.</div>
-      <div class="mt-4 flex flex-wrap justify-end gap-2">
-        <BaseButton variant="secondary" icon-left="help" @click="loadHelp">Help</BaseButton>
-        <BaseButton variant="secondary" icon-left="list" @click="loadExamples">Examples</BaseButton>
-      </div>
-    </BaseCard>
+      <BaseCard title="Help & Examples">
+        <BaseFormattedOutput v-if="helpContent" :value="helpContent" mode="markdown" />
+        <BaseFormattedOutput v-if="examplesContent" class="mt-4" :value="examplesContent" mode="markdown" />
+        <div v-if="!helpContent && !examplesContent" class="text-xs text-rth-muted">
+          Load help or examples to view command references.
+        </div>
+        <div class="mt-4 flex flex-wrap justify-end gap-2">
+          <BaseButton variant="secondary" icon-left="help" @click="loadHelp">Help</BaseButton>
+          <BaseButton variant="secondary" icon-left="list" @click="loadExamples">Examples</BaseButton>
+        </div>
+      </BaseCard>
+    </div>
   </div>
 </template>
 
@@ -48,6 +102,43 @@ import type { AppInfo } from "../api/types";
 const appInfo = ref<AppInfo | null>(null);
 const helpContent = ref<string | null>(null);
 const examplesContent = ref<string | null>(null);
+
+const formatValue = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  if (typeof value === "string") {
+    return value.trim() ? value : "-";
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value.toString() : "-";
+  }
+  return String(value);
+};
+
+const formatFlag = (value?: boolean | null) => {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  return value ? "Enabled" : "Disabled";
+};
+
+const formatStorageKey = (key: string) => {
+  const labels: Record<string, string> = {
+    storage: "Storage root",
+    database: "Database",
+    reticulum_config: "Reticulum config",
+    files: "Files",
+    images: "Images"
+  };
+  if (labels[key]) {
+    return labels[key];
+  }
+  return key
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+};
 
 const loadHelp = async () => {
   const response = await get<unknown>(endpoints.help);

@@ -184,7 +184,18 @@ class ReticulumInfo:
     def to_dict(self) -> dict:
         """Serialize the info model to a dictionary."""
 
-        return asdict(self)
+        data = asdict(self)
+        data["name"] = self.app_name
+        data["version"] = self.app_version
+        data["description"] = self.app_description
+        data["storage_paths"] = {
+            "storage": self.storage_path,
+            "database": self.database_path,
+            "reticulum_config": self.reticulum_config_path,
+            "files": self.file_storage_path,
+            "images": self.image_storage_path,
+        }
+        return data
 
 
 @dataclass

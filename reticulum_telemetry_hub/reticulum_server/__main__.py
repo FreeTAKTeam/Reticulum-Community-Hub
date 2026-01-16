@@ -400,6 +400,7 @@ class ReticulumTelemetryHub:
 
         self.api = ReticulumTelemetryHubAPI(config_manager=self.config_manager)
         self._backfill_identity_announces()
+        self._load_persisted_clients()
         RNS.Transport.register_announce_handler(
             AnnounceHandler(self.identities, api=self.api)
         )
@@ -1025,6 +1026,55 @@ class ReticulumTelemetryHub:
         if created:
             RNS.log(
                 f"Backfilled {created} identity announce records for display names.",
+                getattr(RNS, "LOG_INFO", 3),
+            )
+
+    def _load_persisted_clients(self) -> None:
+        api = getattr(self, "api", None)
+        if api is None:
+            return
+        try:
+            clients = api.list_clients()
+        except Exception as exc:  # pragma: no cover - defensive log
+            RNS.log(
+                f"Failed to load persisted clients: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return
+
+        loaded = 0
+        for client in clients:
+            identity = getattr(client, "identity", None)
+            if not identity:
+                continue
+            try:
+                identity_hash = bytes.fromhex(identity)
+            except ValueError:
+                continue
+            if identity_hash in self.connections:
+                continue
+            try:
+                recalled = RNS.Identity.recall(identity_hash, from_identity_hash=True)
+            except Exception:
+                recalled = None
+            if recalled is None:
+                continue
+            try:
+                dest = RNS.Destination(
+                    recalled,
+                    RNS.Destination.OUT,
+                    RNS.Destination.SINGLE,
+                    "lxmf",
+                    "delivery",
+                )
+            except Exception:
+                continue
+            self.connections[dest.identity.hash] = dest
+            loaded += 1
+
+        if loaded:
+            RNS.log(
+                f"Loaded {loaded} persisted clients into the connection cache.",
                 getattr(RNS, "LOG_INFO", 3),
             )
 
