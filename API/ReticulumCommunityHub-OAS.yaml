@@ -872,6 +872,10 @@ components:
         identity:
           type: string
           description: Client identity hash (hex string).
+        display_name:
+          type: string
+          nullable: true
+          description: Optional display name derived from announce metadata.
         last_seen:
           type: string
           format: date-time
@@ -1027,12 +1031,24 @@ components:
           type: integer
         telemetry:
           type: object
+        display_name:
+          type: string
+          nullable: true
+          description: Optional display name resolved for the peer identity.
+        identity_label:
+          type: string
+          nullable: true
+          description: Backward-compatible label for the peer identity.
     IdentityStatus:
       type: object
       description: Identity moderation status.
       properties:
         Identity:
           type: string
+        DisplayName:
+          type: string
+          nullable: true
+          description: Optional display name resolved from announces.
         Status:
           type: string
         LastSeen:

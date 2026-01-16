@@ -33,7 +33,9 @@ import binascii
 import json
 import mimetypes
 import re
+import string
 import time
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,9 +130,14 @@ def _dispatch_coroutine(coroutine) -> None:
 class AnnounceHandler:
     """Track simple metadata about peers announcing on the Reticulum bus."""
 
-    def __init__(self, identities: dict[str, str]):
+    def __init__(
+        self,
+        identities: dict[str, str],
+        api: ReticulumTelemetryHubAPI | None = None,
+    ):
         self.aspect_filter = APP_NAME
         self.identities = identities
+        self._api = api
 
     def received_announce(self, destination_hash, announced_identity, app_data):
         # RNS.log("\t+--- LXMF Announcement -----------------------------------------")
@@ -139,33 +146,72 @@ class AnnounceHandler:
         # RNS.log(f"\t| App data               : {app_data}")
         # RNS.log("\t+---------------------------------------------------------------")
         label = self._decode_app_data(app_data)
-        hash_key = (
-            destination_hash.hex()
-            if isinstance(destination_hash, (bytes, bytearray))
-            else str(destination_hash)
-        )
-        self.identities[hash_key] = label
+        hash_keys = []
+        destination_key = self._normalize_hash(destination_hash)
+        if destination_key:
+            hash_keys.append(destination_key)
+        identity_key = self._normalize_hash(announced_identity)
+        if identity_key and identity_key not in hash_keys:
+            hash_keys.append(identity_key)
+        if label:
+            for key in hash_keys:
+                self.identities[key] = label
+        for key in hash_keys:
+            self._persist_announce_async(key, label)
 
     @staticmethod
-    def _decode_app_data(app_data) -> str:
-        if app_data is None:
-            return "unknown"
+    def _normalize_hash(value) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return bytes(value).hex().lower()
+        hash_value = getattr(value, "hash", None)
+        if isinstance(hash_value, (bytes, bytearray, memoryview)):
+            return bytes(hash_value).hex().lower()
+        if isinstance(value, str):
+            candidate = value.strip().lower()
+            if candidate and all(ch in string.hexdigits for ch in candidate):
+                return candidate
+        return None
 
-        if isinstance(app_data, bytes):
+    @staticmethod
+    def _decode_app_data(app_data) -> str | None:
+        if app_data is None:
+            return None
+
+        if isinstance(app_data, (bytes, bytearray)):
             try:
-                display_name = display_name_from_app_data(app_data)
+                display_name = display_name_from_app_data(bytes(app_data))
             except Exception:
                 display_name = None
 
-            if display_name is not None:
-                return display_name.strip()
+            if display_name:
+                display_name = display_name.strip()
+                return display_name or None
 
+        return None
+
+    def _persist_announce_async(
+        self, destination_hash: str, display_name: str | None
+    ) -> None:
+        api = self._api
+        if api is None:
+            return
+
+        def _persist() -> None:
             try:
-                return app_data.decode("utf-8").strip()
-            except UnicodeDecodeError:
-                return app_data.hex()
+                api.record_identity_announce(
+                    destination_hash,
+                    display_name=display_name,
+                )
+            except Exception as exc:  # pragma: no cover - defensive log
+                RNS.log(
+                    f"Failed to persist announce metadata for {destination_hash}: {exc}",
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
 
-        return str(app_data)
+        thread = threading.Thread(target=_persist, daemon=True)
+        thread.start()
 
 
 class ReticulumTelemetryHub:
@@ -336,7 +382,6 @@ class ReticulumTelemetryHub:
 
         self._invoke_router_hook("set_message_storage_limit", megabytes=5)
         self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
-        RNS.Transport.register_announce_handler(AnnounceHandler(self.identities))
 
         if self.config_manager is None:
             self.config_manager = HubConfigurationManager(
@@ -354,6 +399,10 @@ class ReticulumTelemetryHub:
             self.embedded_lxmd.start()
 
         self.api = ReticulumTelemetryHubAPI(config_manager=self.config_manager)
+        self._backfill_identity_announces()
+        RNS.Transport.register_announce_handler(
+            AnnounceHandler(self.identities, api=self.api)
+        )
         self.tel_controller.set_api(self.api)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
         tak_config_manager = self.config_manager
@@ -901,14 +950,83 @@ class ReticulumTelemetryHub:
 
     def _lookup_identity_label(self, source_hash) -> str:
         if isinstance(source_hash, (bytes, bytearray)):
-            hash_key = source_hash.hex()
+            hash_key = source_hash.hex().lower()
             pretty = RNS.prettyhexrep(source_hash)
         elif source_hash:
-            hash_key = str(source_hash)
+            hash_key = str(source_hash).lower()
             pretty = hash_key
         else:
             return "unknown"
-        return self.identities.get(hash_key, pretty)
+        label = self.identities.get(hash_key)
+        if not label:
+            api = getattr(self, "api", None)
+            if api is not None and hasattr(api, "resolve_identity_display_name"):
+                try:
+                    label = api.resolve_identity_display_name(hash_key)
+                except Exception as exc:  # pragma: no cover - defensive log
+                    RNS.log(
+                        f"Failed to resolve announce display name for {hash_key}: {exc}",
+                        getattr(RNS, "LOG_WARNING", 2),
+                    )
+                if label:
+                    self.identities[hash_key] = label
+        return label or pretty
+
+    def _backfill_identity_announces(self) -> None:
+        api = getattr(self, "api", None)
+        storage = getattr(api, "_storage", None)
+        if storage is None:
+            return
+        try:
+            records = storage.list_identity_announces()
+        except Exception as exc:  # pragma: no cover - defensive log
+            RNS.log(
+                f"Failed to load announce records for backfill: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return
+
+        if not records:
+            return
+
+        existing = {record.destination_hash.lower() for record in records}
+        created = 0
+        for record in records:
+            if not record.display_name:
+                continue
+            try:
+                destination_bytes = bytes.fromhex(record.destination_hash)
+            except ValueError:
+                continue
+            identity = RNS.Identity.recall(destination_bytes)
+            if identity is None:
+                continue
+            identity_hash = identity.hash.hex().lower()
+            if identity_hash in existing:
+                continue
+            try:
+                api.record_identity_announce(
+                    identity_hash,
+                    display_name=record.display_name,
+                    source_interface=record.source_interface,
+                )
+            except Exception as exc:  # pragma: no cover - defensive log
+                RNS.log(
+                    (
+                        "Failed to backfill announce metadata for "
+                        f"{identity_hash}: {exc}"
+                    ),
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
+                continue
+            existing.add(identity_hash)
+            created += 1
+
+        if created:
+            RNS.log(
+                f"Backfilled {created} identity announce records for display names.",
+                getattr(RNS, "LOG_INFO", 3),
+            )
 
     def _handle_telemetry_for_tak(
         self,

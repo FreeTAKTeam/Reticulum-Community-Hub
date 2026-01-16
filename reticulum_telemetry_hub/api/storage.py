@@ -1,27 +1,16 @@
 """Database storage helpers for the Reticulum Telemetry Hub API."""
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime
-from datetime import timezone
 import logging
 from pathlib import Path
-import time
 from typing import List
 from typing import Optional
 import uuid
 
-from sqlalchemy import Boolean
-from sqlalchemy import Column
-from sqlalchemy import DateTime
-from sqlalchemy import Integer
-from sqlalchemy import JSON
-from sqlalchemy import String
 from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
@@ -29,76 +18,18 @@ from .models import Client
 from .models import FileAttachment
 from .models import Subscriber
 from .models import Topic
-
-Base = declarative_base()
-
-
-def _utcnow() -> datetime:
-    """Return the current UTC datetime with timezone information."""
-    return datetime.now(timezone.utc)
-
-
-class TopicRecord(Base):  # pylint: disable=too-few-public-methods
-    """SQLAlchemy record for topics."""
-    __tablename__ = "topics"
-
-    id = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
-    path = Column(String, nullable=False)
-    description = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+from .storage_base import HubStorageBase
+from .storage_models import Base
+from .storage_models import ClientRecord
+from .storage_models import FileRecord
+from .storage_models import IdentityAnnounceRecord
+from .storage_models import IdentityStateRecord
+from .storage_models import SubscriberRecord
+from .storage_models import TopicRecord
+from .storage_models import _utcnow
 
 
-class SubscriberRecord(Base):  # pylint: disable=too-few-public-methods
-    """SQLAlchemy record for subscribers."""
-    __tablename__ = "subscribers"
-
-    id = Column(String, primary_key=True)
-    destination = Column(String, nullable=False)
-    topic_id = Column(String, nullable=True)
-    reject_tests = Column(Integer, nullable=True)
-    metadata_json = Column("metadata", JSON, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
-
-
-class ClientRecord(Base):  # pylint: disable=too-few-public-methods
-    """SQLAlchemy record for clients."""
-    __tablename__ = "clients"
-
-    identity = Column(String, primary_key=True)
-    last_seen = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
-    metadata_json = Column("metadata", JSON, nullable=True)
-
-
-class FileRecord(Base):  # pylint: disable=too-few-public-methods
-    """SQLAlchemy record for stored files."""
-    __tablename__ = "file_records"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False)
-    path = Column(String, nullable=False)
-    media_type = Column(String, nullable=True)
-    category = Column(String, nullable=False)
-    size = Column(Integer, nullable=False)
-    topic_id = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
-    updated_at = Column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
-    )
-
-
-class IdentityStateRecord(Base):  # pylint: disable=too-few-public-methods
-    """SQLAlchemy record for identity moderation state."""
-
-    __tablename__ = "identity_states"
-
-    identity = Column(String, primary_key=True)
-    is_banned = Column(Boolean, nullable=False, default=False)
-    is_blackholed = Column(Boolean, nullable=False, default=False)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
-
-
-class HubStorage:
+class HubStorage(HubStorageBase):
     """SQLAlchemy-backed persistence layer for the RTH API."""
     _POOL_SIZE = 25
     _POOL_OVERFLOW = 50
@@ -350,7 +281,13 @@ class HubStorage:
         """Return all known clients."""
         with self._session_scope() as session:
             records = session.query(ClientRecord).all()
-            return [self._client_from_record(r) for r in records]
+            announce_map = self._identity_announce_map(session)
+            return [
+                self._client_from_record(
+                    record, announce_map.get(record.identity.lower())
+                )
+                for record in records
+            ]
 
     def get_client(self, identity: str) -> Client | None:
         """Return a client by identity when it exists.
@@ -363,7 +300,10 @@ class HubStorage:
         """
         with self._session_scope() as session:
             record = session.get(ClientRecord, identity)
-            return self._client_from_record(record) if record else None
+            if not record:
+                return None
+            announce = session.get(IdentityAnnounceRecord, identity.lower())
+            return self._client_from_record(record, announce)
 
     def create_file_record(self, attachment: FileAttachment) -> FileAttachment:
         """Persist metadata about a stored file or image."""
@@ -420,6 +360,54 @@ class HubStorage:
             session.commit()
             return record
 
+    def upsert_identity_announce(
+        self,
+        identity: str,
+        *,
+        display_name: str | None = None,
+        source_interface: str | None = None,
+    ) -> IdentityAnnounceRecord:
+        """Insert or update Reticulum announce metadata."""
+
+        identity = identity.lower()
+        now = _utcnow()
+        with self._session_scope() as session:
+            record = session.get(IdentityAnnounceRecord, identity)
+            if record is None:
+                record = IdentityAnnounceRecord(
+                    destination_hash=identity,
+                    display_name=display_name,
+                    first_seen=now,
+                    last_seen=now,
+                    source_interface=source_interface,
+                )
+                session.add(record)
+            else:
+                record.last_seen = now
+                if display_name and (
+                    record.display_name is None or record.display_name != display_name
+                ):
+                    record.display_name = display_name
+                if source_interface and (
+                    record.source_interface is None
+                    or record.source_interface != source_interface
+                ):
+                    record.source_interface = source_interface
+            session.commit()
+            return record
+
+    def get_identity_announce(self, identity: str) -> IdentityAnnounceRecord | None:
+        """Return announce metadata for an identity when present."""
+
+        with self._session_scope() as session:
+            return session.get(IdentityAnnounceRecord, identity.lower())
+
+    def list_identity_announces(self) -> List[IdentityAnnounceRecord]:
+        """Return all announce metadata records."""
+
+        with self._session_scope() as session:
+            return session.query(IdentityAnnounceRecord).all()
+
     def get_identity_state(self, identity: str) -> IdentityStateRecord | None:
         """Return the moderation state for an identity when present."""
 
@@ -462,92 +450,3 @@ class HubStorage:
                 conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
         except OperationalError as exc:
             logging.warning("Failed to enable WAL mode: %s", exc)
-
-    def _ensure_file_topic_column(self) -> None:
-        """Ensure the file_records table includes the topic_id column."""
-        try:
-            with self._engine.connect().execution_options(
-                isolation_level="AUTOCOMMIT"
-            ) as conn:
-                result = conn.execute(text("PRAGMA table_info(file_records);"))
-                column_names = {row[1] for row in result if row and len(row) > 1}
-                if "topic_id" not in column_names:
-                    conn.execute(
-                        text("ALTER TABLE file_records ADD COLUMN topic_id VARCHAR;")
-                    )
-        except OperationalError as exc:
-            logging.warning("Failed to ensure file_records.topic_id column: %s", exc)
-
-    @contextmanager
-    def _session_scope(self):
-        """Yield a database session with automatic cleanup.
-
-        Yields:
-            Session: SQLAlchemy session bound to the configured engine.
-        """
-        session = self._acquire_session_with_retry()
-        try:
-            yield session
-        finally:
-            session.close()
-
-    def _acquire_session_with_retry(self):
-        """Return a SQLite session, retrying on lock contention."""
-        last_exc: OperationalError | None = None
-        for attempt in range(1, self._session_retries + 1):
-            session = None
-            try:
-                session = self._session_factory()
-                session.execute(text("SELECT 1"))
-                return session
-            except OperationalError as exc:
-                last_exc = exc
-                lock_detail = str(exc).strip() or "database is locked"
-                if session is not None:
-                    session.close()
-                logging.warning(
-                    "SQLite session acquisition failed (attempt %d/%d): %s",
-                    attempt,
-                    self._session_retries,
-                    lock_detail,
-                )
-                time.sleep(self._session_backoff * attempt)
-        logging.error(
-            "Unable to obtain SQLite session after %d attempts", self._session_retries
-        )
-        if last_exc:
-            raise last_exc
-        raise RuntimeError("Failed to create SQLite session")
-
-    @staticmethod
-    def _subscriber_from_record(record: SubscriberRecord) -> Subscriber:
-        """Convert a SubscriberRecord into a domain model."""
-        return Subscriber(
-            subscriber_id=record.id,
-            destination=record.destination,
-            topic_id=record.topic_id,
-            reject_tests=record.reject_tests,
-            metadata=record.metadata_json or {},
-        )
-
-    @staticmethod
-    def _client_from_record(record: ClientRecord) -> Client:
-        """Convert a ClientRecord into a domain model."""
-        client = Client(identity=record.identity, metadata=record.metadata_json or {})
-        client.last_seen = record.last_seen
-        return client
-
-    @staticmethod
-    def _file_from_record(record: FileRecord) -> FileAttachment:
-        """Convert a FileRecord into a domain model."""
-        return FileAttachment(
-            file_id=record.id,
-            name=record.name,
-            path=record.path,
-            media_type=record.media_type,
-            category=record.category,
-            size=record.size,
-            topic_id=record.topic_id,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-        )

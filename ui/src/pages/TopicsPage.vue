@@ -85,6 +85,7 @@ import { useSubscribersStore } from "../stores/subscribers";
 import { useTopicsStore } from "../stores/topics";
 import { useToastStore } from "../stores/toasts";
 import { useUsersStore } from "../stores/users";
+import { resolveIdentityLabel } from "../utils/identity";
 
 const topicsStore = useTopicsStore();
 const subscribersStore = useSubscribersStore();
@@ -129,13 +130,13 @@ const topicNameById = computed(() => {
 const sourceNameById = computed(() => {
   const map = new Map<string, string>();
   usersStore.clients.forEach((client) => {
-    if (client.id && client.display_name) {
-      map.set(client.id, client.display_name);
+    if (client.id) {
+      map.set(client.id, resolveIdentityLabel(client.display_name, client.id));
     }
   });
   usersStore.identities.forEach((identity) => {
-    if (identity.id && identity.display_name && !map.has(identity.id)) {
-      map.set(identity.id, identity.display_name);
+    if (identity.id && !map.has(identity.id)) {
+      map.set(identity.id, resolveIdentityLabel(identity.display_name, identity.id));
     }
   });
   return map;
@@ -175,7 +176,7 @@ const resolveSourceName = (subscriber: Subscriber) => {
   if (!subscriber.destination) {
     return undefined;
   }
-  return sourceNameById.value.get(subscriber.destination);
+  return sourceNameById.value.get(subscriber.destination) ?? resolveIdentityLabel(undefined, subscriber.destination);
 };
 
 const topicOptions = computed(() => {
@@ -193,11 +194,20 @@ const topicOptions = computed(() => {
 });
 
 const destinationOptions = computed(() => {
+  const identityDisplayNameById = new Map<string, string>();
+  usersStore.identities.forEach((identity) => {
+    if (identity.id && identity.display_name) {
+      identityDisplayNameById.set(identity.id, identity.display_name);
+    }
+  });
   const options = usersStore.clients
     .filter((client) => client.id)
     .map((client) => ({
       value: client.id as string,
-      label: client.display_name ? `${client.display_name} (${client.id})` : (client.id as string)
+      label: resolveIdentityLabel(
+        client.display_name ?? identityDisplayNameById.get(client.id as string),
+        client.id
+      )
     }));
   const current = subscriberDraft.value.destination;
   if (current && !options.some((option) => option.value === current)) {

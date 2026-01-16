@@ -6,6 +6,7 @@ import { get } from "../api/client";
 import type { TelemetryEntry } from "../api/types";
 import { deriveMarkers } from "../utils/telemetry";
 import type { TelemetryMarker } from "../utils/telemetry";
+import { resolveIdentityLabel } from "../utils/identity";
 
 type TelemetryApiResponse = {
   entries?: TelemetryEntry[] | TelemetryApiEntry[];
@@ -97,7 +98,10 @@ const normalizeTelemetryEntry = (entry: TelemetryEntry | TelemetryApiEntry): Tel
     const identity = raw.peer_destination ?? raw.identity_id ?? raw.identity;
     const timestamp = typeof raw.timestamp === "number" ? raw.timestamp : undefined;
     const created_at = raw.created_at ?? (timestamp ? new Date(timestamp * 1000).toISOString() : undefined);
-    const label = raw.display_name ?? raw.identity_label ?? displayNameFromTelemetry(telemetry);
+    const label = resolveIdentityLabel(
+      raw.display_name ?? raw.identity_label ?? displayNameFromTelemetry(telemetry),
+      identity
+    );
     const location = raw.location ?? extractLocation(telemetry);
     const id = raw.id ?? (identity && timestamp ? `${identity}:${timestamp}` : identity ?? undefined);
 

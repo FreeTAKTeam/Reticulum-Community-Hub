@@ -18,8 +18,8 @@
           <div v-for="client in pagedClients" :key="client.id" class="rounded border border-rth-border bg-rth-panel-muted p-3">
             <div class="flex flex-wrap items-center justify-between">
               <div>
-                <div class="font-semibold">{{ client.display_name || client.id }}</div>
-                <div class="text-xs text-rth-muted">Destination: {{ client.id || "-" }}</div>
+                <div class="font-semibold">{{ resolveIdentityLabel(resolveClientDisplayName(client), client.id) }}</div>
+                <div v-if="!resolveClientDisplayName(client)" class="text-xs text-rth-muted">Destination: {{ client.id || "-" }}</div>
                 <div class="text-xs text-rth-muted">Last seen: {{ formatTimestamp(client.last_seen_at) }}</div>
                 <div class="text-xs text-rth-muted">Metadata: {{ formatMetadata(client.metadata) }}</div>
               </div>
@@ -34,7 +34,8 @@
         </div>
         <div v-else-if="activeTab === 'identities'" class="grid gap-3 md:grid-cols-2">
           <div v-for="identity in pagedIdentities" :key="identity.id" class="rounded border border-rth-border bg-rth-panel-muted p-3">
-            <div class="font-semibold">{{ identity.display_name || identity.id }}</div>
+            <div class="font-semibold">{{ resolveIdentityLabel(identity.display_name, identity.id) }}</div>
+            <div v-if="!identity.display_name" class="text-xs text-rth-muted">Destination: {{ identity.id || "-" }}</div>
             <div class="text-xs text-rth-muted">Status: {{ identity.status || "-" }}</div>
             <div class="text-xs text-rth-muted">Last seen: {{ formatTimestamp(identity.last_seen) }}</div>
             <div class="mt-2 flex gap-2">
@@ -79,6 +80,7 @@ import { get } from "../api/client";
 import { useUsersStore } from "../stores/users";
 import { useToastStore } from "../stores/toasts";
 import { formatTimestamp } from "../utils/format";
+import { resolveIdentityLabel } from "../utils/identity";
 
 const usersStore = useUsersStore();
 const toastStore = useToastStore();
@@ -98,6 +100,16 @@ const pagedClients = computed(() => {
 const pagedIdentities = computed(() => {
   const start = (identitiesPage.value - 1) * identitiesPageSize;
   return usersStore.identities.slice(start, start + identitiesPageSize);
+});
+
+const identityDisplayNameById = computed(() => {
+  const map = new Map<string, string>();
+  usersStore.identities.forEach((identity) => {
+    if (identity.id && identity.display_name) {
+      map.set(identity.id, identity.display_name);
+    }
+  });
+  return map;
 });
 
 const clientPageCount = computed(() =>
@@ -139,6 +151,16 @@ const formatMetadata = (metadata?: Record<string, unknown>) => {
     .slice(0, 3)
     .map(([key, value]) => `${key}: ${String(value)}`);
   return parts.length ? parts.join(" / ") : "-";
+};
+
+const resolveClientDisplayName = (client: { id?: string; display_name?: string }) => {
+  if (client.display_name) {
+    return client.display_name;
+  }
+  if (!client.id) {
+    return undefined;
+  }
+  return identityDisplayNameById.value.get(client.id);
 };
 
 const handleApiError = (error: unknown, fallback: string) => {

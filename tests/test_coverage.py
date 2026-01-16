@@ -119,9 +119,9 @@ def test_announce_handler_tracks_identities():
     handler.received_announce(destination_hash, "peer", b"node-one")
 
     assert identities[destination_hash.hex()] == "node-one"
-    assert handler._decode_app_data(None) == "unknown"
+    assert handler._decode_app_data(None) is None
     assert handler._decode_app_data(b"hello") == "hello"
-    assert handler._decode_app_data(b"\xff\xfe").isalnum()
+    assert handler._decode_app_data(b"\xff\xfe") is None
 
 
 def test_cover_main_file():

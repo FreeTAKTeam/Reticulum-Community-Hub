@@ -10,8 +10,6 @@ from typing import Callable
 from uuid import UUID
 from uuid import uuid4
 
-import pytest
-
 from reticulum_telemetry_hub.internal_api.core import InternalApiCore
 from reticulum_telemetry_hub.internal_api.v1.enums import CommandStatus
 from reticulum_telemetry_hub.internal_api.v1.enums import ErrorCode

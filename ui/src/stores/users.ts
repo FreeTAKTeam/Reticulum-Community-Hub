@@ -10,6 +10,7 @@ type ClientApiPayload = {
   identity?: string;
   last_seen?: string;
   metadata?: Record<string, unknown>;
+  display_name?: string;
 };
 
 const displayNameFromMetadata = (metadata?: Record<string, unknown>): string | undefined => {
@@ -25,12 +26,13 @@ const fromApiClient = (payload: ClientApiPayload): ClientEntry => ({
   id: payload.identity,
   identity_id: payload.identity,
   last_seen_at: payload.last_seen,
-  display_name: displayNameFromMetadata(payload.metadata),
+  display_name: payload.display_name ?? displayNameFromMetadata(payload.metadata),
   metadata: payload.metadata
 });
 
 type IdentityApiPayload = {
   Identity?: string;
+  DisplayName?: string | null;
   Status?: string;
   LastSeen?: string | null;
   Metadata?: Record<string, unknown>;
@@ -42,7 +44,7 @@ const fromApiIdentity = (payload: IdentityApiPayload): IdentityEntry => ({
   id: payload.Identity,
   status: payload.Status,
   last_seen: payload.LastSeen ?? undefined,
-  display_name: displayNameFromMetadata(payload.Metadata),
+  display_name: payload.DisplayName ?? displayNameFromMetadata(payload.Metadata),
   banned: payload.IsBanned,
   blackholed: payload.IsBlackholed
 });

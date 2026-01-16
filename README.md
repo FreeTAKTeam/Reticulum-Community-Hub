@@ -1,10 +1,9 @@
 # Reticulum Community Hub (RCH)
 
-![RCH logo](RCH_small.png)
+<img src="RCH.png" alt="RCH logo" width="100" height="100" style="float:left; margin-right:12px;">
 
-Reticulum Community Hub (RCH) runs a Reticulum/LXMF hub node that brokers topic-based messages,
-telemetry snapshots, and attachments between clients like Sideband and MeshChat. It also exposes
-a REST/WebSocket control plane for the admin UI and optional TAK integration.
+Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. It allows people and groups to exchange messages, share situational updates, and distribute files in a structured and reliable way, even across intermittent or low-connectivity environments, while remaining independent from centralized internet services.
+<div style="clear: both;"></div>
 
 ## What it does
 
@@ -13,6 +12,11 @@ a REST/WebSocket control plane for the admin UI and optional TAK integration.
 - File and image attachment storage with retrieval by ID.
 - Northbound REST + WebSocket API for operators and the admin UI.
 - Optional TAK/CoT bridge for chat and location updates.
+
+## What it looks like
+
+![Dashboard](image.png)
+![Map](image-1.png)
 
 ## Quickstart (from source)
 
@@ -76,11 +80,13 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
   ```
 - Protect admin endpoints by setting `RCH_API_KEY` (accepts `X-API-Key` or Bearer token).
 - The UI lives in `ui/`:
+
   ```bash
   cd ui
   npm install
   npm run dev
   ```
+
   Set `VITE_RCH_BASE_URL` when the UI should target a different hub.
 
 ## Documentation
@@ -101,11 +107,14 @@ RCH uses Ruff for linting with a 120-character line length and ignores `E203` to
 with Black-style slicing.
 
 - With Poetry (installs dev dependencies, including Ruff):
+
   ```bash
   poetry install --with dev
   poetry run ruff check .
   ```
+
 - With a plain virtual environment:
+
   ```bash
   python -m pip install ruff
   ruff check .
@@ -118,12 +127,12 @@ This project is licensed under the Eclipse Public License (EPL). For more detail
 
 ## Support
 
-For issues or support, open a GitHub issue or join the FreeTAKServer community on Discord.
+For issues or support, open a GitHub issue
 
 ## Support Reticulum
 
 You can help support the continued development of open, free and private communications systems
-by donating via one of the following channels to the original Reticulum author:
+by donating via one of the following channels to Mark, the original Reticulum author:
 
 - Monero: 84FpY1QbxHcgdseePYNmhTHcrgMX4nFfBYtz2GKYToqHVVhJp8Eaw1Z1EedRnKD19b3B8NiLCGVxzKV17UMmmeEsCrPyA5w
 - Ethereum: 0xFDabC71AC4c0C78C95aDDDe3B4FA19d6273c5E73

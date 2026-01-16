@@ -222,10 +222,20 @@ class TelemetryBroadcaster:
         """
 
         peer_dest = _normalize_peer(peer_hash)
+        display_name = None
+        if self._api is not None and hasattr(
+            self._api, "resolve_identity_display_name"
+        ):
+            try:
+                display_name = self._api.resolve_identity_display_name(peer_dest)
+            except Exception:  # pragma: no cover - defensive
+                display_name = None
         entry = {
             "peer_destination": peer_dest,
             "timestamp": int(timestamp.timestamp()) if timestamp else 0,
             "telemetry": telemetry,
+            "display_name": display_name,
+            "identity_label": display_name,
         }
         for subscriber in list(self._subscribers):
             if subscriber.allowed_destinations is not None:

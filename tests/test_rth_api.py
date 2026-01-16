@@ -221,12 +221,14 @@ def test_persistence_between_instances(tmp_path):
     api1 = ReticulumTelemetryHubAPI(config_manager=cfg)
     topic = api1.create_topic(Topic(topic_name="Ops", topic_path="/ops"))
     api1.join("identity42")
+    api1.record_identity_announce("identity42", display_name="Sideband-Alice")
 
     # Recreate API with same configuration/DB path
     api2 = ReticulumTelemetryHubAPI(config_manager=cfg)
     assert api2.retrieve_topic(topic.topic_id).topic_name == "Ops"
     clients = api2.list_clients()
-    assert any(c.identity == "identity42" for c in clients)
+    assert any(c.identity == "identity42" and c.display_name == "Sideband-Alice" for c in clients)
+    assert api2.resolve_identity_display_name("identity42") == "Sideband-Alice"
 
 
 def test_patch_topic_preserves_created_at(tmp_path):
@@ -253,6 +255,31 @@ def test_join_and_leave_require_identity(tmp_path):
 
     with pytest.raises(ValueError):
         api.leave("")
+
+
+def test_identity_announce_merges_display_name(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
+    api.join("deadbeef")
+
+    clients = api.list_clients()
+    assert len(clients) == 1
+    client = clients[0]
+    assert client.display_name == "Sideband-Alice"
+    assert client.metadata.get("display_name") == "Sideband-Alice"
+
+    statuses = api.list_identity_statuses()
+    status = next(item for item in statuses if item.identity == "deadbeef")
+    assert status.display_name == "Sideband-Alice"
+    assert status.metadata.get("display_name") == "Sideband-Alice"
+
+
+def test_identity_announce_ignores_missing_name(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
+    api.record_identity_announce("deadbeef", display_name=None)
+
+    assert api.resolve_identity_display_name("deadbeef") == "Sideband-Alice"
 
 
 def test_create_topic_requires_fields(tmp_path):

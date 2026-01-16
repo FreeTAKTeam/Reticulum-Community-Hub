@@ -110,6 +110,40 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             return False
         return self._storage.get_client(identity) is not None
 
+    def record_identity_announce(
+        self,
+        identity: str,
+        *,
+        display_name: str | None = None,
+        source_interface: str | None = None,
+    ) -> None:
+        """Persist announce metadata for a Reticulum identity.
+
+        Args:
+            identity (str): Destination hash in hex form.
+            display_name (str | None): Optional display name from announce data.
+            source_interface (str | None): Optional source interface label.
+        """
+
+        if not identity:
+            raise ValueError("identity is required")
+        identity = identity.lower()
+        self._storage.upsert_identity_announce(
+            identity,
+            display_name=display_name,
+            source_interface=source_interface,
+        )
+
+    def resolve_identity_display_name(self, identity: str) -> str | None:
+        """Return the stored display name for an identity when available."""
+
+        if not identity:
+            return None
+        record = self._storage.get_identity_announce(identity.lower())
+        if record is None:
+            return None
+        return record.display_name
+
     # ------------------------------------------------------------------ #
     # File operations
     # ------------------------------------------------------------------ #
@@ -539,11 +573,22 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         states = {
             state.identity: state for state in self._storage.list_identity_states()
         }
-        identities = sorted(set(clients.keys()) | set(states.keys()))
+        announces = {
+            record.destination_hash: record
+            for record in self._storage.list_identity_announces()
+        }
+        identities = sorted(
+            set(clients.keys()) | set(states.keys()) | set(announces.keys())
+        )
         statuses: List[IdentityStatus] = []
         for identity in identities:
             client = clients.get(identity)
             state = states.get(identity)
+            announce = announces.get(identity.lower())
+            display_name = announce.display_name if announce else None
+            metadata = dict(client.metadata if client else {})
+            if display_name and "display_name" not in metadata:
+                metadata["display_name"] = display_name
             is_banned = bool(state.is_banned) if state else False
             is_blackholed = bool(state.is_blackholed) if state else False
             status = "active"
@@ -556,7 +601,8 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
                     identity=identity,
                     status=status,
                     last_seen=client.last_seen if client else None,
-                    metadata=client.metadata if client else {},
+                    display_name=display_name,
+                    metadata=metadata,
                     is_banned=is_banned,
                     is_blackholed=is_blackholed,
                 )
@@ -570,11 +616,16 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             raise ValueError("identity is required")
         state = self._storage.upsert_identity_state(identity, is_banned=True)
         client = self._storage.get_client(identity)
+        display_name = self.resolve_identity_display_name(identity)
+        metadata = dict(client.metadata if client else {})
+        if display_name and "display_name" not in metadata:
+            metadata["display_name"] = display_name
         return IdentityStatus(
             identity=identity,
             status="banned",
             last_seen=client.last_seen if client else None,
-            metadata=client.metadata if client else {},
+            display_name=display_name,
+            metadata=metadata,
             is_banned=state.is_banned,
             is_blackholed=state.is_blackholed,
         )
@@ -588,11 +639,16 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             identity, is_banned=False, is_blackholed=False
         )
         client = self._storage.get_client(identity)
+        display_name = self.resolve_identity_display_name(identity)
+        metadata = dict(client.metadata if client else {})
+        if display_name and "display_name" not in metadata:
+            metadata["display_name"] = display_name
         return IdentityStatus(
             identity=identity,
             status="active",
             last_seen=client.last_seen if client else None,
-            metadata=client.metadata if client else {},
+            display_name=display_name,
+            metadata=metadata,
             is_banned=state.is_banned,
             is_blackholed=state.is_blackholed,
         )
@@ -604,11 +660,16 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             raise ValueError("identity is required")
         state = self._storage.upsert_identity_state(identity, is_blackholed=True)
         client = self._storage.get_client(identity)
+        display_name = self.resolve_identity_display_name(identity)
+        metadata = dict(client.metadata if client else {})
+        if display_name and "display_name" not in metadata:
+            metadata["display_name"] = display_name
         return IdentityStatus(
             identity=identity,
             status="blackholed",
             last_seen=client.last_seen if client else None,
-            metadata=client.metadata if client else {},
+            display_name=display_name,
+            metadata=metadata,
             is_banned=state.is_banned,
             is_blackholed=state.is_blackholed,
         )

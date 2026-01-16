@@ -10,7 +10,7 @@ from reticulum_telemetry_hub.internal_api.v1 import CONTRACT_VERSION
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_DOC = REPO_ROOT / "internal-api.md"
+CONTRACT_DOC = REPO_ROOT / "docs" / "internal-api.md"
 MANIFEST_PATH = (
     REPO_ROOT / "reticulum_telemetry_hub" / "internal_api" / "v1" / "manifest.json"
 )

@@ -58,8 +58,12 @@ def _resolve_storage_path() -> Path:
 
     storage_dir = os.environ.get("RTH_STORAGE_DIR")
     if storage_dir:
-        return Path(storage_dir)
-    return HubConfigurationManager().storage_path
+        return Path(storage_dir).expanduser().resolve()
+    repo_root = Path(__file__).resolve().parents[2]
+    repo_storage = repo_root / "RTH_Store"
+    if repo_storage.exists():
+        return repo_storage
+    return HubConfigurationManager().storage_path.resolve()
 
 
 def create_app(

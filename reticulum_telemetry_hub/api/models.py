@@ -143,6 +143,7 @@ class Client:
 
     identity: str
     last_seen: datetime = field(default_factory=_now)
+    display_name: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def touch(self) -> None:
@@ -223,6 +224,7 @@ class IdentityStatus:
     identity: str
     status: str
     last_seen: Optional[datetime] = None
+    display_name: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     is_banned: bool = False
     is_blackholed: bool = False
@@ -232,6 +234,7 @@ class IdentityStatus:
 
         return {
             "Identity": self.identity,
+            "DisplayName": self.display_name,
             "Status": self.status,
             "LastSeen": self.last_seen.isoformat() if self.last_seen else None,
             "Metadata": _json_safe(self.metadata or {}),

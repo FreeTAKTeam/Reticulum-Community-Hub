@@ -51,7 +51,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TEMPERATURE,
     SID_TIME,
 )
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, joinedload, sessionmaker
@@ -264,11 +264,23 @@ class TelemetryController:
                 timestamp = int(telemeter.time.timestamp()) if telemeter.time else 0
                 payload = self._serialize_telemeter(telemeter)
                 readable_payload = self._humanize_telemetry(payload)
+                display_name = None
+                if self._api is not None and hasattr(
+                    self._api, "resolve_identity_display_name"
+                ):
+                    try:
+                        display_name = self._api.resolve_identity_display_name(
+                            telemeter.peer_dest
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        display_name = None
                 entries.append(
                     {
                         "peer_destination": telemeter.peer_dest,
                         "timestamp": timestamp,
                         "telemetry": self._json_safe(readable_payload),
+                        "display_name": display_name,
+                        "identity_label": display_name,
                     }
                 )
             return entries
@@ -324,9 +336,20 @@ class TelemetryController:
     def telemetry_stats(self) -> dict:
         """Return basic telemetry ingestion statistics."""
 
-        last_ingest = self._last_ingest_at.isoformat() if self._last_ingest_at else None
+        total = self._ingest_count
+        last_ingest_at = self._last_ingest_at
+        try:
+            with self._session_scope() as ses:
+                total = int(ses.query(func.count(Telemeter.id)).scalar() or 0)
+                last_ingest_at = ses.query(func.max(Telemeter.time)).scalar()
+                if isinstance(last_ingest_at, str):
+                    last_ingest_at = datetime.fromisoformat(last_ingest_at)
+        except Exception:  # pragma: no cover - defensive fallback
+            pass
+
+        last_ingest = last_ingest_at.isoformat() if last_ingest_at else None
         return {
-            "ingest_count": self._ingest_count,
+            "ingest_count": total,
             "last_ingest_at": last_ingest,
         }
 
@@ -358,13 +381,16 @@ class TelemetryController:
             )
             readable = self._humanize_telemetry(tel_data)
             timestamp = self._extract_timestamp(readable)
-            RNS.log(f"Telemetry received from {RNS.hexrep(message.source_hash, False)}")
+            peer_dest = RNS.hexrep(message.source_hash, False)
+            display_name, label = self._resolve_peer_label(peer_dest)
+            RNS.log(f"Telemetry received from {label}")
             RNS.log(f"Telemetry decoded: {readable}")
-            self.save_telemetry(tel_data, RNS.hexrep(message.source_hash, False))
+            self.save_telemetry(tel_data, peer_dest)
             self._notify_listener(readable, message.source_hash, timestamp)
             self._record_event(
                 "telemetry_received",
-                f"Telemetry received from {RNS.hexrep(message.source_hash, False)}",
+                f"Telemetry received from {label}",
+                metadata={"identity": peer_dest, "display_name": display_name},
             )
             handled = True
         if LXMF.FIELD_TELEMETRY_STREAM in message.fields:
@@ -401,13 +427,15 @@ class TelemetryController:
                     continue
 
                 readable = self._humanize_telemetry(payload)
-                RNS.log(f"Telemetry stream from {peer_dest} at {timestamp}: {readable}")
+                display_name, label = self._resolve_peer_label(peer_dest)
+                RNS.log(f"Telemetry stream from {label} at {timestamp}: {readable}")
                 self.save_telemetry(payload, peer_dest, timestamp)
                 stream_timestamp = timestamp or self._extract_timestamp(readable)
                 self._notify_listener(readable, peer_hash, stream_timestamp)
                 self._record_event(
                     "telemetry_stream",
-                    f"Telemetry stream entry from {peer_dest}",
+                    f"Telemetry stream entry from {label}",
+                    metadata={"identity": peer_dest, "display_name": display_name},
                 )
             handled = True
 
@@ -609,6 +637,19 @@ class TelemetryController:
         if self._event_log is None:
             return
         self._event_log.add_event(event_type, message, metadata=metadata)
+
+    def _resolve_peer_label(self, peer_dest: str) -> tuple[str | None, str]:
+        """Return display name and label for a peer destination."""
+
+        display_name = None
+        if self._api is not None and hasattr(self._api, "resolve_identity_display_name"):
+            try:
+                display_name = self._api.resolve_identity_display_name(peer_dest)
+            except Exception:  # pragma: no cover - defensive
+                display_name = None
+        if display_name:
+            return display_name, f"{display_name} ({peer_dest})"
+        return None, peer_dest
 
     def _record_ingest(self, telemeter: Telemeter) -> None:
         """Update telemetry ingestion statistics."""

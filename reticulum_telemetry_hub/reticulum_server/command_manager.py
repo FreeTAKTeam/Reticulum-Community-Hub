@@ -531,11 +531,14 @@ class CommandManager:
     def _handle_join(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
         self.connections[dest.identity.hash] = dest
-        self.api.join(self._identity_hex(dest.identity))
+        identity_hex = self._identity_hex(dest.identity)
+        self.api.join(identity_hex)
         RNS.log(f"Connection added: {message.source}")
+        display_name, label = self._resolve_identity_label(identity_hex)
         self._record_event(
             "client_join",
-            f"Client joined: {self._identity_hex(dest.identity)}",
+            f"Client joined: {label}",
+            metadata={"identity": identity_hex, "display_name": display_name},
         )
         return LXMF.LXMessage(
             dest,
@@ -547,11 +550,14 @@ class CommandManager:
     def _handle_leave(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
         self.connections.pop(dest.identity.hash, None)
-        self.api.leave(self._identity_hex(dest.identity))
+        identity_hex = self._identity_hex(dest.identity)
+        self.api.leave(identity_hex)
         RNS.log(f"Connection removed: {message.source}")
+        display_name, label = self._resolve_identity_label(identity_hex)
         self._record_event(
             "client_leave",
-            f"Client left: {self._identity_hex(dest.identity)}",
+            f"Client left: {label}",
+            metadata={"identity": identity_hex, "display_name": display_name},
         )
         return LXMF.LXMessage(
             dest,
@@ -1121,6 +1127,17 @@ class CommandManager:
         hash_bytes = getattr(identity, "hash", b"") or b""
         return hash_bytes.hex()
 
+    def _resolve_identity_label(self, identity: str) -> tuple[str | None, str]:
+        display_name = None
+        if hasattr(self.api, "resolve_identity_display_name"):
+            try:
+                display_name = self.api.resolve_identity_display_name(identity)
+            except Exception:  # pragma: no cover - defensive
+                display_name = None
+        if display_name:
+            return display_name, f"{display_name} ({identity})"
+        return None, identity
+
     @staticmethod
     def _format_client_entry(client: Client) -> str:
         metadata = client.metadata or {}
@@ -1209,9 +1226,11 @@ class CommandManager:
             }
         return {LXMF.FIELD_FILE_ATTACHMENTS: [payload]}
 
-    def _record_event(self, event_type: str, message: str) -> None:
+    def _record_event(
+        self, event_type: str, message: str, *, metadata: Optional[dict] = None
+    ) -> None:
         """Emit an event log entry when a log sink is configured."""
 
         if self.event_log is None:
             return
-        self.event_log.add_event(event_type, message)
+        self.event_log.add_event(event_type, message, metadata=metadata)

@@ -6,8 +6,6 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 from reticulum_telemetry_hub.internal_api.v1.schemas import CommandEnvelope
 from reticulum_telemetry_hub.internal_api.v1.schemas import CommandResult
 from reticulum_telemetry_hub.internal_api.v1.schemas import EventEnvelope
