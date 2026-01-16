@@ -15,5 +15,6 @@ export const endpoints = {
   help: "/Help",
   examples: "/Examples",
   command: "/Command",
-  appInfo: "/api/v1/app/info"
+  appInfo: "/api/v1/app/info",
+  rth: "/RTH"
 };

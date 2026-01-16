@@ -1,4 +1,5 @@
 # TASKS
+- 2026-01-16: DONE. Add Cosmic UI combobox styling for BaseSelect.
 - 2026-01-16: バ. Persist announce display names and expose them to the UI.
 - 2026-01-16: ?. Reorganize documentation structure, refresh README, and add architecture/user docs.
 - 2026-01-14: ?. Reject invalid config payloads when applying config.

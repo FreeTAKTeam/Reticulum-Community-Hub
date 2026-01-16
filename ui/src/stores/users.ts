@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
 import { post } from "../api/client";
+import { put } from "../api/client";
 import type { ClientEntry } from "../api/types";
 import type { IdentityEntry } from "../api/types";
 
@@ -94,11 +95,21 @@ export const useUsersStore = defineStore("users", () => {
     }
   };
 
+  const joinIdentity = async (identity: string) => {
+    await post<boolean>(`${endpoints.rth}?identity=${encodeURIComponent(identity)}`);
+  };
+
+  const leaveIdentity = async (identity: string) => {
+    await put<boolean>(`${endpoints.rth}?identity=${encodeURIComponent(identity)}`);
+  };
+
   return {
     clients,
     identities,
     loading,
     fetchUsers,
-    actOnClient
+    actOnClient,
+    joinIdentity,
+    leaveIdentity
   };
 });

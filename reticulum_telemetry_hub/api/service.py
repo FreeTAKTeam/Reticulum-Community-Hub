@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from datetime import timedelta
 from datetime import timezone
 from pathlib import Path
 from typing import List
@@ -581,6 +582,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             set(clients.keys()) | set(states.keys()) | set(announces.keys())
         )
         statuses: List[IdentityStatus] = []
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
         for identity in identities:
             client = clients.get(identity)
             state = states.get(identity)
@@ -591,7 +593,15 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
                 metadata["display_name"] = display_name
             is_banned = bool(state.is_banned) if state else False
             is_blackholed = bool(state.is_blackholed) if state else False
-            status = "active"
+            announce_last_seen = None
+            if announce and announce.last_seen:
+                announce_last_seen = announce.last_seen
+                if announce_last_seen.tzinfo is None:
+                    announce_last_seen = announce_last_seen.replace(tzinfo=timezone.utc)
+            last_seen = announce_last_seen or (client.last_seen if client else None)
+            status = "inactive"
+            if announce_last_seen and announce_last_seen >= cutoff:
+                status = "active"
             if is_blackholed:
                 status = "blackholed"
             elif is_banned:
@@ -600,7 +610,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
                 IdentityStatus(
                     identity=identity,
                     status=status,
-                    last_seen=client.last_seen if client else None,
+                    last_seen=last_seen,
                     display_name=display_name,
                     metadata=metadata,
                     is_banned=is_banned,
@@ -616,14 +626,18 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             raise ValueError("identity is required")
         state = self._storage.upsert_identity_state(identity, is_banned=True)
         client = self._storage.get_client(identity)
-        display_name = self.resolve_identity_display_name(identity)
+        announce = self._storage.get_identity_announce(identity.lower())
+        display_name = announce.display_name if announce else None
         metadata = dict(client.metadata if client else {})
         if display_name and "display_name" not in metadata:
             metadata["display_name"] = display_name
+        last_seen = announce.last_seen if announce else None
+        if last_seen and last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
         return IdentityStatus(
             identity=identity,
             status="banned",
-            last_seen=client.last_seen if client else None,
+            last_seen=last_seen or (client.last_seen if client else None),
             display_name=display_name,
             metadata=metadata,
             is_banned=state.is_banned,
@@ -639,14 +653,21 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             identity, is_banned=False, is_blackholed=False
         )
         client = self._storage.get_client(identity)
-        display_name = self.resolve_identity_display_name(identity)
+        announce = self._storage.get_identity_announce(identity.lower())
+        display_name = announce.display_name if announce else None
         metadata = dict(client.metadata if client else {})
         if display_name and "display_name" not in metadata:
             metadata["display_name"] = display_name
+        last_seen = announce.last_seen if announce else None
+        if last_seen and last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        status = "inactive"
+        if last_seen and last_seen >= datetime.now(timezone.utc) - timedelta(minutes=60):
+            status = "active"
         return IdentityStatus(
             identity=identity,
-            status="active",
-            last_seen=client.last_seen if client else None,
+            status=status,
+            last_seen=last_seen or (client.last_seen if client else None),
             display_name=display_name,
             metadata=metadata,
             is_banned=state.is_banned,
@@ -660,14 +681,18 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             raise ValueError("identity is required")
         state = self._storage.upsert_identity_state(identity, is_blackholed=True)
         client = self._storage.get_client(identity)
-        display_name = self.resolve_identity_display_name(identity)
+        announce = self._storage.get_identity_announce(identity.lower())
+        display_name = announce.display_name if announce else None
         metadata = dict(client.metadata if client else {})
         if display_name and "display_name" not in metadata:
             metadata["display_name"] = display_name
+        last_seen = announce.last_seen if announce else None
+        if last_seen and last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
         return IdentityStatus(
             identity=identity,
             status="blackholed",
-            last_seen=client.last_seen if client else None,
+            last_seen=last_seen or (client.last_seen if client else None),
             display_name=display_name,
             metadata=metadata,
             is_banned=state.is_banned,
