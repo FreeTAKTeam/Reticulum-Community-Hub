@@ -68,6 +68,7 @@ class CommandManager:
     CMD_FLUSH_TELEMETRY = "FlushTelemetry"
     CMD_RELOAD_CONFIG = "ReloadConfig"
     CMD_DUMP_ROUTING = "DumpRouting"
+    CMD_CAPABILITIES = "Capabilities"
     POSITIONAL_FIELDS: Dict[str, List[str]] = {
         CMD_CREATE_TOPIC: ["TopicName", "TopicPath"],
         CMD_RETRIEVE_TOPIC: ["TopicID"],
@@ -146,6 +147,7 @@ class CommandManager:
             self.CMD_FLUSH_TELEMETRY,
             self.CMD_RELOAD_CONFIG,
             self.CMD_DUMP_ROUTING,
+            self.CMD_CAPABILITIES,
         ]
 
     def _command_alias_map(self) -> Dict[str, str]:
@@ -504,9 +506,12 @@ class CommandManager:
                 self.CMD_FLUSH_TELEMETRY: lambda: self._handle_flush_telemetry(message),
                 self.CMD_RELOAD_CONFIG: lambda: self._handle_reload_config(message),
                 self.CMD_DUMP_ROUTING: lambda: self._handle_dump_routing(message),
+                self.CMD_CAPABILITIES: lambda: self._handle_capabilities(message),
             }
             handler = dispatch_map.get(name)
             if handler is not None:
+                if name == self.CMD_CAPABILITIES:
+                    RNS.log("Capabilities command received", getattr(RNS, "LOG_DEBUG", 6))
                 return handler()
             if telemetry_request_present and is_telemetry_command:
                 return self.tel_controller.handle_command(
@@ -515,6 +520,177 @@ class CommandManager:
             return self._handle_unknown_command(name, message)
         # Delegate to telemetry controller for telemetry related commands
         return self.tel_controller.handle_command(command, message, self.my_lxmf_dest)
+
+    def _capabilities_manifest(self) -> dict:
+        """Return the command manifest used by dynamic clients."""
+
+        return {
+            "schema_version": 1,
+            "hub_name": "RCH",
+            "commands": [
+                {
+                    "id": "help",
+                    "label": "Help",
+                    "description": "List available commands",
+                    "fields": [],
+                },
+                {
+                    "id": "examples",
+                    "label": "Examples",
+                    "description": "Show command examples",
+                    "fields": [],
+                },
+                {
+                    "id": "join",
+                    "label": "Join",
+                    "description": "Join the hub",
+                    "fields": [],
+                },
+                {
+                    "id": "leave",
+                    "label": "Leave",
+                    "description": "Leave the hub",
+                    "fields": [],
+                },
+                {
+                    "id": "listClients",
+                    "label": "List Clients",
+                    "description": "List connected clients",
+                    "fields": [],
+                },
+                {
+                    "id": "listTopic",
+                    "label": "List Topics",
+                    "description": "List telemetry topics",
+                    "fields": [],
+                },
+                {
+                    "id": "retrieveTopic",
+                    "label": "Retrieve Topic",
+                    "fields": [
+                        {"name": "TopicID", "type": "string", "required": True},
+                    ],
+                },
+                {
+                    "id": "createTopic",
+                    "label": "Create Topic",
+                    "fields": [
+                        {"name": "TopicName", "type": "string", "required": True},
+                        {"name": "TopicPath", "type": "string", "required": True},
+                        {"name": "TopicDescription", "type": "text", "required": False},
+                    ],
+                },
+                {
+                    "id": "deleteTopic",
+                    "label": "Delete Topic",
+                    "fields": [
+                        {"name": "TopicID", "type": "string", "required": True},
+                    ],
+                },
+                {
+                    "id": "subscribeTopic",
+                    "label": "Subscribe Topic",
+                    "fields": [
+                        {"name": "TopicID", "type": "string", "required": True},
+                        {"name": "RejectTests", "type": "boolean", "required": False},
+                    ],
+                },
+                {
+                    "id": "listSubscriber",
+                    "label": "List Subscribers",
+                    "fields": [],
+                },
+                {
+                    "id": "createSubscriber",
+                    "label": "Create Subscriber",
+                    "fields": [
+                        {"name": "Destination", "type": "string", "required": True},
+                        {"name": "TopicID", "type": "string", "required": True},
+                    ],
+                },
+                {
+                    "id": "deleteSubscriber",
+                    "label": "Delete Subscriber",
+                    "fields": [
+                        {"name": "SubscriberID", "type": "string", "required": True},
+                    ],
+                },
+                {
+                    "id": "listFiles",
+                    "label": "List Files",
+                    "fields": [],
+                },
+                {
+                    "id": "listImages",
+                    "label": "List Images",
+                    "fields": [],
+                },
+                {
+                    "id": "retrieveFile",
+                    "label": "Retrieve File",
+                    "fields": [
+                        {"name": "FileID", "type": "string", "required": True},
+                    ],
+                },
+                {
+                    "id": "retrieveImage",
+                    "label": "Retrieve Image",
+                    "fields": [
+                        {"name": "FileID", "type": "string", "required": True},
+                    ],
+                },
+                {
+                    "id": "getStatus",
+                    "label": "Get Status",
+                    "fields": [],
+                },
+                {
+                    "id": "listEvents",
+                    "label": "List Events",
+                    "fields": [],
+                },
+                {
+                    "id": "getConfig",
+                    "label": "Get Config",
+                    "fields": [],
+                },
+                {
+                    "id": "validateConfig",
+                    "label": "Validate Config",
+                    "fields": [],
+                },
+                {
+                    "id": "applyConfig",
+                    "label": "Apply Config",
+                    "fields": [],
+                },
+                {
+                    "id": "rollbackConfig",
+                    "label": "Rollback Config",
+                    "fields": [],
+                },
+                {
+                    "id": "reloadConfig",
+                    "label": "Reload Config",
+                    "fields": [],
+                },
+                {
+                    "id": "dumpRouting",
+                    "label": "Dump Routing",
+                    "fields": [],
+                },
+            ],
+        }
+
+    def _handle_capabilities(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
+        manifest = self._capabilities_manifest()
+        payload = json.dumps(manifest, sort_keys=True)
+        content = f"///capabilities\n{payload}"
+        RNS.log(
+            f"Sending capabilities manifest ({len(payload)} bytes)",
+            getattr(RNS, "LOG_DEBUG", 6),
+        )
+        return self._reply(message, content)
 
     # ------------------------------------------------------------------
     # command implementations
