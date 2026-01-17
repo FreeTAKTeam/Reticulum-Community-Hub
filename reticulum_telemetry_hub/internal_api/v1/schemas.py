@@ -1,4 +1,5 @@
 """Pydantic schemas for the internal API v1 contract."""
+# pylint: disable=import-error
 
 from __future__ import annotations
 
@@ -475,4 +476,3 @@ class ErrorDetail(BaseModel):
     error_code: ErrorCode
     severity: Severity
     message: str
-

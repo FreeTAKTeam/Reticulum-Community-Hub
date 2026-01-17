@@ -1,4 +1,5 @@
 """Internal API adapter routes for the northbound gateway."""
+# pylint: disable=import-error
 
 from __future__ import annotations
 

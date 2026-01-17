@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import logging
 import time
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -23,6 +24,11 @@ from .storage_models import SubscriberRecord
 
 class HubStorageBase:
     """Mixin with shared storage helper methods."""
+
+    _engine: Any
+    _session_factory: Any
+    _session_retries: int
+    _session_backoff: float
 
     def _ensure_file_topic_column(self) -> None:
         """Ensure the file_records table has the topic_id column."""

@@ -8,8 +8,7 @@ from typing import Optional
 import uuid
 
 from sqlalchemy import create_engine
-from sqlalchemy import func
-from sqlalchemy import text
+from sqlalchemy import func as sa_func
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
@@ -489,7 +488,9 @@ class HubStorage(HubStorageBase):
 
         with self._session_scope() as session:
             rows = (
-                session.query(ChatMessageRecord.state, func.count(ChatMessageRecord.id))
+                session.query(
+                    ChatMessageRecord.state, sa_func.count(ChatMessageRecord.id)
+                )
                 .group_by(ChatMessageRecord.state)
                 .all()
             )

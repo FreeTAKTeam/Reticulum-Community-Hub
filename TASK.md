@@ -5,7 +5,7 @@
 - 2026-01-16: ?. Reorganize documentation structure, refresh README, and add architecture/user docs.
 - 2026-01-14: ?. Reject invalid config payloads when applying config.
 - 2026-01-14: ?. Route TelemetryRequest commands when the Command field is used.
-- 2026-01-14: ?. Fix LXMF TelemetryRequest handling for string numeric keys.
+- 2026-01-14: DONE. Fix LXMF TelemetryRequest handling for string numeric keys.
 - 2026-01-13: ?. Add internal API spec and Codex task plan.
 - 2026-01-13: ? Guard inbound message event dispatch when optional state is missing.
 - 2026-01-12: ? Fix missing sqlalchemy dependency in the test environment.
@@ -107,4 +107,3 @@
 - 2026-01-03: ? Resolve command handler lint warnings in delivery callback.
 - 2026-01-05: ? Fix unknown command response typo and rename RetrieveTopic command.
 - 2026-01-12: ? Add multi-agent Codex issue workflow and bump version.
-
