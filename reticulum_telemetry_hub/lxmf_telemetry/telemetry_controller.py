@@ -51,7 +51,9 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TEMPERATURE,
     SID_TIME,
 )
-from sqlalchemy import create_engine, func, text
+from sqlalchemy import create_engine
+from sqlalchemy import func as sa_func
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, joinedload, sessionmaker
@@ -340,8 +342,8 @@ class TelemetryController:
         last_ingest_at = self._last_ingest_at
         try:
             with self._session_scope() as ses:
-                total = int(ses.query(func.count(Telemeter.id)).scalar() or 0)
-                last_ingest_at = ses.query(func.max(Telemeter.time)).scalar()
+                total = int(ses.query(sa_func.count(Telemeter.id)).scalar() or 0)
+                last_ingest_at = ses.query(sa_func.max(Telemeter.time)).scalar()
                 if isinstance(last_ingest_at, str):
                     last_ingest_at = datetime.fromisoformat(last_ingest_at)
         except Exception:  # pragma: no cover - defensive fallback
@@ -445,11 +447,9 @@ class TelemetryController:
         self, command: dict, message: LXMF.LXMessage, my_lxm_dest
     ) -> Optional[LXMF.LXMessage]:
         """Handle the incoming command."""
-        request_key = None
-        if TelemetryController.TELEMETRY_REQUEST in command:
-            request_key = TelemetryController.TELEMETRY_REQUEST
-        elif str(TelemetryController.TELEMETRY_REQUEST) in command:
-            request_key = str(TelemetryController.TELEMETRY_REQUEST)
+        request_key = self._numeric_command_key(
+            command, TelemetryController.TELEMETRY_REQUEST
+        )
         if request_key is not None:
             request_value = command[request_key]
             topic_id = self._extract_topic_id(command)
@@ -687,6 +687,26 @@ class TelemetryController:
             or command.get("topic_id")
             or command.get("topicId")
         )
+
+    @staticmethod
+    def _numeric_command_key(command: dict, index: int) -> int | str | None:
+        """Return the numeric command key matching the provided index.
+
+        Args:
+            command (dict): Incoming command payload.
+            index (int): Numeric index to locate.
+
+        Returns:
+            int | str | None: The matching key when present.
+        """
+
+        for key in command:
+            try:
+                if str(key).isdigit() and int(str(key)) == index:
+                    return key
+            except ValueError:
+                continue
+        return None
 
     def _filter_by_topic(
         self,

@@ -11,6 +11,7 @@ from pydantic import AliasChoices
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 
 class TopicPayload(BaseModel):
     """Topic payload for create/update requests."""
@@ -121,3 +122,47 @@ class MessagePayload(BaseModel):
 
         allow_population_by_field_name = True
         allow_population_by_alias = True
+
+
+class ChatSendPayload(BaseModel):
+    """Payload for sending chat messages with optional attachments."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    content: Optional[str] = Field(default=None, alias="Content")
+    scope: str = Field(alias="Scope")
+    topic_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("TopicID", "topic_id", "topicId"),
+        serialization_alias="TopicID",
+    )
+    destination: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("Destination", "destination"),
+        serialization_alias="Destination",
+    )
+    file_ids: list[int] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("FileIDs", "file_ids", "fileIds"),
+        serialization_alias="FileIDs",
+    )
+    image_ids: list[int] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("ImageIDs", "image_ids", "imageIds"),
+        serialization_alias="ImageIDs",
+    )
+
+    @model_validator(mode="after")
+    def _validate_payload(self) -> "ChatSendPayload":
+        """Validate scope-specific requirements."""
+
+        scope = self.scope.lower().strip()
+        if scope not in {"dm", "topic", "broadcast"}:
+            raise ValueError("Scope must be dm, topic, or broadcast")
+        if scope == "dm" and not self.destination:
+            raise ValueError("Destination is required for DM scope")
+        if scope == "topic" and not self.topic_id:
+            raise ValueError("TopicID is required for topic scope")
+        if not (self.content and self.content.strip()) and not (self.file_ids or self.image_ids):
+            raise ValueError("Content or attachments are required")
+        return self

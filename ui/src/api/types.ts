@@ -13,6 +13,11 @@ export interface StatusResponse {
     ingest_count?: number;
     last_ingest_at?: string;
   };
+  chat?: {
+    sent?: number;
+    failed?: number;
+    received?: number;
+  };
   uptime?: number;
   uptime_seconds?: number;
 }
@@ -89,4 +94,26 @@ export interface AppInfo {
   rns_version?: string;
   lxmf_version?: string;
   storage_paths?: Record<string, string>;
+}
+
+export interface ChatAttachment {
+  file_id?: number;
+  category?: string;
+  name?: string;
+  size?: number;
+  media_type?: string | null;
+}
+
+export interface ChatMessage {
+  message_id?: string;
+  direction?: string;
+  scope?: string;
+  state?: string;
+  content?: string;
+  source?: string | null;
+  destination?: string | null;
+  topic_id?: string | null;
+  attachments?: ChatAttachment[];
+  created_at?: string;
+  updated_at?: string;
 }

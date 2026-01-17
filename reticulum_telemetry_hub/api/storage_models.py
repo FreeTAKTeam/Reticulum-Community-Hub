@@ -75,6 +75,26 @@ class FileRecord(Base):  # pylint: disable=too-few-public-methods
     )
 
 
+class ChatMessageRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for persisted chat messages."""
+
+    __tablename__ = "chat_messages"
+
+    id = Column(String, primary_key=True)
+    direction = Column(String, nullable=False)
+    scope = Column(String, nullable=False)
+    state = Column(String, nullable=False)
+    content = Column(String, nullable=False)
+    source = Column(String, nullable=True)
+    destination = Column(String, nullable=True)
+    topic_id = Column(String, nullable=True)
+    attachments_json = Column("attachments", JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
 class IdentityStateRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for identity moderation state."""
 

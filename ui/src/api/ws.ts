@@ -153,6 +153,48 @@ export class WsClient {
           });
         }, 6000);
       }
+      if (this.path.includes("/messages/stream")) {
+        this.handler({
+          type: "message.receive",
+          ts: new Date().toISOString(),
+          data: {
+            entry: {
+              MessageID: `mock-${Date.now()}`,
+              Direction: "inbound",
+              Scope: "dm",
+              State: "delivered",
+              Content: "Mocked inbound chat message.",
+              Source: "deadbeef01",
+              Destination: null,
+              TopicID: null,
+              Attachments: [],
+              CreatedAt: new Date().toISOString(),
+              UpdatedAt: new Date().toISOString()
+            }
+          }
+        });
+        this.mockInterval = window.setInterval(() => {
+          this.handler({
+            type: "message.receive",
+            ts: new Date().toISOString(),
+            data: {
+              entry: {
+                MessageID: `mock-${Date.now()}`,
+                Direction: "inbound",
+                Scope: "broadcast",
+                State: "delivered",
+                Content: "Mock broadcast update from the hub.",
+                Source: "deadbeef02",
+                Destination: null,
+                TopicID: null,
+                Attachments: [],
+                CreatedAt: new Date().toISOString(),
+                UpdatedAt: new Date().toISOString()
+              }
+            }
+          });
+        }, 7000);
+      }
     }, 150);
   }
 }

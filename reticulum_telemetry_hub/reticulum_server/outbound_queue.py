@@ -17,6 +17,7 @@ class OutboundPayload:
         message_text (str): Plaintext message body to deliver.
         destination_hash (bytes | None): Raw destination hash for diagnostics.
         destination_hex (str | None): Hex-encoded destination hash for logging.
+        fields (dict | None): Optional LXMF fields to include with the message.
         attempts (int): Number of delivery attempts performed.
         next_attempt_at (float): Monotonic timestamp before the next attempt.
     """
@@ -25,6 +26,7 @@ class OutboundPayload:
     message_text: str
     destination_hash: bytes | None
     destination_hex: str | None
+    fields: dict | None = None
     attempts: int = 0
     next_attempt_at: float = field(default_factory=time.monotonic)
 
@@ -102,6 +104,7 @@ class OutboundMessageQueue:
         message_text: str,
         destination_hash: bytes | None,
         destination_hex: str | None,
+        fields: dict | None = None,
     ) -> bool:
         """
         Enqueue a message for delivery.
@@ -111,6 +114,7 @@ class OutboundMessageQueue:
             message_text (str): Plaintext message body to deliver.
             destination_hash (bytes | None): Raw destination hash for diagnostics.
             destination_hex (str | None): Hex-encoded destination hash for logging.
+            fields (dict | None): Optional LXMF message fields.
 
         Returns:
             bool: ``True`` when the message was queued successfully.
@@ -121,6 +125,7 @@ class OutboundMessageQueue:
             message_text=message_text,
             destination_hash=destination_hash,
             destination_hex=destination_hex,
+            fields=fields,
         )
         return self._enqueue_payload(payload)
 
@@ -219,6 +224,7 @@ class OutboundMessageQueue:
                     payload.connection,
                     self._sender,
                     payload.message_text,
+                    fields=payload.fields or {},
                     desired_method=LXMF.LXMessage.DIRECT,
                 )
                 if payload.destination_hash:
@@ -280,6 +286,7 @@ class OutboundMessageQueue:
                 payload.connection,
                 self._sender,
                 payload.message_text,
+                fields=payload.fields or {},
                 desired_method=LXMF.LXMessage.DIRECT,
             )
             if payload.destination_hash:

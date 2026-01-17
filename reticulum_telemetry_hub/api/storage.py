@@ -8,18 +8,20 @@ from typing import Optional
 import uuid
 
 from sqlalchemy import create_engine
-from sqlalchemy import text
+from sqlalchemy import func as sa_func
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
+from .models import ChatMessage
 from .models import Client
 from .models import FileAttachment
 from .models import Subscriber
 from .models import Topic
 from .storage_base import HubStorageBase
 from .storage_models import Base
+from .storage_models import ChatMessageRecord
 from .storage_models import ClientRecord
 from .storage_models import FileRecord
 from .storage_models import IdentityAnnounceRecord
@@ -419,6 +421,80 @@ class HubStorage(HubStorageBase):
 
         with self._session_scope() as session:
             return session.query(IdentityStateRecord).all()
+
+    def create_chat_message(self, message: ChatMessage) -> ChatMessage:
+        """Insert or update a chat message record."""
+
+        with self._session_scope() as session:
+            record = ChatMessageRecord(
+                id=message.message_id or uuid.uuid4().hex,
+                direction=message.direction,
+                scope=message.scope,
+                state=message.state,
+                content=message.content,
+                source=message.source,
+                destination=message.destination,
+                topic_id=message.topic_id,
+                attachments_json=[attachment.to_dict() for attachment in message.attachments],
+                created_at=message.created_at,
+                updated_at=message.updated_at,
+            )
+            session.merge(record)
+            session.commit()
+            return self._chat_from_record(record)
+
+    def list_chat_messages(
+        self,
+        *,
+        limit: int = 200,
+        direction: str | None = None,
+        topic_id: str | None = None,
+        destination: str | None = None,
+        source: str | None = None,
+    ) -> List[ChatMessage]:
+        """Return chat messages with optional filters."""
+
+        with self._session_scope() as session:
+            query = session.query(ChatMessageRecord)
+            if direction:
+                query = query.filter(ChatMessageRecord.direction == direction)
+            if topic_id:
+                query = query.filter(ChatMessageRecord.topic_id == topic_id)
+            if destination:
+                query = query.filter(ChatMessageRecord.destination == destination)
+            if source:
+                query = query.filter(ChatMessageRecord.source == source)
+            records = (
+                query.order_by(ChatMessageRecord.created_at.desc())
+                .limit(max(limit, 1))
+                .all()
+            )
+            return [self._chat_from_record(record) for record in records]
+
+    def update_chat_message_state(self, message_id: str, state: str) -> ChatMessage | None:
+        """Update a chat message delivery state."""
+
+        with self._session_scope() as session:
+            record = session.get(ChatMessageRecord, message_id)
+            if not record:
+                return None
+            record.state = state
+            record.updated_at = _utcnow()
+            session.commit()
+            return self._chat_from_record(record)
+
+    def chat_message_stats(self) -> dict[str, int]:
+        """Return basic chat message counters."""
+
+        with self._session_scope() as session:
+            rows = (
+                session.query(
+                    ChatMessageRecord.state, sa_func.count(ChatMessageRecord.id)
+                )
+                .group_by(ChatMessageRecord.state)
+                .all()
+            )
+            return {state: count for state, count in rows}
 
     def _create_engine(self, db_path: Path) -> Engine:
         """Build a SQLite engine configured for concurrency.

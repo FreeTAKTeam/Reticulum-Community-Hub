@@ -11,6 +11,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 from typing import Dict
+from typing import List
 from typing import Optional
 
 
@@ -223,6 +224,74 @@ class FileAttachment:
             "MediaType": self.media_type,
             "TopicID": self.topic_id,
             "Size": self.size,
+            "CreatedAt": self.created_at.isoformat(),
+            "UpdatedAt": self.updated_at.isoformat(),
+        }
+
+
+@dataclass
+class ChatAttachment:
+    """Attachment metadata associated with a chat message."""
+
+    file_id: int
+    category: str
+    name: str
+    size: int
+    media_type: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        """Serialize the attachment reference for API responses."""
+
+        return {
+            "FileID": self.file_id,
+            "Category": self.category,
+            "Name": self.name,
+            "Size": self.size,
+            "MediaType": self.media_type,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ChatAttachment":
+        """Create a ChatAttachment from a serialized dictionary."""
+
+        return cls(
+            file_id=int(data.get("FileID") or data.get("file_id") or 0),
+            category=str(data.get("Category") or data.get("category") or ""),
+            name=str(data.get("Name") or data.get("name") or ""),
+            size=int(data.get("Size") or data.get("size") or 0),
+            media_type=data.get("MediaType") or data.get("media_type"),
+        )
+
+
+@dataclass
+class ChatMessage:
+    """Chat message metadata persisted by the hub."""
+
+    direction: str
+    scope: str
+    state: str
+    content: str
+    source: Optional[str] = None
+    destination: Optional[str] = None
+    topic_id: Optional[str] = None
+    attachments: List[ChatAttachment] = field(default_factory=list)
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+    message_id: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        """Serialize the chat message into API-friendly fields."""
+
+        return {
+            "MessageID": self.message_id,
+            "Direction": self.direction,
+            "Scope": self.scope,
+            "State": self.state,
+            "Content": self.content,
+            "Source": self.source,
+            "Destination": self.destination,
+            "TopicID": self.topic_id,
+            "Attachments": [attachment.to_dict() for attachment in self.attachments],
             "CreatedAt": self.created_at.isoformat(),
             "UpdatedAt": self.updated_at.isoformat(),
         }

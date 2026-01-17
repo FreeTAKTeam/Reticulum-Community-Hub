@@ -386,7 +386,40 @@ class CommandManager:
 
         if index in payload:
             return payload.get(index)
-        return payload.get(str(index))
+        index_key = str(index)
+        if index_key in payload:
+            return payload.get(index_key)
+        for key in payload:
+            if not CommandManager._is_numeric_key(key):
+                continue
+            try:
+                if int(str(key)) == index:
+                    return payload.get(key)
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def _has_numeric_key(payload: dict, index: int) -> bool:
+        """Return True when the payload includes a matching numeric key.
+
+        Args:
+            payload (dict): Payload to search.
+            index (int): Numeric index to look up.
+
+        Returns:
+            bool: True when the key exists in any numeric string form.
+        """
+
+        for key in payload:
+            if not CommandManager._is_numeric_key(key):
+                continue
+            try:
+                if int(str(key)) == index:
+                    return True
+            except ValueError:
+                continue
+        return False
 
     @staticmethod
     def _is_numeric_key(key: Any) -> bool:
@@ -413,9 +446,8 @@ class CommandManager:
         command = self._merge_pending_fields(command, message)
         name = command.get(PLUGIN_COMMAND) or command.get("Command")
         name = self._normalize_command_name(name)
-        telemetry_request_present = (
-            TelemetryController.TELEMETRY_REQUEST in command
-            or str(TelemetryController.TELEMETRY_REQUEST) in command
+        telemetry_request_present = self._has_numeric_key(
+            command, TelemetryController.TELEMETRY_REQUEST
         )
         is_telemetry_command = (
             isinstance(name, str) and name.strip().lower() == "telemetryrequest"

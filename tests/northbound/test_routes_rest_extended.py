@@ -1,4 +1,5 @@
 """Extended REST route coverage for northbound API."""
+# pylint: disable=import-error
 
 from __future__ import annotations
 
@@ -42,7 +43,7 @@ def _build_client(
         event_log=event_log,
         auth=ApiAuth(api_key="secret"),
         routing_provider=lambda: ["dest-1"],
-        message_dispatcher=lambda content, topic_id=None, destination=None: None,
+        message_dispatcher=lambda content, topic_id=None, destination=None, fields=None: None,
     )
     return TestClient(app), api, event_log, telemetry
 

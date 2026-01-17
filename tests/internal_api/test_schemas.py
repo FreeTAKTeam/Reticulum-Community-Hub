@@ -1,4 +1,5 @@
 """Tests for internal API schemas."""
+# pylint: disable=import-error
 
 from __future__ import annotations
 

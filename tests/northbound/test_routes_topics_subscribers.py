@@ -1,4 +1,5 @@
 """Tests for topic and subscriber routes."""
+# pylint: disable=import-error
 
 from __future__ import annotations
 
