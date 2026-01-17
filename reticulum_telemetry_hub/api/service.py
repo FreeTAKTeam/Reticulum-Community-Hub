@@ -12,6 +12,8 @@ from typing import Optional
 
 from reticulum_telemetry_hub.config import HubConfigurationManager
 
+from .models import ChatAttachment
+from .models import ChatMessage
 from .models import Client
 from .models import FileAttachment
 from .models import IdentityStatus
@@ -218,6 +220,87 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """Fetch stored image metadata by ID."""
 
         return self._retrieve_attachment(record_id, expected_category=self._image_category)
+
+    def store_uploaded_attachment(
+        self,
+        *,
+        content: bytes,
+        filename: str,
+        media_type: Optional[str],
+        category: str,
+        topic_id: Optional[str] = None,
+    ) -> FileAttachment:
+        """Persist uploaded attachment bytes to disk and record metadata."""
+
+        safe_name = Path(filename).name
+        if not safe_name:
+            raise ValueError("filename is required")
+        if category == self._image_category:
+            base_path = self._config_manager.config.image_storage_path
+        elif category == self._file_category:
+            base_path = self._config_manager.config.file_storage_path
+        else:
+            raise ValueError("unsupported category")
+        base_path.mkdir(parents=True, exist_ok=True)
+        suffix = Path(safe_name).suffix
+        stored_name = f"{uuid.uuid4().hex}{suffix}"
+        target_path = base_path / stored_name
+        target_path.write_bytes(content)
+        return self._store_attachment(
+            file_path=target_path,
+            name=safe_name,
+            media_type=media_type,
+            topic_id=topic_id,
+            category=category,
+            base_path=base_path,
+        )
+
+    @staticmethod
+    def chat_attachment_from_file(attachment: FileAttachment) -> ChatAttachment:
+        """Convert a FileAttachment into a ChatAttachment reference."""
+
+        return ChatAttachment(
+            file_id=attachment.file_id or 0,
+            category=attachment.category,
+            name=attachment.name,
+            size=attachment.size,
+            media_type=attachment.media_type,
+        )
+
+    def record_chat_message(self, message: ChatMessage) -> ChatMessage:
+        """Persist a chat message and return the stored record."""
+
+        message.message_id = message.message_id or uuid.uuid4().hex
+        return self._storage.create_chat_message(message)
+
+    def list_chat_messages(
+        self,
+        *,
+        limit: int = 200,
+        direction: Optional[str] = None,
+        topic_id: Optional[str] = None,
+        destination: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> List[ChatMessage]:
+        """Return persisted chat messages."""
+
+        return self._storage.list_chat_messages(
+            limit=limit,
+            direction=direction,
+            topic_id=topic_id,
+            destination=destination,
+            source=source,
+        )
+
+    def update_chat_message_state(self, message_id: str, state: str) -> ChatMessage | None:
+        """Update a chat message delivery state."""
+
+        return self._storage.update_chat_message_state(message_id, state)
+
+    def chat_message_stats(self) -> dict[str, int]:
+        """Return aggregated chat message counters."""
+
+        return self._storage.chat_message_stats()
 
     # ------------------------------------------------------------------ #
     # Topic operations

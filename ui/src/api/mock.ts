@@ -32,6 +32,21 @@ const mockState = {
   ],
   files: [{ FileID: 1, Name: "report.txt", MediaType: "text/plain", Size: 1240, CreatedAt: nowIso() }],
   images: [{ FileID: 2, Name: "snapshot.svg", MediaType: "image/svg+xml", Size: 2048, CreatedAt: nowIso() }],
+  chatMessages: [
+    {
+      MessageID: "msg-1",
+      Direction: "inbound",
+      Scope: "dm",
+      State: "delivered",
+      Content: "Signal check from the field.",
+      Source: "deadbeef01",
+      Destination: null,
+      TopicID: null,
+      Attachments: [],
+      CreatedAt: nowIso(),
+      UpdatedAt: nowIso()
+    }
+  ],
   telemetry: [
     {
       id: "t-1",
@@ -57,6 +72,8 @@ const mockState = {
 
 let topicCounter = 3;
 let subscriberCounter = 2;
+let chatMessageCounter = 2;
+let attachmentCounter = 3;
 
 const jsonResponse = (payload: unknown, status = 200) =>
   new Response(JSON.stringify(payload), {
@@ -178,6 +195,40 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
 
   if (pathname === "/Image") {
     return jsonResponse(mockState.images);
+  }
+
+  if (pathname === "/Chat/Messages") {
+    return jsonResponse(mockState.chatMessages);
+  }
+
+  if (pathname === "/Chat/Message" && method === "POST") {
+    const body = (await parseBody(options.body)) as any;
+    const message = {
+      MessageID: `msg-${chatMessageCounter++}`,
+      Direction: "outbound",
+      Scope: body?.Scope ?? "broadcast",
+      State: "sent",
+      Content: body?.Content ?? "",
+      Source: "hub",
+      Destination: body?.Destination ?? null,
+      TopicID: body?.TopicID ?? null,
+      Attachments: [],
+      CreatedAt: nowIso(),
+      UpdatedAt: nowIso()
+    };
+    mockState.chatMessages.push(message);
+    return jsonResponse(message);
+  }
+
+  if (pathname === "/Chat/Attachment" && method === "POST") {
+    const attachment = {
+      FileID: attachmentCounter++,
+      Name: "mock-upload.bin",
+      MediaType: "application/octet-stream",
+      Size: 2048,
+      Category: "file"
+    };
+    return jsonResponse(attachment);
   }
 
   const fileRawMatch = pathname.match(/^\/File\/(\d+)\/raw$/);

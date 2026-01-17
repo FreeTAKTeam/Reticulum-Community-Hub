@@ -9,9 +9,12 @@ import time
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from .models import ChatAttachment
+from .models import ChatMessage
 from .models import Client
 from .models import FileAttachment
 from .models import Subscriber
+from .storage_models import ChatMessageRecord
 from .storage_models import ClientRecord
 from .storage_models import FileRecord
 from .storage_models import IdentityAnnounceRecord
@@ -113,6 +116,28 @@ class HubStorageBase:
             category=record.category,
             size=record.size,
             topic_id=record.topic_id,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+    @staticmethod
+    def _chat_from_record(record: ChatMessageRecord) -> ChatMessage:
+        """Convert a ChatMessageRecord into a domain model."""
+        attachments = [
+            ChatAttachment.from_dict(item)
+            for item in (record.attachments_json or [])
+            if isinstance(item, dict)
+        ]
+        return ChatMessage(
+            message_id=record.id,
+            direction=record.direction,
+            scope=record.scope,
+            state=record.state,
+            content=record.content,
+            source=record.source,
+            destination=record.destination,
+            topic_id=record.topic_id,
+            attachments=attachments,
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

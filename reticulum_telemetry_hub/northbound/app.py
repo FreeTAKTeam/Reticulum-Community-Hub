@@ -15,6 +15,7 @@ from dotenv import load_dotenv as load_env
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from reticulum_telemetry_hub.api.models import ChatMessage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -26,6 +27,7 @@ from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log
 from .auth import ApiAuth
 from .auth import build_protected_dependency
 from .routes_files import register_file_routes
+from .routes_chat import register_chat_routes
 from .routes_rest import register_core_routes
 from .routes_subscribers import register_subscriber_routes
 from .routes_topics import register_topic_routes
@@ -75,7 +77,9 @@ def create_app(
     routing_provider: Optional[Callable[[], list[str]]] = None,
     started_at: Optional[datetime] = None,
     auth: Optional[ApiAuth] = None,
-    message_dispatcher: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
+    message_dispatcher: Optional[
+        Callable[[str, Optional[str], Optional[str], Optional[dict]], ChatMessage | None]
+    ] = None,
     message_listener: Optional[
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
     ] = None,
@@ -157,6 +161,11 @@ def create_app(
         resolve_openapi_spec=_resolve_openapi_spec,
     )
     register_file_routes(app, services=services, api=api)
+    register_chat_routes(
+        app,
+        services=services,
+        require_protected=require_protected,
+    )
     register_topic_routes(
         app,
         services=services,

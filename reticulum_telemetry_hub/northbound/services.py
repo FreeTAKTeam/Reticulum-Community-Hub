@@ -12,6 +12,7 @@ from typing import Dict
 from typing import List
 from typing import Optional
 
+from reticulum_telemetry_hub.api.models import ChatMessage
 from reticulum_telemetry_hub.api.models import Client
 from reticulum_telemetry_hub.api.models import FileAttachment
 from reticulum_telemetry_hub.api.models import IdentityStatus
@@ -90,7 +91,7 @@ class NorthboundServices:
     command_manager: Optional[Any] = None
     routing_provider: Optional[Callable[[], List[str]]] = None
     message_dispatcher: Optional[
-        Callable[[str, Optional[str], Optional[str]], None]
+        Callable[[str, Optional[str], Optional[str], Optional[dict]], ChatMessage | None]
     ] = None
 
     def help_text(self) -> str:
@@ -129,6 +130,7 @@ class NorthboundServices:
         """
 
         uptime = datetime.now(timezone.utc) - self.started_at
+        chat_stats = self.api.chat_message_stats()
         return {
             "uptime_seconds": int(uptime.total_seconds()),
             "clients": len(self.api.list_clients()),
@@ -136,6 +138,11 @@ class NorthboundServices:
             "subscribers": len(self.api.list_subscribers()),
             "files": len(self.api.list_files()),
             "images": len(self.api.list_images()),
+            "chat": {
+                "sent": chat_stats.get("sent", 0),
+                "failed": chat_stats.get("failed", 0),
+                "received": chat_stats.get("delivered", 0),
+            },
             "telemetry": self.telemetry.telemetry_stats(),
         }
 
@@ -221,6 +228,59 @@ class NorthboundServices:
 
         return self.api.list_identity_statuses()
 
+    def list_chat_messages(
+        self,
+        *,
+        limit: int = 200,
+        direction: Optional[str] = None,
+        topic_id: Optional[str] = None,
+        destination: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> List[ChatMessage]:
+        """Return persisted chat messages."""
+
+        return self.api.list_chat_messages(
+            limit=limit,
+            direction=direction,
+            topic_id=topic_id,
+            destination=destination,
+            source=source,
+        )
+
+    def store_uploaded_attachment(
+        self,
+        *,
+        content: bytes,
+        filename: str,
+        media_type: Optional[str],
+        category: str,
+        topic_id: Optional[str] = None,
+    ) -> FileAttachment:
+        """Persist an uploaded attachment to storage."""
+
+        return self.api.store_uploaded_attachment(
+            content=content,
+            filename=filename,
+            media_type=media_type,
+            category=category,
+            topic_id=topic_id,
+        )
+
+    def resolve_attachments(
+        self,
+        *,
+        file_ids: list[int],
+        image_ids: list[int],
+    ) -> list[FileAttachment]:
+        """Resolve stored attachment records by ID."""
+
+        attachments: list[FileAttachment] = []
+        for file_id in file_ids:
+            attachments.append(self.api.retrieve_file(file_id))
+        for image_id in image_ids:
+            attachments.append(self.api.retrieve_image(image_id))
+        return attachments
+
     def dump_routing(self) -> Dict[str, List[str]]:
         """Return connected destinations.
 
@@ -267,7 +327,41 @@ class NorthboundServices:
 
         if not self.message_dispatcher:
             raise RuntimeError("Message dispatch is not configured")
-        self.message_dispatcher(content, topic_id, destination)
+        self.message_dispatcher(content, topic_id, destination, None)
+
+    def send_chat_message(
+        self,
+        *,
+        content: str,
+        scope: str,
+        topic_id: Optional[str],
+        destination: Optional[str],
+        attachments: list[FileAttachment],
+    ) -> ChatMessage:
+        """Send a chat message via the core hub."""
+
+        if not self.message_dispatcher:
+            raise RuntimeError("Message dispatch is not configured")
+        chat_attachments = [
+            self.api.chat_attachment_from_file(item) for item in attachments
+        ]
+        fields = {"attachments": attachments}
+        if scope:
+            fields["scope"] = scope
+        message = self.message_dispatcher(content, topic_id, destination, fields)
+        if message is None:
+            message = ChatMessage(
+                direction="outbound",
+                scope=scope,
+                state="failed",
+                content=content,
+                source=None,
+                destination=destination,
+                topic_id=topic_id,
+                attachments=chat_attachments,
+            )
+            return self.api.record_chat_message(message)
+        return message
 
     def reload_config(self) -> ReticulumInfo:
         """Reload configuration from disk.

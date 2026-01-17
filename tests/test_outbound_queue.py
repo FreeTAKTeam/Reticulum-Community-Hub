@@ -39,12 +39,14 @@ def test_outbound_queue_applies_backpressure():
             "first",
             recipient_one.identity.hash,
             recipient_one.identity.hash.hex(),
+            None,
         )
         queue.queue_message(
             recipient_two,
             "second",
             recipient_two.identity.hash,
             recipient_two.identity.hash.hex(),
+            None,
         )
         queue.start()
         assert queue.wait_for_flush(timeout=1.0)
@@ -86,6 +88,7 @@ def test_outbound_queue_retries_after_failure():
             "retry-message",
             recipient.identity.hash,
             recipient.identity.hash.hex(),
+            None,
         )
         assert queue.wait_for_flush(timeout=1.0)
     finally:
@@ -122,12 +125,14 @@ def test_outbound_queue_handles_multi_destination_fan_out():
             "alpha",
             recipient_one.identity.hash,
             recipient_one.identity.hash.hex(),
+            None,
         )
         queue.queue_message(
             recipient_two,
             "beta",
             recipient_two.identity.hash,
             recipient_two.identity.hash.hex(),
+            None,
         )
         assert queue.wait_for_flush(timeout=1.0)
     finally:

@@ -119,10 +119,11 @@ def test_send_message_requires_dispatcher(tmp_path: Path) -> None:
 def test_send_message_dispatches_payload(tmp_path: Path) -> None:
     captured = {}
 
-    def _dispatcher(content, topic_id, destination):
+    def _dispatcher(content, topic_id, destination, fields):
         captured["content"] = content
         captured["topic_id"] = topic_id
         captured["destination"] = destination
+        captured["fields"] = fields
 
     services, _, _, _ = _build_services(tmp_path, message_dispatcher=_dispatcher)
     services.send_message("hello", topic_id="topic-1", destination="dest-1")
@@ -131,6 +132,7 @@ def test_send_message_dispatches_payload(tmp_path: Path) -> None:
         "content": "hello",
         "topic_id": "topic-1",
         "destination": "dest-1",
+        "fields": None,
     }
 
 

@@ -1,5 +1,7 @@
 """High level Python API mirroring the ReticulumTelemetryHub OpenAPI spec."""
 
+from .models import ChatAttachment
+from .models import ChatMessage
 from .models import Client
 from .models import FileAttachment
 from .models import IdentityStatus
@@ -13,6 +15,8 @@ __all__ = [
     "Subscriber",
     "Client",
     "FileAttachment",
+    "ChatAttachment",
+    "ChatMessage",
     "IdentityStatus",
     "ReticulumInfo",
     "ReticulumTelemetryHubAPI",

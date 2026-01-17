@@ -1,5 +1,6 @@
 # TASKS
 - 2026-01-16: DONE. Add Cosmic UI combobox styling for BaseSelect.
+- 2026-01-16: DONE. Implement Reticulum Community Hub Chat & LXMF Client specification.
 - 2026-01-16: バ. Persist announce display names and expose them to the UI.
 - 2026-01-16: ?. Reorganize documentation structure, refresh README, and add architecture/user docs.
 - 2026-01-14: ?. Reject invalid config payloads when applying config.
@@ -106,6 +107,4 @@
 - 2026-01-03: ? Resolve command handler lint warnings in delivery callback.
 - 2026-01-05: ? Fix unknown command response typo and rename RetrieveTopic command.
 - 2026-01-12: ? Add multi-agent Codex issue workflow and bump version.
-
-
 

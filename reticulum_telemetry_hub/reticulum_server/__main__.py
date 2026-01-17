@@ -46,6 +46,8 @@ from typing import cast
 import LXMF
 import RNS
 
+from reticulum_telemetry_hub.api.models import ChatMessage
+from reticulum_telemetry_hub.api.models import FileAttachment
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.config.manager import _expand_user_path
@@ -488,22 +490,76 @@ class ReticulumTelemetryHub:
         source_hash: str | None,
         topic_id: str | None,
         timestamp: datetime,
+        direction: str,
+        state: str,
+        destination: str | None,
+        attachments: list[FileAttachment],
+        message_id: str | None = None,
     ) -> None:
-        """Emit an inbound message event for northbound consumers."""
+        """Emit a message event for northbound consumers."""
 
-        entry = {
-            "timestamp": timestamp.isoformat(),
-            "source": source_label,
-            "source_hash": source_hash or "",
-            "topic_id": topic_id,
-            "content": content,
-        }
-        self._notify_message_listeners(entry)
+        scope = "topic" if topic_id else "dm"
+        if direction == "outbound" and not destination and not topic_id:
+            scope = "broadcast"
+        api = getattr(self, "api", None)
+        has_chat_support = api is not None and all(
+            hasattr(api, name) for name in ("record_chat_message", "chat_attachment_from_file")
+        )
+        attachment_payloads = []
+        if has_chat_support:
+            attachment_payloads = [
+                api.chat_attachment_from_file(item).to_dict()
+                for item in attachments
+            ]
+            chat_message = ChatMessage(
+                message_id=message_id,
+                direction=direction,
+                scope=scope,
+                state=state,
+                content=content,
+                source=source_hash or source_label,
+                destination=destination,
+                topic_id=topic_id,
+                attachments=[
+                    api.chat_attachment_from_file(item) for item in attachments
+                ],
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            stored = api.record_chat_message(chat_message)
+            entry = stored.to_dict()
+            entry["SourceHash"] = source_hash or ""
+            entry["SourceLabel"] = source_label
+            entry["Timestamp"] = timestamp.isoformat()
+            entry["Attachments"] = attachment_payloads
+            self._notify_message_listeners(entry)
+        else:
+            entry = {
+                "MessageID": message_id,
+                "Direction": direction,
+                "Scope": scope,
+                "State": state,
+                "Content": content,
+                "Source": source_hash or source_label,
+                "Destination": destination,
+                "TopicID": topic_id,
+                "Attachments": attachment_payloads,
+                "CreatedAt": timestamp.isoformat(),
+                "UpdatedAt": timestamp.isoformat(),
+                "SourceHash": source_hash or "",
+                "SourceLabel": source_label,
+                "Timestamp": timestamp.isoformat(),
+            }
+            self._notify_message_listeners(entry)
         event_log = getattr(self, "event_log", None)
         if event_log is not None:
             event_log.add_event(
-                "message_received",
-                f"Message received from {source_label}",
+                "message_received" if direction == "inbound" else "message_sent",
+                (
+                    f"Message received from {source_label}"
+                    if direction == "inbound"
+                    else "Message sent from hub"
+                ),
                 metadata=entry,
             )
 
@@ -627,6 +683,7 @@ class ReticulumTelemetryHub:
             adapter_commands: list[dict] = []
             sender_joined = False
             attachment_replies: list[LXMF.LXMessage] = []
+            stored_attachments: list[FileAttachment] = []
             # Handle the commands
             command_replies: list[LXMF.LXMessage] = []
             if message.signature_validated:
@@ -645,9 +702,10 @@ class ReticulumTelemetryHub:
                         commands = escape_commands
 
                 topic_id = self._extract_attachment_topic_id(commands)
-                attachment_replies = self._persist_attachments_from_fields(
-                    message, topic_id=topic_id
-                )
+                (
+                    attachment_replies,
+                    stored_attachments,
+                ) = self._persist_attachments_from_fields(message, topic_id=topic_id)
                 if escape_error:
                     error_reply = self._reply_message(
                         message, f"Command error: {escape_error}"
@@ -732,8 +790,8 @@ class ReticulumTelemetryHub:
                         getattr(RNS, "LOG_WARNING", 2),
                     )
 
-            # Skip if the message content is empty
-            if message.content is None or message.content == b"":
+            # Skip if the message content is empty and no attachments were stored.
+            if (message.content is None or message.content == b"") and not stored_attachments:
                 return
 
             if self._is_telemetry_only(message, telemetry_handled):
@@ -761,6 +819,11 @@ class ReticulumTelemetryHub:
                 source_hash=self._message_source_hex(message),
                 topic_id=topic_id,
                 timestamp=message_time,
+                direction="inbound",
+                state="delivered",
+                destination=None,
+                attachments=stored_attachments,
+                message_id=self._message_id_hex(message),
             )
 
             tak_connector = getattr(self, "tak_connector", None)
@@ -796,7 +859,8 @@ class ReticulumTelemetryHub:
         topic: str | None = None,
         destination: str | None = None,
         exclude: set[str] | None = None,
-    ):
+        fields: dict | None = None,
+    ) -> bool:
         """Sends a message to connected clients.
 
         Args:
@@ -805,6 +869,7 @@ class ReticulumTelemetryHub:
             destination (str | None): Optional destination hash for a targeted send.
             exclude (set[str] | None): Optional set of lowercase destination
                 hashes that should not receive the broadcast.
+            fields (dict | None): Optional LXMF message fields.
         """
 
         queue = self._ensure_outbound_queue()
@@ -813,7 +878,7 @@ class ReticulumTelemetryHub:
                 "Outbound queue unavailable; dropping message broadcast request.",
                 getattr(RNS, "LOG_WARNING", 2),
             )
-            return
+            return False
 
         available = (
             list(self.connections.values())
@@ -829,6 +894,7 @@ class ReticulumTelemetryHub:
                 for connection in available
                 if self._connection_hex(connection) in subscriber_hex
             ]
+        enqueued_any = False
         for connection in available:
             connection_hex = self._connection_hex(connection)
             if normalized_destination and connection_hex != normalized_destination:
@@ -846,7 +912,10 @@ class ReticulumTelemetryHub:
                     else None
                 ),
                 connection_hex,
+                fields,
             )
+            if enqueued:
+                enqueued_any = True
             if not enqueued:
                 RNS.log(
                     (
@@ -855,20 +924,85 @@ class ReticulumTelemetryHub:
                     ),
                     getattr(RNS, "LOG_WARNING", 2),
                 )
+        return enqueued_any
 
     def dispatch_northbound_message(
         self,
         message: str,
         topic_id: str | None = None,
         destination: str | None = None,
-    ) -> None:
+        fields: dict | None = None,
+    ) -> ChatMessage | None:
         """Dispatch a message originating from the northbound interface."""
 
-        self.send_message(
+        api = getattr(self, "api", None)
+        attachments: list[FileAttachment] = []
+        scope = "broadcast"
+        if destination:
+            scope = "dm"
+        elif topic_id:
+            scope = "topic"
+        if isinstance(fields, dict):
+            raw_attachments = fields.get("attachments")
+            if isinstance(raw_attachments, list):
+                attachments = [item for item in raw_attachments if isinstance(item, FileAttachment)]
+            override_scope = fields.get("scope")
+            if isinstance(override_scope, str) and override_scope.strip():
+                scope = override_scope.strip()
+        queued = None
+        now = _utcnow()
+        if api is not None:
+            queued = api.record_chat_message(
+                ChatMessage(
+                    direction="outbound",
+                    scope=scope,
+                    state="queued",
+                    content=message,
+                    source=None,
+                    destination=destination,
+                    topic_id=topic_id,
+                    attachments=[api.chat_attachment_from_file(item) for item in attachments],
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            self._notify_message_listeners(queued.to_dict())
+            if getattr(self, "event_log", None) is not None:
+                self.event_log.add_event(
+                    "message_queued",
+                    "Message queued for delivery",
+                    metadata=queued.to_dict(),
+                )
+        lxmf_fields = None
+        if attachments:
+            try:
+                lxmf_fields = self._build_lxmf_attachment_fields(attachments)
+            except Exception as exc:  # pragma: no cover - defensive log
+                RNS.log(
+                    f"Failed to build attachment fields: {exc}",
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
+        sent = self.send_message(
             message,
             topic=topic_id,
             destination=destination,
+            fields=lxmf_fields,
         )
+        if api is not None and queued is not None:
+            updated = api.update_chat_message_state(
+                queued.message_id or "", "sent" if sent else "failed"
+            )
+            if updated is not None:
+                self._notify_message_listeners(updated.to_dict())
+                if getattr(self, "event_log", None) is not None:
+                    self.event_log.add_event(
+                        "message_sent" if sent else "message_failed",
+                        "Message sent" if sent else "Message failed",
+                        metadata=updated.to_dict(),
+                    )
+                return updated
+            return queued
+        return None
 
     def _ensure_outbound_queue(self) -> OutboundMessageQueue | None:
         """
@@ -1289,7 +1423,7 @@ class ReticulumTelemetryHub:
 
     def _persist_attachments_from_fields(
         self, message: LXMF.LXMessage, *, topic_id: str | None = None
-    ) -> list[LXMF.LXMessage]:
+    ) -> tuple[list[LXMF.LXMessage], list[FileAttachment]]:
         """
         Persist file and image attachments from LXMF fields.
 
@@ -1298,11 +1432,12 @@ class ReticulumTelemetryHub:
                 ``FIELD_FILE_ATTACHMENTS`` or ``FIELD_IMAGE`` entries.
 
         Returns:
-            list[LXMF.LXMessage]: Replies acknowledging stored attachments.
+            tuple[list[LXMF.LXMessage], list[FileAttachment]]: Replies acknowledging
+                stored attachments and the stored attachment records.
         """
 
         if not message.fields:
-            return []
+            return [], []
         stored_files, file_errors = self._store_attachment_payloads(
             message.fields.get(LXMF.FIELD_FILE_ATTACHMENTS),
             category="file",
@@ -1315,6 +1450,7 @@ class ReticulumTelemetryHub:
             default_prefix="image",
             topic_id=topic_id,
         )
+        stored_attachments = stored_files + stored_images
         attachment_errors = file_errors + image_errors
         acknowledgements: list[LXMF.LXMessage] = []
         if stored_files:
@@ -1335,11 +1471,11 @@ class ReticulumTelemetryHub:
             )
             if reply:
                 acknowledgements.append(reply)
-        return acknowledgements
+        return acknowledgements, stored_attachments
 
     def _store_attachment_payloads(
         self, payload, *, category: str, default_prefix: str, topic_id: str | None = None
-    ) -> tuple[list, list[str]]:
+    ) -> tuple[list[FileAttachment], list[str]]:
         """
         Normalize and store incoming attachments.
 
@@ -1362,7 +1498,7 @@ class ReticulumTelemetryHub:
         entries = self._normalize_attachment_payloads(
             payload, category=category, default_prefix=default_prefix
         )
-        stored = []
+        stored: list[FileAttachment] = []
         errors: list[str] = []
         for entry in entries:
             if entry.get("error"):
@@ -1379,6 +1515,39 @@ class ReticulumTelemetryHub:
             if stored_entry is not None:
                 stored.append(stored_entry)
         return stored, errors
+
+    def _attachment_payload(self, attachment: FileAttachment) -> list:
+        """Return an LXMF-compatible attachment payload list."""
+
+        file_path = Path(attachment.path)
+        data = file_path.read_bytes()
+        if attachment.media_type:
+            return [attachment.name, data, attachment.media_type]
+        return [attachment.name, data]
+
+    def _build_lxmf_attachment_fields(
+        self, attachments: list[FileAttachment]
+    ) -> dict | None:
+        """Build LXMF fields for outbound attachments."""
+
+        if not attachments:
+            return None
+        file_payloads: list[list] = []
+        image_payloads: list[list] = []
+        for attachment in attachments:
+            payload = self._attachment_payload(attachment)
+            category = (attachment.category or "").lower()
+            if category == "image":
+                image_payloads.append(payload)
+                file_payloads.append(payload)
+            else:
+                file_payloads.append(payload)
+        fields: dict = {}
+        if file_payloads:
+            fields[LXMF.FIELD_FILE_ATTACHMENTS] = file_payloads
+        if image_payloads:
+            fields[LXMF.FIELD_IMAGE] = image_payloads
+        return fields
 
     def _normalize_attachment_payloads(
         self, payload, *, category: str, default_prefix: str
