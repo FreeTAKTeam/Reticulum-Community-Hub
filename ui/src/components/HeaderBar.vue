@@ -23,6 +23,7 @@ const title = computed(() => {
     "/webmap": "WebMap",
     "/topics": "Topics",
     "/files": "Files",
+    "/chat": "Communications",
     "/users": "Users",
     "/configure": "Configure",
     "/about": "About",

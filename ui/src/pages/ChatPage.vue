@@ -1,9 +1,9 @@
 <template>
-  <div class="grid gap-6 xl:grid-cols-[320px_1fr]">
-    <section class="space-y-4">
-      <BaseCard title="Operators">
+  <div class="grid h-full min-h-0 gap-6 xl:grid-cols-[320px_1fr]">
+    <section class="flex min-h-0 flex-col">
+      <BaseCard class="flex min-h-0 flex-1 flex-col" title="Operators">
         <BaseInput v-model="searchQuery" label="Search" placeholder="Filter peers or topics" />
-        <div class="mt-4 space-y-3">
+        <div class="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
           <div class="text-[11px] uppercase tracking-[0.2em] text-rth-muted">Peers</div>
           <div class="space-y-2">
             <button
@@ -47,7 +47,7 @@
       </BaseCard>
     </section>
 
-    <section class="flex flex-col gap-4">
+    <section class="flex min-h-0 flex-col gap-4">
       <div class="rounded border border-rth-border bg-rth-panel p-4 shadow-[0_0_24px_rgba(0,180,255,0.12)]">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -63,8 +63,8 @@
         </div>
       </div>
 
-      <div class="flex-1 rounded border border-rth-border bg-rth-panel/80 p-4 shadow-[0_0_32px_rgba(0,180,255,0.08)]">
-        <div class="flex h-full flex-col gap-4 overflow-y-auto pr-2">
+      <div class="flex min-h-0 flex-1 rounded border border-rth-border bg-rth-panel/80 p-4 shadow-[0_0_32px_rgba(0,180,255,0.08)]">
+        <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-2">
           <div v-if="chatStore.loading" class="text-xs text-rth-muted">Loading messages...</div>
           <div v-else-if="visibleMessages.length === 0" class="text-xs text-rth-muted">
             No messages yet. Start a conversation.
@@ -180,6 +180,7 @@ import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
 import { useTopicsStore } from "../stores/topics";
 import { useUsersStore } from "../stores/users";
+import { useAppStore } from "../stores/app";
 import { resolveIdentityLabel } from "../utils/identity";
 
 const chatStore = useChatStore();
@@ -187,6 +188,7 @@ const usersStore = useUsersStore();
 const topicsStore = useTopicsStore();
 const connectionStore = useConnectionStore();
 const toastStore = useToastStore();
+const appStore = useAppStore();
 
 const searchQuery = ref("");
 const activeScope = ref<"dm" | "topic" | "broadcast">("broadcast");
@@ -207,13 +209,14 @@ const scopeOptions = [
 ];
 
 const peers = computed(() => {
-  const onlineIds = new Set(usersStore.clients.map((client) => client.id).filter(Boolean) as string[]);
-  const entries = usersStore.identities.map((identity) => ({
-    id: identity.id ?? "",
-    label: resolveIdentityLabel(identity.display_name, identity.id),
-    online: onlineIds.has(identity.id ?? "")
-  }));
-  entries.sort((a, b) => Number(b.online) - Number(a.online));
+  const entries = usersStore.clients
+    .filter((client) => client.id)
+    .map((client) => ({
+      id: client.id as string,
+      label: resolveIdentityLabel(client.display_name, client.id),
+      online: true
+    }));
+  entries.sort((a, b) => a.label.localeCompare(b.label));
   return entries;
 });
 
@@ -368,6 +371,11 @@ const sendMessage = async () => {
     toastStore.push("Add a message or attachment first.", "warning");
     return;
   }
+  const prefixedContent = trimmed
+    ? appStore.appName
+      ? `${appStore.appName}: ${trimmed}`
+      : trimmed
+    : "";
   sending.value = true;
   try {
     const fileIds: number[] = [];
@@ -390,7 +398,7 @@ const sendMessage = async () => {
       }
     }
     await chatStore.sendMessage({
-      content: trimmed,
+      content: prefixedContent,
       scope,
       destination: scope === "dm" ? composerTarget.value : undefined,
       topic_id: scope === "topic" ? composerTarget.value : undefined,

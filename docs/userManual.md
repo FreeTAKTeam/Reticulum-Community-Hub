@@ -287,7 +287,16 @@ storage directories.
 The northbound API is a FastAPI service that maps REST to LXMF commands and
 streams telemetry/events over WebSocket.
 
-Run it with:
+Run it alongside the hub (recommended for chat/message sending):
+
+```bash
+python -m reticulum_telemetry_hub.northbound.gateway \
+    --storage_dir ./RCH_Store \
+    --api-host 0.0.0.0 \
+    --api-port 8000
+```
+
+Run only the API server (read-only unless you provide a message dispatcher):
 
 ```bash
 uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000

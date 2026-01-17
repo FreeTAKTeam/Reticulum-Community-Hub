@@ -74,7 +74,14 @@ For configuration, services, and client usage details, see `docs/userManual.md`.
 
 The northbound FastAPI service exposes REST + WebSocket endpoints used by the admin UI.
 
-- Run the API server:
+- Run the hub + API together (recommended for chat/message sending):
+  ```bash
+  python -m reticulum_telemetry_hub.northbound.gateway \
+      --storage_dir ./RCH_Store \
+      --api-host 0.0.0.0 \
+      --api-port 8000
+  ```
+- Run only the API server (read-only unless you provide a message dispatcher):
   ```bash
   uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
   ```

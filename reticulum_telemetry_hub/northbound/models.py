@@ -13,6 +13,32 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
+
+def _normalize_aliases(values: object, alias_map: dict[str, tuple[str, ...]]) -> object:
+    """Normalize payload keys using alias hints.
+
+    Args:
+        values (object): Raw payload input.
+        alias_map (dict[str, tuple[str, ...]]): Map of canonical keys to alias keys.
+
+    Returns:
+        object: Normalized payload values.
+    """
+
+    if not isinstance(values, dict):
+        return values
+
+    normalized = dict(values)
+    for field_name, aliases in alias_map.items():
+        if field_name in normalized:
+            continue
+        for alias in aliases:
+            if alias in normalized:
+                normalized[field_name] = normalized[alias]
+                break
+    return normalized
+
+
 class TopicPayload(BaseModel):
     """Topic payload for create/update requests."""
 
@@ -101,27 +127,38 @@ class SubscribeTopicRequest(BaseModel):
 class ConfigRollbackPayload(BaseModel):
     """Payload for configuration rollbacks."""
 
-    backup_path: Optional[str] = Field(default=None, alias="backup_path")
-
-    class Config:
-        """Pydantic configuration."""
-
-        allow_population_by_field_name = True
-        allow_population_by_alias = True
+    backup_path: Optional[str] = None
 
 
 class MessagePayload(BaseModel):
     """Payload for sending chat messages into the hub."""
 
-    content: str = Field(alias="Content")
-    topic_id: Optional[str] = Field(default=None, alias="TopicID")
-    destination: Optional[str] = Field(default=None, alias="Destination")
+    model_config = ConfigDict(populate_by_name=True)
 
-    class Config:
-        """Pydantic configuration."""
+    content: str
+    topic_id: Optional[str] = None
+    destination: Optional[str] = None
 
-        allow_population_by_field_name = True
-        allow_population_by_alias = True
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload(cls, values: object) -> object:
+        """Normalize payload aliases to field names.
+
+        Args:
+            values (object): Raw payload input.
+
+        Returns:
+            object: Normalized payload values.
+        """
+
+        return _normalize_aliases(
+            values,
+            {
+                "content": ("Content",),
+                "topic_id": ("TopicID", "topicId"),
+                "destination": ("Destination",),
+            },
+        )
 
 
 class ChatSendPayload(BaseModel):
@@ -129,28 +166,36 @@ class ChatSendPayload(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    content: Optional[str] = Field(default=None, alias="Content")
-    scope: str = Field(alias="Scope")
-    topic_id: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("TopicID", "topic_id", "topicId"),
-        serialization_alias="TopicID",
-    )
-    destination: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("Destination", "destination"),
-        serialization_alias="Destination",
-    )
-    file_ids: list[int] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("FileIDs", "file_ids", "fileIds"),
-        serialization_alias="FileIDs",
-    )
-    image_ids: list[int] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("ImageIDs", "image_ids", "imageIds"),
-        serialization_alias="ImageIDs",
-    )
+    content: Optional[str] = None
+    scope: str
+    topic_id: Optional[str] = None
+    destination: Optional[str] = None
+    file_ids: list[int] = Field(default_factory=list)
+    image_ids: list[int] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload(cls, values: object) -> object:
+        """Normalize payload aliases to field names.
+
+        Args:
+            values (object): Raw payload input.
+
+        Returns:
+            object: Normalized payload values.
+        """
+
+        return _normalize_aliases(
+            values,
+            {
+                "content": ("Content",),
+                "scope": ("Scope",),
+                "topic_id": ("TopicID", "topicId"),
+                "destination": ("Destination",),
+                "file_ids": ("FileIDs", "fileIds"),
+                "image_ids": ("ImageIDs", "imageIds"),
+            },
+        )
 
     @model_validator(mode="after")
     def _validate_payload(self) -> "ChatSendPayload":

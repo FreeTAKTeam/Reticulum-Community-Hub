@@ -1,4 +1,12 @@
 # TASKS
+- 2026-01-17: DONE. Prefix outbound chat messages with hub app name loaded at UI startup.
+- 2026-01-17: DONE. Deduplicate identities list to avoid repeated names in the Users page.
+- 2026-01-17: DONE. Update chat page header title and constrain operator list to hub users with scroll.
+- 2026-01-17: DONE. Add aiohttp dependency for PyTAK BasicAuth support.
+- 2026-01-17: DONE. Silence Pydantic alias warnings in northbound chat payload models.
+- 2026-01-17: DONE. Add gateway runner to start hub + northbound API for chat dispatch.
+- 2026-01-17: DONE. Add test_hub.bat to activate venv_linux and run pytest.
+- 2026-01-17: DONE. Refresh internal API v1 manifest hashes.
 - 2026-01-16: DONE. Add Cosmic UI combobox styling for BaseSelect.
 - 2026-01-16: DONE. Implement Reticulum Community Hub Chat & LXMF Client specification.
 - 2026-01-16: バ. Persist announce display names and expose them to the UI.

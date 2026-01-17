@@ -92,14 +92,16 @@
 <script setup lang="ts">
 import { onMounted } from "vue";
 import { ref } from "vue";
+import { storeToRefs } from "pinia";
 import BaseButton from "../components/BaseButton.vue";
 import BaseCard from "../components/BaseCard.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
-import type { AppInfo } from "../api/types";
+import { useAppStore } from "../stores/app";
 
-const appInfo = ref<AppInfo | null>(null);
+const appStore = useAppStore();
+const { appInfo } = storeToRefs(appStore);
 const helpContent = ref<string | null>(null);
 const examplesContent = ref<string | null>(null);
 
@@ -151,6 +153,6 @@ const loadExamples = async () => {
 };
 
 onMounted(async () => {
-  appInfo.value = await get<AppInfo>(endpoints.appInfo);
+  await appStore.fetchAppInfo();
 });
 </script>

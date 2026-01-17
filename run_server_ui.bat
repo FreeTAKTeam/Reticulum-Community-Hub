@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
-rem Start the RTH northbound API (FastAPI) + the RTH Core UI (Vite dev server).
+rem Start the RTH hub + northbound API (FastAPI) + the RTH Core UI (Vite dev server).
 rem Override defaults via env vars:
 rem   VENV_DIR         (default: .venv)
 rem   RTH_STORAGE_DIR  (default: RTH_Store)
@@ -78,17 +78,14 @@ for %%S in (!SERVICES_SPACED!) do (
     if not "%%~S"=="" set "HUB_FLAGS=!HUB_FLAGS! --service %%~S"
 )
 
-echo Starting main hub in "%RTH_STORAGE_DIR%" (mode=%RTH_HUB_MODE%)
-start "RTH Hub" /D "%REPO_ROOT%" cmd /k ""%PYTHON_EXE%" -m reticulum_telemetry_hub.reticulum_server --storage_dir "%RTH_STORAGE_DIR%" --display_name "%RTH_DISPLAY_NAME%" !HUB_ARGS! !HUB_FLAGS!"
-
-echo Starting northbound API at http://%RTH_API_HOST%:%RTH_API_PORT%
-start "RTH API" /D "%REPO_ROOT%" cmd /k ""%PYTHON_EXE%" -m uvicorn reticulum_telemetry_hub.northbound.app:app --host %RTH_API_HOST% --port %RTH_API_PORT%"
+echo Starting hub + northbound API at http://%RTH_API_HOST%:%RTH_API_PORT%
+start "RTH Hub + API" /D "%REPO_ROOT%" cmd /k ""%PYTHON_EXE%" -m reticulum_telemetry_hub.northbound.gateway --storage_dir "%RTH_STORAGE_DIR%" --display_name "%RTH_DISPLAY_NAME%" --api-host %RTH_API_HOST% --api-port %RTH_API_PORT% !HUB_ARGS! !HUB_FLAGS!"
 
 echo Starting UI dev server at http://localhost:5173
 start "RTH UI" /D "%REPO_ROOT%ui" cmd /k "set \"VITE_RTH_BASE_URL=%VITE_RTH_BASE_URL%\" && npm run dev"
 
 echo.
-echo Hub: storage=%RTH_STORAGE_DIR%  mode=%RTH_HUB_MODE%  daemon=%RTH_DAEMON%  services=%RTH_SERVICES%
+echo Hub+API: storage=%RTH_STORAGE_DIR%  mode=%RTH_HUB_MODE%  daemon=%RTH_DAEMON%  services=%RTH_SERVICES%
 echo API: %VITE_RTH_BASE_URL%
 echo UI:  http://localhost:5173
 echo.

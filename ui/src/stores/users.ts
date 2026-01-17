@@ -50,6 +50,19 @@ const fromApiIdentity = (payload: IdentityApiPayload): IdentityEntry => ({
   blackholed: payload.IsBlackholed
 });
 
+const dedupeIdentities = (entries: IdentityEntry[]): IdentityEntry[] => {
+  const byId = new Map<string, IdentityEntry>();
+  const withoutId: IdentityEntry[] = [];
+  entries.forEach((entry) => {
+    if (!entry.id) {
+      withoutId.push(entry);
+      return;
+    }
+    byId.set(entry.id, entry);
+  });
+  return [...byId.values(), ...withoutId];
+};
+
 export const useUsersStore = defineStore("users", () => {
   const clients = ref<ClientEntry[]>([]);
   const identities = ref<IdentityEntry[]>([]);
@@ -61,7 +74,7 @@ export const useUsersStore = defineStore("users", () => {
       const response = await get<ClientApiPayload[]>(endpoints.clients);
       clients.value = response.map(fromApiClient);
       const identityResponse = await get<IdentityApiPayload[]>(endpoints.identities);
-      identities.value = identityResponse.map(fromApiIdentity);
+      identities.value = dedupeIdentities(identityResponse.map(fromApiIdentity));
     } finally {
       loading.value = false;
     }
