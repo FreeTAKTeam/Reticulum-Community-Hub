@@ -1,4 +1,10 @@
 # TASKS
+- 2026-01-17: DONE. Auto-scroll chat history to latest message and adjust fixed height.
+- 2026-01-17: DONE. Make chat history panel fixed-height and scrollable.
+- 2026-01-17: DONE. Constrain chat history panel to scroll while keeping composer visible.
+- 2026-01-17: DONE. Show all inbound hub messages in the All Hub Users view.
+- 2026-01-17: DONE. Adjust chat message prefix delimiter to use ">". 
+- 2026-01-17: DONE. Hide topic hashes in chat topic list display.
 - 2026-01-17: DONE. Prefix outbound chat messages with hub app name loaded at UI startup.
 - 2026-01-17: DONE. Deduplicate identities list to avoid repeated names in the Users page.
 - 2026-01-17: DONE. Update chat page header title and constrain operator list to hub users with scroll.

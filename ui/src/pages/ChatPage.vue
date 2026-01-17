@@ -47,7 +47,7 @@
       </BaseCard>
     </section>
 
-    <section class="flex min-h-0 flex-col gap-4">
+    <section class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-4">
       <div class="rounded border border-rth-border bg-rth-panel p-4 shadow-[0_0_24px_rgba(0,180,255,0.12)]">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -63,8 +63,11 @@
         </div>
       </div>
 
-      <div class="flex min-h-0 flex-1 rounded border border-rth-border bg-rth-panel/80 p-4 shadow-[0_0_32px_rgba(0,180,255,0.08)]">
-        <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-2">
+      <div
+        ref="messageScroller"
+        class="h-[50vh] overflow-y-auto rounded border border-rth-border bg-rth-panel/80 p-4 shadow-[0_0_32px_rgba(0,180,255,0.08)]"
+      >
+        <div class="flex min-h-0 flex-col gap-4 pr-2">
           <div v-if="chatStore.loading" class="text-xs text-rth-muted">Loading messages...</div>
           <div v-else-if="visibleMessages.length === 0" class="text-xs text-rth-muted">
             No messages yet. Start a conversation.
@@ -162,6 +165,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import { nextTick } from "vue";
 import { onBeforeUnmount } from "vue";
 import { onMounted } from "vue";
 import { ref } from "vue";
@@ -199,6 +203,7 @@ const composerTarget = ref("");
 const composerText = ref("");
 const pendingAttachments = ref<File[]>([]);
 const sending = ref(false);
+const messageScroller = ref<HTMLDivElement | null>(null);
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
@@ -223,7 +228,7 @@ const peers = computed(() => {
 const topics = computed(() =>
   topicsStore.topics.map((topic) => ({
     id: topic.id ?? "",
-    label: topic.name ? `${topic.name} (${topic.id})` : topic.id ?? "Unknown"
+    label: topic.name?.trim() || "Untitled topic"
   }))
 );
 
@@ -257,7 +262,7 @@ const activeLabel = computed(() => {
 
 const visibleMessages = computed(() => {
   if (activeScope.value === "broadcast") {
-    return chatStore.messages.filter((message) => message.scope === "broadcast");
+    return chatStore.messages.filter((message) => message.direction !== "outbound");
   }
   if (activeScope.value === "dm") {
     const peerId = activePeer.value;
@@ -270,6 +275,13 @@ const visibleMessages = computed(() => {
   const topicId = activeTopic.value;
   return chatStore.messages.filter((message) => message.topic_id === topicId);
 });
+
+const scrollToLatest = async () => {
+  await nextTick();
+  if (messageScroller.value) {
+    messageScroller.value.scrollTop = messageScroller.value.scrollHeight;
+  }
+};
 
 const composerTargetOptions = computed(() => {
   if (composerScope.value === "topic") {
@@ -373,7 +385,7 @@ const sendMessage = async () => {
   }
   const prefixedContent = trimmed
     ? appStore.appName
-      ? `${appStore.appName}: ${trimmed}`
+      ? `${appStore.appName} > ${trimmed}`
       : trimmed
     : "";
   sending.value = true;
@@ -452,6 +464,7 @@ let wsClient: WsClient | null = null;
 
 onMounted(async () => {
   await Promise.all([usersStore.fetchUsers(), topicsStore.fetchTopics(), chatStore.fetchMessages()]);
+  await scrollToLatest();
   wsClient = new WsClient("/messages/stream", handleWsMessage, () => {
     if (wsClient) {
       wsClient.send({
@@ -470,5 +483,16 @@ onBeforeUnmount(() => {
 
 watch(composerScope, () => {
   composerTarget.value = "";
+});
+
+watch(
+  () => visibleMessages.value.length,
+  () => {
+    scrollToLatest();
+  }
+);
+
+watch(activeScope, () => {
+  scrollToLatest();
 });
 </script>
