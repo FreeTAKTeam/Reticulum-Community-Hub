@@ -58,6 +58,18 @@ const mockState = {
       data: { temperature_c: 22.4 }
     }
   ],
+  markers: [
+    {
+      marker_id: "marker-1",
+      type: "napsg",
+      name: "fire+demo",
+      category: "fire",
+      position: { lat: 37.777, lon: -122.42 },
+      created_at: nowIso(),
+      updated_at: nowIso(),
+      notes: "Initial mock marker"
+    }
+  ],
   events: [
     {
       id: "evt-1",
@@ -74,6 +86,7 @@ let topicCounter = 3;
 let subscriberCounter = 2;
 let chatMessageCounter = 2;
 let attachmentCounter = 3;
+let markerCounter = 2;
 
 const jsonResponse = (payload: unknown, status = 200) =>
   new Response(JSON.stringify(payload), {
@@ -305,6 +318,40 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
 
   if (pathname === "/Telemetry") {
     return jsonResponse({ entries: mockState.telemetry });
+  }
+
+  if (pathname === "/api/markers") {
+    if (method === "GET") {
+      return jsonResponse(mockState.markers);
+    }
+    if (method === "POST") {
+      const body = (await parseBody(options.body)) as any;
+      const marker = {
+        marker_id: `marker-${markerCounter++}`,
+        type: body?.category?.includes("town") ? "maki" : "napsg",
+        name: body?.name ?? `marker-${markerCounter}`,
+        category: body?.category ?? "marker",
+        position: { lat: body?.lat ?? 0, lon: body?.lon ?? 0 },
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        notes: body?.notes ?? null
+      };
+      mockState.markers.push(marker);
+      return jsonResponse({ marker_id: marker.marker_id, created_at: marker.created_at }, 201);
+    }
+  }
+
+  const markerPositionMatch = pathname.match(/^\/api\/markers\/(.+?)\/position$/);
+  if (markerPositionMatch && method === "PATCH") {
+    const markerId = markerPositionMatch[1];
+    const body = (await parseBody(options.body)) as any;
+    const target = mockState.markers.find((entry) => entry.marker_id === markerId);
+    if (!target) {
+      return jsonResponse({ detail: "Marker not found" }, 404);
+    }
+    target.position = { lat: body?.lat ?? target.position.lat, lon: body?.lon ?? target.position.lon };
+    target.updated_at = nowIso();
+    return jsonResponse({ status: "ok" });
   }
 
   if (pathname === "/api/v1/app/info") {

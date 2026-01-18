@@ -8,6 +8,7 @@ from datetime import timezone
 from sqlalchemy import Boolean
 from sqlalchemy import Column
 from sqlalchemy import DateTime
+from sqlalchemy import Float
 from sqlalchemy import Integer
 from sqlalchemy import JSON
 from sqlalchemy import String
@@ -69,6 +70,24 @@ class FileRecord(Base):  # pylint: disable=too-few-public-methods
     category = Column(String, nullable=False)
     size = Column(Integer, nullable=False)
     topic_id = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class MarkerRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for operator markers."""
+
+    __tablename__ = "markers"
+
+    id = Column(String, primary_key=True)
+    marker_type = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=False)
+    notes = Column(String, nullable=True)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False

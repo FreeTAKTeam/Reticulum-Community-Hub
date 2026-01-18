@@ -87,6 +87,20 @@ export interface TelemetryEntry {
   data?: Record<string, unknown>;
 }
 
+export interface MarkerEntry {
+  marker_id?: string;
+  type?: string;
+  name?: string;
+  category?: string;
+  notes?: string | null;
+  position?: {
+    lat?: number;
+    lon?: number;
+  };
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface AppInfo {
   name?: string;
   version?: string;

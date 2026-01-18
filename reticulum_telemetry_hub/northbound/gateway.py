@@ -17,7 +17,6 @@ import RNS
 import uvicorn
 from fastapi import FastAPI
 
-from reticulum_telemetry_hub.config.constants import DEFAULT_ANNOUNCE_INTERVAL
 from reticulum_telemetry_hub.config.constants import DEFAULT_HUB_TELEMETRY_INTERVAL
 from reticulum_telemetry_hub.config.constants import DEFAULT_LOG_LEVEL_NAME
 from reticulum_telemetry_hub.config.constants import DEFAULT_SERVICE_TELEMETRY_INTERVAL
@@ -45,6 +44,9 @@ class GatewayHub(Protocol):
         fields: Optional[dict] = None,
     ) -> object:
         """Send a northbound message through the hub."""
+
+    def dispatch_marker_event(self, payload: dict[str, object]) -> bool:
+        """Send a marker telemetry event through the hub."""
 
     def register_message_listener(
         self, listener: Callable[[dict[str, object]], None]
@@ -241,8 +243,9 @@ def build_gateway_app(
         api=hub.api,
         telemetry_controller=hub.tel_controller,
         event_log=hub.event_log,
-        command_manager=hub.command_manager,
+        command_manager=getattr(hub, "command_manager", None),
         message_dispatcher=hub.dispatch_northbound_message,
+        marker_dispatcher=hub.dispatch_marker_event,
         message_listener=hub.register_message_listener,
         started_at=started_at or datetime.now(timezone.utc),
         auth=auth,

@@ -12,6 +12,7 @@ Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. 
 - File and image attachment storage with retrieval by ID.
 - Northbound REST + WebSocket API for operators and the admin UI.
 - Optional TAK/CoT bridge for chat and location updates.
+- Operator-managed map markers with create/move events propagated as telemetry claims.
 
 ## What it looks like
 
@@ -95,6 +96,12 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
   ```
 
   Set `VITE_RCH_BASE_URL` when the UI should target a different hub.
+
+Marker management endpoints (used by the WebMap UI):
+
+- `GET /api/markers` (list stored markers)
+- `POST /api/markers` (create marker with name/category/lat/lon)
+- `PATCH /api/markers/{marker_id}/position` (update marker coordinates)
 
 ## Documentation
 

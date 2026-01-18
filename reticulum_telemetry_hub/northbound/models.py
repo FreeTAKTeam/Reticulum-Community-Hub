@@ -11,7 +11,10 @@ from pydantic import AliasChoices
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import field_validator
 from pydantic import model_validator
+
+from reticulum_telemetry_hub.api.marker_symbols import is_supported_marker_symbol
 
 
 def _normalize_aliases(values: object, alias_map: dict[str, tuple[str, ...]]) -> object:
@@ -211,3 +214,29 @@ class ChatSendPayload(BaseModel):
         if not (self.content and self.content.strip()) and not (self.file_ids or self.image_ids):
             raise ValueError("Content or attachments are required")
         return self
+
+
+class MarkerCreatePayload(BaseModel):
+    """Payload for creating operator markers."""
+
+    name: Optional[str] = None
+    category: str
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    notes: Optional[str] = None
+
+    @field_validator("category")
+    @classmethod
+    def _validate_category(cls, value: str) -> str:
+        """Validate marker category against supported symbols."""
+
+        if not is_supported_marker_symbol(value):
+            raise ValueError("Unsupported marker category")
+        return value
+
+
+class MarkerPositionPayload(BaseModel):
+    """Payload for marker position updates."""
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)

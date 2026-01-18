@@ -16,6 +16,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from reticulum_telemetry_hub.api.models import ChatMessage
+from reticulum_telemetry_hub.api.marker_service import MarkerService
+from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -28,6 +30,7 @@ from .auth import ApiAuth
 from .auth import build_protected_dependency
 from .routes_files import register_file_routes
 from .routes_chat import register_chat_routes
+from .routes_markers import register_marker_routes
 from .routes_rest import register_core_routes
 from .routes_subscribers import register_subscriber_routes
 from .routes_topics import register_topic_routes
@@ -80,6 +83,7 @@ def create_app(
     message_dispatcher: Optional[
         Callable[[str, Optional[str], Optional[str], Optional[dict]], ChatMessage | None]
     ] = None,
+    marker_dispatcher: Optional[Callable[[dict[str, object]], bool]] = None,
     message_listener: Optional[
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
     ] = None,
@@ -95,6 +99,7 @@ def create_app(
         routing_provider (Optional[Callable[[], list[str]]]): Provider for routing destinations.
         started_at (Optional[datetime]): Start time for uptime calculations.
         auth (Optional[ApiAuth]): Auth validator.
+        marker_dispatcher (Optional[Callable[[dict[str, object]], bool]]): Marker telemetry dispatcher.
 
     Returns:
         FastAPI: Configured FastAPI application.
@@ -113,6 +118,10 @@ def create_app(
 
     if storage_path is None:
         storage_path = _resolve_storage_path()
+
+    hub_db_path = storage_path / "rth_api.sqlite"
+    if config_manager is not None:
+        hub_db_path = config_manager.config.hub_database_path
 
     if event_log is None:
         event_log_path = resolve_event_log_path(storage_path)
@@ -135,6 +144,8 @@ def create_app(
         command_manager=command_manager,
         routing_provider=routing_provider,
         message_dispatcher=message_dispatcher,
+        marker_service=MarkerService(MarkerStorage(hub_db_path)),
+        marker_dispatcher=marker_dispatcher,
     )
     auth = auth or ApiAuth()
     require_protected = build_protected_dependency(auth)
@@ -176,6 +187,11 @@ def create_app(
         app,
         services=services,
         api=api,
+        require_protected=require_protected,
+    )
+    register_marker_routes(
+        app,
+        services=services,
         require_protected=require_protected,
     )
     register_ws_routes(

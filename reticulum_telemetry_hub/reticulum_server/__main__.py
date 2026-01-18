@@ -1004,6 +1004,33 @@ class ReticulumTelemetryHub:
             return queued
         return None
 
+    def dispatch_marker_event(self, payload: dict[str, object]) -> bool:
+        """Dispatch a marker telemetry event through LXMF fields.
+
+        Args:
+            payload (dict[str, object]): Marker event payload to attach to fields.
+
+        Returns:
+            bool: True when the event is queued for delivery.
+        """
+
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be a dict")
+        fields = dict(payload)
+        origin_rch = self._origin_rch_hex()
+        if origin_rch:
+            fields.setdefault("origin_rch", origin_rch)
+        return self.send_message("", fields=fields)
+
+    def _origin_rch_hex(self) -> str:
+        """Return the local collector identity hash as lowercase hex."""
+
+        destination = getattr(self, "my_lxmf_dest", None)
+        identity_hash = getattr(destination, "hash", None)
+        if isinstance(identity_hash, (bytes, bytearray, memoryview)):
+            return bytes(identity_hash).hex()
+        return ""
+
     def _ensure_outbound_queue(self) -> OutboundMessageQueue | None:
         """
         Initialize and start the outbound worker queue.

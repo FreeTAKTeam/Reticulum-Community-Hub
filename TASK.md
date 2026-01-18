@@ -1,4 +1,5 @@
 # TASKS
+- 2026-01-18: DONE. Implement Web UI marker management with northbound marker APIs and telemetry event propagation.
 - 2026-01-17: DONE. Auto-scroll chat history to latest message and adjust fixed height.
 - 2026-01-17: DONE. Make chat history panel fixed-height and scrollable.
 - 2026-01-17: DONE. Constrain chat history panel to scroll while keeping composer visible.
