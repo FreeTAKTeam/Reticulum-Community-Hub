@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="91" height="91" version="1.1" viewBox="0 0 24.077 24.077" xmlns="http://www.w3.org/2000/svg" xmlns:cc="http://creativecommons.org/ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+ <metadata>
+  <rdf:RDF>
+   <cc:Work rdf:about="">
+    <dc:format>image/svg+xml</dc:format>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <g transform="matrix(2.2503,0,0,2.2503,-65.064,-64.765)">
+  <g fill="#fff" shape-rendering="auto">
+   <path d="m38.665 34.131c0 2.4201-1.9704 4.3821-4.401 4.3821s-4.401-1.9619-4.401-4.3821 1.9704-4.3821 4.401-4.3821 4.401 1.9619 4.401 4.3821z" color="#000000" color-rendering="auto" dominant-baseline="auto" image-rendering="auto" solid-color="#000000" stop-color="#000000" style="font-feature-settings:normal;font-variant-alternates:normal;font-variant-caps:normal;font-variant-east-asian:normal;font-variant-ligatures:normal;font-variant-numeric:normal;font-variant-position:normal;font-variation-settings:normal;inline-size:0;isolation:auto;mix-blend-mode:normal;paint-order:stroke fill markers;shape-margin:0;shape-padding:0;text-decoration-color:#000000;text-decoration-line:none;text-decoration-style:solid;text-indent:0;text-orientation:mixed;text-transform:none;white-space:normal"/>
+  </g>
+ </g>
+ <g transform="matrix(2.2503,0,0,2.2503,-65.064,-580.68)">
+  <g shape-rendering="auto">
+   <path d="m34.264 258.13c-2.9161 0-5.291 2.3648-5.291 5.2715s2.3749 5.2695 5.291 5.2695 5.291-2.3628 5.291-5.2695-2.3749-5.2715-5.291-5.2715zm0 0.90625c2.4285 0 4.3848 1.9504 4.3848 4.3652s-1.9563 4.3633-4.3848 4.3633-4.3848-1.9484-4.3848-4.3633 1.9563-4.3652 4.3848-4.3652z" color="#000000" color-rendering="auto" dominant-baseline="auto" fill="#5e9c42" image-rendering="auto" solid-color="#000000" stop-color="#000000" style="font-feature-settings:normal;font-variant-alternates:normal;font-variant-caps:normal;font-variant-east-asian:normal;font-variant-ligatures:normal;font-variant-numeric:normal;font-variant-position:normal;font-variation-settings:normal;inline-size:0;isolation:auto;mix-blend-mode:normal;paint-order:markers fill stroke;shape-margin:0;shape-padding:0;text-decoration-color:#000000;text-decoration-line:none;text-decoration-style:solid;text-indent:0;text-orientation:mixed;text-transform:none;white-space:normal"/>
+  </g>
+  <ellipse cx="34.264" cy="263.4" rx="4.2068" ry="4.1887" fill="none" stroke="#036" stroke-width=".52691" style="paint-order:stroke fill markers"/>
+ </g>
+ <g transform="matrix(.32728 0 0 .3382 .71136 .13976)">
+  <g fill="#036">
+   <path d="m43.905 15.014h5.4293v5.4297h5.4297v5.4292h-5.4297v5.4297h-5.4293v-5.4297h-5.4297v-5.4292h5.4297z" stroke-miterlimit=".94" stroke-width="0" style="paint-order:markers fill stroke"/>
+   <path transform="scale(.26458)" d="m82.912 98.568a14.657 14.657 0 0 0-14.646 14.646v4.918h-2e-3v33.791l22.029 10.272h6.0898c1.3048-1.0926 2.69-2.0673 4.3144-2.6211l21.268-7.4277v-2.1563h-24.41a12.055 12.055 0 0 1-8.6152-3.5879 12.056 12.056 0 0 1-3.5879-8.6171 12.209 12.209 0 0 1 12.203-12.205h9.8633a4.5741 4.5741 0 0 1 0.8281 0.074l4.7207-27.086h-18.861z" stroke-width="2.441"/>
+   <g stroke-width=".64584">
+    <path d="m23.874 36.456a1.9404 1.9404 0 0 0 1.9375 1.9375h1.9375l0.67167-3.875h-2.6092a1.9349 1.9349 0 0 0-1.9375 1.9375z"/>
+    <path d="m33.566 26.08-5e-3 8.4385v3.875h0.64604a1.9349 1.9349 0 0 0 1.9375-1.9375v-7.8106a2.5813 2.5813 0 0 0-2.5761-2.5654z"/>
+    <circle cx="27.103" cy="19.535" r="4.5209"/>
+   </g>
+   <path d="m26.304 45.374c-0.24858 0.33655-0.42537 0.72936-0.48826 1.156-0.0702 0.39463-0.0356 0.81009 0.0944 1.2035 0.46166 1.2924 1.8807 1.9792 3.1772 1.5352l6.446-2.2558 0.2978 0.84881-6.4517 2.2531c-1.7578 0.6119-3.6883-0.32274-4.3145-2.0848-0.21442-0.61318-0.19807-1.2455-0.066-1.8553l-9.2723-4.3238c-1.2593-0.58725-2.7614-0.0429-3.3462 1.2111-0.5897 1.2646-0.0401 2.7627 1.2193 3.35l16.066 7.4916c0.52319 0.244 1.0977 0.26142 1.6414 0.12833l14.147-3.0388 5.6929 2.6546 3.6167-7.756-0.047-0.022 0.0351-0.0753-13.188-6.1499-14.117 4.9308c-0.44774 0.15264-0.83867 0.42631-1.1417 0.7982z" stroke-width="0" style="paint-order:stroke fill markers"/>
+  </g>
+  <path d="m29.889 26.08-2.1396 12.314h5.8115l6e-3 -12.314z" color="#000000" color-rendering="auto" fill="#fff" image-rendering="auto" shape-rendering="auto" solid-color="#000000" style="isolation:auto;mix-blend-mode:normal;text-decoration-color:#000000;text-decoration-line:none;text-decoration-style:solid;text-indent:0;text-transform:none;white-space:normal"/>
+ </g>
+</svg>
