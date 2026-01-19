@@ -12,6 +12,7 @@ from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
     DEFAULT_HUB_TELEMETRY_INTERVAL,
     DEFAULT_LOG_LEVEL_NAME,
+    DEFAULT_MARKER_ANNOUNCE_INTERVAL_MINUTES,
     DEFAULT_SERVICE_TELEMETRY_INTERVAL,
 )
 
@@ -95,6 +96,7 @@ class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
 
     display_name: str = "RTH"
     announce_interval: int = DEFAULT_ANNOUNCE_INTERVAL
+    marker_announce_interval_minutes: int = DEFAULT_MARKER_ANNOUNCE_INTERVAL_MINUTES
     hub_telemetry_interval: int = DEFAULT_HUB_TELEMETRY_INTERVAL
     service_telemetry_interval: int = DEFAULT_SERVICE_TELEMETRY_INTERVAL
     log_level: str = DEFAULT_LOG_LEVEL_NAME

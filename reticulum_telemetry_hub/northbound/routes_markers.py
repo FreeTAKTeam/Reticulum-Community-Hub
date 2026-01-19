@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import status
 
+from reticulum_telemetry_hub.api.marker_symbols import list_marker_symbols
+
 from .models import MarkerCreatePayload
 from .models import MarkerPositionPayload
 from .services import NorthboundServices
@@ -35,6 +37,12 @@ def register_marker_routes(
 
         return [marker.to_dict() for marker in services.list_markers()]
 
+    @app.get("/api/markers/symbols", dependencies=[Depends(require_protected)])
+    def list_marker_symbols_route() -> list[dict[str, str]]:
+        """Return available marker symbol definitions."""
+
+        return list_marker_symbols()
+
     @app.post(
         "/api/markers",
         dependencies=[Depends(require_protected)],
@@ -46,30 +54,36 @@ def register_marker_routes(
         try:
             marker = services.create_marker(
                 name=payload.name,
-                category=payload.category,
+                marker_type=payload.marker_type,
+                symbol=payload.symbol,
+                category=payload.category or payload.symbol,
                 lat=payload.lat,
                 lon=payload.lon,
+                origin_rch=services.origin_rch,
                 notes=payload.notes,
+                ttl_seconds=payload.ttl_seconds,
             )
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
             ) from exc
         return {
-            "marker_id": marker.marker_id,
+            "object_destination_hash": marker.object_destination_hash,
             "created_at": marker.created_at.isoformat(),
         }
 
     @app.patch(
-        "/api/markers/{marker_id}/position",
+        "/api/markers/{object_destination_hash}/position",
         dependencies=[Depends(require_protected)],
     )
-    def update_marker_position(marker_id: str, payload: MarkerPositionPayload) -> dict:
+    def update_marker_position(
+        object_destination_hash: str, payload: MarkerPositionPayload
+    ) -> dict:
         """Update marker coordinates."""
 
         try:
-            services.update_marker_position(
-                marker_id,
+            result = services.update_marker_position(
+                object_destination_hash,
                 lat=payload.lat,
                 lon=payload.lon,
             )
@@ -77,4 +91,4 @@ def register_marker_routes(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
             ) from exc
-        return {"status": "ok"}
+        return {"status": "ok", "updated_at": result.marker.updated_at.isoformat()}

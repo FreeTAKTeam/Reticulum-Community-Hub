@@ -35,6 +35,7 @@ class GatewayHub(Protocol):
     tel_controller: object
     event_log: object
     command_manager: Optional[object]
+    marker_service: Optional[object]
 
     def dispatch_northbound_message(
         self,
@@ -45,8 +46,8 @@ class GatewayHub(Protocol):
     ) -> object:
         """Send a northbound message through the hub."""
 
-    def dispatch_marker_event(self, payload: dict[str, object]) -> bool:
-        """Send a marker telemetry event through the hub."""
+    def dispatch_marker_event(self, marker, event_type: str) -> bool:
+        """Record a marker telemetry event through the hub."""
 
     def register_message_listener(
         self, listener: Callable[[dict[str, object]], None]
@@ -246,6 +247,8 @@ def build_gateway_app(
         command_manager=getattr(hub, "command_manager", None),
         message_dispatcher=hub.dispatch_northbound_message,
         marker_dispatcher=hub.dispatch_marker_event,
+        marker_service=getattr(hub, "marker_service", None),
+        origin_rch=getattr(hub, "_origin_rch_hex", lambda: "")(),
         message_listener=hub.register_message_listener,
         started_at=started_at or datetime.now(timezone.utc),
         auth=auth,

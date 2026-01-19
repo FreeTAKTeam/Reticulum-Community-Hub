@@ -20,7 +20,7 @@ from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 
 
-def _build_client(tmp_path: Path) -> tuple[TestClient, list[dict]]:
+def _build_client(tmp_path: Path) -> tuple[TestClient, list[str]]:
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "rth_api.sqlite")
     api = ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
@@ -30,10 +30,10 @@ def _build_client(tmp_path: Path) -> tuple[TestClient, list[dict]]:
         api=api,
         event_log=event_log,
     )
-    dispatched: list[dict] = []
+    dispatched: list[str] = []
 
-    def _dispatch(payload: dict) -> bool:
-        dispatched.append(dict(payload))
+    def _dispatch(marker, event_type: str) -> bool:
+        dispatched.append(event_type)
         return True
 
     app = create_app(
@@ -47,23 +47,33 @@ def _build_client(tmp_path: Path) -> tuple[TestClient, list[dict]]:
     return TestClient(app), dispatched
 
 
-def test_marker_routes_create_and_update(tmp_path: Path) -> None:
+def test_marker_routes_create_and_update(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("RTH_MARKER_IDENTITY_KEY", "11" * 32)
     client, dispatched = _build_client(tmp_path)
     headers = {"X-API-Key": "secret"}
 
     create_response = client.post(
         "/api/markers",
         headers=headers,
-        json={"name": "Alpha", "category": "fire", "lat": 1.0, "lon": 2.0},
+        json={
+            "name": "Alpha",
+            "type": "fire",
+            "symbol": "fire",
+            "category": "napsg",
+            "lat": 1.0,
+            "lon": 2.0,
+        },
     )
 
     assert create_response.status_code == 201
     payload = create_response.json()
-    marker_id = payload["marker_id"]
+    marker_id = payload["object_destination_hash"]
 
     list_response = client.get("/api/markers", headers=headers)
     assert list_response.status_code == 200
-    assert any(item["marker_id"] == marker_id for item in list_response.json())
+    assert any(
+        item["object_destination_hash"] == marker_id for item in list_response.json()
+    )
 
     update_response = client.patch(
         f"/api/markers/{marker_id}/position",
@@ -82,5 +92,17 @@ def test_marker_routes_create_and_update(tmp_path: Path) -> None:
 
     assert noop_response.status_code == 200
     assert len(dispatched) == 2
-    assert dispatched[0]["event_type"] == "marker.created"
-    assert dispatched[1]["event_type"] == "marker.updated"
+    assert dispatched[0] == "marker.created"
+    assert dispatched[1] == "marker.updated"
+
+
+def test_marker_symbols_route(tmp_path: Path) -> None:
+    client, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    response = client.get("/api/markers/symbols", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"id": "fire", "set": "napsg"} in payload
+    assert {"id": "marker", "set": "maki"} in payload

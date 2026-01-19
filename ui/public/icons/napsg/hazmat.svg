@@ -1,5 +1,174 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <path fill="#000" d="M16 3L3 27h26L16 3z"/>
-  <rect x="15" y="12" width="2" height="8" fill="#000"/>
-  <circle cx="16" cy="23" r="1.5" fill="#000"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="91" height="91" version="1.1" viewBox="0 0 91 91" xmlns="http://www.w3.org/2000/svg" xmlns:cc="http://creativecommons.org/ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+ <title>91px_91px_HCH_Hazmat</title>
+ <defs>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+  <style type="text/css">.str0 {stroke:#D9DADA;stroke-width:0.749401}
+    .str1 {stroke:#231F20;stroke-width:0.749401}
+    .fil0 {fill:none}
+    .fil2 {fill:#231F20}
+    .fil1 {fill:#ED1C24}</style>
+ </defs>
+ <metadata>
+  <rdf:RDF>
+   <cc:Work rdf:about="">
+    <dc:format>image/svg+xml</dc:format>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:title>91px_91px_HCH_Hazmat</dc:title>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <g transform="matrix(4.3787 0 0 4.3787 -.47704 -4048)">
+  <path d="m0.52119 934.88 9.9749-10.015 9.9856 10.015-9.9856 9.9909z" fill="#fff"/>
+ </g>
+ <g transform="translate(35 -889.37)">
+  <path d="m-33.195 934.92c19.008-20.165 31.989-31.926 43.677-43.852 15.116 15.054 31.574 30.39 43.724 43.852-12.099 13.962-28.325 28.631-43.724 43.747-13.694-13.757-30.558-28.601-43.677-43.747z" fill="none" stroke="#0f1600" stroke-linecap="round" stroke-width="1.6973"/>
+ </g>
+ <g style="font-variant-caps:normal;font-variant-east-asian:normal;font-variant-ligatures:normal;font-variant-numeric:normal" aria-label="!">
+  <path d="m50.334 56.948q-0.04395 0.43945-0.26367 0.79102-0.21973 0.35156-0.79102 0.61523-0.52734 0.21973-1.4941 0.35156-0.92285 0.13184-2.2852 0.13184-1.4062 0-2.3291-0.13184-0.92285-0.13184-1.4941-0.35156-0.52734-0.26367-0.74707-0.61523-0.21973-0.35156-0.26367-0.79102l-1.1426-39.902q0-0.57129 0.26367-1.0107t0.92285-0.70312q0.70312-0.30762 1.8457-0.43945 1.1865-0.13184 2.9443-0.13184 1.7578 0 2.9004 0.17578 1.1426 0.13184 1.8018 0.43945 0.70312 0.26367 0.9668 0.70312 0.30762 0.39551 0.30762 0.9668zm1.3623 12.876q0 1.8018-0.30762 3.0322-0.26367 1.2305-1.0107 1.9775-0.70312 0.74707-1.8896 1.0547-1.1865 0.35156-2.9883 0.35156t-3.0322-0.35156q-1.1865-0.30762-1.8896-1.0547t-1.0107-1.9775q-0.26367-1.2305-0.26367-3.0322 0-1.8457 0.26367-3.0762 0.30762-1.2744 1.0107-2.0215 0.70312-0.79102 1.8896-1.0986 1.2305-0.35156 3.0322-0.35156t2.9883 0.35156q1.1865 0.30762 1.8896 1.0986 0.74707 0.74707 1.0107 2.0215 0.30762 1.2305 0.30762 3.0762z" fill-rule="evenodd" stroke-width="2.25"/>
+ </g>
 </svg>

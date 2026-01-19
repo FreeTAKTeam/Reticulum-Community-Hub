@@ -16,6 +16,7 @@ export const endpoints = {
   configValidate: "/Config/Validate",
   configRollback: "/Config/Rollback",
   markers: "/api/markers",
+  markerSymbols: "/api/markers/symbols",
   help: "/Help",
   examples: "/Examples",
   command: "/Command",

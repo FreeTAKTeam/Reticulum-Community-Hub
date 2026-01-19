@@ -97,7 +97,8 @@ class NorthboundServices:
         Callable[[str, Optional[str], Optional[str], Optional[dict]], ChatMessage | None]
     ] = None
     marker_service: MarkerService | None = None
-    marker_dispatcher: Optional[Callable[[dict[str, object]], bool]] = None
+    marker_dispatcher: Optional[Callable[[Marker, str], bool]] = None
+    origin_rch: str = ""
 
     def help_text(self) -> str:
         """Return the Help command text.
@@ -243,27 +244,35 @@ class NorthboundServices:
         self,
         *,
         name: Optional[str],
+        marker_type: str,
+        symbol: str,
         category: str,
         lat: float,
         lon: float,
+        origin_rch: str,
         notes: Optional[str] = None,
+        ttl_seconds: Optional[int] = None,
     ) -> Marker:
         """Create a marker and dispatch a marker.created event."""
 
         service = self._require_marker_service()
         marker = service.create_marker(
             name=name,
+            marker_type=marker_type,
+            symbol=symbol,
             category=category,
             lat=lat,
             lon=lon,
+            origin_rch=origin_rch,
             notes=notes,
+            ttl_seconds=ttl_seconds,
         )
         self._record_marker_event("marker.created", marker)
         return marker
 
     def update_marker_position(
         self,
-        marker_id: str,
+        object_destination_hash: str,
         *,
         lat: float,
         lon: float,
@@ -271,7 +280,9 @@ class NorthboundServices:
         """Update marker coordinates and dispatch marker.updated when changed."""
 
         service = self._require_marker_service()
-        result = service.update_marker_position(marker_id, lat=lat, lon=lon)
+        result = service.update_marker_position(
+            object_destination_hash, lat=lat, lon=lon
+        )
         if result.changed:
             self._record_marker_event("marker.updated", result.marker)
         return result
@@ -433,37 +444,74 @@ class NorthboundServices:
             self.event_log.add_event(
                 "marker_dispatch_skipped",
                 "Marker event dispatch is not configured",
-                metadata={"event_type": event_type, "marker_id": marker.marker_id},
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
+            )
+            return
+        if self._marker_is_expired(marker):
+            self.event_log.add_event(
+                "marker_dispatch_skipped",
+                "Marker event dispatch skipped for expired marker",
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
             )
             return
         try:
-            self.marker_dispatcher(payload)
+            self.marker_dispatcher(marker, event_type)
         except Exception as exc:  # pragma: no cover - defensive logging
             self.event_log.add_event(
                 "marker_dispatch_failed",
                 f"Marker event dispatch failed: {exc}",
-                metadata={"event_type": event_type, "marker_id": marker.marker_id},
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
             )
 
     @staticmethod
     def _marker_event_payload(event_type: str, marker: Marker) -> dict[str, object]:
         """Return a marker event payload suitable for LXMF fields."""
 
+        time_value = marker.time or marker.updated_at
+        stale_at_value = marker.stale_at or time_value
         payload: dict[str, object] = {
             "object_type": "marker",
-            "object_id": marker.marker_id,
-            "marker_id": marker.marker_id,
+            "object_id": marker.object_destination_hash,
             "event_type": event_type,
+            "marker_type": marker.marker_type,
+            "symbol": marker.symbol,
             "lat": marker.lat,
             "lon": marker.lon,
             "position": {"lat": marker.lat, "lon": marker.lon},
+            "origin_rch": marker.origin_rch,
+            "time": time_value.isoformat() if time_value else None,
+            "stale_at": stale_at_value.isoformat() if stale_at_value else None,
             "timestamp": marker.updated_at.isoformat(),
         }
         if event_type == "marker.created":
-            payload["metadata"] = {"name": marker.name, "category": marker.category}
+            payload["metadata"] = {
+                "name": marker.name,
+                "category": marker.category,
+                "symbol": marker.symbol,
+                "marker_type": marker.marker_type,
+            }
             payload["name"] = marker.name
             payload["category"] = marker.category
+            payload["symbol"] = marker.symbol
+            payload["marker_type"] = marker.marker_type
         return payload
+
+    @staticmethod
+    def _marker_is_expired(marker: Marker) -> bool:
+        """Return True when a marker is expired."""
+
+        if marker.stale_at is None:
+            return False
+        return datetime.now(timezone.utc) > marker.stale_at
 
     def _require_marker_service(self) -> MarkerService:
         """Return the marker service or raise when missing."""

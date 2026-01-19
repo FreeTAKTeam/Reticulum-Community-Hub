@@ -5,23 +5,37 @@ import { get } from "../api/client";
 import { patch } from "../api/client";
 import { post } from "../api/client";
 import type { MarkerEntry } from "../api/types";
+import type { MarkerSymbolEntry } from "../api/types";
+import type { MarkerSymbolSet } from "../utils/markers";
+import { buildMarkerSymbols } from "../utils/markers";
 import { getMarkerSymbol } from "../utils/markers";
+import { normalizeMarkerSymbolSet } from "../utils/markers";
+import { setMarkerSymbols } from "../utils/markers";
 
 export type Marker = {
   id: string;
+  objectDestinationHash?: string;
+  originRch?: string;
   type: string;
   name: string;
   category: string;
+  symbol: string;
+  symbolSet?: MarkerSymbolSet;
   notes?: string | null;
   lat: number;
   lon: number;
+  time?: string;
+  staleAt?: string;
   createdAt?: string;
   updatedAt?: string;
   color?: string;
+  expired?: boolean;
 };
 
 export type MarkerCreatePayload = {
   name?: string;
+  type: string;
+  symbol: string;
   category: string;
   lat: number;
   lon: number;
@@ -29,7 +43,7 @@ export type MarkerCreatePayload = {
 };
 
 type MarkerCreateResponse = {
-  marker_id?: string;
+  object_destination_hash?: string;
   created_at?: string;
 };
 
@@ -41,22 +55,38 @@ const fallbackMarkerId = () => {
 };
 
 const fromApiMarker = (entry: MarkerEntry): Marker | null => {
-  if (!entry.marker_id || !entry.position) {
+  if (!entry.position) {
     return null;
   }
-  const category = entry.category ?? "marker";
-  const symbol = getMarkerSymbol(category);
+  const objectHash = entry.object_destination_hash ?? entry.marker_id ?? "";
+  if (!objectHash) {
+    return null;
+  }
+  const symbolId = entry.symbol ?? entry.type ?? entry.category ?? "marker";
+  const category = entry.category ?? symbolId;
+  const categorySet = normalizeMarkerSymbolSet(category);
+  const symbol = getMarkerSymbol(symbolId, categorySet);
+  const symbolSet = symbol?.set ?? categorySet;
+  const staleAt = entry.stale_at ?? undefined;
+  const expired = staleAt ? new Date(staleAt).getTime() < Date.now() : false;
   return {
-    id: entry.marker_id,
-    type: entry.type ?? symbol?.set ?? "custom",
+    id: objectHash,
+    objectDestinationHash: entry.object_destination_hash,
+    originRch: entry.origin_rch,
+    type: entry.type ?? symbolId,
     name: entry.name ?? category,
     category,
+    symbol: symbolId,
+    symbolSet,
     notes: entry.notes ?? null,
     lat: entry.position.lat ?? 0,
     lon: entry.position.lon ?? 0,
+    time: entry.time ?? entry.updated_at ?? entry.created_at,
+    staleAt,
     createdAt: entry.created_at,
     updatedAt: entry.updated_at,
-    color: symbol?.color
+    color: symbol?.color,
+    expired
   };
 };
 
@@ -82,17 +112,30 @@ export const useMarkersStore = defineStore("markers", () => {
     }
   };
 
+  const fetchMarkerSymbols = async () => {
+    const response = await get<MarkerSymbolEntry[]>(endpoints.markerSymbols);
+    const symbols = buildMarkerSymbols(response);
+    setMarkerSymbols(symbols);
+    return symbols;
+  };
+
   const createMarker = async (payload: MarkerCreatePayload) => {
     const response = await post<MarkerCreateResponse>(endpoints.markers, payload);
-    const symbol = getMarkerSymbol(payload.category);
+    const symbolSet = normalizeMarkerSymbolSet(payload.category);
+    const symbol = getMarkerSymbol(payload.symbol, symbolSet);
     const created: Marker = {
-      id: response.marker_id ?? fallbackMarkerId(),
-      type: symbol?.set ?? "custom",
+      id: response.object_destination_hash ?? fallbackMarkerId(),
+      objectDestinationHash: response.object_destination_hash,
+      type: payload.type,
       name: payload.name ?? payload.category,
       category: payload.category,
+      symbol: payload.symbol,
+      symbolSet: symbol?.set ?? symbolSet,
       notes: payload.notes ?? null,
       lat: payload.lat,
       lon: payload.lon,
+      time: new Date().toISOString(),
+      staleAt: undefined,
       createdAt: response.created_at ?? new Date().toISOString(),
       updatedAt: response.created_at ?? new Date().toISOString(),
       color: symbol?.color
@@ -113,6 +156,7 @@ export const useMarkersStore = defineStore("markers", () => {
     markers,
     loading,
     markerIndex,
+    fetchMarkerSymbols,
     fetchMarkers,
     createMarker,
     updateMarkerPosition

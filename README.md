@@ -12,7 +12,7 @@ Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. 
 - File and image attachment storage with retrieval by ID.
 - Northbound REST + WebSocket API for operators and the admin UI.
 - Optional TAK/CoT bridge for chat and location updates.
-- Operator-managed map markers with create/move events propagated as telemetry claims.
+- Operator-managed map markers backed by Reticulum object identities and telemetry updates.
 
 ## What it looks like
 
@@ -87,6 +87,8 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
   uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
   ```
 - Protect admin endpoints by setting `RCH_API_KEY` (accepts `X-API-Key` or Bearer token).
+- Marker identity encryption is derived from the hub identity (no extra key configuration required).
+- The admin UI sidebar can be collapsed and pinned (stored per-browser).
 - The UI lives in `ui/`:
 
   ```bash
@@ -100,8 +102,9 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 Marker management endpoints (used by the WebMap UI):
 
 - `GET /api/markers` (list stored markers)
-- `POST /api/markers` (create marker with name/category/lat/lon)
-- `PATCH /api/markers/{marker_id}/position` (update marker coordinates)
+- `GET /api/markers/symbols` (list available marker symbols)
+- `POST /api/markers` (create marker with type/symbol/lat/lon, optional name/category/notes/ttl_seconds)
+- `PATCH /api/markers/{object_destination_hash}/position` (update marker coordinates)
 
 ## Documentation
 

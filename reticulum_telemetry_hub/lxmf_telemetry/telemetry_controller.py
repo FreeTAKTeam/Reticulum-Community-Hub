@@ -530,7 +530,12 @@ class TelemetryController:
             self._record_event(
                 "telemetry_request",
                 f"Telemetry request served ({len(human_readable_entries)} entries)",
-                metadata={"topic_id": topic_id} if topic_id else None,
+                metadata={
+                    "topic_id": topic_id,
+                    "timebase": timebase,
+                    "entry_count": len(human_readable_entries),
+                    "payload": human_readable_entries,
+                },
             )
             return message
         else:

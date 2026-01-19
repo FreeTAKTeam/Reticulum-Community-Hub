@@ -46,10 +46,14 @@
           v-for="marker in markersStore.markers"
           :key="marker.id"
           class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
+          :class="{ 'opacity-60 line-through': marker.expired }"
           @click="focusOperatorMarker(marker)"
         >
           <div class="font-semibold">{{ marker.name }}</div>
-          <div class="text-xs text-rth-muted">{{ marker.category }} - {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
+          <div class="text-xs text-rth-muted">
+            {{ marker.category }} - {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}
+            <span v-if="marker.expired" class="ml-2 uppercase tracking-wide text-rth-muted">Expired</span>
+          </div>
         </li>
       </ul>
     </BaseCard>
@@ -84,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, onMounted, onUnmounted, watch } from "vue";
 import { ref } from "vue";
 import maplibregl from "maplibre-gl";
 import BaseButton from "../components/BaseButton.vue";
@@ -97,8 +101,12 @@ import LoadingSkeleton from "../components/LoadingSkeleton.vue";
 import { WsClient } from "../api/ws";
 import { useMarkersStore } from "../stores/markers";
 import { useTelemetryStore } from "../stores/telemetry";
+import { buildMarkerSymbolKey } from "../utils/markers";
 import { defaultMarkerName } from "../utils/markers";
+import { getMarkerSymbolByKey } from "../utils/markers";
 import { markerSymbols } from "../utils/markers";
+import { parseMarkerSymbolKey } from "../utils/markers";
+import { resolveMarkerSymbolKey } from "../utils/markers";
 import type { TelemetryMarker } from "../utils/telemetry";
 
 const telemetry = useTelemetryStore();
@@ -123,10 +131,15 @@ let telemetryInteractionReady = false;
 let markerInteractionReady = false;
 const markerImagesReady = ref(false);
 const markerMode = ref(false);
-const markerCategory = ref(markerSymbols[0]?.id ?? "marker");
-const markerOptions = markerSymbols.map((symbol) => ({ label: symbol.label, value: symbol.id }));
+const markerCategory = ref("maki:marker");
+const markerOptions = computed(() =>
+  markerSymbols.value.map((symbol) => ({
+    label: symbol.label,
+    value: buildMarkerSymbolKey(symbol.set, symbol.id)
+  }))
+);
 const markerModalOpen = ref(false);
-const markerDraftCategory = ref(markerCategory.value);
+const markerDraftCategory = ref("maki:marker");
 const markerDraftName = ref("");
 const markerDraftNotes = ref("");
 const markerDraftLat = ref(0);
@@ -197,7 +210,8 @@ const openMarkerModal = (lngLat: maplibregl.LngLat) => {
   markerDraftLon.value = lngLat.lng;
   markerDraftCategory.value = markerCategory.value;
   if (!markerDraftName.value.trim()) {
-    markerDraftName.value = defaultMarkerName(markerDraftCategory.value);
+    const symbolId = parseMarkerSymbolKey(markerDraftCategory.value).id;
+    markerDraftName.value = defaultMarkerName(symbolId);
   }
   markerModalOpen.value = true;
   markerMode.value = false;
@@ -211,11 +225,18 @@ const closeMarkerModal = () => {
 };
 
 const confirmMarker = async () => {
-  const name = markerDraftName.value.trim() || defaultMarkerName(markerDraftCategory.value);
+  const parsedSymbol = parseMarkerSymbolKey(markerDraftCategory.value);
+  const symbol = getMarkerSymbolByKey(markerDraftCategory.value);
+  const symbolId = symbol?.id ?? parsedSymbol.id;
+  const symbolSet = symbol?.set ?? parsedSymbol.set ?? "maki";
+  const name = markerDraftName.value.trim() || defaultMarkerName(symbolId);
   const notes = markerDraftNotes.value.trim();
+  const category = symbolSet;
   const created = await markersStore.createMarker({
     name,
-    category: markerDraftCategory.value,
+    type: symbolId,
+    symbol: symbolId,
+    category,
     lat: markerDraftLat.value,
     lon: markerDraftLon.value,
     notes: notes || undefined
@@ -323,6 +344,42 @@ const stopDrag = () => {
 
 const markerIconBase = import.meta.env.BASE_URL ?? "/";
 const markerIconRoot = markerIconBase.endsWith("/") ? markerIconBase : `${markerIconBase}/`;
+const MAKI_ICON_PIXEL_SIZE = 15;
+const NAPSG_ICON_PIXEL_SIZE = 91;
+const MAKI_ICON_SCALE = 0.9;
+const NAPSG_ICON_SCALE = (MAKI_ICON_PIXEL_SIZE / NAPSG_ICON_PIXEL_SIZE) * MAKI_ICON_SCALE;
+const BASE_ICON_ZOOM = 1;
+
+const resolveIconScale = (symbolSet?: string) => {
+  return symbolSet === "napsg" ? NAPSG_ICON_SCALE : MAKI_ICON_SCALE;
+};
+
+const iconZoomScale = ["^", 1.1, ["-", ["zoom"], BASE_ICON_ZOOM]];
+
+const isSdfMarkerImage = (symbolKey: string) => {
+  if (symbolKey === "marker-fallback") {
+    return true;
+  }
+  const parsed = parseMarkerSymbolKey(symbolKey);
+  return parsed.set !== "napsg";
+};
+
+watch(
+  markerSymbols,
+  (symbols) => {
+    if (!symbols.length) {
+      return;
+    }
+    const keys = symbols.map((symbol) => buildMarkerSymbolKey(symbol.set, symbol.id));
+    if (!keys.includes(markerCategory.value)) {
+      markerCategory.value = keys[0];
+    }
+    if (!keys.includes(markerDraftCategory.value)) {
+      markerDraftCategory.value = markerCategory.value;
+    }
+  },
+  { immediate: true }
+);
 
 const markerIconUrl = (symbolSet: string, symbolId: string) => {
   return `${markerIconRoot}icons/${symbolSet}/${symbolId}.svg`;
@@ -352,13 +409,13 @@ const rasterizeImage = async (url: string) => {
   return context.getImageData(0, 0, width, height);
 };
 
-const loadMarkerImage = async (map: maplibregl.Map, id: string, url: string) => {
+const loadMarkerImage = async (map: maplibregl.Map, id: string, url: string, sdf: boolean) => {
   if (map.hasImage(id)) {
     return;
   }
   try {
     const imageData = await rasterizeImage(url);
-    map.addImage(id, imageData, { sdf: true });
+    map.addImage(id, imageData, { sdf });
   } catch (error) {
     console.warn(`Failed to load marker icon ${id} from ${url}.`, error);
   }
@@ -369,11 +426,17 @@ const loadMarkerImages = async () => {
     return;
   }
   const map = mapInstance.value;
-  await loadMarkerImage(map, "marker-fallback", markerFallbackUrl);
+  await loadMarkerImage(map, "marker-fallback", markerFallbackUrl, true);
   await Promise.all(
-    markerSymbols.map((symbol) =>
-      loadMarkerImage(map, symbol.id, markerIconUrl(symbol.set, symbol.id))
-    )
+    markerSymbols.value.map((symbol) => {
+      const symbolKey = buildMarkerSymbolKey(symbol.set, symbol.id);
+      return loadMarkerImage(
+        map,
+        symbolKey,
+        markerIconUrl(symbol.set, symbol.id),
+        isSdfMarkerImage(symbolKey)
+      );
+    })
   );
   markerImagesReady.value = true;
 };
@@ -381,10 +444,17 @@ const loadMarkerImages = async () => {
 const buildOperatorFeatureCollection = () =>
   ({
     type: "FeatureCollection",
-    features: markersStore.markers.map((marker) => {
+    features: markersStore.markers.filter((marker) => !marker.expired).map((marker) => {
       const override = dragPositions.value.get(marker.id);
       const lat = override?.lat ?? marker.lat;
       const lon = override?.lon ?? marker.lon;
+      const symbolKey = resolveMarkerSymbolKey(
+        marker.symbol,
+        marker.symbolSet ?? marker.category
+      );
+      const parsedSymbol = parseMarkerSymbolKey(symbolKey);
+      const symbolSet = parsedSymbol.set ?? "maki";
+      const iconScale = resolveIconScale(symbolSet);
       return {
         type: "Feature",
         geometry: {
@@ -394,7 +464,9 @@ const buildOperatorFeatureCollection = () =>
         properties: {
           id: marker.id,
           name: marker.name,
-          symbol: marker.category,
+          symbol: symbolKey,
+          symbolSet,
+          iconScale,
           color: marker.color
         }
       };
@@ -562,7 +634,11 @@ const renderOperatorMarkers = () => {
       source: sourceId,
       layout: {
         "icon-image": ["coalesce", ["image", ["get", "symbol"]], ["image", "marker-fallback"]],
-        "icon-size": 0.9,
+        "icon-size": [
+          "*",
+          ["coalesce", ["get", "iconScale"], MAKI_ICON_SCALE],
+          iconZoomScale
+        ],
         "icon-allow-overlap": true
       },
       paint: {
@@ -592,7 +668,16 @@ const renderMarkers = () => {
   renderOperatorMarkers();
 };
 
+const loadMarkerSymbols = async () => {
+  try {
+    await markersStore.fetchMarkerSymbols();
+  } catch (error) {
+    console.warn("Failed to load marker symbols.", error);
+  }
+};
+
 onMounted(async () => {
+  const symbolsPromise = loadMarkerSymbols();
   if (mapContainer.value) {
     mapInstance.value = new maplibregl.Map({
       container: mapContainer.value,
@@ -600,15 +685,16 @@ onMounted(async () => {
       center: [0, 0],
       zoom: 1
     });
-    mapInstance.value.on("load", () => {
+    mapInstance.value.on("load", async () => {
       mapReady.value = true;
-      void loadMarkerImages().then(() => {
-        renderMarkers();
-      });
+      await symbolsPromise;
+      await loadMarkerImages();
+      renderMarkers();
       mapInstance.value?.on("click", handleMapClick);
     });
   }
   await telemetry.fetchTelemetry(sinceSeconds());
+  await symbolsPromise;
   await markersStore.fetchMarkers();
   renderMarkers();
 

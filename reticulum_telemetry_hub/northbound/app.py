@@ -16,6 +16,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from reticulum_telemetry_hub.api.models import ChatMessage
+from reticulum_telemetry_hub.api.models import Marker
+from reticulum_telemetry_hub.api.marker_identity import derive_marker_identity_key_from_path
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
@@ -83,7 +85,9 @@ def create_app(
     message_dispatcher: Optional[
         Callable[[str, Optional[str], Optional[str], Optional[dict]], ChatMessage | None]
     ] = None,
-    marker_dispatcher: Optional[Callable[[dict[str, object]], bool]] = None,
+    marker_dispatcher: Optional[Callable[[Marker, str], bool]] = None,
+    marker_service: Optional[MarkerService] = None,
+    origin_rch: Optional[str] = None,
     message_listener: Optional[
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
     ] = None,
@@ -99,7 +103,9 @@ def create_app(
         routing_provider (Optional[Callable[[], list[str]]]): Provider for routing destinations.
         started_at (Optional[datetime]): Start time for uptime calculations.
         auth (Optional[ApiAuth]): Auth validator.
-        marker_dispatcher (Optional[Callable[[dict[str, object]], bool]]): Marker telemetry dispatcher.
+        marker_dispatcher (Optional[Callable[[Marker, str], bool]]): Marker telemetry dispatcher.
+        marker_service (Optional[MarkerService]): Marker service override.
+        origin_rch (Optional[str]): Originating hub identity hash.
 
     Returns:
         FastAPI: Configured FastAPI application.
@@ -136,6 +142,13 @@ def create_app(
         )
     else:
         telemetry_controller.set_event_log(event_log)
+    if marker_service is None:
+        identity_path = storage_path / "identity"
+        marker_identity_key = derive_marker_identity_key_from_path(identity_path)
+        marker_service = MarkerService(
+            MarkerStorage(hub_db_path),
+            identity_key_provider=lambda: marker_identity_key,
+        )
     services = NorthboundServices(
         api=api,
         telemetry=telemetry_controller,
@@ -144,8 +157,9 @@ def create_app(
         command_manager=command_manager,
         routing_provider=routing_provider,
         message_dispatcher=message_dispatcher,
-        marker_service=MarkerService(MarkerStorage(hub_db_path)),
+        marker_service=marker_service,
         marker_dispatcher=marker_dispatcher,
+        origin_rch=origin_rch or "",
     )
     auth = auth or ApiAuth()
     require_protected = build_protected_dependency(auth)

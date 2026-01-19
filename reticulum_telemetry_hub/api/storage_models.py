@@ -82,12 +82,18 @@ class MarkerRecord(Base):  # pylint: disable=too-few-public-methods
     __tablename__ = "markers"
 
     id = Column(String, primary_key=True)
+    object_destination_hash = Column(String, nullable=True, unique=True)
+    origin_rch = Column(String, nullable=True)
+    object_identity_storage_key = Column(String, nullable=True)
     marker_type = Column(String, nullable=False)
+    symbol = Column(String, nullable=False, default="")
     name = Column(String, nullable=False)
     category = Column(String, nullable=False)
     notes = Column(String, nullable=True)
     lat = Column(Float, nullable=False)
     lon = Column(Float, nullable=False)
+    time = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    stale_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False

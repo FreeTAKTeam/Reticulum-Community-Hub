@@ -70,22 +70,52 @@ def test_chat_send_payload_rejects_invalid_scope() -> None:
         ChatSendPayload.model_validate({"Content": "hello", "Scope": "invalid"})
 
 
-def test_marker_payload_accepts_supported_category() -> None:
-    """Ensure marker payload accepts supported symbol categories."""
+def test_marker_payload_accepts_supported_symbols() -> None:
+    """Ensure marker payload accepts supported marker symbols."""
 
     payload = MarkerCreatePayload.model_validate(
-        {"name": "Alpha", "category": "fire", "lat": 1.0, "lon": 2.0}
+        {
+            "name": "Alpha",
+            "type": "fire",
+            "symbol": "fire",
+            "category": "napsg",
+            "lat": 1.0,
+            "lon": 2.0,
+        }
     )
 
-    assert payload.category == "fire"
+    assert payload.marker_type == "fire"
+    assert payload.symbol == "fire"
+    assert payload.category == "napsg"
 
 
-def test_marker_payload_rejects_unknown_category() -> None:
-    """Ensure marker payload rejects unsupported categories."""
+def test_marker_payload_rejects_unknown_type() -> None:
+    """Ensure marker payload rejects unsupported types."""
 
     with pytest.raises(ValidationError):
         MarkerCreatePayload.model_validate(
-            {"name": "Alpha", "category": "unknown", "lat": 1.0, "lon": 2.0}
+            {
+                "name": "Alpha",
+                "type": "unknown",
+                "symbol": "fire",
+                "lat": 1.0,
+                "lon": 2.0,
+            }
+        )
+
+
+def test_marker_payload_rejects_unknown_symbol() -> None:
+    """Ensure marker payload rejects unsupported symbols."""
+
+    with pytest.raises(ValidationError):
+        MarkerCreatePayload.model_validate(
+            {
+                "name": "Alpha",
+                "type": "fire",
+                "symbol": "unknown",
+                "lat": 1.0,
+                "lon": 2.0,
+            }
         )
 
 

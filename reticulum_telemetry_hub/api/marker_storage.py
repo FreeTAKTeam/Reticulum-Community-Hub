@@ -10,12 +10,12 @@ from typing import Optional
 import uuid
 
 from sqlalchemy import create_engine
+from sqlalchemy import or_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
-from .marker_symbols import resolve_marker_symbol_set
 from .models import Marker
 from .storage_base import HubStorageBase
 from .storage_models import Base
@@ -44,6 +44,7 @@ class MarkerStorage(HubStorageBase):
         self._engine = self._create_engine(db_path)
         self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
+        self._ensure_marker_schema()
         self._session_factory = sessionmaker(  # pylint: disable=invalid-name
             bind=self._engine, expire_on_commit=False
         )
@@ -58,17 +59,22 @@ class MarkerStorage(HubStorageBase):
             Marker: Stored marker instance.
         """
 
-        marker_id = marker.marker_id or uuid.uuid4().hex
-        marker_type = marker.marker_type or resolve_marker_symbol_set(marker.category)
+        marker_id = marker.local_id or uuid.uuid4().hex
         with self._session_scope() as session:
             record = MarkerRecord(
                 id=marker_id,
-                marker_type=marker_type,
+                object_destination_hash=marker.object_destination_hash,
+                origin_rch=marker.origin_rch,
+                object_identity_storage_key=marker.object_identity_storage_key,
+                marker_type=marker.marker_type,
+                symbol=marker.symbol,
                 name=marker.name,
                 category=marker.category,
                 notes=marker.notes,
                 lat=marker.lat,
                 lon=marker.lon,
+                time=marker.time,
+                stale_at=marker.stale_at,
                 created_at=marker.created_at,
                 updated_at=marker.updated_at,
             )
@@ -87,50 +93,139 @@ class MarkerStorage(HubStorageBase):
             )
             return [self._marker_from_record(record) for record in records]
 
-    def get_marker(self, marker_id: str) -> Optional[Marker]:
-        """Return a marker by its identifier.
+    def list_uninitialized_markers(self) -> List[Marker]:
+        """Return markers missing identity metadata."""
+
+        with self._session_scope() as session:
+            records = (
+                session.query(MarkerRecord)
+                .filter(
+                    or_(
+                        MarkerRecord.object_destination_hash.is_(None),
+                        MarkerRecord.object_destination_hash == "",
+                    )
+                )
+                .all()
+            )
+            return [self._marker_from_record(record) for record in records]
+
+    def get_marker(self, object_destination_hash: str) -> Optional[Marker]:
+        """Return a marker by its destination hash.
 
         Args:
-            marker_id (str): Marker identifier.
+            object_destination_hash (str): Marker destination hash.
 
         Returns:
             Optional[Marker]: Matching marker or None.
         """
 
         with self._session_scope() as session:
-            record = session.get(MarkerRecord, marker_id)
+            record = (
+                session.query(MarkerRecord)
+                .filter(MarkerRecord.object_destination_hash == object_destination_hash)
+                .one_or_none()
+            )
+            return self._marker_from_record(record) if record else None
+
+    def get_marker_by_local_id(self, local_id: str) -> Optional[Marker]:
+        """Return a marker by its local identifier.
+
+        Args:
+            local_id (str): Marker local identifier.
+
+        Returns:
+            Optional[Marker]: Matching marker or None.
+        """
+
+        with self._session_scope() as session:
+            record = session.get(MarkerRecord, local_id)
             return self._marker_from_record(record) if record else None
 
     def update_marker_position(
         self,
-        marker_id: str,
+        object_destination_hash: str,
         *,
         lat: float,
         lon: float,
         updated_at: Optional[datetime] = None,
+        time: Optional[datetime] = None,
+        stale_at: Optional[datetime] = None,
     ) -> Optional[Marker]:
         """Update marker coordinates and return the updated record.
 
         Args:
-            marker_id (str): Marker identifier to update.
+            object_destination_hash (str): Marker destination hash to update.
             lat (float): Updated latitude.
             lon (float): Updated longitude.
             updated_at (Optional[object]): Optional timestamp override.
+            time (Optional[datetime]): Optional marker observation time.
+            stale_at (Optional[datetime]): Optional marker expiration timestamp.
 
         Returns:
             Optional[Marker]: Updated marker or None if missing.
         """
 
         with self._session_scope() as session:
-            record = session.get(MarkerRecord, marker_id)
+            record = (
+                session.query(MarkerRecord)
+                .filter(MarkerRecord.object_destination_hash == object_destination_hash)
+                .one_or_none()
+            )
             if not record:
                 return None
             record.lat = float(lat)
             record.lon = float(lon)
+            if time is not None:
+                record.time = time
+            if stale_at is not None:
+                record.stale_at = stale_at
             if updated_at is not None:
                 record.updated_at = updated_at
             else:
                 record.updated_at = _utcnow()
+            session.commit()
+            return self._marker_from_record(record)
+
+    def update_marker_identity(
+        self,
+        local_id: str,
+        *,
+        object_destination_hash: str,
+        origin_rch: str,
+        object_identity_storage_key: str,
+        marker_type: str,
+        symbol: str,
+        time: datetime,
+        stale_at: datetime,
+    ) -> Optional[Marker]:
+        """Update marker identity metadata for a local marker.
+
+        Args:
+            local_id (str): Marker local identifier.
+            object_destination_hash (str): Destination hash for the marker.
+            origin_rch (str): Originating hub identity hash.
+            object_identity_storage_key (str): Encrypted identity storage key.
+            marker_type (str): Marker type identifier.
+            symbol (str): Marker symbol identifier.
+            time (datetime): Marker observation time.
+            stale_at (datetime): Marker expiration timestamp.
+
+        Returns:
+            Optional[Marker]: Updated marker or None if missing.
+        """
+
+        with self._session_scope() as session:
+            record = session.get(MarkerRecord, local_id)
+            if not record:
+                return None
+            record.object_destination_hash = object_destination_hash
+            record.origin_rch = origin_rch
+            record.object_identity_storage_key = object_identity_storage_key
+            record.marker_type = marker_type
+            record.symbol = symbol
+            record.time = time
+            record.stale_at = stale_at
+            record.updated_at = _utcnow()
             session.commit()
             return self._marker_from_record(record)
 
@@ -167,6 +262,41 @@ class MarkerStorage(HubStorageBase):
         except OperationalError as exc:
             logging.warning("Failed to enable WAL mode for markers: %s", exc)
 
+    def _ensure_marker_schema(self) -> None:
+        """Ensure marker schema columns exist for legacy databases."""
+
+        try:
+            with self._engine.connect() as conn:
+                result = conn.exec_driver_sql("PRAGMA table_info(markers);")
+                existing = {row[1] for row in result.fetchall()}
+                if not existing:
+                    return
+                statements = []
+                if "object_destination_hash" not in existing:
+                    statements.append(
+                        "ALTER TABLE markers ADD COLUMN object_destination_hash TEXT"
+                    )
+                if "origin_rch" not in existing:
+                    statements.append(
+                        "ALTER TABLE markers ADD COLUMN origin_rch TEXT"
+                    )
+                if "object_identity_storage_key" not in existing:
+                    statements.append(
+                        "ALTER TABLE markers ADD COLUMN object_identity_storage_key TEXT"
+                    )
+                if "symbol" not in existing:
+                    statements.append("ALTER TABLE markers ADD COLUMN symbol TEXT")
+                if "time" not in existing:
+                    statements.append("ALTER TABLE markers ADD COLUMN time DATETIME")
+                if "stale_at" not in existing:
+                    statements.append(
+                        "ALTER TABLE markers ADD COLUMN stale_at DATETIME"
+                    )
+                for statement in statements:
+                    conn.exec_driver_sql(statement)
+        except OperationalError as exc:
+            logging.warning("Failed to update marker schema: %s", exc)
+
     @staticmethod
     def _marker_from_record(record: MarkerRecord) -> Marker:
         """Convert a MarkerRecord into a domain model.
@@ -179,13 +309,19 @@ class MarkerStorage(HubStorageBase):
         """
 
         return Marker(
-            marker_id=record.id,
+            local_id=record.id,
+            object_destination_hash=record.object_destination_hash,
+            origin_rch=record.origin_rch,
+            object_identity_storage_key=record.object_identity_storage_key,
             marker_type=record.marker_type,
+            symbol=record.symbol or "",
             name=record.name,
             category=record.category,
             notes=record.notes,
             lat=record.lat,
             lon=record.lon,
+            time=record.time,
+            stale_at=record.stale_at,
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

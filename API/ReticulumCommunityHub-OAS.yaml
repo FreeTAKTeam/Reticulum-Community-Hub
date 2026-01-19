@@ -157,7 +157,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MarkerCreateResponse'
-  /api/markers/{marker_id}/position:
+  /api/markers/symbols:
+    get:
+      x-scope: protected
+      tags:
+       - Marker
+      summary: List available marker symbols.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Marker symbol definitions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MarkerSymbol'
+  /api/markers/{object_destination_hash}/position:
     patch:
       x-scope: protected
       tags:
@@ -167,7 +185,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - name: marker_id
+        - name: object_destination_hash
           in: path
           required: true
           schema:
@@ -188,8 +206,12 @@ paths:
                 properties:
                   status:
                     type: string
+                  updated_at:
+                    type: string
+                    format: date-time
                 required:
                   - status
+                  - updated_at
   /telemetry/stream:
     get:
       x-scope: public
@@ -937,22 +959,45 @@ components:
             type: string
             format: date-time
             description: When the attachment metadata was last updated.
+      MarkerSymbol:
+        type: object
+        description: Marker symbol identifier and icon set.
+        properties:
+          id:
+            type: string
+            description: Marker symbol identifier.
+          set:
+            type: string
+            description: Marker symbol set.
+            enum:
+              - napsg
+              - maki
+        required:
+          - id
+          - set
       Marker:
         type: object
         description: Operator-managed marker record.
         properties:
-          marker_id:
+          object_destination_hash:
             type: string
-            description: Unique marker identifier.
+            description: Destination hash for the marker object identity.
+          origin_rch:
+            type: string
+            nullable: true
+            description: Destination hash for the originating hub identity.
           type:
             type: string
-            description: Marker symbol set (napsg or maki).
+            description: Marker type identifier (matches available icon keys).
+          symbol:
+            type: string
+            description: Marker symbol identifier (icon key).
           name:
             type: string
             description: Marker display name.
           category:
             type: string
-            description: Marker symbol identifier.
+            description: Marker category (such as the symbol set).
           notes:
             type: string
             nullable: true
@@ -969,6 +1014,16 @@ components:
             required:
               - lat
               - lon
+          time:
+            type: string
+            format: date-time
+            nullable: true
+            description: Marker observation time.
+          stale_at:
+            type: string
+            format: date-time
+            nullable: true
+            description: Marker expiration time.
           created_at:
             type: string
             format: date-time
@@ -976,8 +1031,9 @@ components:
             type: string
             format: date-time
         required:
-          - marker_id
+          - object_destination_hash
           - type
+          - symbol
           - name
           - category
           - position
@@ -987,12 +1043,18 @@ components:
         type: object
         description: Marker creation payload.
         properties:
+          type:
+            type: string
+            description: Marker type identifier (matches available icon keys).
+          symbol:
+            type: string
+            description: Marker symbol identifier (icon key).
           name:
             type: string
             description: Optional marker name.
           category:
             type: string
-            description: Marker symbol identifier.
+            description: Marker category (such as the symbol set).
           lat:
             type: number
             format: float
@@ -1002,21 +1064,26 @@ components:
           notes:
             type: string
             nullable: true
+          ttl_seconds:
+            type: integer
+            nullable: true
+            description: Optional TTL override in seconds.
         required:
-          - category
+          - type
+          - symbol
           - lat
           - lon
       MarkerCreateResponse:
         type: object
         description: Marker creation response.
         properties:
-          marker_id:
+          object_destination_hash:
             type: string
           created_at:
             type: string
             format: date-time
         required:
-          - marker_id
+          - object_destination_hash
           - created_at
       MarkerPositionUpdate:
         type: object

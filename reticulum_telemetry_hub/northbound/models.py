@@ -15,6 +15,7 @@ from pydantic import field_validator
 from pydantic import model_validator
 
 from reticulum_telemetry_hub.api.marker_symbols import is_supported_marker_symbol
+from reticulum_telemetry_hub.api.marker_symbols import SUPPORTED_MARKER_SYMBOLS
 
 
 def _normalize_aliases(values: object, alias_map: dict[str, tuple[str, ...]]) -> object:
@@ -219,20 +220,45 @@ class ChatSendPayload(BaseModel):
 class MarkerCreatePayload(BaseModel):
     """Payload for creating operator markers."""
 
+    marker_type: str = Field(
+        validation_alias=AliasChoices("type", "marker_type", "markerType"),
+        json_schema_extra={"enum": SUPPORTED_MARKER_SYMBOLS},
+    )
+    symbol: str = Field(json_schema_extra={"enum": SUPPORTED_MARKER_SYMBOLS})
     name: Optional[str] = None
-    category: str
+    category: Optional[str] = None
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
     notes: Optional[str] = None
+    ttl_seconds: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("marker_type")
+    @classmethod
+    def _validate_marker_type(cls, value: str) -> str:
+        """Validate marker type against supported symbols."""
+
+        if not is_supported_marker_symbol(value):
+            raise ValueError("Unsupported marker type")
+        return value
+
+    @field_validator("symbol")
+    @classmethod
+    def _validate_symbol(cls, value: str) -> str:
+        """Validate marker symbol against supported symbols."""
+
+        if not is_supported_marker_symbol(value):
+            raise ValueError("Unsupported marker symbol")
+        return value
 
     @field_validator("category")
     @classmethod
-    def _validate_category(cls, value: str) -> str:
-        """Validate marker category against supported symbols."""
+    def _normalize_category(cls, value: Optional[str]) -> Optional[str]:
+        """Normalize marker category whitespace."""
 
-        if not is_supported_marker_symbol(value):
-            raise ValueError("Unsupported marker category")
-        return value
+        if value is None:
+            return None
+        trimmed = value.strip()
+        return trimmed or None
 
 
 class MarkerPositionPayload(BaseModel):

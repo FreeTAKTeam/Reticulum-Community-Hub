@@ -18,6 +18,7 @@ class OutboundPayload:
         destination_hash (bytes | None): Raw destination hash for diagnostics.
         destination_hex (str | None): Hex-encoded destination hash for logging.
         fields (dict | None): Optional LXMF fields to include with the message.
+        sender (RNS.Destination): Sender identity for the message.
         attempts (int): Number of delivery attempts performed.
         next_attempt_at (float): Monotonic timestamp before the next attempt.
     """
@@ -27,6 +28,7 @@ class OutboundPayload:
     destination_hash: bytes | None
     destination_hex: str | None
     fields: dict | None = None
+    sender: RNS.Destination | None = None
     attempts: int = 0
     next_attempt_at: float = field(default_factory=time.monotonic)
 
@@ -105,6 +107,7 @@ class OutboundMessageQueue:
         destination_hash: bytes | None,
         destination_hex: str | None,
         fields: dict | None = None,
+        sender: RNS.Destination | None = None,
     ) -> bool:
         """
         Enqueue a message for delivery.
@@ -126,6 +129,7 @@ class OutboundMessageQueue:
             destination_hash=destination_hash,
             destination_hex=destination_hex,
             fields=fields,
+            sender=sender or self._sender,
         )
         return self._enqueue_payload(payload)
 
@@ -222,7 +226,7 @@ class OutboundMessageQueue:
             try:
                 message = LXMF.LXMessage(
                     payload.connection,
-                    self._sender,
+                    payload.sender or self._sender,
                     payload.message_text,
                     fields=payload.fields or {},
                     desired_method=LXMF.LXMessage.DIRECT,
@@ -284,7 +288,7 @@ class OutboundMessageQueue:
         try:
             message = LXMF.LXMessage(
                 payload.connection,
-                self._sender,
+                payload.sender or self._sender,
                 payload.message_text,
                 fields=payload.fields or {},
                 desired_method=LXMF.LXMessage.DIRECT,

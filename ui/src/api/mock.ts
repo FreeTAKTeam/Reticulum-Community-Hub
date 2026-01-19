@@ -60,11 +60,15 @@ const mockState = {
   ],
   markers: [
     {
-      marker_id: "marker-1",
-      type: "napsg",
+      object_destination_hash: "marker-obj-1",
+      origin_rch: "origin-1",
+      type: "fire",
+      symbol: "fire",
       name: "fire+demo",
-      category: "fire",
+      category: "napsg",
       position: { lat: 37.777, lon: -122.42 },
+      time: nowIso(),
+      stale_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       created_at: nowIso(),
       updated_at: nowIso(),
       notes: "Initial mock marker"
@@ -81,6 +85,21 @@ const mockState = {
   ],
   configText: "[core]\napp_name=RTH Core\n"
 };
+
+const mockMarkerSymbols = [
+  { id: "fire", set: "napsg" },
+  { id: "hazmat", set: "napsg" },
+  { id: "medical", set: "napsg" },
+  { id: "police", set: "napsg" },
+  { id: "search", set: "napsg" },
+  { id: "shelter", set: "napsg" },
+  { id: "marker", set: "maki" },
+  { id: "town-hall", set: "maki" },
+  { id: "dog-park", set: "maki" },
+  { id: "hospital", set: "maki" },
+  { id: "bus", set: "maki" },
+  { id: "airfield", set: "maki" }
+];
 
 let topicCounter = 3;
 let subscriberCounter = 2;
@@ -326,32 +345,47 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     }
     if (method === "POST") {
       const body = (await parseBody(options.body)) as any;
+      const objectHash = `marker-obj-${markerCounter++}`;
+      const now = nowIso();
       const marker = {
-        marker_id: `marker-${markerCounter++}`,
-        type: body?.category?.includes("town") ? "maki" : "napsg",
+        object_destination_hash: objectHash,
+        origin_rch: "origin-1",
+        type: body?.type ?? body?.symbol ?? "marker",
+        symbol: body?.symbol ?? body?.type ?? "marker",
         name: body?.name ?? `marker-${markerCounter}`,
-        category: body?.category ?? "marker",
+        category: body?.category ?? "maki",
         position: { lat: body?.lat ?? 0, lon: body?.lon ?? 0 },
-        created_at: nowIso(),
-        updated_at: nowIso(),
+        time: now,
+        stale_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        created_at: now,
+        updated_at: now,
         notes: body?.notes ?? null
       };
       mockState.markers.push(marker);
-      return jsonResponse({ marker_id: marker.marker_id, created_at: marker.created_at }, 201);
+      return jsonResponse(
+        { object_destination_hash: marker.object_destination_hash, created_at: marker.created_at },
+        201
+      );
     }
+  }
+
+  if (pathname === "/api/markers/symbols") {
+    return jsonResponse(mockMarkerSymbols);
   }
 
   const markerPositionMatch = pathname.match(/^\/api\/markers\/(.+?)\/position$/);
   if (markerPositionMatch && method === "PATCH") {
     const markerId = markerPositionMatch[1];
     const body = (await parseBody(options.body)) as any;
-    const target = mockState.markers.find((entry) => entry.marker_id === markerId);
+    const target = mockState.markers.find((entry) => entry.object_destination_hash === markerId);
     if (!target) {
       return jsonResponse({ detail: "Marker not found" }, 404);
     }
     target.position = { lat: body?.lat ?? target.position.lat, lon: body?.lon ?? target.position.lon };
+    target.time = nowIso();
+    target.stale_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     target.updated_at = nowIso();
-    return jsonResponse({ status: "ok" });
+    return jsonResponse({ status: "ok", updated_at: target.updated_at });
   }
 
   if (pathname === "/api/v1/app/info") {
