@@ -1,4 +1,12 @@
 # TASKS
+- 2026-01-23: DONE. Switch marker symbol validation to a YAML registry and drop Maki support.
+- 2026-01-23: DONE. Normalize marker symbol aliases to accept telemetry icon labels.
+- 2026-01-23: DONE. Allow MDI marker symbols in marker creation and add route test coverage.
+- 2026-01-23: DONE. Cluster operator markers and add tests for zoom/cluster utilities.
+- 2026-01-23: DONE. Scale telemetry clustering radius by zoom for continent/state/city aggregation.
+- 2026-01-23: DONE. Rebuild telemetry clustering layers when missing to ensure clusters render.
+- 2026-01-23: DONE. Enable MapLibre clustering for telemetry markers at low zoom.
+- 2026-01-23: DONE. Reduce MDI telemetry icon base size and keep zoom scaling.
 - 2026-01-23: DONE. Switch marker type selector to MDI telemetry icons.
 - 2026-01-23: DONE. Add rch lifecycle entrypoint, control endpoints, dashboard buttons, and docs updates.
 - 2026-01-23: DONE. Add MDI telemetry icons and mapping in the WebMap UI.

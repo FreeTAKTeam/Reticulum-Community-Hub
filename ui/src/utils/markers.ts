@@ -2,31 +2,36 @@ import { computed } from "vue";
 import { ref } from "vue";
 import type { MarkerSymbolEntry } from "../api/types";
 
-export type MarkerSymbolSet = "napsg" | "maki";
+export type MarkerSymbolSet = "napsg" | "mdi";
 
 export type MarkerSymbol = {
   id: string;
   label: string;
   set: MarkerSymbolSet;
   color: string;
+  mdi?: string;
 };
 
 const NAPSG_COLORS = ["#F97316", "#FACC15", "#EF4444", "#60A5FA", "#FBBF24", "#34D399"];
-const MAKI_COLORS = ["#38BDF8", "#A78BFA", "#F59E0B", "#F87171", "#22D3EE", "#94A3B8"];
+const MDI_COLORS = ["#38BDF8", "#A78BFA", "#F59E0B", "#F87171", "#22D3EE", "#94A3B8"];
 
 const FALLBACK_SYMBOLS: MarkerSymbol[] = [
-  { id: "fire", label: "NAPSG - Fire", set: "napsg", color: "#F97316" },
-  { id: "hazmat", label: "NAPSG - Hazmat", set: "napsg", color: "#FACC15" },
-  { id: "medical", label: "NAPSG - Medical", set: "napsg", color: "#EF4444" },
-  { id: "police", label: "NAPSG - Police", set: "napsg", color: "#60A5FA" },
-  { id: "search", label: "NAPSG - Search", set: "napsg", color: "#FBBF24" },
-  { id: "shelter", label: "NAPSG - Shelter", set: "napsg", color: "#34D399" },
-  { id: "marker", label: "Maki - Marker", set: "maki", color: "#38BDF8" },
-  { id: "town-hall", label: "Maki - Town Hall", set: "maki", color: "#A78BFA" },
-  { id: "dog-park", label: "Maki - Dog Park", set: "maki", color: "#F59E0B" },
-  { id: "hospital", label: "Maki - Hospital", set: "maki", color: "#F87171" },
-  { id: "bus", label: "Maki - Bus", set: "maki", color: "#22D3EE" },
-  { id: "airfield", label: "Maki - Airfield", set: "maki", color: "#94A3B8" }
+  { id: "marker", label: "Marker", set: "mdi", color: "#38BDF8", mdi: "map-marker" },
+  { id: "vehicle", label: "Vehicle", set: "mdi", color: "#A78BFA", mdi: "car" },
+  { id: "drone", label: "Drone", set: "mdi", color: "#F59E0B", mdi: "drone" },
+  { id: "animal", label: "Animal", set: "mdi", color: "#F87171", mdi: "paw" },
+  { id: "sensor", label: "Sensor", set: "mdi", color: "#22D3EE", mdi: "radar" },
+  { id: "radio", label: "Radio", set: "mdi", color: "#94A3B8", mdi: "radio" },
+  { id: "antenna", label: "Antenna", set: "mdi", color: "#38BDF8", mdi: "antenna" },
+  { id: "camera", label: "Camera", set: "mdi", color: "#A78BFA", mdi: "camera" },
+  { id: "fire", label: "Fire", set: "mdi", color: "#F59E0B", mdi: "fire" },
+  { id: "flood", label: "Flood", set: "mdi", color: "#F87171", mdi: "home-flood" },
+  { id: "person", label: "Person", set: "mdi", color: "#22D3EE", mdi: "account" },
+  { id: "group", label: "Group / Community", set: "mdi", color: "#94A3B8", mdi: "account-group" },
+  { id: "infrastructure", label: "Infrastructure", set: "mdi", color: "#38BDF8", mdi: "office-building" },
+  { id: "medic", label: "Medic", set: "mdi", color: "#A78BFA", mdi: "hospital" },
+  { id: "alert", label: "Alert", set: "mdi", color: "#F59E0B", mdi: "alert" },
+  { id: "task", label: "Task", set: "mdi", color: "#F87171", mdi: "clipboard-check" }
 ];
 
 const FALLBACK_SYMBOL_MAP = new Map(
@@ -35,7 +40,7 @@ const FALLBACK_SYMBOL_MAP = new Map(
 
 export const normalizeMarkerSymbolSet = (value?: string): MarkerSymbolSet | undefined => {
   const normalized = value?.toLowerCase();
-  if (normalized === "napsg" || normalized === "maki") {
+  if (normalized === "napsg" || normalized === "mdi") {
     return normalized;
   }
   return undefined;
@@ -54,12 +59,15 @@ export const parseMarkerSymbolKey = (value: string) => {
 
 const titleizeSymbol = (value: string) =>
   value
-    .split("-")
+    .split(/[-.]+/)
     .filter((segment) => segment)
     .map((segment) => segment[0]?.toUpperCase() + segment.slice(1))
     .join(" ");
 
 const symbolLabel = (id: string, set: MarkerSymbolSet) => {
+  if (set === "mdi") {
+    return titleizeSymbol(id);
+  }
   const setLabel = set.toUpperCase();
   return `${setLabel} - ${titleizeSymbol(id)}`;
 };
@@ -73,26 +81,36 @@ const hashSymbol = (value: string) => {
 };
 
 const resolveSymbolColor = (id: string, set: MarkerSymbolSet) => {
-  const palette = set === "napsg" ? NAPSG_COLORS : MAKI_COLORS;
+  const palette = set === "napsg" ? NAPSG_COLORS : MDI_COLORS;
   const index = hashSymbol(id) % palette.length;
   return palette[index];
 };
+
+const normalizeMdiName = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
 const buildSymbolFromEntry = (entry: MarkerSymbolEntry): MarkerSymbol | null => {
   const id = entry.id?.trim().toLowerCase();
   if (!id) {
     return null;
   }
-  const set = normalizeMarkerSymbolSet(entry.set) ?? "maki";
+  const set = normalizeMarkerSymbolSet(entry.set) ?? "mdi";
   const fallback = FALLBACK_SYMBOL_MAP.get(id);
   if (fallback) {
     return { ...fallback, set };
   }
+  const description = typeof entry.description === "string" ? entry.description.trim() : "";
+  const mdi = typeof entry.mdi === "string" ? normalizeMdiName(entry.mdi) : undefined;
   return {
     id,
-    label: symbolLabel(id, set),
+    label: description || symbolLabel(id, set),
     set,
-    color: resolveSymbolColor(id, set)
+    color: resolveSymbolColor(id, set),
+    mdi: mdi || (set === "mdi" ? id : undefined)
   };
 };
 
@@ -153,7 +171,7 @@ export const resolveMarkerSymbolKey = (id: string, set?: string) => {
   if (normalizedSet) {
     return buildMarkerSymbolKey(normalizedSet, id);
   }
-  return buildMarkerSymbolKey("maki", id);
+  return buildMarkerSymbolKey("mdi", id);
 };
 
 export const defaultMarkerName = (category: string) => {

@@ -104,5 +104,61 @@ def test_marker_symbols_route(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert {"id": "fire", "set": "napsg"} in payload
-    assert {"id": "marker", "set": "maki"} in payload
+    assert {"id": "marker", "set": "mdi"} in payload
+    assert {"id": "vehicle", "set": "mdi"} in payload
+
+
+def test_marker_routes_accept_mdi_symbols(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("RTH_MARKER_IDENTITY_KEY", "22" * 32)
+    client, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    create_response = client.post(
+        "/api/markers",
+        headers=headers,
+        json={
+            "name": "Vehicle",
+            "type": "vehicle",
+            "symbol": "vehicle",
+            "category": "vehicle",
+            "lat": 10.0,
+            "lon": 11.0,
+        },
+    )
+
+    assert create_response.status_code == 201
+    marker_id = create_response.json()["object_destination_hash"]
+    list_response = client.get("/api/markers", headers=headers)
+    assert list_response.status_code == 200
+    marker = next(
+        item for item in list_response.json() if item["object_destination_hash"] == marker_id
+    )
+    assert marker["symbol"] == "vehicle"
+
+
+def test_marker_routes_normalize_alias_symbols(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("RTH_MARKER_IDENTITY_KEY", "33" * 32)
+    client, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    create_response = client.post(
+        "/api/markers",
+        headers=headers,
+        json={
+            "name": "Community",
+            "type": "Group / Community",
+            "symbol": "Group / Community",
+            "category": "Group / Community",
+            "lat": 12.0,
+            "lon": 13.0,
+        },
+    )
+
+    assert create_response.status_code == 201
+    marker_id = create_response.json()["object_destination_hash"]
+    list_response = client.get("/api/markers", headers=headers)
+    assert list_response.status_code == 200
+    marker = next(
+        item for item in list_response.json() if item["object_destination_hash"] == marker_id
+    )
+    assert marker["symbol"] == "group"

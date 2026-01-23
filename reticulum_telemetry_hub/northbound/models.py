@@ -15,6 +15,7 @@ from pydantic import field_validator
 from pydantic import model_validator
 
 from reticulum_telemetry_hub.api.marker_symbols import is_supported_marker_symbol
+from reticulum_telemetry_hub.api.marker_symbols import normalize_marker_symbol
 from reticulum_telemetry_hub.api.marker_symbols import SUPPORTED_MARKER_SYMBOLS
 
 
@@ -231,6 +232,24 @@ class MarkerCreatePayload(BaseModel):
     lon: float = Field(ge=-180, le=180)
     notes: Optional[str] = None
     ttl_seconds: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("marker_type", mode="before")
+    @classmethod
+    def _normalize_marker_type(cls, value: object) -> object:
+        """Normalize marker type aliases before validation."""
+
+        if isinstance(value, str):
+            return normalize_marker_symbol(value)
+        return value
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _normalize_symbol(cls, value: object) -> object:
+        """Normalize marker symbol aliases before validation."""
+
+        if isinstance(value, str):
+            return normalize_marker_symbol(value)
+        return value
 
     @field_validator("marker_type")
     @classmethod

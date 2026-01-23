@@ -87,18 +87,22 @@ const mockState = {
 };
 
 const mockMarkerSymbols = [
-  { id: "fire", set: "napsg" },
-  { id: "hazmat", set: "napsg" },
-  { id: "medical", set: "napsg" },
-  { id: "police", set: "napsg" },
-  { id: "search", set: "napsg" },
-  { id: "shelter", set: "napsg" },
-  { id: "marker", set: "maki" },
-  { id: "town-hall", set: "maki" },
-  { id: "dog-park", set: "maki" },
-  { id: "hospital", set: "maki" },
-  { id: "bus", set: "maki" },
-  { id: "airfield", set: "maki" }
+  { id: "marker", set: "mdi", mdi: "map-marker", description: "Marker", category: "general" },
+  { id: "vehicle", set: "mdi", mdi: "car", description: "Vehicle", category: "mobility" },
+  { id: "drone", set: "mdi", mdi: "drone", description: "Drone", category: "mobility" },
+  { id: "animal", set: "mdi", mdi: "paw", description: "Animal", category: "wildlife" },
+  { id: "sensor", set: "mdi", mdi: "radar", description: "Sensor", category: "equipment" },
+  { id: "radio", set: "mdi", mdi: "radio", description: "Radio", category: "equipment" },
+  { id: "antenna", set: "mdi", mdi: "antenna", description: "Antenna", category: "equipment" },
+  { id: "camera", set: "mdi", mdi: "camera", description: "Camera", category: "equipment" },
+  { id: "fire", set: "mdi", mdi: "fire", description: "Fire", category: "incident" },
+  { id: "flood", set: "mdi", mdi: "home-flood", description: "Flood", category: "incident" },
+  { id: "person", set: "mdi", mdi: "account", description: "Person", category: "people" },
+  { id: "group", set: "mdi", mdi: "account-group", description: "Group / Community", category: "people" },
+  { id: "infrastructure", set: "mdi", mdi: "office-building", description: "Infrastructure", category: "infrastructure" },
+  { id: "medic", set: "mdi", mdi: "hospital", description: "Medic", category: "medical" },
+  { id: "alert", set: "mdi", mdi: "alert", description: "Alert", category: "incident" },
+  { id: "task", set: "mdi", mdi: "clipboard-check", description: "Task", category: "task" }
 ];
 
 let topicCounter = 3;
@@ -377,7 +381,7 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
         type: body?.type ?? body?.symbol ?? "marker",
         symbol: body?.symbol ?? body?.type ?? "marker",
         name: body?.name ?? `marker-${markerCounter}`,
-        category: body?.category ?? "maki",
+        category: body?.category ?? body?.symbol ?? "marker",
         position: { lat: body?.lat ?? 0, lon: body?.lon ?? 0 },
         time: now,
         stale_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),

@@ -110,6 +110,10 @@ export interface MarkerEntry {
 export interface MarkerSymbolEntry {
   id?: string;
   set?: string;
+  mdi?: string;
+  description?: string;
+  tak?: string;
+  category?: string;
 }
 
 export interface AppInfo {

@@ -103,15 +103,14 @@ import { useMarkersStore } from "../stores/markers";
 import { useTelemetryStore } from "../stores/telemetry";
 import { buildMarkerSymbolKey } from "../utils/markers";
 import { defaultMarkerName } from "../utils/markers";
+import { getMarkerSymbol } from "../utils/markers";
 import { markerSymbols } from "../utils/markers";
-import { parseMarkerSymbolKey } from "../utils/markers";
-import { resolveMarkerSymbolKey } from "../utils/markers";
+import { resolveClusterRadius } from "../utils/map-cluster";
+import { resolveZoomScale } from "../utils/map-cluster";
+import { loadMdiSvg } from "../utils/mdi-icons";
 import { buildTelemetryIconId } from "../utils/telemetry-icons";
-import { isTelemetryIconKey } from "../utils/telemetry-icons";
 import { resolveTelemetryIconKey } from "../utils/telemetry-icons";
-import { telemetryIcons } from "../utils/telemetry-icons";
-import { telemetryIconOptions } from "../utils/telemetry-icons";
-import type { TelemetryIconKey } from "../utils/telemetry-icons";
+import { resolveTelemetryIconValue } from "../utils/telemetry-icons";
 import type { TelemetryMarker } from "../utils/telemetry";
 
 const telemetry = useTelemetryStore();
@@ -133,14 +132,25 @@ const defaultStyleUrl = new URL("../assets/map-style.json", import.meta.url).toS
 const mapStyle = import.meta.env.VITE_RTH_MAP_STYLE_URL ?? defaultStyleUrl;
 let pollerId: number | undefined;
 let telemetryInteractionReady = false;
+let telemetryIconInteractionReady = false;
 let markerInteractionReady = false;
+let telemetryClusterRadius: number | null = null;
+let operatorClusterRadius: number | null = null;
 const markerImagesReady = ref(false);
 const telemetryIconsReady = ref(false);
 const markerMode = ref(false);
-const markerCategory = ref<TelemetryIconKey>("marker");
-const markerOptions = telemetryIconOptions;
+const markerCategory = ref<string>("marker");
+const markerOptions = computed(() =>
+  markerSymbols.value.map((symbol) => ({
+    label: symbol.label,
+    value: symbol.id
+  }))
+);
+const symbolKeySet = computed(
+  () => new Set(markerSymbols.value.filter((symbol) => symbol.set !== "napsg").map((symbol) => symbol.id))
+);
 const markerModalOpen = ref(false);
-const markerDraftCategory = ref<TelemetryIconKey>("marker");
+const markerDraftCategory = ref<string>("marker");
 const markerDraftName = ref("");
 const markerDraftNotes = ref("");
 const markerDraftLat = ref(0);
@@ -148,6 +158,17 @@ const markerDraftLon = ref(0);
 const draggingMarkerId = ref<string | null>(null);
 const draggingMarkerOrigin = ref<{ lat: number; lon: number } | null>(null);
 const dragPositions = ref(new Map<string, { lat: number; lon: number }>());
+const ensureMarkerSelection = () => {
+  if (!markerSymbols.value.length) {
+    return;
+  }
+  if (!markerSymbols.value.some((symbol) => symbol.id === markerCategory.value)) {
+    markerCategory.value = markerSymbols.value[0].id;
+  }
+  if (!markerSymbols.value.some((symbol) => symbol.id === markerDraftCategory.value)) {
+    markerDraftCategory.value = markerCategory.value;
+  }
+};
 const handleInspectorViewportChange = () => {
   if (inspectorOpen.value && selected.value) {
     updateInspectorPosition(selected.value);
@@ -340,26 +361,17 @@ const stopDrag = () => {
 
 const markerIconBase = import.meta.env.BASE_URL ?? "/";
 const markerIconRoot = markerIconBase.endsWith("/") ? markerIconBase : `${markerIconBase}/`;
-const MAKI_ICON_PIXEL_SIZE = 15;
+const MDI_ICON_PIXEL_SIZE = 24;
 const NAPSG_ICON_PIXEL_SIZE = 91;
-const MAKI_ICON_SCALE = 0.9;
-const NAPSG_ICON_SCALE = (MAKI_ICON_PIXEL_SIZE / NAPSG_ICON_PIXEL_SIZE) * MAKI_ICON_SCALE;
-const BASE_ICON_ZOOM = 1;
-const TELEMETRY_ICON_SCALE = 0.85;
+const TELEMETRY_ICON_SCALE = 0.153;
+const NAPSG_ICON_SCALE = (MDI_ICON_PIXEL_SIZE / NAPSG_ICON_PIXEL_SIZE) * TELEMETRY_ICON_SCALE;
 const TELEMETRY_ICON_COLOR = "#82DBF7";
-
-const resolveIconScale = (symbolSet?: string) => {
-  return symbolSet === "napsg" ? NAPSG_ICON_SCALE : MAKI_ICON_SCALE;
-};
-
-const resolveZoomScale = (zoom: number) => {
-  return Math.pow(1.1, zoom - BASE_ICON_ZOOM);
-};
+const TELEMETRY_CLUSTER_MAX_ZOOM = 12;
 
 const buildIconSizeExpression = (zoom: number) => {
   return [
     "*",
-    ["coalesce", ["get", "iconScale"], MAKI_ICON_SCALE],
+    ["coalesce", ["get", "iconScale"], TELEMETRY_ICON_SCALE],
     resolveZoomScale(zoom)
   ];
 };
@@ -387,12 +399,12 @@ const handleMarkerZoom = () => {
   }
 };
 
-const isSdfMarkerImage = (symbolKey: string) => {
-  if (symbolKey === "marker-fallback") {
-    return true;
+const handleClusterZoom = () => {
+  if (!mapInstance.value || !mapReady.value) {
+    return;
   }
-  const parsed = parseMarkerSymbolKey(symbolKey);
-  return parsed.set !== "napsg";
+  renderTelemetryMarkers();
+  renderOperatorMarkers();
 };
 
 const markerIconUrl = (symbolSet: string, symbolId: string) => {
@@ -443,29 +455,22 @@ const loadMarkerImages = async () => {
   const map = mapInstance.value;
   await loadMarkerImage(map, "marker-fallback", markerFallbackUrl, true);
   await Promise.all(
-    markerSymbols.value.map((symbol) => {
-      const symbolKey = buildMarkerSymbolKey(symbol.set, symbol.id);
-      return loadMarkerImage(
-        map,
-        symbolKey,
-        markerIconUrl(symbol.set, symbol.id),
-        isSdfMarkerImage(symbolKey)
-      );
+    markerSymbols.value.map(async (symbol) => {
+      if (symbol.set === "napsg") {
+        const symbolKey = buildMarkerSymbolKey(symbol.set, symbol.id);
+        await loadMarkerImage(map, symbolKey, markerIconUrl(symbol.set, symbol.id), false);
+        return;
+      }
+      const mdiName = symbol.mdi ?? symbol.id;
+      const svg = await loadMdiSvg(mdiName);
+      if (!svg) {
+        console.warn(`Failed to load MDI icon ${mdiName} for symbol ${symbol.id}.`);
+        return;
+      }
+      await loadMarkerImage(map, buildTelemetryIconId(symbol.id), svgToDataUrl(svg), true);
     })
   );
   markerImagesReady.value = true;
-};
-
-const loadTelemetryIcons = async () => {
-  if (!mapInstance.value) {
-    return;
-  }
-  const map = mapInstance.value;
-  await Promise.all(
-    telemetryIcons.map((icon) =>
-      loadMarkerImage(map, buildTelemetryIconId(icon.key), svgToDataUrl(icon.svg), true)
-    )
-  );
   telemetryIconsReady.value = true;
 };
 
@@ -476,17 +481,20 @@ const buildOperatorFeatureCollection = () =>
       const override = dragPositions.value.get(marker.id);
       const lat = override?.lat ?? marker.lat;
       const lon = override?.lon ?? marker.lon;
-      const mdiKey = isTelemetryIconKey(marker.symbol)
-        ? marker.symbol
-        : isTelemetryIconKey(marker.category)
-          ? marker.category
-          : undefined;
+      const resolvedSymbol = marker.symbol ? resolveTelemetryIconValue(marker.symbol, symbolKeySet.value) : "";
+      const resolvedCategory = marker.category
+        ? resolveTelemetryIconValue(marker.category, symbolKeySet.value)
+        : "";
+      const symbolInfo =
+        getMarkerSymbol(resolvedSymbol || marker.symbol, marker.symbolSet ?? marker.category) ??
+        getMarkerSymbol(resolvedCategory || marker.category, marker.symbolSet ?? marker.category);
+      const mdiKey = symbolInfo?.set === "mdi" ? symbolInfo.id : undefined;
       const symbolKey = mdiKey
         ? buildTelemetryIconId(mdiKey)
-        : resolveMarkerSymbolKey(marker.symbol, marker.symbolSet ?? marker.category);
-      const iconScale = mdiKey
-        ? TELEMETRY_ICON_SCALE
-        : resolveIconScale(marker.symbolSet ?? marker.category);
+        : symbolInfo?.set === "napsg"
+          ? buildMarkerSymbolKey(symbolInfo.set, symbolInfo.id)
+          : "marker-fallback";
+      const iconScale = symbolInfo?.set === "napsg" ? NAPSG_ICON_SCALE : TELEMETRY_ICON_SCALE;
       return {
         type: "Feature",
         geometry: {
@@ -574,13 +582,16 @@ const stopMarkerDrag = () => {
 };
 
 const renderTelemetryMarkers = () => {
-  if (!mapInstance.value || !mapReady.value || !telemetryIconsReady.value) {
+  if (!mapInstance.value || !mapReady.value) {
     return;
   }
   const map = mapInstance.value;
   const sourceId = "telemetry";
+  const clusterLayerId = "telemetry-clusters";
+  const clusterCountLayerId = "telemetry-cluster-count";
   const layerId = "telemetry-icons";
-  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+  const clusterRadius = resolveClusterRadius(map.getZoom());
+  let existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
   const featureCollection = {
     type: "FeatureCollection",
     features: telemetry.markers.map((marker) => ({
@@ -592,7 +603,7 @@ const renderTelemetryMarkers = () => {
       properties: {
         id: marker.id,
         name: marker.name,
-        icon: buildTelemetryIconId(resolveTelemetryIconKey(marker.raw))
+        icon: buildTelemetryIconId(resolveTelemetryIconKey(marker.raw, symbolKeySet.value))
       }
     }))
   } as GeoJSON.FeatureCollection;
@@ -601,15 +612,133 @@ const renderTelemetryMarkers = () => {
     existing.setData(featureCollection);
   }
 
+  const clusterLayersMissing = !map.getLayer(clusterLayerId) || !map.getLayer(clusterCountLayerId);
+  if (existing && telemetryClusterRadius !== clusterRadius) {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+    if (map.getLayer(clusterCountLayerId)) {
+      map.removeLayer(clusterCountLayerId);
+    }
+    if (map.getLayer(clusterLayerId)) {
+      map.removeLayer(clusterLayerId);
+    }
+    map.removeSource(sourceId);
+    existing = undefined;
+  }
+
   if (!existing) {
     map.addSource(sourceId, {
       type: "geojson",
-      data: featureCollection
+      data: featureCollection,
+      cluster: true,
+      clusterMaxZoom: TELEMETRY_CLUSTER_MAX_ZOOM,
+      clusterRadius
     });
+    telemetryClusterRadius = clusterRadius;
+    map.addLayer({
+      id: clusterLayerId,
+      type: "circle",
+      source: sourceId,
+      filter: ["has", "point_count"],
+      paint: {
+        "circle-color": [
+          "step",
+          ["get", "point_count"],
+          "#64E1FF",
+          10,
+          "#39C6FF",
+          25,
+          "#12B7FF"
+        ],
+        "circle-radius": [
+          "step",
+          ["get", "point_count"],
+          14,
+          10,
+          18,
+          25,
+          22
+        ],
+        "circle-opacity": 0.95,
+        "circle-stroke-color": "#E6FAFF",
+        "circle-stroke-width": 2
+      }
+    });
+    map.addLayer({
+      id: clusterCountLayerId,
+      type: "symbol",
+      source: sourceId,
+      filter: ["has", "point_count"],
+      layout: {
+        "text-field": "{point_count_abbreviated}",
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 12,
+        "text-allow-overlap": true,
+        "text-ignore-placement": true
+      },
+      paint: {
+        "text-color": "#03101C"
+      }
+    });
+  } else if (clusterLayersMissing) {
+    if (!map.getLayer(clusterLayerId)) {
+      map.addLayer({
+        id: clusterLayerId,
+        type: "circle",
+        source: sourceId,
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step",
+            ["get", "point_count"],
+            "#64E1FF",
+            10,
+            "#39C6FF",
+            25,
+            "#12B7FF"
+          ],
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            14,
+            10,
+            18,
+            25,
+            22
+          ],
+          "circle-opacity": 0.95,
+          "circle-stroke-color": "#E6FAFF",
+          "circle-stroke-width": 2
+        }
+      });
+    }
+    if (!map.getLayer(clusterCountLayerId)) {
+      map.addLayer({
+        id: clusterCountLayerId,
+        type: "symbol",
+        source: sourceId,
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": "{point_count_abbreviated}",
+          "text-font": ["Noto Sans Regular"],
+          "text-size": 12,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true
+        },
+        paint: {
+          "text-color": "#03101C"
+        }
+      });
+    }
+  }
+
+  if (telemetryIconsReady.value && !map.getLayer(layerId)) {
     map.addLayer({
       id: layerId,
       type: "symbol",
       source: sourceId,
+      filter: ["!", ["has", "point_count"]],
       layout: {
         "icon-image": ["coalesce", ["image", ["get", "icon"]], ["image", "mdi-marker"]],
         "icon-size": buildTelemetryIconSizeExpression(map.getZoom()),
@@ -622,6 +751,43 @@ const renderTelemetryMarkers = () => {
   }
 
   if (!telemetryInteractionReady) {
+    map.on("click", clusterLayerId, (event) => {
+      const feature = event.features?.[0];
+      const clusterId = feature?.properties?.cluster_id;
+      if (clusterId === undefined || clusterId === null) {
+        return;
+      }
+      const source = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+      if (!source) {
+        return;
+      }
+      source.getClusterExpansionZoom(Number(clusterId), (error, zoom) => {
+        if (error) {
+          return;
+        }
+        const geometry = feature?.geometry as GeoJSON.Point | undefined;
+        const coordinates = geometry?.coordinates as [number, number] | undefined;
+        if (!coordinates) {
+          return;
+        }
+        map.easeTo({ center: coordinates, zoom });
+      });
+    });
+    map.on("mouseenter", clusterLayerId, () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", clusterLayerId, () => {
+      map.getCanvas().style.cursor = "";
+    });
+    map.on("move", () => {
+      if (inspectorOpen.value && selected.value) {
+        updateInspectorPosition(selected.value);
+      }
+    });
+    telemetryInteractionReady = true;
+  }
+
+  if (!telemetryIconInteractionReady && telemetryIconsReady.value && map.getLayer(layerId)) {
     map.on("click", layerId, (event) => {
       const feature = event.features?.[0];
       const markerId = feature?.properties?.id;
@@ -639,35 +805,167 @@ const renderTelemetryMarkers = () => {
     map.on("mouseleave", layerId, () => {
       map.getCanvas().style.cursor = "";
     });
-    map.on("move", () => {
-      if (inspectorOpen.value && selected.value) {
-        updateInspectorPosition(selected.value);
-      }
-    });
-    telemetryInteractionReady = true;
+    telemetryIconInteractionReady = true;
   }
 };
 
 const renderOperatorMarkers = () => {
-  if (!mapInstance.value || !mapReady.value || !markerImagesReady.value || !telemetryIconsReady.value) {
+  if (!mapInstance.value || !mapReady.value || !markerImagesReady.value) {
     return;
   }
   const map = mapInstance.value;
   const sourceId = "operator-markers";
+  const clusterLayerId = "operator-marker-clusters";
+  const clusterCountLayerId = "operator-marker-cluster-count";
   const layerId = "operator-marker-layer";
+  const clusterRadius = resolveClusterRadius(map.getZoom());
   const featureCollection = buildOperatorFeatureCollection();
-  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+  let existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
   if (existing) {
     existing.setData(featureCollection);
-  } else {
+  }
+
+  const operatorClusterLayersMissing = !map.getLayer(clusterLayerId) || !map.getLayer(clusterCountLayerId);
+  if (existing && operatorClusterRadius !== clusterRadius) {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+    if (map.getLayer(clusterCountLayerId)) {
+      map.removeLayer(clusterCountLayerId);
+    }
+    if (map.getLayer(clusterLayerId)) {
+      map.removeLayer(clusterLayerId);
+    }
+    map.removeSource(sourceId);
+    existing = undefined;
+  }
+
+  if (!existing) {
     map.addSource(sourceId, {
       type: "geojson",
-      data: featureCollection
+      data: featureCollection,
+      cluster: true,
+      clusterMaxZoom: TELEMETRY_CLUSTER_MAX_ZOOM,
+      clusterRadius
+    });
+    operatorClusterRadius = clusterRadius;
+    map.addLayer({
+      id: clusterLayerId,
+      type: "circle",
+      source: sourceId,
+      filter: ["has", "point_count"],
+      paint: {
+        "circle-color": [
+          "step",
+          ["get", "point_count"],
+          "#FFD166",
+          10,
+          "#FFB703",
+          25,
+          "#FB8C00"
+        ],
+        "circle-radius": [
+          "step",
+          ["get", "point_count"],
+          14,
+          10,
+          18,
+          25,
+          22
+        ],
+        "circle-opacity": 0.95,
+        "circle-stroke-color": "#FFF4D6",
+        "circle-stroke-width": 2
+      }
+    });
+    map.addLayer({
+      id: clusterCountLayerId,
+      type: "symbol",
+      source: sourceId,
+      filter: ["has", "point_count"],
+      layout: {
+        "text-field": "{point_count_abbreviated}",
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 12,
+        "text-allow-overlap": true,
+        "text-ignore-placement": true
+      },
+      paint: {
+        "text-color": "#2B1D06"
+      }
     });
     map.addLayer({
       id: layerId,
       type: "symbol",
       source: sourceId,
+      filter: ["!", ["has", "point_count"]],
+      layout: {
+        "icon-image": ["coalesce", ["image", ["get", "symbol"]], ["image", "marker-fallback"]],
+        "icon-size": buildIconSizeExpression(map.getZoom()),
+        "icon-allow-overlap": true
+      },
+      paint: {
+        "icon-color": ["coalesce", ["get", "color"], "#FBBF24"]
+      }
+    });
+  } else if (operatorClusterLayersMissing) {
+    if (!map.getLayer(clusterLayerId)) {
+      map.addLayer({
+        id: clusterLayerId,
+        type: "circle",
+        source: sourceId,
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step",
+            ["get", "point_count"],
+            "#FFD166",
+            10,
+            "#FFB703",
+            25,
+            "#FB8C00"
+          ],
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            14,
+            10,
+            18,
+            25,
+            22
+          ],
+          "circle-opacity": 0.95,
+          "circle-stroke-color": "#FFF4D6",
+          "circle-stroke-width": 2
+        }
+      });
+    }
+    if (!map.getLayer(clusterCountLayerId)) {
+      map.addLayer({
+        id: clusterCountLayerId,
+        type: "symbol",
+        source: sourceId,
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": "{point_count_abbreviated}",
+          "text-font": ["Noto Sans Regular"],
+          "text-size": 12,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true
+        },
+        paint: {
+          "text-color": "#2B1D06"
+        }
+      });
+    }
+  }
+
+  if (!map.getLayer(layerId)) {
+    map.addLayer({
+      id: layerId,
+      type: "symbol",
+      source: sourceId,
+      filter: ["!", ["has", "point_count"]],
       layout: {
         "icon-image": ["coalesce", ["image", ["get", "symbol"]], ["image", "marker-fallback"]],
         "icon-size": buildIconSizeExpression(map.getZoom()),
@@ -684,12 +982,44 @@ const renderOperatorMarkers = () => {
   if (!markerInteractionReady) {
     map.on("mousedown", layerId, startMarkerDrag);
     map.on("zoom", handleMarkerZoom);
+    map.on("click", clusterLayerId, (event) => {
+      const feature = event.features?.[0];
+      const clusterId = feature?.properties?.cluster_id;
+      if (clusterId === undefined || clusterId === null) {
+        return;
+      }
+      const source = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+      if (!source) {
+        return;
+      }
+      source.getClusterExpansionZoom(Number(clusterId), (error, zoom) => {
+        if (error) {
+          return;
+        }
+        const geometry = feature?.geometry as GeoJSON.Point | undefined;
+        const coordinates = geometry?.coordinates as [number, number] | undefined;
+        if (!coordinates) {
+          return;
+        }
+        map.easeTo({ center: coordinates, zoom });
+      });
+    });
     map.on("mouseenter", layerId, () => {
       if (!draggingMarkerId.value) {
         map.getCanvas().style.cursor = "move";
       }
     });
     map.on("mouseleave", layerId, () => {
+      if (!draggingMarkerId.value) {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+    map.on("mouseenter", clusterLayerId, () => {
+      if (!draggingMarkerId.value) {
+        map.getCanvas().style.cursor = "pointer";
+      }
+    });
+    map.on("mouseleave", clusterLayerId, () => {
       if (!draggingMarkerId.value) {
         map.getCanvas().style.cursor = "";
       }
@@ -708,6 +1038,8 @@ const loadMarkerSymbols = async () => {
     await markersStore.fetchMarkerSymbols();
   } catch (error) {
     console.warn("Failed to load marker symbols.", error);
+  } finally {
+    ensureMarkerSelection();
   }
 };
 
@@ -724,9 +1056,9 @@ onMounted(async () => {
       mapReady.value = true;
       await symbolsPromise;
       await loadMarkerImages();
-      await loadTelemetryIcons();
       renderMarkers();
       mapInstance.value?.on("click", handleMapClick);
+      mapInstance.value?.on("zoomend", handleClusterZoom);
     });
   }
   await telemetry.fetchTelemetry(sinceSeconds());
@@ -771,6 +1103,7 @@ onUnmounted(() => {
     window.clearInterval(pollerId);
   }
   if (mapInstance.value) {
+    mapInstance.value.off("zoomend", handleClusterZoom);
     mapInstance.value.off("zoom", handleMarkerZoom);
   }
   window.removeEventListener("resize", handleInspectorViewportChange);

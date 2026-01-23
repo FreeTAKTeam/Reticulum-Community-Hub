@@ -17,6 +17,7 @@ from .marker_identity import encrypt_marker_identity
 from .marker_identity import marker_destination_hash
 from .marker_storage import MarkerStorage
 from .marker_symbols import is_supported_marker_symbol
+from .marker_symbols import normalize_marker_symbol
 from .models import Marker
 
 
@@ -188,9 +189,9 @@ class MarkerService:
         """
 
         local_id = uuid.uuid4().hex
-        normalized_type = (marker_type or "").strip().lower()
-        normalized_symbol = (symbol or "").strip().lower()
-        normalized_category = (category or "").strip().lower()
+        normalized_type = normalize_marker_symbol(marker_type or "marker")
+        normalized_symbol = normalize_marker_symbol(symbol or "marker")
+        normalized_category = normalize_marker_symbol(category or "")
         if not normalized_category:
             normalized_category = normalized_symbol or normalized_type or "marker"
         if not normalized_type:
@@ -292,10 +293,12 @@ class MarkerService:
             identity_key = self._resolve_identity_key()
             storage_key = encrypt_marker_identity(identity, identity_key=identity_key)
             destination_hash = marker_destination_hash(identity)
-            marker_type = (
+            marker_type = normalize_marker_symbol(
                 marker.marker_type or marker.category or "marker"
-            ).strip().lower()
-            symbol = (marker.symbol or marker.category or marker_type).strip().lower()
+            )
+            symbol = normalize_marker_symbol(
+                marker.symbol or marker.category or marker_type
+            )
             if not is_supported_marker_symbol(symbol):
                 symbol = marker_type if is_supported_marker_symbol(marker_type) else "marker"
             if not is_supported_marker_symbol(marker_type):

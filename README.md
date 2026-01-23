@@ -97,6 +97,7 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 - Marker identity encryption is derived from the hub identity (no extra key configuration required).
 - The admin UI sidebar can be collapsed and pinned (stored per-browser).
 - Telemetry map markers render MDI icons when telemetry payloads include `telemetry_type`, `symbol`, `category`, or `type`.
+- Marker symbols load from `rch-symbols.yaml` (override with `RTH_SYMBOL_REGISTRY_PATH`).
 - The UI lives in `ui/`:
 
   ```bash

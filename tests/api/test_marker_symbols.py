@@ -9,5 +9,5 @@ def test_list_marker_symbols_includes_defaults() -> None:
     symbols = list_marker_symbols()
     ids = {(entry["id"], entry["set"]) for entry in symbols}
 
-    assert ("fire", "napsg") in ids
-    assert ("marker", "maki") in ids
+    assert ("marker", "mdi") in ids
+    assert ("vehicle", "mdi") in ids
