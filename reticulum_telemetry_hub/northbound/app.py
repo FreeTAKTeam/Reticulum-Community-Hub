@@ -32,6 +32,8 @@ from .auth import ApiAuth
 from .auth import build_protected_dependency
 from .routes_files import register_file_routes
 from .routes_chat import register_chat_routes
+from .routes_control import ControlService
+from .routes_control import register_control_routes
 from .routes_markers import register_marker_routes
 from .routes_rest import register_core_routes
 from .routes_subscribers import register_subscriber_routes
@@ -92,6 +94,7 @@ def create_app(
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
     ] = None,
     internal_adapter: Optional[InternalAdapter] = None,
+    control: Optional[ControlService] = None,
 ) -> FastAPI:
     """Create the northbound FastAPI application.
 
@@ -106,6 +109,7 @@ def create_app(
         marker_dispatcher (Optional[Callable[[Marker, str], bool]]): Marker telemetry dispatcher.
         marker_service (Optional[MarkerService]): Marker service override.
         origin_rch (Optional[str]): Originating hub identity hash.
+        control (Optional[ControlService]): Optional gateway control surface.
 
     Returns:
         FastAPI: Configured FastAPI application.
@@ -216,6 +220,12 @@ def create_app(
         telemetry_broadcaster=telemetry_broadcaster,
         message_broadcaster=message_broadcaster,
     )
+    if control is not None:
+        register_control_routes(
+            app,
+            control=control,
+            require_protected=require_protected,
+        )
     adapter = internal_adapter or build_internal_adapter()
     register_internal_adapter(app, adapter=adapter)
 

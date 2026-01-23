@@ -153,6 +153,30 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     });
   }
 
+  if (pathname === "/Control/Status") {
+    return jsonResponse({
+      status: "running",
+      pid: 4321,
+      host: "127.0.0.1",
+      port: 8000,
+      uptime_seconds: 4521
+    });
+  }
+
+  if (pathname === "/Control/Start" && method === "POST") {
+    return jsonResponse({
+      status: "running",
+      pid: 4321,
+      host: "127.0.0.1",
+      port: 8000,
+      uptime_seconds: 1
+    });
+  }
+
+  if (pathname === "/Control/Stop" && method === "POST") {
+    return jsonResponse({ status: "stopping" });
+  }
+
   if (pathname === "/Events") {
     return jsonResponse(mockState.events);
   }

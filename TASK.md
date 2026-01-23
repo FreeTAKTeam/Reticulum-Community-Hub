@@ -1,4 +1,8 @@
 # TASKS
+- 2026-01-23: DONE. Switch marker type selector to MDI telemetry icons.
+- 2026-01-23: DONE. Add rch lifecycle entrypoint, control endpoints, dashboard buttons, and docs updates.
+- 2026-01-23: DONE. Add MDI telemetry icons and mapping in the WebMap UI.
+- 2026-01-19: DONE. Fix WebMap marker zoom scaling visibility regression.
 - 2026-01-19: DONE. Scale WebMap markers by zoom level.
 - 2026-01-19: DONE. Fix WebMap SVG marker rendering and normalize NAPSG/Maki icon sizes.
 - 2026-01-19: DONE. Make navigation bar collapsable and pinnable.

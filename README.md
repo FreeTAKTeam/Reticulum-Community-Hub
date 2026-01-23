@@ -48,6 +48,10 @@ Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. 
        --storage_dir ./RCH_Store \
        --display_name "RCH"
    ```
+   Or start the hub + northbound API locally with the new entrypoint:
+   ```bash
+   rch start --data-dir ./RCH_Store --port 8000 --log-level info
+   ```
 
 For configuration, services, and client usage details, see `docs/userManual.md`.
 
@@ -77,18 +81,22 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 
 - Run the hub + API together (recommended for chat/message sending):
   ```bash
-  python -m reticulum_telemetry_hub.northbound.gateway \
-      --storage_dir ./RCH_Store \
-      --api-host 0.0.0.0 \
-      --api-port 8000
+  rch start --data-dir ./RCH_Store --port 8000 --log-level info
+  ```
+  The gateway binds to `127.0.0.1` for local-only access.
+- Check or stop the backend:
+  ```bash
+  rch status --data-dir ./RCH_Store
+  rch stop --data-dir ./RCH_Store
   ```
 - Run only the API server (read-only unless you provide a message dispatcher):
   ```bash
-  uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
+  uvicorn reticulum_telemetry_hub.northbound.app:app --host 127.0.0.1 --port 8000
   ```
 - Protect admin endpoints by setting `RCH_API_KEY` (accepts `X-API-Key` or Bearer token).
 - Marker identity encryption is derived from the hub identity (no extra key configuration required).
 - The admin UI sidebar can be collapsed and pinned (stored per-browser).
+- Telemetry map markers render MDI icons when telemetry payloads include `telemetry_type`, `symbol`, `category`, or `type`.
 - The UI lives in `ui/`:
 
   ```bash

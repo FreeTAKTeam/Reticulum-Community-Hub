@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@mdi/svg": "^7.4.47",
     "maplibre-gl": "^4.7.1",
     "markdown-it": "^14.1.0",
     "pinia": "^2.1.7",

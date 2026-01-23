@@ -21,5 +21,8 @@ export const endpoints = {
   examples: "/Examples",
   command: "/Command",
   appInfo: "/api/v1/app/info",
-  rth: "/RTH"
+  rth: "/RTH",
+  controlStart: "/Control/Start",
+  controlStop: "/Control/Stop",
+  controlStatus: "/Control/Status"
 };

@@ -28,6 +28,7 @@ def _build_marker(**overrides: object) -> Marker:
         "category": "napsg",
         "lat": 1.0,
         "lon": 2.0,
+        "stale_at": None,
         "notes": None,
     }
     defaults.update(overrides)

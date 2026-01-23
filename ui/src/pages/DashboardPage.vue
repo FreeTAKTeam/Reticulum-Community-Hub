@@ -23,6 +23,22 @@
       </div>
     </BaseCard>
 
+    <BaseCard title="Backend Control">
+      <div class="flex flex-wrap items-center gap-3 text-sm text-rth-muted">
+        <BaseBadge v-if="controlStatus" :tone="controlStatusTone">{{ controlStatusLabel }}</BaseBadge>
+        <span v-if="controlStatus">PID: {{ controlStatus.pid ?? "-" }}</span>
+        <span v-if="controlStatus">Port: {{ controlStatus.port ?? "-" }}</span>
+        <span v-if="!controlStatus">Status unavailable.</span>
+      </div>
+      <div class="mt-4 flex flex-wrap gap-2">
+        <BaseButton :disabled="controlBusy" icon-left="play" @click="startBackend">Start</BaseButton>
+        <BaseButton :disabled="controlBusy" variant="secondary" icon-left="stop" @click="stopBackend">Stop</BaseButton>
+        <BaseButton :disabled="controlBusy" variant="secondary" icon-left="refresh" @click="refreshControlStatus">
+          Status
+        </BaseButton>
+      </div>
+    </BaseCard>
+
     <BaseCard title="Recent Events">
       <LoadingSkeleton v-if="dashboard.loading" />
       <div v-else class="max-h-96 overflow-y-auto pr-1 scrollbar-thin">
@@ -44,17 +60,31 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import BaseBadge from "../components/BaseBadge.vue";
+import BaseButton from "../components/BaseButton.vue";
 import BaseCard from "../components/BaseCard.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
+import { get, post } from "../api/client";
+import { endpoints } from "../api/endpoints";
 import { WsClient } from "../api/ws";
 import { useDashboardStore } from "../stores/dashboard";
+import { useToastStore } from "../stores/toasts";
 import { formatNumber } from "../utils/format";
 import { formatTimestamp } from "../utils/format";
 
 const dashboard = useDashboardStore();
+const toastStore = useToastStore();
 let pollerId: number | undefined;
 const wsClient = ref<WsClient | null>(null);
+const controlStatus = ref<ControlStatus | null>(null);
+const controlBusy = ref(false);
+
+interface ControlStatus {
+  status?: string;
+  pid?: number;
+  port?: number;
+  uptime_seconds?: number;
+}
 
 const uptime = computed(() => {
   const value = dashboard.status?.uptime;
@@ -78,6 +108,25 @@ const isTelemetryStale = computed(() => {
   return Date.now() - lastDate > 10 * 60 * 1000;
 });
 
+const controlStatusLabel = computed(() => {
+  const value = controlStatus.value?.status ?? "unknown";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+});
+
+const controlStatusTone = computed(() => {
+  const value = controlStatus.value?.status;
+  if (value === "running") {
+    return "success";
+  }
+  if (value === "stopping") {
+    return "warning";
+  }
+  if (value === "stopped") {
+    return "danger";
+  }
+  return "neutral";
+});
+
 const hasMetadata = (value?: Record<string, unknown>) => {
   if (!value) {
     return false;
@@ -85,8 +134,45 @@ const hasMetadata = (value?: Record<string, unknown>) => {
   return Object.keys(value).length > 0;
 };
 
+const refreshControlStatus = async () => {
+  controlBusy.value = true;
+  try {
+    controlStatus.value = await get<ControlStatus>(endpoints.controlStatus);
+  } catch (error) {
+    controlStatus.value = null;
+    toastStore.push("Unable to fetch backend status", "danger");
+  } finally {
+    controlBusy.value = false;
+  }
+};
+
+const startBackend = async () => {
+  controlBusy.value = true;
+  try {
+    controlStatus.value = await post<ControlStatus>(endpoints.controlStart);
+    toastStore.push("Backend start requested", "success");
+  } catch (error) {
+    toastStore.push("Backend start failed", "danger");
+  } finally {
+    controlBusy.value = false;
+  }
+};
+
+const stopBackend = async () => {
+  controlBusy.value = true;
+  try {
+    await post(endpoints.controlStop);
+    toastStore.push("Backend stop requested", "warning");
+  } catch (error) {
+    toastStore.push("Backend stop failed", "danger");
+  } finally {
+    controlBusy.value = false;
+  }
+};
+
 onMounted(async () => {
   await dashboard.refresh();
+  await refreshControlStatus();
   const ws = new WsClient("/events/system", (payload) => {
     if (payload.type === "system.status") {
       dashboard.updateStatus(payload.data as any);

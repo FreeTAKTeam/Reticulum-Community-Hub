@@ -88,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import { ref } from "vue";
 import maplibregl from "maplibre-gl";
 import BaseButton from "../components/BaseButton.vue";
@@ -103,10 +103,15 @@ import { useMarkersStore } from "../stores/markers";
 import { useTelemetryStore } from "../stores/telemetry";
 import { buildMarkerSymbolKey } from "../utils/markers";
 import { defaultMarkerName } from "../utils/markers";
-import { getMarkerSymbolByKey } from "../utils/markers";
 import { markerSymbols } from "../utils/markers";
 import { parseMarkerSymbolKey } from "../utils/markers";
 import { resolveMarkerSymbolKey } from "../utils/markers";
+import { buildTelemetryIconId } from "../utils/telemetry-icons";
+import { isTelemetryIconKey } from "../utils/telemetry-icons";
+import { resolveTelemetryIconKey } from "../utils/telemetry-icons";
+import { telemetryIcons } from "../utils/telemetry-icons";
+import { telemetryIconOptions } from "../utils/telemetry-icons";
+import type { TelemetryIconKey } from "../utils/telemetry-icons";
 import type { TelemetryMarker } from "../utils/telemetry";
 
 const telemetry = useTelemetryStore();
@@ -130,16 +135,12 @@ let pollerId: number | undefined;
 let telemetryInteractionReady = false;
 let markerInteractionReady = false;
 const markerImagesReady = ref(false);
+const telemetryIconsReady = ref(false);
 const markerMode = ref(false);
-const markerCategory = ref("maki:marker");
-const markerOptions = computed(() =>
-  markerSymbols.value.map((symbol) => ({
-    label: symbol.label,
-    value: buildMarkerSymbolKey(symbol.set, symbol.id)
-  }))
-);
+const markerCategory = ref<TelemetryIconKey>("marker");
+const markerOptions = telemetryIconOptions;
 const markerModalOpen = ref(false);
-const markerDraftCategory = ref("maki:marker");
+const markerDraftCategory = ref<TelemetryIconKey>("marker");
 const markerDraftName = ref("");
 const markerDraftNotes = ref("");
 const markerDraftLat = ref(0);
@@ -210,8 +211,7 @@ const openMarkerModal = (lngLat: maplibregl.LngLat) => {
   markerDraftLon.value = lngLat.lng;
   markerDraftCategory.value = markerCategory.value;
   if (!markerDraftName.value.trim()) {
-    const symbolId = parseMarkerSymbolKey(markerDraftCategory.value).id;
-    markerDraftName.value = defaultMarkerName(symbolId);
+    markerDraftName.value = defaultMarkerName(markerDraftCategory.value);
   }
   markerModalOpen.value = true;
   markerMode.value = false;
@@ -225,18 +225,14 @@ const closeMarkerModal = () => {
 };
 
 const confirmMarker = async () => {
-  const parsedSymbol = parseMarkerSymbolKey(markerDraftCategory.value);
-  const symbol = getMarkerSymbolByKey(markerDraftCategory.value);
-  const symbolId = symbol?.id ?? parsedSymbol.id;
-  const symbolSet = symbol?.set ?? parsedSymbol.set ?? "maki";
+  const symbolId = markerDraftCategory.value;
   const name = markerDraftName.value.trim() || defaultMarkerName(symbolId);
   const notes = markerDraftNotes.value.trim();
-  const category = symbolSet;
   const created = await markersStore.createMarker({
     name,
     type: symbolId,
     symbol: symbolId,
-    category,
+    category: symbolId,
     lat: markerDraftLat.value,
     lon: markerDraftLon.value,
     notes: notes || undefined
@@ -349,12 +345,47 @@ const NAPSG_ICON_PIXEL_SIZE = 91;
 const MAKI_ICON_SCALE = 0.9;
 const NAPSG_ICON_SCALE = (MAKI_ICON_PIXEL_SIZE / NAPSG_ICON_PIXEL_SIZE) * MAKI_ICON_SCALE;
 const BASE_ICON_ZOOM = 1;
+const TELEMETRY_ICON_SCALE = 0.85;
+const TELEMETRY_ICON_COLOR = "#82DBF7";
 
 const resolveIconScale = (symbolSet?: string) => {
   return symbolSet === "napsg" ? NAPSG_ICON_SCALE : MAKI_ICON_SCALE;
 };
 
-const iconZoomScale = ["^", 1.1, ["-", ["zoom"], BASE_ICON_ZOOM]];
+const resolveZoomScale = (zoom: number) => {
+  return Math.pow(1.1, zoom - BASE_ICON_ZOOM);
+};
+
+const buildIconSizeExpression = (zoom: number) => {
+  return [
+    "*",
+    ["coalesce", ["get", "iconScale"], MAKI_ICON_SCALE],
+    resolveZoomScale(zoom)
+  ];
+};
+
+const buildTelemetryIconSizeExpression = (zoom: number) => {
+  return ["*", TELEMETRY_ICON_SCALE, resolveZoomScale(zoom)];
+};
+
+const handleMarkerZoom = () => {
+  if (!mapInstance.value) {
+    return;
+  }
+  const map = mapInstance.value;
+  const layerId = "operator-marker-layer";
+  if (map.getLayer(layerId)) {
+    map.setLayoutProperty(layerId, "icon-size", buildIconSizeExpression(map.getZoom()));
+  }
+  const telemetryLayerId = "telemetry-icons";
+  if (map.getLayer(telemetryLayerId)) {
+    map.setLayoutProperty(
+      telemetryLayerId,
+      "icon-size",
+      buildTelemetryIconSizeExpression(map.getZoom())
+    );
+  }
+};
 
 const isSdfMarkerImage = (symbolKey: string) => {
   if (symbolKey === "marker-fallback") {
@@ -364,27 +395,11 @@ const isSdfMarkerImage = (symbolKey: string) => {
   return parsed.set !== "napsg";
 };
 
-watch(
-  markerSymbols,
-  (symbols) => {
-    if (!symbols.length) {
-      return;
-    }
-    const keys = symbols.map((symbol) => buildMarkerSymbolKey(symbol.set, symbol.id));
-    if (!keys.includes(markerCategory.value)) {
-      markerCategory.value = keys[0];
-    }
-    if (!keys.includes(markerDraftCategory.value)) {
-      markerDraftCategory.value = markerCategory.value;
-    }
-  },
-  { immediate: true }
-);
-
 const markerIconUrl = (symbolSet: string, symbolId: string) => {
   return `${markerIconRoot}icons/${symbolSet}/${symbolId}.svg`;
 };
 const markerFallbackUrl = `${markerIconRoot}icons/marker-fallback.svg`;
+const svgToDataUrl = (svg: string) => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 
 const rasterizeImage = async (url: string) => {
   const image = new Image();
@@ -441,6 +456,19 @@ const loadMarkerImages = async () => {
   markerImagesReady.value = true;
 };
 
+const loadTelemetryIcons = async () => {
+  if (!mapInstance.value) {
+    return;
+  }
+  const map = mapInstance.value;
+  await Promise.all(
+    telemetryIcons.map((icon) =>
+      loadMarkerImage(map, buildTelemetryIconId(icon.key), svgToDataUrl(icon.svg), true)
+    )
+  );
+  telemetryIconsReady.value = true;
+};
+
 const buildOperatorFeatureCollection = () =>
   ({
     type: "FeatureCollection",
@@ -448,13 +476,17 @@ const buildOperatorFeatureCollection = () =>
       const override = dragPositions.value.get(marker.id);
       const lat = override?.lat ?? marker.lat;
       const lon = override?.lon ?? marker.lon;
-      const symbolKey = resolveMarkerSymbolKey(
-        marker.symbol,
-        marker.symbolSet ?? marker.category
-      );
-      const parsedSymbol = parseMarkerSymbolKey(symbolKey);
-      const symbolSet = parsedSymbol.set ?? "maki";
-      const iconScale = resolveIconScale(symbolSet);
+      const mdiKey = isTelemetryIconKey(marker.symbol)
+        ? marker.symbol
+        : isTelemetryIconKey(marker.category)
+          ? marker.category
+          : undefined;
+      const symbolKey = mdiKey
+        ? buildTelemetryIconId(mdiKey)
+        : resolveMarkerSymbolKey(marker.symbol, marker.symbolSet ?? marker.category);
+      const iconScale = mdiKey
+        ? TELEMETRY_ICON_SCALE
+        : resolveIconScale(marker.symbolSet ?? marker.category);
       return {
         type: "Feature",
         geometry: {
@@ -465,7 +497,6 @@ const buildOperatorFeatureCollection = () =>
           id: marker.id,
           name: marker.name,
           symbol: symbolKey,
-          symbolSet,
           iconScale,
           color: marker.color
         }
@@ -543,11 +574,13 @@ const stopMarkerDrag = () => {
 };
 
 const renderTelemetryMarkers = () => {
-  if (!mapInstance.value || !mapReady.value) {
+  if (!mapInstance.value || !mapReady.value || !telemetryIconsReady.value) {
     return;
   }
   const map = mapInstance.value;
-  const existing = map.getSource("telemetry") as maplibregl.GeoJSONSource | undefined;
+  const sourceId = "telemetry";
+  const layerId = "telemetry-icons";
+  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
   const featureCollection = {
     type: "FeatureCollection",
     features: telemetry.markers.map((marker) => ({
@@ -558,7 +591,8 @@ const renderTelemetryMarkers = () => {
       },
       properties: {
         id: marker.id,
-        name: marker.name
+        name: marker.name,
+        icon: buildTelemetryIconId(resolveTelemetryIconKey(marker.raw))
       }
     }))
   } as GeoJSON.FeatureCollection;
@@ -568,25 +602,27 @@ const renderTelemetryMarkers = () => {
   }
 
   if (!existing) {
-    map.addSource("telemetry", {
+    map.addSource(sourceId, {
       type: "geojson",
       data: featureCollection
     });
     map.addLayer({
-      id: "telemetry-points",
-      type: "circle",
-      source: "telemetry",
+      id: layerId,
+      type: "symbol",
+      source: sourceId,
+      layout: {
+        "icon-image": ["coalesce", ["image", ["get", "icon"]], ["image", "mdi-marker"]],
+        "icon-size": buildTelemetryIconSizeExpression(map.getZoom()),
+        "icon-allow-overlap": true
+      },
       paint: {
-        "circle-radius": 6,
-        "circle-color": "#82DBF7",
-        "circle-stroke-color": "#222128",
-        "circle-stroke-width": 2
+        "icon-color": TELEMETRY_ICON_COLOR
       }
     });
   }
 
   if (!telemetryInteractionReady) {
-    map.on("click", "telemetry-points", (event) => {
+    map.on("click", layerId, (event) => {
       const feature = event.features?.[0];
       const markerId = feature?.properties?.id;
       if (!markerId) {
@@ -597,10 +633,10 @@ const renderTelemetryMarkers = () => {
         openInspector(marker);
       }
     });
-    map.on("mouseenter", "telemetry-points", () => {
+    map.on("mouseenter", layerId, () => {
       map.getCanvas().style.cursor = "pointer";
     });
-    map.on("mouseleave", "telemetry-points", () => {
+    map.on("mouseleave", layerId, () => {
       map.getCanvas().style.cursor = "";
     });
     map.on("move", () => {
@@ -613,7 +649,7 @@ const renderTelemetryMarkers = () => {
 };
 
 const renderOperatorMarkers = () => {
-  if (!mapInstance.value || !mapReady.value || !markerImagesReady.value) {
+  if (!mapInstance.value || !mapReady.value || !markerImagesReady.value || !telemetryIconsReady.value) {
     return;
   }
   const map = mapInstance.value;
@@ -634,11 +670,7 @@ const renderOperatorMarkers = () => {
       source: sourceId,
       layout: {
         "icon-image": ["coalesce", ["image", ["get", "symbol"]], ["image", "marker-fallback"]],
-        "icon-size": [
-          "*",
-          ["coalesce", ["get", "iconScale"], MAKI_ICON_SCALE],
-          iconZoomScale
-        ],
+        "icon-size": buildIconSizeExpression(map.getZoom()),
         "icon-allow-overlap": true
       },
       paint: {
@@ -647,8 +679,11 @@ const renderOperatorMarkers = () => {
     });
   }
 
+  handleMarkerZoom();
+
   if (!markerInteractionReady) {
     map.on("mousedown", layerId, startMarkerDrag);
+    map.on("zoom", handleMarkerZoom);
     map.on("mouseenter", layerId, () => {
       if (!draggingMarkerId.value) {
         map.getCanvas().style.cursor = "move";
@@ -689,6 +724,7 @@ onMounted(async () => {
       mapReady.value = true;
       await symbolsPromise;
       await loadMarkerImages();
+      await loadTelemetryIcons();
       renderMarkers();
       mapInstance.value?.on("click", handleMapClick);
     });
@@ -733,6 +769,9 @@ onUnmounted(() => {
   }
   if (pollerId) {
     window.clearInterval(pollerId);
+  }
+  if (mapInstance.value) {
+    mapInstance.value.off("zoom", handleMarkerZoom);
   }
   window.removeEventListener("resize", handleInspectorViewportChange);
   window.removeEventListener("scroll", handleInspectorViewportChange);
