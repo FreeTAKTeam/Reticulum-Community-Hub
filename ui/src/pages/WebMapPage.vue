@@ -39,33 +39,113 @@
       <BaseFormattedOutput class="mt-3" :value="selected.raw" :accordion-open-by-default="false" />
     </div>
 
-    <BaseCard title="Operator Markers">
-      <LoadingSkeleton v-if="markersStore.loading" />
-      <ul v-else class="space-y-2 text-sm">
-        <li
-          v-for="marker in markersStore.markers"
-          :key="marker.id"
-          class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
-          :class="{ 'opacity-60 line-through': marker.expired }"
-          @click="focusOperatorMarker(marker)"
+    <BaseCard title="Markers">
+      <div class="flex flex-wrap items-center gap-2 border-b border-rth-border pb-3">
+        <BaseButton
+          variant="tab"
+          size="sm"
+          :class="{ 'cui-tab-active': activeMarkerTab === 'operator' }"
+          @click="activeMarkerTab = 'operator'"
         >
-          <div class="font-semibold">{{ marker.name }}</div>
-          <div class="text-xs text-rth-muted">
-            {{ marker.category }} - {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}
-            <span v-if="marker.expired" class="ml-2 uppercase tracking-wide text-rth-muted">Expired</span>
-          </div>
-        </li>
-      </ul>
-    </BaseCard>
+          Operator Markers
+        </BaseButton>
+        <BaseButton
+          variant="tab"
+          size="sm"
+          :class="{ 'cui-tab-active': activeMarkerTab === 'telemetry' }"
+          @click="activeMarkerTab = 'telemetry'"
+        >
+          Telemetry Markers
+        </BaseButton>
+      </div>
 
-    <BaseCard title="Telemetry Markers">
-      <LoadingSkeleton v-if="telemetry.loading" />
-      <ul v-else class="space-y-2 text-sm">
-        <li v-for="marker in filteredMarkers" :key="marker.id" class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3" @click="selectMarker(marker)">
-          <div class="font-semibold">{{ marker.name }}</div>
-          <div class="text-xs text-rth-muted">{{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
-        </li>
-      </ul>
+      <div v-if="activeMarkerTab === 'operator'" class="mt-4">
+        <LoadingSkeleton v-if="markersStore.loading" />
+        <ul v-else class="space-y-2 text-sm">
+          <li
+            v-for="marker in operatorPagination.items"
+            :key="marker.id"
+            class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
+            :class="{ 'opacity-60 line-through': marker.expired }"
+            @click="focusOperatorMarker(marker)"
+          >
+            <div class="font-semibold">{{ marker.name }}</div>
+            <div class="text-xs text-rth-muted">
+              {{ marker.category }} - {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}
+              <span v-if="marker.expired" class="ml-2 uppercase tracking-wide text-rth-muted">Expired</span>
+            </div>
+          </li>
+        </ul>
+        <div v-if="!markersStore.loading" class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-rth-muted">
+          <span v-if="operatorPagination.total">
+            Showing {{ operatorPagination.startIndex }}-{{ operatorPagination.endIndex }} of {{ operatorPagination.total }}
+          </span>
+          <span v-else>No markers yet.</span>
+          <div class="flex items-center gap-2">
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              iconLeft="chevron-left"
+              :disabled="operatorPagination.page <= 1"
+              @click="updateOperatorPage(-1)"
+            >
+              Prev
+            </BaseButton>
+            <span class="min-w-[96px] text-center">Page {{ operatorPagination.page }} / {{ operatorPagination.totalPages }}</span>
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              iconRight="chevron-right"
+              :disabled="operatorPagination.page >= operatorPagination.totalPages"
+              @click="updateOperatorPage(1)"
+            >
+              Next
+            </BaseButton>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="mt-4">
+        <LoadingSkeleton v-if="telemetry.loading" />
+        <ul v-else class="space-y-2 text-sm">
+          <li
+            v-for="marker in telemetryPagination.items"
+            :key="marker.id"
+            class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
+            @click="selectMarker(marker)"
+          >
+            <div class="font-semibold">{{ marker.name }}</div>
+            <div class="text-xs text-rth-muted">{{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
+          </li>
+        </ul>
+        <div v-if="!telemetry.loading" class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-rth-muted">
+          <span v-if="telemetryPagination.total">
+            Showing {{ telemetryPagination.startIndex }}-{{ telemetryPagination.endIndex }} of {{ telemetryPagination.total }}
+          </span>
+          <span v-else>No telemetry markers yet.</span>
+          <div class="flex items-center gap-2">
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              iconLeft="chevron-left"
+              :disabled="telemetryPagination.page <= 1"
+              @click="updateTelemetryPage(-1)"
+            >
+              Prev
+            </BaseButton>
+            <span class="min-w-[96px] text-center">Page {{ telemetryPagination.page }} / {{ telemetryPagination.totalPages }}</span>
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              iconRight="chevron-right"
+              :disabled="telemetryPagination.page >= telemetryPagination.totalPages"
+              @click="updateTelemetryPage(1)"
+            >
+              Next
+            </BaseButton>
+          </div>
+        </div>
+      </div>
     </BaseCard>
 
     <BaseModal :open="markerModalOpen" title="Create Marker" @close="closeMarkerModal">
@@ -88,7 +168,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, onMounted, onUnmounted, watch } from "vue";
 import { ref } from "vue";
 import maplibregl from "maplibre-gl";
 import BaseButton from "../components/BaseButton.vue";
@@ -158,6 +238,19 @@ const markerDraftLon = ref(0);
 const draggingMarkerId = ref<string | null>(null);
 const draggingMarkerOrigin = ref<{ lat: number; lon: number } | null>(null);
 const dragPositions = ref(new Map<string, { lat: number; lon: number }>());
+type MarkerTab = "operator" | "telemetry";
+const activeMarkerTab = ref<MarkerTab>("operator");
+const ITEMS_PER_PAGE = 10;
+const operatorPage = ref(1);
+const telemetryPage = ref(1);
+
+const toTimestamp = (value?: string) => {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 const ensureMarkerSelection = () => {
   if (!markerSymbols.value.length) {
     return;
@@ -175,7 +268,7 @@ const handleInspectorViewportChange = () => {
   }
 };
 
-const filteredMarkers = computed(() => {
+const telemetryMarkersFiltered = computed(() => {
   const query = search.value.toLowerCase();
   return telemetry.markers.filter((marker) => {
     if (query && !marker.name.toLowerCase().includes(query)) {
@@ -184,6 +277,69 @@ const filteredMarkers = computed(() => {
     return true;
   });
 });
+
+const telemetryMarkersSorted = computed(() => {
+  return [...telemetryMarkersFiltered.value].sort(
+    (left, right) => toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt)
+  );
+});
+
+const operatorMarkersSorted = computed(() => {
+  return [...markersStore.markers].sort((left, right) => {
+    const leftTime = toTimestamp(left.updatedAt ?? left.time ?? left.createdAt);
+    const rightTime = toTimestamp(right.updatedAt ?? right.time ?? right.createdAt);
+    return rightTime - leftTime;
+  });
+});
+
+const buildPagination = <T>(items: T[], page: number) => {
+  const total = items.length;
+  const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+  const currentPage = Math.min(Math.max(page, 1), totalPages);
+  const startIndex = total === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
+  const endIndex = total === 0 ? 0 : Math.min(currentPage * ITEMS_PER_PAGE, total);
+  return {
+    items: items.slice(startIndex ? startIndex - 1 : 0, endIndex),
+    total,
+    totalPages,
+    page: currentPage,
+    startIndex,
+    endIndex
+  };
+};
+
+const operatorPagination = computed(() => buildPagination(operatorMarkersSorted.value, operatorPage.value));
+const telemetryPagination = computed(() => buildPagination(telemetryMarkersSorted.value, telemetryPage.value));
+
+const updateOperatorPage = (delta: number) => {
+  const totalPages = operatorPagination.value.totalPages;
+  operatorPage.value = Math.min(totalPages, Math.max(1, operatorPage.value + delta));
+};
+
+const updateTelemetryPage = (delta: number) => {
+  const totalPages = telemetryPagination.value.totalPages;
+  telemetryPage.value = Math.min(totalPages, Math.max(1, telemetryPage.value + delta));
+};
+
+watch(
+  () => operatorMarkersSorted.value.length,
+  (total) => {
+    const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+    if (operatorPage.value > totalPages) {
+      operatorPage.value = totalPages;
+    }
+  }
+);
+
+watch(
+  () => telemetryMarkersSorted.value.length,
+  (total) => {
+    const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+    if (telemetryPage.value > totalPages) {
+      telemetryPage.value = totalPages;
+    }
+  }
+);
 
 const markerIndex = computed(() => {
   const map = new Map<string, TelemetryMarker>();
@@ -218,6 +374,7 @@ const subscribeTelemetry = () => {
 
 const applyFilters = async () => {
   telemetry.topicId = topicFilter.value;
+  telemetryPage.value = 1;
   await telemetry.fetchTelemetry(sinceSeconds());
   renderMarkers();
   subscribeTelemetry();
