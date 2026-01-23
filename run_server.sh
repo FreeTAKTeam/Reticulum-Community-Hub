@@ -29,5 +29,4 @@ python -m pip install -e .
 # FreeTAKServer  endpoint for CoT pushes unless  provided to you by us for free
 export RTH_TAK_COT_URL="${RTH_TAK_COT_URL:-tcp://137.184.101.250:8087}"
 
-exec RTH_TAK_COT_URL="$RTH_TAK_COT_URL" \
-    python -m reticulum_telemetry_hub.reticulum_server --daemon --service tak_cot "$@"
+exec python -m reticulum_telemetry_hub.reticulum_server --daemon "$@"
