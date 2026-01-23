@@ -17,9 +17,8 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       !startsWith(github.event.workflow_run.head_branch, 'codex/')
     runs-on: ubuntu-latest
-
     # Hard job-level timeout (GitHub enforced)
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -65,8 +64,8 @@ jobs:
           # Pass arguments directly to Codex CLI
           # --max-steps limits runaway reasoning loops
           codex-args: >
-           -- --max-steps=120
-            --stop-on-success
+            -- --max-steps=120
+             --stop-on-success
 
           prompt-file: .github/codex/prompts/autofix-ci.md
           sandbox: workspace-write
