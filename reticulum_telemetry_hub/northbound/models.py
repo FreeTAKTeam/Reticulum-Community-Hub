@@ -221,10 +221,7 @@ class ChatSendPayload(BaseModel):
 class MarkerCreatePayload(BaseModel):
     """Payload for creating operator markers."""
 
-    marker_type: str = Field(
-        validation_alias=AliasChoices("type", "marker_type", "markerType"),
-        json_schema_extra={"enum": SUPPORTED_MARKER_SYMBOLS},
-    )
+    marker_type: str = Field(json_schema_extra={"enum": SUPPORTED_MARKER_SYMBOLS})
     symbol: str = Field(json_schema_extra={"enum": SUPPORTED_MARKER_SYMBOLS})
     name: Optional[str] = None
     category: Optional[str] = None
@@ -232,6 +229,16 @@ class MarkerCreatePayload(BaseModel):
     lon: float = Field(ge=-180, le=180)
     notes: Optional[str] = None
     ttl_seconds: Optional[int] = Field(default=None, ge=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload(cls, values: object) -> object:
+        """Normalize payload aliases to field names."""
+
+        return _normalize_aliases(
+            values,
+            {"marker_type": ("type", "marker_type", "markerType")},
+        )
 
     @field_validator("marker_type", mode="before")
     @classmethod

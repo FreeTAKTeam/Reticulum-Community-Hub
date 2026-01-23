@@ -28,6 +28,9 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 from reticulum_telemetry_hub.reticulum_server import command_text
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.marker_objects import (
+    build_marker_telemetry_payload,
+)
 
 
 def _load_supported_commands_doc() -> Optional[str]:
@@ -440,20 +443,21 @@ class NorthboundServices:
             f"Marker {event_type.split('.')[-1]}: {marker.name}",
             metadata=payload,
         )
-        if self.marker_dispatcher is None:
+        if self._marker_is_expired(marker):
             self.event_log.add_event(
                 "marker_dispatch_skipped",
-                "Marker event dispatch is not configured",
+                "Marker event dispatch skipped for expired marker",
                 metadata={
                     "event_type": event_type,
                     "object_destination_hash": marker.object_destination_hash,
                 },
             )
             return
-        if self._marker_is_expired(marker):
+        if self.marker_dispatcher is None:
+            self._record_marker_telemetry(event_type, marker)
             self.event_log.add_event(
                 "marker_dispatch_skipped",
-                "Marker event dispatch skipped for expired marker",
+                "Marker event dispatch is not configured; telemetry recorded locally",
                 metadata={
                     "event_type": event_type,
                     "object_destination_hash": marker.object_destination_hash,
@@ -466,6 +470,46 @@ class NorthboundServices:
             self.event_log.add_event(
                 "marker_dispatch_failed",
                 f"Marker event dispatch failed: {exc}",
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
+            )
+
+    def _record_marker_telemetry(self, event_type: str, marker: Marker) -> None:
+        """Record marker telemetry directly in the telemetry store."""
+
+        if not marker.object_destination_hash:
+            self.event_log.add_event(
+                "marker_telemetry_skipped",
+                "Marker telemetry skipped due to missing destination hash",
+                metadata={"event_type": event_type},
+            )
+            return
+        origin_rch = marker.origin_rch or self.origin_rch
+        payload = build_marker_telemetry_payload(
+            marker,
+            event_type,
+            origin_rch=origin_rch,
+        )
+        try:
+            self.telemetry.record_telemetry(
+                payload,
+                marker.object_destination_hash,
+                notify=True,
+            )
+            self.event_log.add_event(
+                "marker_telemetry_recorded",
+                "Marker telemetry recorded",
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.event_log.add_event(
+                "marker_telemetry_failed",
+                f"Marker telemetry recording failed: {exc}",
                 metadata={
                     "event_type": event_type,
                     "object_destination_hash": marker.object_destination_hash,

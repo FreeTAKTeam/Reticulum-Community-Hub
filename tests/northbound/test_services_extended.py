@@ -13,6 +13,7 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
+    SID_LOCATION,
     SID_TIME,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -20,6 +21,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 from reticulum_telemetry_hub.northbound.services import NorthboundServices
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.factories import build_location_payload
 
 
 def _build_services(
@@ -71,7 +73,14 @@ def test_status_snapshot_counts(tmp_path: Path) -> None:
     api.store_image(image_path, media_type="image/jpeg")
 
     now = datetime.now(timezone.utc)
-    telemetry.save_telemetry({SID_TIME: int(now.timestamp())}, "dest-1", timestamp=now)
+    telemetry.save_telemetry(
+        {
+            SID_TIME: int(now.timestamp()),
+            SID_LOCATION: build_location_payload(int(now.timestamp())),
+        },
+        "dest-1",
+        timestamp=now,
+    )
 
     snapshot = services.status_snapshot()
 
@@ -139,7 +148,14 @@ def test_send_message_dispatches_payload(tmp_path: Path) -> None:
 def test_telemetry_entries_proxy(tmp_path: Path) -> None:
     services, _, telemetry, _ = _build_services(tmp_path)
     now = datetime.now(timezone.utc)
-    telemetry.save_telemetry({SID_TIME: int(now.timestamp())}, "dest-1", timestamp=now)
+    telemetry.save_telemetry(
+        {
+            SID_TIME: int(now.timestamp()),
+            SID_LOCATION: build_location_payload(int(now.timestamp())),
+        },
+        "dest-1",
+        timestamp=now,
+    )
 
     entries = services.telemetry_entries(since=int(now.timestamp()) - 1, topic_id=None)
 

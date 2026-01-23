@@ -1,27 +1,175 @@
 <template>
   <div class="space-y-6">
-    <BaseCard title="Telemetry Map">
-      <LoadingSkeleton v-if="telemetry.loading" />
-      <div ref="mapContainer" class="h-[720px] w-full rounded border border-rth-border"></div>
-      <div class="mt-4 space-y-3">
-        <div class="flex flex-wrap items-end gap-4">
-          <BaseSelect v-model="markerCategory" label="Marker Type" :options="markerOptions" class="min-w-[240px]" />
-          <BaseButton
-            :variant="markerMode ? 'success' : 'secondary'"
-            icon-left="plus"
-            @click="toggleMarkerMode"
-          >
-            {{ markerMode ? "Click Map to Place" : "Place Marker" }}
-          </BaseButton>
-          <span v-if="markerMode" class="text-xs text-rth-muted">Click on the map to drop a marker.</span>
+    <div class="flex flex-col gap-6 xl:flex-row">
+      <BaseCard title="Telemetry Map" class="flex-1 min-w-0">
+        <LoadingSkeleton v-if="telemetry.loading" />
+        <div ref="mapContainer" class="h-[720px] w-full rounded border border-rth-border"></div>
+        <div class="mt-4 space-y-3">
+          <div class="flex flex-wrap items-end gap-4">
+            <BaseSelect v-model="markerCategory" label="Marker Type" :options="markerOptions" class="min-w-[240px]" />
+            <BaseButton
+              :variant="markerMode ? 'success' : 'secondary'"
+              icon-left="plus"
+              @click="toggleMarkerMode"
+            >
+              {{ markerMode ? "Click Map to Place" : "Place Marker" }}
+            </BaseButton>
+            <span v-if="markerMode" class="text-xs text-rth-muted">Click on the map to drop a marker.</span>
+          </div>
+          <div class="flex flex-wrap items-end gap-4">
+            <BaseInput v-model="topicFilter" label="Topic ID" class="min-w-[220px] flex-1" />
+            <BaseInput v-model="search" label="Search Identity" class="min-w-[220px] flex-1" />
+            <BaseButton variant="secondary" icon-left="filter" @click="applyFilters">Apply</BaseButton>
+          </div>
         </div>
-        <div class="flex flex-wrap items-end gap-4">
-          <BaseInput v-model="topicFilter" label="Topic ID" class="min-w-[220px] flex-1" />
-          <BaseInput v-model="search" label="Search Identity" class="min-w-[220px] flex-1" />
-          <BaseButton variant="secondary" icon-left="filter" @click="applyFilters">Apply</BaseButton>
+      </BaseCard>
+
+      <div
+        class="cui-panel flex flex-col transition-all duration-300 ease-out"
+        :class="markersPanelCollapsed ? 'w-full xl:w-12 p-2' : 'w-full xl:w-96 p-4'"
+      >
+        <div class="flex items-center justify-between gap-2">
+          <div v-if="!markersPanelCollapsed" class="text-sm font-semibold text-rth-text">Markers</div>
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            :icon-left="markersPanelCollapsed ? 'chevron-left' : 'chevron-right'"
+            icon-only
+            :aria-label="markersPanelCollapsed ? 'Expand markers panel' : 'Collapse markers panel'"
+            :title="markersPanelCollapsed ? 'Expand markers panel' : 'Collapse markers panel'"
+            :aria-expanded="!markersPanelCollapsed"
+            @click="toggleMarkersPanel"
+          />
+        </div>
+        <div
+          v-if="markersPanelCollapsed"
+          class="mt-3 flex flex-1 items-center justify-center text-[10px] uppercase tracking-[0.3em] text-rth-muted"
+          style="writing-mode: vertical-rl; text-orientation: upright;"
+        >
+          Markers
+        </div>
+        <div v-else class="mt-4">
+          <div class="flex flex-wrap items-center gap-2 border-b border-rth-border pb-3">
+            <BaseButton
+              variant="tab"
+              size="sm"
+              :class="{ 'cui-tab-active': activeMarkerTab === 'operator' }"
+              @click="activeMarkerTab = 'operator'"
+            >
+              Operator Markers
+            </BaseButton>
+            <BaseButton
+              variant="tab"
+              size="sm"
+              :class="{ 'cui-tab-active': activeMarkerTab === 'telemetry' }"
+              @click="activeMarkerTab = 'telemetry'"
+            >
+              Telemetry Markers
+            </BaseButton>
+          </div>
+
+          <div v-if="activeMarkerTab === 'operator'" class="mt-4">
+            <LoadingSkeleton v-if="markersStore.loading" />
+            <ul v-else class="space-y-2 text-sm">
+              <li
+                v-for="marker in operatorPagination.items"
+                :key="marker.id"
+                class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
+                :class="{ 'opacity-60 line-through': marker.expired }"
+                @click="focusOperatorMarker(marker)"
+              >
+                <div class="font-semibold">{{ marker.name }}</div>
+                <div class="text-xs text-rth-muted">
+                  {{ marker.category }} - {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}
+                  <span v-if="marker.expired" class="ml-2 uppercase tracking-wide text-rth-muted">Expired</span>
+                </div>
+              </li>
+            </ul>
+            <div
+              v-if="!markersStore.loading"
+              class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-rth-muted"
+            >
+              <span v-if="operatorPagination.total">
+                Showing {{ operatorPagination.startIndex }}-{{ operatorPagination.endIndex }} of
+                {{ operatorPagination.total }}
+              </span>
+              <span v-else>No markers yet.</span>
+              <div class="flex items-center gap-2">
+                <BaseButton
+                  variant="secondary"
+                  size="sm"
+                  iconLeft="chevron-left"
+                  :disabled="operatorPagination.page <= 1"
+                  @click="updateOperatorPage(-1)"
+                >
+                  Prev
+                </BaseButton>
+                <span class="min-w-[96px] text-center">
+                  Page {{ operatorPagination.page }} / {{ operatorPagination.totalPages }}
+                </span>
+                <BaseButton
+                  variant="secondary"
+                  size="sm"
+                  iconRight="chevron-right"
+                  :disabled="operatorPagination.page >= operatorPagination.totalPages"
+                  @click="updateOperatorPage(1)"
+                >
+                  Next
+                </BaseButton>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="mt-4">
+            <LoadingSkeleton v-if="telemetry.loading" />
+            <ul v-else class="space-y-2 text-sm">
+              <li
+                v-for="marker in telemetryPagination.items"
+                :key="marker.id"
+                class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
+                @click="selectMarker(marker)"
+              >
+                <div class="font-semibold">{{ marker.name }}</div>
+                <div class="text-xs text-rth-muted">{{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
+              </li>
+            </ul>
+            <div
+              v-if="!telemetry.loading"
+              class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-rth-muted"
+            >
+              <span v-if="telemetryPagination.total">
+                Showing {{ telemetryPagination.startIndex }}-{{ telemetryPagination.endIndex }} of
+                {{ telemetryPagination.total }}
+              </span>
+              <span v-else>No telemetry markers yet.</span>
+              <div class="flex items-center gap-2">
+                <BaseButton
+                  variant="secondary"
+                  size="sm"
+                  iconLeft="chevron-left"
+                  :disabled="telemetryPagination.page <= 1"
+                  @click="updateTelemetryPage(-1)"
+                >
+                  Prev
+                </BaseButton>
+                <span class="min-w-[96px] text-center">
+                  Page {{ telemetryPagination.page }} / {{ telemetryPagination.totalPages }}
+                </span>
+                <BaseButton
+                  variant="secondary"
+                  size="sm"
+                  iconRight="chevron-right"
+                  :disabled="telemetryPagination.page >= telemetryPagination.totalPages"
+                  @click="updateTelemetryPage(1)"
+                >
+                  Next
+                </BaseButton>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-    </BaseCard>
+    </div>
 
     <div
       v-if="inspectorOpen && selected"
@@ -38,115 +186,6 @@
       </div>
       <BaseFormattedOutput class="mt-3" :value="selected.raw" :accordion-open-by-default="false" />
     </div>
-
-    <BaseCard title="Markers">
-      <div class="flex flex-wrap items-center gap-2 border-b border-rth-border pb-3">
-        <BaseButton
-          variant="tab"
-          size="sm"
-          :class="{ 'cui-tab-active': activeMarkerTab === 'operator' }"
-          @click="activeMarkerTab = 'operator'"
-        >
-          Operator Markers
-        </BaseButton>
-        <BaseButton
-          variant="tab"
-          size="sm"
-          :class="{ 'cui-tab-active': activeMarkerTab === 'telemetry' }"
-          @click="activeMarkerTab = 'telemetry'"
-        >
-          Telemetry Markers
-        </BaseButton>
-      </div>
-
-      <div v-if="activeMarkerTab === 'operator'" class="mt-4">
-        <LoadingSkeleton v-if="markersStore.loading" />
-        <ul v-else class="space-y-2 text-sm">
-          <li
-            v-for="marker in operatorPagination.items"
-            :key="marker.id"
-            class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
-            :class="{ 'opacity-60 line-through': marker.expired }"
-            @click="focusOperatorMarker(marker)"
-          >
-            <div class="font-semibold">{{ marker.name }}</div>
-            <div class="text-xs text-rth-muted">
-              {{ marker.category }} - {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}
-              <span v-if="marker.expired" class="ml-2 uppercase tracking-wide text-rth-muted">Expired</span>
-            </div>
-          </li>
-        </ul>
-        <div v-if="!markersStore.loading" class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-rth-muted">
-          <span v-if="operatorPagination.total">
-            Showing {{ operatorPagination.startIndex }}-{{ operatorPagination.endIndex }} of {{ operatorPagination.total }}
-          </span>
-          <span v-else>No markers yet.</span>
-          <div class="flex items-center gap-2">
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              iconLeft="chevron-left"
-              :disabled="operatorPagination.page <= 1"
-              @click="updateOperatorPage(-1)"
-            >
-              Prev
-            </BaseButton>
-            <span class="min-w-[96px] text-center">Page {{ operatorPagination.page }} / {{ operatorPagination.totalPages }}</span>
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              iconRight="chevron-right"
-              :disabled="operatorPagination.page >= operatorPagination.totalPages"
-              @click="updateOperatorPage(1)"
-            >
-              Next
-            </BaseButton>
-          </div>
-        </div>
-      </div>
-
-      <div v-else class="mt-4">
-        <LoadingSkeleton v-if="telemetry.loading" />
-        <ul v-else class="space-y-2 text-sm">
-          <li
-            v-for="marker in telemetryPagination.items"
-            :key="marker.id"
-            class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
-            @click="selectMarker(marker)"
-          >
-            <div class="font-semibold">{{ marker.name }}</div>
-            <div class="text-xs text-rth-muted">{{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
-          </li>
-        </ul>
-        <div v-if="!telemetry.loading" class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-rth-muted">
-          <span v-if="telemetryPagination.total">
-            Showing {{ telemetryPagination.startIndex }}-{{ telemetryPagination.endIndex }} of {{ telemetryPagination.total }}
-          </span>
-          <span v-else>No telemetry markers yet.</span>
-          <div class="flex items-center gap-2">
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              iconLeft="chevron-left"
-              :disabled="telemetryPagination.page <= 1"
-              @click="updateTelemetryPage(-1)"
-            >
-              Prev
-            </BaseButton>
-            <span class="min-w-[96px] text-center">Page {{ telemetryPagination.page }} / {{ telemetryPagination.totalPages }}</span>
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              iconRight="chevron-right"
-              :disabled="telemetryPagination.page >= telemetryPagination.totalPages"
-              @click="updateTelemetryPage(1)"
-            >
-              Next
-            </BaseButton>
-          </div>
-        </div>
-      </div>
-    </BaseCard>
 
     <BaseModal :open="markerModalOpen" title="Create Marker" @close="closeMarkerModal">
       <div class="space-y-4">
@@ -168,7 +207,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, watch } from "vue";
 import { ref } from "vue";
 import maplibregl from "maplibre-gl";
 import BaseButton from "../components/BaseButton.vue";
@@ -219,6 +258,7 @@ let operatorClusterRadius: number | null = null;
 const markerImagesReady = ref(false);
 const telemetryIconsReady = ref(false);
 const markerMode = ref(false);
+const markersPanelCollapsed = ref(true);
 const markerCategory = ref<string>("marker");
 const markerOptions = computed(() =>
   markerSymbols.value.map((symbol) => ({
@@ -382,6 +422,15 @@ const applyFilters = async () => {
 
 const toggleMarkerMode = () => {
   markerMode.value = !markerMode.value;
+};
+
+const toggleMarkersPanel = async () => {
+  markersPanelCollapsed.value = !markersPanelCollapsed.value;
+  await nextTick();
+  mapInstance.value?.resize();
+  window.setTimeout(() => {
+    mapInstance.value?.resize();
+  }, 320);
 };
 
 const openMarkerModal = (lngLat: maplibregl.LngLat) => {

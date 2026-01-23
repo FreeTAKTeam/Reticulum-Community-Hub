@@ -75,6 +75,78 @@ def _is_marker_expired(marker: Marker, now: Optional[datetime] = None) -> bool:
     return _normalize_timestamp(now_value) > _normalize_timestamp(marker.stale_at)
 
 
+def build_marker_custom_payload(
+    marker: Marker,
+    event_type: str,
+    *,
+    origin_rch: str,
+    time_value: datetime,
+    stale_at_value: datetime,
+) -> list[list[object]] | None:
+    """Build a Sideband-compatible custom payload for marker telemetry."""
+
+    custom = Custom()
+    metadata: dict[str, object] = {
+        "object_type": "marker",
+        "object_id": marker.object_destination_hash,
+        "event_type": event_type,
+        "marker_type": marker.marker_type,
+        "symbol": marker.symbol,
+        "category": marker.category,
+        "name": marker.name,
+        "origin_rch": origin_rch,
+        "position": {"lat": marker.lat, "lon": marker.lon},
+        "time": time_value.isoformat(),
+        "stale_at": stale_at_value.isoformat(),
+    }
+    if marker.notes:
+        metadata["notes"] = marker.notes
+    custom.update_entry(metadata, type_label="marker")
+    return custom.pack()
+
+
+def build_marker_telemetry_payload(
+    marker: Marker,
+    event_type: str,
+    *,
+    origin_rch: str,
+) -> dict[int, object]:
+    """Build a Sideband-compatible telemetry payload for markers."""
+
+    time_value = _normalize_timestamp(marker.time or marker.updated_at or _utcnow())
+    stale_at_value = _normalize_timestamp(marker.stale_at or time_value)
+    payload: dict[int, object] = {
+        SID_TIME: time_value.timestamp(),
+    }
+
+    location = Location()
+    location.latitude = marker.lat
+    location.longitude = marker.lon
+    location.altitude = 0.0
+    location.speed = 0.0
+    location.bearing = 0.0
+    location.accuracy = 0.0
+    location.last_update = time_value
+    location_payload = location.pack()
+    if location_payload is not None:
+        payload[SID_LOCATION] = location_payload
+
+    info_payload = Information(marker.name).pack()
+    if info_payload:
+        payload[SID_INFORMATION] = info_payload
+
+    custom_payload = build_marker_custom_payload(
+        marker,
+        event_type,
+        origin_rch=origin_rch,
+        time_value=time_value,
+        stale_at_value=stale_at_value,
+    )
+    if custom_payload is not None:
+        payload[SID_CUSTOM] = custom_payload
+    return payload
+
+
 @dataclass
 class MarkerObjectManager:
     """Manage marker object identities and announcements."""
@@ -222,39 +294,12 @@ class MarkerObjectManager:
             dict[int, object]: Packed telemetry payload keyed by sensor id.
         """
 
-        time_value = _normalize_timestamp(marker.time or marker.updated_at or _utcnow())
-        stale_at_value = _normalize_timestamp(marker.stale_at or time_value)
         origin_rch = marker.origin_rch or self.origin_rch_provider()
-        payload: dict[int, object] = {
-            SID_TIME: time_value.timestamp(),
-        }
-
-        location = Location()
-        location.latitude = marker.lat
-        location.longitude = marker.lon
-        location.altitude = 0.0
-        location.speed = 0.0
-        location.bearing = 0.0
-        location.accuracy = 0.0
-        location.last_update = time_value
-        location_payload = location.pack()
-        if location_payload is not None:
-            payload[SID_LOCATION] = location_payload
-
-        info_payload = Information(marker.name).pack()
-        if info_payload:
-            payload[SID_INFORMATION] = info_payload
-
-        custom_payload = self._build_custom_payload(
+        return build_marker_telemetry_payload(
             marker,
             event_type,
             origin_rch=origin_rch,
-            time_value=time_value,
-            stale_at_value=stale_at_value,
         )
-        if custom_payload is not None:
-            payload[SID_CUSTOM] = custom_payload
-        return payload
 
     @staticmethod
     def _build_custom_payload(
@@ -265,24 +310,13 @@ class MarkerObjectManager:
         time_value: datetime,
         stale_at_value: datetime,
     ) -> list[list[object]] | None:
-        custom = Custom()
-        metadata: dict[str, object] = {
-            "object_type": "marker",
-            "object_id": marker.object_destination_hash,
-            "event_type": event_type,
-            "marker_type": marker.marker_type,
-            "symbol": marker.symbol,
-            "category": marker.category,
-            "name": marker.name,
-            "origin_rch": origin_rch,
-            "position": {"lat": marker.lat, "lon": marker.lon},
-            "time": time_value.isoformat(),
-            "stale_at": stale_at_value.isoformat(),
-        }
-        if marker.notes:
-            metadata["notes"] = marker.notes
-        custom.update_entry(metadata, type_label="marker")
-        return custom.pack()
+        return build_marker_custom_payload(
+            marker,
+            event_type,
+            origin_rch=origin_rch,
+            time_value=time_value,
+            stale_at_value=stale_at_value,
+        )
 
     def _should_announce(self) -> bool:
         """Return True when the marker announce interval has elapsed.

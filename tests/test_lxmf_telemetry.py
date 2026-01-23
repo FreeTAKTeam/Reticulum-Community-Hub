@@ -113,6 +113,7 @@ def test_handle_command_stream_is_msgpack_encoded(
 
     peer_hash, timestamp, telemeter_blob = unpacked[0][:3]
     assert isinstance(peer_hash, (bytes, bytearray))
+    assert unpacked[0][3] == {4: ["bird", b"\x00\x00\x00", b"\xff\xff\xff"]}
     round_trip_payload = unpackb(telemeter_blob, strict_map_key=False)
     assert round_trip_payload[SID_TIME] == pytest.approx(timestamp, rel=0)
     # Remaining sensors should match the original payload.

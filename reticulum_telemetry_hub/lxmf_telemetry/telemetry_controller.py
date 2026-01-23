@@ -323,6 +323,23 @@ class TelemetryController:
             ses.commit()
         self._record_ingest(tel)
 
+    def record_telemetry(
+        self,
+        telemetry_data: dict | bytes,
+        peer_dest: str,
+        timestamp: Optional[datetime] = None,
+        *,
+        notify: bool = False,
+    ) -> None:
+        """Persist telemetry data and optionally notify listeners."""
+
+        self.save_telemetry(telemetry_data, peer_dest, timestamp=timestamp)
+        if not notify:
+            return
+        readable = self._humanize_telemetry(telemetry_data)
+        resolved_timestamp = timestamp or self._extract_timestamp(readable)
+        self._notify_listener(readable, peer_dest, resolved_timestamp)
+
     def clear_telemetry(self) -> int:
         """Remove all telemetry entries from storage.
 
@@ -511,7 +528,7 @@ class TelemetryController:
                             peer_hash,
                             round(tel.time.timestamp()),
                             packb(tel_data, use_bin_type=True),
-                            None,
+                            self._build_appearance_payload(),
                         ]
                     )
                 message = LXMF.LXMessage(
@@ -610,10 +627,42 @@ class TelemetryController:
         """Return the most recent telemetry entry per peer."""
         latest: dict[str, Telemeter] = {}
         for tel in telemeters:
-            # The list is already ordered newest->oldest, so first wins.
-            if tel.peer_dest not in latest:
-                latest[tel.peer_dest] = tel
-        return list(latest.values())
+            if not self._telemeter_has_location(tel):
+                continue
+            peer_dest = (tel.peer_dest or "").strip()
+            if not peer_dest:
+                continue
+            existing = latest.get(peer_dest)
+            if existing is None:
+                latest[peer_dest] = tel
+                continue
+            if existing.time is None:
+                latest[peer_dest] = tel
+                continue
+            if tel.time and tel.time > existing.time:
+                latest[peer_dest] = tel
+        return sorted(
+            latest.values(),
+            key=lambda tel: tel.time or datetime.min,
+            reverse=True,
+        )
+
+    def _build_appearance_payload(self) -> dict[int, list[object]]:
+        """Return the default appearance payload for telemetry stream entries."""
+
+        return {4: ["bird", b"\x00\x00\x00", b"\xff\xff\xff"]}
+
+    def _telemeter_has_location(self, telemeter: Telemeter) -> bool:
+        """Return True when the telemeter includes usable location data."""
+        for sensor in telemeter.sensors:
+            if getattr(sensor, "sid", None) != SID_LOCATION:
+                continue
+            latitude = getattr(sensor, "latitude", None)
+            longitude = getattr(sensor, "longitude", None)
+            if latitude is None or longitude is None:
+                return False
+            return True
+        return False
 
     def _notify_listener(
         self,

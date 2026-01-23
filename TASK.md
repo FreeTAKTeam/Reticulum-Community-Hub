@@ -1,4 +1,5 @@
 # TASKS
+- 2026-01-23: DONE. Update telemetry documentation with current system flow and operator marker integration.
 - 2026-01-23: DONE. Switch marker symbol validation to a YAML registry and drop Maki support.
 - 2026-01-23: DONE. Normalize marker symbol aliases to accept telemetry icon labels.
 - 2026-01-23: DONE. Allow MDI marker symbols in marker creation and add route test coverage.
