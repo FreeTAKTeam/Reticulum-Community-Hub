@@ -1,4 +1,7 @@
 # TASKS
+- 2026-01-23: DONE. Preserve WebMap center/zoom between tab switches.
+- 2026-01-23: DONE. Style the WebMap marker label toggle as a cosmic switch control.
+- 2026-01-23: DONE. Add configurable WebMap marker labels and show names on the map.
 - 2026-01-23: DONE. Resize the WebMap when the navigation sidebar toggles to prevent horizontal scrolling.
 - 2026-01-23: DONE. Add operator marker entry to the telemetry example JSON.
 - 2026-01-23: DONE. Move WebMap markers into a collapsible right-side panel (default collapsed).

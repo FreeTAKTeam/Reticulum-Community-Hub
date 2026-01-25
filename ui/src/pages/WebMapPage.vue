@@ -219,6 +219,7 @@ import BaseModal from "../components/BaseModal.vue";
 import BaseSelect from "../components/BaseSelect.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
 import { WsClient } from "../api/ws";
+import { useMapSettingsStore } from "../stores/map-settings";
 import { useNavStore } from "../stores/nav";
 import { useMarkersStore } from "../stores/markers";
 import { useTelemetryStore } from "../stores/telemetry";
@@ -236,8 +237,10 @@ import type { TelemetryMarker } from "../utils/telemetry";
 
 const telemetry = useTelemetryStore();
 const markersStore = useMarkersStore();
+const mapSettingsStore = useMapSettingsStore();
 const navStore = useNavStore();
 const { isCollapsed: isNavCollapsed } = storeToRefs(navStore);
+const { mapView, showMarkerLabels } = storeToRefs(mapSettingsStore);
 const mapContainer = ref<HTMLDivElement | null>(null);
 const mapInstance = ref<maplibregl.Map | null>(null);
 const mapReady = ref(false);
@@ -253,6 +256,7 @@ const dragOffset = ref({ x: 0, y: 0 });
 const wsClient = ref<WsClient | null>(null);
 const defaultStyleUrl = new URL("../assets/map-style.json", import.meta.url).toString();
 const mapStyle = import.meta.env.VITE_RTH_MAP_STYLE_URL ?? defaultStyleUrl;
+const defaultMapView = { lat: 0, lon: 0, zoom: 1 };
 let pollerId: number | undefined;
 let telemetryInteractionReady = false;
 let telemetryIconInteractionReady = false;
@@ -585,6 +589,28 @@ const TELEMETRY_ICON_SCALE = 0.153;
 const NAPSG_ICON_SCALE = (MDI_ICON_PIXEL_SIZE / NAPSG_ICON_PIXEL_SIZE) * TELEMETRY_ICON_SCALE;
 const TELEMETRY_ICON_COLOR = "#82DBF7";
 const TELEMETRY_CLUSTER_MAX_ZOOM = 12;
+const MARKER_LABEL_COLOR = "#E7ECF5";
+const MARKER_LABEL_HALO_COLOR = "#06121E";
+const MARKER_LABEL_HALO_WIDTH = 1.2;
+const MARKER_LABEL_OFFSET: [number, number] = [0, 1.2];
+const MARKER_LABEL_SIZE = 12;
+
+const resolveMarkerLabelField = () => (showMarkerLabels.value ? ["get", "name"] : "");
+
+const buildMarkerLabelLayout = () => ({
+  "text-field": resolveMarkerLabelField(),
+  "text-size": MARKER_LABEL_SIZE,
+  "text-offset": MARKER_LABEL_OFFSET,
+  "text-anchor": "top",
+  "text-allow-overlap": true,
+  "text-ignore-placement": true
+});
+
+const markerLabelPaint = {
+  "text-color": MARKER_LABEL_COLOR,
+  "text-halo-color": MARKER_LABEL_HALO_COLOR,
+  "text-halo-width": MARKER_LABEL_HALO_WIDTH
+};
 
 const buildIconSizeExpression = (zoom: number) => {
   return [
@@ -596,6 +622,36 @@ const buildIconSizeExpression = (zoom: number) => {
 
 const buildTelemetryIconSizeExpression = (zoom: number) => {
   return ["*", TELEMETRY_ICON_SCALE, resolveZoomScale(zoom)];
+};
+
+const applyMarkerLabelVisibility = () => {
+  if (!mapInstance.value || !mapReady.value) {
+    return;
+  }
+  const map = mapInstance.value;
+  const labelField = resolveMarkerLabelField();
+  const layerIds = ["telemetry-icons", "operator-marker-layer"];
+  layerIds.forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "text-field", labelField);
+    }
+  });
+};
+
+watch(showMarkerLabels, () => {
+  applyMarkerLabelVisibility();
+});
+
+const persistMapView = () => {
+  if (!mapInstance.value) {
+    return;
+  }
+  const center = mapInstance.value.getCenter();
+  mapSettingsStore.setMapView({
+    lat: center.lat,
+    lon: center.lng,
+    zoom: mapInstance.value.getZoom()
+  });
 };
 
 const handleMarkerZoom = () => {
@@ -960,10 +1016,12 @@ const renderTelemetryMarkers = () => {
       layout: {
         "icon-image": ["coalesce", ["image", ["get", "icon"]], ["image", "mdi-marker"]],
         "icon-size": buildTelemetryIconSizeExpression(map.getZoom()),
-        "icon-allow-overlap": true
+        "icon-allow-overlap": true,
+        ...buildMarkerLabelLayout()
       },
       paint: {
-        "icon-color": TELEMETRY_ICON_COLOR
+        "icon-color": TELEMETRY_ICON_COLOR,
+        ...markerLabelPaint
       }
     });
   }
@@ -1120,10 +1178,12 @@ const renderOperatorMarkers = () => {
       layout: {
         "icon-image": ["coalesce", ["image", ["get", "symbol"]], ["image", "marker-fallback"]],
         "icon-size": buildIconSizeExpression(map.getZoom()),
-        "icon-allow-overlap": true
+        "icon-allow-overlap": true,
+        ...buildMarkerLabelLayout()
       },
       paint: {
-        "icon-color": ["coalesce", ["get", "color"], "#FBBF24"]
+        "icon-color": ["coalesce", ["get", "color"], "#FBBF24"],
+        ...markerLabelPaint
       }
     });
   } else if (operatorClusterLayersMissing) {
@@ -1187,10 +1247,12 @@ const renderOperatorMarkers = () => {
       layout: {
         "icon-image": ["coalesce", ["image", ["get", "symbol"]], ["image", "marker-fallback"]],
         "icon-size": buildIconSizeExpression(map.getZoom()),
-        "icon-allow-overlap": true
+        "icon-allow-overlap": true,
+        ...buildMarkerLabelLayout()
       },
       paint: {
-        "icon-color": ["coalesce", ["get", "color"], "#FBBF24"]
+        "icon-color": ["coalesce", ["get", "color"], "#FBBF24"],
+        ...markerLabelPaint
       }
     });
   }
@@ -1249,6 +1311,7 @@ const renderOperatorMarkers = () => {
 const renderMarkers = () => {
   renderTelemetryMarkers();
   renderOperatorMarkers();
+  applyMarkerLabelVisibility();
 };
 
 const loadMarkerSymbols = async () => {
@@ -1264,11 +1327,12 @@ const loadMarkerSymbols = async () => {
 onMounted(async () => {
   const symbolsPromise = loadMarkerSymbols();
   if (mapContainer.value) {
+    const initialView = mapView.value ?? defaultMapView;
     mapInstance.value = new maplibregl.Map({
       container: mapContainer.value,
       style: mapStyle,
-      center: [0, 0],
-      zoom: 1
+      center: [initialView.lon, initialView.lat],
+      zoom: initialView.zoom
     });
     mapInstance.value.on("load", async () => {
       mapReady.value = true;
@@ -1277,6 +1341,7 @@ onMounted(async () => {
       renderMarkers();
       mapInstance.value?.on("click", handleMapClick);
       mapInstance.value?.on("zoomend", handleClusterZoom);
+      mapInstance.value?.on("moveend", persistMapView);
     });
   }
   await telemetry.fetchTelemetry(sinceSeconds());
@@ -1323,6 +1388,7 @@ onUnmounted(() => {
   if (mapInstance.value) {
     mapInstance.value.off("zoomend", handleClusterZoom);
     mapInstance.value.off("zoom", handleMarkerZoom);
+    mapInstance.value.off("moveend", persistMapView);
   }
   window.removeEventListener("resize", handleInspectorViewportChange);
   window.removeEventListener("scroll", handleInspectorViewportChange);

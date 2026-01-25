@@ -2,15 +2,49 @@
   <div class="space-y-6">
     <BaseCard title="Configuration & Tools">
       <div class="mb-4 flex flex-wrap gap-2">
-        <BaseButton variant="tab" icon-left="settings" :class="{ 'cui-tab-active': activeTab === 'config' }" @click="activeTab = 'config'">
+        <BaseButton
+          variant="tab"
+          icon-left="settings"
+          :class="{ 'cui-tab-active': activeTab === 'config' }"
+          @click="activeTab = 'config'"
+        >
           Configuration
         </BaseButton>
-        <BaseButton variant="tab" icon-left="tool" :class="{ 'cui-tab-active': activeTab === 'tools' }" @click="activeTab = 'tools'">
+        <BaseButton
+          variant="tab"
+          icon-left="tool"
+          :class="{ 'cui-tab-active': activeTab === 'tools' }"
+          @click="activeTab = 'tools'"
+        >
           Tools
         </BaseButton>
       </div>
       <div v-if="activeTab === 'config'">
-        <textarea v-model="configStore.configText" class="h-64 w-full rounded border border-rth-border bg-rth-panel-muted p-3 text-xs text-rth-text"></textarea>
+        <div class="mb-4 rounded border border-rth-border bg-rth-panel-muted p-3">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.2em] text-rth-muted">WebMap</div>
+              <div class="text-sm font-semibold text-rth-text">Marker Labels</div>
+              <div class="text-xs text-rth-muted">Show names next to telemetry and operator markers.</div>
+            </div>
+            <label class="cui-switch">
+              <input
+                v-model="markerLabelsEnabled"
+                type="checkbox"
+                class="cui-switch__input"
+                aria-label="Show marker labels on the WebMap"
+              />
+              <span class="cui-switch__track">
+                <span class="cui-switch__indicator" aria-hidden="true"></span>
+              </span>
+              <span class="cui-switch__label">{{ markerLabelsEnabled ? "On" : "Off" }}</span>
+            </label>
+          </div>
+        </div>
+        <textarea
+          v-model="configStore.configText"
+          class="h-64 w-full rounded border border-rth-border bg-rth-panel-muted p-3 text-xs text-rth-text"
+        ></textarea>
         <div class="mt-4 space-y-3 text-xs text-rth-muted">
           <div v-if="configStore.error" class="text-[#fecaca]">Error: {{ configStore.error }}</div>
           <div v-if="configStore.validation">
@@ -47,20 +81,28 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import BaseButton from "../components/BaseButton.vue";
 import BaseCard from "../components/BaseCard.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
 import { useConfigStore } from "../stores/config";
+import { useMapSettingsStore } from "../stores/map-settings";
 import { useToastStore } from "../stores/toasts";
 
 const configStore = useConfigStore();
+const mapSettingsStore = useMapSettingsStore();
 const toastStore = useToastStore();
 const toolResponse = ref<unknown>(null);
 const toolResponseMode = ref<"auto" | "markdown" | "json" | "html">("auto");
 const activeTab = ref<"config" | "tools">("config");
+const markerLabelsEnabled = computed({
+  get: () => mapSettingsStore.showMarkerLabels,
+  set: (value: boolean) => {
+    mapSettingsStore.setShowMarkerLabels(value);
+  }
+});
 
 const toolPaths: Record<string, string> = {
   Ping: endpoints.status,
