@@ -10,14 +10,16 @@ Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. 
 - One-to-many and topic-scoped message fan-out over LXMF.
 - Telemetry collection and on-demand telemetry responses.
 - File and image attachment storage with retrieval by ID.
-- Northbound REST + WebSocket API for operators and the admin UI.
-- Optional TAK/CoT bridge for chat and location updates.
+- sci-fu themed admin UI.
 - Operator-managed map markers backed by Reticulum object identities and telemetry updates.
+- Optional TAK/CoT bridge for chat and location updates.
 
 ## What it looks like
 
 ![Dashboard](image.png)
 ![Map](image-1.png)
+![chat](image-2.png)
+
 
 ## Quickstart (from source)
 
