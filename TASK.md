@@ -1,4 +1,7 @@
 # TASKS
+- 2026-01-23: DONE. Resize the WebMap when the navigation sidebar toggles to prevent horizontal scrolling.
+- 2026-01-23: DONE. Add operator marker entry to the telemetry example JSON.
+- 2026-01-23: DONE. Move WebMap markers into a collapsible right-side panel (default collapsed).
 - 2026-01-23: DONE. Update telemetry documentation with current system flow and operator marker integration.
 - 2026-01-23: DONE. Switch marker symbol validation to a YAML registry and drop Maki support.
 - 2026-01-23: DONE. Normalize marker symbol aliases to accept telemetry icon labels.

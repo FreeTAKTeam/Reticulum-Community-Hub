@@ -209,6 +209,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, watch } from "vue";
 import { ref } from "vue";
+import { storeToRefs } from "pinia";
 import maplibregl from "maplibre-gl";
 import BaseButton from "../components/BaseButton.vue";
 import BaseCard from "../components/BaseCard.vue";
@@ -218,6 +219,7 @@ import BaseModal from "../components/BaseModal.vue";
 import BaseSelect from "../components/BaseSelect.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
 import { WsClient } from "../api/ws";
+import { useNavStore } from "../stores/nav";
 import { useMarkersStore } from "../stores/markers";
 import { useTelemetryStore } from "../stores/telemetry";
 import { buildMarkerSymbolKey } from "../utils/markers";
@@ -234,6 +236,8 @@ import type { TelemetryMarker } from "../utils/telemetry";
 
 const telemetry = useTelemetryStore();
 const markersStore = useMarkersStore();
+const navStore = useNavStore();
+const { isCollapsed: isNavCollapsed } = storeToRefs(navStore);
 const mapContainer = ref<HTMLDivElement | null>(null);
 const mapInstance = ref<maplibregl.Map | null>(null);
 const mapReady = ref(false);
@@ -424,13 +428,21 @@ const toggleMarkerMode = () => {
   markerMode.value = !markerMode.value;
 };
 
-const toggleMarkersPanel = async () => {
-  markersPanelCollapsed.value = !markersPanelCollapsed.value;
+const scheduleMapResize = async () => {
   await nextTick();
   mapInstance.value?.resize();
   window.setTimeout(() => {
     mapInstance.value?.resize();
   }, 320);
+};
+
+watch(isNavCollapsed, () => {
+  void scheduleMapResize();
+});
+
+const toggleMarkersPanel = async () => {
+  markersPanelCollapsed.value = !markersPanelCollapsed.value;
+  await scheduleMapResize();
 };
 
 const openMarkerModal = (lngLat: maplibregl.LngLat) => {

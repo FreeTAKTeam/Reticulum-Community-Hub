@@ -65,4 +65,4 @@ The full SID set is enumerated at `reticulum_telemetry_hub/lxmf_telemetry/model/
 
 ### Example (humanized)
 
-The decoded example at `docs/example_telemetry.json` shows stream responses with entries containing `peer_destination`, `timestamp`, and `telemetry` maps. A typical `telemetry` block includes `time`, `location`, `acceleration`, and `angular_velocity` objects that were humanized from the raw SID map using the sensor `unpack()` methods.
+The decoded example at `docs/example_telemetry.json` shows stream responses with entries containing `peer_destination`, `timestamp`, and `telemetry` maps. A typical `telemetry` block includes `time`, `location`, `acceleration`, and `angular_velocity` objects that were humanized from the raw SID map using the sensor `unpack()` methods. The final entry demonstrates an operator marker payload, with `information` holding the marker name and `custom.marker` capturing marker metadata.
