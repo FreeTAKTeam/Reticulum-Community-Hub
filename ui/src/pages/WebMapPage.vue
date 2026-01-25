@@ -583,11 +583,21 @@ const stopDrag = () => {
 
 const markerIconBase = import.meta.env.BASE_URL ?? "/";
 const markerIconRoot = markerIconBase.endsWith("/") ? markerIconBase : `${markerIconBase}/`;
+const resolveCssColor = (name: string, fallback: string) => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return fallback;
+  }
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+};
 const MDI_ICON_PIXEL_SIZE = 24;
 const NAPSG_ICON_PIXEL_SIZE = 91;
 const TELEMETRY_ICON_SCALE = 0.153;
 const NAPSG_ICON_SCALE = (MDI_ICON_PIXEL_SIZE / NAPSG_ICON_PIXEL_SIZE) * TELEMETRY_ICON_SCALE;
-const TELEMETRY_ICON_COLOR = "#82DBF7";
+const MARKER_PRIMARY_COLOR = resolveCssColor("--cui-primary", "#00b4ff");
+const MARKER_ICON_FILL_COLOR = "rgba(0, 0, 0, 0)";
+const MARKER_ICON_HALO_WIDTH = 1.2;
+const TELEMETRY_ICON_COLOR = MARKER_ICON_FILL_COLOR;
 const TELEMETRY_CLUSTER_MAX_ZOOM = 12;
 const MARKER_LABEL_COLOR = "#E7ECF5";
 const MARKER_LABEL_HALO_COLOR = "#06121E";
@@ -916,15 +926,7 @@ const renderTelemetryMarkers = () => {
       source: sourceId,
       filter: ["has", "point_count"],
       paint: {
-        "circle-color": [
-          "step",
-          ["get", "point_count"],
-          "#64E1FF",
-          10,
-          "#39C6FF",
-          25,
-          "#12B7FF"
-        ],
+        "circle-color": MARKER_ICON_FILL_COLOR,
         "circle-radius": [
           "step",
           ["get", "point_count"],
@@ -935,7 +937,7 @@ const renderTelemetryMarkers = () => {
           22
         ],
         "circle-opacity": 0.95,
-        "circle-stroke-color": "#E6FAFF",
+        "circle-stroke-color": MARKER_PRIMARY_COLOR,
         "circle-stroke-width": 2
       }
     });
@@ -952,7 +954,7 @@ const renderTelemetryMarkers = () => {
         "text-ignore-placement": true
       },
       paint: {
-        "text-color": "#03101C"
+        "text-color": "#FFFFFF"
       }
     });
   } else if (clusterLayersMissing) {
@@ -963,15 +965,7 @@ const renderTelemetryMarkers = () => {
         source: sourceId,
         filter: ["has", "point_count"],
         paint: {
-          "circle-color": [
-            "step",
-            ["get", "point_count"],
-            "#64E1FF",
-            10,
-            "#39C6FF",
-            25,
-            "#12B7FF"
-          ],
+          "circle-color": MARKER_ICON_FILL_COLOR,
           "circle-radius": [
             "step",
             ["get", "point_count"],
@@ -982,7 +976,7 @@ const renderTelemetryMarkers = () => {
             22
           ],
           "circle-opacity": 0.95,
-          "circle-stroke-color": "#E6FAFF",
+          "circle-stroke-color": MARKER_PRIMARY_COLOR,
           "circle-stroke-width": 2
         }
       });
@@ -1000,11 +994,11 @@ const renderTelemetryMarkers = () => {
           "text-allow-overlap": true,
           "text-ignore-placement": true
         },
-        paint: {
-          "text-color": "#03101C"
-        }
-      });
-    }
+      paint: {
+        "text-color": "#FFFFFF"
+      }
+    });
+  }
   }
 
   if (telemetryIconsReady.value && !map.getLayer(layerId)) {
@@ -1021,6 +1015,8 @@ const renderTelemetryMarkers = () => {
       },
       paint: {
         "icon-color": TELEMETRY_ICON_COLOR,
+        "icon-halo-color": MARKER_PRIMARY_COLOR,
+        "icon-halo-width": MARKER_ICON_HALO_WIDTH,
         ...markerLabelPaint
       }
     });
@@ -1131,15 +1127,7 @@ const renderOperatorMarkers = () => {
       source: sourceId,
       filter: ["has", "point_count"],
       paint: {
-        "circle-color": [
-          "step",
-          ["get", "point_count"],
-          "#FFD166",
-          10,
-          "#FFB703",
-          25,
-          "#FB8C00"
-        ],
+        "circle-color": MARKER_ICON_FILL_COLOR,
         "circle-radius": [
           "step",
           ["get", "point_count"],
@@ -1150,7 +1138,7 @@ const renderOperatorMarkers = () => {
           22
         ],
         "circle-opacity": 0.95,
-        "circle-stroke-color": "#FFF4D6",
+        "circle-stroke-color": MARKER_PRIMARY_COLOR,
         "circle-stroke-width": 2
       }
     });
@@ -1167,7 +1155,7 @@ const renderOperatorMarkers = () => {
         "text-ignore-placement": true
       },
       paint: {
-        "text-color": "#2B1D06"
+        "text-color": "#FFFFFF"
       }
     });
     map.addLayer({
@@ -1182,7 +1170,9 @@ const renderOperatorMarkers = () => {
         ...buildMarkerLabelLayout()
       },
       paint: {
-        "icon-color": ["coalesce", ["get", "color"], "#FBBF24"],
+        "icon-color": MARKER_ICON_FILL_COLOR,
+        "icon-halo-color": MARKER_PRIMARY_COLOR,
+        "icon-halo-width": MARKER_ICON_HALO_WIDTH,
         ...markerLabelPaint
       }
     });
@@ -1194,15 +1184,7 @@ const renderOperatorMarkers = () => {
         source: sourceId,
         filter: ["has", "point_count"],
         paint: {
-          "circle-color": [
-            "step",
-            ["get", "point_count"],
-            "#FFD166",
-            10,
-            "#FFB703",
-            25,
-            "#FB8C00"
-          ],
+          "circle-color": MARKER_ICON_FILL_COLOR,
           "circle-radius": [
             "step",
             ["get", "point_count"],
@@ -1213,7 +1195,7 @@ const renderOperatorMarkers = () => {
             22
           ],
           "circle-opacity": 0.95,
-          "circle-stroke-color": "#FFF4D6",
+          "circle-stroke-color": MARKER_PRIMARY_COLOR,
           "circle-stroke-width": 2
         }
       });
@@ -1231,10 +1213,10 @@ const renderOperatorMarkers = () => {
           "text-allow-overlap": true,
           "text-ignore-placement": true
         },
-        paint: {
-          "text-color": "#2B1D06"
-        }
-      });
+      paint: {
+        "text-color": "#FFFFFF"
+      }
+    });
     }
   }
 
@@ -1251,7 +1233,9 @@ const renderOperatorMarkers = () => {
         ...buildMarkerLabelLayout()
       },
       paint: {
-        "icon-color": ["coalesce", ["get", "color"], "#FBBF24"],
+        "icon-color": MARKER_ICON_FILL_COLOR,
+        "icon-halo-color": MARKER_PRIMARY_COLOR,
+        "icon-halo-width": MARKER_ICON_HALO_WIDTH,
         ...markerLabelPaint
       }
     });

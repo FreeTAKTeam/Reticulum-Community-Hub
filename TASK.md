@@ -1,4 +1,7 @@
 # TASKS
+- 2026-01-25: DONE. Update WebMap cluster count labels to render in white.
+- 2026-01-25: DONE. Remove WebMap marker fills while keeping primary outlines.
+- 2026-01-25: DONE. Align WebMap marker fills to primary and strokes to accent.
 - 2026-01-23: DONE. Preserve WebMap center/zoom between tab switches.
 - 2026-01-23: DONE. Style the WebMap marker label toggle as a cosmic switch control.
 - 2026-01-23: DONE. Add configurable WebMap marker labels and show names on the map.
