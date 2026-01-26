@@ -489,7 +489,8 @@ class HubStorage(HubStorageBase):
         with self._session_scope() as session:
             rows = (
                 session.query(
-                    ChatMessageRecord.state, sa_func.count(ChatMessageRecord.id)
+                    ChatMessageRecord.state,
+                    sa_func.count(ChatMessageRecord.id),  # pylint: disable=not-callable
                 )
                 .group_by(ChatMessageRecord.state)
                 .all()

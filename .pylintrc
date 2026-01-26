@@ -8,7 +8,7 @@
 ignore=reticulum_telemetry_hub/lxmf_daemon,reticulum_telemetry_hub/reticulum_server,reticulum_telemetry_hub/embedded_lxmd,reticulum_telemetry_hub/lxmf_telemetry,tests
 
 [TYPECHECK]
-ignored-modules=dotenv,qrcode,nacl,nacl.encoding,nacl.hash
+ignored-modules=dotenv,qrcode,nacl,nacl.encoding,nacl.hash,httpx,pydantic,fastapi,fastapi.testclient
 
 [FORMAT]
 max-line-length=120
