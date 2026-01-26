@@ -108,6 +108,8 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
   npm run dev
   ```
 
+  The UI uses Vite 6 (installed via `npm install`).
+
   Set `VITE_RCH_BASE_URL` when the UI should target a different hub.
 
 Marker management endpoints (used by the WebMap UI):

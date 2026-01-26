@@ -1,4 +1,5 @@
 # TASKS
+- 2026-01-26: DONE. Align UI Vite version to plugin-vue peer requirements for fresh installs.
 - 2026-01-25: DONE. Update WebMap cluster count labels to render in white.
 - 2026-01-25: DONE. Remove WebMap marker fills while keeping primary outlines.
 - 2026-01-25: DONE. Align WebMap marker fills to primary and strokes to accent.
