@@ -17,7 +17,6 @@ import RNS
 import uvicorn
 from fastapi import FastAPI
 
-from reticulum_telemetry_hub.config.constants import DEFAULT_ANNOUNCE_INTERVAL
 from reticulum_telemetry_hub.config.constants import DEFAULT_HUB_TELEMETRY_INTERVAL
 from reticulum_telemetry_hub.config.constants import DEFAULT_LOG_LEVEL_NAME
 from reticulum_telemetry_hub.config.constants import DEFAULT_SERVICE_TELEMETRY_INTERVAL
