@@ -1,4 +1,14 @@
 # TASKS
+- 2026-01-29: DONE. Reset PyInstaller environment for spawned gateway and normalize gateway argv.
+- 2026-01-28: DONE. Add frozen-safe gateway command for the packaged backend launcher.
+- 2026-01-28: DONE. Fix Electron backend arg order for rch CLI global flags.
+- 2026-01-28: DONE. Log Electron-packaged backend output to userData for troubleshooting.
+- 2026-01-28: DONE. Add GitHub Actions workflow to build Windows Electron installer and portable EXE.
+- 2026-01-28: DONE. Bundle the Python backend into the Electron package with PyInstaller autostart.
+- 2026-01-28: DONE. Fix Electron file:// UI assets and API defaults for packaged builds.
+- 2026-01-28: DONE. Add Windows portable Electron build target for self-contained EXE.
+- 2026-01-28: DONE. Fix Vite base path for Electron file:// assets.
+- 2026-01-28: DONE. Create Electron deployment scaffold for Windows and Raspberry Pi OS.
 - 2026-01-26: DONE. Align UI Vite version to plugin-vue peer requirements for fresh installs.
 - 2026-01-25: DONE. Update WebMap cluster count labels to render in white.
 - 2026-01-25: DONE. Remove WebMap marker fills while keeping primary outlines.

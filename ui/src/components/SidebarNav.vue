@@ -6,7 +6,7 @@
     <div class="flex text-sm text-rth-text" :class="isCollapsed ? 'mb-4 flex-col items-center gap-3' : 'mb-6 items-center gap-3'">
       <div class="flex items-center gap-3" :class="isCollapsed ? 'justify-center' : 'flex-1'">
         <div class="cui-logo-spin h-8 w-8">
-          <img src="/RCH_vector.svg" alt="Reticulum Community Hub" class="h-full w-full" />
+          <img :src="logoUrl" alt="Reticulum Community Hub" class="h-full w-full" />
         </div>
         <div v-if="!isCollapsed" class="cui-title-wrap" :class="{ 'cui-title-paused': isTitlePaused }">
           <span class="cui-title-text" data-title="Reticulum Community Hub">Reticulum Community Hub</span>
@@ -146,4 +146,6 @@ const isTitlePaused = computed(() => {
     connectionStore.authStatus === "forbidden"
   );
 });
+
+const logoUrl = `${import.meta.env.BASE_URL}RCH_vector.svg`;
 </script>

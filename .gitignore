@@ -174,5 +174,11 @@ docs/example_telemetry.json
 # UI artifacts
 ui/node_modules/
 ui/dist/
+electron/node_modules/
+electron/dist/
+electron/dist-release/
+electron/backend/build/
+electron/backend/rch-backend*
+electron/backend/*.spec
 telemetry.db-wal
 telemetry.db-shm

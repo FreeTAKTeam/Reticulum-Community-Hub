@@ -1,0 +1,59 @@
+{
+  "name": "rch-desktop",
+  "private": true,
+  "version": "0.3.1",
+  "description": "Electron shell for Reticulum Community Hub.",
+  "main": "dist/main.js",
+  "author": "FreeTAKTeam",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build:ui": "npm --prefix ../ui run build",
+    "build:electron": "tsc -p tsconfig.json",
+    "build:backend": "node scripts/build-backend.mjs",
+    "build": "npm run build:ui && npm run build:electron && npm run build:backend",
+    "start": "electron dist/main.js",
+    "dist": "npm run build && electron-builder"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.4.5"
+  },
+  "build": {
+    "appId": "com.freetakteam.rch",
+    "productName": "RCH Desktop",
+    "directories": {
+      "output": "dist-release"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../ui/dist",
+        "to": "ui"
+      },
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "rch-backend*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "deb"
+      ],
+      "category": "Utility"
+    }
+  }
+}

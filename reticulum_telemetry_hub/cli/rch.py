@@ -170,17 +170,29 @@ def _build_gateway_command(
 ) -> list[str]:
     """Build the command used to spawn the gateway process."""
 
-    command = [
-        sys.executable,
-        "-m",
-        "reticulum_telemetry_hub.northbound.gateway",
-        "--data-dir",
-        str(data_dir),
-        "--port",
-        str(port),
-        "--api-host",
-        DEFAULT_HOST,
-    ]
+    if getattr(sys, "frozen", False):
+        command = [
+            sys.executable,
+            "--data-dir",
+            str(data_dir),
+            "--port",
+            str(port),
+            "gateway",
+            "--api-host",
+            DEFAULT_HOST,
+        ]
+    else:
+        command = [
+            sys.executable,
+            "-m",
+            "reticulum_telemetry_hub.northbound.gateway",
+            "--data-dir",
+            str(data_dir),
+            "--port",
+            str(port),
+            "--api-host",
+            DEFAULT_HOST,
+        ]
     if log_level:
         command.extend(["--log-level", log_level])
     return command
@@ -192,10 +204,15 @@ def _spawn_gateway_process(command: list[str], log_path: Path) -> subprocess.Pop
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = log_path.open("a", encoding="utf-8")
     creationflags = 0
+    env = os.environ.copy()
+    if getattr(sys, "frozen", False):
+        env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        env.pop("_MEIPASS", None)
     kwargs: dict[str, object] = {
         "stdout": log_file,
         "stderr": log_file,
         "stdin": subprocess.DEVNULL,
+        "env": env,
     }
     if os.name == "nt":
         creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -331,20 +348,85 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Log verbosity for the hub runtime.",
     )
 
+    gateway_parser = subparsers.add_parser("gateway", help=argparse.SUPPRESS)
+    gateway_parser.add_argument(
+        "--data-dir",
+        dest="data_dir",
+        default=None,
+        help="Storage directory for hub data.",
+    )
+    gateway_parser.add_argument(
+        "--port",
+        dest="port",
+        type=int,
+        default=None,
+        help="Port to bind the northbound API.",
+    )
+    gateway_parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        choices=["error", "warning", "info", "debug"],
+        default=None,
+        help="Log verbosity for the hub runtime.",
+    )
+    gateway_parser.add_argument(
+        "--api-host",
+        dest="api_host",
+        default=DEFAULT_HOST,
+        help="Host address for the northbound API.",
+    )
+
     subparsers.add_parser("stop", help="Stop the hub backend.")
     subparsers.add_parser("status", help="Show hub backend status.")
     return parser
+
+
+def _gateway_command(args: argparse.Namespace) -> int:
+    """Run the gateway process directly (used by frozen builds)."""
+
+    from reticulum_telemetry_hub.northbound import gateway
+
+    argv = ["gateway"]
+    if args.data_dir:
+        argv.extend(["--data-dir", str(args.data_dir)])
+    if args.port is not None:
+        argv.extend(["--port", str(args.port)])
+    if args.api_host:
+        argv.extend(["--api-host", str(args.api_host)])
+    if args.log_level:
+        argv.extend(["--log-level", str(args.log_level)])
+    original_argv = sys.argv
+    try:
+        sys.argv = argv
+        gateway.main()
+    finally:
+        sys.argv = original_argv
+    return 0
+
+
+def _normalize_gateway_args() -> None:
+    """Rewrite argv when invoked via python -m to the gateway subcommand."""
+
+    argv = sys.argv[1:]
+    if len(argv) >= 2 and argv[0] == "-m" and argv[1] == "reticulum_telemetry_hub.northbound.gateway":
+        sys.argv = [sys.argv[0], "gateway", *argv[2:]]
+        return
+    if argv and argv[0] == "reticulum_telemetry_hub.northbound.gateway":
+        sys.argv = [sys.argv[0], "gateway", *argv[1:]]
 
 
 def main() -> None:
     """Run the rch CLI entrypoint."""
 
     load_env()
+    _normalize_gateway_args()
     parser = _build_parser()
     args = parser.parse_args()
 
     if args.command == "start":
         raise SystemExit(_start_command(args))
+    if args.command == "gateway":
+        raise SystemExit(_gateway_command(args))
     if args.command == "stop":
         raise SystemExit(_stop_command(args))
     if args.command == "status":

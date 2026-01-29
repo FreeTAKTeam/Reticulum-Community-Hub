@@ -68,6 +68,18 @@ def test_build_gateway_command_includes_args(tmp_path) -> None:
     assert "debug" in command
 
 
+def test_build_gateway_command_frozen_uses_gateway(tmp_path, monkeypatch) -> None:
+    """Use the gateway subcommand when running in frozen mode."""
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "rch-backend.exe", raising=False)
+
+    command = _build_gateway_command(tmp_path, 8124, "info")
+
+    assert "gateway" in command
+    assert "-m" not in command
+
+
 def test_control_client_status_success() -> None:
     """Return status JSON for a healthy endpoint."""
 
@@ -344,12 +356,16 @@ def test_spawn_gateway_process_writes_log(tmp_path, monkeypatch) -> None:
         recorded["kwargs"] = kwargs
         return DummyProcess()
 
+    monkeypatch.setenv("_MEIPASS", "C:\\Temp\\_MEI123")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(rch.subprocess, "Popen", fake_popen)
 
     process = _spawn_gateway_process(["python", "-m", "rch"], tmp_path / "rch.log")
 
     assert process.pid == 9000
     assert recorded["kwargs"]["stdin"] == rch.subprocess.DEVNULL
+    assert recorded["kwargs"]["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert "_MEIPASS" not in recorded["kwargs"]["env"]
 
 
 def test_build_parser_parses_start_args() -> None:
@@ -397,3 +413,34 @@ def test_main_routes_to_status(monkeypatch) -> None:
         rch.main()
 
     assert exc.value.code == 0
+
+
+def test_main_normalizes_gateway_args(monkeypatch) -> None:
+    """Normalize python -m gateway calls to the gateway subcommand."""
+
+    called = {}
+
+    def fake_gateway(_args) -> int:
+        called["gateway"] = True
+        return 0
+
+    monkeypatch.setattr(rch, "_gateway_command", fake_gateway)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "rch",
+            "-m",
+            "reticulum_telemetry_hub.northbound.gateway",
+            "--data-dir",
+            "RCH_Store",
+            "--port",
+            "8123",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        rch.main()
+
+    assert exc.value.code == 0
+    assert called["gateway"] is True

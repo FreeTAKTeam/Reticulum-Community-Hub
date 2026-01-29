@@ -112,6 +112,54 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 
   Set `VITE_RCH_BASE_URL` when the UI should target a different hub.
 
+## Electron desktop packaging (Windows + Raspberry Pi OS)
+
+The `electron/` folder contains a minimal desktop wrapper that bundles the UI and
+loads the hub API from `127.0.0.1`.
+
+1. Install Electron dependencies:
+   ```bash
+   cd electron
+   npm install
+   ```
+2. Run the Electron shell in dev mode (starts the Vite dev server):
+   ```bash
+   npm run dev
+   ```
+3. Build installers:
+   ```bash
+   npm run dist
+   ```
+4. Build a portable Windows EXE:
+   ```bash
+   npm run dist -- --win portable
+   ```
+
+Electron packaging expects a bundled backend executable. Install PyInstaller and
+build it before packaging:
+
+```bash
+python -m pip install -e .
+python -m pip install pyinstaller
+cd electron
+npm run build:backend
+```
+
+For Raspberry Pi OS, build on Linux and target the desired architecture:
+
+```bash
+npm run dist -- --linux --armv7l
+npm run dist -- --linux --arm64
+```
+
+Packaged builds default to `http://127.0.0.1:8000` for the API when loaded from
+`file://`. Override in the Connect page or set `VITE_RTH_BASE_URL` /
+`VITE_RTH_WS_BASE_URL` at build time.
+
+Packaged desktop builds also launch the bundled backend automatically. Set
+`RCH_BACKEND_MANAGED=false` to disable autostart, or override with
+`RCH_DATA_DIR`, `RCH_BACKEND_PORT`, and `RCH_LOG_LEVEL`.
+
 Marker management endpoints (used by the WebMap UI):
 
 - `GET /api/markers` (list stored markers)
