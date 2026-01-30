@@ -16,7 +16,7 @@ Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. 
 
 ## What it looks like
 
-![Dashboard](image.png)
+![Dashboard](image-3.png)
 ![Map](image-1.png)
 ![chat](image-2.png)
 

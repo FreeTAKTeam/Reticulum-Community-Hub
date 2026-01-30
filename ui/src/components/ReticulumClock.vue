@@ -15,7 +15,7 @@
 
     <div ref="containerRef" class="reticulum-container" :style="containerStyle">
       <div class="reticulum-header">
-        <h1 class="reticulum-title glow-text">RETICULUM</h1>
+        <h1 class="reticulum-title glow-text">LOCAL INFO</h1>
         <div class="reticulum-title-line" />
       </div>
 

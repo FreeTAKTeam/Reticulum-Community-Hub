@@ -1,10 +1,10 @@
 <template>
-  <div class="flex min-h-screen bg-rth-bg text-rth-text">
+  <div class="flex bg-rth-bg text-rth-text" :class="shellClass">
     <SidebarNav />
-    <div class="flex flex-1 min-w-0 flex-col">
-      <HeaderBar />
+    <div class="flex flex-1 min-w-0 flex-col min-h-0">
+      <HeaderBar v-if="showHeaderBar" />
       <ConnectionBanner />
-      <main class="flex-1 overflow-y-auto p-6">
+      <main class="flex-1 min-h-0" :class="mainClass">
         <slot />
       </main>
     </div>
@@ -12,7 +12,20 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
+import { useRoute } from "vue-router";
 import ConnectionBanner from "./ConnectionBanner.vue";
 import HeaderBar from "./HeaderBar.vue";
 import SidebarNav from "./SidebarNav.vue";
+
+const route = useRoute();
+const showHeaderBar = computed(() => route.path !== "/");
+const shellClass = computed(() =>
+  route.path === "/" ? "h-screen overflow-hidden" : "min-h-screen"
+);
+const mainClass = computed(() =>
+  route.path === "/"
+    ? "p-2 overflow-hidden flex flex-col min-h-0"
+    : "p-6 overflow-y-auto"
+);
 </script>

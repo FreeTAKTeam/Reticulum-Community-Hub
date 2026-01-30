@@ -2,6 +2,15 @@
 - 2026-01-30: DONE. Allow null TAK values in marker symbol API response.
 - 2026-01-30: DONE. Add LXMF appearance fields to outbound messages with defaults and tests.
 - 2026-01-30: DONE. Ensure telemetry emits LXMF icon appearance (0x04) with MDI icon names and colors.
+- 2026-01-30: DONE. Redesign dashboard layout to match asymmetric command layout and embed ReticulumClock widget.
+- 2026-01-30: DONE. Hide global header bar on dashboard to avoid duplicate title/status rows.
+- 2026-01-30: DONE. Match Event Feed panel height to Reticulum Clock widget.
+- 2026-01-30: DONE. Replace Live badges in vitals with cosmic UI decorators.
+- 2026-01-30: DONE. Remove SYSTEM VITAL rail text from dashboard vitals column.
+- 2026-01-30: DONE. Reclaim dashboard padding after removing vitals rail.
+- 2026-01-30: DONE. Move backend control to left column, relocate uptime to clock, and stretch event feed/clock heights.
+- 2026-01-30: DONE. Constrain dashboard scrolling to the Event Feed panel only.
+- 2026-01-30: DONE. Ensure the dashboard fits the viewport without overall page scrolling.
 - 2026-01-29: DONE. Add NATO marker symbols with specified colors and MDI icons.
 - 2026-01-29: DONE. Make map marker backgrounds transparent and force telemetry icons to person.
 - 2026-01-29: DONE. Reset PyInstaller environment for spawned gateway and normalize gateway argv.
