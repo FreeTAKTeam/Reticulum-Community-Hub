@@ -8,6 +8,7 @@ from typing import Protocol
 
 from fastapi import Depends
 from fastapi import FastAPI
+from fastapi import HTTPException
 
 
 class ControlService(Protocol):
@@ -18,6 +19,9 @@ class ControlService(Protocol):
 
     def request_shutdown(self) -> None:
         """Request a graceful shutdown."""
+
+    def request_announce(self) -> bool:
+        """Trigger a Reticulum announce."""
 
 
 def register_control_routes(
@@ -58,3 +62,11 @@ def register_control_routes(
         if callable(request_start):
             request_start()
         return control.status()
+
+    @app.post("/Control/Announce", dependencies=[Depends(require_protected)])
+    def control_announce() -> dict[str, object]:
+        """Send an immediate Reticulum announce."""
+
+        if not control.request_announce():
+            raise HTTPException(status_code=503, detail="Announce unavailable")
+        return {"status": "announce sent"}

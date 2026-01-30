@@ -24,5 +24,6 @@ export const endpoints = {
   rth: "/RTH",
   controlStart: "/Control/Start",
   controlStop: "/Control/Stop",
-  controlStatus: "/Control/Status"
+  controlStatus: "/Control/Status",
+  controlAnnounce: "/Control/Announce"
 };

@@ -111,6 +111,15 @@
             >
               Status
             </BaseButton>
+            <BaseButton
+              :disabled="controlBusy"
+              class="hud-control-btn hud-control-btn--announce"
+              icon-left="send"
+              variant="secondary"
+              @click="sendAnnounce"
+            >
+              Announce
+            </BaseButton>
           </div>
         </div>
       </aside>
@@ -600,6 +609,19 @@ const stopBackend = async () => {
     toastStore.push("Backend stop requested", "warning");
   } catch (error) {
     toastStore.push("Backend stop failed", "danger");
+  } finally {
+    controlBusy.value = false;
+  }
+};
+
+const sendAnnounce = async () => {
+  controlBusy.value = true;
+  try {
+    const response = await post<{ status?: string }>(endpoints.controlAnnounce);
+    const message = response?.status ?? "Announce sent";
+    toastStore.push(message, "success");
+  } catch (error) {
+    toastStore.push("Announce failed", "danger");
   } finally {
     controlBusy.value = false;
   }

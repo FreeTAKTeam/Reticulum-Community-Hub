@@ -1059,6 +1059,35 @@ class ReticulumTelemetryHub:
             manager.announce_marker(marker)
         return manager.dispatch_marker_telemetry(marker, event_type)
 
+    def send_announce(self) -> bool:
+        """Send an immediate Reticulum announce.
+
+        Returns:
+            bool: True when the announce was dispatched.
+        """
+
+        destination = getattr(self, "my_lxmf_dest", None)
+        if destination is None:
+            RNS.log(
+                "Announce skipped; no LXMF destination available.",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return False
+        try:
+            destination.announce()
+            RNS.log(
+                "LXMF identity announced (manual)",
+                getattr(RNS, "LOG_DEBUG", self.loglevel),
+            )
+            self._announce_active_markers()
+            return True
+        except Exception as exc:  # pragma: no cover - defensive
+            RNS.log(
+                f"Manual announce failed: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return False
+
     def _announce_active_markers(self) -> None:
         """Announce non-expired marker objects on schedule."""
 

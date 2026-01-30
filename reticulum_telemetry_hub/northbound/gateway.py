@@ -261,6 +261,14 @@ class GatewayControl:
 
         return
 
+    def request_announce(self) -> bool:
+        """Request an immediate Reticulum announce."""
+
+        announce = getattr(self.hub, "send_announce", None)
+        if callable(announce):
+            return bool(announce())
+        return False
+
     def status(self) -> dict[str, object]:
         """Return a snapshot of the gateway status."""
 

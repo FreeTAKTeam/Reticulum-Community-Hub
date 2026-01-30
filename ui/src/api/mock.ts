@@ -181,6 +181,10 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     return jsonResponse({ status: "stopping" });
   }
 
+  if (pathname === "/Control/Announce" && method === "POST") {
+    return jsonResponse({ status: "announce sent" });
+  }
+
   if (pathname === "/Events") {
     return jsonResponse(mockState.events);
   }

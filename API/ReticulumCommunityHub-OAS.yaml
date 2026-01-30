@@ -75,6 +75,33 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Event'
+  /Control/Announce:
+    post:
+      x-scope: protected
+      tags:
+       - Control
+      summary: Send an immediate Reticulum announce.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Announce request acknowledged.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                required:
+                  - status
+        '503':
+          description: Announce unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /events/system:
     get:
       x-scope: protected
