@@ -114,8 +114,8 @@ def test_marker_symbols_route(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert {"id": "marker", "set": "mdi"} in payload
-    assert {"id": "vehicle", "set": "mdi"} in payload
+    assert any(item.get("id") == "marker" and item.get("set") == "mdi" for item in payload)
+    assert any(item.get("id") == "vehicle" and item.get("set") == "mdi" for item in payload)
 
 
 def test_marker_routes_accept_mdi_symbols(tmp_path: Path, monkeypatch) -> None:

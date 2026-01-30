@@ -231,7 +231,6 @@ import { resolveClusterRadius } from "../utils/map-cluster";
 import { resolveZoomScale } from "../utils/map-cluster";
 import { loadMdiSvg } from "../utils/mdi-icons";
 import { buildTelemetryIconId } from "../utils/telemetry-icons";
-import { resolveTelemetryIconKey } from "../utils/telemetry-icons";
 import { resolveTelemetryIconValue } from "../utils/telemetry-icons";
 import type { TelemetryMarker } from "../utils/telemetry";
 
@@ -595,9 +594,11 @@ const NAPSG_ICON_PIXEL_SIZE = 91;
 const TELEMETRY_ICON_SCALE = 0.153;
 const NAPSG_ICON_SCALE = (MDI_ICON_PIXEL_SIZE / NAPSG_ICON_PIXEL_SIZE) * TELEMETRY_ICON_SCALE;
 const MARKER_PRIMARY_COLOR = resolveCssColor("--cui-primary", "#00b4ff");
-const MARKER_ICON_FILL_COLOR = "rgba(0, 0, 0, 0)";
+const MARKER_ICON_COLOR = MARKER_PRIMARY_COLOR;
 const MARKER_ICON_HALO_WIDTH = 1.2;
-const TELEMETRY_ICON_COLOR = MARKER_ICON_FILL_COLOR;
+const TELEMETRY_ICON_COLOR = MARKER_ICON_COLOR;
+const MARKER_CLUSTER_FILL_COLOR = "transparent";
+const MARKER_CLUSTER_FILL_OPACITY = 0;
 const TELEMETRY_CLUSTER_MAX_ZOOM = 12;
 const MARKER_LABEL_COLOR = "#E7ECF5";
 const MARKER_LABEL_HALO_COLOR = "#06121E";
@@ -887,7 +888,7 @@ const renderTelemetryMarkers = () => {
       properties: {
         id: marker.id,
         name: marker.name,
-        icon: buildTelemetryIconId(resolveTelemetryIconKey(marker.raw, symbolKeySet.value))
+        icon: buildTelemetryIconId("person")
       }
     }))
   } as GeoJSON.FeatureCollection;
@@ -926,7 +927,7 @@ const renderTelemetryMarkers = () => {
       source: sourceId,
       filter: ["has", "point_count"],
       paint: {
-        "circle-color": MARKER_ICON_FILL_COLOR,
+        "circle-color": MARKER_CLUSTER_FILL_COLOR,
         "circle-radius": [
           "step",
           ["get", "point_count"],
@@ -936,7 +937,7 @@ const renderTelemetryMarkers = () => {
           25,
           22
         ],
-        "circle-opacity": 0.95,
+        "circle-opacity": MARKER_CLUSTER_FILL_OPACITY,
         "circle-stroke-color": MARKER_PRIMARY_COLOR,
         "circle-stroke-width": 2
       }
@@ -965,7 +966,7 @@ const renderTelemetryMarkers = () => {
         source: sourceId,
         filter: ["has", "point_count"],
         paint: {
-          "circle-color": MARKER_ICON_FILL_COLOR,
+          "circle-color": MARKER_CLUSTER_FILL_COLOR,
           "circle-radius": [
             "step",
             ["get", "point_count"],
@@ -975,7 +976,7 @@ const renderTelemetryMarkers = () => {
             25,
             22
           ],
-          "circle-opacity": 0.95,
+          "circle-opacity": MARKER_CLUSTER_FILL_OPACITY,
           "circle-stroke-color": MARKER_PRIMARY_COLOR,
           "circle-stroke-width": 2
         }
@@ -1127,7 +1128,7 @@ const renderOperatorMarkers = () => {
       source: sourceId,
       filter: ["has", "point_count"],
       paint: {
-        "circle-color": MARKER_ICON_FILL_COLOR,
+        "circle-color": MARKER_CLUSTER_FILL_COLOR,
         "circle-radius": [
           "step",
           ["get", "point_count"],
@@ -1137,7 +1138,7 @@ const renderOperatorMarkers = () => {
           25,
           22
         ],
-        "circle-opacity": 0.95,
+        "circle-opacity": MARKER_CLUSTER_FILL_OPACITY,
         "circle-stroke-color": MARKER_PRIMARY_COLOR,
         "circle-stroke-width": 2
       }
@@ -1170,7 +1171,7 @@ const renderOperatorMarkers = () => {
         ...buildMarkerLabelLayout()
       },
       paint: {
-        "icon-color": MARKER_ICON_FILL_COLOR,
+        "icon-color": ["coalesce", ["get", "color"], MARKER_ICON_COLOR],
         "icon-halo-color": MARKER_PRIMARY_COLOR,
         "icon-halo-width": MARKER_ICON_HALO_WIDTH,
         ...markerLabelPaint
@@ -1184,7 +1185,7 @@ const renderOperatorMarkers = () => {
         source: sourceId,
         filter: ["has", "point_count"],
         paint: {
-          "circle-color": MARKER_ICON_FILL_COLOR,
+          "circle-color": MARKER_CLUSTER_FILL_COLOR,
           "circle-radius": [
             "step",
             ["get", "point_count"],
@@ -1194,7 +1195,7 @@ const renderOperatorMarkers = () => {
             25,
             22
           ],
-          "circle-opacity": 0.95,
+          "circle-opacity": MARKER_CLUSTER_FILL_OPACITY,
           "circle-stroke-color": MARKER_PRIMARY_COLOR,
           "circle-stroke-width": 2
         }
@@ -1233,7 +1234,7 @@ const renderOperatorMarkers = () => {
         ...buildMarkerLabelLayout()
       },
       paint: {
-        "icon-color": MARKER_ICON_FILL_COLOR,
+        "icon-color": ["coalesce", ["get", "color"], MARKER_ICON_COLOR],
         "icon-halo-color": MARKER_PRIMARY_COLOR,
         "icon-halo-width": MARKER_ICON_HALO_WIDTH,
         ...markerLabelPaint

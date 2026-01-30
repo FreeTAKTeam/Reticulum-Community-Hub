@@ -8,6 +8,10 @@ from typing import Callable, Optional
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
+from reticulum_telemetry_hub.reticulum_server.appearance import (
+    build_telemetry_icon_appearance_payload,
+)
 
 import LXMF
 import RNS
@@ -528,7 +532,7 @@ class TelemetryController:
                             peer_hash,
                             round(tel.time.timestamp()),
                             packb(tel_data, use_bin_type=True),
-                            self._build_appearance_payload(),
+                            self._build_appearance_payload(tel_data),
                         ]
                     )
                 message = LXMF.LXMessage(
@@ -539,6 +543,7 @@ class TelemetryController:
             # Sideband expects telemetry streams as plain lists; avoid
             # double-encoding the field so clients can iterate entries directly.
             message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packed_tels
+            message.fields = apply_icon_appearance(message.fields)
             readable_json = json.dumps(
                 self._json_safe(human_readable_entries), default=str
             )
@@ -647,10 +652,19 @@ class TelemetryController:
             reverse=True,
         )
 
-    def _build_appearance_payload(self) -> dict[int, list[object]]:
-        """Return the default appearance payload for telemetry stream entries."""
+    def _build_appearance_payload(
+        self, telemetry_payload: dict[int, object]
+    ) -> dict[int, list[object]]:
+        """Return the appearance payload for telemetry stream entries.
 
-        return {4: ["bird", b"\x00\x00\x00", b"\xff\xff\xff"]}
+        Args:
+            telemetry_payload (dict[int, object]): Serialized telemetry payload.
+
+        Returns:
+            dict[int, list[object]]: LXMF appearance field payload.
+        """
+
+        return build_telemetry_icon_appearance_payload(telemetry_payload)
 
     def _telemeter_has_location(self, telemeter: Telemeter) -> bool:
         """Return True when the telemeter includes usable location data."""
@@ -729,6 +743,7 @@ class TelemetryController:
             dest,
             my_lxm_dest,
             content,
+            fields=apply_icon_appearance(None),
             desired_method=LXMF.LXMessage.DIRECT,
         )
 

@@ -182,7 +182,7 @@ def test_retrieve_file_missing_record_returns_error(tmp_path):
 
     assert response is not None
     assert "File '999' not found" in response.content_as_string()
-    assert not response.fields
+    assert set(response.fields.keys()) == {LXMF.FIELD_ICON_APPEARANCE}
 
 
 def test_retrieve_file_missing_from_disk_returns_helpful_message(tmp_path):

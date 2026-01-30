@@ -36,6 +36,9 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.rns_transp
     RNSTransport,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
+from reticulum_telemetry_hub.reticulum_server.appearance import (
+    build_telemetry_icon_appearance_payload,
+)
 from tests.factories import (
     build_complex_telemeter_payload,
     create_connection_map_sensor,
@@ -113,7 +116,7 @@ def test_handle_command_stream_is_msgpack_encoded(
 
     peer_hash, timestamp, telemeter_blob = unpacked[0][:3]
     assert isinstance(peer_hash, (bytes, bytearray))
-    assert unpacked[0][3] == {4: ["bird", b"\x00\x00\x00", b"\xff\xff\xff"]}
+    assert unpacked[0][3] == build_telemetry_icon_appearance_payload(payload)
     round_trip_payload = unpackb(telemeter_blob, strict_map_key=False)
     assert round_trip_payload[SID_TIME] == pytest.approx(timestamp, rel=0)
     # Remaining sensors should match the original payload.

@@ -96,7 +96,7 @@ def test_marker_payload_rejects_unknown_type() -> None:
         MarkerCreatePayload.model_validate(
             {
                 "name": "Alpha",
-                "type": "unknown",
+                "type": "mystery-type",
                 "symbol": "fire",
                 "lat": 1.0,
                 "lon": 2.0,
@@ -112,7 +112,7 @@ def test_marker_payload_rejects_unknown_symbol() -> None:
             {
                 "name": "Alpha",
                 "type": "fire",
-                "symbol": "unknown",
+                "symbol": "mystery-symbol",
                 "lat": 1.0,
                 "lon": 2.0,
             }

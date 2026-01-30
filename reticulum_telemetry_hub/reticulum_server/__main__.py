@@ -57,6 +57,7 @@ from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.config.manager import _expand_user_path
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
+from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -2062,7 +2063,7 @@ class ReticulumTelemetryHub:
             destination,
             self.my_lxmf_dest,
             content,
-            fields=fields or {},
+            fields=apply_icon_appearance(fields),
             desired_method=LXMF.LXMessage.DIRECT,
         )
 

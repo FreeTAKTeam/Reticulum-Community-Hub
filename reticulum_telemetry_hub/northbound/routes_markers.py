@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Callable
+from typing import Optional
 
 from fastapi import Depends
 from fastapi import FastAPI
@@ -38,7 +39,7 @@ def register_marker_routes(
         return [marker.to_dict() for marker in services.list_markers()]
 
     @app.get("/api/markers/symbols", dependencies=[Depends(require_protected)])
-    def list_marker_symbols_route() -> list[dict[str, str]]:
+    def list_marker_symbols_route() -> list[dict[str, Optional[str]]]:
         """Return available marker symbol definitions."""
 
         return list_marker_symbols()

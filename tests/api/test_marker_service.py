@@ -40,7 +40,7 @@ def test_marker_service_rejects_unknown_type(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="Unsupported marker type"):
         service.create_marker(
             name="test",
-            marker_type="unknown",
+            marker_type="mystery-type",
             symbol="fire",
             category="napsg",
             lat=0.0,
@@ -58,7 +58,7 @@ def test_marker_service_rejects_unknown_symbol(tmp_path, monkeypatch):
         service.create_marker(
             name="test",
             marker_type="fire",
-            symbol="unknown",
+            symbol="mystery-symbol",
             category="napsg",
             lat=0.0,
             lon=0.0,

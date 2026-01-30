@@ -1,4 +1,9 @@
 # TASKS
+- 2026-01-30: DONE. Allow null TAK values in marker symbol API response.
+- 2026-01-30: DONE. Add LXMF appearance fields to outbound messages with defaults and tests.
+- 2026-01-30: DONE. Ensure telemetry emits LXMF icon appearance (0x04) with MDI icon names and colors.
+- 2026-01-29: DONE. Add NATO marker symbols with specified colors and MDI icons.
+- 2026-01-29: DONE. Make map marker backgrounds transparent and force telemetry icons to person.
 - 2026-01-29: DONE. Reset PyInstaller environment for spawned gateway and normalize gateway argv.
 - 2026-01-28: DONE. Add frozen-safe gateway command for the packaged backend launcher.
 - 2026-01-28: DONE. Fix Electron backend arg order for rch CLI global flags.

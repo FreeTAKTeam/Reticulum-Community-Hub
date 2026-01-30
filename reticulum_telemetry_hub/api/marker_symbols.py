@@ -33,6 +33,26 @@ DEFAULT_SYMBOL_REGISTRY: dict[str, dict[str, str]] = {
         "description": "Marker",
         "category": "general",
     },
+    "friendly": {
+        "mdi": "rectangle",
+        "description": "Friendly",
+        "category": "nato",
+    },
+    "hostile": {
+        "mdi": "rhombus",
+        "description": "Hostile",
+        "category": "nato",
+    },
+    "neutral": {
+        "mdi": "square",
+        "description": "Neutral",
+        "category": "nato",
+    },
+    "unknown": {
+        "mdi": "clover",
+        "description": "Unknown",
+        "category": "nato",
+    },
     "vehicle": {
         "mdi": "car",
         "description": "Vehicle",
@@ -297,6 +317,25 @@ def list_marker_symbols() -> list[dict[str, Optional[str]]]:
             }
         )
     return symbols
+
+
+def resolve_marker_mdi_name(symbol: str) -> Optional[str]:
+    """Return the MDI icon name for a marker symbol.
+
+    Args:
+        symbol (str): Marker symbol identifier.
+
+    Returns:
+        Optional[str]: MDI icon name when available.
+    """
+
+    normalized = normalize_marker_symbol(symbol)
+    if not normalized:
+        return None
+    for entry in _load_symbol_registry():
+        if entry.symbol_id == normalized:
+            return entry.mdi or normalized
+    return None
 
 
 def resolve_marker_symbol_set(symbol: str) -> str:

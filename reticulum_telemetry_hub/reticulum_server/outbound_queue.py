@@ -6,6 +6,7 @@ from queue import Empty, Full, Queue
 import LXMF
 import RNS
 
+from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 
 @dataclass
 class OutboundPayload:
@@ -228,7 +229,7 @@ class OutboundMessageQueue:
                     payload.connection,
                     payload.sender or self._sender,
                     payload.message_text,
-                    fields=payload.fields or {},
+                    fields=apply_icon_appearance(payload.fields),
                     desired_method=LXMF.LXMessage.DIRECT,
                 )
                 if payload.destination_hash:
@@ -290,7 +291,7 @@ class OutboundMessageQueue:
                 payload.connection,
                 payload.sender or self._sender,
                 payload.message_text,
-                fields=payload.fields or {},
+                fields=apply_icon_appearance(payload.fields),
                 desired_method=LXMF.LXMessage.DIRECT,
             )
             if payload.destination_hash:

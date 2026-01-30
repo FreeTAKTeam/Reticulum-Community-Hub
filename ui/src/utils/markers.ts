@@ -14,9 +14,19 @@ export type MarkerSymbol = {
 
 const NAPSG_COLORS = ["#F97316", "#FACC15", "#EF4444", "#60A5FA", "#FBBF24", "#34D399"];
 const MDI_COLORS = ["#38BDF8", "#A78BFA", "#F59E0B", "#F87171", "#22D3EE", "#94A3B8"];
+const EXPLICIT_SYMBOL_COLORS: Record<string, string> = {
+  friendly: "#6BCBEC",
+  hostile: "#DE6767",
+  neutral: "#9BBB59",
+  unknown: "#F1E097"
+};
 
 const FALLBACK_SYMBOLS: MarkerSymbol[] = [
   { id: "marker", label: "Marker", set: "mdi", color: "#38BDF8", mdi: "map-marker" },
+  { id: "friendly", label: "Friendly", set: "mdi", color: "#6BCBEC", mdi: "rectangle" },
+  { id: "hostile", label: "Hostile", set: "mdi", color: "#DE6767", mdi: "rhombus" },
+  { id: "neutral", label: "Neutral", set: "mdi", color: "#9BBB59", mdi: "square" },
+  { id: "unknown", label: "Unknown", set: "mdi", color: "#F1E097", mdi: "clover" },
   { id: "vehicle", label: "Vehicle", set: "mdi", color: "#A78BFA", mdi: "car" },
   { id: "drone", label: "Drone", set: "mdi", color: "#F59E0B", mdi: "drone" },
   { id: "animal", label: "Animal", set: "mdi", color: "#F87171", mdi: "paw" },
@@ -81,6 +91,9 @@ const hashSymbol = (value: string) => {
 };
 
 const resolveSymbolColor = (id: string, set: MarkerSymbolSet) => {
+  if (id in EXPLICIT_SYMBOL_COLORS) {
+    return EXPLICIT_SYMBOL_COLORS[id];
+  }
   const palette = set === "napsg" ? NAPSG_COLORS : MDI_COLORS;
   const index = hashSymbol(id) % palette.length;
   return palette[index];

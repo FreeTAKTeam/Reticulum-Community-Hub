@@ -3,6 +3,26 @@ marker:
   description: Marker
   category: general
 
+friendly:
+  mdi: rectangle
+  description: Friendly
+  category: nato
+
+hostile:
+  mdi: rhombus
+  description: Hostile
+  category: nato
+
+neutral:
+  mdi: square
+  description: Neutral
+  category: nato
+
+unknown:
+  mdi: clover
+  description: Unknown
+  category: nato
+
 vehicle:
   mdi: car
   description: Vehicle
