@@ -15,9 +15,15 @@ export const endpoints = {
   config: "/Config",
   configValidate: "/Config/Validate",
   configRollback: "/Config/Rollback",
+  markers: "/api/markers",
+  markerSymbols: "/api/markers/symbols",
   help: "/Help",
   examples: "/Examples",
   command: "/Command",
   appInfo: "/api/v1/app/info",
-  rth: "/RTH"
+  rth: "/RTH",
+  controlStart: "/Control/Start",
+  controlStop: "/Control/Stop",
+  controlStatus: "/Control/Status",
+  controlAnnounce: "/Control/Announce"
 };

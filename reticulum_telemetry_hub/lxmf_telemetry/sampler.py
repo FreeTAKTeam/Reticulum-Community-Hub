@@ -9,6 +9,7 @@ from typing import Callable, Protocol, Sequence
 
 import LXMF
 import RNS
+from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_TIME,
 )
@@ -199,7 +200,7 @@ class TelemetrySampler:
                 message = LXMF.LXMessage(
                     destination,
                     self._source_destination,
-                    fields={LXMF.FIELD_TELEMETRY: encoded},
+                    fields=apply_icon_appearance({LXMF.FIELD_TELEMETRY: encoded}),
                     desired_method=LXMF.LXMessage.DIRECT,
                 )
                 if hasattr(destination, "identity") and hasattr(

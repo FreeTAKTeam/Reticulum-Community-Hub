@@ -13,6 +13,7 @@ import LXMF
 from reticulum_telemetry_hub.api.models import Client, FileAttachment, Subscriber, Topic
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
+from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 
 from .constants import PLUGIN_COMMAND
@@ -572,12 +573,7 @@ class CommandManager:
             f"Client joined: {label}",
             metadata={"identity": identity_hex, "display_name": display_name},
         )
-        return LXMF.LXMessage(
-            dest,
-            self.my_lxmf_dest,
-            "Connection established",
-            desired_method=LXMF.LXMessage.DIRECT,
-        )
+        return self._reply(message, "Connection established")
 
     def _handle_leave(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
@@ -591,12 +587,7 @@ class CommandManager:
             f"Client left: {label}",
             metadata={"identity": identity_hex, "display_name": display_name},
         )
-        return LXMF.LXMessage(
-            dest,
-            self.my_lxmf_dest,
-            "Connection removed",
-            desired_method=LXMF.LXMessage.DIRECT,
-        )
+        return self._reply(message, "Connection removed")
 
     def _handle_list_clients(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
         clients = self.api.list_clients()
@@ -1189,7 +1180,7 @@ class CommandManager:
             dest,
             self.my_lxmf_dest,
             content,
-            fields=fields,
+            fields=apply_icon_appearance(fields),
             desired_method=LXMF.LXMessage.DIRECT,
         )
 

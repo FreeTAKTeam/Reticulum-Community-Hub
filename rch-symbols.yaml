@@ -1,0 +1,99 @@
+marker:
+  mdi: map-marker
+  description: Marker
+  category: general
+
+friendly:
+  mdi: rectangle
+  description: Friendly
+  category: nato
+
+hostile:
+  mdi: rhombus
+  description: Hostile
+  category: nato
+
+neutral:
+  mdi: square
+  description: Neutral
+  category: nato
+
+unknown:
+  mdi: clover
+  description: Unknown
+  category: nato
+
+vehicle:
+  mdi: car
+  description: Vehicle
+  category: mobility
+
+drone:
+  mdi: drone
+  description: Drone
+  category: mobility
+
+animal:
+  mdi: paw
+  description: Animal
+  category: wildlife
+
+sensor:
+  mdi: radar
+  description: Sensor
+  category: equipment
+
+radio:
+  mdi: radio
+  description: Radio
+  category: equipment
+
+antenna:
+  mdi: antenna
+  description: Antenna
+  category: equipment
+
+camera:
+  mdi: camera
+  description: Camera
+  category: equipment
+
+fire:
+  mdi: fire
+  description: Fire
+  category: incident
+
+flood:
+  mdi: home-flood
+  description: Flood
+  category: incident
+
+person:
+  mdi: account
+  description: Person
+  category: people
+
+group:
+  mdi: account-group
+  description: Group / Community
+  category: people
+
+infrastructure:
+  mdi: office-building
+  description: Infrastructure
+  category: infrastructure
+
+medic:
+  mdi: hospital
+  description: Medic
+  category: medical
+
+alert:
+  mdi: alert
+  description: Alert
+  category: incident
+
+task:
+  mdi: clipboard-check
+  description: Task
+  category: task

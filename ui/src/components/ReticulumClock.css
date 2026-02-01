@@ -1,0 +1,566 @@
+@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&display=swap");
+
+.reticulum-root {
+  --background: 190 80% 5%;
+  --foreground: 180 100% 70%;
+  --card: 190 70% 8%;
+  --card-foreground: 180 100% 70%;
+  --popover: 190 70% 8%;
+  --popover-foreground: 180 100% 70%;
+  --primary: 180 100% 50%;
+  --primary-foreground: 190 80% 5%;
+  --secondary: 190 60% 15%;
+  --secondary-foreground: 180 100% 70%;
+  --muted: 190 50% 12%;
+  --muted-foreground: 180 50% 50%;
+  --accent: 180 100% 50%;
+  --accent-foreground: 190 80% 5%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 180 50% 25%;
+  --input: 180 50% 25%;
+  --ring: 180 100% 50%;
+  --radius: 0.5rem;
+
+  --jarvis-cyan: 180 100% 50%;
+  --jarvis-teal: 170 80% 40%;
+  --jarvis-dark: 190 80% 5%;
+  --jarvis-glow: 180 100% 70%;
+
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-family: "Rajdhani", sans-serif;
+  color: hsl(var(--foreground));
+}
+
+.reticulum-root * {
+  border-color: hsl(var(--border));
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  box-sizing: border-box;
+}
+
+.reticulum-root ::selection {
+  background: rgba(0, 255, 255, 0.3);
+  color: white;
+}
+
+.reticulum-root *:focus-visible {
+  outline: 2px solid rgba(0, 255, 255, 0.5);
+  outline-offset: 2px;
+}
+
+.reticulum-root .glow-text {
+  text-shadow:
+    0 0 5px hsl(var(--jarvis-cyan)),
+    0 0 10px hsl(var(--jarvis-cyan)),
+    0 0 20px hsl(var(--jarvis-cyan)),
+    0 0 40px hsl(var(--jarvis-cyan));
+}
+
+.reticulum-root .progress-ring {
+  transform: rotate(-90deg);
+}
+
+.reticulum-root .progress-ring-circle {
+  transition: stroke-dashoffset 0.35s;
+  transform-origin: 50% 50%;
+}
+
+.reticulum-root .animate-pulse-glow {
+  animation: reticulum-pulse-glow 2s ease-in-out infinite;
+}
+
+.reticulum-root .animate-blink {
+  animation: reticulum-blink 1s ease-in-out infinite;
+}
+
+.reticulum-root .glass-panel {
+  background: rgba(10, 31, 36, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 255, 255, 0.2);
+}
+
+.reticulum-scanline {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.reticulum-scanline-bar {
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(to bottom, transparent, rgba(0, 255, 255, 0.3), transparent);
+  animation: reticulum-scan 4s linear infinite;
+}
+
+.reticulum-corner {
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  border-color: rgba(0, 255, 255, 0.5);
+}
+
+.reticulum-corner--tl {
+  top: 16px;
+  left: 16px;
+  border-left: 2px solid currentColor;
+  border-top: 2px solid currentColor;
+}
+
+.reticulum-corner--tr {
+  top: 16px;
+  right: 16px;
+  border-right: 2px solid currentColor;
+  border-top: 2px solid currentColor;
+}
+
+.reticulum-corner--bl {
+  bottom: 16px;
+  left: 16px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+
+.reticulum-corner--br {
+  bottom: 16px;
+  right: 16px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+
+.reticulum-container {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+}
+
+.reticulum-header {
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.reticulum-title {
+  font-family: "Orbitron", monospace;
+  font-size: 24px;
+  letter-spacing: 0.3em;
+  color: hsl(var(--jarvis-cyan));
+  margin: 0;
+}
+
+.reticulum-title-line {
+  width: 128px;
+  height: 1px;
+  margin: 8px auto 0;
+  background: linear-gradient(to right, transparent, hsl(var(--jarvis-cyan)), transparent);
+}
+
+.reticulum-clock {
+  position: relative;
+  width: 320px;
+  height: 320px;
+}
+
+.reticulum-ring {
+  position: absolute;
+  inset: 0;
+}
+
+.reticulum-ring--outer {
+  animation: reticulum-rotate-slow 20s linear infinite;
+  opacity: 0.3;
+}
+
+.reticulum-ring-svg {
+  display: block;
+}
+
+.reticulum-clock-face {
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.reticulum-time {
+  text-align: center;
+}
+
+.reticulum-time-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+}
+
+.reticulum-time-hours,
+.reticulum-time-minutes {
+  font-family: "Orbitron", monospace;
+  font-size: 56px;
+  color: #ffffff;
+  letter-spacing: 0.08em;
+}
+
+.reticulum-time-sep {
+  font-family: "Orbitron", monospace;
+  font-size: 56px;
+  color: hsl(var(--jarvis-cyan));
+}
+
+.reticulum-time-sub {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.reticulum-time-seconds {
+  font-family: "Orbitron", monospace;
+  font-size: 20px;
+  color: rgba(0, 255, 255, 0.8);
+}
+
+.reticulum-time-ampm {
+  font-family: "Orbitron", monospace;
+  font-size: 18px;
+  color: rgba(0, 255, 255, 0.6);
+}
+
+.reticulum-indicator {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -8px);
+}
+
+.reticulum-indicator-triangle {
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 12px solid hsl(var(--jarvis-cyan));
+}
+
+.reticulum-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: 672px;
+}
+
+.reticulum-panel {
+  position: relative;
+  border-radius: 10px;
+  padding: 16px;
+  background: rgba(10, 31, 36, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 255, 255, 0.2);
+  overflow: hidden;
+}
+
+.reticulum-panel:hover {
+  border-color: rgba(0, 255, 255, 0.4);
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.15);
+}
+
+.reticulum-panel-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-color: hsl(var(--jarvis-cyan));
+}
+
+.reticulum-panel-corner--tl {
+  top: 0;
+  left: 0;
+  border-left: 2px solid currentColor;
+  border-top: 2px solid currentColor;
+}
+
+.reticulum-panel-corner--tr {
+  top: 0;
+  right: 0;
+  border-right: 2px solid currentColor;
+  border-top: 2px solid currentColor;
+}
+
+.reticulum-panel-corner--bl {
+  bottom: 0;
+  left: 0;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+
+.reticulum-panel-corner--br {
+  bottom: 0;
+  right: 0;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+
+.reticulum-panel-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.reticulum-panel-content--calendar {
+  height: 100%;
+}
+
+.reticulum-panel-label {
+  font-family: "Orbitron", monospace;
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  color: rgba(0, 255, 255, 0.7);
+  margin: 0 0 4px;
+}
+
+.reticulum-panel-sub {
+  font-family: "Orbitron", monospace;
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  color: rgba(0, 255, 255, 0.5);
+  margin: 0;
+}
+
+.reticulum-weather {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.reticulum-weather-loading {
+  font-family: "Orbitron", monospace;
+  font-size: 32px;
+  color: #ffffff;
+}
+
+.reticulum-weather-error {
+  font-family: "Orbitron", monospace;
+  font-size: 14px;
+  color: #f87171;
+}
+
+.reticulum-weather-temp {
+  font-family: "Orbitron", monospace;
+  font-size: 40px;
+  color: #ffffff;
+}
+
+.reticulum-weather-unit {
+  font-family: "Orbitron", monospace;
+  font-size: 20px;
+  color: hsl(var(--jarvis-cyan));
+}
+
+.reticulum-temp-scale {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.reticulum-temp-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 255, 255, 0.2);
+  transition: all 0.3s ease;
+}
+
+.reticulum-temp-bar--active {
+  background: hsl(var(--jarvis-cyan));
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.reticulum-refresh {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+}
+
+.reticulum-refresh-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 255, 255, 0.5);
+}
+
+.reticulum-refresh-dot--loading {
+  background: hsl(var(--jarvis-cyan));
+  animation: reticulum-pulse-glow 2s ease-in-out infinite;
+}
+
+.reticulum-calendar-day {
+  font-family: "Orbitron", monospace;
+  font-size: 48px;
+  color: #ffffff;
+}
+
+.reticulum-status {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  margin-top: 16px;
+}
+
+.reticulum-status-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reticulum-status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: hsl(var(--jarvis-cyan));
+  animation: reticulum-pulse-glow 2s ease-in-out infinite;
+}
+
+.reticulum-status-text {
+  font-family: "Orbitron", monospace;
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  color: rgba(0, 255, 255, 0.7);
+}
+
+.reticulum-status-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(0, 255, 255, 0.3);
+}
+
+.reticulum-status-icon {
+  width: 16px;
+  height: 16px;
+  color: hsl(var(--jarvis-cyan));
+}
+
+.scanlines::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 255, 255, 0.03) 2px,
+    rgba(0, 255, 255, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(0, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+.hex-pattern {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cg fill-rule='evenodd'%3E%3Cg fill='%2300ffff' fill-opacity='0.05'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9zM0 15l12.98-7.5V0h-2v6.35L0 12.69v2.3zm0 18.5L12.98 41v8h-2v-6.85L0 35.81v-2.3zM15 0v7.5L27.99 15H28v-2.31h-.01L17 6.35V0h-2zm0 49v-8l12.99-7.5H28v2.31h-.01L17 42.15V49h-2z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+@keyframes reticulum-pulse-glow {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 5px hsl(var(--jarvis-cyan)));
+  }
+  50% {
+    opacity: 0.7;
+    filter: drop-shadow(0 0 15px hsl(var(--jarvis-cyan)));
+  }
+}
+
+@keyframes reticulum-rotate-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes reticulum-scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes reticulum-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (min-width: 768px) {
+  .reticulum-title {
+    font-size: 30px;
+  }
+
+  .reticulum-time-hours,
+  .reticulum-time-minutes,
+  .reticulum-time-sep {
+    font-size: 72px;
+  }
+
+  .reticulum-time-seconds {
+    font-size: 24px;
+  }
+
+  .reticulum-time-ampm {
+    font-size: 20px;
+  }
+
+  .reticulum-weather-temp {
+    font-size: 48px;
+  }
+
+  .reticulum-calendar-day {
+    font-size: 56px;
+  }
+
+  .reticulum-panels {
+    flex-direction: row;
+  }
+}
+
+@media (max-width: 640px) {
+  .reticulum-title {
+    letter-spacing: 0.2em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reticulum-root *,
+  .reticulum-root *::before,
+  .reticulum-root *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

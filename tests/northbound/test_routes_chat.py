@@ -32,7 +32,9 @@ class _StubHub:
         self.tel_controller = telemetry
         self.event_log = event_log
         self.command_manager = None
+        self.marker_service = None
         self.dispatch_calls: list[dict] = []
+        self.marker_dispatch_calls: list[dict] = []
 
     def dispatch_northbound_message(
         self,
@@ -63,6 +65,12 @@ class _StubHub:
             topic_id=topic_id,
             message_id="msg-1",
         )
+
+    def dispatch_marker_event(self, marker, event_type: str) -> bool:
+        """Record marker dispatches for gateway compatibility."""
+
+        self.marker_dispatch_calls.append({"event_type": event_type, "marker": marker})
+        return True
 
     def register_message_listener(self, listener):
         """Provide a no-op unsubscribe callback."""

@@ -16,15 +16,21 @@ from reticulum_telemetry_hub.api.models import ChatMessage
 from reticulum_telemetry_hub.api.models import Client
 from reticulum_telemetry_hub.api.models import FileAttachment
 from reticulum_telemetry_hub.api.models import IdentityStatus
+from reticulum_telemetry_hub.api.models import Marker
 from reticulum_telemetry_hub.api.models import ReticulumInfo
 from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.api.models import Topic
+from reticulum_telemetry_hub.api.marker_service import MarkerService
+from reticulum_telemetry_hub.api.marker_service import MarkerUpdateResult
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
 from reticulum_telemetry_hub.reticulum_server import command_text
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.marker_objects import (
+    build_marker_telemetry_payload,
+)
 
 
 def _load_supported_commands_doc() -> Optional[str]:
@@ -93,6 +99,9 @@ class NorthboundServices:
     message_dispatcher: Optional[
         Callable[[str, Optional[str], Optional[str], Optional[dict]], ChatMessage | None]
     ] = None
+    marker_service: MarkerService | None = None
+    marker_dispatcher: Optional[Callable[[Marker, str], bool]] = None
+    origin_rch: str = ""
 
     def help_text(self) -> str:
         """Return the Help command text.
@@ -227,6 +236,59 @@ class NorthboundServices:
         """
 
         return self.api.list_identity_statuses()
+
+    def list_markers(self) -> List[Marker]:
+        """Return stored operator markers."""
+
+        service = self._require_marker_service()
+        return service.list_markers()
+
+    def create_marker(
+        self,
+        *,
+        name: Optional[str],
+        marker_type: str,
+        symbol: str,
+        category: str,
+        lat: float,
+        lon: float,
+        origin_rch: str,
+        notes: Optional[str] = None,
+        ttl_seconds: Optional[int] = None,
+    ) -> Marker:
+        """Create a marker and dispatch a marker.created event."""
+
+        service = self._require_marker_service()
+        marker = service.create_marker(
+            name=name,
+            marker_type=marker_type,
+            symbol=symbol,
+            category=category,
+            lat=lat,
+            lon=lon,
+            origin_rch=origin_rch,
+            notes=notes,
+            ttl_seconds=ttl_seconds,
+        )
+        self._record_marker_event("marker.created", marker)
+        return marker
+
+    def update_marker_position(
+        self,
+        object_destination_hash: str,
+        *,
+        lat: float,
+        lon: float,
+    ) -> MarkerUpdateResult:
+        """Update marker coordinates and dispatch marker.updated when changed."""
+
+        service = self._require_marker_service()
+        result = service.update_marker_position(
+            object_destination_hash, lat=lat, lon=lon
+        )
+        if result.changed:
+            self._record_marker_event("marker.updated", result.marker)
+        return result
 
     def list_chat_messages(
         self,
@@ -371,3 +433,133 @@ class NorthboundServices:
         """
 
         return self.api.reload_config()
+
+    def _record_marker_event(self, event_type: str, marker: Marker) -> None:
+        """Record marker activity and dispatch telemetry events."""
+
+        payload = self._marker_event_payload(event_type, marker)
+        self.event_log.add_event(
+            event_type.replace(".", "_"),
+            f"Marker {event_type.split('.')[-1]}: {marker.name}",
+            metadata=payload,
+        )
+        if self._marker_is_expired(marker):
+            self.event_log.add_event(
+                "marker_dispatch_skipped",
+                "Marker event dispatch skipped for expired marker",
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
+            )
+            return
+        if self.marker_dispatcher is None:
+            self._record_marker_telemetry(event_type, marker)
+            self.event_log.add_event(
+                "marker_dispatch_skipped",
+                "Marker event dispatch is not configured; telemetry recorded locally",
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
+            )
+            return
+        try:
+            self.marker_dispatcher(marker, event_type)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.event_log.add_event(
+                "marker_dispatch_failed",
+                f"Marker event dispatch failed: {exc}",
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
+            )
+
+    def _record_marker_telemetry(self, event_type: str, marker: Marker) -> None:
+        """Record marker telemetry directly in the telemetry store."""
+
+        if not marker.object_destination_hash:
+            self.event_log.add_event(
+                "marker_telemetry_skipped",
+                "Marker telemetry skipped due to missing destination hash",
+                metadata={"event_type": event_type},
+            )
+            return
+        origin_rch = marker.origin_rch or self.origin_rch
+        payload = build_marker_telemetry_payload(
+            marker,
+            event_type,
+            origin_rch=origin_rch,
+        )
+        try:
+            self.telemetry.record_telemetry(
+                payload,
+                marker.object_destination_hash,
+                notify=True,
+            )
+            self.event_log.add_event(
+                "marker_telemetry_recorded",
+                "Marker telemetry recorded",
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.event_log.add_event(
+                "marker_telemetry_failed",
+                f"Marker telemetry recording failed: {exc}",
+                metadata={
+                    "event_type": event_type,
+                    "object_destination_hash": marker.object_destination_hash,
+                },
+            )
+
+    @staticmethod
+    def _marker_event_payload(event_type: str, marker: Marker) -> dict[str, object]:
+        """Return a marker event payload suitable for LXMF fields."""
+
+        time_value = marker.time or marker.updated_at
+        stale_at_value = marker.stale_at or time_value
+        payload: dict[str, object] = {
+            "object_type": "marker",
+            "object_id": marker.object_destination_hash,
+            "event_type": event_type,
+            "marker_type": marker.marker_type,
+            "symbol": marker.symbol,
+            "lat": marker.lat,
+            "lon": marker.lon,
+            "position": {"lat": marker.lat, "lon": marker.lon},
+            "origin_rch": marker.origin_rch,
+            "time": time_value.isoformat() if time_value else None,
+            "stale_at": stale_at_value.isoformat() if stale_at_value else None,
+            "timestamp": marker.updated_at.isoformat(),
+        }
+        if event_type == "marker.created":
+            payload["metadata"] = {
+                "name": marker.name,
+                "category": marker.category,
+                "symbol": marker.symbol,
+                "marker_type": marker.marker_type,
+            }
+            payload["name"] = marker.name
+            payload["category"] = marker.category
+            payload["symbol"] = marker.symbol
+            payload["marker_type"] = marker.marker_type
+        return payload
+
+    @staticmethod
+    def _marker_is_expired(marker: Marker) -> bool:
+        """Return True when a marker is expired."""
+
+        if marker.stale_at is None:
+            return False
+        return datetime.now(timezone.utc) > marker.stale_at
+
+    def _require_marker_service(self) -> MarkerService:
+        """Return the marker service or raise when missing."""
+
+        if self.marker_service is None:
+            raise RuntimeError("Marker service is not configured")
+        return self.marker_service

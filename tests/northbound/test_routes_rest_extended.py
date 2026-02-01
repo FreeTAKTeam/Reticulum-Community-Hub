@@ -13,6 +13,7 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
+    SID_LOCATION,
     SID_TIME,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -23,6 +24,7 @@ from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.northbound.routes_rest import register_core_routes
 from reticulum_telemetry_hub.northbound.services import NorthboundServices
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.factories import build_location_payload
 
 
 def _build_client(
@@ -139,7 +141,14 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
     rollback_response = client.post("/Config/Rollback", headers=headers)
     assert rollback_response.status_code == 200
 
-    telemetry.save_telemetry({SID_TIME: int(now.timestamp())}, "peer-1", timestamp=now)
+    telemetry.save_telemetry(
+        {
+            SID_TIME: int(now.timestamp()),
+            SID_LOCATION: build_location_payload(int(now.timestamp())),
+        },
+        "peer-1",
+        timestamp=now,
+    )
 
     flush_response = client.post("/Command/FlushTelemetry", headers=headers)
     assert flush_response.status_code == 200

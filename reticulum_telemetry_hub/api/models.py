@@ -230,6 +230,47 @@ class FileAttachment:
 
 
 @dataclass
+class Marker:
+    """Logical marker state stored by the hub."""
+
+    local_id: str
+    object_destination_hash: Optional[str]
+    origin_rch: Optional[str]
+    object_identity_storage_key: Optional[str]
+    marker_type: str
+    symbol: str
+    name: str
+    category: str
+    lat: float
+    lon: float
+    notes: Optional[str] = None
+    time: Optional[datetime] = field(default_factory=_now)
+    stale_at: Optional[datetime] = field(default_factory=_now)
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+
+    def to_dict(self) -> dict:
+        """Serialize marker state for API responses."""
+
+        time_value = self.time or self.updated_at or self.created_at
+        stale_at_value = self.stale_at or time_value
+        return {
+            "object_destination_hash": self.object_destination_hash,
+            "origin_rch": self.origin_rch,
+            "type": self.marker_type,
+            "name": self.name,
+            "category": self.category,
+            "symbol": self.symbol,
+            "notes": self.notes,
+            "position": {"lat": self.lat, "lon": self.lon},
+            "time": time_value.isoformat() if time_value else None,
+            "stale_at": stale_at_value.isoformat() if stale_at_value else None,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+
+@dataclass
 class ChatAttachment:
     """Attachment metadata associated with a chat message."""
 

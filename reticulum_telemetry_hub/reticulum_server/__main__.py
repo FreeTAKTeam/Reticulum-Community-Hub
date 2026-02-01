@@ -48,11 +48,16 @@ import RNS
 
 from reticulum_telemetry_hub.api.models import ChatMessage
 from reticulum_telemetry_hub.api.models import FileAttachment
+from reticulum_telemetry_hub.api.models import Marker
+from reticulum_telemetry_hub.api.marker_identity import derive_marker_identity_key
+from reticulum_telemetry_hub.api.marker_service import MarkerService
+from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.config.manager import _expand_user_path
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
+from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -71,6 +76,7 @@ from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import ReticulumInternalAdapter
+from reticulum_telemetry_hub.reticulum_server.marker_objects import MarkerObjectManager
 from .command_manager import CommandManager
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
@@ -238,6 +244,8 @@ class ReticulumTelemetryHub:
     telemetry_sampler: TelemetrySampler | None
     telemeter_manager: TelemeterManager | None
     tak_connector: TakConnector | None
+    marker_service: MarkerService | None
+    marker_manager: MarkerObjectManager | None
     _active_services: dict[str, HubService]
 
     TELEMETRY_PLACEHOLDERS = {"telemetry data", "telemetry update"}
@@ -388,6 +396,31 @@ class ReticulumTelemetryHub:
         if self.config_manager is None:
             self.config_manager = HubConfigurationManager(
                 storage_path=self.storage_path, config_path=config_path
+            )
+
+        hub_db_path = self.config_manager.config.hub_database_path
+        marker_identity_key = derive_marker_identity_key(identity)
+        self.marker_service = MarkerService(
+            MarkerStorage(hub_db_path),
+            identity_key_provider=lambda: marker_identity_key,
+        )
+        runtime_config = self.config_manager.runtime_config
+        marker_interval_minutes = getattr(
+            runtime_config, "marker_announce_interval_minutes", 15
+        )
+        self.marker_manager = MarkerObjectManager(
+            origin_rch_provider=self._origin_rch_hex,
+            event_log=self.event_log,
+            telemetry_recorder=self.tel_controller.save_telemetry,
+            identity_key_provider=lambda: marker_identity_key,
+            announce_interval_seconds=max(int(marker_interval_minutes) * 60, 60),
+        )
+        try:
+            self.marker_service.migrate_markers(origin_rch=self._origin_rch_hex())
+        except ValueError as exc:
+            RNS.log(
+                f"Skipping marker migration: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
             )
 
         self.embedded_lxmd = None
@@ -860,6 +893,7 @@ class ReticulumTelemetryHub:
         destination: str | None = None,
         exclude: set[str] | None = None,
         fields: dict | None = None,
+        sender: RNS.Destination | None = None,
     ) -> bool:
         """Sends a message to connected clients.
 
@@ -870,6 +904,7 @@ class ReticulumTelemetryHub:
             exclude (set[str] | None): Optional set of lowercase destination
                 hashes that should not receive the broadcast.
             fields (dict | None): Optional LXMF message fields.
+            sender (RNS.Destination | None): Optional sender identity override.
         """
 
         queue = self._ensure_outbound_queue()
@@ -913,6 +948,7 @@ class ReticulumTelemetryHub:
                 ),
                 connection_hex,
                 fields,
+                sender=sender,
             )
             if enqueued:
                 enqueued_any = True
@@ -1003,6 +1039,80 @@ class ReticulumTelemetryHub:
                 return updated
             return queued
         return None
+
+    def dispatch_marker_event(self, marker: Marker, event_type: str) -> bool:
+        """Dispatch marker announcements and telemetry events.
+
+        Args:
+            marker (Marker): Marker metadata to dispatch.
+            event_type (str): Marker event type string.
+
+        Returns:
+            bool: True when the telemetry payload is recorded.
+        """
+
+        manager = getattr(self, "marker_manager", None)
+        if manager is None:
+            RNS.log("Marker manager unavailable; dropping marker event.")
+            return False
+        if event_type in {"marker.created", "marker.updated"}:
+            manager.announce_marker(marker)
+        return manager.dispatch_marker_telemetry(marker, event_type)
+
+    def send_announce(self) -> bool:
+        """Send an immediate Reticulum announce.
+
+        Returns:
+            bool: True when the announce was dispatched.
+        """
+
+        destination = getattr(self, "my_lxmf_dest", None)
+        if destination is None:
+            RNS.log(
+                "Announce skipped; no LXMF destination available.",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return False
+        try:
+            destination.announce()
+            RNS.log(
+                "LXMF identity announced (manual)",
+                getattr(RNS, "LOG_DEBUG", self.loglevel),
+            )
+            self._announce_active_markers()
+            return True
+        except Exception as exc:  # pragma: no cover - defensive
+            RNS.log(
+                f"Manual announce failed: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return False
+
+    def _announce_active_markers(self) -> None:
+        """Announce non-expired marker objects on schedule."""
+
+        manager = getattr(self, "marker_manager", None)
+        service = getattr(self, "marker_service", None)
+        if manager is None or service is None:
+            return
+        try:
+            markers = service.list_markers()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            RNS.log(
+                f"Failed to list markers for announce: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return
+        manager.announce_active_markers(markers)
+
+    def _origin_rch_hex(self) -> str:
+        """Return the local collector identity hash as lowercase hex."""
+
+        destination = getattr(self, "my_lxmf_dest", None)
+        identity_hash = getattr(destination, "hash", None)
+        if isinstance(identity_hash, (bytes, bytearray, memoryview)):
+            return bytes(identity_hash).hex()
+        return ""
 
     def _ensure_outbound_queue(self) -> OutboundMessageQueue | None:
         """
@@ -1982,7 +2092,7 @@ class ReticulumTelemetryHub:
             destination,
             self.my_lxmf_dest,
             content,
-            fields=fields or {},
+            fields=apply_icon_appearance(fields),
             desired_method=LXMF.LXMessage.DIRECT,
         )
 
@@ -2043,9 +2153,11 @@ class ReticulumTelemetryHub:
         )
         if daemon_mode:
             self.start_daemon_workers(services=services)
+        self._announce_active_markers()
         while not self._shutdown:
             self.my_lxmf_dest.announce()
             RNS.log("LXMF identity announced", getattr(RNS, "LOG_DEBUG", self.loglevel))
+            self._announce_active_markers()
             time.sleep(self.announce_interval)
 
     def start_daemon_workers(

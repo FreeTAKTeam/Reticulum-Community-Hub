@@ -75,6 +75,33 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Event'
+  /Control/Announce:
+    post:
+      x-scope: protected
+      tags:
+       - Control
+      summary: Send an immediate Reticulum announce.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Announce request acknowledged.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                required:
+                  - status
+        '503':
+          description: Announce unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /events/system:
     get:
       x-scope: protected
@@ -118,6 +145,100 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TelemetryResponse'
+  /api/markers:
+    get:
+      x-scope: protected
+      tags:
+       - Marker
+      summary: List stored operator markers.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Stored marker records.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Marker'
+    post:
+      x-scope: protected
+      tags:
+       - Marker
+      summary: Create a new operator marker.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkerCreateRequest'
+      responses:
+        '201':
+          description: Marker creation response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkerCreateResponse'
+  /api/markers/symbols:
+    get:
+      x-scope: protected
+      tags:
+       - Marker
+      summary: List available marker symbols.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Marker symbol definitions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MarkerSymbol'
+  /api/markers/{object_destination_hash}/position:
+    patch:
+      x-scope: protected
+      tags:
+       - Marker
+      summary: Update marker coordinates.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: object_destination_hash
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkerPositionUpdate'
+      responses:
+        '200':
+          description: Marker update acknowledgment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  updated_at:
+                    type: string
+                    format: date-time
+                required:
+                  - status
+                  - updated_at
   /telemetry/stream:
     get:
       x-scope: public
@@ -830,10 +951,10 @@ components:
       required:
         - TopicName
         - TopicPath
-    FileAttachment:
-      type: object
-      description: Metadata for a stored file or image attachment.
-      properties:
+      FileAttachment:
+        type: object
+        description: Metadata for a stored file or image attachment.
+        properties:
         FileID:
           type: integer
           description: Numeric identifier assigned by the hub.
@@ -861,16 +982,155 @@ components:
           type: string
           format: date-time
           description: When the attachment metadata was created.
-        UpdatedAt:
-          type: string
-          format: date-time
-          description: When the attachment metadata was last updated.
-    Client:
-      type: object
-      description: Connected client state and metadata.
-      properties:
-        identity:
-          type: string
+          UpdatedAt:
+            type: string
+            format: date-time
+            description: When the attachment metadata was last updated.
+      MarkerSymbol:
+        type: object
+        description: Marker symbol identifier and icon set.
+        properties:
+          id:
+            type: string
+            description: Marker symbol identifier.
+          set:
+            type: string
+            description: Marker symbol set.
+            enum:
+              - napsg
+              - mdi
+        required:
+          - id
+          - set
+      Marker:
+        type: object
+        description: Operator-managed marker record.
+        properties:
+          object_destination_hash:
+            type: string
+            description: Destination hash for the marker object identity.
+          origin_rch:
+            type: string
+            nullable: true
+            description: Destination hash for the originating hub identity.
+          type:
+            type: string
+            description: Marker type identifier (matches available icon keys).
+          symbol:
+            type: string
+            description: Marker symbol identifier (icon key).
+          name:
+            type: string
+            description: Marker display name.
+          category:
+            type: string
+            description: Marker category (such as the symbol set).
+          notes:
+            type: string
+            nullable: true
+            description: Optional operator notes.
+          position:
+            type: object
+            properties:
+              lat:
+                type: number
+                format: float
+              lon:
+                type: number
+                format: float
+            required:
+              - lat
+              - lon
+          time:
+            type: string
+            format: date-time
+            nullable: true
+            description: Marker observation time.
+          stale_at:
+            type: string
+            format: date-time
+            nullable: true
+            description: Marker expiration time.
+          created_at:
+            type: string
+            format: date-time
+          updated_at:
+            type: string
+            format: date-time
+        required:
+          - object_destination_hash
+          - type
+          - symbol
+          - name
+          - category
+          - position
+          - created_at
+          - updated_at
+      MarkerCreateRequest:
+        type: object
+        description: Marker creation payload.
+        properties:
+          type:
+            type: string
+            description: Marker type identifier (matches available icon keys).
+          symbol:
+            type: string
+            description: Marker symbol identifier (icon key).
+          name:
+            type: string
+            description: Optional marker name.
+          category:
+            type: string
+            description: Marker category (such as the symbol set).
+          lat:
+            type: number
+            format: float
+          lon:
+            type: number
+            format: float
+          notes:
+            type: string
+            nullable: true
+          ttl_seconds:
+            type: integer
+            nullable: true
+            description: Optional TTL override in seconds.
+        required:
+          - type
+          - symbol
+          - lat
+          - lon
+      MarkerCreateResponse:
+        type: object
+        description: Marker creation response.
+        properties:
+          object_destination_hash:
+            type: string
+          created_at:
+            type: string
+            format: date-time
+        required:
+          - object_destination_hash
+          - created_at
+      MarkerPositionUpdate:
+        type: object
+        description: Marker position update payload.
+        properties:
+          lat:
+            type: number
+            format: float
+          lon:
+            type: number
+            format: float
+        required:
+          - lat
+          - lon
+      Client:
+        type: object
+        description: Connected client state and metadata.
+        properties:
+          identity:
+            type: string
           description: Client identity hash (hex string).
         display_name:
           type: string

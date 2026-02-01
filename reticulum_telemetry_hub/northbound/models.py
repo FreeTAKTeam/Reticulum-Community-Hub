@@ -11,7 +11,12 @@ from pydantic import AliasChoices
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import field_validator
 from pydantic import model_validator
+
+from reticulum_telemetry_hub.api.marker_symbols import is_supported_marker_symbol
+from reticulum_telemetry_hub.api.marker_symbols import normalize_marker_symbol
+from reticulum_telemetry_hub.api.marker_symbols import SUPPORTED_MARKER_SYMBOLS
 
 
 def _normalize_aliases(values: object, alias_map: dict[str, tuple[str, ...]]) -> object:
@@ -211,3 +216,79 @@ class ChatSendPayload(BaseModel):
         if not (self.content and self.content.strip()) and not (self.file_ids or self.image_ids):
             raise ValueError("Content or attachments are required")
         return self
+
+
+class MarkerCreatePayload(BaseModel):
+    """Payload for creating operator markers."""
+
+    marker_type: str = Field(json_schema_extra={"enum": SUPPORTED_MARKER_SYMBOLS})
+    symbol: str = Field(json_schema_extra={"enum": SUPPORTED_MARKER_SYMBOLS})
+    name: Optional[str] = None
+    category: Optional[str] = None
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    notes: Optional[str] = None
+    ttl_seconds: Optional[int] = Field(default=None, ge=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload(cls, values: object) -> object:
+        """Normalize payload aliases to field names."""
+
+        return _normalize_aliases(
+            values,
+            {"marker_type": ("type", "marker_type", "markerType")},
+        )
+
+    @field_validator("marker_type", mode="before")
+    @classmethod
+    def _normalize_marker_type(cls, value: object) -> object:
+        """Normalize marker type aliases before validation."""
+
+        if isinstance(value, str):
+            return normalize_marker_symbol(value)
+        return value
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _normalize_symbol(cls, value: object) -> object:
+        """Normalize marker symbol aliases before validation."""
+
+        if isinstance(value, str):
+            return normalize_marker_symbol(value)
+        return value
+
+    @field_validator("marker_type")
+    @classmethod
+    def _validate_marker_type(cls, value: str) -> str:
+        """Validate marker type against supported symbols."""
+
+        if not is_supported_marker_symbol(value):
+            raise ValueError("Unsupported marker type")
+        return value
+
+    @field_validator("symbol")
+    @classmethod
+    def _validate_symbol(cls, value: str) -> str:
+        """Validate marker symbol against supported symbols."""
+
+        if not is_supported_marker_symbol(value):
+            raise ValueError("Unsupported marker symbol")
+        return value
+
+    @field_validator("category")
+    @classmethod
+    def _normalize_category(cls, value: Optional[str]) -> Optional[str]:
+        """Normalize marker category whitespace."""
+
+        if value is None:
+            return None
+        trimmed = value.strip()
+        return trimmed or None
+
+
+class MarkerPositionPayload(BaseModel):
+    """Payload for marker position updates."""
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)

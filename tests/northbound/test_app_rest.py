@@ -13,6 +13,7 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
+    SID_LOCATION,
     SID_TIME,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -21,6 +22,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.factories import build_location_payload
 
 
 def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
@@ -47,7 +49,14 @@ def test_status_endpoint_returns_counts(tmp_path) -> None:
 
     telemetry_controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     now = datetime.now(timezone.utc)
-    telemetry_controller.save_telemetry({SID_TIME: int(now.timestamp())}, "peer-1", timestamp=now)
+    telemetry_controller.save_telemetry(
+        {
+            SID_TIME: int(now.timestamp()),
+            SID_LOCATION: build_location_payload(int(now.timestamp())),
+        },
+        "peer-1",
+        timestamp=now,
+    )
 
     app = create_app(
         api=api,

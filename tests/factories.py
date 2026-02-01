@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Dict
+from typing import Optional
 
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_CONNECTION_MAP,
+    SID_LOCATION,
     SID_LXMF_PROPAGATION,
     SID_RNS_TRANSPORT,
     SID_TIME,
@@ -19,6 +22,9 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propa
 )
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.rns_transport import (
     RNSTransport,
+)
+from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.location import (
+    Location,
 )
 
 
@@ -182,12 +188,32 @@ def create_connection_map_sensor() -> ConnectionMap:
     return sensor
 
 
+def create_location_sensor(timestamp: Optional[int] = None) -> Location:
+    """Return a ``Location`` sensor with deterministic values."""
+
+    sensor = Location()
+    sensor.latitude = 44.0
+    sensor.longitude = -63.0
+    sensor.altitude = 10.0
+    sensor.speed = 0.0
+    sensor.bearing = 0.0
+    sensor.accuracy = 5.0
+    sensor.last_update = datetime.utcfromtimestamp(timestamp or 1_700_000_000)
+    return sensor
+
+
+def build_location_payload(timestamp: Optional[int] = None) -> list | None:
+    sensor = create_location_sensor(timestamp)
+    return sensor.pack()
+
+
 def build_complex_telemeter_payload(
     *, timestamp: int | None = None
-) -> Dict[int, dict | int]:
+) -> Dict[int, object]:
     """Return a telemetry payload covering complex/nested sensors."""
 
     sensors = [
+        create_location_sensor(timestamp),
         create_rns_transport_sensor(),
         create_lxmf_propagation_sensor(),
         create_connection_map_sensor(),

@@ -17,11 +17,42 @@ interface ConnectionState {
 }
 
 const STORAGE_KEY = "rth-ui-connection";
+const DEFAULT_LOCAL_HTTP = "http://127.0.0.1:8000";
+const DEFAULT_LOCAL_WS = "ws://127.0.0.1:8000";
+
+const isFileOrigin = (): boolean => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return window.location.protocol === "file:" || window.location.origin === "null";
+};
+
+const resolveDefaultBaseUrl = (): string => {
+  const envBaseUrl = import.meta.env.VITE_RTH_BASE_URL;
+  if (envBaseUrl) {
+    return envBaseUrl;
+  }
+  if (isFileOrigin()) {
+    return DEFAULT_LOCAL_HTTP;
+  }
+  return "";
+};
+
+const resolveDefaultWsBaseUrl = (): string => {
+  const envWsBaseUrl = import.meta.env.VITE_RTH_WS_BASE_URL;
+  if (envWsBaseUrl) {
+    return envWsBaseUrl;
+  }
+  if (isFileOrigin()) {
+    return DEFAULT_LOCAL_WS;
+  }
+  return "";
+};
 
 export const useConnectionStore = defineStore("connection", () => {
   const stored = loadJson<ConnectionState>(STORAGE_KEY, {
-    baseUrl: import.meta.env.VITE_RTH_BASE_URL ?? "",
-    wsBaseUrl: import.meta.env.VITE_RTH_WS_BASE_URL ?? "",
+    baseUrl: resolveDefaultBaseUrl(),
+    wsBaseUrl: resolveDefaultWsBaseUrl(),
     authMode: "none",
     token: "",
     apiKey: ""
@@ -39,7 +70,7 @@ export const useConnectionStore = defineStore("connection", () => {
   const wsConnections = ref(0);
 
   const resolveUrl = (path: string): string => {
-    const origin = baseUrl.value || window.location.origin;
+    const origin = baseUrl.value || (isFileOrigin() ? DEFAULT_LOCAL_HTTP : window.location.origin);
     return `${origin}${path}`;
   };
 
@@ -47,7 +78,7 @@ export const useConnectionStore = defineStore("connection", () => {
     if (wsBaseUrl.value) {
       return `${wsBaseUrl.value}${path}`;
     }
-    const origin = baseUrl.value || window.location.origin;
+    const origin = baseUrl.value || (isFileOrigin() ? DEFAULT_LOCAL_HTTP : window.location.origin);
     const scheme = origin.startsWith("https") ? "wss" : "ws";
     const host = origin.replace(/^https?:\/\//, "");
     return `${scheme}://${host}${path}`;
@@ -60,7 +91,15 @@ export const useConnectionStore = defineStore("connection", () => {
     return "";
   });
 
-  const baseUrlDisplay = computed(() => baseUrl.value || "(same origin)");
+  const baseUrlDisplay = computed(() => {
+    if (baseUrl.value) {
+      return baseUrl.value;
+    }
+    if (isFileOrigin()) {
+      return DEFAULT_LOCAL_HTTP;
+    }
+    return "(same origin)";
+  });
   const statusLabel = computed(() => {
     if (status.value === "online") {
       return "Online";

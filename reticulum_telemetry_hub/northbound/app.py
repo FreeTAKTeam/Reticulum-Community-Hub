@@ -16,6 +16,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from reticulum_telemetry_hub.api.models import ChatMessage
+from reticulum_telemetry_hub.api.models import Marker
+from reticulum_telemetry_hub.api.marker_identity import derive_marker_identity_key_from_path
+from reticulum_telemetry_hub.api.marker_service import MarkerService
+from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -28,6 +32,9 @@ from .auth import ApiAuth
 from .auth import build_protected_dependency
 from .routes_files import register_file_routes
 from .routes_chat import register_chat_routes
+from .routes_control import ControlService
+from .routes_control import register_control_routes
+from .routes_markers import register_marker_routes
 from .routes_rest import register_core_routes
 from .routes_subscribers import register_subscriber_routes
 from .routes_topics import register_topic_routes
@@ -80,10 +87,14 @@ def create_app(
     message_dispatcher: Optional[
         Callable[[str, Optional[str], Optional[str], Optional[dict]], ChatMessage | None]
     ] = None,
+    marker_dispatcher: Optional[Callable[[Marker, str], bool]] = None,
+    marker_service: Optional[MarkerService] = None,
+    origin_rch: Optional[str] = None,
     message_listener: Optional[
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
     ] = None,
     internal_adapter: Optional[InternalAdapter] = None,
+    control: Optional[ControlService] = None,
 ) -> FastAPI:
     """Create the northbound FastAPI application.
 
@@ -95,6 +106,10 @@ def create_app(
         routing_provider (Optional[Callable[[], list[str]]]): Provider for routing destinations.
         started_at (Optional[datetime]): Start time for uptime calculations.
         auth (Optional[ApiAuth]): Auth validator.
+        marker_dispatcher (Optional[Callable[[Marker, str], bool]]): Marker telemetry dispatcher.
+        marker_service (Optional[MarkerService]): Marker service override.
+        origin_rch (Optional[str]): Originating hub identity hash.
+        control (Optional[ControlService]): Optional gateway control surface.
 
     Returns:
         FastAPI: Configured FastAPI application.
@@ -114,6 +129,10 @@ def create_app(
     if storage_path is None:
         storage_path = _resolve_storage_path()
 
+    hub_db_path = storage_path / "rth_api.sqlite"
+    if config_manager is not None:
+        hub_db_path = config_manager.config.hub_database_path
+
     if event_log is None:
         event_log_path = resolve_event_log_path(storage_path)
         event_log = EventLog(event_path=event_log_path, tail=True)
@@ -127,6 +146,13 @@ def create_app(
         )
     else:
         telemetry_controller.set_event_log(event_log)
+    if marker_service is None:
+        identity_path = storage_path / "identity"
+        marker_identity_key = derive_marker_identity_key_from_path(identity_path)
+        marker_service = MarkerService(
+            MarkerStorage(hub_db_path),
+            identity_key_provider=lambda: marker_identity_key,
+        )
     services = NorthboundServices(
         api=api,
         telemetry=telemetry_controller,
@@ -135,6 +161,9 @@ def create_app(
         command_manager=command_manager,
         routing_provider=routing_provider,
         message_dispatcher=message_dispatcher,
+        marker_service=marker_service,
+        marker_dispatcher=marker_dispatcher,
+        origin_rch=origin_rch or "",
     )
     auth = auth or ApiAuth()
     require_protected = build_protected_dependency(auth)
@@ -178,6 +207,11 @@ def create_app(
         api=api,
         require_protected=require_protected,
     )
+    register_marker_routes(
+        app,
+        services=services,
+        require_protected=require_protected,
+    )
     register_ws_routes(
         app,
         services=services,
@@ -186,6 +220,12 @@ def create_app(
         telemetry_broadcaster=telemetry_broadcaster,
         message_broadcaster=message_broadcaster,
     )
+    if control is not None:
+        register_control_routes(
+            app,
+            control=control,
+            require_protected=require_protected,
+        )
     adapter = internal_adapter or build_internal_adapter()
     register_internal_adapter(app, adapter=adapter)
 

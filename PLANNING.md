@@ -2,7 +2,7 @@
 
 ## Goals
 
-- Provide a stable Reticulum Telemetry Hub for LXMF clients.
+- Provide a stable Reticulum Comunity Hub for LXMF clients.
 - Persist telemetry, topics, subscribers, and attachments reliably.
 - Keep commands and APIs predictable, backward compatible, and well documented.
 - Maintain high test coverage and strong linting to protect behavior.

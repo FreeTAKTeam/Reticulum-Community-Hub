@@ -87,6 +87,35 @@ export interface TelemetryEntry {
   data?: Record<string, unknown>;
 }
 
+export interface MarkerEntry {
+  object_destination_hash?: string;
+  origin_rch?: string;
+  object_identity_storage_key?: string;
+  marker_id?: string;
+  type?: string;
+  name?: string;
+  category?: string;
+  symbol?: string;
+  notes?: string | null;
+  position?: {
+    lat?: number;
+    lon?: number;
+  };
+  time?: string;
+  stale_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MarkerSymbolEntry {
+  id?: string;
+  set?: string;
+  mdi?: string;
+  description?: string;
+  tak?: string;
+  category?: string;
+}
+
 export interface AppInfo {
   name?: string;
   version?: string;

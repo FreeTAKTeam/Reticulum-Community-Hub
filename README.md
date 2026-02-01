@@ -10,13 +10,16 @@ Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. 
 - One-to-many and topic-scoped message fan-out over LXMF.
 - Telemetry collection and on-demand telemetry responses.
 - File and image attachment storage with retrieval by ID.
-- Northbound REST + WebSocket API for operators and the admin UI.
+- sci-fu themed admin UI.
+- Operator-managed map markers backed by Reticulum object identities and telemetry updates.
 - Optional TAK/CoT bridge for chat and location updates.
 
 ## What it looks like
 
-![Dashboard](image.png)
+![Dashboard](image-3.png)
 ![Map](image-1.png)
+![chat](image-2.png)
+
 
 ## Quickstart (from source)
 
@@ -47,6 +50,10 @@ Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. 
        --storage_dir ./RCH_Store \
        --display_name "RCH"
    ```
+   Or start the hub + northbound API locally with the new entrypoint:
+   ```bash
+   rch start --data-dir ./RCH_Store --port 8000 --log-level info
+   ```
 
 For configuration, services, and client usage details, see `docs/userManual.md`.
 
@@ -76,16 +83,23 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 
 - Run the hub + API together (recommended for chat/message sending):
   ```bash
-  python -m reticulum_telemetry_hub.northbound.gateway \
-      --storage_dir ./RCH_Store \
-      --api-host 0.0.0.0 \
-      --api-port 8000
+  rch start --data-dir ./RCH_Store --port 8000 --log-level info
+  ```
+  The gateway binds to `127.0.0.1` for local-only access.
+- Check or stop the backend:
+  ```bash
+  rch status --data-dir ./RCH_Store
+  rch stop --data-dir ./RCH_Store
   ```
 - Run only the API server (read-only unless you provide a message dispatcher):
   ```bash
-  uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
+  uvicorn reticulum_telemetry_hub.northbound.app:app --host 127.0.0.1 --port 8000
   ```
 - Protect admin endpoints by setting `RCH_API_KEY` (accepts `X-API-Key` or Bearer token).
+- Marker identity encryption is derived from the hub identity (no extra key configuration required).
+- The admin UI sidebar can be collapsed and pinned (stored per-browser).
+- Telemetry map markers render MDI icons when telemetry payloads include `telemetry_type`, `symbol`, `category`, or `type`.
+- Marker symbols load from `rch-symbols.yaml` (override with `RTH_SYMBOL_REGISTRY_PATH`).
 - The UI lives in `ui/`:
 
   ```bash
@@ -94,7 +108,64 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
   npm run dev
   ```
 
+  The UI uses Vite 6 (installed via `npm install`).
+
   Set `VITE_RCH_BASE_URL` when the UI should target a different hub.
+
+## Electron desktop packaging (Windows + Raspberry Pi OS)
+
+The `electron/` folder contains a minimal desktop wrapper that bundles the UI and
+loads the hub API from `127.0.0.1`.
+
+1. Install Electron dependencies:
+   ```bash
+   cd electron
+   npm install
+   ```
+2. Run the Electron shell in dev mode (starts the Vite dev server):
+   ```bash
+   npm run dev
+   ```
+3. Build installers:
+   ```bash
+   npm run dist
+   ```
+4. Build a portable Windows EXE:
+   ```bash
+   npm run dist -- --win portable
+   ```
+
+Electron packaging expects a bundled backend executable. Install PyInstaller and
+build it before packaging:
+
+```bash
+python -m pip install -e .
+python -m pip install pyinstaller
+cd electron
+npm run build:backend
+```
+
+For Raspberry Pi OS, build on Linux and target the desired architecture:
+
+```bash
+npm run dist -- --linux --armv7l
+npm run dist -- --linux --arm64
+```
+
+Packaged builds default to `http://127.0.0.1:8000` for the API when loaded from
+`file://`. Override in the Connect page or set `VITE_RTH_BASE_URL` /
+`VITE_RTH_WS_BASE_URL` at build time.
+
+Packaged desktop builds also launch the bundled backend automatically. Set
+`RCH_BACKEND_MANAGED=false` to disable autostart, or override with
+`RCH_DATA_DIR`, `RCH_BACKEND_PORT`, and `RCH_LOG_LEVEL`.
+
+Marker management endpoints (used by the WebMap UI):
+
+- `GET /api/markers` (list stored markers)
+- `GET /api/markers/symbols` (list available marker symbols)
+- `POST /api/markers` (create marker with type/symbol/lat/lon, optional name/category/notes/ttl_seconds)
+- `PATCH /api/markers/{object_destination_hash}/position` (update marker coordinates)
 
 ## Documentation
 

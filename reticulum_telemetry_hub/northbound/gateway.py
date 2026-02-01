@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import threading
 from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -17,7 +19,6 @@ import RNS
 import uvicorn
 from fastapi import FastAPI
 
-from reticulum_telemetry_hub.config.constants import DEFAULT_ANNOUNCE_INTERVAL
 from reticulum_telemetry_hub.config.constants import DEFAULT_HUB_TELEMETRY_INTERVAL
 from reticulum_telemetry_hub.config.constants import DEFAULT_LOG_LEVEL_NAME
 from reticulum_telemetry_hub.config.constants import DEFAULT_SERVICE_TELEMETRY_INTERVAL
@@ -29,6 +30,9 @@ from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 
 
+LOCAL_API_HOST = "127.0.0.1"
+
+
 class GatewayHub(Protocol):
     """Protocol for hub dependencies consumed by the gateway app."""
 
@@ -36,6 +40,7 @@ class GatewayHub(Protocol):
     tel_controller: object
     event_log: object
     command_manager: Optional[object]
+    marker_service: Optional[object]
 
     def dispatch_northbound_message(
         self,
@@ -45,6 +50,9 @@ class GatewayHub(Protocol):
         fields: Optional[dict] = None,
     ) -> object:
         """Send a northbound message through the hub."""
+
+    def dispatch_marker_event(self, marker, event_type: str) -> bool:
+        """Record a marker telemetry event through the hub."""
 
     def register_message_listener(
         self, listener: Callable[[dict[str, object]], None]
@@ -103,6 +111,7 @@ def _parse_args() -> argparse.Namespace:
         default=None,
     )
     parser.add_argument("-s", "--storage_dir", help="Storage directory path", default=None)
+    parser.add_argument("--data-dir", dest="storage_dir", help="Storage directory path", default=None)
     parser.add_argument("--display_name", help="Display name for the server", default=None)
     parser.add_argument(
         "--announce-interval",
@@ -156,10 +165,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--api-host",
         dest="api_host",
-        default="127.0.0.1",
-        help="Host address for the northbound API.",
+        default=LOCAL_API_HOST,
+        help="Host address for the northbound API (always 127.0.0.1).",
     )
     parser.add_argument(
+        "--port",
         "--api-port",
         dest="api_port",
         type=int,
@@ -215,9 +225,68 @@ def _build_gateway_config(args: argparse.Namespace) -> GatewayConfig:
         embedded=embedded,
         daemon_mode=bool(args.daemon),
         services=services,
-        api_host=str(args.api_host),
+        api_host=LOCAL_API_HOST,
         api_port=int(args.api_port),
     )
+
+
+@dataclass
+class GatewayControl:
+    """Control surface for the gateway runtime."""
+
+    hub: ReticulumTelemetryHub
+    hub_thread: threading.Thread
+    host: str
+    port: int
+    started_at: datetime
+    server: Optional[uvicorn.Server] = None
+    _shutdown_requested: threading.Event = field(default_factory=threading.Event)
+
+    def attach_server(self, server: uvicorn.Server) -> None:
+        """Attach the running uvicorn server."""
+
+        self.server = server
+
+    def request_shutdown(self) -> None:
+        """Request a graceful shutdown of the gateway."""
+
+        if not self._shutdown_requested.is_set():
+            self._shutdown_requested.set()
+        self.hub.shutdown()
+        if self.server is not None:
+            self.server.should_exit = True
+
+    def request_start(self) -> None:
+        """No-op start hook for parity with control endpoints."""
+
+        return
+
+    def request_announce(self) -> bool:
+        """Request an immediate Reticulum announce."""
+
+        announce = getattr(self.hub, "send_announce", None)
+        if callable(announce):
+            return bool(announce())
+        return False
+
+    def status(self) -> dict[str, object]:
+        """Return a snapshot of the gateway status."""
+
+        uptime = datetime.now(timezone.utc) - self.started_at
+        if self._shutdown_requested.is_set():
+            status = "stopping"
+        elif self.hub_thread.is_alive():
+            status = "running"
+        else:
+            status = "stopped"
+        return {
+            "status": status,
+            "pid": os.getpid(),
+            "host": self.host,
+            "port": self.port,
+            "uptime_seconds": int(uptime.total_seconds()),
+            "hub_thread_alive": self.hub_thread.is_alive(),
+        }
 
 
 def build_gateway_app(
@@ -225,6 +294,7 @@ def build_gateway_app(
     *,
     auth: Optional[ApiAuth] = None,
     started_at: Optional[datetime] = None,
+    control: Optional[GatewayControl] = None,
 ) -> FastAPI:
     """Create a northbound API app wired to the hub instance.
 
@@ -241,11 +311,15 @@ def build_gateway_app(
         api=hub.api,
         telemetry_controller=hub.tel_controller,
         event_log=hub.event_log,
-        command_manager=hub.command_manager,
+        command_manager=getattr(hub, "command_manager", None),
         message_dispatcher=hub.dispatch_northbound_message,
+        marker_dispatcher=hub.dispatch_marker_event,
+        marker_service=getattr(hub, "marker_service", None),
+        origin_rch=getattr(hub, "_origin_rch_hex", lambda: "")(),
         message_listener=hub.register_message_listener,
         started_at=started_at or datetime.now(timezone.utc),
         auth=auth,
+        control=control,
     )
     app.state.hub = hub
     return app
@@ -293,16 +367,27 @@ def main() -> None:
         daemon_mode=config.daemon_mode,
         services=config.services,
     )
-    app = build_gateway_app(hub)
+    started_at = datetime.now(timezone.utc)
+    control = GatewayControl(
+        hub=hub,
+        hub_thread=hub_thread,
+        host=config.api_host,
+        port=config.api_port,
+        started_at=started_at,
+    )
+    app = build_gateway_app(hub, started_at=started_at, control=control)
+    server_config = uvicorn.Config(
+        app,
+        host=config.api_host,
+        port=config.api_port,
+        log_level="info",
+    )
+    server = uvicorn.Server(server_config)
+    control.attach_server(server)
     try:
-        uvicorn.run(
-            app,
-            host=config.api_host,
-            port=config.api_port,
-            log_level="info",
-        )
+        server.run()
     finally:
-        hub.shutdown()
+        control.request_shutdown()
         hub_thread.join(timeout=5)
 
 

@@ -212,6 +212,11 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         telemetry_filename = hub_section.get(
             "telemetry_filename", defaults.telemetry_filename
         )
+        marker_announce_interval = self._coerce_int(
+            hub_section.get("marker_announce_interval_minutes")
+            or hub_section.get("marker_announce_interval"),
+            defaults.marker_announce_interval_minutes,
+        )
 
         gps_section = self._get_section("gpsd")
         gps_host = gps_section.get("host", defaults.gpsd_host)
@@ -238,6 +243,7 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             announce_interval=self._coerce_int(
                 hub_section.get("announce_interval"), defaults.announce_interval
             ),
+            marker_announce_interval_minutes=marker_announce_interval,
             hub_telemetry_interval=self._coerce_int(
                 hub_section.get("hub_telemetry_interval"),
                 defaults.hub_telemetry_interval,

@@ -32,7 +32,7 @@
 
 - **Mark completed tasks in `TASK.md`** immediately after finishing them.
 - Add new sub-tasks or TODOs discovered during development to `TASK.md` under a “Discovered During Work” section.
-- update the pyproject.toml version for every change. Bump the minor version
+- update the pyproject.toml version for every change. Bump the minor version for functional changes and the patch version for non-functional changes.
 
 ### 📎 Style & Conventions
 

@@ -4,6 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from reticulum_telemetry_hub.northbound.models import ChatSendPayload
+from reticulum_telemetry_hub.northbound.models import MarkerCreatePayload
+from reticulum_telemetry_hub.northbound.models import MarkerPositionPayload
 from reticulum_telemetry_hub.northbound.models import MessagePayload
 
 
@@ -66,3 +68,59 @@ def test_chat_send_payload_rejects_invalid_scope() -> None:
 
     with pytest.raises(ValidationError):
         ChatSendPayload.model_validate({"Content": "hello", "Scope": "invalid"})
+
+
+def test_marker_payload_accepts_supported_symbols() -> None:
+    """Ensure marker payload accepts supported marker symbols."""
+
+    payload = MarkerCreatePayload.model_validate(
+        {
+            "name": "Alpha",
+            "type": "fire",
+            "symbol": "fire",
+            "category": "napsg",
+            "lat": 1.0,
+            "lon": 2.0,
+        }
+    )
+
+    assert payload.marker_type == "fire"
+    assert payload.symbol == "fire"
+    assert payload.category == "napsg"
+
+
+def test_marker_payload_rejects_unknown_type() -> None:
+    """Ensure marker payload rejects unsupported types."""
+
+    with pytest.raises(ValidationError):
+        MarkerCreatePayload.model_validate(
+            {
+                "name": "Alpha",
+                "type": "mystery-type",
+                "symbol": "fire",
+                "lat": 1.0,
+                "lon": 2.0,
+            }
+        )
+
+
+def test_marker_payload_rejects_unknown_symbol() -> None:
+    """Ensure marker payload rejects unsupported symbols."""
+
+    with pytest.raises(ValidationError):
+        MarkerCreatePayload.model_validate(
+            {
+                "name": "Alpha",
+                "type": "fire",
+                "symbol": "mystery-symbol",
+                "lat": 1.0,
+                "lon": 2.0,
+            }
+        )
+
+
+def test_marker_position_payload_bounds() -> None:
+    """Ensure marker position payload enforces coordinate bounds."""
+
+    with pytest.raises(ValidationError):
+        MarkerPositionPayload.model_validate({"lat": -95.0, "lon": 0.0})

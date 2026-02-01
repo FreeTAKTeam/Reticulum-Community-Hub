@@ -58,6 +58,22 @@ const mockState = {
       data: { temperature_c: 22.4 }
     }
   ],
+  markers: [
+    {
+      object_destination_hash: "marker-obj-1",
+      origin_rch: "origin-1",
+      type: "fire",
+      symbol: "fire",
+      name: "fire+demo",
+      category: "napsg",
+      position: { lat: 37.777, lon: -122.42 },
+      time: nowIso(),
+      stale_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      created_at: nowIso(),
+      updated_at: nowIso(),
+      notes: "Initial mock marker"
+    }
+  ],
   events: [
     {
       id: "evt-1",
@@ -70,10 +86,30 @@ const mockState = {
   configText: "[core]\napp_name=RTH Core\n"
 };
 
+const mockMarkerSymbols = [
+  { id: "marker", set: "mdi", mdi: "map-marker", description: "Marker", category: "general" },
+  { id: "vehicle", set: "mdi", mdi: "car", description: "Vehicle", category: "mobility" },
+  { id: "drone", set: "mdi", mdi: "drone", description: "Drone", category: "mobility" },
+  { id: "animal", set: "mdi", mdi: "paw", description: "Animal", category: "wildlife" },
+  { id: "sensor", set: "mdi", mdi: "radar", description: "Sensor", category: "equipment" },
+  { id: "radio", set: "mdi", mdi: "radio", description: "Radio", category: "equipment" },
+  { id: "antenna", set: "mdi", mdi: "antenna", description: "Antenna", category: "equipment" },
+  { id: "camera", set: "mdi", mdi: "camera", description: "Camera", category: "equipment" },
+  { id: "fire", set: "mdi", mdi: "fire", description: "Fire", category: "incident" },
+  { id: "flood", set: "mdi", mdi: "home-flood", description: "Flood", category: "incident" },
+  { id: "person", set: "mdi", mdi: "account", description: "Person", category: "people" },
+  { id: "group", set: "mdi", mdi: "account-group", description: "Group / Community", category: "people" },
+  { id: "infrastructure", set: "mdi", mdi: "office-building", description: "Infrastructure", category: "infrastructure" },
+  { id: "medic", set: "mdi", mdi: "hospital", description: "Medic", category: "medical" },
+  { id: "alert", set: "mdi", mdi: "alert", description: "Alert", category: "incident" },
+  { id: "task", set: "mdi", mdi: "clipboard-check", description: "Task", category: "task" }
+];
+
 let topicCounter = 3;
 let subscriberCounter = 2;
 let chatMessageCounter = 2;
 let attachmentCounter = 3;
+let markerCounter = 2;
 
 const jsonResponse = (payload: unknown, status = 200) =>
   new Response(JSON.stringify(payload), {
@@ -119,6 +155,34 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
         last_ingest_at: mockState.telemetry[0]?.created_at ?? null
       }
     });
+  }
+
+  if (pathname === "/Control/Status") {
+    return jsonResponse({
+      status: "running",
+      pid: 4321,
+      host: "127.0.0.1",
+      port: 8000,
+      uptime_seconds: 4521
+    });
+  }
+
+  if (pathname === "/Control/Start" && method === "POST") {
+    return jsonResponse({
+      status: "running",
+      pid: 4321,
+      host: "127.0.0.1",
+      port: 8000,
+      uptime_seconds: 1
+    });
+  }
+
+  if (pathname === "/Control/Stop" && method === "POST") {
+    return jsonResponse({ status: "stopping" });
+  }
+
+  if (pathname === "/Control/Announce" && method === "POST") {
+    return jsonResponse({ status: "announce sent" });
   }
 
   if (pathname === "/Events") {
@@ -305,6 +369,55 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
 
   if (pathname === "/Telemetry") {
     return jsonResponse({ entries: mockState.telemetry });
+  }
+
+  if (pathname === "/api/markers") {
+    if (method === "GET") {
+      return jsonResponse(mockState.markers);
+    }
+    if (method === "POST") {
+      const body = (await parseBody(options.body)) as any;
+      const objectHash = `marker-obj-${markerCounter++}`;
+      const now = nowIso();
+      const marker = {
+        object_destination_hash: objectHash,
+        origin_rch: "origin-1",
+        type: body?.type ?? body?.symbol ?? "marker",
+        symbol: body?.symbol ?? body?.type ?? "marker",
+        name: body?.name ?? `marker-${markerCounter}`,
+        category: body?.category ?? body?.symbol ?? "marker",
+        position: { lat: body?.lat ?? 0, lon: body?.lon ?? 0 },
+        time: now,
+        stale_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        created_at: now,
+        updated_at: now,
+        notes: body?.notes ?? null
+      };
+      mockState.markers.push(marker);
+      return jsonResponse(
+        { object_destination_hash: marker.object_destination_hash, created_at: marker.created_at },
+        201
+      );
+    }
+  }
+
+  if (pathname === "/api/markers/symbols") {
+    return jsonResponse(mockMarkerSymbols);
+  }
+
+  const markerPositionMatch = pathname.match(/^\/api\/markers\/(.+?)\/position$/);
+  if (markerPositionMatch && method === "PATCH") {
+    const markerId = markerPositionMatch[1];
+    const body = (await parseBody(options.body)) as any;
+    const target = mockState.markers.find((entry) => entry.object_destination_hash === markerId);
+    if (!target) {
+      return jsonResponse({ detail: "Marker not found" }, 404);
+    }
+    target.position = { lat: body?.lat ?? target.position.lat, lon: body?.lon ?? target.position.lon };
+    target.time = nowIso();
+    target.stale_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    target.updated_at = nowIso();
+    return jsonResponse({ status: "ok", updated_at: target.updated_at });
   }
 
   if (pathname === "/api/v1/app/info") {

@@ -12,11 +12,13 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
+    SID_LOCATION,
     SID_TIME,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from tests.factories import build_location_payload
 
 
 def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
@@ -40,7 +42,10 @@ def test_list_telemetry_entries_returns_latest(tmp_path) -> None:
     api = _build_api(tmp_path)
     controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     now = datetime.now(timezone.utc)
-    payload = {SID_TIME: int(now.timestamp())}
+    payload = {
+        SID_TIME: int(now.timestamp()),
+        SID_LOCATION: build_location_payload(int(now.timestamp())),
+    }
     controller.save_telemetry(payload, "peer-1", timestamp=now)
 
     entries = controller.list_telemetry_entries(since=int(now.timestamp()) - 10)
@@ -58,7 +63,10 @@ def test_list_telemetry_entries_filters_by_topic(tmp_path) -> None:
     api.create_subscriber(Subscriber(destination="peer-1", topic_id=topic.topic_id))
 
     now = datetime.now(timezone.utc)
-    payload = {SID_TIME: int(now.timestamp())}
+    payload = {
+        SID_TIME: int(now.timestamp()),
+        SID_LOCATION: build_location_payload(int(now.timestamp())),
+    }
     controller.save_telemetry(payload, "peer-1", timestamp=now)
     controller.save_telemetry(payload, "peer-2", timestamp=now)
 

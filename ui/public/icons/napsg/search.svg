@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="91" height="91" version="1.1" viewBox="0 0 91 91" xmlns="http://www.w3.org/2000/svg" xmlns:cc="http://creativecommons.org/ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:xlink="http://www.w3.org/1999/xlink">
+ <metadata>
+  <rdf:RDF>
+   <cc:Work rdf:about="">
+    <dc:format>image/svg+xml</dc:format>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <g transform="translate(-19.208,-19.313)">
+  <g transform="matrix(1.0227 0 0 1.0506 -.68833 -2.1351)">
+   <g transform="matrix(2.9963,0,0,2.7179,-57.885,308.56)" fill="#999">
+    <g transform="translate(-4.4215,-110.09)">
+     <use transform="matrix(.18607 0 0 .26627 -29.62 -87.665)" width="100%" height="100%" fill="#999999" xlink:href="#g20218-001"/>
+     <path d="m41.153 21.752c-1.3e-4 -5e-3 0.0124-0.0535 0.0265-0.10864 0.0333-0.1259 0.042-0.16713 0.043-0.2055 8.7e-4 -0.028-5.8e-4 -0.0319-0.0166-0.0491-0.0104-0.0102-0.0166-0.0187-0.0145-0.0187 6e-3 0 0.0774 0.054 0.0774 0.0582 0 8e-3 -0.11545 0.33144-0.11566 0.32373z" fill="#999" opacity=".522" stroke="#fff" stroke-linecap="square" stroke-linejoin="bevel" stroke-width=".0015863"/>
+     <g transform="matrix(1.3845,0,0,1.4449,-164.4,72.945)" fill="#999">
+      <path d="m146-38.378v-2.062l1.2059-0.96601c0.6632-0.53131 1.2087-0.96342 1.2121-0.96026 0 3e-3 -0.018 0.18323-0.049 0.40014-0.043 0.30997-0.072 0.45118-0.1365 0.65975-0.045 0.14595-0.082 0.27988-0.082 0.29763 0 0.0177 0.091 0.26983 0.2024 0.56017 0.1114 0.29035 0.2024 0.53623 0.2024 0.54641 0 0.0102-0.2002 0.29846-0.4451 0.6406-0.2448 0.34214-0.4441 0.63364-0.4429 0.64779 0 0.0211 0.6835 2.0939 0.7402 2.2506l0.018 0.0472h-2.4278v-2.062z"/>
+      <path d="m148.75-37.437c-0.3645-1.0294-0.4005-1.1413-0.3788-1.1789 0.013-0.0229 0.1973-0.30771 0.4091-0.63298l0.3853-0.5914-0.1733-0.54722-0.1734-0.54722 0.2281-0.51613c0.1254-0.28387 0.2337-0.52122 0.2405-0.52745 0.01-6e-3 0.4348 0.33748 0.9511 0.76379l0.9388 0.77512v4.1397h-2.0341l-0.4028-1.1373z"/>
+      <g transform="matrix(.99953 0 0 1.0005 -1.5409 -13.178)" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+       <ellipse cx="150.44" cy="-25.747" rx="4.1662" ry="4.4034" stroke-width=".72046"/>
+       <path d="m153.05-22.046 4.6493 5.7879" fill-rule="evenodd" stroke-width="1px"/>
+      </g>
+     </g>
+    </g>
+   </g>
+   <text transform="scale(.7987 1.252)" x="66.857109" y="53.255344" fill="#000000" font-family="sans-serif" font-size="8.6731px" letter-spacing="0px" stroke-width=".72276px" word-spacing="0px" style="line-height:0%" xml:space="preserve"><tspan x="0" y="0" font-family="sans-serif" font-size="15.903px" font-weight="bold" stroke-width=".72276px" style="line-height:1.25">SWAT</tspan></text>
+  </g>
+  <path d="m46.915 32.816h35.588c13.964 0 25.206 11.242 25.206 25.206v13.581c0 13.964-11.242 25.206-25.206 25.206h-35.588c-13.964 0-25.206-11.242-25.206-25.206v-13.581c0-13.964 11.242-25.206 25.206-25.206z" fill="none" stroke="#000" stroke-linecap="round" stroke-width="2.979"/>
+ </g>
+</svg>
