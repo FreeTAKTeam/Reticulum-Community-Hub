@@ -64,6 +64,7 @@ class TelemetryController:
     """This class is responsible for managing the telemetry data."""
 
     TELEMETRY_REQUEST = 1
+    DEFAULT_STREAM_APPEARANCE = ["account", [0, 0, 0, 1], [1, 1, 1, 1]]
     SID_HUMAN_NAMES = {
         SID_TIME: "time",
         SID_LOCATION: "location",
@@ -511,7 +512,7 @@ class TelemetryController:
                             peer_hash,
                             round(tel.time.timestamp()),
                             packb(tel_data, use_bin_type=True),
-                            None,
+                            self._stream_appearance(),
                         ]
                     )
                 message = LXMF.LXMessage(
@@ -553,6 +554,11 @@ class TelemetryController:
             telemeter_data[SID_TIME] = int(time_payload)
 
         return telemeter_data
+
+    def _stream_appearance(self) -> list:
+        """Return appearance metadata for telemetry stream entries."""
+
+        return list(self.DEFAULT_STREAM_APPEARANCE)
 
     def _deserialize_telemeter(self, tel_data, peer_dest: str = "") -> Telemeter:
         """Deserialize the telemeter data.
