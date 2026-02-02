@@ -6,8 +6,12 @@ from reticulum_telemetry_hub.reticulum_server.appearance import DEFAULT_FG_HEX
 from reticulum_telemetry_hub.reticulum_server.appearance import DEFAULT_ICON_NAME
 from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.reticulum_server.appearance import build_icon_appearance_payload
+from reticulum_telemetry_hub.reticulum_server.appearance import build_icon_appearance_value
 from reticulum_telemetry_hub.reticulum_server.appearance import (
     build_telemetry_icon_appearance_payload,
+)
+from reticulum_telemetry_hub.reticulum_server.appearance import (
+    build_telemetry_icon_appearance_value,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_CUSTOM,
@@ -38,6 +42,15 @@ def test_build_icon_appearance_payload_env_overrides(monkeypatch) -> None:
     assert icon == "hiking"
     assert fg_bytes == b"\xff\x00\xff"
     assert bg_bytes == b"\x00\xff\x00"
+
+
+def test_build_icon_appearance_value_matches_payload() -> None:
+    """Return the appearance list used by the payload helper."""
+
+    payload = build_icon_appearance_payload()
+    value = build_icon_appearance_value()
+
+    assert value == payload[LXMF.FIELD_ICON_APPEARANCE]
 
 
 def test_apply_icon_appearance_preserves_existing() -> None:
@@ -75,6 +88,18 @@ def test_build_telemetry_icon_appearance_payload_uses_symbol_metadata() -> None:
     assert icon == "rectangle"
     assert fg_bytes == bytes.fromhex(DEFAULT_FG_HEX)
     assert bg_bytes == bytes.fromhex("6BCBEC")
+
+
+def test_build_telemetry_icon_appearance_value_matches_payload() -> None:
+    """Return the telemetry-derived appearance list."""
+
+    payload = {
+        SID_CUSTOM: [["marker", [{"symbol": "friendly"}, None]]],
+    }
+    value = build_telemetry_icon_appearance_value(payload)
+    appearance = build_telemetry_icon_appearance_payload(payload)
+
+    assert value == appearance[LXMF.FIELD_ICON_APPEARANCE]
 
 
 def test_build_telemetry_icon_appearance_payload_falls_back_without_custom() -> None:

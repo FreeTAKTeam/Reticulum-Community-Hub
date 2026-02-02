@@ -1,6 +1,8 @@
 # TASKS
+- 2026-02-02: DONE. Add WebMap latitude/longitude coordinate readout overlay.
 - 2026-02-02: DONE. Improve build-electron.ps1 to avoid npm prefix failures by running installs in working dirs.
 - 2026-02-02: DONE. Add npm ci fallback to npm install in the Electron build script.
+- 2026-02-02: DONE. Send telemetry stream appearance as the LXMF icon appearance value list for Sideband compatibility.
 - 2026-01-30: DONE. Fix build-electron.ps1 to run cmd/bat shims and avoid Start-Process issues.
 - 2026-01-30: DONE. Add PowerShell build script for Windows Electron installer and portable EXE.
 - 2026-01-30: DONE. Allow null TAK values in marker symbol API response.

@@ -3,7 +3,19 @@
     <div class="flex flex-col gap-6 xl:flex-row">
       <BaseCard title="Telemetry Map" class="flex-1 min-w-0">
         <LoadingSkeleton v-if="telemetry.loading" />
-        <div ref="mapContainer" class="h-[720px] w-full rounded border border-rth-border"></div>
+        <div class="relative">
+          <div ref="mapContainer" class="h-[720px] w-full rounded border border-rth-border"></div>
+          <div class="cui-map-coordinates" aria-live="polite">
+            <div class="cui-map-coordinates__row">
+              <span class="cui-map-coordinates__label">Lat</span>
+              <span class="cui-map-coordinates__value">{{ coordinateLat }}</span>
+            </div>
+            <div class="cui-map-coordinates__row">
+              <span class="cui-map-coordinates__label">Lon</span>
+              <span class="cui-map-coordinates__value">{{ coordinateLon }}</span>
+            </div>
+          </div>
+        </div>
         <div class="mt-4 space-y-3">
           <div class="flex flex-wrap items-end gap-4">
             <BaseSelect v-model="markerCategory" label="Marker Type" :options="markerOptions" class="min-w-[240px]" />
@@ -243,6 +255,7 @@ const { mapView, showMarkerLabels } = storeToRefs(mapSettingsStore);
 const mapContainer = ref<HTMLDivElement | null>(null);
 const mapInstance = ref<maplibregl.Map | null>(null);
 const mapReady = ref(false);
+const mapCoordinates = ref<{ lat: number; lon: number } | null>(null);
 const search = ref("");
 const topicFilter = ref("");
 const selected = ref<TelemetryMarker | null>(null);
@@ -290,6 +303,16 @@ const activeMarkerTab = ref<MarkerTab>("operator");
 const ITEMS_PER_PAGE = 10;
 const operatorPage = ref(1);
 const telemetryPage = ref(1);
+
+const formatCoordinate = (value: number | null | undefined) => {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "--";
+  }
+  return value.toFixed(6);
+};
+
+const coordinateLat = computed(() => formatCoordinate(mapCoordinates.value?.lat));
+const coordinateLon = computed(() => formatCoordinate(mapCoordinates.value?.lon));
 
 const toTimestamp = (value?: string) => {
   if (!value) {
@@ -429,6 +452,25 @@ const applyFilters = async () => {
 
 const toggleMarkerMode = () => {
   markerMode.value = !markerMode.value;
+};
+
+const syncMapCoordinates = (lngLat?: maplibregl.LngLat) => {
+  if (lngLat) {
+    mapCoordinates.value = { lat: lngLat.lat, lon: lngLat.lng };
+    return;
+  }
+  if (mapInstance.value) {
+    const center = mapInstance.value.getCenter();
+    mapCoordinates.value = { lat: center.lat, lon: center.lng };
+  }
+};
+
+const handleMapPointerMove = (event: maplibregl.MapMouseEvent) => {
+  syncMapCoordinates(event.lngLat);
+};
+
+const handleMapPointerLeave = () => {
+  syncMapCoordinates();
 };
 
 const scheduleMapResize = async () => {
@@ -1313,6 +1355,7 @@ onMounted(async () => {
   const symbolsPromise = loadMarkerSymbols();
   if (mapContainer.value) {
     const initialView = mapView.value ?? defaultMapView;
+    mapCoordinates.value = { lat: initialView.lat, lon: initialView.lon };
     mapInstance.value = new maplibregl.Map({
       container: mapContainer.value,
       style: mapStyle,
@@ -1325,6 +1368,8 @@ onMounted(async () => {
       await loadMarkerImages();
       renderMarkers();
       mapInstance.value?.on("click", handleMapClick);
+      mapInstance.value?.on("mousemove", handleMapPointerMove);
+      mapInstance.value?.on("mouseleave", handleMapPointerLeave);
       mapInstance.value?.on("zoomend", handleClusterZoom);
       mapInstance.value?.on("moveend", persistMapView);
     });
@@ -1374,6 +1419,8 @@ onUnmounted(() => {
     mapInstance.value.off("zoomend", handleClusterZoom);
     mapInstance.value.off("zoom", handleMarkerZoom);
     mapInstance.value.off("moveend", persistMapView);
+    mapInstance.value.off("mousemove", handleMapPointerMove);
+    mapInstance.value.off("mouseleave", handleMapPointerLeave);
   }
   window.removeEventListener("resize", handleInspectorViewportChange);
   window.removeEventListener("scroll", handleInspectorViewportChange);

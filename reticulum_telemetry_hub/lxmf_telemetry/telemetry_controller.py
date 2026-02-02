@@ -10,7 +10,7 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.reticulum_server.appearance import (
-    build_telemetry_icon_appearance_payload,
+    build_telemetry_icon_appearance_value,
 )
 
 import LXMF
@@ -660,17 +660,17 @@ class TelemetryController:
 
     def _build_appearance_payload(
         self, telemetry_payload: dict[int, object]
-    ) -> dict[int, list[object]]:
+    ) -> list[object]:
         """Return the appearance payload for telemetry stream entries.
 
         Args:
             telemetry_payload (dict[int, object]): Serialized telemetry payload.
 
         Returns:
-            dict[int, list[object]]: LXMF appearance field payload.
+            list[object]: LXMF appearance list for stream entries.
         """
 
-        return build_telemetry_icon_appearance_payload(telemetry_payload)
+        return build_telemetry_icon_appearance_value(telemetry_payload)
 
     def _telemeter_has_location(self, telemeter: Telemeter) -> bool:
         """Return True when the telemeter includes usable location data."""

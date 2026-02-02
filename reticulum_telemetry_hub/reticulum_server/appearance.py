@@ -248,6 +248,30 @@ def build_icon_appearance_payload(
     }
 
 
+def build_icon_appearance_value(
+    icon_name: Optional[str] = None,
+    fg_hex: Optional[str] = None,
+    bg_hex: Optional[str] = None,
+) -> list[object]:
+    """Return the LXMF icon appearance value list.
+
+    Args:
+        icon_name (Optional[str]): MDI icon name to display.
+        fg_hex (Optional[str]): Foreground RGB hex string (RRGGBB).
+        bg_hex (Optional[str]): Background RGB hex string (RRGGBB).
+
+    Returns:
+        list[object]: Appearance list ``[icon_name, fg_rgb_bytes, bg_rgb_bytes]``.
+    """
+
+    payload = build_icon_appearance_payload(
+        icon_name=icon_name,
+        fg_hex=fg_hex,
+        bg_hex=bg_hex,
+    )
+    return payload[LXMF.FIELD_ICON_APPEARANCE]
+
+
 def build_telemetry_icon_appearance_payload(
     telemetry_payload: Optional[dict[int, object]],
 ) -> dict[int, list[object]]:
@@ -289,6 +313,22 @@ def build_telemetry_icon_appearance_payload(
         fg_hex=fg_hex,
         bg_hex=bg_hex,
     )
+
+
+def build_telemetry_icon_appearance_value(
+    telemetry_payload: Optional[dict[int, object]],
+) -> list[object]:
+    """Return the icon appearance list derived from telemetry metadata.
+
+    Args:
+        telemetry_payload (Optional[dict[int, object]]): Raw telemetry sensor map.
+
+    Returns:
+        list[object]: Appearance list ``[icon_name, fg_rgb_bytes, bg_rgb_bytes]``.
+    """
+
+    payload = build_telemetry_icon_appearance_payload(telemetry_payload)
+    return payload[LXMF.FIELD_ICON_APPEARANCE]
 
 
 def apply_icon_appearance(fields: Optional[dict]) -> dict:
