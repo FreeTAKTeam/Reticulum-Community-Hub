@@ -363,6 +363,75 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConfigRollbackResult'
+  /Reticulum/Config:
+    get:
+      x-scope: protected
+      tags:
+       - Reticulum
+      summary: Return the raw Reticulum config content.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Reticulum config content.
+          content:
+            text/plain:
+              schema:
+                type: string
+    put:
+      x-scope: protected
+      tags:
+       - Reticulum
+      summary: Apply a new Reticulum config payload.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        $ref: '#/components/requestBodies/ConfigPayload'
+      responses:
+        '200':
+          description: Apply result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigApplyResult'
+  /Reticulum/Config/Validate:
+    post:
+      x-scope: protected
+      tags:
+       - Reticulum
+      summary: Validate a Reticulum config payload without applying.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        $ref: '#/components/requestBodies/ConfigPayload'
+      responses:
+        '200':
+          description: Validation result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigValidation'
+  /Reticulum/Config/Rollback:
+    post:
+      x-scope: protected
+      tags:
+       - Reticulum
+      summary: Roll back Reticulum config using a backup.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        $ref: '#/components/requestBodies/ConfigRollback'
+      responses:
+        '200':
+          description: Rollback result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigRollbackResult'
   /Command/FlushTelemetry:
     post:
       x-scope: protected

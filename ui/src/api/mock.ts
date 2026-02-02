@@ -83,7 +83,23 @@ const mockState = {
       category: "system"
     }
   ],
-  configText: "[core]\napp_name=RTH Core\n"
+  configText: "[core]\napp_name=RTH Core\n",
+  reticulumConfigText:
+    "[reticulum]\n" +
+    "enable_transport = yes\n" +
+    "share_instance = yes\n" +
+    "\n" +
+    "[logging]\n" +
+    "loglevel = 4\n" +
+    "\n" +
+    "[interfaces]\n" +
+    "[[UDP test]]\n" +
+    "type = UDPInterface\n" +
+    "interface_enabled = true\n" +
+    "listen_ip = 0.0.0.0\n" +
+    "listen_port = 4242\n" +
+    "forward_ip = 255.255.255.255\n" +
+    "forward_port = 4242\n"
 };
 
 const mockMarkerSymbols = [
@@ -318,11 +334,30 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     }
   }
 
+  if (pathname === "/Reticulum/Config") {
+    if (method === "GET") {
+      return textResponse(mockState.reticulumConfigText);
+    }
+    if (method === "PUT") {
+      const body = await parseBody(options.body);
+      mockState.reticulumConfigText = typeof body === "string" ? body : mockState.reticulumConfigText;
+      return jsonResponse({ applied: true });
+    }
+  }
+
   if (pathname === "/Config/Validate" && method === "POST") {
     return jsonResponse({ valid: true });
   }
 
   if (pathname === "/Config/Rollback" && method === "POST") {
+    return jsonResponse({ rolled_back: true });
+  }
+
+  if (pathname === "/Reticulum/Config/Validate" && method === "POST") {
+    return jsonResponse({ valid: true });
+  }
+
+  if (pathname === "/Reticulum/Config/Rollback" && method === "POST") {
     return jsonResponse({ rolled_back: true });
   }
 

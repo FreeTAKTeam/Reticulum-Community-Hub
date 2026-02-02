@@ -405,6 +405,28 @@
   border-color: rgba(0, 180, 255, 1);
 }
 
+.cui-input {
+  width: 100%;
+  border: 1px solid rgba(0, 180, 255, 0.35);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(10, 32, 52, 0.96), rgba(7, 22, 36, 0.98));
+  color: var(--cui-text);
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  transition: border-color 200ms ease, box-shadow 200ms ease, background 200ms ease;
+}
+
+.cui-input::placeholder {
+  color: rgba(231, 243, 255, 0.45);
+}
+
+.cui-input:focus {
+  outline: none;
+  border-color: var(--cui-primary);
+  box-shadow: inset 0 0 18px rgba(6, 12, 20, 0.6), 0 0 14px rgba(0, 180, 255, 0.2);
+  background: linear-gradient(180deg, rgba(12, 38, 58, 0.96), rgba(7, 24, 40, 0.98));
+}
+
 .cui-logo-spin {
   display: inline-block;
   animation: cui-orbit 40s linear infinite;

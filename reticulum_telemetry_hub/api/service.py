@@ -625,10 +625,20 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         return self._config_manager.get_config_text()
 
+    def get_reticulum_config_text(self) -> str:
+        """Return the raw Reticulum configuration file content."""
+
+        return self._config_manager.get_reticulum_config_text()
+
     def validate_config_text(self, config_text: str) -> dict:
         """Validate the provided configuration payload."""
 
         return self._config_manager.validate_config_text(config_text)
+
+    def validate_reticulum_config_text(self, config_text: str) -> dict:
+        """Validate the provided Reticulum configuration payload."""
+
+        return self._config_manager.validate_reticulum_config_text(config_text)
 
     def apply_config_text(self, config_text: str) -> dict:
         """Persist a new configuration payload and reload."""
@@ -637,10 +647,26 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         self._config_manager.reload()
         return result
 
+    def apply_reticulum_config_text(self, config_text: str) -> dict:
+        """Persist a new Reticulum configuration payload and reload."""
+
+        result = self._config_manager.apply_reticulum_config_text(config_text)
+        self._config_manager.reload()
+        return result
+
     def rollback_config_text(self, backup_path: str | None = None) -> dict:
         """Rollback configuration from the latest backup."""
 
         result = self._config_manager.rollback_config_text(backup_path=backup_path)
+        self._config_manager.reload()
+        return result
+
+    def rollback_reticulum_config_text(self, backup_path: str | None = None) -> dict:
+        """Rollback Reticulum configuration from the latest backup."""
+
+        result = self._config_manager.rollback_reticulum_config_text(
+            backup_path=backup_path
+        )
         self._config_manager.reload()
         return result
 

@@ -12,6 +12,14 @@
         </BaseButton>
         <BaseButton
           variant="tab"
+          icon-left="layers"
+          :class="{ 'cui-tab-active': activeTab === 'reticulum' }"
+          @click="activeTab = 'reticulum'"
+        >
+          Reticulum
+        </BaseButton>
+        <BaseButton
+          variant="tab"
           icon-left="tool"
           :class="{ 'cui-tab-active': activeTab === 'tools' }"
           @click="activeTab = 'tools'"
@@ -67,6 +75,9 @@
           <BaseButton variant="secondary" icon-left="undo" @click="rollbackConfig">Rollback</BaseButton>
         </div>
       </div>
+      <div v-else-if="activeTab === 'reticulum'">
+        <ReticulumConfigEditor />
+      </div>
       <div v-else>
         <BaseFormattedOutput v-if="toolResponse" class="mt-4" :value="toolResponse" :mode="toolResponseMode" />
         <div v-else class="text-xs text-rth-muted">Run a tool to see the response.</div>
@@ -85,6 +96,7 @@ import { computed, onMounted, ref } from "vue";
 import BaseButton from "../components/BaseButton.vue";
 import BaseCard from "../components/BaseCard.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
+import ReticulumConfigEditor from "../components/ReticulumConfigEditor.vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
 import { useConfigStore } from "../stores/config";
@@ -96,7 +108,7 @@ const mapSettingsStore = useMapSettingsStore();
 const toastStore = useToastStore();
 const toolResponse = ref<unknown>(null);
 const toolResponseMode = ref<"auto" | "markdown" | "json" | "html">("auto");
-const activeTab = ref<"config" | "tools">("config");
+const activeTab = ref<"config" | "reticulum" | "tools">("config");
 const markerLabelsEnabled = computed({
   get: () => mapSettingsStore.showMarkerLabels,
   set: (value: boolean) => {

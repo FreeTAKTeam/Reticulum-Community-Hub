@@ -1,4 +1,8 @@
 # TASKS
+- 2026-02-02: DONE. Improve build-electron.ps1 to avoid npm prefix failures by running installs in working dirs.
+- 2026-02-02: DONE. Add npm ci fallback to npm install in the Electron build script.
+- 2026-01-30: DONE. Fix build-electron.ps1 to run cmd/bat shims and avoid Start-Process issues.
+- 2026-01-30: DONE. Add PowerShell build script for Windows Electron installer and portable EXE.
 - 2026-01-30: DONE. Allow null TAK values in marker symbol API response.
 - 2026-01-30: DONE. Add LXMF appearance fields to outbound messages with defaults and tests.
 - 2026-01-30: DONE. Ensure telemetry emits LXMF icon appearance (0x04) with MDI icon names and colors.

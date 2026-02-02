@@ -184,6 +184,63 @@ def register_core_routes(
         services.record_event("config_rolled_back", "Configuration rolled back")
         return result
 
+    @app.get("/Reticulum/Config", dependencies=[Depends(require_protected)])
+    def get_reticulum_config() -> Response:
+        """Return the Reticulum configuration payload.
+
+        Returns:
+            Response: Plain text configuration payload.
+        """
+
+        return Response(api.get_reticulum_config_text(), media_type="text/plain")
+
+    @app.put("/Reticulum/Config", dependencies=[Depends(require_protected)])
+    def apply_reticulum_config(config_text: str = Body(media_type="text/plain")) -> dict:
+        """Apply a new Reticulum configuration payload.
+
+        Args:
+            config_text (str): Raw Reticulum configuration payload.
+
+        Returns:
+            dict: Apply result payload.
+        """
+
+        try:
+            result = api.apply_reticulum_config_text(config_text)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        services.record_event("reticulum_config_applied", "Reticulum configuration applied")
+        return result
+
+    @app.post("/Reticulum/Config/Validate", dependencies=[Depends(require_protected)])
+    def validate_reticulum_config(config_text: str = Body(media_type="text/plain")) -> dict:
+        """Validate a Reticulum configuration payload.
+
+        Args:
+            config_text (str): Raw Reticulum configuration payload.
+
+        Returns:
+            dict: Validation result payload.
+        """
+
+        return api.validate_reticulum_config_text(config_text)
+
+    @app.post("/Reticulum/Config/Rollback", dependencies=[Depends(require_protected)])
+    def rollback_reticulum_config(payload: Optional[ConfigRollbackPayload] = Body(default=None)) -> dict:
+        """Rollback the Reticulum configuration using a backup path.
+
+        Args:
+            payload (Optional[ConfigRollbackPayload]): Rollback payload.
+
+        Returns:
+            dict: Rollback result payload.
+        """
+
+        backup_path = payload.backup_path if payload else None
+        result = api.rollback_reticulum_config_text(backup_path=backup_path)
+        services.record_event("reticulum_config_rolled_back", "Reticulum configuration rolled back")
+        return result
+
     @app.post("/Command/FlushTelemetry", dependencies=[Depends(require_protected)])
     def flush_telemetry() -> dict:
         """Flush stored telemetry entries.

@@ -94,6 +94,13 @@ def test_openapi_yaml_missing_returns_404(tmp_path: Path) -> None:
 
 
 def test_core_routes_endpoints(tmp_path: Path) -> None:
+    reticulum_path = tmp_path / "reticulum.conf"
+    reticulum_path.write_text("[reticulum]\nshare_instance = yes\n", encoding="utf-8")
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        f"[hub]\nreticulum_config_path = {reticulum_path}\n", encoding="utf-8"
+    )
+
     client, api, event_log, telemetry = _build_client(tmp_path)
     headers = {"X-API-Key": "secret"}
 
@@ -140,6 +147,28 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
 
     rollback_response = client.post("/Config/Rollback", headers=headers)
     assert rollback_response.status_code == 200
+
+    reticulum_response = client.get("/Reticulum/Config", headers=headers)
+    assert reticulum_response.status_code == 200
+
+    reticulum_validate_response = client.post(
+        "/Reticulum/Config/Validate",
+        data="[reticulum]\nenable_transport = yes\n",
+        headers={**headers, "Content-Type": "text/plain"},
+    )
+    assert reticulum_validate_response.status_code == 200
+
+    reticulum_apply_response = client.put(
+        "/Reticulum/Config",
+        data="[reticulum]\nenable_transport = yes\n",
+        headers={**headers, "Content-Type": "text/plain"},
+    )
+    assert reticulum_apply_response.status_code == 200
+
+    reticulum_rollback_response = client.post(
+        "/Reticulum/Config/Rollback", headers=headers
+    )
+    assert reticulum_rollback_response.status_code == 200
 
     telemetry.save_telemetry(
         {
@@ -195,6 +224,28 @@ def test_apply_config_rejects_invalid_payload(tmp_path: Path) -> None:
     assert response.status_code == 400
     assert "Invalid configuration payload" in response.json().get("detail", "")
     assert api.get_config_text() == original
+
+
+def test_apply_reticulum_config_rejects_invalid_payload(tmp_path: Path) -> None:
+    """Return HTTP 400 when a Reticulum config payload is invalid."""
+
+    reticulum_path = tmp_path / "reticulum.conf"
+    reticulum_path.write_text("[reticulum]\nshare_instance = yes\n", encoding="utf-8")
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        f"[hub]\nreticulum_config_path = {reticulum_path}\n", encoding="utf-8"
+    )
+
+    client, api, _, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret", "Content-Type": "text/plain"}
+
+    original = api.get_reticulum_config_text()
+
+    response = client.put("/Reticulum/Config", data="reticulum]\nnope", headers=headers)
+
+    assert response.status_code == 400
+    assert "Invalid Reticulum configuration payload" in response.json().get("detail", "")
+    assert api.get_reticulum_config_text() == original
 
 
 def test_identity_moderation_routes(tmp_path: Path) -> None:
