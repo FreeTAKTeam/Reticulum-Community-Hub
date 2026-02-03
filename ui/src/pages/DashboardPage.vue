@@ -20,7 +20,7 @@
         <div class="hud-vitals-stack">
           <div class="hud-vital-card">
             <div class="hud-vital-header">
-              <span>Clients</span>
+              <span>Users</span>
               <span class="hud-cosmic-deco" aria-hidden="true">
                 <span></span>
                 <span></span>
