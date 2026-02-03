@@ -10,6 +10,10 @@ from typing import Optional, Tuple
 
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
+    DEFAULT_ANNOUNCE_CAPABILITIES_ENABLED,
+    DEFAULT_ANNOUNCE_CAPABILITIES_INCLUDE_TIMESTAMP,
+    DEFAULT_ANNOUNCE_CAPABILITIES_INCLUDE_VERSION,
+    DEFAULT_ANNOUNCE_CAPABILITIES_MAX_BYTES,
     DEFAULT_HUB_TELEMETRY_INTERVAL,
     DEFAULT_LOG_LEVEL_NAME,
     DEFAULT_MARKER_ANNOUNCE_INTERVAL_MINUTES,
@@ -97,6 +101,14 @@ class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     display_name: str = "RTH"
     announce_interval: int = DEFAULT_ANNOUNCE_INTERVAL
     marker_announce_interval_minutes: int = DEFAULT_MARKER_ANNOUNCE_INTERVAL_MINUTES
+    announce_capabilities_enabled: bool = DEFAULT_ANNOUNCE_CAPABILITIES_ENABLED
+    announce_capabilities_max_bytes: int = DEFAULT_ANNOUNCE_CAPABILITIES_MAX_BYTES
+    announce_capabilities_include_version: bool = (
+        DEFAULT_ANNOUNCE_CAPABILITIES_INCLUDE_VERSION
+    )
+    announce_capabilities_include_timestamp: bool = (
+        DEFAULT_ANNOUNCE_CAPABILITIES_INCLUDE_TIMESTAMP
+    )
     hub_telemetry_interval: int = DEFAULT_HUB_TELEMETRY_INTERVAL
     service_telemetry_interval: int = DEFAULT_SERVICE_TELEMETRY_INTERVAL
     log_level: str = DEFAULT_LOG_LEVEL_NAME

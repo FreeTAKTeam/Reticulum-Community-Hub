@@ -8,7 +8,6 @@ from typing import Optional
 
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_CONNECTION_MAP,
-    SID_LOCATION,
     SID_LXMF_PROPAGATION,
     SID_RNS_TRANSPORT,
     SID_TIME,

@@ -55,9 +55,19 @@ from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.config.manager import _expand_user_path
+from reticulum_telemetry_hub.config.models import HubAppConfig
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
 from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
+from reticulum_telemetry_hub.reticulum_server.announce_capabilities import (
+    AnnounceCapabilitiesConfig,
+    CapabilityEncodingResult,
+    append_capabilities_to_announce_app_data,
+    build_capability_payload,
+    encode_capability_payload,
+    normalize_capability_list,
+    select_capability_encoder,
+)
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -370,6 +380,11 @@ class ReticulumTelemetryHub:
         self._daemon_started = False
         self._active_services = {}
         self._outbound_queue: OutboundMessageQueue | None = None
+        self._announce_capabilities_state: CapabilityEncodingResult | None = None
+        self._announce_capabilities_encoder = select_capability_encoder()
+        self._announce_capabilities_enabled = True
+        self._announce_capabilities_lock = threading.Lock()
+        self._announce_capabilities_logged = False
 
         identity = self.load_or_generate_identity(self.identity_path)
 
@@ -433,7 +448,10 @@ class ReticulumTelemetryHub:
             )
             self.embedded_lxmd.start()
 
-        self.api = ReticulumTelemetryHubAPI(config_manager=self.config_manager)
+        self.api = ReticulumTelemetryHubAPI(
+            config_manager=self.config_manager,
+            on_config_reload=self._handle_config_reload,
+        )
         self._backfill_identity_announces()
         self._load_persisted_clients()
         RNS.Transport.register_announce_handler(
@@ -1059,11 +1077,219 @@ class ReticulumTelemetryHub:
             manager.announce_marker(marker)
         return manager.dispatch_marker_telemetry(marker, event_type)
 
-    def send_announce(self) -> bool:
-        """Send an immediate Reticulum announce.
+    def _handle_config_reload(self, _config: "HubAppConfig") -> None:
+        """Handle configuration reloads by recomputing capabilities.
+
+        Args:
+            _config (HubAppConfig): Updated configuration snapshot.
+        """
+
+        self._refresh_announce_capabilities(trigger_announce=True)
+
+    def _announce_capabilities_settings(self) -> AnnounceCapabilitiesConfig:
+        """Return announce capability settings from runtime config.
 
         Returns:
-            bool: True when the announce was dispatched.
+            AnnounceCapabilitiesConfig: Capability announce settings.
+        """
+
+        config_manager = self.config_manager or HubConfigurationManager(
+            storage_path=self.storage_path
+        )
+        runtime = config_manager.runtime_config
+        return AnnounceCapabilitiesConfig(
+            enabled=bool(
+                getattr(runtime, "announce_capabilities_enabled", True)
+            ),
+            max_bytes=int(
+                getattr(runtime, "announce_capabilities_max_bytes", 256)
+            ),
+            include_version=bool(
+                getattr(runtime, "announce_capabilities_include_version", True)
+            ),
+            include_timestamp=bool(
+                getattr(runtime, "announce_capabilities_include_timestamp", False)
+            ),
+        )
+
+    def _derive_announce_capabilities(self) -> list[str]:
+        """Derive capability identifiers from configuration and runtime state.
+
+        Returns:
+            list[str]: Capability identifiers to advertise.
+        """
+
+        caps: list[str] = []
+        if (
+            getattr(self, "command_manager", None) is not None
+            and getattr(self, "api", None) is not None
+        ):
+            caps.append("topic_broker")
+            caps.append("group_chat")
+        if getattr(self, "tel_controller", None) is not None:
+            caps.append("telemetry_relay")
+        if getattr(self, "api", None) is not None:
+            caps.append("attachments")
+        if getattr(self, "tak_connector", None) is not None:
+            caps.append("tak_bridge")
+        return normalize_capability_list(caps)
+
+    def _resolve_rch_version(
+        self, settings: AnnounceCapabilitiesConfig
+    ) -> str | None:
+        """Return the RCH version string when configured.
+
+        Args:
+            settings (AnnounceCapabilitiesConfig): Capability settings.
+
+        Returns:
+            str | None: Version string when enabled, otherwise ``None``.
+        """
+
+        if not settings.include_version:
+            return None
+        config_manager = self.config_manager
+        if config_manager is None:
+            return None
+        version = getattr(config_manager.config, "app_version", None)
+        if not version:
+            return None
+        return str(version)
+
+    def _refresh_announce_capabilities(
+        self,
+        *,
+        trigger_announce: bool = False,
+        log_startup: bool = False,
+    ) -> None:
+        """Recompute the announce capability payload.
+
+        Args:
+            trigger_announce (bool): When True, send an announce if changed.
+            log_startup (bool): When True, emit the startup capabilities log.
+        """
+
+        settings = self._announce_capabilities_settings()
+        if not settings.enabled:
+            with self._announce_capabilities_lock:
+                self._announce_capabilities_state = None
+                self._announce_capabilities_enabled = False
+            if log_startup and not self._announce_capabilities_logged:
+                RNS.log(
+                    "Announce capabilities disabled",
+                    getattr(RNS, "LOG_INFO", 3),
+                )
+                self._announce_capabilities_logged = True
+            return
+
+        payload = build_capability_payload(
+            rch_version=self._resolve_rch_version(settings),
+            caps=self._derive_announce_capabilities(),
+            roles=None,
+            include_timestamp=settings.include_timestamp,
+        )
+        result = encode_capability_payload(
+            payload,
+            encoder=self._announce_capabilities_encoder,
+            max_bytes=settings.max_bytes,
+        )
+        with self._announce_capabilities_lock:
+            previous = self._announce_capabilities_state
+            changed = previous is None or previous.encoded != result.encoded
+            self._announce_capabilities_state = result
+            self._announce_capabilities_enabled = True
+
+        if result.truncated and (
+            previous is None or not previous.truncated or changed
+        ):
+            RNS.log(
+                "Announce capabilities truncated to fit max bytes",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+
+        if log_startup and not self._announce_capabilities_logged:
+            caps = result.payload.get("caps", [])
+            RNS.log(
+                f"Announce capabilities: {caps} ({result.encoded_size_bytes} bytes)",
+                getattr(RNS, "LOG_INFO", 3),
+            )
+            self._announce_capabilities_logged = True
+
+        if changed and trigger_announce:
+            self._send_announce(recompute_capabilities=False, reason="capabilities")
+
+    def _build_announce_app_data(self) -> bytes | None:
+        """Return announce app-data with optional capabilities appended.
+
+        Returns:
+            bytes | None: Encoded announce app-data.
+        """
+
+        destination = getattr(self, "my_lxmf_dest", None)
+        if destination is None:
+            return None
+        base_app_data = None
+        try:
+            base_app_data = self._invoke_router_hook(
+                "get_announce_app_data", destination.hash
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            RNS.log(
+                f"Failed to build base announce app data: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+
+        if not self._announce_capabilities_enabled:
+            return base_app_data
+
+        state = self._announce_capabilities_state
+        if state is None:
+            return base_app_data
+        try:
+            return append_capabilities_to_announce_app_data(
+                base_app_data,
+                state.encoded,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            RNS.log(
+                f"Failed to append announce capabilities: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return base_app_data
+
+    def announce_capabilities_snapshot(self) -> dict[str, object]:
+        """Return the current announced capability payload.
+
+        Returns:
+            dict[str, object]: Capability snapshot payload and encoded size.
+        """
+
+        if (
+            self._announce_capabilities_state is None
+            and self._announce_capabilities_enabled
+        ):
+            self._refresh_announce_capabilities()
+        with self._announce_capabilities_lock:
+            state = self._announce_capabilities_state
+            enabled = self._announce_capabilities_enabled
+        if not enabled or state is None:
+            return {"capabilities": None, "encoded_size_bytes": 0}
+        return {
+            "capabilities": state.payload,
+            "encoded_size_bytes": state.encoded_size_bytes,
+        }
+
+    def _send_announce(
+        self, *, recompute_capabilities: bool = True, reason: str = "manual"
+    ) -> bool:
+        """Send a Reticulum announce with optional capabilities.
+
+        Args:
+            recompute_capabilities (bool): Whether to recompute capabilities.
+            reason (str): Log label for the announce reason.
+
+        Returns:
+            bool: True when the announce is dispatched.
         """
 
         destination = getattr(self, "my_lxmf_dest", None)
@@ -1073,20 +1299,40 @@ class ReticulumTelemetryHub:
                 getattr(RNS, "LOG_WARNING", 2),
             )
             return False
+        if recompute_capabilities:
+            self._refresh_announce_capabilities()
+        app_data = None
+        if self._announce_capabilities_enabled:
+            app_data = self._build_announce_app_data()
         try:
-            destination.announce()
+            if app_data is None:
+                destination.announce()
+            else:
+                destination.announce(app_data=app_data)
+            message = "LXMF identity announced"
+            if reason:
+                message = f"{message} ({reason})"
             RNS.log(
-                "LXMF identity announced (manual)",
+                message,
                 getattr(RNS, "LOG_DEBUG", self.loglevel),
             )
             self._announce_active_markers()
             return True
         except Exception as exc:  # pragma: no cover - defensive
             RNS.log(
-                f"Manual announce failed: {exc}",
+                f"Announce failed: {exc}",
                 getattr(RNS, "LOG_WARNING", 2),
             )
             return False
+
+    def send_announce(self) -> bool:
+        """Send an immediate Reticulum announce.
+
+        Returns:
+            bool: True when the announce was dispatched.
+        """
+
+        return self._send_announce(reason="manual")
 
     def _announce_active_markers(self) -> None:
         """Announce non-expired marker objects on schedule."""
@@ -2151,13 +2397,12 @@ class ReticulumTelemetryHub:
             f"Starting headless hub; announcing every {self.announce_interval}s",
             getattr(RNS, "LOG_INFO", 3),
         )
+        self._refresh_announce_capabilities(log_startup=True)
         if daemon_mode:
             self.start_daemon_workers(services=services)
         self._announce_active_markers()
         while not self._shutdown:
-            self.my_lxmf_dest.announce()
-            RNS.log("LXMF identity announced", getattr(RNS, "LOG_DEBUG", self.loglevel))
-            self._announce_active_markers()
+            self._send_announce(reason="periodic")
             time.sleep(self.announce_interval)
 
     def start_daemon_workers(
@@ -2183,6 +2428,7 @@ class ReticulumTelemetryHub:
                 self._active_services[name] = service
 
         self._daemon_started = True
+        self._refresh_announce_capabilities(trigger_announce=True)
 
     def stop_daemon_workers(self) -> None:
         if self._daemon_started:
@@ -2197,6 +2443,7 @@ class ReticulumTelemetryHub:
                 self.telemetry_sampler.stop()
 
             self._daemon_started = False
+            self._refresh_announce_capabilities(trigger_announce=True)
 
         if self._outbound_queue is not None:
             self.wait_for_outbound_flush(timeout=1.0)

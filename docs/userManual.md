@@ -111,6 +111,12 @@ reticulum_config_path = ~/.reticulum/config
 lxmf_router_config_path = ~/.lxmd/config
 telemetry_filename = telemetry.ini
 
+[announce.capabilities]
+enabled = true
+max_bytes = 256
+include_version = true
+include_timestamp = false
+
 [reticulum]
 enable_transport = true
 share_instance = true

@@ -7,10 +7,12 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 from pathlib import Path
+from typing import Callable
 from typing import List
 from typing import Optional
 
 from reticulum_telemetry_hub.config import HubConfigurationManager
+from reticulum_telemetry_hub.config.models import HubAppConfig
 
 from .models import ChatAttachment
 from .models import ChatMessage
@@ -30,6 +32,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         self,
         config_manager: Optional[HubConfigurationManager] = None,
         storage: Optional[HubStorage] = None,
+        on_config_reload: Optional[Callable[[HubAppConfig], None]] = None,
     ) -> None:
         """Initialize the API service with configuration and storage providers.
 
@@ -47,6 +50,18 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         self._storage = storage or HubStorage(hub_db_path)
         self._file_category = "file"
         self._image_category = "image"
+        self._on_config_reload = on_config_reload
+
+    def _notify_config_reload(self, config: HubAppConfig) -> None:
+        """Invoke the config reload callback when configured.
+
+        Args:
+            config (HubAppConfig): Updated configuration snapshot.
+        """
+
+        if self._on_config_reload is None:
+            return
+        self._on_config_reload(config)
 
     # ------------------------------------------------------------------ #
     # RTH operations
@@ -644,21 +659,24 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """Persist a new configuration payload and reload."""
 
         result = self._config_manager.apply_config_text(config_text)
-        self._config_manager.reload()
+        config = self._config_manager.reload()
+        self._notify_config_reload(config)
         return result
 
     def apply_reticulum_config_text(self, config_text: str) -> dict:
         """Persist a new Reticulum configuration payload and reload."""
 
         result = self._config_manager.apply_reticulum_config_text(config_text)
-        self._config_manager.reload()
+        config = self._config_manager.reload()
+        self._notify_config_reload(config)
         return result
 
     def rollback_config_text(self, backup_path: str | None = None) -> dict:
         """Rollback configuration from the latest backup."""
 
         result = self._config_manager.rollback_config_text(backup_path=backup_path)
-        self._config_manager.reload()
+        config = self._config_manager.reload()
+        self._notify_config_reload(config)
         return result
 
     def rollback_reticulum_config_text(self, backup_path: str | None = None) -> dict:
@@ -667,13 +685,15 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         result = self._config_manager.rollback_reticulum_config_text(
             backup_path=backup_path
         )
-        self._config_manager.reload()
+        config = self._config_manager.reload()
+        self._notify_config_reload(config)
         return result
 
     def reload_config(self) -> ReticulumInfo:
         """Reload the configuration from disk."""
 
         config = self._config_manager.reload()
+        self._notify_config_reload(config)
         return ReticulumInfo(**config.to_reticulum_info_dict())
 
     def list_identity_statuses(self) -> List[IdentityStatus]:

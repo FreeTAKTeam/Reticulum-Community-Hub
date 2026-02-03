@@ -214,7 +214,6 @@
                     </td>
                     <td class="hud-events-cell hud-events-cell--meta">
                       <span class="hud-event-tag">{{ event.category }}</span>
-                      <span class="hud-event-tag hud-event-tag--level">{{ event.level }}</span>
                     </td>
                     <td class="hud-events-cell hud-events-cell--time">
                       {{ formatTimestamp(event.created_at) }}
@@ -1213,8 +1212,9 @@ onUnmounted(() => {
 
 .hud-events-body {
   margin-top: clamp(6px, 1vh, 8px);
-  overflow-y: auto;
-  padding-right: 6px;
+  overflow: hidden auto;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
   flex: 1;
   min-height: 0;
 }
@@ -1275,8 +1275,9 @@ onUnmounted(() => {
   letter-spacing: 0.24em;
   text-transform: uppercase;
   color: rgba(231, 244, 255, 0.45);
-  padding: 0 8px 4px;
+  padding: 0 4px 4px;
   font-family: "Orbitron", "Rajdhani", sans-serif;
+  min-width: 0;
 }
 
 .hud-events-table thead th.hud-events-cell--action {
@@ -1284,10 +1285,11 @@ onUnmounted(() => {
 }
 
 .hud-events-row td {
-  padding: 8px 10px;
+  padding: 4px 4px;
   background: rgba(7, 20, 28, 0.82);
   border-top: 1px solid rgba(56, 244, 255, 0.18);
   border-bottom: 1px solid rgba(56, 244, 255, 0.18);
+  min-width: 0;
 }
 
 .hud-events-row td:first-child {
@@ -1301,7 +1303,7 @@ onUnmounted(() => {
 }
 
 .hud-events-cell--message {
-  width: 50%;
+  width: 58%;
 }
 
 .hud-events-cell--message .hud-event-title {
@@ -1312,21 +1314,34 @@ onUnmounted(() => {
 }
 
 .hud-events-cell--meta {
-  width: 22%;
-  white-space: nowrap;
+  width: 18%;
+  white-space: normal;
+  line-height: 1.2;
 }
 
 .hud-events-cell--time {
-  width: 20%;
+  width: 9%;
   font-family: "JetBrains Mono", "Cascadia Mono", monospace;
-  font-size: 0.58rem;
+  font-size: 0.55rem;
   color: var(--hud-muted);
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.hud-events-cell--meta,
+.hud-events-cell--time {
+  padding-left: 2px;
+  padding-right: 2px;
 }
 
 .hud-events-cell--action {
-  width: 8%;
+  width: 6%;
   text-align: right;
+}
+
+.hud-events-cell--action {
+  padding-left: 2px;
+  padding-right: 2px;
 }
 
 .hud-event-tag {
@@ -1353,14 +1368,14 @@ onUnmounted(() => {
 .hud-events-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: 4px;
+  padding: 2px 3px;
   border-radius: 999px;
   border: 1px solid rgba(56, 244, 255, 0.3);
   background: rgba(8, 18, 26, 0.7);
   color: var(--hud-cyan);
-  font-size: 0.5rem;
-  letter-spacing: 0.2em;
+  font-size: 0.42rem;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   font-family: "Orbitron", "Rajdhani", sans-serif;
   cursor: pointer;
@@ -1391,7 +1406,7 @@ onUnmounted(() => {
 }
 
 .hud-events-details {
-  margin: 0 10px 10px;
+  margin: 0 6px 10px;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid rgba(56, 244, 255, 0.2);

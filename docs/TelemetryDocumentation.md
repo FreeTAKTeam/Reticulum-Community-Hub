@@ -39,6 +39,43 @@ The full SID set is enumerated at `reticulum_telemetry_hub/lxmf_telemetry/model/
 - **Identity labeling** - Display names are resolved from LXMF announce metadata when available; the telemetry API and WebSocket include `display_name` and `identity_label` fields in each entry (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py` and `reticulum_telemetry_hub/northbound/websocket.py`).
 - **Schema fidelity** - Sensor classes mirror Sideband's wire format (for example, signed micro-degree coordinates in `Location.pack()` and timestamp enforcement in `Time.pack()`), keeping RCH's stored snapshots and outbound messages byte-compatible with Sideband.
 
+## Announce Capabilities
+
+RCH embeds a compact capability descriptor into the Reticulum Announce application-data for the hub identity. The standard LXMF announce list (`[display_name_bytes, stamp_cost]`) is extended with a third entry that holds the encoded capability payload.
+
+### Payload schema
+
+The capability payload is a versioned map with the following fields:
+
+- `app`: constant string `"rch"`
+- `schema`: integer schema version (starts at `1`)
+- `rch_version`: string (optional; hub version)
+- `caps`: array of lowercase snake_case capability identifiers
+- `roles`: array of strings (optional)
+- `ts`: unix epoch seconds (optional)
+
+### Encoding and size limits
+
+- The capability payload is encoded to bytes (CBOR preferred, MessagePack fallback).
+- Encoding is deterministic for the same input.
+- Default maximum size is 256 bytes. If the payload exceeds the configured limit, RCH drops optional fields in this order: `ts`, `roles`, `rch_version`, then truncates the `caps` list by priority.
+
+### Configuration
+
+Configure the behavior in `config.ini` using the `[announce.capabilities]` section:
+
+```ini
+[announce.capabilities]
+enabled = true
+max_bytes = 256
+include_version = true
+include_timestamp = false
+```
+
+### Diagnostics
+
+The internal endpoint `GET /internal/rch/announce-capabilities` returns the decoded capability payload plus `encoded_size_bytes` for debugging.
+
 ## Northbound telemetry access
 
 - **REST snapshot** - `GET /Telemetry?since=...` returns `{ "entries": [...] }` with each entry containing `peer_destination`, `timestamp`, `telemetry`, and optional `display_name`. The payload is humanized using the sensor `unpack()` helpers (`reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py`).

@@ -182,6 +182,19 @@ def register_internal_adapter(app: FastAPI, *, adapter: InternalAdapter) -> None
         finally:
             unsubscribe()
 
+    @router.get("/rch/announce-capabilities")
+    async def get_announce_capabilities() -> dict:
+        """Return the currently announced capability payload."""
+
+        hub = getattr(app.state, "hub", None)
+        snapshot = getattr(hub, "announce_capabilities_snapshot", None)
+        if hub is None or not callable(snapshot):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Hub capabilities are not available",
+            )
+        return snapshot()
+
     app.include_router(router)
     app.state.internal_adapter = adapter
 

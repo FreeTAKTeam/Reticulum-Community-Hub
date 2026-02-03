@@ -321,6 +321,15 @@
 
 .reticulum-panel-content--calendar {
   height: 100%;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.reticulum-panel-calendar-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .reticulum-panel-label {
@@ -359,7 +368,7 @@
 
 .reticulum-weather-temp {
   font-family: "Orbitron", monospace;
-  font-size: 40px;
+  font-size: 32px;
   color: #ffffff;
 }
 
@@ -407,8 +416,9 @@
 
 .reticulum-calendar-day {
   font-family: "Orbitron", monospace;
-  font-size: 48px;
+  font-size: 32px;
   color: #ffffff;
+  margin: 4px 0 0;
 }
 
 .reticulum-status {
@@ -537,11 +547,11 @@
   }
 
   .reticulum-weather-temp {
-    font-size: 48px;
+    font-size: 40px;
   }
 
   .reticulum-calendar-day {
-    font-size: 56px;
+    font-size: 40px;
   }
 
   .reticulum-panels {

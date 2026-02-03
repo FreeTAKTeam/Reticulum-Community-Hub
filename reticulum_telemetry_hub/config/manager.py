@@ -310,12 +310,87 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         file_storage_path = self._ensure_directory(file_storage_path)
         image_storage_path = self._ensure_directory(image_storage_path)
 
+        announce_section = (
+            self._get_section("announce.capabilities")
+            or self._get_section("announce_capabilities")
+            or self._get_section("announce")
+        )
+        announce_enabled = self._get_bool(
+            announce_section,
+            "enabled",
+            defaults.announce_capabilities_enabled,
+        )
+        announce_max_bytes = self._coerce_int(
+            announce_section.get("max_bytes"),
+            defaults.announce_capabilities_max_bytes,
+        )
+        announce_include_version = self._get_bool(
+            announce_section,
+            "include_version",
+            defaults.announce_capabilities_include_version,
+        )
+        announce_include_timestamp = self._get_bool(
+            announce_section,
+            "include_timestamp",
+            defaults.announce_capabilities_include_timestamp,
+        )
+        if "announce.capabilities.enabled" in hub_section:
+            announce_enabled = self._get_bool(
+                hub_section,
+                "announce.capabilities.enabled",
+                announce_enabled,
+            )
+        if "announce.capabilities.max_bytes" in hub_section:
+            announce_max_bytes = self._coerce_int(
+                hub_section.get("announce.capabilities.max_bytes"),
+                announce_max_bytes,
+            )
+        if "announce.capabilities.include_version" in hub_section:
+            announce_include_version = self._get_bool(
+                hub_section,
+                "announce.capabilities.include_version",
+                announce_include_version,
+            )
+        if "announce.capabilities.include_timestamp" in hub_section:
+            announce_include_timestamp = self._get_bool(
+                hub_section,
+                "announce.capabilities.include_timestamp",
+                announce_include_timestamp,
+            )
+        if "announce_capabilities_enabled" in hub_section:
+            announce_enabled = self._get_bool(
+                hub_section,
+                "announce_capabilities_enabled",
+                announce_enabled,
+            )
+        if "announce_capabilities_max_bytes" in hub_section:
+            announce_max_bytes = self._coerce_int(
+                hub_section.get("announce_capabilities_max_bytes"),
+                announce_max_bytes,
+            )
+        if "announce_capabilities_include_version" in hub_section:
+            announce_include_version = self._get_bool(
+                hub_section,
+                "announce_capabilities_include_version",
+                announce_include_version,
+            )
+        if "announce_capabilities_include_timestamp" in hub_section:
+            announce_include_timestamp = self._get_bool(
+                hub_section,
+                "announce_capabilities_include_timestamp",
+                announce_include_timestamp,
+            )
+
         return HubRuntimeConfig(
             display_name=hub_section.get("display_name", defaults.display_name),
             announce_interval=self._coerce_int(
                 hub_section.get("announce_interval"), defaults.announce_interval
             ),
             marker_announce_interval_minutes=marker_announce_interval,
+            announce_capabilities_enabled=announce_enabled,
+            announce_capabilities_max_bytes=announce_max_bytes,
+            announce_capabilities_include_version=announce_include_version,
+            announce_capabilities_include_timestamp=announce_include_timestamp,
             hub_telemetry_interval=self._coerce_int(
                 hub_section.get("hub_telemetry_interval"),
                 defaults.hub_telemetry_interval,

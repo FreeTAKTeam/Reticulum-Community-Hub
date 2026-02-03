@@ -95,3 +95,33 @@ def test_file_and_image_overrides_expand_and_create(monkeypatch, tmp_path):
     assert manager.runtime_config.image_storage_path == tmp_path / "custom/images"
     assert manager.runtime_config.file_storage_path.is_dir()
     assert manager.runtime_config.image_storage_path.is_dir()
+
+
+def test_announce_capabilities_defaults(tmp_path):
+    manager = HubConfigurationManager(storage_path=tmp_path)
+
+    runtime = manager.runtime_config
+
+    assert runtime.announce_capabilities_enabled is True
+    assert runtime.announce_capabilities_max_bytes == 256
+    assert runtime.announce_capabilities_include_version is True
+    assert runtime.announce_capabilities_include_timestamp is False
+
+
+def test_announce_capabilities_config_section_overrides(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[announce.capabilities]\n"
+        "enabled = false\n"
+        "max_bytes = 128\n"
+        "include_version = false\n"
+        "include_timestamp = true\n"
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+    runtime = manager.runtime_config
+
+    assert runtime.announce_capabilities_enabled is False
+    assert runtime.announce_capabilities_max_bytes == 128
+    assert runtime.announce_capabilities_include_version is False
+    assert runtime.announce_capabilities_include_timestamp is True
