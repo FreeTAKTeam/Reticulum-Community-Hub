@@ -282,6 +282,42 @@ def test_identity_announce_ignores_missing_name(tmp_path):
     assert api.resolve_identity_display_name("deadbeef") == "Sideband-Alice"
 
 
+def test_identity_statuses_dedupe_case_insensitive(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.join("DeAdBeEf")
+    api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
+
+    statuses = api.list_identity_statuses()
+
+    matches = [status for status in statuses if status.identity.lower() == "deadbeef"]
+    assert len(matches) == 1
+    assert matches[0].identity == "DeAdBeEf"
+    assert matches[0].display_name == "Sideband-Alice"
+
+
+def test_identity_statuses_dedupe_with_announce_only(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
+
+    statuses = api.list_identity_statuses()
+
+    matches = [status for status in statuses if status.identity.lower() == "deadbeef"]
+    assert len(matches) == 1
+    assert matches[0].identity == "deadbeef"
+
+
+def test_identity_statuses_dedupe_preserves_blackhole(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.blackhole_identity("deadbeef")
+    api.unban_identity("DEADBEEF")
+
+    statuses = api.list_identity_statuses()
+
+    match = next(status for status in statuses if status.identity.lower() == "deadbeef")
+    assert match.is_blackholed
+    assert match.status == "blackholed"
+
+
 def test_create_topic_requires_fields(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
 

@@ -1,4 +1,5 @@
 # TASKS
+- 2026-02-03: DONE. Deduplicate identity status entries to avoid repeated cards in the Users/Identities tab.
 - 2026-02-03: DONE. Announce capabilities in Reticulum announces with size limits, config, and internal diagnostics.
 - 2026-02-02: DONE. Add WebMap latitude/longitude coordinate readout overlay.
 - 2026-02-02: DONE. Improve build-electron.ps1 to avoid npm prefix failures by running installs in working dirs.

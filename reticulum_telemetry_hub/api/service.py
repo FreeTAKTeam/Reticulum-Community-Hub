@@ -699,12 +699,48 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
     def list_identity_statuses(self) -> List[IdentityStatus]:
         """Return identity statuses merged with client data."""
 
-        clients = {client.identity: client for client in self._storage.list_clients()}
-        states = {
-            state.identity: state for state in self._storage.list_identity_states()
-        }
+        clients: dict[str, Client] = {}
+        for client in self._storage.list_clients():
+            if not client.identity:
+                continue
+            identity_key = client.identity.strip().lower()
+            if not identity_key:
+                continue
+            existing = clients.get(identity_key)
+            if existing is None or client.last_seen > existing.last_seen:
+                clients[identity_key] = client
+
+        states: dict[str, dict[str, object]] = {}
+        for state in self._storage.list_identity_states():
+            identity_value = getattr(state, "identity", None)
+            if not identity_value:
+                continue
+            identity_key = identity_value.strip().lower()
+            if not identity_key:
+                continue
+            entry = states.get(identity_key)
+            if entry is None:
+                states[identity_key] = {
+                    "identity": identity_value,
+                    "is_banned": bool(state.is_banned),
+                    "is_blackholed": bool(state.is_blackholed),
+                    "updated_at": state.updated_at,
+                }
+                continue
+            entry["is_banned"] = bool(entry["is_banned"]) or bool(state.is_banned)
+            entry["is_blackholed"] = bool(entry["is_blackholed"]) or bool(
+                state.is_blackholed
+            )
+            updated_at = state.updated_at
+            existing_updated_at = entry.get("updated_at")
+            if updated_at is None:
+                continue
+            if existing_updated_at is None or updated_at >= existing_updated_at:
+                entry["identity"] = identity_value
+                entry["updated_at"] = updated_at
+
         announces = {
-            record.destination_hash: record
+            record.destination_hash.lower(): record
             for record in self._storage.list_identity_announces()
         }
         identities = sorted(
@@ -712,16 +748,18 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         )
         statuses: List[IdentityStatus] = []
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
-        for identity in identities:
-            client = clients.get(identity)
-            state = states.get(identity)
-            announce = announces.get(identity.lower())
+        for identity_key in identities:
+            client = clients.get(identity_key)
+            state_entry = states.get(identity_key)
+            announce = announces.get(identity_key)
             display_name = announce.display_name if announce else None
             metadata = dict(client.metadata if client else {})
             if display_name and "display_name" not in metadata:
                 metadata["display_name"] = display_name
-            is_banned = bool(state.is_banned) if state else False
-            is_blackholed = bool(state.is_blackholed) if state else False
+            is_banned = bool(state_entry.get("is_banned")) if state_entry else False
+            is_blackholed = (
+                bool(state_entry.get("is_blackholed")) if state_entry else False
+            )
             announce_last_seen = None
             if announce and announce.last_seen:
                 announce_last_seen = announce.last_seen
@@ -735,9 +773,16 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
                 status = "blackholed"
             elif is_banned:
                 status = "banned"
+            identity_value = identity_key
+            if client and client.identity:
+                identity_value = client.identity
+            elif state_entry and state_entry.get("identity"):
+                identity_value = str(state_entry.get("identity"))
+            elif announce and announce.destination_hash:
+                identity_value = announce.destination_hash
             statuses.append(
                 IdentityStatus(
-                    identity=identity,
+                    identity=identity_value,
                     status=status,
                     last_seen=last_seen,
                     display_name=display_name,
