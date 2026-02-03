@@ -1,10 +1,12 @@
 <template>
-  <header class="flex items-center justify-between border-b border-rth-border bg-rth-panel-muted px-6 py-4">
-    <div class="text-sm font-semibold uppercase tracking-[0.2em] text-rth-text">{{ title }}</div>
-    <div class="flex items-center gap-3 text-xs text-rth-muted">
-      <span class="cui-status-pill" :class="connectionClass">{{ connectionLabel }}</span>
-      <span class="cui-status-pill" :class="wsClass">{{ wsLabel }}</span>
-      <span class="text-[11px]">{{ baseUrl }}</span>
+  <header v-if="showHeader" class="cui-page-header">
+    <div class="cui-page-header__grid">
+      <div class="cui-page-header__title">{{ title }}</div>
+      <div class="cui-page-header__status">
+        <span class="cui-status-pill" :class="connectionClass">{{ connectionLabel }}</span>
+        <span class="cui-status-pill" :class="wsClass">{{ wsLabel }}</span>
+        <span class="cui-page-header__url">{{ baseUrl }}</span>
+      </div>
     </div>
   </header>
 </template>
@@ -29,8 +31,10 @@ const title = computed(() => {
     "/about": "About",
     "/connect": "Connect"
   };
-  return mapping[route.path] ?? "RTH Core UI";
+  return mapping[route.path] ?? "RCH";
 });
+
+const showHeader = computed(() => route.path !== "/topics");
 
 const baseUrl = computed(() => connectionStore.baseUrlDisplay);
 const connectionLabel = computed(() => connectionStore.statusLabel);

@@ -562,6 +562,67 @@
   overflow: hidden;
 }
 
+.cui-page-header {
+  position: relative;
+  padding: 18px 28px;
+  background: linear-gradient(180deg, rgba(6, 20, 32, 0.96), rgba(3, 12, 20, 0.98));
+  border-bottom: 1px solid rgba(0, 180, 255, 0.2);
+  box-shadow: inset 0 0 24px rgba(6, 12, 20, 0.65);
+  overflow: hidden;
+}
+
+.cui-page-header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 1px 1px, rgba(55, 242, 255, 0.1) 1px, transparent 0) 0 0 / 18px 18px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.cui-page-header::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 55%, rgba(55, 242, 255, 0.1), transparent 75%);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.cui-page-header__grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 16px;
+  z-index: 1;
+}
+
+.cui-page-header__title {
+  justify-self: center;
+  text-align: center;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #d4fbff;
+  text-shadow: 0 0 12px rgba(55, 242, 255, 0.45);
+}
+
+.cui-page-header__status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-self: end;
+  font-size: 12px;
+}
+
+.cui-page-header__url {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(215, 243, 255, 0.8);
+}
+
 .cui-title-text {
   position: relative;
   display: inline-block;
