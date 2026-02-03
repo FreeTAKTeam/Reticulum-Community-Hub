@@ -51,8 +51,24 @@
     </BaseCard>
 
     <div class="grid gap-4 lg:grid-cols-2">
-      <BaseCard title="Documentation">
-        <div class="space-y-2 text-sm">
+      <BaseCard class="lg:col-span-2" title="Resources">
+        <div class="mb-4 cui-tab-group">
+          <BaseButton variant="tab" :class="{ 'cui-tab-active': resourcesTab === 'docs' }" @click="resourcesTab = 'docs'">
+            Documentation
+          </BaseButton>
+          <BaseButton variant="tab" :class="{ 'cui-tab-active': resourcesTab === 'help' }" @click="resourcesTab = 'help'">
+            Help
+          </BaseButton>
+          <BaseButton
+            variant="tab"
+            :class="{ 'cui-tab-active': resourcesTab === 'examples' }"
+            @click="resourcesTab = 'examples'"
+          >
+            Examples
+          </BaseButton>
+        </div>
+
+        <div v-if="resourcesTab === 'docs'" class="space-y-2 text-sm">
           <a
             class="flex items-center justify-between rounded border border-rth-border bg-rth-panel-muted p-3 text-rth-text transition-colors hover:border-rth-accent"
             href="/docs/"
@@ -72,17 +88,21 @@
             <span class="text-xs text-rth-muted">/API/ReticulumCommunityHub-OAS.yaml</span>
           </a>
         </div>
-      </BaseCard>
 
-      <BaseCard title="Help & Examples">
-        <BaseFormattedOutput v-if="helpContent" :value="helpContent" mode="markdown" />
-        <BaseFormattedOutput v-if="examplesContent" class="mt-4" :value="examplesContent" mode="markdown" />
-        <div v-if="!helpContent && !examplesContent" class="text-xs text-rth-muted">
-          Load help or examples to view command references.
+        <div v-else-if="resourcesTab === 'help'">
+          <BaseFormattedOutput v-if="helpContent" :value="helpContent" mode="markdown" />
+          <div v-else class="text-xs text-rth-muted">Load help to view command references.</div>
+          <div class="mt-4 flex flex-wrap justify-end gap-2">
+            <BaseButton variant="secondary" icon-left="help" @click="loadHelp">Load Help</BaseButton>
+          </div>
         </div>
-        <div class="mt-4 flex flex-wrap justify-end gap-2">
-          <BaseButton variant="secondary" icon-left="help" @click="loadHelp">Help</BaseButton>
-          <BaseButton variant="secondary" icon-left="list" @click="loadExamples">Examples</BaseButton>
+
+        <div v-else>
+          <BaseFormattedOutput v-if="examplesContent" :value="examplesContent" mode="markdown" />
+          <div v-else class="text-xs text-rth-muted">Load examples to view command references.</div>
+          <div class="mt-4 flex flex-wrap justify-end gap-2">
+            <BaseButton variant="secondary" icon-left="list" @click="loadExamples">Load Examples</BaseButton>
+          </div>
         </div>
       </BaseCard>
     </div>
@@ -104,6 +124,7 @@ const appStore = useAppStore();
 const { appInfo } = storeToRefs(appStore);
 const helpContent = ref<string | null>(null);
 const examplesContent = ref<string | null>(null);
+const resourcesTab = ref<"docs" | "help" | "examples">("docs");
 
 const formatValue = (value: unknown) => {
   if (value === null || value === undefined) {

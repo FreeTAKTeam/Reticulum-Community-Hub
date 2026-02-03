@@ -110,20 +110,44 @@
 }
 
 .cui-btn--tab {
-  --cui-cut: 12px;
   --cui-accent: var(--cui-primary);
-  --cui-accent-soft: rgba(0, 180, 255, 0.16);
   --cui-glow-color: rgba(0, 180, 255, 0.35);
-  --cui-shape: polygon(var(--cui-cut) 0, 100% 0, calc(100% - var(--cui-cut)) 100%, 0 100%);
-  color: var(--cui-muted);
+  background: transparent;
+  border-color: transparent;
+  border-radius: 999px;
+  clip-path: none;
+  box-shadow: none;
+  color: rgba(209, 251, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.65rem;
+  padding: 6px 14px;
 }
 
 .cui-btn--tab:hover {
-  color: var(--cui-text);
+  color: #e0feff;
+  border-color: rgba(55, 242, 255, 0.4);
+  background: rgba(55, 242, 255, 0.08);
 }
 
 .cui-btn--tab::after {
   content: none;
+}
+
+.cui-btn--tab::before {
+  content: none;
+}
+
+.cui-tab-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(55, 242, 255, 0.25);
+  background: rgba(7, 18, 26, 0.8);
+  box-shadow: inset 0 0 12px rgba(6, 18, 28, 0.45);
 }
 
 .cui-btn--action {
@@ -139,9 +163,10 @@
 }
 
 .cui-tab-active {
-  border-color: var(--cui-primary);
-  background: linear-gradient(180deg, rgba(10, 26, 40, 0.95), rgba(6, 18, 30, 0.98));
-  color: var(--cui-text);
+  border-color: rgba(55, 242, 255, 0.6);
+  background: rgba(55, 242, 255, 0.12);
+  color: #e0feff;
+  box-shadow: 0 0 14px rgba(55, 242, 255, 0.25);
 }
 
 .cui-tab-active::after {
@@ -177,6 +202,21 @@
   padding: 10px 22px;
   font-size: 1rem;
   --cui-icon-size: 22px;
+}
+
+.cui-btn--tab.cui-btn--sm {
+  padding: 5px 12px;
+  font-size: 0.6rem;
+}
+
+.cui-btn--tab.cui-btn--md {
+  padding: 6px 14px;
+  font-size: 0.65rem;
+}
+
+.cui-btn--tab.cui-btn--lg {
+  padding: 8px 16px;
+  font-size: 0.7rem;
 }
 
 .cui-btn--icon-only {

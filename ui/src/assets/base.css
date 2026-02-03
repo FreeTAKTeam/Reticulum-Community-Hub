@@ -9,6 +9,12 @@
   font-family: "Barlow", "IBM Plex Sans", "Source Sans 3", "Segoe UI", sans-serif;
   background-color: #0f1320;
   color: #e7ecf5;
+  --cui-scrollbar-track: rgba(6, 18, 30, 0.92);
+  --cui-scrollbar-thumb: rgba(44, 212, 230, 0.75);
+  --cui-scrollbar-thumb-strong: rgba(70, 244, 255, 0.9);
+  --cui-scrollbar-border: rgba(56, 244, 255, 0.28);
+  --cui-scrollbar-glow: rgba(44, 212, 230, 0.35);
+  --cui-scrollbar-corner: rgba(8, 18, 26, 0.85);
 }
 
 body {
@@ -21,6 +27,43 @@ body {
 code,
 pre {
   font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+}
+
+.cui-scrollbar,
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--cui-scrollbar-thumb) var(--cui-scrollbar-track);
+}
+
+.cui-scrollbar::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.cui-scrollbar::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(4, 12, 20, 0.95), var(--cui-scrollbar-track));
+  border: 1px solid rgba(56, 244, 255, 0.12);
+  box-shadow: inset 0 0 10px rgba(3, 12, 18, 0.8);
+}
+
+.cui-scrollbar::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(8, 36, 48, 0.95), var(--cui-scrollbar-thumb));
+  border: 1px solid var(--cui-scrollbar-border);
+  border-radius: 999px;
+  box-shadow: 0 0 10px var(--cui-scrollbar-glow);
+}
+
+.cui-scrollbar::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(12, 50, 64, 0.98), var(--cui-scrollbar-thumb-strong));
+}
+
+.cui-scrollbar::-webkit-scrollbar-corner,
+*::-webkit-scrollbar-corner {
+  background: var(--cui-scrollbar-corner);
 }
 
 .scrollbar-thin {

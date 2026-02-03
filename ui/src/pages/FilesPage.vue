@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-6">
     <BaseCard title="Files & Images">
-      <div class="mb-4 flex flex-wrap gap-2">
+      <div class="mb-4 cui-tab-group">
         <BaseButton variant="tab" icon-left="file" :class="{ 'cui-tab-active': activeTab === 'files' }" @click="activeTab = 'files'">Files</BaseButton>
         <BaseButton variant="tab" icon-left="image" :class="{ 'cui-tab-active': activeTab === 'images' }" @click="activeTab = 'images'">Images</BaseButton>
       </div>

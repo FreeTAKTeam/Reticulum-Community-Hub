@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-6">
     <BaseCard title="Configuration & Tools">
-      <div class="mb-4 flex flex-wrap gap-2">
+      <div class="mb-4 cui-tab-group">
         <BaseButton
           variant="tab"
           icon-left="settings"

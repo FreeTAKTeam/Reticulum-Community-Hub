@@ -61,7 +61,7 @@
           Markers
         </div>
         <div v-else class="mt-4">
-          <div class="flex flex-wrap items-center gap-2 border-b border-rth-border pb-3">
+          <div class="cui-tab-group mb-3">
             <BaseButton
               variant="tab"
               size="sm"

@@ -2,10 +2,17 @@
   <div class="grid h-full min-h-0 gap-6 xl:grid-cols-[320px_1fr]">
     <section class="flex min-h-0 flex-col">
       <BaseCard class="flex min-h-0 flex-1 flex-col" title="Operators">
-        <BaseInput v-model="searchQuery" label="Search" placeholder="Filter peers or topics" />
-        <div class="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
-          <div class="text-[11px] uppercase tracking-[0.2em] text-rth-muted">Peers</div>
-          <div class="space-y-2">
+        <BaseInput v-model="searchQuery" label="Search" placeholder="Filter users or topics" />
+        <div class="mt-3 cui-tab-group">
+          <BaseButton variant="tab" :class="{ 'cui-tab-active': directoryTab === 'peers' }" @click="directoryTab = 'peers'">
+            Users
+          </BaseButton>
+          <BaseButton variant="tab" :class="{ 'cui-tab-active': directoryTab === 'topics' }" @click="directoryTab = 'topics'">
+            Topics
+          </BaseButton>
+        </div>
+        <div class="mt-3 flex min-h-0 flex-1 flex-col gap-3 pr-1 chat-directory-scroll">
+          <div v-if="directoryTab === 'peers'" class="space-y-2">
             <button
               v-for="peer in filteredPeers"
               :key="peer.id"
@@ -20,8 +27,7 @@
               <span class="text-[10px] uppercase tracking-[0.2em] text-rth-muted">DM</span>
             </button>
           </div>
-          <div class="pt-2 text-[11px] uppercase tracking-[0.2em] text-rth-muted">Topics</div>
-          <div class="space-y-2">
+          <div v-else class="space-y-2">
             <button
               v-for="topic in filteredTopics"
               :key="topic.id"
@@ -204,6 +210,7 @@ const composerText = ref("");
 const pendingAttachments = ref<File[]>([]);
 const sending = ref(false);
 const messageScroller = ref<HTMLDivElement | null>(null);
+const directoryTab = ref<"peers" | "topics">("peers");
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
@@ -336,9 +343,11 @@ const selectConversation = (scope: "dm" | "topic" | "broadcast", targetId?: stri
   if (scope === "dm") {
     activePeer.value = targetId ?? "";
     composerTarget.value = targetId ?? "";
+    directoryTab.value = "peers";
   } else if (scope === "topic") {
     activeTopic.value = targetId ?? "";
     composerTarget.value = targetId ?? "";
+    directoryTab.value = "topics";
   } else {
     activePeer.value = "";
     activeTopic.value = "";
@@ -496,3 +505,13 @@ watch(activeScope, () => {
   scrollToLatest();
 });
 </script>
+
+<style scoped>
+.chat-directory-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  max-height: clamp(260px, 45vh, 520px);
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+</style>
