@@ -23,10 +23,10 @@ def test_build_icon_appearance_payload_defaults() -> None:
 
     payload = build_icon_appearance_payload()
 
-    icon, fg_bytes, bg_bytes = payload[LXMF.FIELD_ICON_APPEARANCE]
+    icon, bg_bytes, fg_bytes = payload[LXMF.FIELD_ICON_APPEARANCE]
     assert icon == DEFAULT_ICON_NAME
-    assert fg_bytes == bytes.fromhex(DEFAULT_FG_HEX)
     assert bg_bytes == bytes.fromhex(DEFAULT_BG_HEX)
+    assert fg_bytes == bytes.fromhex(DEFAULT_FG_HEX)
 
 
 def test_build_icon_appearance_payload_env_overrides(monkeypatch) -> None:
@@ -37,11 +37,11 @@ def test_build_icon_appearance_payload_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("RCH_ICON_BG", "#00FF00")
 
     payload = build_icon_appearance_payload()
-    icon, fg_bytes, bg_bytes = payload[LXMF.FIELD_ICON_APPEARANCE]
+    icon, bg_bytes, fg_bytes = payload[LXMF.FIELD_ICON_APPEARANCE]
 
     assert icon == "hiking"
-    assert fg_bytes == b"\xff\x00\xff"
     assert bg_bytes == b"\x00\xff\x00"
+    assert fg_bytes == b"\xff\x00\xff"
 
 
 def test_build_icon_appearance_value_matches_payload() -> None:
@@ -83,11 +83,11 @@ def test_build_telemetry_icon_appearance_payload_uses_symbol_metadata() -> None:
         SID_CUSTOM: [["marker", [{"symbol": "friendly"}, None]]],
     }
     appearance = build_telemetry_icon_appearance_payload(payload)
-    icon, fg_bytes, bg_bytes = appearance[LXMF.FIELD_ICON_APPEARANCE]
+    icon, bg_bytes, fg_bytes = appearance[LXMF.FIELD_ICON_APPEARANCE]
 
     assert icon == "rectangle"
-    assert fg_bytes == bytes.fromhex(DEFAULT_FG_HEX)
     assert bg_bytes == bytes.fromhex("6BCBEC")
+    assert fg_bytes == bytes.fromhex(DEFAULT_FG_HEX)
 
 
 def test_build_telemetry_icon_appearance_value_matches_payload() -> None:
@@ -106,11 +106,11 @@ def test_build_telemetry_icon_appearance_payload_falls_back_without_custom() -> 
     """Fallback to defaults when no custom metadata exists."""
 
     appearance = build_telemetry_icon_appearance_payload({})
-    icon, fg_bytes, bg_bytes = appearance[LXMF.FIELD_ICON_APPEARANCE]
+    icon, bg_bytes, fg_bytes = appearance[LXMF.FIELD_ICON_APPEARANCE]
 
     assert icon == DEFAULT_ICON_NAME
-    assert fg_bytes == bytes.fromhex(DEFAULT_FG_HEX)
     assert bg_bytes == bytes.fromhex(DEFAULT_BG_HEX)
+    assert fg_bytes == bytes.fromhex(DEFAULT_FG_HEX)
 
 
 def test_build_telemetry_icon_appearance_payload_handles_invalid_custom() -> None:
@@ -118,8 +118,8 @@ def test_build_telemetry_icon_appearance_payload_handles_invalid_custom() -> Non
 
     payload = {SID_CUSTOM: "invalid"}
     appearance = build_telemetry_icon_appearance_payload(payload)
-    icon, fg_bytes, bg_bytes = appearance[LXMF.FIELD_ICON_APPEARANCE]
+    icon, bg_bytes, fg_bytes = appearance[LXMF.FIELD_ICON_APPEARANCE]
 
     assert icon == DEFAULT_ICON_NAME
-    assert fg_bytes == bytes.fromhex(DEFAULT_FG_HEX)
     assert bg_bytes == bytes.fromhex(DEFAULT_BG_HEX)
+    assert fg_bytes == bytes.fromhex(DEFAULT_FG_HEX)

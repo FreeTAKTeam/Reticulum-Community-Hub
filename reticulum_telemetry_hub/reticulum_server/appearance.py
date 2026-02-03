@@ -242,8 +242,9 @@ def build_icon_appearance_payload(
     return {
         LXMF.FIELD_ICON_APPEARANCE: [
             icon,
-            _hex_to_bytes(fg_value),
+            # Sideband expects background then foreground bytes.
             _hex_to_bytes(bg_value),
+            _hex_to_bytes(fg_value),
         ]
     }
 
@@ -261,7 +262,7 @@ def build_icon_appearance_value(
         bg_hex (Optional[str]): Background RGB hex string (RRGGBB).
 
     Returns:
-        list[object]: Appearance list ``[icon_name, fg_rgb_bytes, bg_rgb_bytes]``.
+        list[object]: Appearance list ``[icon_name, bg_rgb_bytes, fg_rgb_bytes]``.
     """
 
     payload = build_icon_appearance_payload(
@@ -324,7 +325,7 @@ def build_telemetry_icon_appearance_value(
         telemetry_payload (Optional[dict[int, object]]): Raw telemetry sensor map.
 
     Returns:
-        list[object]: Appearance list ``[icon_name, fg_rgb_bytes, bg_rgb_bytes]``.
+        list[object]: Appearance list ``[icon_name, bg_rgb_bytes, fg_rgb_bytes]``.
     """
 
     payload = build_telemetry_icon_appearance_payload(telemetry_payload)
