@@ -600,6 +600,7 @@ class CommandManager:
             "name": getattr(app_info, "app_name", ""),
             "version": getattr(app_info, "app_version", ""),
             "description": getattr(app_info, "app_description", ""),
+            "reticulum_destination": getattr(app_info, "reticulum_destination", None),
         }
         return self._reply(message, json.dumps(payload, sort_keys=True))
 

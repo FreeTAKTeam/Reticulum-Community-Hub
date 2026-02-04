@@ -164,18 +164,24 @@ class AnnounceHandler:
         # RNS.log(f"\t| App data               : {app_data}")
         # RNS.log("\t+---------------------------------------------------------------")
         label = self._decode_app_data(app_data)
-        hash_keys = []
         destination_key = self._normalize_hash(destination_hash)
-        if destination_key:
-            hash_keys.append(destination_key)
         identity_key = self._normalize_hash(announced_identity)
-        if identity_key and identity_key not in hash_keys:
-            hash_keys.append(identity_key)
+        hash_keys = [key for key in (destination_key, identity_key) if key]
         if label:
             for key in hash_keys:
                 self.identities[key] = label
-        for key in hash_keys:
-            self._persist_announce_async(key, label)
+        if destination_key:
+            self._persist_announce_async(
+                destination_key,
+                label,
+                source_interface="destination",
+            )
+        if identity_key and identity_key != destination_key:
+            self._persist_announce_async(
+                identity_key,
+                label,
+                source_interface="identity",
+            )
 
     @staticmethod
     def _normalize_hash(value) -> str | None:
@@ -210,8 +216,20 @@ class AnnounceHandler:
         return None
 
     def _persist_announce_async(
-        self, destination_hash: str, display_name: str | None
+        self,
+        destination_hash: str,
+        display_name: str | None,
+        *,
+        source_interface: str | None = None,
     ) -> None:
+        """Persist announce metadata on a background thread.
+
+        Args:
+            destination_hash (str): Identity or destination hash to store.
+            display_name (str | None): Optional announce display name.
+            source_interface (str | None): Tag describing the announce hash type.
+        """
+
         api = self._api
         if api is None:
             return
@@ -221,6 +239,7 @@ class AnnounceHandler:
                 api.record_identity_announce(
                     destination_hash,
                     display_name=display_name,
+                    source_interface=source_interface,
                 )
             except Exception as exc:  # pragma: no cover - defensive log
                 RNS.log(
@@ -452,6 +471,7 @@ class ReticulumTelemetryHub:
             config_manager=self.config_manager,
             on_config_reload=self._handle_config_reload,
         )
+        self.api.set_reticulum_destination(self._origin_rch_hex())
         self._backfill_identity_announces()
         self._load_persisted_clients()
         RNS.Transport.register_announce_handler(
@@ -1499,7 +1519,7 @@ class ReticulumTelemetryHub:
                 api.record_identity_announce(
                     identity_hash,
                     display_name=record.display_name,
-                    source_interface=record.source_interface,
+                    source_interface="identity",
                 )
             except Exception as exc:  # pragma: no cover - defensive log
                 RNS.log(

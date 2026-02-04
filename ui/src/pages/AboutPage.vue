@@ -36,6 +36,10 @@
             <div class="cui-json-key">Shared Instance</div>
             <div class="cui-json-value">{{ formatFlag(appInfo?.is_connected_to_shared_instance) }}</div>
           </div>
+          <div class="cui-json-row">
+            <div class="cui-json-key">Reticulum Destination</div>
+            <div class="cui-json-value">{{ formatValue(appInfo?.reticulum_destination) }}</div>
+          </div>
         </div>
       </BaseCard>
     </div>

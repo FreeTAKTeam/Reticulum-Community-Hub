@@ -1254,6 +1254,9 @@ components:
         image_storage_path:
           type: string
           description: Folder where image artifacts are stored (defaults to ``<storage_dir>/images``).
+        reticulum_destination:
+          type: string
+          description: Hex-encoded Reticulum destination hash for the running hub.
         app_name:
           type: string
           description: Application display name configured in ``config.ini``.

@@ -102,6 +102,7 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 - Telemetry map markers render MDI icons when telemetry payloads include `telemetry_type`, `symbol`, `category`, or `type`.
 - The WebMap shows a live latitude/longitude readout for the map cursor.
 - Marker symbols load from `rch-symbols.yaml` (override with `RTH_SYMBOL_REGISTRY_PATH`).
+- `/api/v1/app/info` includes the hub Reticulum destination (`reticulum_destination`) for display on the About page.
 - The UI lives in `ui/`:
 
   ```bash

@@ -181,6 +181,7 @@ class ReticulumInfo:
     lxmf_version: str
     app_version: str
     app_description: str
+    reticulum_destination: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Serialize the info model to a dictionary."""

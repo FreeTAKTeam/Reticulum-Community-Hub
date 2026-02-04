@@ -169,3 +169,4 @@ def test_app_info_round_trip(tmp_path: Path) -> None:
 
     assert "app_name" in info
     assert "storage_path" in info
+    assert "reticulum_destination" in info

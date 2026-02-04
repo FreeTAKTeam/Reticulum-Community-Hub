@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import string
 import uuid
 from datetime import datetime
 from datetime import timedelta
@@ -51,6 +52,48 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         self._file_category = "file"
         self._image_category = "image"
         self._on_config_reload = on_config_reload
+        self._reticulum_destination: str | None = None
+
+    def set_reticulum_destination(self, destination: str | None) -> None:
+        """Set the Reticulum destination hash for app info responses.
+
+        Args:
+            destination (str | None): Hex-encoded destination hash. Provide
+                ``None`` or whitespace to clear the value.
+
+        Raises:
+            ValueError: If ``destination`` is not a valid hex string.
+        """
+
+        if destination is None:
+            self._reticulum_destination = None
+            return
+
+        cleaned = destination.strip()
+        if not cleaned:
+            self._reticulum_destination = None
+            return
+
+        if not all(char in string.hexdigits for char in cleaned):
+            raise ValueError("destination must be a hex string")
+        if len(cleaned) % 2 != 0:
+            raise ValueError("destination must contain an even number of hex characters")
+
+        self._reticulum_destination = cleaned.lower()
+
+    def _build_reticulum_info(self, info_dict: dict) -> ReticulumInfo:
+        """Return a ReticulumInfo model enriched with runtime data.
+
+        Args:
+            info_dict (dict): Base info payload from configuration.
+
+        Returns:
+            ReticulumInfo: Info snapshot including runtime destination data.
+        """
+
+        payload = dict(info_dict)
+        payload["reticulum_destination"] = self._reticulum_destination
+        return ReticulumInfo(**payload)
 
     def _notify_config_reload(self, config: HubAppConfig) -> None:
         """Invoke the config reload callback when configured.
@@ -633,7 +676,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             manager, including the app name, version, and description.
         """
         info_dict = self._config_manager.reticulum_info_snapshot()
-        return ReticulumInfo(**info_dict)
+        return self._build_reticulum_info(info_dict)
 
     def get_config_text(self) -> str:
         """Return the raw hub configuration file content."""
@@ -694,7 +737,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         config = self._config_manager.reload()
         self._notify_config_reload(config)
-        return ReticulumInfo(**config.to_reticulum_info_dict())
+        return self._build_reticulum_info(config.to_reticulum_info_dict())
 
     def list_identity_statuses(self) -> List[IdentityStatus]:
         """Return identity statuses merged with client data."""
@@ -742,6 +785,10 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         announces = {
             record.destination_hash.lower(): record
             for record in self._storage.list_identity_announces()
+        }
+        announce_sources = {
+            key: (record.source_interface or "").strip().lower() or None
+            for key, record in announces.items()
         }
         identities = sorted(
             set(clients.keys()) | set(states.keys()) | set(announces.keys())
@@ -791,7 +838,153 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
                     is_blackholed=is_blackholed,
                 )
             )
-        return statuses
+        return self._dedupe_identity_statuses(
+            statuses,
+            announce_sources=announce_sources,
+            client_keys=set(clients.keys()),
+            state_keys=set(states.keys()),
+        )
+
+    def _dedupe_identity_statuses(
+        self,
+        statuses: List[IdentityStatus],
+        *,
+        announce_sources: dict[str, str | None],
+        client_keys: set[str],
+        state_keys: set[str],
+    ) -> List[IdentityStatus]:
+        """Collapse duplicate identity statuses with matching display metadata.
+
+        Args:
+            statuses (List[IdentityStatus]): Raw identity status entries.
+            announce_sources (dict[str, str | None]): Announce source tags keyed by
+                identity hash.
+            client_keys (set[str]): Identities currently joined to the hub.
+            state_keys (set[str]): Identities with moderation state records.
+
+        Returns:
+            List[IdentityStatus]: Deduplicated status list for UI consumption.
+        """
+
+        results: List[IdentityStatus] = []
+        index_by_key: dict[tuple[object, ...], int] = {}
+        for status in statuses:
+            display_name = (status.display_name or "").strip()
+            if not display_name:
+                results.append(status)
+                continue
+            key = (
+                display_name.lower(),
+                status.status,
+                self._identity_status_bucket(status.last_seen),
+                bool(status.is_banned),
+                bool(status.is_blackholed),
+            )
+            existing_index = index_by_key.get(key)
+            if existing_index is None:
+                index_by_key[key] = len(results)
+                results.append(status)
+                continue
+            existing = results[existing_index]
+            if self._identity_status_preferred(
+                status,
+                existing,
+                announce_sources=announce_sources,
+                client_keys=client_keys,
+                state_keys=state_keys,
+            ):
+                results[existing_index] = status
+        return results
+
+    @staticmethod
+    def _identity_status_bucket(last_seen: datetime | None) -> int | None:
+        """Return a bucketed timestamp for deduping announce entries.
+
+        Args:
+            last_seen (datetime | None): Timestamp to bucket.
+
+        Returns:
+            int | None: A 5-second bucket epoch timestamp or ``None`` when missing.
+        """
+
+        if not last_seen:
+            return None
+        timestamp = int(last_seen.timestamp())
+        return timestamp - (timestamp % 5)
+
+    @staticmethod
+    def _identity_status_rank(
+        identity_key: str,
+        *,
+        announce_sources: dict[str, str | None],
+        client_keys: set[str],
+        state_keys: set[str],
+    ) -> int:
+        """Return a preference rank for selecting a canonical identity entry.
+
+        Args:
+            identity_key (str): Normalized identity hash.
+            announce_sources (dict[str, str | None]): Announce source tags keyed by
+                identity hash.
+            client_keys (set[str]): Joined identities.
+            state_keys (set[str]): Moderated identities.
+
+        Returns:
+            int: Preference rank where higher values are preferred.
+        """
+
+        if identity_key in client_keys or identity_key in state_keys:
+            return 3
+        source = announce_sources.get(identity_key)
+        if source == "identity":
+            return 2
+        if source == "destination":
+            return 1
+        return 0
+
+    @classmethod
+    def _identity_status_preferred(
+        cls,
+        candidate: IdentityStatus,
+        current: IdentityStatus,
+        *,
+        announce_sources: dict[str, str | None],
+        client_keys: set[str],
+        state_keys: set[str],
+    ) -> bool:
+        """Return True when the candidate status should replace the current one.
+
+        Args:
+            candidate (IdentityStatus): Proposed replacement entry.
+            current (IdentityStatus): Existing entry in the deduped list.
+            announce_sources (dict[str, str | None]): Announce source tags keyed by
+                identity hash.
+            client_keys (set[str]): Joined identities.
+            state_keys (set[str]): Moderated identities.
+
+        Returns:
+            bool: ``True`` if the candidate should replace the current entry.
+        """
+
+        candidate_key = (candidate.identity or "").strip().lower()
+        current_key = (current.identity or "").strip().lower()
+        candidate_rank = cls._identity_status_rank(
+            candidate_key,
+            announce_sources=announce_sources,
+            client_keys=client_keys,
+            state_keys=state_keys,
+        )
+        current_rank = cls._identity_status_rank(
+            current_key,
+            announce_sources=announce_sources,
+            client_keys=client_keys,
+            state_keys=state_keys,
+        )
+        if candidate_rank != current_rank:
+            return candidate_rank > current_rank
+        if candidate_key and current_key and candidate_key != current_key:
+            return candidate_key < current_key
+        return False
 
     def ban_identity(self, identity: str) -> IdentityStatus:
         """Mark an identity as banned."""

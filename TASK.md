@@ -1,4 +1,8 @@
 # TASKS
+- 2026-02-04: DONE. Include the server Reticulum destination in app info and show it on the About page.
+- 2026-02-03: DONE. Scale the boot splash layout to occupy the full viewport.
+- 2026-02-03: DONE. Add boot splash screen with rotating RCH logo and backend polling gate before showing the UI.
+- 2026-02-03: DONE. Collapse announce-derived identity duplicates while preferring identity hashes for the Identities tab.
 - 2026-02-03: DONE. Deduplicate identity status entries to avoid repeated cards in the Users/Identities tab.
 - 2026-02-03: DONE. Announce capabilities in Reticulum announces with size limits, config, and internal diagnostics.
 - 2026-02-02: DONE. Add WebMap latitude/longitude coordinate readout overlay.

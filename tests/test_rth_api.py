@@ -1,4 +1,6 @@
 import threading
+from datetime import datetime
+from datetime import timezone
 
 import pytest
 from sqlalchemy.exc import OperationalError
@@ -7,6 +9,7 @@ from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api import Subscriber
 from reticulum_telemetry_hub.api import Topic
 from reticulum_telemetry_hub.api.storage import TopicRecord
+from reticulum_telemetry_hub.api.storage_models import IdentityAnnounceRecord
 from reticulum_telemetry_hub.config import HubConfigurationManager
 
 
@@ -172,6 +175,46 @@ def test_get_app_info(tmp_path):
     assert info.app_name == "TestHub"
     assert info.app_version == "9.9.9"
     assert info.app_description == "Test hub instance"
+    assert info.reticulum_destination is None
+
+
+def test_get_app_info_includes_reticulum_destination(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    api.set_reticulum_destination("DeAdBeEf")
+
+    info = api.get_app_info()
+
+    assert info.reticulum_destination == "deadbeef"
+
+
+def test_reticulum_destination_clears_on_blank_value(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    api.set_reticulum_destination("deadbeef")
+    api.set_reticulum_destination(" ")
+
+    info = api.get_app_info()
+
+    assert info.reticulum_destination is None
+
+
+def test_reticulum_destination_clears_on_none(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    api.set_reticulum_destination("deadbeef")
+    api.set_reticulum_destination(None)
+
+    info = api.get_app_info()
+
+    assert info.reticulum_destination is None
+
+
+def test_reticulum_destination_rejects_non_hex(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    with pytest.raises(ValueError):
+        api.set_reticulum_destination("not-hex")
 
 
 def test_config_apply_and_rollback(tmp_path):
@@ -316,6 +359,43 @@ def test_identity_statuses_dedupe_preserves_blackhole(tmp_path):
     match = next(status for status in statuses if status.identity.lower() == "deadbeef")
     assert match.is_blackholed
     assert match.status == "blackholed"
+
+
+def test_identity_statuses_dedupe_display_name_collapses_duplicates(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
+    api.record_identity_announce("cafebabe", display_name="Sideband-Alice")
+
+    now = datetime.now(timezone.utc)
+    with api._storage._Session() as session:
+        records = session.query(IdentityAnnounceRecord).all()
+        for record in records:
+            record.last_seen = now
+        session.commit()
+
+    statuses = api.list_identity_statuses()
+
+    matches = [status for status in statuses if status.display_name == "Sideband-Alice"]
+    assert len(matches) == 1
+
+
+def test_identity_statuses_dedupe_prefers_joined_identity(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
+    api.record_identity_announce("cafebabe", display_name="Sideband-Alice")
+    api.join("deadbeef")
+
+    now = datetime.now(timezone.utc)
+    with api._storage._Session() as session:
+        records = session.query(IdentityAnnounceRecord).all()
+        for record in records:
+            record.last_seen = now
+        session.commit()
+
+    statuses = api.list_identity_statuses()
+
+    match = next(status for status in statuses if status.display_name == "Sideband-Alice")
+    assert match.identity == "deadbeef"
 
 
 def test_create_topic_requires_fields(tmp_path):

@@ -122,6 +122,7 @@ export interface AppInfo {
   description?: string;
   rns_version?: string;
   lxmf_version?: string;
+  reticulum_destination?: string;
   storage_paths?: Record<string, string>;
 }
 

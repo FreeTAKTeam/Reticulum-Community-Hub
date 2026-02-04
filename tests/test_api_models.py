@@ -99,6 +99,7 @@ def test_reticulum_info_to_dict_returns_all_fields():
         lxmf_version="0.9",
         app_version="0.0.0",
         app_description="Reticulum Telemetry Hub instance",
+        reticulum_destination="deadbeef",
     )
 
     result = info.to_dict()
@@ -110,6 +111,7 @@ def test_reticulum_info_to_dict_returns_all_fields():
     assert result["image_storage_path"] == "/tmp/storage/images"
     assert result["app_name"] == "RTH"
     assert result["app_description"] == "Reticulum Telemetry Hub instance"
+    assert result["reticulum_destination"] == "deadbeef"
 
 
 def test_file_attachment_to_dict_serializes_fields():
