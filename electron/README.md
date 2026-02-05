@@ -64,11 +64,16 @@ Use `RCH_PYTHON` to point at a specific Python interpreter if needed.
 npm run dist -- --win
 ```
 
-### Windows (portable self-contained EXE)
+### Windows installer + portable
 
 ```bash
-npm run dist -- --win portable
+npm run dist -- --win
 ```
+
+Windows artifact names:
+
+- Installer: `RCH_win Install_<version>.exe`
+- Portable: `RCH_win Portable_<version>.exe`
 
 ### Raspberry Pi OS (Linux)
 
@@ -88,6 +93,9 @@ separately (for example, `rch start --data-dir ./RCH_Store --port 8000`).
 Packaged builds start the bundled backend automatically (defaults to
 `http://127.0.0.1:8000`). Override with `RCH_DATA_DIR`, `RCH_BACKEND_PORT`, or
 `RCH_LOG_LEVEL` if needed. Set `RCH_BACKEND_MANAGED=false` to disable autostart.
+
+Before each desktop build, Electron version metadata is synchronized from
+`pyproject.toml` automatically.
 
 If the UI cannot connect in a packaged build, check the backend log at:
 `%APPDATA%/RCH Desktop/backend.log` (Windows) or the platform-specific userData

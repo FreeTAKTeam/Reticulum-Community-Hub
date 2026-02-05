@@ -1,17 +1,18 @@
 {
   "name": "rch-desktop",
   "private": true,
-  "version": "0.3.1",
+  "version": "1.33.0",
   "description": "Electron shell for Reticulum Community Hub.",
   "main": "dist/main.js",
   "author": "FreeTAKTeam",
   "type": "commonjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "sync:version": "node scripts/sync-version.mjs",
     "build:ui": "npm --prefix ../ui run build",
     "build:electron": "tsc -p tsconfig.json",
     "build:backend": "node scripts/build-backend.mjs",
-    "build": "npm run build:ui && npm run build:electron && npm run build:backend",
+    "build": "npm run sync:version && npm run build:ui && npm run build:electron && npm run build:backend",
     "start": "electron dist/main.js",
     "dist": "npm run build && electron-builder"
   },
@@ -51,6 +52,12 @@
         "portable",
         "nsis"
       ]
+    },
+    "nsis": {
+      "artifactName": "RCH_win Install_${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "RCH_win Portable_${version}.${ext}"
     },
     "mac": {
       "icon": "buildResources/icon.png"

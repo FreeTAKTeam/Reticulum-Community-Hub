@@ -179,6 +179,7 @@ if (-not $SkipNodeInstall) {
 
 Push-Location $electronPath
 try {
+  Invoke-Checked "npm" @("run", "sync:version")
   Invoke-Checked "npm" @("run", "build:ui")
   Invoke-Checked "npm" @("run", "build:electron")
   if (-not $SkipBackendBuild) {

@@ -133,9 +133,9 @@ loads the hub API from `127.0.0.1`.
    ```bash
    npm run dist
    ```
-4. Build a portable Windows EXE:
+4. Build Windows installer + portable EXE:
    ```bash
-   npm run dist -- --win portable
+   npm run dist -- --win
    ```
 
 Electron packaging expects a bundled backend executable. Install PyInstaller and
@@ -147,6 +147,14 @@ python -m pip install pyinstaller
 cd electron
 npm run build:backend
 ```
+
+Before each Electron build, the desktop app version is synchronized from
+`pyproject.toml` automatically.
+
+Windows artifact naming:
+
+- Installer: `RCH_win Install_<version>.exe`
+- Portable: `RCH_win Portable_<version>.exe`
 
 For Raspberry Pi OS, build on Linux and target the desired architecture:
 

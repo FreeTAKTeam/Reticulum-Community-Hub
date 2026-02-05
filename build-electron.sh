@@ -272,6 +272,7 @@ if [ "$SKIP_NODE_INSTALL" -eq 0 ]; then
 fi
 
 pushd "$ELECTRON_PATH" >/dev/null
+  npm run sync:version
   npm run build:ui
   npm run build:electron
   if [ "$SKIP_BACKEND_BUILD" -eq 0 ]; then

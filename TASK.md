@@ -1,4 +1,6 @@
 # TASKS
+- 2026-02-05: DONE. Run a full consistency pass: harden Ruff excludes, add release metadata consistency tests, and refresh Electron docs.
+- 2026-02-05: DONE. Sync Electron app version to pyproject version during builds and enforce Windows artifact naming convention.
 - 2026-02-05: DONE. Add WebSocket runtime dependency/bundling for Electron backend and set RCH icon for Electron build/runtime.
 - 2026-02-05: DONE. Add macOS-friendly build-electron.sh translation of the Electron build script.
 - 2026-02-04: DONE. Expand build-electron.ps1 to build Windows, macOS, and Raspberry Pi OS 64-bit artifacts.
