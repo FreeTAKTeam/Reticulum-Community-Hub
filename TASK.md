@@ -1,4 +1,5 @@
 # TASKS
+- 2026-02-05: DONE. Remediate dependency vulnerabilities across Python, UI, and Electron (including lockfile refresh and audit verification).
 - 2026-02-05: DONE. Run a full consistency pass: harden Ruff excludes, add release metadata consistency tests, and refresh Electron docs.
 - 2026-02-05: DONE. Sync Electron app version to pyproject version during builds and enforce Windows artifact naming convention.
 - 2026-02-05: DONE. Add WebSocket runtime dependency/bundling for Electron backend and set RCH icon for Electron build/runtime.
