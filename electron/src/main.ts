@@ -56,6 +56,20 @@ const resolveBackendLogPath = (): string => {
   return path.join(app.getPath("userData"), "backend.log");
 };
 
+const resolveWindowIcon = (): string | undefined => {
+  if (process.platform === "darwin") {
+    return undefined;
+  }
+
+  if (app.isPackaged) {
+    const packagedIcon = path.join(process.resourcesPath, "ui", "RCH_small.png");
+    return fs.existsSync(packagedIcon) ? packagedIcon : undefined;
+  }
+
+  const devIcon = path.join(__dirname, "..", "..", "ui", "public", "RCH_small.png");
+  return fs.existsSync(devIcon) ? devIcon : undefined;
+};
+
 const startBackendLogging = (): fs.WriteStream => {
   const logPath = resolveBackendLogPath();
   const stream = fs.createWriteStream(logPath, { flags: "a" });
@@ -139,6 +153,7 @@ const createWindow = async (): Promise<void> => {
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT,
     backgroundColor: "#0a0f18",
+    icon: resolveWindowIcon(),
     show: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

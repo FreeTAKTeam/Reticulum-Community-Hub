@@ -35,6 +35,8 @@ const args = [
   "RNS",
   "--collect-all",
   "LXMF",
+  "--collect-all",
+  "websockets",
   entrypoint
 ];
 

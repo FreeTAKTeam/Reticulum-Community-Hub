@@ -24,8 +24,10 @@
   "build": {
     "appId": "com.freetakteam.rch",
     "productName": "RCH Desktop",
+    "icon": "buildResources/icon.png",
     "directories": {
-      "output": "dist-release"
+      "output": "dist-release",
+      "buildResources": "buildResources"
     },
     "files": [
       "dist/**/*"
@@ -44,12 +46,17 @@
       }
     ],
     "win": {
+      "icon": "buildResources/icon.png",
       "target": [
         "portable",
         "nsis"
       ]
     },
+    "mac": {
+      "icon": "buildResources/icon.png"
+    },
     "linux": {
+      "icon": "buildResources/icon.png",
       "target": [
         "deb"
       ],

@@ -10,7 +10,7 @@ Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. 
 - One-to-many and topic-scoped message fan-out over LXMF.
 - Telemetry collection and on-demand telemetry responses.
 - File and image attachment storage with retrieval by ID.
-- sci-fu themed admin UI.
+- sci-fi themed admin UI.
 - Operator-managed map markers backed by Reticulum object identities and telemetry updates.
 - Optional TAK/CoT bridge for chat and location updates.
 - Capability announces embedded in Reticulum announces for feature discovery.
@@ -133,9 +133,9 @@ loads the hub API from `127.0.0.1`.
    ```bash
    npm run dist
    ```
-4. Build a portable Windows EXE:
+4. Build Windows installer + portable EXE:
    ```bash
-   npm run dist -- --win portable
+   npm run dist -- --win
    ```
 
 Electron packaging expects a bundled backend executable. Install PyInstaller and
@@ -147,6 +147,9 @@ python -m pip install pyinstaller
 cd electron
 npm run build:backend
 ```
+
+The backend WebSocket runtime (`websockets`) is installed with the Python package
+and explicitly collected into the PyInstaller executable.
 
 For Raspberry Pi OS, build on Linux and target the desired architecture:
 
