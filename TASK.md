@@ -1,5 +1,9 @@
 # TASKS
+<<<<<<< HEAD
 - 2026-02-05: DONE. Add WebSocket runtime dependency/bundling for Electron backend and set RCH icon for Electron build/runtime.
+=======
+- 2026-02-05: DONE. Add macOS-friendly build-electron.sh translation of the Electron build script.
+>>>>>>> 63a3ff26c77914f87520073dd30020398780fb71
 - 2026-02-04: DONE. Expand build-electron.ps1 to build Windows, macOS, and Raspberry Pi OS 64-bit artifacts.
 - 2026-02-04: DONE. Include the server Reticulum destination in app info and show it on the About page.
 - 2026-02-03: DONE. Scale the boot splash layout to occupy the full viewport.
