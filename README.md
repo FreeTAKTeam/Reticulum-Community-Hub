@@ -5,6 +5,12 @@
 Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. It allows people and groups to exchange messages, share situational updates, and distribute files in a structured and reliable way, even across intermittent or low-connectivity environments, while remaining independent from centralized internet services.
 <div style="clear: both;"></div>
 
+## Why?
+
+> "RCH begins from a simple refusal:  When this illusion breaks, highly optimized global systems fail first."
+
+Read our full manifesto: [docs/Manifesto_Reticulum_Community_Hub.md](docs/Manifesto_Reticulum_Community_Hub.md)
+
 ## What it does
 
 - One-to-many and topic-scoped message fan-out over LXMF.
