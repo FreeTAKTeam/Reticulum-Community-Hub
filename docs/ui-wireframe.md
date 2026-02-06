@@ -165,6 +165,7 @@ Data:
 - List: `GET /File`, `GET /Image`
 - Metadata: `GET /File/{id}`, `GET /Image/{id}`
 - Raw bytes: `GET /File/{id}/raw`, `GET /Image/{id}/raw`
+- Delete: `DELETE /File/{id}`, `DELETE /Image/{id}`
 
 ---
 

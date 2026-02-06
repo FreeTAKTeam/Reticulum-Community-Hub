@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
-import { get } from "../api/client";
+import { del as delRequest, get } from "../api/client";
 import type { FileEntry } from "../api/types";
 
 type FileApiPayload = {
@@ -39,6 +39,14 @@ export const useFilesStore = defineStore("files", () => {
 
   const fileRawUrl = (id: string) => `${endpoints.files}/${id}/raw`;
   const imageRawUrl = (id: string) => `${endpoints.images}/${id}/raw`;
+  const removeFile = async (id: string) => {
+    await delRequest(`${endpoints.files}/${id}`);
+    files.value = files.value.filter((item) => item.id !== id);
+  };
+  const removeImage = async (id: string) => {
+    await delRequest(`${endpoints.images}/${id}`);
+    images.value = images.value.filter((item) => item.id !== id);
+  };
 
   return {
     files,
@@ -46,6 +54,8 @@ export const useFilesStore = defineStore("files", () => {
     loading,
     fetchFiles,
     fileRawUrl,
-    imageRawUrl
+    imageRawUrl,
+    removeFile,
+    removeImage
   };
 });

@@ -273,8 +273,34 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     return jsonResponse(mockState.files);
   }
 
+  const fileDetailMatch = pathname.match(/^\/File\/(\d+)$/);
+  if (fileDetailMatch) {
+    const id = Number(fileDetailMatch[1]);
+    const target = mockState.files.find((entry) => entry.FileID === id);
+    if (!target) {
+      return jsonResponse({ detail: "File not found" }, 404);
+    }
+    if (method === "DELETE") {
+      mockState.files = mockState.files.filter((entry) => entry.FileID !== id);
+    }
+    return jsonResponse(target);
+  }
+
   if (pathname === "/Image") {
     return jsonResponse(mockState.images);
+  }
+
+  const imageDetailMatch = pathname.match(/^\/Image\/(\d+)$/);
+  if (imageDetailMatch) {
+    const id = Number(imageDetailMatch[1]);
+    const target = mockState.images.find((entry) => entry.FileID === id);
+    if (!target) {
+      return jsonResponse({ detail: "Image not found" }, 404);
+    }
+    if (method === "DELETE") {
+      mockState.images = mockState.images.filter((entry) => entry.FileID !== id);
+    }
+    return jsonResponse(target);
   }
 
   if (pathname === "/Chat/Messages") {

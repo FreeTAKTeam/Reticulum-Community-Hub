@@ -699,6 +699,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FileAttachment'
+    delete:
+      x-scope: protected
+      tags:
+       - File
+      summary: Delete a stored file by its ID.
+      operationId: DeleteFile
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: Deleted file metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileAttachment'
+        '404':
+          $ref: '#/components/responses/404'
   /File/{id}/raw:
     get:
       x-scope: public
@@ -751,6 +768,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FileAttachment'
+    delete:
+      x-scope: protected
+      tags:
+       - Image
+      summary: Delete a stored image by its ID.
+      operationId: DeleteImage
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: Deleted image metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileAttachment'
+        '404':
+          $ref: '#/components/responses/404'
   /Image/{id}/raw:
     get:
       x-scope: public

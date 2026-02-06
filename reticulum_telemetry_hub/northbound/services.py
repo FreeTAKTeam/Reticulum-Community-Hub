@@ -228,6 +228,16 @@ class NorthboundServices:
 
         return self.api.list_images()
 
+    def delete_file(self, file_id: int) -> FileAttachment:
+        """Delete a stored file."""
+
+        return self.api.delete_file(file_id)
+
+    def delete_image(self, file_id: int) -> FileAttachment:
+        """Delete a stored image."""
+
+        return self.api.delete_image(file_id)
+
     def list_identity_statuses(self) -> List[IdentityStatus]:
         """Return identity moderation statuses.
 

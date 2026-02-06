@@ -15,6 +15,8 @@ from typing import Optional
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.config.models import HubAppConfig
 
+from .filesystem import FileSystemAdapter
+from .filesystem import LocalFileSystemAdapter
 from .models import ChatAttachment
 from .models import ChatMessage
 from .models import Client
@@ -34,6 +36,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         config_manager: Optional[HubConfigurationManager] = None,
         storage: Optional[HubStorage] = None,
         on_config_reload: Optional[Callable[[HubAppConfig], None]] = None,
+        filesystem: Optional[FileSystemAdapter] = None,
     ) -> None:
         """Initialize the API service with configuration and storage providers.
 
@@ -44,11 +47,15 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             storage (Optional[HubStorage]): Persistence provider for clients,
                 topics, and subscribers. Defaults to storage built with the
                 configuration's database path.
+            filesystem (Optional[FileSystemAdapter]): Filesystem adapter used
+                for file operations. Defaults to a local pathlib-backed
+                implementation.
 
         """
         self._config_manager = config_manager or HubConfigurationManager()
         hub_db_path = self._config_manager.config.hub_database_path
         self._storage = storage or HubStorage(hub_db_path)
+        self._filesystem = filesystem or LocalFileSystemAdapter()
         self._file_category = "file"
         self._image_category = "image"
         self._on_config_reload = on_config_reload
@@ -279,6 +286,24 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         return self._retrieve_attachment(record_id, expected_category=self._image_category)
 
+    def delete_file(self, record_id: int) -> FileAttachment:
+        """Delete a stored file from disk and metadata storage."""
+
+        return self._delete_attachment(
+            record_id,
+            expected_category=self._file_category,
+            expected_base_path=self._config_manager.config.file_storage_path,
+        )
+
+    def delete_image(self, record_id: int) -> FileAttachment:
+        """Delete a stored image from disk and metadata storage."""
+
+        return self._delete_attachment(
+            record_id,
+            expected_category=self._image_category,
+            expected_base_path=self._config_manager.config.image_storage_path,
+        )
+
     def store_uploaded_attachment(
         self,
         *,
@@ -299,11 +324,11 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             base_path = self._config_manager.config.file_storage_path
         else:
             raise ValueError("unsupported category")
-        base_path.mkdir(parents=True, exist_ok=True)
+        self._filesystem.ensure_directory(base_path)
         suffix = Path(safe_name).suffix
         stored_name = f"{uuid.uuid4().hex}{suffix}"
         target_path = base_path / stored_name
-        target_path.write_bytes(content)
+        self._filesystem.write_bytes(target_path, content)
         return self._store_attachment(
             file_path=target_path,
             name=safe_name,
@@ -1083,33 +1108,57 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         if not file_path:
             raise ValueError("file_path is required")
         path_obj = Path(file_path)
-        if not path_obj.is_file():
+        if not self._filesystem.is_file(path_obj):
             raise ValueError(f"File '{file_path}' does not exist")
         resolved_name = name or path_obj.name
         if not resolved_name:
             raise ValueError("name is required")
-        base_path.mkdir(parents=True, exist_ok=True)
-        resolved_base_path = base_path.resolve()
-        resolved_path = path_obj.resolve()
+        self._filesystem.ensure_directory(base_path)
+        resolved_base_path = self._filesystem.resolve(base_path)
+        resolved_path = self._filesystem.resolve(path_obj)
         try:
             resolved_path.relative_to(resolved_base_path)
         except ValueError as exc:
             raise ValueError(
                 f"File '{file_path}' must be stored within '{resolved_base_path}'"
             ) from exc
-        stat_result = resolved_path.stat()
         timestamp = datetime.now(timezone.utc)
         attachment = FileAttachment(
             name=resolved_name,
             path=str(resolved_path),
             category=category,
-            size=stat_result.st_size,
+            size=self._filesystem.stat_size(resolved_path),
             media_type=media_type,
             topic_id=topic_id,
             created_at=timestamp,
             updated_at=timestamp,
         )
         return self._storage.create_file_record(attachment)
+
+    def _delete_attachment(
+        self,
+        record_id: int,
+        *,
+        expected_category: str,
+        expected_base_path: Path,
+    ) -> FileAttachment:
+        """Delete an attachment record and its on-disk file."""
+
+        record = self._retrieve_attachment(record_id, expected_category=expected_category)
+        resolved_base_path = self._filesystem.resolve(expected_base_path)
+        resolved_path = self._filesystem.resolve(Path(record.path))
+        try:
+            resolved_path.relative_to(resolved_base_path)
+        except ValueError as exc:
+            raise ValueError(
+                f"File '{record.path}' must be stored within '{resolved_base_path}'"
+            ) from exc
+        if self._filesystem.is_file(resolved_path):
+            self._filesystem.delete_file(resolved_path)
+        deleted = self._storage.delete_file_record(record_id)
+        if deleted is None:
+            raise KeyError(f"File '{record_id}' not found")
+        return deleted
 
     def _retrieve_attachment(self, record_id: int, *, expected_category: str) -> FileAttachment:
         """Return an attachment by ID, ensuring it matches the category."""

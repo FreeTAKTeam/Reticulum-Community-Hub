@@ -219,7 +219,9 @@ Features:
 API:
 
 - `GET /File`, `GET /File/{id}`, `GET /File/{id}/raw`
+- `DELETE /File/{id}`
 - `GET /Image`, `GET /Image/{id}`, `GET /Image/{id}/raw`
+- `DELETE /Image/{id}`
 
 ---
 

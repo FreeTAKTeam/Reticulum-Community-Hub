@@ -104,3 +104,37 @@ def test_file_routes_missing_entries_return_404(tmp_path: Path) -> None:
     assert image_response.status_code == 404
     assert file_raw_response.status_code == 404
     assert image_raw_response.status_code == 404
+
+
+def test_file_routes_delete_entries(tmp_path: Path) -> None:
+    """Ensure delete routes remove files/images from metadata and disk."""
+
+    client, api = _build_client(tmp_path)
+    file_path = api._config_manager.config.file_storage_path / "delete.txt"  # pylint: disable=protected-access
+    file_path.write_bytes(b"payload")
+    file_record = api.store_file(file_path, media_type="text/plain")
+    image_path = api._config_manager.config.image_storage_path / "delete.jpg"  # pylint: disable=protected-access
+    image_path.write_bytes(b"image")
+    image_record = api.store_image(image_path, media_type="image/jpeg")
+
+    file_response = client.delete(f"/File/{file_record.file_id}")
+    image_response = client.delete(f"/Image/{image_record.file_id}")
+
+    assert file_response.status_code == 200
+    assert image_response.status_code == 200
+    assert file_response.json()["FileID"] == file_record.file_id
+    assert image_response.json()["FileID"] == image_record.file_id
+    assert not file_path.exists()
+    assert not image_path.exists()
+
+    assert client.get(f"/File/{file_record.file_id}").status_code == 404
+    assert client.get(f"/Image/{image_record.file_id}").status_code == 404
+
+
+def test_file_routes_delete_missing_entries_return_404(tmp_path: Path) -> None:
+    """Ensure delete routes return 404 when records are missing."""
+
+    client, _ = _build_client(tmp_path)
+
+    assert client.delete("/File/999").status_code == 404
+    assert client.delete("/Image/999").status_code == 404

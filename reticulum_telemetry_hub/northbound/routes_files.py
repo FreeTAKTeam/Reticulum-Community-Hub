@@ -74,6 +74,18 @@ def register_file_routes(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return FileResponse(path=attachment.path, media_type=attachment.media_type)
 
+    @app.delete("/File/{file_id}")
+    def delete_file(file_id: int) -> dict:
+        """Delete a stored file and its metadata."""
+
+        try:
+            attachment = services.delete_file(file_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return attachment.to_dict()
+
     @app.get("/Image")
     def list_images() -> list[dict]:
         """List stored images.
@@ -117,3 +129,15 @@ def register_file_routes(
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return FileResponse(path=attachment.path, media_type=attachment.media_type)
+
+    @app.delete("/Image/{file_id}")
+    def delete_image(file_id: int) -> dict:
+        """Delete a stored image and its metadata."""
+
+        try:
+            attachment = services.delete_image(file_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return attachment.to_dict()

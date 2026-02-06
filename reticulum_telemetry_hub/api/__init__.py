@@ -9,6 +9,8 @@ from .models import Marker
 from .models import ReticulumInfo
 from .models import Subscriber
 from .models import Topic
+from .filesystem import FileSystemAdapter
+from .filesystem import LocalFileSystemAdapter
 from .service import ReticulumTelemetryHubAPI
 
 __all__ = [
@@ -21,5 +23,7 @@ __all__ = [
     "IdentityStatus",
     "Marker",
     "ReticulumInfo",
+    "FileSystemAdapter",
+    "LocalFileSystemAdapter",
     "ReticulumTelemetryHubAPI",
 ]

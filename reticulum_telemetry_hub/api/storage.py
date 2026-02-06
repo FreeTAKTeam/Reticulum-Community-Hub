@@ -340,6 +340,18 @@ class HubStorage(HubStorageBase):
             record = session.get(FileRecord, record_id)
             return self._file_from_record(record) if record else None
 
+    def delete_file_record(self, record_id: int) -> FileAttachment | None:
+        """Delete a stored file by its database identifier."""
+
+        with self._session_scope() as session:
+            record = session.get(FileRecord, record_id)
+            if not record:
+                return None
+            attachment = self._file_from_record(record)
+            session.delete(record)
+            session.commit()
+            return attachment
+
     def upsert_identity_state(
         self,
         identity: str,

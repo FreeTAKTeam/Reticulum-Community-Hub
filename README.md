@@ -9,7 +9,7 @@ Reticulum Community Hub (RCH) is a shared coordination point for mesh networks. 
 
 - One-to-many and topic-scoped message fan-out over LXMF.
 - Telemetry collection and on-demand telemetry responses.
-- File and image attachment storage with retrieval by ID.
+- File and image attachment storage with retrieval and deletion by ID.
 - sci-fi themed admin UI.
 - Operator-managed map markers backed by Reticulum object identities and telemetry updates.
 - TAK bridge for chat and location updates (Optional).
@@ -103,6 +103,7 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 - The WebMap shows a live latitude/longitude readout for the map cursor.
 - Marker symbols load from `rch-symbols.yaml` (override with `RTH_SYMBOL_REGISTRY_PATH`).
 - `/api/v1/app/info` includes the hub Reticulum destination (`reticulum_destination`) for display on the About page.
+- File/image attachments support delete operations that remove both metadata and on-disk content (`DELETE /File/{id}`, `DELETE /Image/{id}`).
 - The UI lives in `ui/`:
 
   ```bash

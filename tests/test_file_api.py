@@ -53,3 +53,33 @@ def test_retrieve_image_rejects_file_category(tmp_path: Path):
 
     with pytest.raises(KeyError):
         api.retrieve_image(file_record.file_id)
+
+
+def test_delete_file_and_image_removes_db_and_disk(tmp_path: Path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    file_path = api._config_manager.config.file_storage_path / "delete-note.txt"  # pylint: disable=protected-access
+    file_path.write_text("hello")
+    file_record = api.store_file(file_path, media_type="text/plain")
+    image_path = api._config_manager.config.image_storage_path / "delete-photo.jpg"  # pylint: disable=protected-access
+    image_path.write_bytes(b"image-data")
+    image_record = api.store_image(image_path, media_type="image/jpeg")
+
+    deleted_file = api.delete_file(file_record.file_id)
+    deleted_image = api.delete_image(image_record.file_id)
+
+    assert deleted_file.file_id == file_record.file_id
+    assert deleted_image.file_id == image_record.file_id
+    assert not Path(deleted_file.path).exists()
+    assert not Path(deleted_image.path).exists()
+
+    with pytest.raises(KeyError):
+        api.retrieve_file(file_record.file_id)
+    with pytest.raises(KeyError):
+        api.retrieve_image(image_record.file_id)
+
+
+def test_delete_file_missing_raises_key_error(tmp_path: Path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    with pytest.raises(KeyError):
+        api.delete_file(999)

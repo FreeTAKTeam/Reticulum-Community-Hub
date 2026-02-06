@@ -6,7 +6,15 @@
           <span class="hud-brand-symbol">RCH</span>
           <span class="hud-brand-subtitle">Reticulum Community Hub</span>
         </div>
-        <div class="hud-brand-trace" />
+        <div class="hud-brand-trace" aria-hidden="true">
+          <svg class="hud-brand-trace-svg" viewBox="0 0 640 40" preserveAspectRatio="none">
+            <path class="hud-brand-trace-fill" :d="brandTraceAreaPath" />
+            <path class="hud-brand-trace-carrier-glow" :d="brandTracePath" />
+            <path class="hud-brand-trace-carrier" :d="brandTracePath" />
+            <path class="hud-brand-trace-fringe" :d="brandTracePath" />
+            <path class="hud-brand-trace-pulse" :d="brandTracePath" />
+          </svg>
+        </div>
       </div>
       <div class="hud-banner-status">
         <span class="hud-chip" :class="connectionChipClass">{{ connectionLabel }}</span>
@@ -299,6 +307,9 @@ const telemetryWsClient = ref<WsClient | null>(null);
 const controlStatus = ref<ControlStatus | null>(null);
 const controlBusy = ref(false);
 let telemetryTickId: number | undefined;
+let sparklineTickId: number | undefined;
+let brandTraceFrameId: number | undefined;
+let brandTraceLastFrameAt = 0;
 const telemetrySubscribed = ref(false);
 const expandedEvents = ref<Record<string, boolean>>({});
 
@@ -565,7 +576,10 @@ const hasMetadata = (value?: Record<string, unknown>) => {
 };
 
 const eventRowKey = (event: EventEntry, index: number) => {
-  return event.id ?? event.created_at ?? `event-${index}`;
+  const base = event.id ?? event.created_at ?? "event";
+  const category = event.category ?? "unknown";
+  const createdAt = event.created_at ?? "no-time";
+  return `${base}-${category}-${createdAt}-${index}`;
 };
 
 const isEventExpanded = (key: string) => Boolean(expandedEvents.value[key]);
@@ -574,9 +588,145 @@ const toggleEventDetails = (key: string) => {
   expandedEvents.value[key] = !expandedEvents.value[key];
 };
 
-const clientsSparkline = [18, 24, 12, 38, 26, 46, 20, 54, 16, 34, 22, 42];
-const topicsSparkline = [10, 18, 28, 20, 34, 26, 48, 22, 36, 18, 30, 24];
-const subscribersSparkline = [14, 30, 20, 44, 24, 36, 28, 52, 18, 40, 22, 34];
+const SPARKLINE_COUNT = 12;
+const SPARKLINE_MIN = 9;
+const SPARKLINE_MAX = 72;
+const SPARKLINE_TICK_MS = 500;
+
+const clampSparkline = (value: number) => Math.max(SPARKLINE_MIN, Math.min(SPARKLINE_MAX, value));
+
+const randomSparklineHeight = () => {
+  return SPARKLINE_MIN + Math.floor(Math.random() * (SPARKLINE_MAX - SPARKLINE_MIN + 1));
+};
+
+const createSparklineSeed = () => {
+  return Array.from({ length: SPARKLINE_COUNT }, () => randomSparklineHeight());
+};
+
+const mutateSparkline = (values: number[]) => {
+  return values.map((current) => {
+    if (Math.random() < 0.3) {
+      return current;
+    }
+    const target = randomSparklineHeight();
+    const blend = 0.25 + Math.random() * 0.4;
+    const jitter = (Math.random() - 0.5) * 6;
+    return clampSparkline(Math.round(current + (target - current) * blend + jitter));
+  });
+};
+
+const clientsSparkline = ref<number[]>(createSparklineSeed());
+const topicsSparkline = ref<number[]>(createSparklineSeed());
+const subscribersSparkline = ref<number[]>(createSparklineSeed());
+
+const refreshSparklines = () => {
+  clientsSparkline.value = mutateSparkline(clientsSparkline.value);
+  topicsSparkline.value = mutateSparkline(topicsSparkline.value);
+  subscribersSparkline.value = mutateSparkline(subscribersSparkline.value);
+};
+
+interface BrandTraceState {
+  values: number[];
+  travel: number;
+  incoming: number;
+  speed: number;
+}
+
+const BRAND_TRACE_WIDTH = 640;
+const BRAND_TRACE_HEIGHT = 40;
+const BRAND_TRACE_POINT_COUNT = 180;
+const BRAND_TRACE_POINT_STEP_X = BRAND_TRACE_WIDTH / (BRAND_TRACE_POINT_COUNT - 1);
+const BRAND_TRACE_ANCHOR_Y = 19.5;
+const BRAND_TRACE_AMPLITUDE = 14.2;
+const BRAND_TRACE_MIN = 0.04;
+const BRAND_TRACE_MAX = 0.96;
+const BRAND_TRACE_MAX_DELTA_SECONDS = 0.065;
+const BRAND_TRACE_SPEED_SLOWDOWN_FACTOR = 0.27;
+
+const brandTracePath = ref("");
+const brandTraceAreaPath = ref("");
+
+const clampBrandTrace = (value: number) => Math.max(BRAND_TRACE_MIN, Math.min(BRAND_TRACE_MAX, value));
+
+const randomBrandTraceSpeed = () => (10 + Math.random() * 8) * BRAND_TRACE_SPEED_SLOWDOWN_FACTOR;
+
+const randomBrandTracePoint = (previous: number) => {
+  const drift = (Math.random() - 0.5) * 0.34;
+  const recoil = (0.5 - previous) * (0.08 + Math.random() * 0.1);
+  const spike = Math.random() < 0.18 ? (Math.random() - 0.5) * (0.72 + Math.random() * 0.36) : 0;
+  const micro = (Math.random() - 0.5) * 0.08;
+  return clampBrandTrace(previous + drift + recoil + spike + micro);
+};
+
+const createBrandTraceSeed = () => {
+  let current = clampBrandTrace(0.5 + (Math.random() - 0.5) * 0.18);
+  return Array.from({ length: BRAND_TRACE_POINT_COUNT }, () => {
+    current = randomBrandTracePoint(current);
+    return current;
+  });
+};
+
+const createBrandTraceState = (): BrandTraceState => {
+  const values = createBrandTraceSeed();
+  const lastValue = values[values.length - 1] ?? 0.5;
+  return {
+    values,
+    travel: 0,
+    incoming: randomBrandTracePoint(lastValue),
+    speed: randomBrandTraceSpeed()
+  };
+};
+
+const brandTraceState = createBrandTraceState();
+
+const toBrandTraceY = (value: number) => {
+  const y = BRAND_TRACE_ANCHOR_Y - (value - 0.5) * BRAND_TRACE_AMPLITUDE * 2;
+  return Math.max(2, Math.min(BRAND_TRACE_HEIGHT - 2, y));
+};
+
+const sampleBrandTraceValue = (state: BrandTraceState, index: number) => {
+  const position = index + state.travel;
+  const baseIndex = Math.floor(position);
+  const blend = position - baseIndex;
+  const current = baseIndex < state.values.length ? state.values[baseIndex] : state.incoming;
+  const next = baseIndex + 1 < state.values.length ? state.values[baseIndex + 1] : state.incoming;
+  return current + (next - current) * blend;
+};
+
+const renderBrandTrace = () => {
+  const firstY = toBrandTraceY(sampleBrandTraceValue(brandTraceState, 0)).toFixed(2);
+  let path = `M0.00 ${firstY}`;
+  for (let index = 1; index < BRAND_TRACE_POINT_COUNT; index += 1) {
+    const x = (index * BRAND_TRACE_POINT_STEP_X).toFixed(2);
+    const y = toBrandTraceY(sampleBrandTraceValue(brandTraceState, index)).toFixed(2);
+    path += ` L${x} ${y}`;
+  }
+  brandTracePath.value = path;
+  brandTraceAreaPath.value = `${path} L${BRAND_TRACE_WIDTH.toFixed(2)} ${BRAND_TRACE_HEIGHT.toFixed(2)} L0.00 ${BRAND_TRACE_HEIGHT.toFixed(2)} Z`;
+};
+
+const advanceBrandTrace = (deltaSeconds: number) => {
+  brandTraceState.travel += deltaSeconds * brandTraceState.speed;
+  while (brandTraceState.travel >= 1) {
+    brandTraceState.travel -= 1;
+    brandTraceState.values.shift();
+    brandTraceState.values.push(brandTraceState.incoming);
+    const lastValue = brandTraceState.values[brandTraceState.values.length - 1] ?? 0.5;
+    brandTraceState.incoming = randomBrandTracePoint(lastValue);
+    if (Math.random() < 0.1) {
+      brandTraceState.speed = randomBrandTraceSpeed();
+    }
+  }
+};
+
+const animateBrandTrace = (timestamp: number) => {
+  const deltaSeconds = Math.min((timestamp - brandTraceLastFrameAt) / 1000, BRAND_TRACE_MAX_DELTA_SECONDS);
+  brandTraceLastFrameAt = timestamp;
+  advanceBrandTrace(deltaSeconds);
+  renderBrandTrace();
+  brandTraceFrameId = window.requestAnimationFrame(animateBrandTrace);
+};
+
 const refreshControlStatus = async () => {
   controlBusy.value = true;
   try {
@@ -670,9 +820,19 @@ onMounted(async () => {
   telemetryWs.connect();
   telemetryWsClient.value = telemetryWs;
 
+  renderBrandTrace();
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    brandTraceLastFrameAt = window.performance.now();
+    brandTraceFrameId = window.requestAnimationFrame(animateBrandTrace);
+  }
+
   pollerId = window.setInterval(() => {
     dashboard.refresh();
   }, 30000);
+
+  sparklineTickId = window.setInterval(() => {
+    refreshSparklines();
+  }, SPARKLINE_TICK_MS);
 
   telemetryTickId = window.setInterval(() => {
     const now = Date.now();
@@ -690,6 +850,14 @@ onUnmounted(() => {
   if (telemetryTickId) {
     window.clearInterval(telemetryTickId);
   }
+  if (sparklineTickId) {
+    window.clearInterval(sparklineTickId);
+  }
+  if (brandTraceFrameId) {
+    window.cancelAnimationFrame(brandTraceFrameId);
+  }
+  brandTraceFrameId = undefined;
+  brandTraceLastFrameAt = 0;
 });
 </script>
 
@@ -758,6 +926,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 16px;
+  flex: 1;
   min-width: 0;
 }
 
@@ -782,11 +951,143 @@ onUnmounted(() => {
 }
 
 .hud-brand-trace {
+  position: relative;
   flex: 1;
-  height: 2px;
-  min-width: 80px;
-  background: linear-gradient(90deg, var(--hud-cyan), transparent);
-  opacity: 0.7;
+  height: 40px;
+  min-width: 260px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(56, 244, 255, 0.2);
+  background:
+    radial-gradient(
+      130% 140% at 50% 100%,
+      rgba(44, 224, 239, 0.42),
+      rgba(10, 32, 41, 0.2) 44%,
+      rgba(4, 11, 17, 0.98) 100%
+    ),
+    linear-gradient(180deg, rgba(9, 36, 47, 0.7), rgba(4, 10, 15, 0.98));
+  box-shadow:
+    inset 0 -14px 22px rgba(46, 217, 233, 0.28),
+    inset 0 0 18px rgba(2, 8, 12, 0.92);
+}
+
+.hud-brand-trace::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(150, 252, 255, 0.08), transparent 42%);
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+.hud-brand-trace-svg {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.hud-brand-trace-fill {
+  fill: rgba(48, 231, 246, 0.3);
+  filter:
+    drop-shadow(0 0 10px rgba(48, 231, 246, 0.34))
+    drop-shadow(0 0 18px rgba(48, 231, 246, 0.2));
+  animation: hud-trace-breath 7.8s ease-in-out infinite;
+}
+
+.hud-brand-trace-carrier-glow {
+  fill: none;
+  stroke: rgba(56, 244, 255, 0.46);
+  stroke-width: 7.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter:
+    drop-shadow(0 0 12px rgba(56, 244, 255, 0.92))
+    drop-shadow(0 0 24px rgba(56, 244, 255, 0.42));
+  opacity: 0.72;
+  animation: hud-trace-breath 7.8s ease-in-out infinite;
+}
+
+.hud-brand-trace-carrier {
+  fill: none;
+  stroke: rgba(74, 247, 255, 0.99);
+  stroke-width: 2.45;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter:
+    drop-shadow(0 0 5px rgba(56, 244, 255, 0.96))
+    drop-shadow(0 0 12px rgba(56, 244, 255, 0.72));
+  animation: hud-trace-breath 7.8s ease-in-out infinite;
+}
+
+.hud-brand-trace-fringe {
+  fill: none;
+  stroke: rgba(226, 255, 255, 0.92);
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1.1 2.2 0.7 2.2;
+  filter: drop-shadow(0 0 6px rgba(204, 253, 255, 0.85));
+  opacity: 0.64;
+  animation:
+    hud-trace-noise-drift 5.6s linear infinite,
+    hud-trace-noise-flicker 4.8s ease-in-out infinite;
+}
+
+.hud-brand-trace-pulse {
+  fill: none;
+  stroke: rgba(232, 255, 255, 0.96);
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 88 980;
+  mix-blend-mode: screen;
+  animation: hud-trace-packet 7s linear infinite;
+}
+
+@keyframes hud-trace-breath {
+  0%,
+  100% {
+    opacity: 0.86;
+  }
+  42% {
+    opacity: 1;
+  }
+  76% {
+    opacity: 0.74;
+  }
+}
+
+@keyframes hud-trace-noise-drift {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -180;
+  }
+}
+
+@keyframes hud-trace-noise-flicker {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  31% {
+    opacity: 0.68;
+  }
+  63% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes hud-trace-packet {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -640;
+  }
 }
 
 .hud-banner-status {
@@ -795,6 +1096,16 @@ onUnmounted(() => {
   gap: 12px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-brand-trace-fill,
+  .hud-brand-trace-carrier-glow,
+  .hud-brand-trace-carrier,
+  .hud-brand-trace-fringe,
+  .hud-brand-trace-pulse {
+    animation: none;
+  }
 }
 
 .hud-chip {
@@ -960,6 +1271,8 @@ onUnmounted(() => {
   border-radius: 4px 4px 0 0;
   background: linear-gradient(180deg, var(--hud-cyan), rgba(56, 244, 255, 0.2));
   opacity: 0.7;
+  transition: height 1.25s cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: height;
 }
 
 .hud-center {
@@ -1591,6 +1904,10 @@ onUnmounted(() => {
   .hud-banner {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .hud-brand {
+    width: 100%;
   }
 
   .hud-banner-status {
