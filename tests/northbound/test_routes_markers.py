@@ -101,9 +101,25 @@ def test_marker_routes_create_and_update(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert noop_response.status_code == 200
-    assert len(dispatched) == 2
+
+    rename_response = client.patch(
+        f"/api/markers/{marker_id}",
+        headers=headers,
+        json={"name": "Renamed Alpha"},
+    )
+
+    assert rename_response.status_code == 200
+    refreshed = client.get("/api/markers", headers=headers)
+    assert refreshed.status_code == 200
+    renamed = next(
+        item for item in refreshed.json() if item["object_destination_hash"] == marker_id
+    )
+    assert renamed["name"] == "Renamed Alpha"
+
+    assert len(dispatched) == 3
     assert dispatched[0] == "marker.created"
     assert dispatched[1] == "marker.updated"
+    assert dispatched[2] == "marker.updated"
 
 
 def test_marker_symbols_route(tmp_path: Path) -> None:

@@ -300,6 +300,20 @@ class NorthboundServices:
             self._record_marker_event("marker.updated", result.marker)
         return result
 
+    def update_marker_name(
+        self,
+        object_destination_hash: str,
+        *,
+        name: str,
+    ) -> MarkerUpdateResult:
+        """Update marker display name and dispatch marker.updated when changed."""
+
+        service = self._require_marker_service()
+        result = service.update_marker_name(object_destination_hash, name=name)
+        if result.changed:
+            self._record_marker_event("marker.updated", result.marker)
+        return result
+
     def list_chat_messages(
         self,
         *,

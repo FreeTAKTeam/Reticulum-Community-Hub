@@ -481,6 +481,25 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     return jsonResponse({ status: "ok", updated_at: target.updated_at });
   }
 
+  const markerUpdateMatch = pathname.match(/^\/api\/markers\/(.+?)$/);
+  if (markerUpdateMatch && method === "PATCH") {
+    const markerId = markerUpdateMatch[1];
+    const body = (await parseBody(options.body)) as any;
+    const target = mockState.markers.find((entry) => entry.object_destination_hash === markerId);
+    if (!target) {
+      return jsonResponse({ detail: "Marker not found" }, 404);
+    }
+    const nextName = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!nextName) {
+      return jsonResponse({ detail: "Marker name is required" }, 400);
+    }
+    target.name = nextName;
+    target.time = nowIso();
+    target.stale_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    target.updated_at = nowIso();
+    return jsonResponse({ status: "ok", updated_at: target.updated_at });
+  }
+
   if (pathname === "/api/v1/app/info") {
     return jsonResponse({
       name: "RTH Core",

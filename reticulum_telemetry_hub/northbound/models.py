@@ -292,3 +292,9 @@ class MarkerPositionPayload(BaseModel):
 
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
+
+
+class MarkerUpdatePayload(BaseModel):
+    """Payload for marker metadata updates."""
+
+    name: str = Field(min_length=1, max_length=96)

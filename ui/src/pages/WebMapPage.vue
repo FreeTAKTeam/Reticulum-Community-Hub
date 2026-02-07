@@ -1,187 +1,228 @@
 <template>
-  <div class="space-y-6">
-    <div class="flex flex-col gap-6 xl:flex-row">
-      <BaseCard title="Telemetry Map" class="flex-1 min-w-0">
-        <LoadingSkeleton v-if="telemetry.loading" />
-        <div class="relative">
-          <div ref="mapContainer" class="h-[720px] w-full rounded border border-rth-border"></div>
-          <div class="cui-map-coordinates" aria-live="polite">
-            <div class="cui-map-coordinates__row">
-              <span class="cui-map-coordinates__label">Lat</span>
-              <span class="cui-map-coordinates__value">{{ coordinateLat }}</span>
-            </div>
-            <div class="cui-map-coordinates__row">
-              <span class="cui-map-coordinates__label">Lon</span>
-              <span class="cui-map-coordinates__value">{{ coordinateLon }}</span>
-            </div>
-          </div>
-        </div>
-        <div class="mt-4 space-y-3">
-          <div class="flex flex-wrap items-end gap-4">
-            <BaseSelect v-model="markerCategory" label="Marker Type" :options="markerOptions" class="min-w-[240px]" />
-            <BaseButton
-              :variant="markerMode ? 'success' : 'secondary'"
-              icon-left="plus"
+  <div class="webmap-cosmos">
+    <section class="webmap-main">
+      <div class="webmap-stage">
+        <LoadingSkeleton v-if="telemetry.loading && !mapReady" class="webmap-loader" />
+        <div ref="mapContainer" class="webmap-canvas"></div>
+
+        <div ref="markerToolbarRef" class="webmap-toolbar">
+          <div class="webmap-toolbar-row">
+            <button
+              type="button"
+              class="webmap-marker-trigger"
+              :aria-expanded="markerToolbarOpen"
+              aria-haspopup="menu"
+              @click="toggleMarkerToolbar"
+            >
+              <span class="webmap-marker-trigger-icon">
+                <img v-if="selectedMarkerIconUrl" :src="selectedMarkerIconUrl" :alt="selectedMarkerLabel" />
+              </span>
+              <span class="webmap-marker-trigger-label">{{ selectedMarkerLabel }}</span>
+              <span class="webmap-marker-trigger-arrow" :class="{ open: markerToolbarOpen }" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M7 10l5 5 5-5" />
+                </svg>
+              </span>
+            </button>
+            <button
+              type="button"
+              class="webmap-place-btn"
+              :class="{ active: markerMode }"
               @click="toggleMarkerMode"
             >
-              {{ markerMode ? "Click Map to Place" : "Place Marker" }}
-            </BaseButton>
-            <span v-if="markerMode" class="text-xs text-rth-muted">Click on the map to drop a marker.</span>
+              <span class="webmap-place-btn-icon" aria-hidden="true">+</span>
+              <span>{{ markerMode ? "Placement Armed" : "Place Marker" }}</span>
+            </button>
+            <div class="webmap-place-hint" :class="{ active: markerMode }">{{ markerHintText }}</div>
           </div>
-          <div class="flex flex-wrap items-end gap-4">
-            <BaseInput v-model="topicFilter" label="Topic ID" class="min-w-[220px] flex-1" />
-            <BaseInput v-model="search" label="Search Identity" class="min-w-[220px] flex-1" />
-            <BaseButton variant="secondary" icon-left="filter" @click="applyFilters">Apply</BaseButton>
-          </div>
-        </div>
-      </BaseCard>
 
-      <div
-        class="cui-panel flex flex-col transition-all duration-300 ease-out"
-        :class="markersPanelCollapsed ? 'w-full xl:w-12 p-2' : 'w-full xl:w-96 p-4'"
-      >
-        <div class="flex items-center justify-between gap-2">
-          <div v-if="!markersPanelCollapsed" class="text-sm font-semibold text-rth-text">Markers</div>
-          <BaseButton
-            variant="secondary"
-            size="sm"
-            :icon-left="markersPanelCollapsed ? 'chevron-left' : 'chevron-right'"
-            icon-only
-            :aria-label="markersPanelCollapsed ? 'Expand markers panel' : 'Collapse markers panel'"
-            :title="markersPanelCollapsed ? 'Expand markers panel' : 'Collapse markers panel'"
-            :aria-expanded="!markersPanelCollapsed"
-            @click="toggleMarkersPanel"
-          />
+          <div v-if="markerToolbarOpen" class="webmap-marker-menu cui-scrollbar" role="menu">
+            <button
+              v-for="symbol in markerCatalog"
+              :key="symbol.id"
+              type="button"
+              class="webmap-marker-option"
+              :class="{ active: markerCategory === symbol.id }"
+              @click="selectMarkerSymbol(symbol.id)"
+            >
+              <span class="webmap-marker-option-name">{{ symbol.label }}</span>
+              <span class="webmap-marker-option-id">{{ symbol.id }}</span>
+            </button>
+          </div>
         </div>
+
         <div
-          v-if="markersPanelCollapsed"
-          class="mt-3 flex flex-1 items-center justify-center text-[10px] uppercase tracking-[0.3em] text-rth-muted"
-          style="writing-mode: vertical-rl; text-orientation: upright;"
+          v-if="markerRenameOpen"
+          class="webmap-rename-popover"
+          :style="markerRenameStyle"
+          @click.stop
+          @contextmenu.prevent
         >
-          Markers
+          <div class="webmap-rename-title">Edit Marker Name</div>
+          <input
+            v-model="markerRenameValue"
+            class="webmap-rename-input"
+            type="text"
+            maxlength="96"
+            placeholder="Marker name"
+            @keydown.enter.prevent="submitMarkerRename"
+            @keydown.esc.prevent="closeMarkerRename"
+          />
+          <div class="webmap-rename-actions">
+            <button type="button" class="webmap-rename-btn" @click="closeMarkerRename">Cancel</button>
+            <button type="button" class="webmap-rename-btn webmap-rename-btn--primary" @click="submitMarkerRename">
+              {{ markerRenameBusy ? "Saving..." : "Save" }}
+            </button>
+          </div>
         </div>
-        <div v-else class="mt-4">
-          <div class="cui-tab-group mb-3">
-            <BaseButton
-              variant="tab"
-              size="sm"
-              :class="{ 'cui-tab-active': activeMarkerTab === 'operator' }"
-              @click="activeMarkerTab = 'operator'"
-            >
-              Operator Markers
-            </BaseButton>
-            <BaseButton
-              variant="tab"
-              size="sm"
-              :class="{ 'cui-tab-active': activeMarkerTab === 'telemetry' }"
-              @click="activeMarkerTab = 'telemetry'"
-            >
-              Telemetry Markers
-            </BaseButton>
-          </div>
 
-          <div v-if="activeMarkerTab === 'operator'" class="mt-4">
-            <LoadingSkeleton v-if="markersStore.loading" />
-            <ul v-else class="space-y-2 text-sm">
-              <li
-                v-for="marker in operatorPagination.items"
-                :key="marker.id"
-                class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
-                :class="{ 'opacity-60 line-through': marker.expired }"
-                @click="focusOperatorMarker(marker)"
-              >
-                <div class="font-semibold">{{ marker.name }}</div>
-                <div class="text-xs text-rth-muted">
-                  {{ marker.category }} - {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}
-                  <span v-if="marker.expired" class="ml-2 uppercase tracking-wide text-rth-muted">Expired</span>
-                </div>
-              </li>
-            </ul>
-            <div
-              v-if="!markersStore.loading"
-              class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-rth-muted"
-            >
-              <span v-if="operatorPagination.total">
-                Showing {{ operatorPagination.startIndex }}-{{ operatorPagination.endIndex }} of
-                {{ operatorPagination.total }}
-              </span>
-              <span v-else>No markers yet.</span>
-              <div class="flex items-center gap-2">
-                <BaseButton
-                  variant="secondary"
-                  size="sm"
-                  iconLeft="chevron-left"
-                  :disabled="operatorPagination.page <= 1"
-                  @click="updateOperatorPage(-1)"
-                >
-                  Prev
-                </BaseButton>
-                <span class="min-w-[96px] text-center">
-                  Page {{ operatorPagination.page }} / {{ operatorPagination.totalPages }}
-                </span>
-                <BaseButton
-                  variant="secondary"
-                  size="sm"
-                  iconRight="chevron-right"
-                  :disabled="operatorPagination.page >= operatorPagination.totalPages"
-                  @click="updateOperatorPage(1)"
-                >
-                  Next
-                </BaseButton>
-              </div>
-            </div>
+        <div class="cui-map-coordinates" aria-live="polite">
+          <div class="cui-map-coordinates__row">
+            <span class="cui-map-coordinates__label">Lat</span>
+            <span class="cui-map-coordinates__value">{{ coordinateLat }}</span>
           </div>
-
-          <div v-else class="mt-4">
-            <LoadingSkeleton v-if="telemetry.loading" />
-            <ul v-else class="space-y-2 text-sm">
-              <li
-                v-for="marker in telemetryPagination.items"
-                :key="marker.id"
-                class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted p-3"
-                @click="selectMarker(marker)"
-              >
-                <div class="font-semibold">{{ marker.name }}</div>
-                <div class="text-xs text-rth-muted">{{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
-              </li>
-            </ul>
-            <div
-              v-if="!telemetry.loading"
-              class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-rth-muted"
-            >
-              <span v-if="telemetryPagination.total">
-                Showing {{ telemetryPagination.startIndex }}-{{ telemetryPagination.endIndex }} of
-                {{ telemetryPagination.total }}
-              </span>
-              <span v-else>No telemetry markers yet.</span>
-              <div class="flex items-center gap-2">
-                <BaseButton
-                  variant="secondary"
-                  size="sm"
-                  iconLeft="chevron-left"
-                  :disabled="telemetryPagination.page <= 1"
-                  @click="updateTelemetryPage(-1)"
-                >
-                  Prev
-                </BaseButton>
-                <span class="min-w-[96px] text-center">
-                  Page {{ telemetryPagination.page }} / {{ telemetryPagination.totalPages }}
-                </span>
-                <BaseButton
-                  variant="secondary"
-                  size="sm"
-                  iconRight="chevron-right"
-                  :disabled="telemetryPagination.page >= telemetryPagination.totalPages"
-                  @click="updateTelemetryPage(1)"
-                >
-                  Next
-                </BaseButton>
-              </div>
-            </div>
+          <div class="cui-map-coordinates__row">
+            <span class="cui-map-coordinates__label">Lon</span>
+            <span class="cui-map-coordinates__value">{{ coordinateLon }}</span>
           </div>
         </div>
       </div>
-    </div>
+    </section>
+
+    <aside
+      class="webmap-sidebar"
+      :class="{ 'webmap-sidebar--collapsed': markersPanelCollapsed }"
+    >
+      <div class="webmap-sidebar-head">
+        <div v-if="!markersPanelCollapsed" class="webmap-sidebar-title">Marker Registry</div>
+        <BaseButton
+          variant="secondary"
+          size="sm"
+          :icon-left="markersPanelCollapsed ? 'chevron-left' : 'chevron-right'"
+          icon-only
+          :aria-label="markersPanelCollapsed ? 'Expand markers panel' : 'Collapse markers panel'"
+          :title="markersPanelCollapsed ? 'Expand markers panel' : 'Collapse markers panel'"
+          :aria-expanded="!markersPanelCollapsed"
+          @click="toggleMarkersPanel"
+        />
+      </div>
+
+      <div v-if="markersPanelCollapsed" class="webmap-sidebar-collapsed">Markers</div>
+
+      <div v-else class="webmap-sidebar-body">
+        <div class="webmap-filters">
+          <BaseInput v-model="topicFilter" label="Topic ID" />
+          <BaseInput v-model="search" label="Search Identity" />
+          <BaseButton variant="secondary" icon-left="filter" @click="applyFilters">Apply</BaseButton>
+        </div>
+
+        <div class="cui-tab-group webmap-tabs">
+          <BaseButton
+            variant="tab"
+            size="sm"
+            :class="{ 'cui-tab-active': activeMarkerTab === 'operator' }"
+            @click="activeMarkerTab = 'operator'"
+          >
+            Operator
+          </BaseButton>
+          <BaseButton
+            variant="tab"
+            size="sm"
+            :class="{ 'cui-tab-active': activeMarkerTab === 'telemetry' }"
+            @click="activeMarkerTab = 'telemetry'"
+          >
+            Telemetry
+          </BaseButton>
+        </div>
+
+        <div v-if="activeMarkerTab === 'operator'" class="webmap-list-wrap cui-scrollbar">
+          <LoadingSkeleton v-if="markersStore.loading" />
+          <ul v-else class="webmap-list">
+            <li
+              v-for="marker in operatorPagination.items"
+              :key="marker.id"
+              class="webmap-list-item"
+              :class="{ 'webmap-list-item--expired': marker.expired }"
+              @click="focusOperatorMarker(marker)"
+            >
+              <div class="webmap-list-name">{{ marker.name }}</div>
+              <div class="webmap-list-meta">
+                {{ marker.category }} · {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div v-else class="webmap-list-wrap cui-scrollbar">
+          <LoadingSkeleton v-if="telemetry.loading" />
+          <ul v-else class="webmap-list">
+            <li
+              v-for="marker in telemetryPagination.items"
+              :key="marker.id"
+              class="webmap-list-item"
+              @click="selectMarker(marker)"
+            >
+              <div class="webmap-list-name">{{ marker.name }}</div>
+              <div class="webmap-list-meta">{{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
+            </li>
+          </ul>
+        </div>
+
+        <div v-if="activeMarkerTab === 'operator'" class="webmap-pagination">
+          <span v-if="operatorPagination.total">
+            {{ operatorPagination.startIndex }}-{{ operatorPagination.endIndex }} / {{ operatorPagination.total }}
+          </span>
+          <span v-else>No markers yet.</span>
+          <div class="webmap-pagination-actions">
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-left="chevron-left"
+              :disabled="operatorPagination.page <= 1"
+              @click="updateOperatorPage(-1)"
+            >
+              Prev
+            </BaseButton>
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-left="chevron-right"
+              :disabled="operatorPagination.page >= operatorPagination.totalPages"
+              @click="updateOperatorPage(1)"
+            >
+              Next
+            </BaseButton>
+          </div>
+        </div>
+
+        <div v-else class="webmap-pagination">
+          <span v-if="telemetryPagination.total">
+            {{ telemetryPagination.startIndex }}-{{ telemetryPagination.endIndex }} / {{ telemetryPagination.total }}
+          </span>
+          <span v-else>No telemetry markers yet.</span>
+          <div class="webmap-pagination-actions">
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-left="chevron-left"
+              :disabled="telemetryPagination.page <= 1"
+              @click="updateTelemetryPage(-1)"
+            >
+              Prev
+            </BaseButton>
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-left="chevron-right"
+              :disabled="telemetryPagination.page >= telemetryPagination.totalPages"
+              @click="updateTelemetryPage(1)"
+            >
+              Next
+            </BaseButton>
+          </div>
+        </div>
+      </div>
+    </aside>
 
     <div
       v-if="inspectorOpen && selected"
@@ -198,23 +239,6 @@
       </div>
       <BaseFormattedOutput class="mt-3" :value="selected.raw" :accordion-open-by-default="false" />
     </div>
-
-    <BaseModal :open="markerModalOpen" title="Create Marker" @close="closeMarkerModal">
-      <div class="space-y-4">
-        <div class="grid gap-4 md:grid-cols-2">
-          <BaseSelect v-model="markerDraftCategory" label="Type" :options="markerOptions" />
-          <BaseInput v-model="markerDraftName" label="Name" />
-        </div>
-        <BaseInput v-model="markerDraftNotes" label="Notes" />
-        <div class="text-xs text-rth-muted">
-          Lat {{ markerDraftLat.toFixed(6) }} - Lon {{ markerDraftLon.toFixed(6) }}
-        </div>
-        <div class="flex justify-end gap-3">
-          <BaseButton variant="secondary" @click="closeMarkerModal">Cancel</BaseButton>
-          <BaseButton variant="success" icon-left="check" @click="confirmMarker">Create</BaseButton>
-        </div>
-      </div>
-    </BaseModal>
   </div>
 </template>
 
@@ -224,11 +248,8 @@ import { ref } from "vue";
 import { storeToRefs } from "pinia";
 import maplibregl from "maplibre-gl";
 import BaseButton from "../components/BaseButton.vue";
-import BaseCard from "../components/BaseCard.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import BaseInput from "../components/BaseInput.vue";
-import BaseModal from "../components/BaseModal.vue";
-import BaseSelect from "../components/BaseSelect.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
 import { WsClient } from "../api/ws";
 import { useMapSettingsStore } from "../stores/map-settings";
@@ -279,22 +300,19 @@ const markerImagesReady = ref(false);
 const telemetryIconsReady = ref(false);
 const markerMode = ref(false);
 const markersPanelCollapsed = ref(true);
+const markerToolbarRef = ref<HTMLDivElement | null>(null);
+const markerToolbarOpen = ref(false);
+const selectedMarkerIconUrl = ref("");
 const markerCategory = ref<string>("marker");
-const markerOptions = computed(() =>
-  markerSymbols.value.map((symbol) => ({
-    label: symbol.label,
-    value: symbol.id
-  }))
-);
 const symbolKeySet = computed(
   () => new Set(markerSymbols.value.filter((symbol) => symbol.set !== "napsg").map((symbol) => symbol.id))
 );
-const markerModalOpen = ref(false);
-const markerDraftCategory = ref<string>("marker");
-const markerDraftName = ref("");
-const markerDraftNotes = ref("");
-const markerDraftLat = ref(0);
-const markerDraftLon = ref(0);
+const markerRenameOpen = ref(false);
+const markerRenameMarkerId = ref("");
+const markerRenameValue = ref("");
+const markerRenamePosition = ref({ left: 12, top: 12 });
+const markerRenameBusy = ref(false);
+const creatingMarker = ref(false);
 const draggingMarkerId = ref<string | null>(null);
 const draggingMarkerOrigin = ref<{ lat: number; lon: number } | null>(null);
 const dragPositions = ref(new Map<string, { lat: number; lon: number }>());
@@ -328,10 +346,26 @@ const ensureMarkerSelection = () => {
   if (!markerSymbols.value.some((symbol) => symbol.id === markerCategory.value)) {
     markerCategory.value = markerSymbols.value[0].id;
   }
-  if (!markerSymbols.value.some((symbol) => symbol.id === markerDraftCategory.value)) {
-    markerDraftCategory.value = markerCategory.value;
-  }
 };
+const markerCatalog = computed(() =>
+  markerSymbols.value.map((symbol) => ({
+    id: symbol.id,
+    label: symbol.label,
+    set: symbol.set,
+    mdi: symbol.mdi
+  }))
+);
+const selectedMarkerLabel = computed(() => {
+  const selectedSymbol = markerCatalog.value.find((symbol) => symbol.id === markerCategory.value);
+  return selectedSymbol?.label ?? "Marker";
+});
+const markerHintText = computed(() =>
+  markerMode.value ? "Click map to create marker" : "Select marker type and arm placement"
+);
+const markerRenameStyle = computed(() => ({
+  left: `${markerRenamePosition.value.left}px`,
+  top: `${markerRenamePosition.value.top}px`
+}));
 const handleInspectorViewportChange = () => {
   if (inspectorOpen.value && selected.value) {
     updateInspectorPosition(selected.value);
@@ -451,7 +485,80 @@ const applyFilters = async () => {
 };
 
 const toggleMarkerMode = () => {
+  markerToolbarOpen.value = false;
   markerMode.value = !markerMode.value;
+};
+
+const toggleMarkerToolbar = () => {
+  markerToolbarOpen.value = !markerToolbarOpen.value;
+};
+
+const selectMarkerSymbol = (symbolId: string) => {
+  markerCategory.value = symbolId;
+  markerMode.value = true;
+  markerToolbarOpen.value = false;
+};
+
+const closeMarkerRename = () => {
+  markerRenameOpen.value = false;
+  markerRenameMarkerId.value = "";
+  markerRenameValue.value = "";
+  markerRenameBusy.value = false;
+};
+
+const openMarkerRename = (markerId: string, point: { x: number; y: number }) => {
+  const marker = markersStore.markerIndex.get(markerId);
+  const container = mapContainer.value;
+  if (!marker || !container) {
+    closeMarkerRename();
+    return;
+  }
+  const width = 260;
+  const height = 140;
+  const left = Math.min(Math.max(point.x + 12, 12), Math.max(12, container.clientWidth - width - 12));
+  const top = Math.min(Math.max(point.y + 12, 12), Math.max(12, container.clientHeight - height - 12));
+  markerRenameMarkerId.value = markerId;
+  markerRenameValue.value = marker.name;
+  markerRenamePosition.value = { left, top };
+  markerRenameOpen.value = true;
+};
+
+const submitMarkerRename = async () => {
+  const markerId = markerRenameMarkerId.value;
+  const nextName = markerRenameValue.value.trim();
+  if (!markerId || !nextName || markerRenameBusy.value) {
+    return;
+  }
+  markerRenameBusy.value = true;
+  try {
+    await markersStore.updateMarkerName(markerId, nextName);
+    renderOperatorMarkers();
+    closeMarkerRename();
+  } finally {
+    markerRenameBusy.value = false;
+  }
+};
+
+const createMarkerAt = async (lngLat: maplibregl.LngLat) => {
+  if (creatingMarker.value) {
+    return;
+  }
+  creatingMarker.value = true;
+  const symbolId = markerCategory.value;
+  try {
+    await markersStore.createMarker({
+      name: defaultMarkerName(symbolId),
+      type: symbolId,
+      symbol: symbolId,
+      category: symbolId,
+      lat: lngLat.lat,
+      lon: lngLat.lng
+    });
+    renderOperatorMarkers();
+    markerMode.value = false;
+  } finally {
+    creatingMarker.value = false;
+  }
 };
 
 const syncMapCoordinates = (lngLat?: maplibregl.LngLat) => {
@@ -473,6 +580,32 @@ const handleMapPointerLeave = () => {
   syncMapCoordinates();
 };
 
+const pointHitsRenderedLayer = (
+  point: { x: number; y: number },
+  layerIds: string[]
+) => {
+  const map = mapInstance.value;
+  if (!map) {
+    return false;
+  }
+  const existingLayers = layerIds.filter((layerId) => Boolean(map.getLayer(layerId)));
+  if (!existingLayers.length) {
+    return false;
+  }
+  return map.queryRenderedFeatures(point, { layers: existingLayers }).length > 0;
+};
+
+const handleDocumentPointerDown = (event: MouseEvent) => {
+  if (!markerToolbarOpen.value || !markerToolbarRef.value) {
+    return;
+  }
+  const target = event.target as Node | null;
+  if (!target || markerToolbarRef.value.contains(target)) {
+    return;
+  }
+  markerToolbarOpen.value = false;
+};
+
 const scheduleMapResize = async () => {
   await nextTick();
   mapInstance.value?.resize();
@@ -490,45 +623,6 @@ const toggleMarkersPanel = async () => {
   await scheduleMapResize();
 };
 
-const openMarkerModal = (lngLat: maplibregl.LngLat) => {
-  markerDraftLat.value = lngLat.lat;
-  markerDraftLon.value = lngLat.lng;
-  markerDraftCategory.value = markerCategory.value;
-  if (!markerDraftName.value.trim()) {
-    markerDraftName.value = defaultMarkerName(markerDraftCategory.value);
-  }
-  markerModalOpen.value = true;
-  markerMode.value = false;
-};
-
-const closeMarkerModal = () => {
-  markerModalOpen.value = false;
-  markerDraftName.value = "";
-  markerDraftNotes.value = "";
-  markerDraftCategory.value = markerCategory.value;
-};
-
-const confirmMarker = async () => {
-  const symbolId = markerDraftCategory.value;
-  const name = markerDraftName.value.trim() || defaultMarkerName(symbolId);
-  const notes = markerDraftNotes.value.trim();
-  const created = await markersStore.createMarker({
-    name,
-    type: symbolId,
-    symbol: symbolId,
-    category: symbolId,
-    lat: markerDraftLat.value,
-    lon: markerDraftLon.value,
-    notes: notes || undefined
-  });
-  markerModalOpen.value = false;
-  markerDraftName.value = "";
-  markerDraftNotes.value = "";
-  markerDraftCategory.value = markerCategory.value;
-  renderOperatorMarkers();
-  focusOperatorMarker(created);
-};
-
 const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
   if (!mapInstance.value) {
     return;
@@ -537,10 +631,26 @@ const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
 };
 
 const handleMapClick = (event: maplibregl.MapMouseEvent) => {
+  markerToolbarOpen.value = false;
+  if (markerRenameOpen.value) {
+    closeMarkerRename();
+  }
   if (!markerMode.value) {
     return;
   }
-  openMarkerModal(event.lngLat);
+  if (
+    pointHitsRenderedLayer(event.point, [
+      "operator-marker-layer",
+      "operator-marker-clusters",
+      "operator-marker-cluster-count",
+      "telemetry-icons",
+      "telemetry-clusters",
+      "telemetry-cluster-count"
+    ])
+  ) {
+    return;
+  }
+  void createMarkerAt(event.lngLat);
 };
 
 const selectMarker = (marker: TelemetryMarker) => {
@@ -695,6 +805,18 @@ watch(showMarkerLabels, () => {
   applyMarkerLabelVisibility();
 });
 
+watch(markerCategory, () => {
+  void refreshSelectedMarkerIcon();
+});
+
+watch(
+  () => markerSymbols.value.length,
+  () => {
+    ensureMarkerSelection();
+    void refreshSelectedMarkerIcon();
+  }
+);
+
 const persistMapView = () => {
   if (!mapInstance.value) {
     return;
@@ -739,6 +861,17 @@ const markerIconUrl = (symbolSet: string, symbolId: string) => {
 };
 const markerFallbackUrl = `${markerIconRoot}icons/marker-fallback.svg`;
 const svgToDataUrl = (svg: string) => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+
+const refreshSelectedMarkerIcon = async () => {
+  const symbol = getMarkerSymbol(markerCategory.value, markerCategory.value);
+  if (symbol?.set === "napsg") {
+    selectedMarkerIconUrl.value = markerIconUrl(symbol.set, symbol.id);
+    return;
+  }
+  const mdiName = symbol?.mdi ?? symbol?.id ?? markerCategory.value;
+  const svg = await loadMdiSvg(mdiName);
+  selectedMarkerIconUrl.value = svg ? svgToDataUrl(svg) : markerFallbackUrl;
+};
 
 const rasterizeImage = async (url: string) => {
   const image = new Image();
@@ -840,7 +973,7 @@ const buildOperatorFeatureCollection = () =>
   }) as GeoJSON.FeatureCollection;
 
 const startMarkerDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
-  if (!mapInstance.value || markerMode.value) {
+  if (!mapInstance.value) {
     return;
   }
   const feature = event.features?.[0];
@@ -906,6 +1039,17 @@ const stopMarkerDrag = () => {
   mapInstance.value.getCanvas().style.cursor = "";
   draggingMarkerId.value = null;
   draggingMarkerOrigin.value = null;
+};
+
+const handleOperatorMarkerContextMenu = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+  const feature = event.features?.[0];
+  const markerId = feature?.properties?.id;
+  if (!markerId) {
+    return;
+  }
+  event.preventDefault();
+  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  openMarkerRename(String(markerId), event.point);
 };
 
 const renderTelemetryMarkers = () => {
@@ -1288,6 +1432,7 @@ const renderOperatorMarkers = () => {
 
   if (!markerInteractionReady) {
     map.on("mousedown", layerId, startMarkerDrag);
+    map.on("contextmenu", layerId, handleOperatorMarkerContextMenu);
     map.on("zoom", handleMarkerZoom);
     map.on("click", clusterLayerId, (event) => {
       const feature = event.features?.[0];
@@ -1348,6 +1493,7 @@ const loadMarkerSymbols = async () => {
     console.warn("Failed to load marker symbols.", error);
   } finally {
     ensureMarkerSelection();
+    void refreshSelectedMarkerIcon();
   }
 };
 
@@ -1406,6 +1552,7 @@ onMounted(async () => {
 
   window.addEventListener("resize", handleInspectorViewportChange);
   window.addEventListener("scroll", handleInspectorViewportChange);
+  window.addEventListener("mousedown", handleDocumentPointerDown);
 });
 
 onUnmounted(() => {
@@ -1419,12 +1566,457 @@ onUnmounted(() => {
     mapInstance.value.off("zoomend", handleClusterZoom);
     mapInstance.value.off("zoom", handleMarkerZoom);
     mapInstance.value.off("moveend", persistMapView);
+    mapInstance.value.off("click", handleMapClick);
     mapInstance.value.off("mousemove", handleMapPointerMove);
     mapInstance.value.off("mouseleave", handleMapPointerLeave);
   }
   window.removeEventListener("resize", handleInspectorViewportChange);
   window.removeEventListener("scroll", handleInspectorViewportChange);
+  window.removeEventListener("mousedown", handleDocumentPointerDown);
   stopDrag();
   stopMarkerDrag();
 });
 </script>
+<style scoped>
+.webmap-cosmos {
+  --wm-neon: #3bf4ff;
+  --wm-neon-soft: rgba(59, 244, 255, 0.24);
+  --wm-panel: rgba(4, 14, 24, 0.92);
+  --wm-panel-alt: rgba(7, 22, 36, 0.9);
+  --wm-amber: #ffb35c;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 14px;
+  min-height: 0;
+  color: #e2fcff;
+  font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
+}
+
+.webmap-main {
+  min-width: 0;
+}
+
+.webmap-stage {
+  position: relative;
+  height: clamp(520px, 74vh, 860px);
+  border-radius: 18px;
+  border: 1px solid rgba(59, 244, 255, 0.26);
+  background: linear-gradient(160deg, rgba(5, 16, 28, 0.96), rgba(2, 8, 14, 0.98));
+  box-shadow:
+    0 22px 54px rgba(1, 5, 12, 0.56),
+    inset 0 0 0 1px rgba(59, 244, 255, 0.08);
+  overflow: hidden;
+}
+
+.webmap-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(59, 244, 255, 0.07) 1px, transparent 0) 0 0 / 18px 18px,
+    linear-gradient(180deg, rgba(44, 188, 242, 0.12), transparent 42%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.webmap-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.webmap-loader {
+  position: absolute;
+  inset: 24px;
+  z-index: 5;
+}
+
+.webmap-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 6;
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.webmap-toolbar > * {
+  pointer-events: auto;
+}
+
+.webmap-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.webmap-marker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.35);
+  background: linear-gradient(180deg, rgba(8, 24, 38, 0.96), rgba(6, 16, 26, 0.94));
+  color: #dcfdff;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  box-shadow: 0 0 14px rgba(59, 244, 255, 0.12);
+}
+
+.webmap-marker-trigger-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.4);
+  background: rgba(7, 20, 31, 0.9);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.webmap-marker-trigger-icon img {
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 8px rgba(59, 244, 255, 0.38));
+}
+
+.webmap-marker-trigger-label {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webmap-marker-trigger-arrow {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 160ms ease;
+}
+
+.webmap-marker-trigger-arrow svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.webmap-marker-trigger-arrow.open {
+  transform: rotate(180deg);
+}
+
+.webmap-place-btn {
+  min-height: 46px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(59, 244, 255, 0.3);
+  background: linear-gradient(180deg, rgba(9, 24, 37, 0.96), rgba(6, 15, 25, 0.95));
+  color: #d8fbff;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+}
+
+.webmap-place-btn-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.webmap-place-btn.active {
+  border-color: rgba(255, 179, 92, 0.62);
+  box-shadow:
+    0 0 16px rgba(255, 179, 92, 0.2),
+    inset 0 0 12px rgba(255, 179, 92, 0.2);
+  color: #ffe0bf;
+}
+
+.webmap-place-hint {
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(59, 244, 255, 0.22);
+  background: rgba(7, 18, 30, 0.85);
+  display: inline-flex;
+  align-items: center;
+  color: rgba(214, 251, 255, 0.62);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 10px;
+}
+
+.webmap-place-hint.active {
+  color: rgba(255, 215, 170, 0.9);
+  border-color: rgba(255, 179, 92, 0.55);
+}
+
+.webmap-marker-menu {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px;
+  width: min(420px, 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(59, 244, 255, 0.28);
+  background: linear-gradient(180deg, rgba(6, 18, 30, 0.98), rgba(4, 12, 22, 0.98));
+  box-shadow: 0 20px 34px rgba(0, 0, 0, 0.42);
+}
+
+.webmap-marker-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(59, 244, 255, 0.18);
+  background: rgba(7, 18, 30, 0.66);
+  color: #dcfdff;
+  padding: 8px 10px;
+}
+
+.webmap-marker-option + .webmap-marker-option {
+  margin-top: 6px;
+}
+
+.webmap-marker-option.active {
+  border-color: rgba(59, 244, 255, 0.56);
+  background: rgba(59, 244, 255, 0.13);
+}
+
+.webmap-marker-option-name {
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  font-size: 11px;
+}
+
+.webmap-marker-option-id {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: rgba(222, 250, 255, 0.58);
+}
+
+.webmap-rename-popover {
+  position: absolute;
+  z-index: 7;
+  width: 260px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(59, 244, 255, 0.35);
+  background: linear-gradient(180deg, rgba(9, 26, 39, 0.98), rgba(7, 18, 30, 0.98));
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+}
+
+.webmap-rename-title {
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 10px;
+  color: rgba(220, 251, 255, 0.7);
+}
+
+.webmap-rename-input {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(59, 244, 255, 0.3);
+  background: rgba(6, 15, 25, 0.9);
+  color: #e6feff;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  padding: 8px 10px;
+}
+
+.webmap-rename-input:focus {
+  outline: none;
+  border-color: rgba(59, 244, 255, 0.64);
+  box-shadow: 0 0 12px rgba(59, 244, 255, 0.22);
+}
+
+.webmap-rename-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.webmap-rename-btn {
+  border-radius: 8px;
+  border: 1px solid rgba(59, 244, 255, 0.28);
+  background: rgba(7, 18, 30, 0.9);
+  color: rgba(218, 251, 255, 0.9);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  padding: 6px 10px;
+}
+
+.webmap-rename-btn--primary {
+  border-color: rgba(255, 179, 92, 0.52);
+  color: #ffdcb8;
+}
+
+.webmap-sidebar {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(59, 244, 255, 0.24);
+  background: linear-gradient(180deg, var(--wm-panel), var(--wm-panel-alt));
+  box-shadow: inset 0 0 18px rgba(5, 14, 24, 0.9);
+}
+
+.webmap-sidebar--collapsed {
+  width: 58px;
+  padding: 8px;
+}
+
+.webmap-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.webmap-sidebar-title {
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.webmap-sidebar-collapsed {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-size: 10px;
+  color: rgba(214, 251, 255, 0.62);
+}
+
+.webmap-sidebar-body {
+  margin-top: 10px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 0;
+}
+
+.webmap-filters {
+  display: grid;
+  gap: 8px;
+}
+
+.webmap-tabs {
+  width: fit-content;
+}
+
+.webmap-list-wrap {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.webmap-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.webmap-list-item {
+  border-radius: 10px;
+  border: 1px solid rgba(59, 244, 255, 0.18);
+  background: rgba(7, 18, 29, 0.75);
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.webmap-list-item:hover {
+  border-color: rgba(59, 244, 255, 0.46);
+}
+
+.webmap-list-item--expired {
+  opacity: 0.56;
+  text-decoration: line-through;
+}
+
+.webmap-list-name {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.webmap-list-meta {
+  margin-top: 4px;
+  font-size: 10px;
+  color: rgba(206, 248, 255, 0.62);
+}
+
+.webmap-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10px;
+  color: rgba(214, 251, 255, 0.64);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.webmap-pagination-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+:deep(.webmap-canvas .maplibregl-canvas) {
+  outline: none;
+}
+
+@media (max-width: 1280px) {
+  .webmap-cosmos {
+    grid-template-columns: 1fr;
+  }
+
+  .webmap-sidebar--collapsed {
+    width: 100%;
+    min-height: 54px;
+  }
+
+  .webmap-sidebar-collapsed {
+    writing-mode: horizontal-tb;
+    text-orientation: mixed;
+  }
+}
+
+@media (max-width: 860px) {
+  .webmap-toolbar-row {
+    align-items: stretch;
+  }
+
+  .webmap-place-hint {
+    width: 100%;
+  }
+
+  .webmap-marker-trigger {
+    flex: 1;
+    min-width: 0;
+  }
+}
+</style>

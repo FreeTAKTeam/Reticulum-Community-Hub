@@ -15,6 +15,7 @@ from reticulum_telemetry_hub.api.marker_symbols import list_marker_symbols
 
 from .models import MarkerCreatePayload
 from .models import MarkerPositionPayload
+from .models import MarkerUpdatePayload
 from .services import NorthboundServices
 
 
@@ -91,5 +92,29 @@ def register_marker_routes(
         except KeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        return {"status": "ok", "updated_at": result.marker.updated_at.isoformat()}
+
+    @app.patch(
+        "/api/markers/{object_destination_hash}",
+        dependencies=[Depends(require_protected)],
+    )
+    def update_marker(
+        object_destination_hash: str, payload: MarkerUpdatePayload
+    ) -> dict:
+        """Update marker metadata."""
+
+        try:
+            result = services.update_marker_name(
+                object_destination_hash,
+                name=payload.name,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
             ) from exc
         return {"status": "ok", "updated_at": result.marker.updated_at.isoformat()}

@@ -186,6 +186,37 @@ class MarkerStorage(HubStorageBase):
             session.commit()
             return self._marker_from_record(record)
 
+    def update_marker_name(
+        self,
+        object_destination_hash: str,
+        *,
+        name: str,
+        updated_at: Optional[datetime] = None,
+        time: Optional[datetime] = None,
+        stale_at: Optional[datetime] = None,
+    ) -> Optional[Marker]:
+        """Update marker name and return the updated record."""
+
+        with self._session_scope() as session:
+            record = (
+                session.query(MarkerRecord)
+                .filter(MarkerRecord.object_destination_hash == object_destination_hash)
+                .one_or_none()
+            )
+            if not record:
+                return None
+            record.name = name
+            if time is not None:
+                record.time = time
+            if stale_at is not None:
+                record.stale_at = stale_at
+            if updated_at is not None:
+                record.updated_at = updated_at
+            else:
+                record.updated_at = _utcnow()
+            session.commit()
+            return self._marker_from_record(record)
+
     def update_marker_identity(
         self,
         local_id: str,

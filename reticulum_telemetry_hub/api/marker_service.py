@@ -276,6 +276,36 @@ class MarkerService:
             raise KeyError(f"Marker '{object_destination_hash}' not found")
         return MarkerUpdateResult(marker=updated, changed=True)
 
+    def update_marker_name(
+        self,
+        object_destination_hash: str,
+        *,
+        name: str,
+    ) -> MarkerUpdateResult:
+        """Update marker display name when it has changed."""
+
+        marker = self._storage.get_marker(object_destination_hash)
+        if marker is None:
+            raise KeyError(f"Marker '{object_destination_hash}' not found")
+        resolved_name = name.strip()
+        if not resolved_name:
+            raise ValueError("Marker name is required")
+        if marker.name == resolved_name:
+            return MarkerUpdateResult(marker=marker, changed=False)
+        now = _utcnow()
+        ttl_seconds = _resolve_marker_ttl_seconds(marker)
+        stale_at = _compute_stale_at(now, ttl_seconds)
+        updated = self._storage.update_marker_name(
+            object_destination_hash,
+            name=resolved_name,
+            updated_at=now,
+            time=now,
+            stale_at=stale_at,
+        )
+        if updated is None:
+            raise KeyError(f"Marker '{object_destination_hash}' not found")
+        return MarkerUpdateResult(marker=updated, changed=True)
+
     def migrate_markers(self, *, origin_rch: str) -> list[Marker]:
         """Migrate legacy markers to identity-backed objects.
 
