@@ -1,171 +1,181 @@
 <template>
-  <div class="grid h-full min-h-0 gap-6 xl:grid-cols-[320px_1fr]">
-    <section class="flex min-h-0 flex-col">
-      <BaseCard class="flex min-h-0 flex-1 flex-col" title="Operators">
-        <BaseInput v-model="searchQuery" label="Search" placeholder="Filter users or topics" />
-        <div class="mt-3 cui-tab-group">
-          <BaseButton variant="tab" :class="{ 'cui-tab-active': directoryTab === 'peers' }" @click="directoryTab = 'peers'">
-            Users
-          </BaseButton>
-          <BaseButton variant="tab" :class="{ 'cui-tab-active': directoryTab === 'topics' }" @click="directoryTab = 'topics'">
-            Topics
-          </BaseButton>
+  <div class="chat-cosmos">
+    <div class="chat-shell">
+      <header class="chat-top">
+        <div>
+          <div class="chat-title">Communications Grid</div>
+          <div class="chat-subtitle">Direct, topic, and broadcast channels with live attachment flow</div>
         </div>
-        <div class="mt-3 flex min-h-0 flex-1 flex-col gap-3 pr-1 chat-directory-scroll">
-          <div v-if="directoryTab === 'peers'" class="space-y-2">
-            <button
-              v-for="peer in filteredPeers"
-              :key="peer.id"
-              class="flex w-full items-center justify-between rounded border border-rth-border bg-rth-panel-muted px-3 py-2 text-left text-xs transition hover:border-rth-accent"
-              :class="peer.id === activePeer ? 'border-rth-accent shadow-[0_0_12px_rgba(0,180,255,0.35)]' : ''"
-              @click="selectConversation('dm', peer.id)"
-            >
-              <span class="truncate">
-                <span class="mr-2 inline-flex h-2 w-2 rounded-full" :class="peer.online ? 'bg-emerald-400' : 'bg-slate-500'" />
-                {{ peer.label }}
-              </span>
-              <span class="text-[10px] uppercase tracking-[0.2em] text-rth-muted">DM</span>
+        <div class="chat-badges">
+          <div class="chat-badge">
+            <span>Scope</span>
+            <strong>{{ activeScope.toUpperCase() }}</strong>
+          </div>
+          <div class="chat-badge">
+            <span>Messages</span>
+            <strong>{{ visibleMessages.length }}</strong>
+          </div>
+          <div class="chat-badge">
+            <span>Queued Files</span>
+            <strong>{{ pendingAttachments.length }}</strong>
+          </div>
+        </div>
+      </header>
+
+      <div class="chat-grid">
+        <aside class="panel chat-directory">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Directory</div>
+              <div class="panel-subtitle">Select a communications lane</div>
+            </div>
+            <div class="panel-chip">{{ directoryTab === "peers" ? filteredPeers.length : filteredTopics.length }}</div>
+          </div>
+
+          <div class="directory-search">
+            <label for="chat-directory-search">Filter</label>
+            <input id="chat-directory-search" v-model="searchQuery" type="text" placeholder="Filter users or topics" />
+          </div>
+
+          <div class="panel-tabs">
+            <button class="panel-tab" :class="{ active: directoryTab === 'peers' }" type="button" @click="directoryTab = 'peers'">
+              Users
+            </button>
+            <button class="panel-tab" :class="{ active: directoryTab === 'topics' }" type="button" @click="directoryTab = 'topics'">
+              Topics
             </button>
           </div>
-          <div v-else class="space-y-2">
+
+          <div class="directory-list chat-directory-scroll">
+            <template v-if="directoryTab === 'peers'">
+              <button
+                v-for="peer in filteredPeers"
+                :key="peer.id"
+                class="directory-item"
+                :class="{ active: peer.id === activePeer && activeScope === 'dm' }"
+                @click="selectConversation('dm', peer.id)"
+              >
+                <span class="directory-primary">
+                  <span class="presence-dot" :class="{ online: peer.online }" aria-hidden="true"></span>
+                  <span class="truncate">{{ peer.label }}</span>
+                </span>
+                <span class="directory-tag">DM</span>
+              </button>
+            </template>
+            <template v-else>
+              <button
+                v-for="topic in filteredTopics"
+                :key="topic.id"
+                class="directory-item"
+                :class="{ active: topic.id === activeTopic && activeScope === 'topic' }"
+                @click="selectConversation('topic', topic.id)"
+              >
+                <span class="directory-primary">
+                  <span class="truncate">{{ topic.label }}</span>
+                </span>
+                <span class="directory-tag">Topic</span>
+              </button>
+            </template>
             <button
-              v-for="topic in filteredTopics"
-              :key="topic.id"
-              class="flex w-full items-center justify-between rounded border border-rth-border bg-rth-panel-muted px-3 py-2 text-left text-xs transition hover:border-rth-accent"
-              :class="topic.id === activeTopic ? 'border-rth-accent shadow-[0_0_12px_rgba(0,180,255,0.35)]' : ''"
-              @click="selectConversation('topic', topic.id)"
-            >
-              <span class="truncate">{{ topic.label }}</span>
-              <span class="text-[10px] uppercase tracking-[0.2em] text-rth-muted">Topic</span>
-            </button>
-          </div>
-          <div class="pt-2">
-            <button
-              class="flex w-full items-center justify-between rounded border border-rth-border bg-rth-panel-muted px-3 py-2 text-left text-xs transition hover:border-rth-accent"
-              :class="activeScope === 'broadcast' ? 'border-rth-accent shadow-[0_0_12px_rgba(0,180,255,0.35)]' : ''"
+              class="directory-item directory-item--broadcast"
+              :class="{ active: activeScope === 'broadcast' }"
               @click="selectConversation('broadcast')"
             >
-              <span class="truncate">Broadcast</span>
-              <span class="text-[10px] uppercase tracking-[0.2em] text-rth-muted">All</span>
+              <span class="directory-primary">
+                <span class="truncate">Broadcast</span>
+              </span>
+              <span class="directory-tag">All</span>
             </button>
           </div>
-        </div>
-      </BaseCard>
-    </section>
+        </aside>
 
-    <section class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-4">
-      <div class="rounded border border-rth-border bg-rth-panel p-4 shadow-[0_0_24px_rgba(0,180,255,0.12)]">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div class="text-xs uppercase tracking-[0.2em] text-rth-muted">Conversation</div>
-            <div class="text-lg font-semibold">{{ activeLabel }}</div>
+        <section class="panel chat-main">
+          <div class="conversation-head">
+            <div>
+              <div class="panel-title">Conversation: {{ activeLabel }}</div>
+              <div class="panel-subtitle">Delivery state inline</div>
+            </div>
+            <div class="conversation-state">
+              <span class="scope-pill">{{ activeScope.toUpperCase() }}</span>
+              <BaseButton variant="secondary" icon-left="refresh" @click="chatStore.fetchMessages()">Refresh</BaseButton>
+            </div>
           </div>
-          <div class="flex items-center gap-2 text-xs text-rth-muted">
-            <span class="rounded border border-rth-border px-2 py-1 uppercase tracking-[0.2em]">
-              {{ activeScope.toUpperCase() }}
-            </span>
-            <span class="text-[10px] uppercase tracking-[0.2em] text-rth-muted">Delivery state inline</span>
-          </div>
-        </div>
-      </div>
 
-      <div
-        ref="messageScroller"
-        class="h-[50vh] overflow-y-auto rounded border border-rth-border bg-rth-panel/80 p-4 shadow-[0_0_32px_rgba(0,180,255,0.08)]"
-      >
-        <div class="flex min-h-0 flex-col gap-4 pr-2">
-          <div v-if="chatStore.loading" class="text-xs text-rth-muted">Loading messages...</div>
-          <div v-else-if="visibleMessages.length === 0" class="text-xs text-rth-muted">
-            No messages yet. Start a conversation.
-          </div>
-          <div
-            v-for="message in visibleMessages"
-            :key="message.message_id || `${message.content}-${message.created_at}`"
-            class="rounded border border-rth-border bg-rth-panel-muted p-3"
-          >
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="text-xs uppercase tracking-[0.2em] text-rth-muted">
-                {{ resolveMessageSource(message) }}
+          <div ref="messageScroller" class="message-scroller">
+            <div class="message-stack">
+              <div v-if="chatStore.loading" class="panel-empty">Loading messages...</div>
+              <div v-else-if="visibleMessages.length === 0" class="panel-empty">
+                No messages yet. Start a conversation.
               </div>
-              <div class="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-rth-muted">
-                <span>{{ message.state || "sent" }}</span>
-                <span>{{ formatTimestamp(message.created_at) }}</span>
-              </div>
-            </div>
-            <div class="mt-2 whitespace-pre-wrap text-sm text-rth-text">
-              {{ message.content || "Attachment delivered." }}
-            </div>
-            <div v-if="message.attachments && message.attachments.length" class="mt-3 space-y-2">
-              <div
-                v-for="attachment in message.attachments"
-                :key="`${attachment.file_id}-${attachment.name}`"
-                class="rounded border border-rth-border bg-rth-panel p-2 text-xs text-rth-muted"
+              <article
+                v-for="message in visibleMessages"
+                :key="message.message_id || `${message.content}-${message.created_at}`"
+                class="message-card"
+                :class="{ outbound: message.direction === 'outbound' }"
               >
-                <div v-if="attachment.category === 'image' && attachment.file_id" class="space-y-2">
-                  <img
-                    :src="resolveAttachmentUrl(attachment)"
-                    :alt="attachment.name ?? 'image attachment'"
-                    class="max-h-48 w-full rounded border border-rth-border object-cover"
-                  />
-                  <div class="flex flex-wrap items-center justify-between">
-                    <span>{{ attachment.name }}</span>
-                    <span>{{ formatSize(attachment.size) }}</span>
+                <div class="message-meta">
+                  <div class="message-source">{{ resolveMessageSource(message) }}</div>
+                  <div class="message-state">
+                    <span>{{ message.state || "sent" }}</span>
+                    <span>{{ formatTimestamp(message.created_at) }}</span>
                   </div>
                 </div>
-                <div v-else class="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div class="font-semibold text-rth-text">{{ attachment.name }}</div>
-                    <div>{{ attachment.media_type || "File" }}</div>
+                <div class="message-body">{{ message.content || "Attachment delivered." }}</div>
+                <div v-if="message.attachments && message.attachments.length" class="attachment-list">
+                  <div
+                    v-for="attachment in message.attachments"
+                    :key="`${attachment.file_id}-${attachment.name}`"
+                    class="attachment-card"
+                  >
+                    <div v-if="attachment.category === 'image' && attachment.file_id" class="attachment-image">
+                      <img :src="resolveAttachmentUrl(attachment)" :alt="attachment.name ?? 'image attachment'" />
+                      <div class="attachment-meta">
+                        <span>{{ attachment.name }}</span>
+                        <span>{{ formatSize(attachment.size) }}</span>
+                      </div>
+                    </div>
+                    <div v-else class="attachment-file">
+                      <div>
+                        <div class="attachment-name">{{ attachment.name }}</div>
+                        <div class="attachment-type">{{ attachment.media_type || "File" }}</div>
+                      </div>
+                      <div class="attachment-size">{{ formatSize(attachment.size) }}</div>
+                    </div>
                   </div>
-                  <div class="text-[11px] uppercase tracking-[0.2em]">{{ formatSize(attachment.size) }}</div>
                 </div>
-              </div>
+              </article>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div class="rounded border border-rth-border bg-rth-panel p-4 shadow-[0_0_24px_rgba(0,180,255,0.12)]">
-        <div class="grid gap-3 md:grid-cols-[140px_1fr_1fr]">
-          <BaseSelect v-model="composerScope" label="Scope" :options="scopeOptions" />
-          <BaseSelect
-            v-if="composerScope !== 'broadcast'"
-            v-model="composerTarget"
-            :label="composerScope === 'topic' ? 'Topic' : 'Peer'"
-            :options="composerTargetOptions"
-          />
-          <div class="flex items-end justify-end md:col-span-1" :class="composerScope === 'broadcast' ? 'md:col-span-2' : ''">
-            <BaseButton variant="secondary" icon-left="refresh" @click="chatStore.fetchMessages()">Refresh</BaseButton>
+          <div class="composer-panel">
+            <div class="composer-top" :class="{ broadcast: composerScope === 'broadcast' }">
+              <BaseSelect v-model="composerScope" label="Scope" :options="scopeOptions" />
+              <BaseSelect
+                v-if="composerScope !== 'broadcast'"
+                v-model="composerTarget"
+                :label="composerScope === 'topic' ? 'Topic' : 'Peer'"
+                :options="composerTargetOptions"
+              />
+            </div>
+            <div class="composer-grid">
+              <textarea v-model="composerText" rows="3" class="composer-textarea" placeholder="Compose a message..."></textarea>
+              <div class="composer-actions">
+                <label class="attach-label">
+                  <input type="file" class="hidden" multiple @change="handleAttachmentSelection" />
+                  Attach files
+                </label>
+                <BaseButton icon-left="send" variant="primary" :disabled="sending" @click="sendMessage">Send</BaseButton>
+              </div>
+            </div>
+            <div v-if="pendingAttachments.length" class="pending-attachments">
+              <span v-for="attachment in pendingAttachments" :key="attachment.name" class="pending-pill">
+                {{ attachment.name }} ({{ formatSize(attachment.size) }})
+              </span>
+            </div>
           </div>
-        </div>
-        <div class="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
-          <textarea
-            v-model="composerText"
-            rows="3"
-            class="w-full rounded border border-rth-border bg-rth-panel-muted p-3 text-sm text-rth-text focus:border-rth-accent focus:outline-none"
-            placeholder="Compose a message..."
-          ></textarea>
-          <div class="flex flex-col gap-2">
-            <label class="cursor-pointer rounded border border-rth-border bg-rth-panel-muted px-3 py-2 text-xs text-rth-muted">
-              <input type="file" class="hidden" multiple @change="handleAttachmentSelection" />
-              Attach files
-            </label>
-            <BaseButton icon-left="send" variant="primary" :disabled="sending" @click="sendMessage">
-              Send
-            </BaseButton>
-          </div>
-        </div>
-        <div v-if="pendingAttachments.length" class="mt-3 flex flex-wrap gap-2 text-xs text-rth-muted">
-          <span
-            v-for="attachment in pendingAttachments"
-            :key="attachment.name"
-            class="rounded border border-rth-border bg-rth-panel-muted px-2 py-1"
-          >
-            {{ attachment.name }} ({{ formatSize(attachment.size) }})
-          </span>
-        </div>
+        </section>
       </div>
-    </section>
+    </div>
   </div>
 </template>
 
@@ -177,8 +187,6 @@ import { onMounted } from "vue";
 import { ref } from "vue";
 import { watch } from "vue";
 import BaseButton from "../components/BaseButton.vue";
-import BaseCard from "../components/BaseCard.vue";
-import BaseInput from "../components/BaseInput.vue";
 import BaseSelect from "../components/BaseSelect.vue";
 import { endpoints } from "../api/endpoints";
 import type { ChatAttachment } from "../api/types";
@@ -507,11 +515,644 @@ watch(activeScope, () => {
 </script>
 
 <style scoped>
+.chat-cosmos {
+  --neon: #37f2ff;
+  --neon-soft: rgba(55, 242, 255, 0.35);
+  --panel-dark: rgba(4, 12, 22, 0.96);
+  --panel-light: rgba(10, 30, 45, 0.94);
+  --amber: #ffb35c;
+  color: #dffcff;
+  font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-shell {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px 22px;
+  border-radius: 18px;
+  border: 1px solid rgba(55, 242, 255, 0.25);
+  background: radial-gradient(circle at top, rgba(42, 210, 255, 0.12), transparent 56%),
+    linear-gradient(145deg, rgba(5, 16, 28, 0.96), rgba(2, 6, 12, 0.98));
+  box-shadow: 0 18px 55px rgba(1, 6, 12, 0.65), inset 0 0 0 1px rgba(55, 242, 255, 0.08);
+  overflow: hidden;
+}
+
+.chat-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 1px 1px, rgba(55, 242, 255, 0.08) 1px, transparent 0) 0 0 / 18px 18px;
+  opacity: 0.58;
+  pointer-events: none;
+}
+
+.chat-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.chat-title {
+  font-size: 20px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #d4fbff;
+  text-shadow: 0 0 12px rgba(55, 242, 255, 0.5);
+}
+
+.chat-subtitle {
+  margin-top: 5px;
+  font-family: "Rajdhani", "Barlow", sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(209, 251, 255, 0.7);
+}
+
+.chat-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.chat-badge {
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid rgba(55, 242, 255, 0.28);
+  background: rgba(6, 18, 28, 0.78);
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  display: grid;
+  gap: 3px;
+}
+
+.chat-badge span {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(206, 250, 255, 0.6);
+}
+
+.chat-badge strong {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #e8feff;
+}
+
+.chat-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(270px, 330px) 1fr;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.panel {
+  position: relative;
+  padding: 16px;
+  background: linear-gradient(145deg, var(--panel-light), var(--panel-dark));
+  border: 1px solid rgba(55, 242, 255, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(55, 242, 255, 0.08), 0 12px 30px rgba(1, 6, 12, 0.6);
+  clip-path: polygon(0 0, calc(100% - 24px) 0, 100% 24px, 100% 100%, 24px 100%, 0 calc(100% - 24px));
+}
+
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(55, 242, 255, 0.2);
+  clip-path: polygon(
+    1px 1px,
+    calc(100% - 25px) 1px,
+    calc(100% - 1px) 25px,
+    calc(100% - 1px) calc(100% - 1px),
+    25px calc(100% - 1px),
+    1px calc(100% - 25px)
+  );
+  pointer-events: none;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.panel-title {
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #d1fbff;
+}
+
+.panel-subtitle {
+  margin-top: 4px;
+  font-family: "Rajdhani", "Barlow", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(209, 251, 255, 0.62);
+}
+
+.panel-chip {
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  font-size: 10px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  background: rgba(18, 24, 30, 0.62);
+}
+
+.chat-directory {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.directory-search {
+  display: grid;
+  gap: 6px;
+}
+
+.directory-search label {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(201, 248, 255, 0.64);
+}
+
+.directory-search input {
+  width: 100%;
+  background: rgba(6, 16, 25, 0.85);
+  border: 1px solid rgba(55, 242, 255, 0.3);
+  color: #d8fbff;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.directory-search input::placeholder {
+  color: rgba(209, 251, 255, 0.42);
+}
+
+.directory-search input:focus {
+  outline: none;
+  border-color: rgba(55, 242, 255, 0.62);
+  box-shadow: 0 0 14px rgba(55, 242, 255, 0.2);
+}
+
+.panel-tabs {
+  margin-top: 12px;
+  display: inline-flex;
+  background: rgba(7, 18, 26, 0.8);
+  border: 1px solid rgba(55, 242, 255, 0.25);
+  border-radius: 999px;
+  padding: 4px;
+  gap: 4px;
+}
+
+.panel-tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(209, 251, 255, 0.62);
+  padding: 6px 14px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 11px;
+  transition: all 0.2s ease;
+}
+
+.panel-tab.active {
+  background: rgba(55, 242, 255, 0.12);
+  border-color: rgba(55, 242, 255, 0.6);
+  color: #e0feff;
+  box-shadow: 0 0 14px rgba(55, 242, 255, 0.25);
+}
+
+.directory-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .chat-directory-scroll {
   min-height: 0;
   overflow-y: auto;
-  max-height: clamp(260px, 45vh, 520px);
+  max-height: none;
+  flex: 1;
   padding-right: 6px;
   scrollbar-gutter: stable;
+}
+
+.directory-item {
+  width: 100%;
+  border: 1px solid rgba(55, 242, 255, 0.2);
+  background: rgba(7, 18, 28, 0.62);
+  color: rgba(213, 251, 255, 0.9);
+  padding: 9px 10px;
+  border-radius: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.2s ease;
+}
+
+.directory-item:hover {
+  border-color: rgba(55, 242, 255, 0.4);
+}
+
+.directory-item.active {
+  border-color: rgba(55, 242, 255, 0.68);
+  background: rgba(55, 242, 255, 0.14);
+  box-shadow: 0 0 16px rgba(55, 242, 255, 0.24);
+}
+
+.directory-item--broadcast {
+  margin-top: 4px;
+}
+
+.directory-primary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.presence-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(124, 145, 165, 0.8);
+  box-shadow: 0 0 8px rgba(124, 145, 165, 0.5);
+}
+
+.presence-dot.online {
+  background: #6dffdf;
+  box-shadow: 0 0 10px rgba(109, 255, 223, 0.65);
+}
+
+.directory-tag {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(206, 250, 255, 0.62);
+}
+
+.chat-main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.conversation-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid rgba(55, 242, 255, 0.2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(8, 20, 31, 0.72);
+}
+
+.conversation-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.scope-pill {
+  border: 1px solid rgba(55, 242, 255, 0.32);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #d7fdff;
+  background: rgba(8, 20, 30, 0.66);
+}
+
+.message-scroller {
+  min-height: 0;
+  overflow: hidden auto;
+  border: 1px solid rgba(55, 242, 255, 0.22);
+  border-radius: 12px;
+  background: rgba(6, 16, 26, 0.78);
+  padding: 12px;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(44, 212, 230, 0.75) rgba(6, 18, 30, 0.92);
+}
+
+.message-scroller::-webkit-scrollbar {
+  width: 10px;
+}
+
+.message-scroller::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(4, 12, 20, 0.95), rgba(6, 18, 30, 0.92));
+  border: 1px solid rgba(56, 244, 255, 0.12);
+  box-shadow: inset 0 0 10px rgba(3, 12, 18, 0.8);
+}
+
+.message-scroller::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(8, 36, 48, 0.95), rgba(44, 212, 230, 0.75));
+  border: 1px solid rgba(56, 244, 255, 0.28);
+  border-radius: 999px;
+  box-shadow: 0 0 10px rgba(44, 212, 230, 0.35);
+}
+
+.message-scroller::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(12, 50, 64, 0.98), rgba(70, 244, 255, 0.9));
+}
+
+.message-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel-empty {
+  border: 1px dashed rgba(55, 242, 255, 0.28);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 11px;
+  color: rgba(209, 251, 255, 0.62);
+}
+
+.message-card {
+  border: 1px solid rgba(55, 242, 255, 0.2);
+  background: rgba(8, 20, 30, 0.74);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.message-card.outbound {
+  border-color: rgba(255, 179, 92, 0.45);
+  background: rgba(38, 22, 10, 0.4);
+}
+
+.message-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.message-source {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(209, 251, 255, 0.72);
+}
+
+.message-state {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(209, 251, 255, 0.56);
+}
+
+.message-body {
+  margin-top: 8px;
+  white-space: pre-wrap;
+  font-family: "Rajdhani", "Barlow", sans-serif;
+  font-size: 14px;
+  color: #e5fcff;
+}
+
+.attachment-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.attachment-card {
+  border: 1px solid rgba(55, 242, 255, 0.18);
+  border-radius: 9px;
+  background: rgba(6, 16, 25, 0.75);
+  padding: 8px;
+}
+
+.attachment-image img {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(55, 242, 255, 0.2);
+}
+
+.attachment-meta {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: rgba(213, 251, 255, 0.8);
+}
+
+.attachment-file {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.attachment-name {
+  font-size: 12px;
+  color: #e6feff;
+}
+
+.attachment-type {
+  font-size: 11px;
+  color: rgba(209, 251, 255, 0.58);
+}
+
+.attachment-size {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(209, 251, 255, 0.64);
+}
+
+.composer-panel {
+  border: 1px solid rgba(55, 242, 255, 0.24);
+  border-radius: 12px;
+  background: rgba(7, 18, 28, 0.76);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.composer-top {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 10px;
+}
+
+.composer-top.broadcast {
+  grid-template-columns: 160px;
+}
+
+.composer-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.composer-textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  border: 1px solid rgba(55, 242, 255, 0.3);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(8, 22, 34, 0.95), rgba(5, 15, 24, 0.98));
+  color: #dffcff;
+  padding: 11px;
+  font-family: "Rajdhani", "Barlow", sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.composer-textarea:focus {
+  outline: none;
+  border-color: rgba(55, 242, 255, 0.66);
+  box-shadow: 0 0 16px rgba(55, 242, 255, 0.22);
+}
+
+.composer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.attach-label {
+  cursor: pointer;
+  border: 1px solid rgba(55, 242, 255, 0.3);
+  background: rgba(8, 20, 31, 0.8);
+  color: rgba(213, 251, 255, 0.76);
+  border-radius: 9px;
+  padding: 9px 12px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.pending-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pending-pill {
+  border: 1px solid rgba(55, 242, 255, 0.28);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: rgba(225, 253, 255, 0.84);
+  background: rgba(8, 20, 30, 0.68);
+}
+
+:deep(.chat-cosmos .cui-btn) {
+  background: linear-gradient(135deg, rgba(35, 130, 160, 0.45), rgba(6, 18, 28, 0.92));
+  border: 1px solid rgba(55, 242, 255, 0.45);
+  color: #e5feff;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 10px;
+  padding: 6px 12px;
+  box-shadow: 0 0 12px rgba(55, 242, 255, 0.15);
+}
+
+:deep(.chat-cosmos .cui-btn--secondary) {
+  background: linear-gradient(135deg, rgba(14, 44, 60, 0.85), rgba(6, 14, 22, 0.92));
+}
+
+:deep(.chat-cosmos .cui-combobox__label) {
+  letter-spacing: 0.16em;
+  color: rgba(209, 251, 255, 0.64);
+}
+
+@media (max-width: 1100px) {
+  .chat-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(180px, 0.42fr) minmax(0, 1fr);
+    height: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .chat-top {
+    flex-direction: column;
+  }
+
+  .chat-badges {
+    justify-content: flex-start;
+  }
+
+  .conversation-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .composer-top,
+  .composer-top.broadcast,
+  .composer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .panel-tabs {
+    align-self: flex-start;
+  }
 }
 </style>

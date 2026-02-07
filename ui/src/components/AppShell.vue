@@ -20,12 +20,17 @@ import SidebarNav from "./SidebarNav.vue";
 
 const route = useRoute();
 const showHeaderBar = computed(() => route.path !== "/");
+const isViewportLockedRoute = computed(() => route.path === "/" || route.path === "/chat");
 const shellClass = computed(() =>
-  route.path === "/" ? "h-screen overflow-hidden" : "min-h-screen"
+  isViewportLockedRoute.value ? "h-screen overflow-hidden" : "min-h-screen"
 );
-const mainClass = computed(() =>
-  route.path === "/"
-    ? "p-2 overflow-hidden flex flex-col min-h-0"
-    : "p-6 overflow-y-auto"
-);
+const mainClass = computed(() => {
+  if (route.path === "/") {
+    return "p-2 overflow-hidden flex flex-col min-h-0";
+  }
+  if (route.path === "/chat") {
+    return "p-4 overflow-hidden flex flex-col min-h-0";
+  }
+  return "p-6 overflow-y-auto";
+});
 </script>
