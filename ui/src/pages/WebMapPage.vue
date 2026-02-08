@@ -1,5 +1,5 @@
 <template>
-  <div class="webmap-cosmos">
+  <div class="webmap-cosmos" :class="{ 'webmap-cosmos--sidebar-collapsed': markersPanelCollapsed }">
     <section class="webmap-main">
       <div class="webmap-stage">
         <LoadingSkeleton v-if="telemetry.loading && !mapReady" class="webmap-loader" />
@@ -45,8 +45,12 @@
               :class="{ active: markerCategory === symbol.id }"
               @click="selectMarkerSymbol(symbol.id)"
             >
-              <span class="webmap-marker-option-name">{{ symbol.label }}</span>
-              <span class="webmap-marker-option-id">{{ symbol.id }}</span>
+              <span class="webmap-marker-option-main">
+                <span class="webmap-marker-option-icon">
+                  <img :src="markerCatalogIconUrl(symbol.id)" :alt="symbol.label" />
+                </span>
+                <span class="webmap-marker-option-name">{{ symbol.label }}</span>
+              </span>
             </button>
           </div>
         </div>
@@ -303,6 +307,7 @@ const markersPanelCollapsed = ref(true);
 const markerToolbarRef = ref<HTMLDivElement | null>(null);
 const markerToolbarOpen = ref(false);
 const selectedMarkerIconUrl = ref("");
+const markerCatalogIconUrls = ref<Record<string, string>>({});
 const markerCategory = ref<string>("marker");
 const symbolKeySet = computed(
   () => new Set(markerSymbols.value.filter((symbol) => symbol.set !== "napsg").map((symbol) => symbol.id))
@@ -352,7 +357,8 @@ const markerCatalog = computed(() =>
     id: symbol.id,
     label: symbol.label,
     set: symbol.set,
-    mdi: symbol.mdi
+    mdi: symbol.mdi,
+    color: symbol.color
   }))
 );
 const selectedMarkerLabel = computed(() => {
@@ -810,9 +816,13 @@ watch(markerCategory, () => {
 });
 
 watch(
-  () => markerSymbols.value.length,
+  () =>
+    markerCatalog.value
+      .map((symbol) => `${symbol.id}:${symbol.set}:${symbol.mdi ?? ""}:${symbol.color ?? ""}`)
+      .join("|"),
   () => {
     ensureMarkerSelection();
+    void refreshMarkerCatalogIcons();
     void refreshSelectedMarkerIcon();
   }
 );
@@ -861,8 +871,45 @@ const markerIconUrl = (symbolSet: string, symbolId: string) => {
 };
 const markerFallbackUrl = `${markerIconRoot}icons/marker-fallback.svg`;
 const svgToDataUrl = (svg: string) => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+const MARKER_UI_ICON_COLOR_FALLBACK = "#74f7ff";
+const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+const normalizeIconColor = (value?: string) =>
+  value && HEX_COLOR.test(value) ? value : MARKER_UI_ICON_COLOR_FALLBACK;
+const svgToUiIconDataUrl = (svg: string, color?: string) => {
+  const resolvedColor = normalizeIconColor(color);
+  const tintedSvg = svg.replace(/<svg\b([^>]*)>/i, (_match, attrs: string) => {
+    if (/\sfill\s*=\s*"[^"]*"/i.test(attrs)) {
+      return `<svg${attrs.replace(/\sfill\s*=\s*"[^"]*"/i, ` fill="${resolvedColor}"`)}>`;
+    }
+    return `<svg${attrs} fill="${resolvedColor}">`;
+  });
+  return svgToDataUrl(tintedSvg);
+};
+
+const markerCatalogIconUrl = (symbolId: string) => {
+  return markerCatalogIconUrls.value[symbolId] ?? markerFallbackUrl;
+};
+
+const refreshMarkerCatalogIcons = async () => {
+  const entries = await Promise.all(
+    markerCatalog.value.map(async (symbol) => {
+      if (symbol.set === "napsg") {
+        return [symbol.id, markerIconUrl(symbol.set, symbol.id)] as const;
+      }
+      const mdiName = symbol.mdi ?? symbol.id;
+      const svg = await loadMdiSvg(mdiName);
+      return [symbol.id, svg ? svgToUiIconDataUrl(svg, symbol.color) : markerFallbackUrl] as const;
+    })
+  );
+  markerCatalogIconUrls.value = Object.fromEntries(entries);
+};
 
 const refreshSelectedMarkerIcon = async () => {
+  const existing = markerCatalogIconUrls.value[markerCategory.value];
+  if (existing) {
+    selectedMarkerIconUrl.value = existing;
+    return;
+  }
   const symbol = getMarkerSymbol(markerCategory.value, markerCategory.value);
   if (symbol?.set === "napsg") {
     selectedMarkerIconUrl.value = markerIconUrl(symbol.set, symbol.id);
@@ -870,7 +917,7 @@ const refreshSelectedMarkerIcon = async () => {
   }
   const mdiName = symbol?.mdi ?? symbol?.id ?? markerCategory.value;
   const svg = await loadMdiSvg(mdiName);
-  selectedMarkerIconUrl.value = svg ? svgToDataUrl(svg) : markerFallbackUrl;
+  selectedMarkerIconUrl.value = svg ? svgToUiIconDataUrl(svg, symbol?.color) : markerFallbackUrl;
 };
 
 const rasterizeImage = async (url: string) => {
@@ -1493,6 +1540,7 @@ const loadMarkerSymbols = async () => {
     console.warn("Failed to load marker symbols.", error);
   } finally {
     ensureMarkerSelection();
+    void refreshMarkerCatalogIcons();
     void refreshSelectedMarkerIcon();
   }
 };
@@ -1584,12 +1632,17 @@ onUnmounted(() => {
   --wm-panel: rgba(4, 14, 24, 0.92);
   --wm-panel-alt: rgba(7, 22, 36, 0.9);
   --wm-amber: #ffb35c;
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
   gap: 14px;
   min-height: 0;
   color: #e2fcff;
   font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
+}
+
+.webmap-cosmos--sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .webmap-main {
@@ -1672,18 +1725,18 @@ onUnmounted(() => {
   width: 26px;
   height: 26px;
   border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.4);
-  background: rgba(7, 20, 31, 0.9);
+  border: 1px solid rgba(59, 244, 255, 0.55);
+  background: radial-gradient(circle at 30% 30%, rgba(59, 244, 255, 0.2), rgba(7, 20, 31, 0.88));
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
 .webmap-marker-trigger-icon img {
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
   object-fit: contain;
-  filter: drop-shadow(0 0 8px rgba(59, 244, 255, 0.38));
+  filter: drop-shadow(0 0 8px rgba(59, 244, 255, 0.55));
 }
 
 .webmap-marker-trigger-label {
@@ -1778,13 +1831,39 @@ onUnmounted(() => {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
   border-radius: 9px;
   border: 1px solid rgba(59, 244, 255, 0.18);
   background: rgba(7, 18, 30, 0.66);
   color: #dcfdff;
   padding: 8px 10px;
+}
+
+.webmap-marker-option-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.webmap-marker-option-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.55);
+  background: radial-gradient(circle at 30% 30%, rgba(59, 244, 255, 0.2), rgba(7, 20, 31, 0.88));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.webmap-marker-option-icon img {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 7px rgba(59, 244, 255, 0.55));
 }
 
 .webmap-marker-option + .webmap-marker-option {
@@ -1800,12 +1879,6 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.11em;
   font-size: 11px;
-}
-
-.webmap-marker-option-id {
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  color: rgba(222, 250, 255, 0.58);
 }
 
 .webmap-rename-popover {
@@ -1881,6 +1954,14 @@ onUnmounted(() => {
 .webmap-sidebar--collapsed {
   width: 58px;
   padding: 8px;
+}
+
+.webmap-cosmos--sidebar-collapsed .webmap-sidebar--collapsed {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
 }
 
 .webmap-sidebar-head {

@@ -129,6 +129,44 @@ def _resolve_interval(value: int | None, fallback: int) -> int:
     return max(0, int(fallback))
 
 
+def _resolve_reticulum_config_dir(
+    config_manager: HubConfigurationManager | None,
+) -> str | None:
+    """Return the Reticulum config directory inferred from manager settings."""
+
+    if config_manager is None:
+        return None
+
+    config_path = getattr(config_manager, "reticulum_config_path", None)
+    if config_path is None:
+        return None
+
+    resolved_path = _expand_user_path(config_path)
+    if resolved_path.exists():
+        target_dir = resolved_path if resolved_path.is_dir() else resolved_path.parent
+        return str(target_dir)
+
+    # For non-existing values, treat ".../config" as file path shorthand.
+    if resolved_path.name.lower() == "config":
+        return str(resolved_path.parent)
+
+    return str(resolved_path)
+
+
+def _build_reticulum_init_kwargs(
+    *,
+    loglevel: int,
+    config_manager: HubConfigurationManager | None,
+) -> dict[str, object]:
+    """Build kwargs passed to ``RNS.Reticulum``."""
+
+    kwargs: dict[str, object] = {"loglevel": loglevel}
+    config_dir = _resolve_reticulum_config_dir(config_manager)
+    if config_dir:
+        kwargs["configdir"] = config_dir
+    return kwargs
+
+
 def _dispatch_coroutine(coroutine) -> None:
     """Execute ``coroutine`` on the active event loop or create one if needed.
 
@@ -371,6 +409,11 @@ class ReticulumTelemetryHub:
         self.outbound_send_timeout = outbound_send_timeout
         self.outbound_backoff = outbound_backoff
         self.outbound_max_attempts = outbound_max_attempts
+        self.config_manager: HubConfigurationManager | None = config_manager
+        if self.config_manager is None:
+            self.config_manager = HubConfigurationManager(
+                storage_path=self.storage_path, config_path=config_path
+            )
 
         # Reuse an existing Reticulum instance when running in-process tests
         # to avoid triggering the single-instance guard in the RNS library.
@@ -379,7 +422,12 @@ class ReticulumTelemetryHub:
             self.ret = existing_reticulum
             RNS.loglevel = self.loglevel
         else:
-            self.ret = RNS.Reticulum(loglevel=self.loglevel)
+            self.ret = RNS.Reticulum(
+                **_build_reticulum_init_kwargs(
+                    loglevel=self.loglevel,
+                    config_manager=self.config_manager,
+                )
+            )
             RNS.loglevel = self.loglevel
 
         telemetry_db_path = self.storage_path / "telemetry.db"
@@ -390,7 +438,6 @@ class ReticulumTelemetryHub:
             event_log=self.event_log,
         )
         self._message_listeners: list[Callable[[dict[str, object]], None]] = []
-        self.config_manager: HubConfigurationManager | None = config_manager
         self.embedded_lxmd: EmbeddedLxmd | None = None
         self.telemetry_sampler: TelemetrySampler | None = None
         self.telemeter_manager: TelemeterManager | None = None
@@ -426,11 +473,6 @@ class ReticulumTelemetryHub:
 
         self._invoke_router_hook("set_message_storage_limit", megabytes=5)
         self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
-
-        if self.config_manager is None:
-            self.config_manager = HubConfigurationManager(
-                storage_path=self.storage_path, config_path=config_path
-            )
 
         hub_db_path = self.config_manager.config.hub_database_path
         marker_identity_key = derive_marker_identity_key(identity)
