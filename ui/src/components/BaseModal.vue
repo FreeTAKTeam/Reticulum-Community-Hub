@@ -1,22 +1,29 @@
 <template>
-  <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="emit('close')">
+  <Teleport to="body">
     <div
-      ref="panelRef"
-      class="cui-modal w-full max-w-xl p-6"
-      role="dialog"
-      aria-modal="true"
-      :aria-labelledby="titleId"
-      tabindex="-1"
+      v-if="open"
+      class="fixed inset-0 flex items-center justify-center bg-black/60"
+      style="z-index: 3200;"
+      @click.self="emit('close')"
     >
-      <div class="flex items-start justify-between">
-        <h3 :id="titleId" class="text-lg font-semibold">{{ title }}</h3>
-        <button class="cui-modal-close" aria-label="Close" @click="emit('close')">X</button>
-      </div>
-      <div class="mt-4">
-        <slot />
+      <div
+        ref="panelRef"
+        class="cui-modal w-full max-w-xl p-6"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="titleId"
+        tabindex="-1"
+      >
+        <div class="flex items-start justify-between">
+          <h3 :id="titleId" class="text-lg font-semibold">{{ title }}</h3>
+          <button class="cui-modal-close" aria-label="Close" @click="emit('close')">X</button>
+        </div>
+        <div class="mt-4">
+          <slot />
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

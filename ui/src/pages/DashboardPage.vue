@@ -17,6 +17,7 @@
         </div>
       </div>
       <div class="hud-banner-status">
+        <OnlineHelpLauncher />
         <span class="hud-chip" :class="connectionChipClass">{{ connectionLabel }}</span>
         <span class="hud-chip" :class="wsChipClass">{{ wsLabel }}</span>
         <span class="hud-url">{{ baseUrl }}</span>
@@ -287,6 +288,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import BaseButton from "../components/BaseButton.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
+import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { get, post } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import { WsClient } from "../api/ws";

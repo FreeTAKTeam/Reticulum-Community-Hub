@@ -1,0 +1,12 @@
+[Users // Identity Grid]
+
+Purpose:
+This page governs identities, connected users, and routing visibility.
+
+Primary systems:
+- Users tab with policy actions: ban, unban, blackhole, and leave.
+- Identities tab with join status and identity lifecycle checks.
+- Routing tab for live destination table inspection.
+- Filter and paging tools for high-density environments.
+
+Use this page to enforce access posture, inspect identity state, and verify routing-level connectivity.

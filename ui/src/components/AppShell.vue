@@ -19,7 +19,7 @@ import HeaderBar from "./HeaderBar.vue";
 import SidebarNav from "./SidebarNav.vue";
 
 const route = useRoute();
-const showHeaderBar = computed(() => route.path !== "/");
+const showHeaderBar = computed(() => route.path !== "/" && route.path !== "/users");
 const isViewportLockedRoute = computed(() => route.path === "/" || route.path === "/chat");
 const shellClass = computed(() =>
   isViewportLockedRoute.value ? "h-screen overflow-hidden" : "min-h-screen"

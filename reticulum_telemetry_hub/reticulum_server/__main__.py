@@ -313,6 +313,7 @@ class ReticulumTelemetryHub:
     tak_connector: TakConnector | None
     marker_service: MarkerService | None
     marker_manager: MarkerObjectManager | None
+    command_manager: CommandManager | None
     _active_services: dict[str, HubService]
 
     TELEMETRY_PLACEHOLDERS = {"telemetry data", "telemetry update"}
@@ -451,6 +452,7 @@ class ReticulumTelemetryHub:
         self._announce_capabilities_enabled = True
         self._announce_capabilities_lock = threading.Lock()
         self._announce_capabilities_logged = False
+        self.command_manager = None
 
         identity = self.load_or_generate_identity(self.identity_path)
 
@@ -472,7 +474,6 @@ class ReticulumTelemetryHub:
         self.identities: dict[str, str] = {}
 
         self._invoke_router_hook("set_message_storage_limit", megabytes=5)
-        self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
 
         hub_db_path = self.config_manager.config.hub_database_path
         marker_identity_key = derive_marker_identity_key(identity)
@@ -551,6 +552,7 @@ class ReticulumTelemetryHub:
         self.topic_subscribers: dict[str, set[str]] = {}
         self._topic_registry_last_refresh: float = 0.0
         self._refresh_topic_registry()
+        self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
 
     def command_handler(self, commands: list, message: LXMF.LXMessage) -> list[LXMF.LXMessage]:
         """Handles commands received from the client and returns responses.
@@ -562,7 +564,14 @@ class ReticulumTelemetryHub:
         Returns:
             list[LXMF.LXMessage]: Responses generated for the commands.
         """
-        responses = self.command_manager.handle_commands(commands, message)
+        manager = getattr(self, "command_manager", None)
+        if manager is None:
+            RNS.log(
+                "Command manager unavailable; dropping command payload.",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+            return []
+        responses = manager.handle_commands(commands, message)
         if self._commands_affect_subscribers(commands):
             self._refresh_topic_registry()
         return responses

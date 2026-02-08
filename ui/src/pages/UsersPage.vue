@@ -4,6 +4,7 @@
       <header class="registry-top">
         <div class="registry-title">User Registry</div>
         <div class="registry-status">
+          <OnlineHelpLauncher />
           <span class="cui-status-pill" :class="connectionClass">{{ connectionLabel }}</span>
           <span class="cui-status-pill" :class="wsClass">{{ wsLabel }}</span>
           <span class="status-url">{{ baseUrl }}</span>
@@ -201,6 +202,7 @@ import BaseBadge from "../components/BaseBadge.vue";
 import BaseButton from "../components/BaseButton.vue";
 import BasePagination from "../components/BasePagination.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
+import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import type { ApiError } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";

@@ -3,6 +3,7 @@
     <div class="cui-page-header__grid">
       <div class="cui-page-header__title">{{ title }}</div>
       <div class="cui-page-header__status">
+        <OnlineHelpLauncher />
         <span class="cui-status-pill" :class="connectionClass">{{ connectionLabel }}</span>
         <span class="cui-status-pill" :class="wsClass">{{ wsLabel }}</span>
         <span class="cui-page-header__url">{{ baseUrl }}</span>
@@ -14,6 +15,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
+import OnlineHelpLauncher from "./OnlineHelpLauncher.vue";
 import { useConnectionStore } from "../stores/connection";
 
 const route = useRoute();

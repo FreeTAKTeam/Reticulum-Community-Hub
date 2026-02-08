@@ -1118,6 +1118,41 @@ def test_delivery_callback_emits_cot_chat_for_valid_message():
     assert parse_flag is False
 
 
+def test_command_handler_handles_missing_command_manager(monkeypatch):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    logged: list[str] = []
+    monkeypatch.setattr(
+        RNS,
+        "log",
+        lambda message, *args, **kwargs: logged.append(str(message)),
+    )
+
+    server_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    source_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    message = LXMF.LXMessage(
+        server_dest,
+        source_dest,
+        fields={LXMF.FIELD_COMMANDS: [{PLUGIN_COMMAND: CommandManager.CMD_HELP}]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.pack()
+    message.signature_validated = True
+
+    responses = ReticulumTelemetryHub.command_handler(
+        hub, message.fields[LXMF.FIELD_COMMANDS], message
+    )
+
+    assert responses == []
+    assert any("Command manager unavailable" in entry for entry in logged)
+
+
 def test_delivery_callback_honors_topic_field():
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()

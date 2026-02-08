@@ -1,0 +1,12 @@
+[Dashboard // Mission Control]
+
+Purpose:
+This page is the operational overview for the hub. It combines node health, telemetry flow, and backend control in one surface.
+
+Primary systems:
+- Backend Control starts, stops, and checks the backend process.
+- Global Telemetry Stream visualizes ingest, motion, transport load, and marker activity over the last 24 hours.
+- Event Feed shows real-time operational events with expandable metadata.
+- Time panel displays local node timing and uptime.
+
+Use this page for quick situational awareness before deeper work in map, users, topics, or file operations.
