@@ -1180,8 +1180,18 @@ def test_delivery_callback_honors_topic_field():
         dest_two.identity.hash: dest_two,
     }
     hub.identities = {}
+    hub._lookup_identity_label = lambda _source_hash: "user-beta"
     hub.topic_subscribers = {"topic-beta": {dest_one.identity.hash.hex().lower()}}
-    hub.api = type("DummyAPI", (), {"list_subscribers": lambda self: []})()
+
+    class DummyAPI:
+        def list_subscribers(self):
+            return []
+
+        def retrieve_topic(self, topic_id: str):
+            assert topic_id == "topic-beta"
+            return Topic(topic_name="Beta", topic_path="/ops/beta", topic_id=topic_id)
+
+    hub.api = DummyAPI()
 
     hub.tel_controller = type(
         "DummyController",
@@ -1209,6 +1219,10 @@ def test_delivery_callback_honors_topic_field():
 
     assert len(router_messages) == 1
     assert router_messages[0].destination_hash == dest_one.identity.hash
+    assert (
+        router_messages[0].content_as_string()
+        == "/ops/beta: user-beta > topic-message"
+    )
 
 
 def test_delivery_callback_skips_sender_echo():

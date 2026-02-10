@@ -979,8 +979,12 @@ class ReticulumTelemetryHub:
                         getattr(RNS, "LOG_WARNING", 2),
                     )
 
-            # Broadcast the message to all connected clients
-            msg = f"{source_label} > {content_text}"
+            # Broadcast the message to all connected clients.
+            msg = self._format_chat_broadcast_text(
+                source_label=source_label,
+                content_text=content_text,
+                topic_id=topic_id,
+            )
             source_hex = self._message_source_hex(message)
             exclude = {source_hex} if source_hex else None
             self.send_message(msg, topic=topic_id, exclude=exclude)
@@ -1711,6 +1715,45 @@ class ReticulumTelemetryHub:
                     if topic_id:
                         return str(topic_id)
         return None
+
+    def _format_chat_broadcast_text(
+        self,
+        *,
+        source_label: str,
+        content_text: str,
+        topic_id: str | None,
+    ) -> str:
+        """Build the relayed chat text for topic and non-topic messages."""
+
+        if not topic_id:
+            return f"{source_label} > {content_text}"
+
+        topic_path = self._resolve_topic_path(topic_id)
+        return f"{topic_path}: {source_label} > {content_text}"
+
+    def _resolve_topic_path(self, topic_id: str) -> str:
+        """Return the topic path for ``topic_id`` when available."""
+
+        fallback = str(topic_id)
+        api = getattr(self, "api", None)
+        if api is None:
+            return fallback
+
+        resolver = getattr(api, "retrieve_topic", None)
+        if not callable(resolver):
+            return fallback
+
+        try:
+            topic = resolver(topic_id)
+        except Exception:
+            return fallback
+
+        topic_path = getattr(topic, "topic_path", None)
+        if isinstance(topic_path, str):
+            normalized = topic_path.strip()
+            if normalized:
+                return normalized
+        return fallback
 
     def _refresh_topic_registry(self) -> None:
         self._topic_registry_last_refresh = time.monotonic()

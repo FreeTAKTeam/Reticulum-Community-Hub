@@ -8,12 +8,14 @@ import sys
 import threading
 
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.northbound import gateway
 from reticulum_telemetry_hub.northbound.gateway import LOCAL_API_HOST
 from reticulum_telemetry_hub.northbound.gateway import _build_gateway_config
@@ -35,6 +37,8 @@ class DummyHub:
         self.event_log = event_log
         self.command_manager = None
         self.marker_service = None
+        self.identities = {}
+        self.connections = {}
 
     def dispatch_northbound_message(self, message, topic_id=None, destination=None, fields=None):
         """No-op dispatcher for tests."""
@@ -132,6 +136,56 @@ def test_build_gateway_app_sets_state(tmp_path) -> None:
 
     assert isinstance(app, FastAPI)
     assert app.state.hub is hub
+
+
+def test_build_gateway_app_routes_include_destination_identity_and_name(tmp_path) -> None:
+    """Expose destination hash, identity hash, and display names in routing snapshots."""
+
+    config_manager = HubConfigurationManager(storage_path=tmp_path)
+    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
+    hub = DummyHub(api, telemetry, EventLog())
+
+    class DummyConnection:
+        def __init__(self, destination_hash: bytes, identity_hash: bytes) -> None:
+            self.hash = destination_hash
+            self.identity = type("DummyIdentity", (), {"hash": identity_hash})()
+
+    destination_one = b"\x11" * 16
+    destination_two = b"\x22" * 16
+    identity_one = b"\xaa" * 16
+    identity_two = b"\xbb" * 16
+    hub.connections = {
+        identity_one: DummyConnection(destination_one, identity_one),
+        identity_two: DummyConnection(destination_two, identity_two),
+    }
+    hub.identities = {
+        identity_one.hex(): "Field Team Alpha",
+        destination_two.hex(): "Field Team Bravo",
+    }
+
+    app = build_gateway_app(
+        hub,
+        started_at=datetime.now(timezone.utc),
+        auth=ApiAuth(api_key="secret"),
+    )
+    client = TestClient(app)
+
+    response = client.get("/Command/DumpRouting", headers={"X-API-Key": "secret"})
+
+    assert response.status_code == 200
+    assert response.json()["destinations"] == [
+        {
+            "destination": destination_one.hex(),
+            "identity": identity_one.hex(),
+            "display_name": "Field Team Alpha",
+        },
+        {
+            "destination": destination_two.hex(),
+            "identity": identity_two.hex(),
+            "display_name": "Field Team Bravo",
+        },
+    ]
 
 
 def test_gateway_main_runs_server(monkeypatch, tmp_path) -> None:

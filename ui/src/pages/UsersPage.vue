@@ -158,6 +158,7 @@
                 <table class="routing-table">
                   <thead>
                     <tr>
+                      <th>Name</th>
                       <th>Destination</th>
                       <th>Identity</th>
                       <th>Status</th>
@@ -166,8 +167,9 @@
                   </thead>
                   <tbody>
                     <tr v-for="row in routingRows" :key="row.id" class="routing-row">
+                      <td class="routing-cell routing-cell--name">{{ row.name }}</td>
                       <td class="routing-cell routing-cell--destination mono">{{ row.destination }}</td>
-                      <td class="routing-cell routing-cell--identity">{{ row.label }}</td>
+                      <td class="routing-cell routing-cell--identity">{{ row.identityLabel }}</td>
                       <td class="routing-cell routing-cell--status">
                         <span class="routing-tag" :class="{ 'routing-tag--active': row.connected }">
                           {{ row.connected ? "Joined" : "Routed" }}
@@ -221,8 +223,8 @@ const routingError = ref<string | null>(null);
 const activeTab = ref<"clients" | "identities" | "routing">("clients");
 const clientsPage = ref(1);
 const identitiesPage = ref(1);
-const clientsPageSize = 6;
-const identitiesPageSize = 6;
+const clientsPageSize = 9;
+const identitiesPageSize = 9;
 const identityFilter = ref("");
 const clientFilter = ref("");
 
@@ -324,6 +326,7 @@ const identityDisplayNameById = computed(() => {
   usersStore.identities.forEach((identity) => {
     if (identity.id && identity.display_name) {
       map.set(identity.id, identity.display_name);
+      map.set(identity.id.toLowerCase(), identity.display_name);
     }
   });
   return map;
@@ -337,6 +340,7 @@ const clientIdentitySet = computed(() => {
   usersStore.clients.forEach((client) => {
     if (client.id) {
       set.add(client.id);
+      set.add(client.id.toLowerCase());
     }
   });
   return set;
@@ -356,33 +360,146 @@ const normalizeRoutingValue = (value: unknown): string => {
   }
 };
 
-const parseRoutingDestinations = (payload: unknown): string[] => {
-  if (Array.isArray(payload)) {
-    return payload.map((entry) => normalizeRoutingValue(entry)).filter((entry) => entry.length > 0);
-  }
-  if (!payload || typeof payload !== "object") {
-    return [];
-  }
-  const source = payload as Record<string, unknown>;
-  const candidates = [source.destinations, source.routes, source.items];
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate)) {
-      return candidate.map((entry) => normalizeRoutingValue(entry)).filter((entry) => entry.length > 0);
-    }
-  }
-  return [];
+type RoutingEntry = {
+  destination: string;
+  identity: string;
+  displayName?: string;
 };
 
-const routingDestinations = computed(() => parseRoutingDestinations(routing.value));
+const normalizeRoutingText = (value: unknown): string => normalizeRoutingValue(value).trim();
+
+const pickRoutingText = (source: Record<string, unknown>, keys: string[]): string => {
+  for (const key of keys) {
+    if (!(key in source)) {
+      continue;
+    }
+    const value = normalizeRoutingText(source[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+};
+
+const parseRoutingEntry = (entry: unknown): RoutingEntry | null => {
+  if (typeof entry === "string") {
+    const value = normalizeRoutingText(entry);
+    if (!value) {
+      return null;
+    }
+    return { destination: value, identity: value };
+  }
+  if (!entry || typeof entry !== "object") {
+    const value = normalizeRoutingText(entry);
+    if (!value) {
+      return null;
+    }
+    return { destination: value, identity: value };
+  }
+  const source = entry as Record<string, unknown>;
+  const destination = pickRoutingText(source, [
+    "destination",
+    "Destination",
+    "destination_hash",
+    "destinationHash",
+    "lxmf_destination",
+    "lxmfDestination"
+  ]);
+  const identity = pickRoutingText(source, [
+    "identity",
+    "Identity",
+    "identity_hash",
+    "identityHash",
+    "source_identity",
+    "sourceIdentity"
+  ]);
+  const displayName = pickRoutingText(source, [
+    "display_name",
+    "displayName",
+    "name",
+    "label",
+    "human_readable_name",
+    "humanReadableName"
+  ]);
+  const resolvedDestination = destination || identity;
+  if (!resolvedDestination) {
+    return null;
+  }
+  return {
+    destination: resolvedDestination,
+    identity: identity || resolvedDestination,
+    displayName: displayName || undefined
+  };
+};
+
+const parseRoutingEntries = (payload: unknown): RoutingEntry[] => {
+  let entries: unknown[] = [];
+  if (Array.isArray(payload)) {
+    entries = payload;
+  } else if (payload && typeof payload === "object") {
+    const source = payload as Record<string, unknown>;
+    const candidates = [source.destinations, source.routes, source.items];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) {
+        entries = candidate;
+        break;
+      }
+    }
+  }
+  return entries
+    .map((entry) => parseRoutingEntry(entry))
+    .filter((entry): entry is RoutingEntry => entry !== null);
+};
+
+const routingEntries = computed(() => parseRoutingEntries(routing.value));
+
+const clientDisplayNameById = computed(() => {
+  const map = new Map<string, string>();
+  usersStore.clients.forEach((client) => {
+    if (client.id && client.display_name) {
+      map.set(client.id, client.display_name);
+      map.set(client.id.toLowerCase(), client.display_name);
+    }
+  });
+  return map;
+});
+
+const lookupRoutingDisplayName = (identity?: string, destination?: string): string | undefined => {
+  const keys = [identity, destination].filter((key): key is string => Boolean(key));
+  for (const key of keys) {
+    const lower = key.toLowerCase();
+    const displayName =
+      identityDisplayNameById.value.get(key) ??
+      identityDisplayNameById.value.get(lower) ??
+      clientDisplayNameById.value.get(key) ??
+      clientDisplayNameById.value.get(lower);
+    if (displayName) {
+      return displayName;
+    }
+  }
+  return undefined;
+};
 
 const routingRows = computed(() =>
-  routingDestinations.value.map((destination, index) => ({
-    id: `${destination}-${index}`,
-    destination,
-    label: resolveIdentityLabel(identityDisplayNameById.value.get(destination), destination),
-    connected: clientIdentitySet.value.has(destination),
-    slot: index + 1
-  }))
+  routingEntries.value.map((entry, index) => {
+    const displayName = entry.displayName ?? lookupRoutingDisplayName(entry.identity, entry.destination);
+    return {
+      id: `${entry.destination}-${entry.identity}-${index}`,
+      name: displayName || "Unknown",
+      destination: entry.destination,
+      identityLabel: resolveIdentityLabel(undefined, entry.identity),
+      connected:
+        clientIdentitySet.value.has(entry.identity) ||
+        clientIdentitySet.value.has(entry.identity.toLowerCase()) ||
+        clientIdentitySet.value.has(entry.destination) ||
+        clientIdentitySet.value.has(entry.destination.toLowerCase()),
+      slot: index + 1
+    };
+  })
+);
+
+const routingDestinations = computed(() =>
+  routingRows.value.map((row) => row.destination)
 );
 
 const clientTag = (lastSeenAt?: string) => {
@@ -435,7 +552,7 @@ const isIdentityJoined = (identityId?: string) => {
   if (!identityId) {
     return false;
   }
-  return clientIdentitySet.value.has(identityId);
+  return clientIdentitySet.value.has(identityId) || clientIdentitySet.value.has(identityId.toLowerCase());
 };
 
 const loadRouting = async () => {
@@ -470,7 +587,7 @@ const resolveClientDisplayName = (client: { id?: string; display_name?: string }
   if (!client.id) {
     return undefined;
   }
-  return identityDisplayNameById.value.get(client.id);
+  return identityDisplayNameById.value.get(client.id) ?? identityDisplayNameById.value.get(client.id.toLowerCase());
 };
 
 const handleApiError = (error: unknown, fallback: string) => {
@@ -914,24 +1031,31 @@ onMounted(() => {
   border-radius: 0 12px 12px 0;
 }
 
+.routing-cell--name {
+  width: 20%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .routing-cell--destination {
-  width: 56%;
+  width: 42%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .routing-cell--identity {
-  width: 18%;
+  width: 16%;
   text-transform: uppercase;
 }
 
 .routing-cell--status {
-  width: 14%;
+  width: 12%;
 }
 
 .routing-cell--slot {
-  width: 12%;
+  width: 10%;
   text-align: right;
   color: rgba(210, 249, 255, 0.65);
 }
