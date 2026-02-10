@@ -411,6 +411,7 @@ class ReticulumTelemetryHub:
         self.outbound_send_timeout = outbound_send_timeout
         self.outbound_backoff = outbound_backoff
         self.outbound_max_attempts = outbound_max_attempts
+        self.display_name = str(display_name).strip() if str(display_name).strip() else "Hub"
         self.config_manager: HubConfigurationManager | None = config_manager
         if self.config_manager is None:
             self.config_manager = HubConfigurationManager(
@@ -1091,6 +1092,17 @@ class ReticulumTelemetryHub:
             override_scope = fields.get("scope")
             if isinstance(override_scope, str) and override_scope.strip():
                 scope = override_scope.strip()
+        outbound_message = message
+        if topic_id and message:
+            topic_path = self._resolve_topic_path(topic_id)
+            if self._has_sender_prefix(message):
+                outbound_message = f"{topic_path}: {message}"
+            else:
+                outbound_message = self._format_chat_broadcast_text(
+                    source_label=self._hub_sender_label(),
+                    content_text=message,
+                    topic_id=topic_id,
+                )
         queued = None
         now = _utcnow()
         if api is not None:
@@ -1099,7 +1111,7 @@ class ReticulumTelemetryHub:
                     direction="outbound",
                     scope=scope,
                     state="queued",
-                    content=message,
+                    content=outbound_message,
                     source=None,
                     destination=destination,
                     topic_id=topic_id,
@@ -1125,7 +1137,7 @@ class ReticulumTelemetryHub:
                     getattr(RNS, "LOG_WARNING", 2),
                 )
         sent = self.send_message(
-            message,
+            outbound_message,
             topic=topic_id,
             destination=destination,
             fields=lxmf_fields,
@@ -1730,6 +1742,28 @@ class ReticulumTelemetryHub:
 
         topic_path = self._resolve_topic_path(topic_id)
         return f"{topic_path}: {source_label} > {content_text}"
+
+    def _hub_sender_label(self) -> str:
+        """Return the sender label used for hub-originated chat messages."""
+
+        display_name = getattr(self, "display_name", None)
+        if isinstance(display_name, str):
+            normalized = display_name.strip()
+            if normalized:
+                return normalized
+        return "Hub"
+
+    @staticmethod
+    def _has_sender_prefix(content_text: str) -> bool:
+        """Return True when ``content_text`` already contains ``User > Text``."""
+
+        if not isinstance(content_text, str):
+            return False
+        separator = " > "
+        left, marker, right = content_text.partition(separator)
+        if marker != separator:
+            return False
+        return bool(left.strip() and right.strip())
 
     def _resolve_topic_path(self, topic_id: str) -> str:
         """Return the topic path for ``topic_id`` when available."""

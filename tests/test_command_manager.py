@@ -871,6 +871,73 @@ def test_send_message_refreshes_topic_registry(tmp_path):
     assert sent[0].destination_hash == dest_two.identity.hash
 
 
+def test_dispatch_northbound_message_prefixes_topic_payload():
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    sent: dict[str, object] = {}
+
+    class DummyAPI:
+        def retrieve_topic(self, topic_id: str) -> Topic:
+            return Topic(topic_name="Ops", topic_path="/ops/live", topic_id=topic_id)
+
+        def record_chat_message(self, message):
+            message.message_id = "queued-1"
+            return message
+
+        def update_chat_message_state(self, message_id: str, state: str):
+            assert message_id == "queued-1"
+            assert state == "sent"
+            return None
+
+    hub.api = DummyAPI()
+    hub.display_name = "HubNode"
+    hub.event_log = None
+    hub.send_message = (
+        lambda message, **kwargs: sent.update({"message": message, **kwargs}) or True
+    )
+
+    queued = hub.dispatch_northbound_message("status ping", topic_id="topic-live")
+
+    assert queued is not None
+    assert queued.content == "/ops/live: HubNode > status ping"
+    assert sent["message"] == "/ops/live: HubNode > status ping"
+    assert sent["topic"] == "topic-live"
+
+
+def test_dispatch_northbound_message_keeps_existing_sender_prefix():
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    sent: dict[str, object] = {}
+
+    class DummyAPI:
+        def retrieve_topic(self, topic_id: str) -> Topic:
+            return Topic(topic_name="Venezuela", topic_path="var.venezuela", topic_id=topic_id)
+
+        def record_chat_message(self, message):
+            message.message_id = "queued-2"
+            return message
+
+        def update_chat_message_state(self, message_id: str, state: str):
+            assert message_id == "queued-2"
+            assert state == "sent"
+            return None
+
+    hub.api = DummyAPI()
+    hub.display_name = "RTH"
+    hub.event_log = None
+    hub.send_message = (
+        lambda message, **kwargs: sent.update({"message": message, **kwargs}) or True
+    )
+
+    queued = hub.dispatch_northbound_message(
+        "RCH - win test > this is about Venezuela",
+        topic_id="topic-venezuela",
+    )
+
+    assert queued is not None
+    assert queued.content == "var.venezuela: RCH - win test > this is about Venezuela"
+    assert sent["message"] == "var.venezuela: RCH - win test > this is about Venezuela"
+    assert sent["topic"] == "topic-venezuela"
+
+
 def test_help_command_lists_examples(tmp_path):
     class DummyAPI:
         pass
