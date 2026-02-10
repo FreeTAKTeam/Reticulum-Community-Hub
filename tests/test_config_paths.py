@@ -125,3 +125,22 @@ def test_announce_capabilities_config_section_overrides(tmp_path):
     assert runtime.announce_capabilities_max_bytes == 128
     assert runtime.announce_capabilities_include_version is False
     assert runtime.announce_capabilities_include_timestamp is True
+
+
+def test_lxmf_startup_options_loaded_from_propagation_section(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[propagation]\n"
+        "startup_mode = blocking\n"
+        "startup_prune_enabled = yes\n"
+        "startup_max_messages = 20000\n"
+        "startup_max_age_days = 30\n"
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+    lxmf = manager.config.lxmf_router
+
+    assert lxmf.propagation_start_mode == "blocking"
+    assert lxmf.propagation_startup_prune_enabled is True
+    assert lxmf.propagation_startup_max_messages == 20000
+    assert lxmf.propagation_startup_max_age_days == 30

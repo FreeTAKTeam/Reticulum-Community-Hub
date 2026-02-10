@@ -78,6 +78,10 @@ class LXMFRouterConfig:
     enable_node: bool = True
     announce_interval_minutes: int = 10
     display_name: str = "RTH_router"
+    propagation_start_mode: str = "background"
+    propagation_startup_prune_enabled: bool = False
+    propagation_startup_max_messages: int | None = None
+    propagation_startup_max_age_days: int | None = None
 
     def to_dict(self) -> dict:
         """Serialise LXMF router configuration fields.
@@ -91,6 +95,10 @@ class LXMFRouterConfig:
             "enable_node": self.enable_node,
             "announce_interval_minutes": self.announce_interval_minutes,
             "display_name": self.display_name,
+            "propagation_start_mode": self.propagation_start_mode,
+            "propagation_startup_prune_enabled": self.propagation_startup_prune_enabled,
+            "propagation_startup_max_messages": self.propagation_startup_max_messages,
+            "propagation_startup_max_age_days": self.propagation_startup_max_age_days,
         }
 
 

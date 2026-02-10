@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 import LXMF
@@ -35,14 +37,33 @@ class EmbeddedLxmdConfig:
 
     enable_propagation_node: bool
     announce_interval_seconds: int
+    propagation_start_mode: str
+    propagation_startup_prune_enabled: bool
+    propagation_startup_max_messages: int | None
+    propagation_startup_max_age_days: int | None
 
     @classmethod
     def from_manager(cls, manager: HubConfigurationManager) -> "EmbeddedLxmdConfig":
         lxmf_config = manager.config.lxmf_router
         interval = max(1, int(lxmf_config.announce_interval_minutes) * 60)
+        startup_mode = str(
+            getattr(lxmf_config, "propagation_start_mode", "background")
+        ).strip().lower()
+        if startup_mode not in {"blocking", "background"}:
+            startup_mode = "background"
         return cls(
             enable_propagation_node=lxmf_config.enable_node,
             announce_interval_seconds=interval,
+            propagation_start_mode=startup_mode,
+            propagation_startup_prune_enabled=bool(
+                getattr(lxmf_config, "propagation_startup_prune_enabled", False)
+            ),
+            propagation_startup_max_messages=getattr(
+                lxmf_config, "propagation_startup_max_messages", None
+            ),
+            propagation_startup_max_age_days=getattr(
+                lxmf_config, "propagation_startup_max_age_days", None
+            ),
         )
 
 
@@ -85,6 +106,14 @@ class EmbeddedLxmd:
         self._started = False
         self._last_peer_announce: float | None = None
         self._last_node_announce: float | None = None
+        self._propagation_state_lock = threading.Lock()
+        self._propagation_state = (
+            "idle" if self.config.enable_propagation_node else "disabled"
+        )
+        self._propagation_last_error: str | None = None
+        self._propagation_started_monotonic: float | None = None
+        self._propagation_finished_monotonic: float | None = None
+        self._startup_prune_summary: dict[str, int] | None = None
 
     def start(self) -> None:
         """Start the embedded propagation threads if not already running."""
@@ -93,16 +122,18 @@ class EmbeddedLxmd:
             return
 
         if self.config.enable_propagation_node:
-            try:
-                self.router.enable_propagation()
-            except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
-                    f"Failed to enable LXMF propagation node in embedded mode: {exc}",
-                    RNS.LOG_ERROR,
-                )
+            mode = self.config.propagation_start_mode
+            if mode == "blocking":
+                self._enable_propagation()
+                self._started = True
+                self._start_thread(self._deferred_start_jobs)
+                return
 
         self._started = True
         self._start_thread(self._deferred_start_jobs)
+
+        if self.config.enable_propagation_node:
+            self._start_thread(self._enable_propagation)
 
     def stop(self) -> None:
         """Request the helper threads to stop and wait for them to finish."""
@@ -117,6 +148,8 @@ class EmbeddedLxmd:
         # Allow future ``start`` calls to run the deferred jobs loop again.
         self._stop_event.clear()
         self._started = False
+        next_state = "disabled" if not self.config.enable_propagation_node else "idle"
+        self._set_propagation_state(next_state)
         self._maybe_emit_propagation_update(force=True)
 
     def add_propagation_observer(
@@ -126,9 +159,229 @@ class EmbeddedLxmd:
 
         self._propagation_observers.append(observer)
 
+    def propagation_startup_status(self) -> dict[str, Any]:
+        """Return propagation startup state for control/status endpoints."""
+
+        with self._propagation_state_lock:
+            state = self._propagation_state
+            last_error = self._propagation_last_error
+            started_at = self._propagation_started_monotonic
+            finished_at = self._propagation_finished_monotonic
+            prune_summary = (
+                dict(self._startup_prune_summary)
+                if self._startup_prune_summary is not None
+                else None
+            )
+
+        elapsed = None
+        if started_at is not None:
+            end = finished_at if finished_at is not None else time.monotonic()
+            elapsed = max(0.0, end - started_at)
+
+        return {
+            "enabled": self.config.enable_propagation_node,
+            "start_mode": self.config.propagation_start_mode,
+            "state": state,
+            "ready": state == "ready" or not self.config.enable_propagation_node,
+            "last_error": last_error,
+            "index_duration_seconds": elapsed,
+            "startup_prune": prune_summary,
+        }
+
     # ------------------------------------------------------------------ #
     # private helpers
     # ------------------------------------------------------------------ #
+    def _set_propagation_state(
+        self,
+        state: str,
+        *,
+        error: str | None = None,
+        mark_started: bool = False,
+        mark_finished: bool = False,
+    ) -> None:
+        now = time.monotonic()
+        with self._propagation_state_lock:
+            self._propagation_state = state
+            if error is not None:
+                self._propagation_last_error = error
+            elif state != "error":
+                self._propagation_last_error = None
+            if mark_started:
+                self._propagation_started_monotonic = now
+                self._propagation_finished_monotonic = None
+            if mark_finished:
+                self._propagation_finished_monotonic = now
+            if state == "indexing":
+                self._startup_prune_summary = None
+
+    def _is_propagation_ready(self) -> bool:
+        if not self.config.enable_propagation_node:
+            return False
+        with self._propagation_state_lock:
+            return self._propagation_state == "ready"
+
+    def _message_store_path(self) -> Path | None:
+        storage_path = getattr(self.router, "storagepath", None)
+        if storage_path is None:
+            return None
+        return Path(str(storage_path)) / "messagestore"
+
+    @staticmethod
+    def _parse_store_filename(filename: str) -> float | None:
+        components = filename.split("_")
+        if len(components) < 3:
+            return None
+
+        expected_hash_hex_length = (RNS.Identity.HASHLENGTH // 8) * 2
+        if len(components[0]) != expected_hash_hex_length:
+            return None
+
+        try:
+            received = float(components[1])
+            if received <= 0:
+                return None
+            int(components[2])
+        except (TypeError, ValueError):
+            return None
+
+        return received
+
+    @staticmethod
+    def _remove_startup_files(
+        paths: list[str],
+        *,
+        reason: str,
+    ) -> int:
+        removed = 0
+        for path in paths:
+            try:
+                os.unlink(path)
+                removed += 1
+            except FileNotFoundError:
+                continue
+            except Exception as exc:  # pragma: no cover - defensive logging
+                RNS.log(
+                    f"Failed to remove {reason} startup message file '{path}': {exc}",
+                    RNS.LOG_WARNING,
+                )
+        return removed
+
+    def _prune_message_store_at_startup(self) -> dict[str, int] | None:
+        if not self.config.propagation_startup_prune_enabled:
+            return None
+
+        message_store = self._message_store_path()
+        if message_store is None or not message_store.is_dir():
+            return {
+                "scanned": 0,
+                "kept": 0,
+                "removed_invalid": 0,
+                "removed_expired": 0,
+                "removed_overflow": 0,
+            }
+
+        max_messages = self.config.propagation_startup_max_messages
+        max_age_days = self.config.propagation_startup_max_age_days
+        now = time.time()
+        expiry_seconds = max_age_days * 24 * 60 * 60 if max_age_days else None
+        cutoff = (now - expiry_seconds) if expiry_seconds else None
+
+        scanned = 0
+        valid_entries: list[tuple[float, str]] = []
+        invalid_paths: list[str] = []
+
+        with os.scandir(message_store) as iterator:
+            for entry in iterator:
+                if not entry.is_file():
+                    continue
+                scanned += 1
+                received = self._parse_store_filename(entry.name)
+                if received is None:
+                    invalid_paths.append(entry.path)
+                    continue
+                valid_entries.append((received, entry.path))
+
+        removed_invalid = self._remove_startup_files(
+            invalid_paths,
+            reason="invalid",
+        )
+
+        removed_expired = 0
+        filtered_entries = valid_entries
+        if cutoff is not None:
+            expired_paths = [path for received, path in filtered_entries if received < cutoff]
+            filtered_entries = [
+                (received, path)
+                for received, path in filtered_entries
+                if received >= cutoff
+            ]
+            removed_expired = self._remove_startup_files(
+                expired_paths,
+                reason="expired",
+            )
+
+        removed_overflow = 0
+        if max_messages is not None and len(filtered_entries) > max_messages:
+            filtered_entries.sort(key=lambda item: item[0], reverse=True)
+            overflow_paths = [
+                path for _, path in filtered_entries[max_messages:]
+            ]
+            filtered_entries = filtered_entries[:max_messages]
+            removed_overflow = self._remove_startup_files(
+                overflow_paths,
+                reason="overflow",
+            )
+
+        return {
+            "scanned": scanned,
+            "kept": len(filtered_entries),
+            "removed_invalid": removed_invalid,
+            "removed_expired": removed_expired,
+            "removed_overflow": removed_overflow,
+        }
+
+    def _enable_propagation(self) -> None:
+        self._set_propagation_state("indexing", mark_started=True)
+        startup_prune_started = time.monotonic()
+        startup_prune_summary = self._prune_message_store_at_startup()
+        if startup_prune_summary is not None:
+            self._startup_prune_summary = startup_prune_summary
+            startup_prune_elapsed = time.monotonic() - startup_prune_started
+            RNS.log(
+                "Startup messagestore pruning scanned "
+                f"{startup_prune_summary['scanned']} files, removed "
+                f"{startup_prune_summary['removed_invalid'] + startup_prune_summary['removed_expired'] + startup_prune_summary['removed_overflow']} "
+                f"in {startup_prune_elapsed:.2f}s",
+                RNS.LOG_NOTICE,
+            )
+
+        start = time.monotonic()
+        try:
+            self.router.enable_propagation()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self._set_propagation_state(
+                "error",
+                error=str(exc),
+                mark_finished=True,
+            )
+            RNS.log(
+                f"Failed to enable LXMF propagation node in embedded mode: {exc}",
+                RNS.LOG_ERROR,
+            )
+            return
+
+        elapsed = time.monotonic() - start
+        self._set_propagation_state("ready", mark_finished=True)
+        RNS.log(
+            f"LXMF propagation node ready in {elapsed:.2f}s",
+            RNS.LOG_NOTICE,
+        )
+
+        if self._started and not self._stop_event.is_set():
+            self._announce_propagation()
+            self._last_node_announce = time.monotonic()
+            self._maybe_emit_propagation_update(force=True)
+
     def _start_thread(self, target) -> None:
         thread = threading.Thread(target=target, daemon=True)
         thread.start()
@@ -380,7 +633,7 @@ class EmbeddedLxmd:
         self._announce_delivery()
         self._last_peer_announce = time.monotonic()
 
-        if self.config.enable_propagation_node:
+        if self._is_propagation_ready():
             self._announce_propagation()
             self._last_node_announce = self._last_peer_announce
 
@@ -399,7 +652,7 @@ class EmbeddedLxmd:
                 self._announce_delivery()
                 self._last_peer_announce = now
 
-            if not self.config.enable_propagation_node:
+            if not self._is_propagation_ready():
                 continue
 
             if (

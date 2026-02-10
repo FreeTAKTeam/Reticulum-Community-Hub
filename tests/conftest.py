@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Iterator
+import time
 
 import pytest
 from sqlalchemy import create_engine
@@ -62,9 +63,23 @@ def telemetry_controller(telemetry_db_engine):
 class DummyConfigManager:
     """Provide the minimal configuration structure expected by EmbeddedLxmd."""
 
-    def __init__(self, *, enable_node: bool = True, interval_minutes: int = 1) -> None:
+    def __init__(
+        self,
+        *,
+        enable_node: bool = True,
+        interval_minutes: int = 1,
+        propagation_start_mode: str = "blocking",
+        startup_prune_enabled: bool = False,
+        startup_max_messages: int | None = None,
+        startup_max_age_days: int | None = None,
+    ) -> None:
         lxmf_router = SimpleNamespace(
-            enable_node=enable_node, announce_interval_minutes=interval_minutes
+            enable_node=enable_node,
+            announce_interval_minutes=interval_minutes,
+            propagation_start_mode=propagation_start_mode,
+            propagation_startup_prune_enabled=startup_prune_enabled,
+            propagation_startup_max_messages=startup_max_messages,
+            propagation_startup_max_age_days=startup_max_age_days,
         )
         self.config = SimpleNamespace(lxmf_router=lxmf_router)
 
@@ -77,7 +92,12 @@ class DummyDestination:
 class DummyRouter:
     """Router stub exposing the propagation attributes accessed by EmbeddedLxmd."""
 
-    def __init__(self, stats: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        stats: dict[str, Any] | None = None,
+        *,
+        enable_delay_seconds: float = 0.0,
+    ) -> None:
         self._stats = stats
         self.identity = SimpleNamespace(hash=b"\x33" * 16)
         self.propagation_destination = SimpleNamespace(hash=b"\x44" * 16)
@@ -91,10 +111,13 @@ class DummyRouter:
         self.peers: dict[bytes, Any] = {}
         self.max_peers = 5
         self._enabled = False
+        self.enable_delay_seconds = enable_delay_seconds
         self.announce_calls: list[bytes] = []
         self.announce_propagation_count = 0
 
     def enable_propagation(self) -> None:
+        if self.enable_delay_seconds > 0:
+            time.sleep(self.enable_delay_seconds)
         self._enabled = True
 
     def announce(self, destination_hash: bytes) -> None:
@@ -127,11 +150,21 @@ def embedded_lxmd_factory(telemetry_controller):
         destination_hash: bytes | None = None,
         enable_node: bool = True,
         interval_minutes: int = 1,
+        propagation_start_mode: str = "blocking",
+        startup_prune_enabled: bool = False,
+        startup_max_messages: int | None = None,
+        startup_max_age_days: int | None = None,
+        enable_delay_seconds: float = 0.0,
     ) -> EmbeddedTestHarness:
-        router = DummyRouter(stats)
+        router = DummyRouter(stats, enable_delay_seconds=enable_delay_seconds)
         destination = DummyDestination(destination_hash or b"\x11" * 16)
         config_manager = DummyConfigManager(
-            enable_node=enable_node, interval_minutes=interval_minutes
+            enable_node=enable_node,
+            interval_minutes=interval_minutes,
+            propagation_start_mode=propagation_start_mode,
+            startup_prune_enabled=startup_prune_enabled,
+            startup_max_messages=startup_max_messages,
+            startup_max_age_days=startup_max_age_days,
         )
         embedded = EmbeddedLxmd(
             router,

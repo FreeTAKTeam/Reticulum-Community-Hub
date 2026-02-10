@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -235,3 +236,94 @@ def test_embedded_lxmd_can_restart_after_stop(running_embedded_lxmd):
         assert len(observed) > post_stop_observed >= first_observed
         assert len(harness.router.announce_calls) > first_announces
         assert harness.router.announce_propagation_count > first_propagation_announces
+
+
+def test_embedded_lxmd_background_start_is_non_blocking(
+    embedded_lxmd_factory,
+) -> None:
+    stats = {
+        "destination_hash": b"\xaa" * 16,
+        "identity_hash": b"\xbb" * 16,
+        "uptime": 0.0,
+        "delivery_limit": 128,
+        "propagation_limit": 128,
+        "autopeer_maxdepth": 1,
+        "from_static_only": False,
+        "messagestore": None,
+        "clients": None,
+        "unpeered_propagation_incoming": 0,
+        "unpeered_propagation_rx_bytes": 0,
+        "static_peers": 0,
+        "max_peers": 5,
+        "peers": {},
+        "total_peers": 0,
+    }
+    harness = embedded_lxmd_factory(
+        stats=stats,
+        propagation_start_mode="background",
+        enable_delay_seconds=0.5,
+    )
+    harness.embedded.DEFERRED_JOBS_DELAY = 0
+    harness.embedded.JOBS_INTERVAL_SECONDS = 0.01
+
+    try:
+        started = time.perf_counter()
+        harness.embedded.start()
+        elapsed = time.perf_counter() - started
+        assert elapsed < 0.2
+
+        initial_status = harness.embedded.propagation_startup_status()
+        assert initial_status["enabled"] is True
+        assert initial_status["start_mode"] == "background"
+        assert initial_status["state"] in {"indexing", "ready"}
+
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            status = harness.embedded.propagation_startup_status()
+            if status["ready"]:
+                break
+            time.sleep(0.02)
+
+        status = harness.embedded.propagation_startup_status()
+        assert status["state"] == "ready"
+        assert status["ready"] is True
+        assert status["index_duration_seconds"] is not None
+    finally:
+        harness.embedded.stop()
+
+
+def test_embedded_lxmd_startup_prunes_messagestore(
+    embedded_lxmd_factory,
+    tmp_path,
+) -> None:
+    now = time.time()
+    hash_hex = "a" * ((RNS.Identity.HASHLENGTH // 8) * 2)
+    message_store = tmp_path / "messagestore"
+    message_store.mkdir(parents=True, exist_ok=True)
+
+    (message_store / f"{hash_hex}_{now - 10}_1").write_bytes(b"msg-a")
+    (message_store / f"{hash_hex}_{now - 20}_1").write_bytes(b"msg-b")
+    (message_store / f"{hash_hex}_{now - (40 * 24 * 60 * 60)}_1").write_bytes(b"msg-c")
+    (message_store / "invalid-entry").write_bytes(b"bad")
+
+    harness = embedded_lxmd_factory(
+        propagation_start_mode="blocking",
+        startup_prune_enabled=True,
+        startup_max_messages=1,
+        startup_max_age_days=30,
+    )
+    harness.router.storagepath = str(tmp_path)
+
+    try:
+        harness.embedded.start()
+        status = harness.embedded.propagation_startup_status()
+        prune = status["startup_prune"]
+        assert prune is not None
+        assert prune["scanned"] == 4
+        assert prune["kept"] == 1
+        assert prune["removed_invalid"] == 1
+        assert prune["removed_expired"] == 1
+        assert prune["removed_overflow"] == 1
+        assert len(list(message_store.iterdir())) == 1
+    finally:
+        harness.embedded.stop()

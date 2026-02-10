@@ -131,6 +131,10 @@ listen_port = 4242
 enable_node = yes
 announce_interval = 10
 propagation_transfer_max_accepted_size = 1024
+startup_mode = background
+startup_prune_enabled = no
+# startup_max_messages = 20000
+# startup_max_age_days = 30
 
 [lxmf]
 display_name = RCH_router
@@ -164,6 +168,12 @@ Notes:
   when you run against existing Reticulum/LXMF daemons.
 - File and image storage directories default to `<storage_dir>/files` and
   `<storage_dir>/images` when not set.
+- `startup_mode` controls propagation startup behavior:
+  `blocking` waits for full message-store indexing, `background` starts indexing
+  in a worker thread so the hub/API can become ready sooner.
+- `startup_prune_enabled` allows pre-index cleanup. Optional
+  `startup_max_messages` and `startup_max_age_days` prune old/overflowed files
+  before LXMF begins indexing.
 
 ### Command-line options
 

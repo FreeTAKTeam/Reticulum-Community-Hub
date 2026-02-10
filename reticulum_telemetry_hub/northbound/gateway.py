@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import threading
+import time
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -279,6 +280,16 @@ class GatewayControl:
             status = "running"
         else:
             status = "stopped"
+        propagation = None
+        status_provider = getattr(self.hub, "get_propagation_startup_status", None)
+        if callable(status_provider):
+            try:
+                propagation = status_provider()
+            except Exception as exc:  # pragma: no cover - defensive logging
+                RNS.log(
+                    f"Failed to fetch propagation startup status: {exc}",
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
         return {
             "status": status,
             "pid": os.getpid(),
@@ -286,6 +297,7 @@ class GatewayControl:
             "port": self.port,
             "uptime_seconds": int(uptime.total_seconds()),
             "hub_thread_alive": self.hub_thread.is_alive(),
+            "propagation": propagation,
         }
 
 
@@ -345,12 +357,20 @@ def _start_hub_thread(
 def main() -> None:
     """Start the hub + northbound API gateway."""
 
+    startup_started = time.monotonic()
     args = _parse_args()
+    config_started = time.monotonic()
     config = _build_gateway_config(args)
+    config_elapsed = time.monotonic() - config_started
+    RNS.log(
+        f"Gateway configuration loaded in {config_elapsed:.2f}s",
+        getattr(RNS, "LOG_NOTICE", 3),
+    )
     config_manager = HubConfigurationManager(
         storage_path=config.storage_path,
         config_path=config.config_path,
     )
+    hub_init_started = time.monotonic()
     hub = ReticulumTelemetryHub(
         config.display_name,
         config.storage_path,
@@ -361,6 +381,11 @@ def main() -> None:
         hub_telemetry_interval=config.hub_telemetry_interval,
         service_telemetry_interval=config.service_telemetry_interval,
         config_manager=config_manager,
+    )
+    hub_init_elapsed = time.monotonic() - hub_init_started
+    RNS.log(
+        f"Hub object constructed in {hub_init_elapsed:.2f}s",
+        getattr(RNS, "LOG_NOTICE", 3),
     )
     hub_thread = _start_hub_thread(
         hub,
@@ -375,7 +400,14 @@ def main() -> None:
         port=config.api_port,
         started_at=started_at,
     )
+    app_started = time.monotonic()
     app = build_gateway_app(hub, started_at=started_at, control=control)
+    app_elapsed = time.monotonic() - app_started
+    total_elapsed = time.monotonic() - startup_started
+    RNS.log(
+        f"Gateway app wiring completed in {app_elapsed:.2f}s (total startup {total_elapsed:.2f}s)",
+        getattr(RNS, "LOG_NOTICE", 3),
+    )
     server_config = uvicorn.Config(
         app,
         host=config.api_host,

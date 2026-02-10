@@ -521,11 +521,40 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             propagation_section.get("announce_interval"), 10
         )
         display_name = lxmf_section.get("display_name", "RTH_router")
+        startup_mode_value = propagation_section.get("startup_mode")
+        if startup_mode_value is None:
+            startup_mode_value = propagation_section.get("propagation_start_mode")
+        startup_mode = self._normalize_propagation_start_mode(startup_mode_value)
+
+        startup_prune_enabled_value = propagation_section.get("startup_prune_enabled")
+        if startup_prune_enabled_value is None:
+            startup_prune_enabled_value = propagation_section.get(
+                "propagation_startup_prune_enabled"
+            )
+        startup_prune_enabled = self._get_bool(
+            {"startup_prune_enabled": startup_prune_enabled_value},
+            "startup_prune_enabled",
+            False,
+        )
+
+        startup_max_messages = self._coerce_optional_positive_int(
+            propagation_section.get("startup_max_messages")
+            or propagation_section.get("propagation_startup_max_messages")
+        )
+        startup_max_age_days = self._coerce_optional_positive_int(
+            propagation_section.get("startup_max_age_days")
+            or propagation_section.get("propagation_startup_max_age_days")
+        )
+
         return LXMFRouterConfig(
             path=path,
             enable_node=enable_node,
             announce_interval_minutes=announce_interval,
             display_name=display_name,
+            propagation_start_mode=startup_mode,
+            propagation_startup_prune_enabled=startup_prune_enabled,
+            propagation_startup_max_messages=startup_max_messages,
+            propagation_startup_max_age_days=startup_max_age_days,
         )
 
     @staticmethod
@@ -540,6 +569,21 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             return default
 
     @staticmethod
+    def _coerce_optional_positive_int(value: str | None) -> int | None:
+        """Return a positive integer or ``None`` when unset/invalid."""
+
+        if value is None:
+            return None
+        compact = str(value).strip()
+        if not compact:
+            return None
+        try:
+            parsed = int(compact)
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
     def _coerce_float(value: str | None, default: float) -> float:
         """Return a float from a string value or fallback."""
 
@@ -549,6 +593,13 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             return float(value)
         except ValueError:
             return default
+
+    @staticmethod
+    def _normalize_propagation_start_mode(value: str | None) -> str:
+        """Return a supported propagation startup mode."""
+
+        mode = (value or "background").strip().lower()
+        return mode if mode in {"blocking", "background"} else "background"
 
     @staticmethod
     def _get_bool(section, key: str, default: bool) -> bool:

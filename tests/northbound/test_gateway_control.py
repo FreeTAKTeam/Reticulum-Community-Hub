@@ -20,6 +20,19 @@ class DummyHub:
 
         self.shutdown_called = True
 
+    def get_propagation_startup_status(self) -> dict[str, object]:
+        """Return fixed propagation startup status."""
+
+        return {
+            "enabled": True,
+            "start_mode": "background",
+            "state": "indexing",
+            "ready": False,
+            "last_error": None,
+            "index_duration_seconds": 1.23,
+            "startup_prune": None,
+        }
+
 
 def test_gateway_control_reports_running_status() -> None:
     """Report running status when the hub thread is alive."""
@@ -43,6 +56,7 @@ def test_gateway_control_reports_running_status() -> None:
     payload = control.status()
 
     assert payload["status"] == "running"
+    assert payload["propagation"]["state"] == "indexing"
     stop_event.set()
     hub_thread.join(timeout=1)
 

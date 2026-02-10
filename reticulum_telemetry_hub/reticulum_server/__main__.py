@@ -396,6 +396,7 @@ class ReticulumTelemetryHub:
             outbound_backoff (float): Base number of seconds to wait between retry attempts.
             outbound_max_attempts (int): Number of attempts before an outbound message is dropped.
         """
+        init_started = time.monotonic()
         # Normalize paths early so downstream helpers can rely on Path objects.
         self.storage_path = Path(storage_path)
         self.identity_path = Path(identity_path)
@@ -508,7 +509,13 @@ class ReticulumTelemetryHub:
                 config_manager=self.config_manager,
                 telemetry_controller=self.tel_controller,
             )
+            embedded_started = time.monotonic()
             self.embedded_lxmd.start()
+            embedded_elapsed = time.monotonic() - embedded_started
+            RNS.log(
+                f"Embedded LXMF startup hook returned in {embedded_elapsed:.2f}s",
+                getattr(RNS, "LOG_NOTICE", 3),
+            )
 
         self.api = ReticulumTelemetryHubAPI(
             config_manager=self.config_manager,
@@ -553,6 +560,11 @@ class ReticulumTelemetryHub:
         self._topic_registry_last_refresh: float = 0.0
         self._refresh_topic_registry()
         self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
+        init_elapsed = time.monotonic() - init_started
+        RNS.log(
+            f"Hub initialization completed in {init_elapsed:.2f}s",
+            getattr(RNS, "LOG_NOTICE", 3),
+        )
 
     def command_handler(self, commands: list, message: LXMF.LXMessage) -> list[LXMF.LXMessage]:
         """Handles commands received from the client and returns responses.
@@ -1404,6 +1416,23 @@ class ReticulumTelemetryHub:
         """
 
         return self._send_announce(reason="manual")
+
+    def get_propagation_startup_status(self) -> dict[str, object]:
+        """Return the embedded propagation startup state."""
+
+        embedded = self.embedded_lxmd
+        if embedded is None:
+            return {
+                "enabled": False,
+                "start_mode": "external",
+                "state": "unmanaged",
+                "ready": False,
+                "last_error": None,
+                "index_duration_seconds": None,
+                "startup_prune": None,
+            }
+        status = embedded.propagation_startup_status()
+        return cast(dict[str, object], status)
 
     def _announce_active_markers(self) -> None:
         """Announce non-expired marker objects on schedule."""

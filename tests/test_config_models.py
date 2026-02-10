@@ -29,6 +29,10 @@ def test_lxmf_router_config_to_dict_includes_all_fields(tmp_path):
         enable_node=False,
         announce_interval_minutes=15,
         display_name="Relay",
+        propagation_start_mode="blocking",
+        propagation_startup_prune_enabled=True,
+        propagation_startup_max_messages=5000,
+        propagation_startup_max_age_days=14,
     )
 
     serialized = router_config.to_dict()
@@ -37,6 +41,10 @@ def test_lxmf_router_config_to_dict_includes_all_fields(tmp_path):
     assert serialized["enable_node"] is False
     assert serialized["announce_interval_minutes"] == 15
     assert serialized["display_name"] == "Relay"
+    assert serialized["propagation_start_mode"] == "blocking"
+    assert serialized["propagation_startup_prune_enabled"] is True
+    assert serialized["propagation_startup_max_messages"] == 5000
+    assert serialized["propagation_startup_max_age_days"] == 14
 
 
 def test_safe_get_version_handles_missing_distribution(monkeypatch):
