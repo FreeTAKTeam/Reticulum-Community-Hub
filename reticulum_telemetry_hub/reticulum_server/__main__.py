@@ -904,7 +904,8 @@ class ReticulumTelemetryHub:
                 RNS.log("Telemetry data saved")
 
             if not sender_joined:
-                self._reply_with_app_info(message)
+                self._reply_with_help(message)
+                return
 
             adapter = getattr(self, "internal_adapter", None)
             if adapter is not None and message.signature_validated:
@@ -1854,18 +1855,39 @@ class ReticulumTelemetryHub:
             message (LXMF.LXMessage): Message requiring an informational reply.
         """
 
+        self._reply_with_command_handler(
+            message, "_handle_get_app_info", "app info reply"
+        )
+
+    def _reply_with_help(self, message: LXMF.LXMessage) -> None:
+        """Send a help reply to the given message source.
+
+        Args:
+            message (LXMF.LXMessage): Message requiring a help reply.
+        """
+
+        self._reply_with_command_handler(message, "_handle_help", "help reply")
+
+    def _reply_with_command_handler(
+        self,
+        message: LXMF.LXMessage,
+        handler_name: str,
+        response_label: str,
+    ) -> None:
+        """Reply using a command manager handler when available."""
+
         command_manager = getattr(self, "command_manager", None)
         router = getattr(self, "lxm_router", None)
         if command_manager is None or router is None:
             return
-        handler = getattr(command_manager, "_handle_get_app_info", None)
+        handler = getattr(command_manager, handler_name, None)
         if handler is None:
             return
         try:
             response = handler(message)
         except Exception as exc:  # pragma: no cover - defensive log
             RNS.log(
-                f"Unable to build app info reply: {exc}",
+                f"Unable to build {response_label}: {exc}",
                 getattr(RNS, "LOG_WARNING", 2),
             )
             return
@@ -1873,7 +1895,7 @@ class ReticulumTelemetryHub:
             router.handle_outbound(response)
         except Exception as exc:  # pragma: no cover - defensive log
             RNS.log(
-                f"Unable to send app info reply: {exc}",
+                f"Unable to send {response_label}: {exc}",
                 getattr(RNS, "LOG_WARNING", 2),
             )
 

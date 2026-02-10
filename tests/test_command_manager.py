@@ -1323,7 +1323,7 @@ def test_delivery_callback_skips_telemetry_only_messages():
     assert not router_messages
 
 
-def test_delivery_callback_replies_app_info_when_not_joined():
+def test_delivery_callback_replies_help_and_skips_broadcast_when_not_joined():
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
@@ -1341,7 +1341,12 @@ def test_delivery_callback_replies_app_info_when_not_joined():
     sender = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
-    hub.connections = {}
+    joined_peer = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    hub.connections = {
+        joined_peer.identity.hash: joined_peer,
+    }
     hub.identities = {}
     hub.topic_subscribers = {}
     hub.api = type(
@@ -1358,26 +1363,28 @@ def test_delivery_callback_replies_app_info_when_not_joined():
         {"handle_message": lambda self, message: False},
     )()
 
-    def build_app_info(message):
-        return LXMF.LXMessage(sender, hub.my_lxmf_dest, "app-info")
+    def build_help(message):
+        return LXMF.LXMessage(sender, hub.my_lxmf_dest, "help-text")
 
     hub.command_manager = type(
         "DummyCommands",
         (),
         {
             "handle_commands": lambda self, commands, message: [],
-            "_handle_get_app_info": lambda self, message: build_app_info(message),
+            "_handle_help": lambda self, message: build_help(message),
         },
     )()
-    hub.send_message = lambda *args, **kwargs: None
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
 
     incoming = LXMF.LXMessage(hub.my_lxmf_dest, sender, "hello app")
     incoming.signature_validated = True
 
     hub.delivery_callback(incoming)
     hub.wait_for_outbound_flush()
+    hub.wait_for_outbound_flush()
 
-    assert any(msg.content_as_string() == "app-info" for msg in router_messages)
+    assert len(router_messages) == 1
+    assert router_messages[0].content_as_string() == "help-text"
 
 
 def test_delivery_callback_skips_cot_chat_for_telemetry():
