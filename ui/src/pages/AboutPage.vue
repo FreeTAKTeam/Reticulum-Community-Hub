@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="about-cosmos">
     <div class="about-shell">
       <header class="about-top">
@@ -62,9 +62,6 @@
               <div class="panel-subtitle">Service health and resource references</div>
             </div>
             <div class="panel-tabs">
-              <button class="panel-tab" :class="{ active: resourcesTab === 'docs' }" type="button" @click="resourcesTab = 'docs'">
-                Documentation
-              </button>
               <button class="panel-tab" :class="{ active: resourcesTab === 'help' }" type="button" @click="resourcesTab = 'help'">
                 Help
               </button>
@@ -103,29 +100,31 @@
           </div>
 
           <div class="resource-panel">
-            <div v-if="resourcesTab === 'docs'" class="doc-links">
-              <a class="doc-link" href="/docs/" target="_blank" rel="noreferrer">
-                <span>Project Docs</span>
-                <small>/docs/</small>
-              </a>
-              <a class="doc-link" href="/API/ReticulumCommunityHub-OAS.yaml" target="_blank" rel="noreferrer">
-                <span>OpenAPI Reference</span>
-                <small>/API/ReticulumCommunityHub-OAS.yaml</small>
-              </a>
-            </div>
-
-            <div v-else-if="resourcesTab === 'help'" class="resource-output">
-              <BaseFormattedOutput v-if="helpContent" :value="helpContent" mode="markdown" />
-              <div v-else class="panel-empty">Load help to view command references.</div>
-              <div class="panel-actions">
-                <BaseButton variant="secondary" icon-left="help" @click="loadHelp">Load Help</BaseButton>
-              </div>
+            <div v-if="resourcesTab === 'help'" class="doc-links">
+              <RouterLink
+                v-for="screen in helpScreens"
+                :key="screen.path"
+                class="doc-link"
+                :to="{ path: screen.path, query: { help: '1' } }"
+              >
+                <span>{{ screen.title }}</span>
+                <small>{{ screen.path }} - {{ screen.fileName }}</small>
+              </RouterLink>
             </div>
 
             <div v-else class="resource-output">
-              <BaseFormattedOutput v-if="examplesContent" :value="examplesContent" mode="markdown" />
-              <div v-else class="panel-empty">Load examples to view command references.</div>
+              <div class="resource-section">
+                <div class="resource-section__title">Commands</div>
+                <BaseFormattedOutput v-if="commandsContent" :value="commandsContent" mode="markdown" />
+                <div v-else class="panel-empty">Load commands to view command references.</div>
+              </div>
+              <div class="resource-section">
+                <div class="resource-section__title">Examples</div>
+                <BaseFormattedOutput v-if="examplesContent" :value="examplesContent" mode="markdown" />
+                <div v-else class="panel-empty">Load examples to view command references.</div>
+              </div>
               <div class="panel-actions">
+                <BaseButton variant="secondary" icon-left="help" @click="loadCommands">Load Commands</BaseButton>
                 <BaseButton variant="secondary" icon-left="list" @click="loadExamples">Load Examples</BaseButton>
               </div>
             </div>
@@ -144,12 +143,14 @@ import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
 import { useAppStore } from "../stores/app";
+import { HELP_SCREENS } from "../utils/online-help";
 
 const appStore = useAppStore();
 const { appInfo } = storeToRefs(appStore);
-const helpContent = ref<string | null>(null);
+const commandsContent = ref<string | null>(null);
 const examplesContent = ref<string | null>(null);
-const resourcesTab = ref<"docs" | "help" | "examples">("docs");
+const resourcesTab = ref<"help" | "examples">("help");
+const helpScreens = HELP_SCREENS;
 
 const formatValue = (value: unknown) => {
   if (value === null || value === undefined) {
@@ -212,9 +213,9 @@ const storageRows = computed(() => {
   }));
 });
 
-const loadHelp = async () => {
+const loadCommands = async () => {
   const response = await get<unknown>(endpoints.help);
-  helpContent.value = typeof response === "string" ? response : JSON.stringify(response, null, 2);
+  commandsContent.value = typeof response === "string" ? response : JSON.stringify(response, null, 2);
 };
 
 const loadExamples = async () => {
@@ -595,6 +596,18 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.resource-section {
+  display: grid;
+  gap: 8px;
+}
+
+.resource-section__title {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 11px;
+  color: rgba(201, 248, 255, 0.75);
+}
+
 .panel-actions {
   display: flex;
   justify-content: flex-end;
@@ -631,10 +644,6 @@ onMounted(async () => {
   background: linear-gradient(135deg, rgba(14, 44, 60, 0.85), rgba(6, 14, 22, 0.92));
 }
 
-:deep(.resource-output > div) {
-  max-height: 300px;
-}
-
 @media (max-width: 1120px) {
   .about-grid {
     grid-template-columns: 1fr;
@@ -664,3 +673,4 @@ onMounted(async () => {
   }
 }
 </style>
+

@@ -83,7 +83,7 @@ const mockState = {
       category: "system"
     }
   ],
-  configText: "[core]\napp_name=RTH Core\n",
+  configText: "[core]\napp_name=RCH UI\n",
   reticulumConfigText:
     "[reticulum]\n" +
     "enable_transport = yes\n" +
@@ -502,8 +502,8 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
 
   if (pathname === "/api/v1/app/info") {
     return jsonResponse({
-      name: "RTH Core",
-      version: "0.1.0",
+      name: "RCH UI",
+      version: "1.34.0",
       description: "Mock hub",
       rns_version: "0.9.0",
       lxmf_version: "0.7.0",

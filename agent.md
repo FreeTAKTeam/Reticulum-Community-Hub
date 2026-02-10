@@ -33,6 +33,16 @@
 - **Mark completed tasks in `TASK.md`** immediately after finishing them.
 - Add new sub-tasks or TODOs discovered during development to `TASK.md` under a “Discovered During Work” section.
 - update the pyproject.toml version for every change. Bump the minor version for functional changes and the patch version for non-functional changes.
+- align the version 
+```Python
+return jsonResponse({
+      name: "RTH Core",
+      name: "RCH UI",
+      version: "0.1.0",
+```
+and the version in package-lock.json to the one in  pyproject.toml
+
+- 
 
 ### 📎 Style & Conventions
 

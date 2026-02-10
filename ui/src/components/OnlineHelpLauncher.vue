@@ -31,33 +31,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import { useRouter } from "vue-router";
 import BaseModal from "./BaseModal.vue";
-
-type HelpProfile = {
-  title: string;
-  fileName: string;
-};
-
-const HELP_BY_PATH: Record<string, HelpProfile> = {
-  "/": { title: "Mission Control // Dashboard", fileName: "dashboard.txt" },
-  "/webmap": { title: "Atlas Operations // WebMap", fileName: "webmap.txt" },
-  "/topics": { title: "Signal Matrix // Topics", fileName: "topics.txt" },
-  "/files": { title: "Asset Vault // Files", fileName: "files.txt" },
-  "/chat": { title: "Comms Array // Communications", fileName: "chat.txt" },
-  "/users": { title: "Identity Grid // Users", fileName: "users.txt" },
-  "/configure": { title: "Node Tuning // Configure", fileName: "configure.txt" },
-  "/about": { title: "System Intel // About", fileName: "about.txt" },
-  "/connect": { title: "Link Uplink // Connect", fileName: "connect.txt" }
-};
-
-const FALLBACK_HELP: HelpProfile = {
-  title: "Online Help",
-  fileName: "dashboard.txt"
-};
+import { getHelpProfileForPath, resolveHelpUrl } from "../utils/online-help";
 
 const helpCache = new Map<string, string>();
 
 const route = useRoute();
+const router = useRouter();
 const modalOpen = ref(false);
 const loading = ref(false);
 const loadError = ref("");
@@ -68,7 +49,7 @@ let typewriterTimer: number | null = null;
 let typewriterIndex = 0;
 let requestToken = 0;
 
-const helpProfile = computed(() => HELP_BY_PATH[route.path] ?? FALLBACK_HELP);
+const helpProfile = computed(() => getHelpProfileForPath(route.path));
 
 const stopTypewriter = () => {
   if (typewriterTimer !== null) {
@@ -110,10 +91,40 @@ const runTypewriter = () => {
   tick();
 };
 
-const resolveHelpUrl = (fileName: string) => {
-  const base = import.meta.env.BASE_URL ?? "/";
-  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
-  return `${normalizedBase}help/${fileName}`;
+const isHelpQueryEnabled = (value: unknown): boolean => {
+  if (Array.isArray(value)) {
+    return value.some((entry) => isHelpQueryEnabled(entry));
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value === 1;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "1" || normalized === "true" || normalized === "yes";
+  }
+  return false;
+};
+
+const openHelpFromQueryIfRequested = () => {
+  if (isHelpQueryEnabled(route.query.help) && !modalOpen.value) {
+    modalOpen.value = true;
+  }
+};
+
+const clearHelpQuery = async () => {
+  if (!isHelpQueryEnabled(route.query.help)) {
+    return;
+  }
+  const nextQuery = { ...route.query };
+  delete nextQuery.help;
+  try {
+    await router.replace({ path: route.path, query: nextQuery, hash: route.hash });
+  } catch {
+    // Ignore query cleanup failures; closing the modal should still succeed.
+  }
 };
 
 const loadHelp = async () => {
@@ -164,6 +175,7 @@ watch(modalOpen, (open) => {
     return;
   }
   stopTypewriter();
+  void clearHelpQuery();
 });
 
 watch(helpProfile, () => {
@@ -171,6 +183,14 @@ watch(helpProfile, () => {
     void loadHelp();
   }
 });
+
+watch(
+  () => route.query.help,
+  () => {
+    openHelpFromQueryIfRequested();
+  },
+  { immediate: true }
+);
 
 onBeforeUnmount(() => {
   stopTypewriter();

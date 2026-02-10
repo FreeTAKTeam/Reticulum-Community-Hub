@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
-rem Start the RTH hub + northbound API (FastAPI) + the RTH Core UI (Vite dev server).
+rem Start the RTH hub + northbound API (FastAPI) + the RCH UI (Vite dev server).
 rem Override defaults via env vars:
 rem   VENV_DIR         (default: .venv)
 rem   RTH_STORAGE_DIR  (default: RTH_Store)
