@@ -23,6 +23,7 @@ jobs:
             artifact_name: rch-desktop-macos-dmg
             artifact_glob: electron/dist-release/rch_*_macos_universal.dmg
             csc_identity_auto_discovery: "false"
+            pyinstaller_target_arch: universal2
           - platform: Windows
             os: windows-latest
             dist_arg: --win
@@ -30,6 +31,7 @@ jobs:
             artifact_name: rch-desktop-windows-exe
             artifact_glob: electron/dist-release/rch_*_windows_x64_*.exe
             csc_identity_auto_discovery: ""
+            pyinstaller_target_arch: ""
           - platform: Linux AppImage
             os: ubuntu-latest
             dist_arg: --linux AppImage --x64
@@ -37,6 +39,7 @@ jobs:
             artifact_name: rch-desktop-linux-appimage
             artifact_glob: electron/dist-release/rch_*_linux_x64_appimage.AppImage
             csc_identity_auto_discovery: ""
+            pyinstaller_target_arch: ""
           - platform: Raspberry Pi OS 64-bit
             os: ubuntu-latest
             dist_arg: --linux deb --arm64
@@ -44,6 +47,7 @@ jobs:
             artifact_name: rch-desktop-raspberrypi-arm64-deb
             artifact_glob: electron/dist-release/rch_*_linux_arm64_deb.deb
             csc_identity_auto_discovery: ""
+            pyinstaller_target_arch: ""
 
     steps:
       - name: Checkout
@@ -81,6 +85,7 @@ jobs:
       - name: Build platform artifacts
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
+          RCH_PYINSTALLER_TARGET_ARCH: ${{ matrix.pyinstaller_target_arch }}
         run: |
           cd electron
           npm run dist -- ${{ matrix.dist_arg }}

@@ -12,6 +12,9 @@ const entrypoint = path.join(backendRoot, "rch_entrypoint.py");
 const pythonCmd = process.env.RCH_PYTHON ?? "python";
 const distPath = backendRoot;
 const workPath = path.join(backendRoot, "build");
+const pyinstallerTargetArchitecture = (
+  process.env.RCH_PYINSTALLER_TARGET_ARCH ?? ""
+).trim();
 
 const args = [
   "-m",
@@ -39,6 +42,15 @@ const args = [
   "websockets",
   entrypoint
 ];
+
+if (pyinstallerTargetArchitecture) {
+  args.splice(
+    args.length - 1,
+    0,
+    "--target-architecture",
+    pyinstallerTargetArchitecture
+  );
+}
 
 const result = spawnSync(pythonCmd, args, {
   cwd: repoRoot,

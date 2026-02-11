@@ -3,8 +3,12 @@
   "private": true,
   "version": "1.34.0",
   "description": "Electron shell for Reticulum Community Hub.",
+  "homepage": "https://github.com/FreeTAKTeam/Reticulum-Community-Hub",
   "main": "dist/main.js",
-  "author": "FreeTAKTeam",
+  "author": {
+    "name": "FreeTAKTeam",
+    "email": "support@freetakteam.org"
+  },
   "type": "commonjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -60,14 +64,16 @@
       "artifactName": "RCH_win Portable_${version}.${ext}"
     },
     "mac": {
-      "icon": "buildResources/icon.png"
+      "icon": "buildResources/icon.png",
+      "x64ArchFiles": "**/backend/**"
     },
     "linux": {
       "icon": "buildResources/icon.png",
       "target": [
         "deb"
       ],
-      "category": "Utility"
+      "category": "Utility",
+      "maintainer": "FreeTAKTeam <support@freetakteam.org>"
     }
   }
 }
