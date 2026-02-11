@@ -18,27 +18,31 @@ jobs:
         include:
           - platform: macOS
             os: macos-latest
-            dist_arg: --mac
+            dist_arg: --mac --universal
+            rename_target: macos
             artifact_name: rch-desktop-macos-dmg
-            artifact_glob: electron/dist-release/*.dmg
+            artifact_glob: electron/dist-release/rch_*_macos_universal.dmg
             csc_identity_auto_discovery: "false"
           - platform: Windows
             os: windows-latest
             dist_arg: --win
+            rename_target: windows
             artifact_name: rch-desktop-windows-exe
-            artifact_glob: electron/dist-release/*.exe
+            artifact_glob: electron/dist-release/rch_*_windows_x64_*.exe
             csc_identity_auto_discovery: ""
           - platform: Linux AppImage
             os: ubuntu-latest
             dist_arg: --linux AppImage --x64
+            rename_target: linux-appimage
             artifact_name: rch-desktop-linux-appimage
-            artifact_glob: electron/dist-release/*.AppImage
+            artifact_glob: electron/dist-release/rch_*_linux_x64_appimage.AppImage
             csc_identity_auto_discovery: ""
           - platform: Raspberry Pi OS 64-bit
             os: ubuntu-latest
             dist_arg: --linux deb --arm64
+            rename_target: linux-deb
             artifact_name: rch-desktop-raspberrypi-arm64-deb
-            artifact_glob: electron/dist-release/*.deb
+            artifact_glob: electron/dist-release/rch_*_linux_arm64_deb.deb
             csc_identity_auto_discovery: ""
 
     steps:
@@ -80,6 +84,9 @@ jobs:
         run: |
           cd electron
           npm run dist -- ${{ matrix.dist_arg }}
+
+      - name: Normalize artifact filenames
+        run: node electron/scripts/normalize-artifact-names.mjs ${{ matrix.rename_target }}
 
       - name: Upload workflow artifacts
         if: github.event_name == 'workflow_dispatch'
