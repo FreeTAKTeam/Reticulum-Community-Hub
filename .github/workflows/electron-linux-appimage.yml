@@ -1,0 +1,60 @@
+name: Build Linux AppImage Electron App
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-appimage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install backend build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller
+
+      - name: Install UI dependencies
+        run: npm ci --prefix ui
+
+      - name: Install Electron dependencies
+        run: npm ci --prefix electron
+
+      - name: Build Linux AppImage artifact
+        run: |
+          cd electron
+          npm run dist -- --linux AppImage --x64
+
+      - name: Upload Linux AppImage workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rch-desktop-linux-appimage
+          path: electron/dist-release/*.AppImage
+          if-no-files-found: error
+
+      - name: Attach AppImage to GitHub release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            electron/dist-release/*.AppImage
+          fail_on_unmatched_files: true
