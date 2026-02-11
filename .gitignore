@@ -182,3 +182,4 @@ electron/backend/rch-backend*
 electron/backend/*.spec
 telemetry.db-wal
 telemetry.db-shm
+.DS_Store
