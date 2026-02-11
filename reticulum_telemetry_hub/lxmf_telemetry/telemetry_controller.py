@@ -364,7 +364,7 @@ class TelemetryController:
         last_ingest_at = self._last_ingest_at
         try:
             with self._session_scope() as ses:
-                total = int(ses.query(sa_func.count(Telemeter.id)).scalar() or 0)
+                total = int(ses.query(Telemeter.id).count() or 0)
                 last_ingest_at = ses.query(sa_func.max(Telemeter.time)).scalar()
                 if isinstance(last_ingest_at, str):
                     last_ingest_at = datetime.fromisoformat(last_ingest_at)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import tomllib
+import re
 from pathlib import Path
 
 
@@ -16,8 +16,14 @@ BUILD_SH_PATH = REPO_ROOT / "build-electron.sh"
 
 
 def _read_python_version() -> str:
-    data = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
-    return data["tool"]["poetry"]["version"]
+    pyproject_text = PYPROJECT_PATH.read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^\[tool\.poetry\].*?^version\s*=\s*\"([^\"]+)\"",
+        pyproject_text,
+    )
+    if not match:
+        raise AssertionError("Unable to find [tool.poetry].version in pyproject.toml")
+    return match.group(1)
 
 
 def _read_json(path: Path) -> dict:

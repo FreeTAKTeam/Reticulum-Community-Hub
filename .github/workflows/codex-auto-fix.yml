@@ -62,13 +62,7 @@ jobs:
           # Reasoning control (low | medium | high)
           effort: medium
 
-          # Pass arguments directly to Codex CLI
-          # --max-steps limits runaway reasoning loops
-          codex-args: >
-            -- --max-steps=120
-
           prompt-file: .github/codex/prompts/autofix-ci.md
-          sandbox: workspace-write
 
       - name: Verify ruff
         if: ${{ env.OPENAI_API_KEY != '' }}

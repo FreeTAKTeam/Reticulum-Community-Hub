@@ -11,13 +11,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pylint pytest sqlalchemy pytak RNS LXMF msgpack
+        pip install .
+        pip install pylint
     - name: Analysing the code with pylint
       run: |
         pylint --disable=all --enable=E,F --score=n $(git ls-files '*.py')
