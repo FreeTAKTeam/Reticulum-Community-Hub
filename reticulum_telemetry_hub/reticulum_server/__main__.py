@@ -1906,6 +1906,13 @@ class ReticulumTelemetryHub:
         sender_hex = self._message_source_hex(message)
         if not sender_hex:
             return False
+
+        identities = getattr(self, "identities", {}) or {}
+        if isinstance(identities, dict) and sender_hex.lower() in {
+            str(key).lower() for key in identities
+        }:
+            return True
+
         api = getattr(self, "api", None)
         if api is None:
             return False
