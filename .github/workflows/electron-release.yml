@@ -18,28 +18,24 @@ jobs:
         include:
           - platform: macOS
             os: macos-latest
-            shell: bash
             dist_arg: --mac
             artifact_name: rch-desktop-macos-dmg
             artifact_glob: electron/dist-release/*.dmg
             csc_identity_auto_discovery: "false"
           - platform: Windows
             os: windows-latest
-            shell: powershell
             dist_arg: --win
             artifact_name: rch-desktop-windows-exe
             artifact_glob: electron/dist-release/*.exe
             csc_identity_auto_discovery: ""
           - platform: Linux AppImage
             os: ubuntu-latest
-            shell: bash
             dist_arg: --linux AppImage --x64
             artifact_name: rch-desktop-linux-appimage
             artifact_glob: electron/dist-release/*.AppImage
             csc_identity_auto_discovery: ""
           - platform: Raspberry Pi OS 64-bit
             os: ubuntu-latest
-            shell: bash
             dist_arg: --linux deb --arm64
             artifact_name: rch-desktop-raspberrypi-arm64-deb
             artifact_glob: electron/dist-release/*.deb
@@ -67,22 +63,18 @@ jobs:
           sudo apt-get install -y fakeroot
 
       - name: Install backend build dependencies
-        shell: ${{ matrix.shell }}
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install pyinstaller
 
       - name: Install UI dependencies
-        shell: ${{ matrix.shell }}
         run: npm ci --prefix ui
 
       - name: Install Electron dependencies
-        shell: ${{ matrix.shell }}
         run: npm ci --prefix electron
 
       - name: Build platform artifacts
-        shell: ${{ matrix.shell }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
         run: |
