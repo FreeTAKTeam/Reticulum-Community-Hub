@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from datetime import UTC
+from datetime import timezone
 from typing import Dict
 from typing import Optional
 
@@ -198,7 +198,9 @@ def create_location_sensor(timestamp: Optional[int] = None) -> Location:
     sensor.speed = 0.0
     sensor.bearing = 0.0
     sensor.accuracy = 5.0
-    sensor.last_update = datetime.fromtimestamp(timestamp or 1_700_000_000, UTC)
+    sensor.last_update = datetime.fromtimestamp(
+        timestamp or 1_700_000_000, timezone.utc
+    )
     return sensor
 
 
