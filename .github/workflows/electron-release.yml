@@ -30,6 +30,20 @@ jobs:
             artifact_name: rch-desktop-windows-exe
             artifact_glob: electron/dist-release/*.exe
             csc_identity_auto_discovery: ""
+          - platform: Linux AppImage
+            os: ubuntu-latest
+            shell: bash
+            dist_arg: --linux AppImage --x64
+            artifact_name: rch-desktop-linux-appimage
+            artifact_glob: electron/dist-release/*.AppImage
+            csc_identity_auto_discovery: ""
+          - platform: Raspberry Pi OS 64-bit
+            os: ubuntu-latest
+            shell: bash
+            dist_arg: --linux deb --arm64
+            artifact_name: rch-desktop-raspberrypi-arm64-deb
+            artifact_glob: electron/dist-release/*.deb
+            csc_identity_auto_discovery: ""
 
     steps:
       - name: Checkout
@@ -44,6 +58,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Install Linux packaging dependencies
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot
 
       - name: Install backend build dependencies
         shell: ${{ matrix.shell }}

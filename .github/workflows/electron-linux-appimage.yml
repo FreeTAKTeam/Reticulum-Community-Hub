@@ -2,8 +2,6 @@ name: Build Linux AppImage Electron App
 
 on:
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: write
@@ -50,11 +48,3 @@ jobs:
           name: rch-desktop-linux-appimage
           path: electron/dist-release/*.AppImage
           if-no-files-found: error
-
-      - name: Attach AppImage to GitHub release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            electron/dist-release/*.AppImage
-          fail_on_unmatched_files: true

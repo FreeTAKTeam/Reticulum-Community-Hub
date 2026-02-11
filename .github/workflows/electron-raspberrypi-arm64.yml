@@ -2,8 +2,6 @@ name: Build Raspberry Pi OS 64-bit Electron App
 
 on:
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: write
@@ -55,11 +53,3 @@ jobs:
           name: rch-desktop-raspberrypi-arm64-deb
           path: electron/dist-release/*.deb
           if-no-files-found: error
-
-      - name: Attach Raspberry Pi DEB to GitHub release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            electron/dist-release/*.deb
-          fail_on_unmatched_files: true
