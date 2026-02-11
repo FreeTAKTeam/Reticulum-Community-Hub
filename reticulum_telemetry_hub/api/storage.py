@@ -1,7 +1,6 @@
 """Database storage helpers for the Reticulum Telemetry Hub API."""
 from __future__ import annotations
 
-from collections import Counter
 import logging
 from pathlib import Path
 from typing import List
@@ -9,6 +8,7 @@ from typing import Optional
 import uuid
 
 from sqlalchemy import create_engine
+from sqlalchemy import func
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
@@ -499,8 +499,12 @@ class HubStorage(HubStorageBase):
         """Return basic chat message counters."""
 
         with self._session_scope() as session:
-            rows = session.query(ChatMessageRecord.state).all()
-            return dict(Counter(state for (state,) in rows))
+            rows = (
+                session.query(ChatMessageRecord.state, func.count(ChatMessageRecord.id))
+                .group_by(ChatMessageRecord.state)
+                .all()
+            )
+            return {state: count for state, count in rows}
 
     def _create_engine(self, db_path: Path) -> Engine:
         """Build a SQLite engine configured for concurrency.
