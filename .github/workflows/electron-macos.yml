@@ -48,13 +48,14 @@ jobs:
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rch-desktop-macos
-          path: electron/dist-release/**
+          name: rch-desktop-macos-dmg
+          path: electron/dist-release/*.dmg
+          if-no-files-found: error
 
       - name: Attach artifacts to GitHub release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            electron/dist-release/**/*
+            electron/dist-release/*.dmg
           fail_on_unmatched_files: false
