@@ -58,4 +58,4 @@ jobs:
         with:
           files: |
             electron/dist-release/*.dmg
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
