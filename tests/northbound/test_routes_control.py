@@ -21,6 +21,7 @@ class DummyControl:
     def __init__(self) -> None:
         self.shutdown_called = False
         self.start_called = False
+        self.announce_available = True
 
     def status(self) -> dict[str, object]:
         """Return a fixed status payload."""
@@ -36,6 +37,11 @@ class DummyControl:
         """Record start requests."""
 
         self.start_called = True
+
+    def request_announce(self) -> bool:
+        """Return whether announce is currently available."""
+
+        return self.announce_available
 
 
 class DummyControlNoStart:
@@ -53,6 +59,11 @@ class DummyControlNoStart:
         """Record shutdown requests."""
 
         self.shutdown_called = True
+
+    def request_announce(self) -> bool:
+        """Return announce availability when no start hook exists."""
+
+        return True
 
 
 def _build_app(tmp_path: Path, control) -> TestClient:
@@ -95,6 +106,33 @@ def test_control_start_without_start_hook(tmp_path) -> None:
     response = client.post("/Control/Start", headers={"X-API-Key": "secret"})
     assert response.status_code == 200
     assert response.json()["status"] == "running"
+
+
+def test_control_start_with_start_hook(tmp_path) -> None:
+    """Invoke request_start when the control hook is available."""
+
+    control = DummyControl()
+    client = _build_app(tmp_path, control)
+
+    response = client.post("/Control/Start", headers={"X-API-Key": "secret"})
+
+    assert response.status_code == 200
+    assert control.start_called is True
+
+
+def test_control_announce_routes(tmp_path) -> None:
+    """Return success when announce is available and 503 when unavailable."""
+
+    control = DummyControl()
+    client = _build_app(tmp_path, control)
+
+    success = client.post("/Control/Announce", headers={"X-API-Key": "secret"})
+    assert success.status_code == 200
+    assert success.json()["status"] == "announce sent"
+
+    control.announce_available = False
+    unavailable = client.post("/Control/Announce", headers={"X-API-Key": "secret"})
+    assert unavailable.status_code == 503
 
 
 def test_control_routes_missing_when_disabled(tmp_path) -> None:

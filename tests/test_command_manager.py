@@ -1148,7 +1148,7 @@ def test_delivery_callback_emits_cot_chat_for_valid_message():
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
     sender_hash = sender.identity.hash.hex()
-    hub.connections = {}
+    hub.connections = {sender.identity.hash: sender}
     hub.identities = {sender_hash: "peer-one"}
     hub.topic_subscribers = {}
     hub.api = type("DummyAPI", (), {"list_subscribers": lambda self: []})()

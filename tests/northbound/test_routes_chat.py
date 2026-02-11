@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -15,6 +16,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.northbound.gateway import build_gateway_app
+from reticulum_telemetry_hub.northbound.routes_chat import MAX_ATTACHMENT_BYTES
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 
 
@@ -146,3 +148,162 @@ def test_chat_message_requires_dispatcher(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 503
+
+
+def test_chat_messages_list_applies_filters(tmp_path: Path) -> None:
+    """Ensure list endpoint forwards query filters to storage."""
+
+    client, hub = _build_gateway_client(tmp_path)
+
+    hub.api.record_chat_message(
+        ChatMessage(
+            direction="inbound",
+            scope="topic",
+            state="delivered",
+            content="hello-topic",
+            source="src-a",
+            destination="dst-a",
+            topic_id="topic-a",
+        )
+    )
+    hub.api.record_chat_message(
+        ChatMessage(
+            direction="outbound",
+            scope="broadcast",
+            state="sent",
+            content="hello-other",
+            destination="dst-b",
+            topic_id="topic-b",
+        )
+    )
+
+    response = client.get(
+        "/Chat/Messages",
+        params={
+            "limit": 1,
+            "direction": "inbound",
+            "topic_id": "topic-a",
+            "destination": "dst-a",
+            "source": "src-a",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["Content"] == "hello-topic"
+    assert payload[0]["Direction"] == "inbound"
+    assert payload[0]["TopicID"] == "topic-a"
+
+
+def test_chat_message_returns_404_for_missing_attachment(tmp_path: Path) -> None:
+    """Ensure send endpoint maps missing attachments to HTTP 404."""
+
+    client, _hub = _build_gateway_client(tmp_path)
+
+    response = client.post(
+        "/Chat/Message",
+        json={"content": "hello", "scope": "broadcast", "file_ids": [99999]},
+    )
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_upload_attachment_validates_category(tmp_path: Path) -> None:
+    """Ensure invalid attachment categories are rejected."""
+
+    client, _hub = _build_gateway_client(tmp_path)
+
+    response = client.post(
+        "/Chat/Attachment",
+        data={"category": "binary"},
+        files={"file": ("sample.bin", b"abc", "application/octet-stream")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Attachment category must be file or image"
+
+
+def test_upload_attachment_rejects_empty_payload(tmp_path: Path) -> None:
+    """Ensure empty uploads are rejected."""
+
+    client, _hub = _build_gateway_client(tmp_path)
+
+    response = client.post(
+        "/Chat/Attachment",
+        data={"category": "file"},
+        files={"file": ("empty.txt", b"", "text/plain")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Attachment content is empty"
+
+
+def test_upload_attachment_rejects_oversized_payload(tmp_path: Path) -> None:
+    """Ensure uploads above the configured size limit are rejected."""
+
+    client, _hub = _build_gateway_client(tmp_path)
+    too_large = b"x" * (MAX_ATTACHMENT_BYTES + 1)
+
+    response = client.post(
+        "/Chat/Attachment",
+        data={"category": "file"},
+        files={"file": ("large.bin", too_large, "application/octet-stream")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Attachment exceeds size limit"
+
+
+def test_upload_attachment_rejects_non_image_content_type(tmp_path: Path) -> None:
+    """Ensure image uploads require an image media type."""
+
+    client, _hub = _build_gateway_client(tmp_path)
+
+    response = client.post(
+        "/Chat/Attachment",
+        data={"category": "image"},
+        files={"file": ("not-image.txt", b"abc", "text/plain")},
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"] == "Image attachments must use an image content type"
+    )
+
+
+def test_upload_attachment_rejects_hash_mismatch(tmp_path: Path) -> None:
+    """Ensure provided SHA-256 checksums must match content."""
+
+    client, _hub = _build_gateway_client(tmp_path)
+
+    response = client.post(
+        "/Chat/Attachment",
+        data={"category": "file", "sha256": "0" * 64},
+        files={"file": ("data.txt", b"abc", "text/plain")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Attachment hash mismatch"
+
+
+def test_upload_attachment_success_with_hash_and_topic(tmp_path: Path) -> None:
+    """Ensure valid uploads persist and return attachment metadata."""
+
+    client, _hub = _build_gateway_client(tmp_path)
+    content = b"payload-123"
+    digest = hashlib.sha256(content).hexdigest()
+
+    response = client.post(
+        "/Chat/Attachment",
+        data={"category": "file", "sha256": digest, "topic_id": "topic-a"},
+        files={"file": ("payload.bin", content, "application/octet-stream")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["Category"] == "file"
+    assert payload["TopicID"] == "topic-a"
+    assert payload["Size"] == len(content)
+    assert isinstance(payload["FileID"], int)

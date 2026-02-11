@@ -7,6 +7,7 @@ from typing import Tuple
 from fastapi.testclient import TestClient
 
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.api.models import FileAttachment
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
@@ -138,3 +139,38 @@ def test_file_routes_delete_missing_entries_return_404(tmp_path: Path) -> None:
 
     assert client.delete("/File/999").status_code == 404
     assert client.delete("/Image/999").status_code == 404
+
+
+def test_file_routes_delete_rejects_outside_storage_paths(tmp_path: Path) -> None:
+    """Ensure delete routes return 400 for files outside configured storage."""
+
+    client, api = _build_client(tmp_path)
+    rogue_file = tmp_path / "outside-file.bin"
+    rogue_file.write_bytes(b"payload")
+    rogue_image = tmp_path / "outside-image.bin"
+    rogue_image.write_bytes(b"payload")
+
+    file_record = api._storage.create_file_record(  # pylint: disable=protected-access
+        FileAttachment(
+            name="outside-file.bin",
+            path=str(rogue_file),
+            category="file",
+            size=rogue_file.stat().st_size,
+            media_type="application/octet-stream",
+        )
+    )
+    image_record = api._storage.create_file_record(  # pylint: disable=protected-access
+        FileAttachment(
+            name="outside-image.bin",
+            path=str(rogue_image),
+            category="image",
+            size=rogue_image.stat().st_size,
+            media_type="image/png",
+        )
+    )
+
+    file_response = client.delete(f"/File/{file_record.file_id}")
+    image_response = client.delete(f"/Image/{image_record.file_id}")
+
+    assert file_response.status_code == 400
+    assert image_response.status_code == 400

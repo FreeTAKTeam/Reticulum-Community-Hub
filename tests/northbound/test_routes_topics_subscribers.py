@@ -104,6 +104,43 @@ def test_topic_patch_requires_id(tmp_path: Path) -> None:
     assert response.status_code == 400
 
 
+def test_topic_routes_error_paths(tmp_path: Path) -> None:
+    """Cover topic route 400/404 branches."""
+
+    client, _api = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    create_invalid = client.post(
+        "/Topic",
+        json={"TopicName": "", "TopicPath": ""},
+        headers=headers,
+    )
+    assert create_invalid.status_code == 400
+
+    delete_missing = client.delete("/Topic", params={"id": "missing"}, headers=headers)
+    assert delete_missing.status_code == 404
+
+    patch_missing = client.patch(
+        "/Topic",
+        json={"TopicID": "missing", "TopicDescription": "x"},
+        headers=headers,
+    )
+    assert patch_missing.status_code == 404
+
+    subscribe_missing_topic = client.post(
+        "/Topic/Subscribe",
+        json={"TopicID": "missing", "Destination": "dest-404"},
+    )
+    assert subscribe_missing_topic.status_code == 404
+
+    associate_missing_with_auth = client.post(
+        "/Topic/Associate",
+        json={},
+        headers=headers,
+    )
+    assert associate_missing_with_auth.status_code == 400
+
+
 def test_subscriber_crud_flow(tmp_path: Path) -> None:
     client, api = _build_client(tmp_path)
     headers = {"X-API-Key": "secret"}
@@ -158,3 +195,28 @@ def test_subscriber_crud_flow(tmp_path: Path) -> None:
         headers=headers,
     )
     assert delete_missing.status_code == 404
+
+
+def test_subscriber_routes_error_paths(tmp_path: Path) -> None:
+    """Cover subscriber route validation and not-found branches."""
+
+    client, api = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    topic = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
+
+    missing_retrieve = client.get("/Subscriber/missing", headers=headers)
+    assert missing_retrieve.status_code == 404
+
+    add_invalid = client.post(
+        "/Subscriber/Add",
+        json={"Destination": "", "TopicID": topic.topic_id},
+        headers=headers,
+    )
+    assert add_invalid.status_code == 400
+
+    create_invalid = client.post(
+        "/Subscriber",
+        json={"Destination": "", "TopicID": topic.topic_id},
+        headers=headers,
+    )
+    assert create_invalid.status_code == 400
