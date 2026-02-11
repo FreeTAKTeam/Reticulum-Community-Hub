@@ -2,9 +2,11 @@ name: Build Windows Electron App
 
 on:
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -36,15 +38,25 @@ jobs:
         run: npm ci --prefix ui
 
       - name: Install Electron dependencies
-        run: npm install --prefix electron
+        run: npm ci --prefix electron
 
       - name: Build Windows installer + portable exe
         run: |
           cd electron
           npm run dist -- --win
 
-      - name: Upload Windows artifacts
+      - name: Upload Windows workflow artifacts
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: rch-desktop-windows
-          path: electron/dist-release/**
+          name: rch-desktop-windows-exe
+          path: electron/dist-release/*.exe
+          if-no-files-found: error
+
+      - name: Attach EXE files to GitHub release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            electron/dist-release/*.exe
+          fail_on_unmatched_files: true
