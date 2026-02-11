@@ -23,7 +23,7 @@ jobs:
             artifact_name: rch-desktop-macos-dmg
             artifact_glob: electron/dist-release/rch_*_macos_universal.dmg
             csc_identity_auto_discovery: "false"
-            pyinstaller_target_arch: universal2
+            pyinstaller_target_arch: ""
           - platform: Windows
             os: windows-latest
             dist_arg: --win
