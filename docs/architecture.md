@@ -30,6 +30,45 @@ transport-agnostic integrations.
 - **Northbound API**: REST endpoints map to the same command and storage paths,
   while WebSocket streams read from the event log and telemetry broadcaster.
 
+## DR-2 Structured SITREP Generation and Parsing
+
+RCH supports structured SITREP objects with:
+
+- `priority`
+- `coordinates_ref` (reference to telemetry objects, not raw coordinates)
+- `notes`
+- `timestamp`
+- `origin_identity`
+
+### SITREP datapack standard
+
+For compact wire representation, SITREP packets use canonical datapack keys:
+
+- `v`: schema version
+- `p`: priority
+- `r`: coordinates reference (`telemeter_id` + `sensor_id` + sample time)
+- `n`: notes
+- `t`: timestamp
+- `o`: origin identity
+
+### Secure Reticulum transport
+
+- SITREP datapacks are wrapped in a Reticulum envelope for transport.
+- When destination identity material is available, payload is encrypted before
+  transmit.
+- Imported encrypted payloads are decrypted, then parsed back into structured
+  SITREP objects.
+
+### Parsing and persistence/logging
+
+- Parsed SITREPs are reconstructed as first-class domain objects.
+- Each successful import writes a `MissionChange` record
+  (`change_type = SITREP_IMPORTED`) linked to the SITREP identity.
+- `Mission` and `Task` remain first-class planning concepts; SITREPs can be
+  associated to mission/task context and reflected in mission change history.
+- A `LogEntry` is also written for auditability and traceability of parsing,
+  validation, and persistence outcomes.
+
 ## Reference documents
 
 - `docs/internal-api.md` (normative internal API contract)
@@ -43,3 +82,5 @@ transport-agnostic integrations.
 - `docs/ui-design.md` (UI design spec)
 - `docs/ui-wireframe.md` (UI wireframes)
 - `ui/README.md` (UI dev/build steps)
+- `docs/dataArchitecture.md` (domain class diagram including DR-2 SITREP model)
+- `docs/architecture/R3AKT_Domain_Class_Diagram.mmd` (standalone Mermaid source)

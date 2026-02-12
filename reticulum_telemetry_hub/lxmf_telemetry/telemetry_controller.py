@@ -56,12 +56,13 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TIME,
 )
 from sqlalchemy import create_engine
-from sqlalchemy import func as sa_func
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, joinedload, sessionmaker
 from sqlalchemy.pool import QueuePool
+from sqlalchemy.sql.functions import count as sa_count
+from sqlalchemy.sql.functions import max as sa_max
 
 
 class TelemetryController:
@@ -364,8 +365,8 @@ class TelemetryController:
         last_ingest_at = self._last_ingest_at
         try:
             with self._session_scope() as ses:
-                total = int(ses.query(sa_func.count(Telemeter.id)).scalar() or 0)
-                last_ingest_at = ses.query(sa_func.max(Telemeter.time)).scalar()
+                total = int(ses.query(sa_count(Telemeter.id)).scalar() or 0)
+                last_ingest_at = ses.query(sa_max(Telemeter.time)).scalar()
                 if isinstance(last_ingest_at, str):
                     last_ingest_at = datetime.fromisoformat(last_ingest_at)
         except Exception:  # pragma: no cover - defensive fallback
