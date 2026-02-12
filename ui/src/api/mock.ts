@@ -74,6 +74,19 @@ const mockState = {
       notes: "Initial mock marker"
     }
   ],
+  zones: [
+    {
+      zone_id: "zone-1",
+      name: "Ops Corridor",
+      points: [
+        { lat: 37.78, lon: -122.45 },
+        { lat: 37.81, lon: -122.43 },
+        { lat: 37.79, lon: -122.4 }
+      ],
+      created_at: nowIso(),
+      updated_at: nowIso()
+    }
+  ],
   events: [
     {
       id: "evt-1",
@@ -126,6 +139,7 @@ let subscriberCounter = 2;
 let chatMessageCounter = 2;
 let attachmentCounter = 3;
 let markerCounter = 2;
+let zoneCounter = 2;
 
 const jsonResponse = (payload: unknown, status = 200) =>
   new Response(JSON.stringify(payload), {
@@ -460,6 +474,66 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
         201
       );
     }
+  }
+
+  if (pathname === "/api/zones") {
+    if (method === "GET") {
+      return jsonResponse(mockState.zones);
+    }
+    if (method === "POST") {
+      const body = (await parseBody(options.body)) as any;
+      const now = nowIso();
+      const zone = {
+        zone_id: `zone-${zoneCounter++}`,
+        name: typeof body?.name === "string" ? body.name.trim() : "",
+        points: Array.isArray(body?.points) ? body.points : [],
+        created_at: now,
+        updated_at: now
+      };
+      if (!zone.name) {
+        return jsonResponse({ detail: "Zone name is required" }, 400);
+      }
+      if (zone.points.length < 3) {
+        return jsonResponse({ detail: "Zone must contain at least 3 points" }, 400);
+      }
+      mockState.zones.push(zone);
+      return jsonResponse({ zone_id: zone.zone_id, created_at: zone.created_at }, 201);
+    }
+  }
+
+  const zoneMatch = pathname.match(/^\/api\/zones\/(.+?)$/);
+  if (zoneMatch && method === "PATCH") {
+    const zoneId = zoneMatch[1];
+    const body = (await parseBody(options.body)) as any;
+    const target = mockState.zones.find((entry) => entry.zone_id === zoneId);
+    if (!target) {
+      return jsonResponse({ detail: "Zone not found" }, 404);
+    }
+    if (typeof body?.name === "string") {
+      const nextName = body.name.trim();
+      if (!nextName) {
+        return jsonResponse({ detail: "Zone name is required" }, 400);
+      }
+      target.name = nextName;
+    }
+    if (Array.isArray(body?.points)) {
+      if (body.points.length < 3) {
+        return jsonResponse({ detail: "Zone must contain at least 3 points" }, 400);
+      }
+      target.points = body.points;
+    }
+    target.updated_at = nowIso();
+    return jsonResponse({ status: "ok", updated_at: target.updated_at });
+  }
+
+  if (zoneMatch && method === "DELETE") {
+    const zoneId = zoneMatch[1];
+    const index = mockState.zones.findIndex((entry) => entry.zone_id === zoneId);
+    if (index < 0) {
+      return jsonResponse({ detail: "Zone not found" }, 404);
+    }
+    const [removed] = mockState.zones.splice(index, 1);
+    return jsonResponse({ status: "ok", deleted_at: removed.updated_at ?? nowIso() });
   }
 
   if (pathname === "/api/markers/symbols") {

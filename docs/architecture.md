@@ -69,6 +69,27 @@ For compact wire representation, SITREP packets use canonical datapack keys:
 - A `LogEntry` is also written for auditability and traceability of parsing,
   validation, and persistence outcomes.
 
+## DR-8 Asset and Resource Registry
+
+R3AKT supports structured registry management for:
+
+- Assets
+- Mission task assignments
+- Client/team-member profiles
+- Skills
+- Team member and skill mappings
+
+### Domain model coverage
+
+- `Asset` tracks resource identity, type, lifecycle status, location, and notes.
+- `MissionTaskAssignment` links `Mission`, `checklistTask`, and `TeamMember`
+  (with optional asset usage and assignment metadata).
+- `ClientProfile` provides structured profile metadata for each `TeamMember`.
+- `Skill` defines a reusable skill catalog.
+- `TeamMemberSkill` models the many-to-many mapping between team members and
+  skills, including validation metadata.
+- `TaskSkillRequirement` captures minimum skill requirements per task.
+
 ## Reference documents
 
 - `docs/internal-api.md` (normative internal API contract)

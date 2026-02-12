@@ -200,6 +200,7 @@ import { useTopicsStore } from "../stores/topics";
 import { useUsersStore } from "../stores/users";
 import { useAppStore } from "../stores/app";
 import { resolveIdentityLabel } from "../utils/identity";
+import { isPresenceOnline } from "../utils/presence";
 
 const chatStore = useChatStore();
 const usersStore = useUsersStore();
@@ -228,14 +229,38 @@ const scopeOptions = [
   { value: "broadcast", label: "Broadcast" }
 ];
 
+const identityPresenceById = computed(() => {
+  const map = new Map<string, { status?: string; lastSeen?: string }>();
+  usersStore.identities.forEach((identity) => {
+    if (!identity.id) {
+      return;
+    }
+    const value = {
+      status: identity.status,
+      lastSeen: identity.last_seen
+    };
+    map.set(identity.id, value);
+    map.set(identity.id.toLowerCase(), value);
+  });
+  return map;
+});
+
 const peers = computed(() => {
   const entries = usersStore.clients
     .filter((client) => client.id)
-    .map((client) => ({
-      id: client.id as string,
-      label: resolveIdentityLabel(client.display_name, client.id),
-      online: true
-    }));
+    .map((client) => {
+      const clientId = client.id as string;
+      const identityPresence =
+        identityPresenceById.value.get(clientId) ?? identityPresenceById.value.get(clientId.toLowerCase());
+      return {
+        id: clientId,
+        label: resolveIdentityLabel(client.display_name, clientId),
+        online: isPresenceOnline({
+          status: identityPresence?.status,
+          lastSeenAt: client.last_seen_at ?? identityPresence?.lastSeen
+        })
+      };
+    });
   entries.sort((a, b) => a.label.localeCompare(b.label));
   return entries;
 });
@@ -809,11 +834,13 @@ watch(activeScope, () => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: rgba(124, 145, 165, 0.8);
-  box-shadow: 0 0 8px rgba(124, 145, 165, 0.5);
+  border: 1px solid rgba(89, 106, 123, 0.55);
+  background: rgba(7, 15, 24, 0.95);
+  box-shadow: inset 0 0 3px rgba(1, 4, 8, 0.85), 0 0 6px rgba(18, 27, 38, 0.75);
 }
 
 .presence-dot.online {
+  border-color: rgba(109, 255, 223, 0.92);
   background: #6dffdf;
   box-shadow: 0 0 10px rgba(109, 255, 223, 0.65);
 }

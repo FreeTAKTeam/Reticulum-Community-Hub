@@ -20,9 +20,13 @@ from reticulum_telemetry_hub.api.models import Marker
 from reticulum_telemetry_hub.api.models import ReticulumInfo
 from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.api.models import Topic
+from reticulum_telemetry_hub.api.models import Zone
+from reticulum_telemetry_hub.api.models import ZonePoint
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.marker_service import MarkerUpdateResult
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.api.zone_service import ZoneService
+from reticulum_telemetry_hub.api.zone_service import ZoneUpdateResult
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
@@ -101,6 +105,7 @@ class NorthboundServices:
     ] = None
     marker_service: MarkerService | None = None
     marker_dispatcher: Optional[Callable[[Marker, str], bool]] = None
+    zone_service: ZoneService | None = None
     origin_rch: str = ""
 
     def help_text(self) -> str:
@@ -313,6 +318,36 @@ class NorthboundServices:
         if result.changed:
             self._record_marker_event("marker.updated", result.marker)
         return result
+
+    def list_zones(self) -> list[Zone]:
+        """Return stored operational zones."""
+
+        service = self._require_zone_service()
+        return service.list_zones()
+
+    def create_zone(self, *, name: str, points: list[ZonePoint]) -> Zone:
+        """Create and persist a zone."""
+
+        service = self._require_zone_service()
+        return service.create_zone(name=name, points=points)
+
+    def update_zone(
+        self,
+        zone_id: str,
+        *,
+        name: str | None = None,
+        points: list[ZonePoint] | None = None,
+    ) -> ZoneUpdateResult:
+        """Update zone metadata and/or geometry."""
+
+        service = self._require_zone_service()
+        return service.update_zone(zone_id, name=name, points=points)
+
+    def delete_zone(self, zone_id: str) -> Zone:
+        """Delete a zone."""
+
+        service = self._require_zone_service()
+        return service.delete_zone(zone_id)
 
     def list_chat_messages(
         self,
@@ -587,3 +622,10 @@ class NorthboundServices:
         if self.marker_service is None:
             raise RuntimeError("Marker service is not configured")
         return self.marker_service
+
+    def _require_zone_service(self) -> ZoneService:
+        """Return the zone service or raise when missing."""
+
+        if self.zone_service is None:
+            raise RuntimeError("Zone service is not configured")
+        return self.zone_service

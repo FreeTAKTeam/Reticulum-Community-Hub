@@ -1379,6 +1379,34 @@ class ReticulumTelemetryHub:
             "encoded_size_bytes": state.encoded_size_bytes,
         }
 
+    def _announce_propagation_aspect(self, *, reason: str = "") -> None:
+        """Announce the propagation destination when the node is active.
+
+        Args:
+            reason (str): Optional log label for diagnostics.
+        """
+
+        router = getattr(self, "lxm_router", None)
+        if router is None:
+            return
+        if not bool(getattr(router, "propagation_node", False)):
+            return
+
+        try:
+            self._invoke_router_hook("announce_propagation_node")
+            message = "LXMF propagation announced"
+            if reason:
+                message = f"{message} ({reason})"
+            RNS.log(
+                message,
+                getattr(RNS, "LOG_DEBUG", self.loglevel),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            RNS.log(
+                f"Propagation announce failed: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+
     def _send_announce(
         self, *, recompute_capabilities: bool = True, reason: str = "manual"
     ) -> bool:
@@ -1416,6 +1444,7 @@ class ReticulumTelemetryHub:
                 message,
                 getattr(RNS, "LOG_DEBUG", self.loglevel),
             )
+            self._announce_propagation_aspect(reason=reason)
             self._announce_active_markers()
             return True
         except Exception as exc:  # pragma: no cover - defensive

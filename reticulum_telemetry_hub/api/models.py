@@ -272,6 +272,41 @@ class Marker:
 
 
 @dataclass
+class ZonePoint:
+    """A single zone polygon point."""
+
+    lat: float
+    lon: float
+
+    def to_dict(self) -> dict:
+        """Serialize the point for API responses."""
+
+        return {"lat": self.lat, "lon": self.lon}
+
+
+@dataclass
+class Zone:
+    """Logical zone state stored by the hub."""
+
+    zone_id: str
+    name: str
+    points: List[ZonePoint] = field(default_factory=list)
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+
+    def to_dict(self) -> dict:
+        """Serialize zone state for API responses."""
+
+        return {
+            "zone_id": self.zone_id,
+            "name": self.name,
+            "points": [point.to_dict() for point in self.points],
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+
+@dataclass
 class ChatAttachment:
     """Attachment metadata associated with a chat message."""
 

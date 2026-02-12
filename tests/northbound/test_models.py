@@ -7,6 +7,8 @@ from reticulum_telemetry_hub.northbound.models import ChatSendPayload
 from reticulum_telemetry_hub.northbound.models import MarkerCreatePayload
 from reticulum_telemetry_hub.northbound.models import MarkerPositionPayload
 from reticulum_telemetry_hub.northbound.models import MessagePayload
+from reticulum_telemetry_hub.northbound.models import ZoneCreatePayload
+from reticulum_telemetry_hub.northbound.models import ZoneUpdatePayload
 
 
 def test_message_payload_accepts_pascal_case_keys() -> None:
@@ -124,3 +126,59 @@ def test_marker_position_payload_bounds() -> None:
 
     with pytest.raises(ValidationError):
         MarkerPositionPayload.model_validate({"lat": -95.0, "lon": 0.0})
+
+
+def test_zone_create_payload_accepts_valid_polygon() -> None:
+    """Ensure zone create payload validates a valid polygon."""
+
+    payload = ZoneCreatePayload.model_validate(
+        {
+            "name": "Alpha Zone",
+            "points": [
+                {"lat": 1.0, "lon": 2.0},
+                {"lat": 1.1, "lon": 2.0},
+                {"lat": 1.1, "lon": 2.1},
+            ],
+        }
+    )
+
+    assert payload.name == "Alpha Zone"
+    assert len(payload.points) == 3
+
+
+def test_zone_create_payload_rejects_short_polygons() -> None:
+    """Ensure zone create payload requires at least 3 points."""
+
+    with pytest.raises(ValidationError):
+        ZoneCreatePayload.model_validate(
+            {
+                "name": "Alpha Zone",
+                "points": [
+                    {"lat": 1.0, "lon": 2.0},
+                    {"lat": 1.1, "lon": 2.0},
+                ],
+            }
+        )
+
+
+def test_zone_create_payload_rejects_blank_name() -> None:
+    """Ensure zone create payload rejects blank names."""
+
+    with pytest.raises(ValidationError):
+        ZoneCreatePayload.model_validate(
+            {
+                "name": "   ",
+                "points": [
+                    {"lat": 1.0, "lon": 2.0},
+                    {"lat": 1.1, "lon": 2.0},
+                    {"lat": 1.1, "lon": 2.1},
+                ],
+            }
+        )
+
+
+def test_zone_update_payload_requires_fields() -> None:
+    """Ensure zone update payload requires at least one update field."""
+
+    with pytest.raises(ValidationError):
+        ZoneUpdatePayload.model_validate({})

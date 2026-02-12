@@ -239,6 +239,112 @@ paths:
                 required:
                   - status
                   - updated_at
+  /api/zones:
+    get:
+      x-scope: protected
+      tags:
+       - Zone
+      summary: List stored operational zones.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Stored zone records.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Zone'
+    post:
+      x-scope: protected
+      tags:
+       - Zone
+      summary: Create a new operational zone.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ZoneCreateRequest'
+      responses:
+        '201':
+          description: Zone creation response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZoneCreateResponse'
+  /api/zones/{zone_id}:
+    patch:
+      x-scope: protected
+      tags:
+       - Zone
+      summary: Update zone metadata and/or polygon points.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: zone_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ZoneUpdateRequest'
+      responses:
+        '200':
+          description: Zone update acknowledgement.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  updated_at:
+                    type: string
+                    format: date-time
+                required:
+                  - status
+                  - updated_at
+    delete:
+      x-scope: protected
+      tags:
+       - Zone
+      summary: Delete an operational zone.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: zone_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Zone delete acknowledgement.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  deleted_at:
+                    type: string
+                    format: date-time
+                required:
+                  - status
+                  - deleted_at
   /telemetry/stream:
     get:
       x-scope: public
@@ -1228,6 +1334,87 @@ components:
         required:
           - lat
           - lon
+      ZonePoint:
+        type: object
+        description: A polygon coordinate pair.
+        properties:
+          lat:
+            type: number
+            format: float
+          lon:
+            type: number
+            format: float
+        required:
+          - lat
+          - lon
+      Zone:
+        type: object
+        description: Operator-defined operational zone.
+        properties:
+          zone_id:
+            type: string
+            description: Unique zone identifier.
+          name:
+            type: string
+            description: Zone display name.
+          points:
+            type: array
+            description: Ordered polygon points.
+            items:
+              $ref: '#/components/schemas/ZonePoint'
+          created_at:
+            type: string
+            format: date-time
+          updated_at:
+            type: string
+            format: date-time
+        required:
+          - zone_id
+          - name
+          - points
+          - created_at
+          - updated_at
+      ZoneCreateRequest:
+        type: object
+        description: Zone creation payload.
+        properties:
+          name:
+            type: string
+            maxLength: 96
+          points:
+            type: array
+            minItems: 3
+            maxItems: 200
+            items:
+              $ref: '#/components/schemas/ZonePoint'
+        required:
+          - name
+          - points
+      ZoneUpdateRequest:
+        type: object
+        description: Zone update payload.
+        properties:
+          name:
+            type: string
+            maxLength: 96
+          points:
+            type: array
+            minItems: 3
+            maxItems: 200
+            items:
+              $ref: '#/components/schemas/ZonePoint'
+      ZoneCreateResponse:
+        type: object
+        description: Zone creation response.
+        properties:
+          zone_id:
+            type: string
+          created_at:
+            type: string
+            format: date-time
+        required:
+          - zone_id
+          - created_at
       Client:
         type: object
         description: Connected client state and metadata.

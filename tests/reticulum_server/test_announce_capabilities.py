@@ -155,6 +155,27 @@ def test_send_announce_includes_capabilities(tmp_path):
         hub.shutdown()
 
 
+def test_send_announce_emits_propagation_aspect_when_enabled(tmp_path):
+    hub = ReticulumTelemetryHub("Announcer", str(tmp_path), tmp_path / "identity")
+    propagation_calls: list[bool] = []
+
+    def _announce(*_args, **_kwargs):
+        return True
+
+    def _announce_propagation_node(*_args, **_kwargs):
+        propagation_calls.append(True)
+
+    hub.my_lxmf_dest.announce = _announce
+    hub.lxm_router.propagation_node = True
+    hub.lxm_router.announce_propagation_node = _announce_propagation_node
+
+    try:
+        assert hub.send_announce() is True
+        assert len(propagation_calls) == 1
+    finally:
+        hub.shutdown()
+
+
 def test_reannounce_on_capability_change(tmp_path):
     hub = ReticulumTelemetryHub("Announcer", str(tmp_path), tmp_path / "identity")
     captured: list[bytes | None] = []

@@ -298,3 +298,54 @@ class MarkerUpdatePayload(BaseModel):
     """Payload for marker metadata updates."""
 
     name: str = Field(min_length=1, max_length=96)
+
+
+class ZonePointPayload(BaseModel):
+    """Payload for a zone polygon point."""
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
+class ZoneCreatePayload(BaseModel):
+    """Payload for creating an operational zone."""
+
+    name: str = Field(min_length=1, max_length=96)
+    points: list[ZonePointPayload] = Field(min_length=3, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str) -> str:
+        """Trim and validate zone names."""
+
+        resolved = value.strip()
+        if not resolved:
+            raise ValueError("Zone name is required")
+        return resolved
+
+
+class ZoneUpdatePayload(BaseModel):
+    """Payload for updating an operational zone."""
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=96)
+    points: Optional[list[ZonePointPayload]] = Field(default=None, min_length=3, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: Optional[str]) -> Optional[str]:
+        """Trim and validate optional zone names."""
+
+        if value is None:
+            return None
+        resolved = value.strip()
+        if not resolved:
+            raise ValueError("Zone name is required")
+        return resolved
+
+    @model_validator(mode="after")
+    def _validate_has_updates(self) -> "ZoneUpdatePayload":
+        """Ensure at least one field is supplied for patch."""
+
+        if self.name is None and self.points is None:
+            raise ValueError("At least one zone field must be provided")
+        return self

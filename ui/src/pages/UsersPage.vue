@@ -212,6 +212,7 @@ import { useConnectionStore } from "../stores/connection";
 import { useUsersStore } from "../stores/users";
 import { useToastStore } from "../stores/toasts";
 import { formatTimestamp } from "../utils/format";
+import { clientPresenceTag } from "../utils/presence";
 import { resolveIdentityLabel } from "../utils/identity";
 
 const usersStore = useUsersStore();
@@ -503,11 +504,7 @@ const routingDestinations = computed(() =>
 );
 
 const clientTag = (lastSeenAt?: string) => {
-  const seenTimestamp = lastSeenAt ? Date.parse(lastSeenAt) : Number.NaN;
-  if (!Number.isNaN(seenTimestamp) && Date.now() - seenTimestamp <= 5 * 60 * 1000) {
-    return "Active";
-  }
-  return "Seen";
+  return clientPresenceTag(lastSeenAt);
 };
 
 const actOnClient = async (clientId?: string, action?: "Ban" | "Unban" | "Blackhole") => {

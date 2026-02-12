@@ -100,6 +100,20 @@ class MarkerRecord(Base):  # pylint: disable=too-few-public-methods
     )
 
 
+class ZoneRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for operator zones."""
+
+    __tablename__ = "zones"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    points_json = Column("points", JSON, nullable=False, default=list)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
 class ChatMessageRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for persisted chat messages."""
 

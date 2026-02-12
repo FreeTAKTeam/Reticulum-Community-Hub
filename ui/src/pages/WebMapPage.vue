@@ -13,6 +13,10 @@
               :aria-expanded="markerToolbarOpen"
               aria-haspopup="menu"
               @click="toggleMarkerToolbar"
+              @mouseenter="setToolbarHoverHint(markerHintText)"
+              @mouseleave="clearToolbarHoverHint"
+              @focus="setToolbarHoverHint(markerHintText)"
+              @blur="clearToolbarHoverHint"
             >
               <span class="webmap-marker-trigger-icon">
                 <img v-if="selectedMarkerIconUrl" :src="selectedMarkerIconUrl" :alt="selectedMarkerLabel" />
@@ -27,13 +31,58 @@
             <button
               type="button"
               class="webmap-place-btn"
-              :class="{ active: markerMode }"
-              @click="toggleMarkerMode"
+              :class="{ active: zoneMode || Boolean(zoneEditingId) }"
+              @click="toggleZoneMode"
+              @mouseenter="setToolbarHoverHint(zoneHintText)"
+              @mouseleave="clearToolbarHoverHint"
+              @focus="setToolbarHoverHint(zoneHintText)"
+              @blur="clearToolbarHoverHint"
             >
-              <span class="webmap-place-btn-icon" aria-hidden="true">+</span>
-              <span>{{ markerMode ? "Placement Armed" : "Place Marker" }}</span>
+              <span class="webmap-place-btn-icon" aria-hidden="true">[]</span>
+              <span>
+                {{
+                  zoneEditingId
+                    ? "Editing Zone"
+                    : zoneMode
+                      ? "Zone Draw Armed"
+                      : "Draw Zone"
+                }}
+              </span>
             </button>
-            <div class="webmap-place-hint" :class="{ active: markerMode }">{{ markerHintText }}</div>
+            <button
+              v-if="zoneMode && zoneDraftPoints.length >= 3"
+              type="button"
+              class="webmap-place-btn"
+              @click="completeZoneDraft"
+              @mouseenter="setToolbarHoverHint('Finish polygon and enter a zone name')"
+              @mouseleave="clearToolbarHoverHint"
+            >
+              <span>Finish Zone</span>
+            </button>
+            <button
+              v-if="zoneEditingId"
+              type="button"
+              class="webmap-place-btn"
+              @click="saveZoneEdit"
+              @mouseenter="setToolbarHoverHint('Save zone geometry changes')"
+              @mouseleave="clearToolbarHoverHint"
+            >
+              <span>Save Zone</span>
+            </button>
+            <button
+              v-if="zoneEditingId"
+              type="button"
+              class="webmap-place-btn"
+              @click="cancelZoneEdit"
+              @mouseenter="setToolbarHoverHint('Discard zone geometry changes')"
+              @mouseleave="clearToolbarHoverHint"
+            >
+              <span>Cancel Edit</span>
+            </button>
+          </div>
+
+          <div v-if="toolbarHoverHint" class="webmap-toolbar-hover-hint" aria-live="polite">
+            {{ toolbarHoverHint }}
           </div>
 
           <div v-if="markerToolbarOpen" class="webmap-marker-menu cui-scrollbar" role="menu">
@@ -51,6 +100,31 @@
                 </span>
                 <span class="webmap-marker-option-name">{{ symbol.label }}</span>
               </span>
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-if="zonePromptOpen"
+          class="webmap-rename-popover"
+          :style="zonePromptStyle"
+          @click.stop
+          @contextmenu.prevent
+        >
+          <div class="webmap-rename-title">{{ zonePromptMode === "create" ? "Name New Zone" : "Rename Zone" }}</div>
+          <input
+            v-model="zonePromptValue"
+            class="webmap-rename-input"
+            type="text"
+            maxlength="96"
+            placeholder="Zone name"
+            @keydown.enter.prevent="submitZonePrompt"
+            @keydown.esc.prevent="closeZonePrompt"
+          />
+          <div class="webmap-rename-actions">
+            <button type="button" class="webmap-rename-btn" @click="closeZonePrompt">Cancel</button>
+            <button type="button" class="webmap-rename-btn webmap-rename-btn--primary" @click="submitZonePrompt">
+              {{ zonePromptBusy ? "Saving..." : "Save" }}
             </button>
           </div>
         </div>
@@ -137,6 +211,14 @@
           >
             Telemetry
           </BaseButton>
+          <BaseButton
+            variant="tab"
+            size="sm"
+            :class="{ 'cui-tab-active': activeMarkerTab === 'zones' }"
+            @click="activeMarkerTab = 'zones'"
+          >
+            Zones
+          </BaseButton>
         </div>
 
         <div v-if="activeMarkerTab === 'operator'" class="webmap-list-wrap cui-scrollbar">
@@ -157,7 +239,7 @@
           </ul>
         </div>
 
-        <div v-else class="webmap-list-wrap cui-scrollbar">
+        <div v-else-if="activeMarkerTab === 'telemetry'" class="webmap-list-wrap cui-scrollbar">
           <LoadingSkeleton v-if="telemetry.loading" />
           <ul v-else class="webmap-list">
             <li
@@ -168,6 +250,31 @@
             >
               <div class="webmap-list-name">{{ marker.name }}</div>
               <div class="webmap-list-meta">{{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}</div>
+            </li>
+          </ul>
+        </div>
+
+        <div v-else class="webmap-list-wrap cui-scrollbar">
+          <LoadingSkeleton v-if="zonesStore.loading" />
+          <ul v-else class="webmap-list">
+            <li
+              v-for="zone in zonePagination.items"
+              :key="zone.id"
+              class="webmap-list-item"
+              :class="{ 'webmap-list-item--selected': selectedZoneId === zone.id }"
+              @click="focusZone(zone.id)"
+            >
+              <div class="webmap-zone-row">
+                <div class="webmap-list-name">{{ zone.name }}</div>
+                <div class="webmap-zone-actions">
+                  <button type="button" class="webmap-zone-action" @click.stop="openZoneRename(zone.id)">Rename</button>
+                  <button type="button" class="webmap-zone-action" @click.stop="startZoneEdit(zone.id)">Edit</button>
+                  <button type="button" class="webmap-zone-action webmap-zone-action--danger" @click.stop="deleteZone(zone.id)">
+                    Delete
+                  </button>
+                </div>
+              </div>
+              <div class="webmap-list-meta">{{ zone.points.length }} pts · {{ zoneAreaSummary(zone.points) }}</div>
             </li>
           </ul>
         </div>
@@ -199,7 +306,7 @@
           </div>
         </div>
 
-        <div v-else class="webmap-pagination">
+        <div v-else-if="activeMarkerTab === 'telemetry'" class="webmap-pagination">
           <span v-if="telemetryPagination.total">
             {{ telemetryPagination.startIndex }}-{{ telemetryPagination.endIndex }} / {{ telemetryPagination.total }}
           </span>
@@ -220,6 +327,33 @@
               icon-left="chevron-right"
               :disabled="telemetryPagination.page >= telemetryPagination.totalPages"
               @click="updateTelemetryPage(1)"
+            >
+              Next
+            </BaseButton>
+          </div>
+        </div>
+
+        <div v-else class="webmap-pagination">
+          <span v-if="zonePagination.total">
+            {{ zonePagination.startIndex }}-{{ zonePagination.endIndex }} / {{ zonePagination.total }}
+          </span>
+          <span v-else>No zones yet.</span>
+          <div class="webmap-pagination-actions">
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-left="chevron-left"
+              :disabled="zonePagination.page <= 1"
+              @click="updateZonePage(-1)"
+            >
+              Prev
+            </BaseButton>
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-left="chevron-right"
+              :disabled="zonePagination.page >= zonePagination.totalPages"
+              @click="updateZonePage(1)"
             >
               Next
             </BaseButton>
@@ -260,6 +394,14 @@ import { useMapSettingsStore } from "../stores/map-settings";
 import { useNavStore } from "../stores/nav";
 import { useMarkersStore } from "../stores/markers";
 import { useTelemetryStore } from "../stores/telemetry";
+import { useToastStore } from "../stores/toasts";
+import { useZonesStore } from "../stores/zones";
+import { formatAreaLabel } from "../utils/geometry";
+import type { GeoPoint } from "../utils/geometry";
+import { closePolygonRing } from "../utils/geometry";
+import { polygonAreaSquareMeters } from "../utils/geometry";
+import { polygonCentroid } from "../utils/geometry";
+import { polygonMidpoints } from "../utils/geometry";
 import { buildMarkerSymbolKey } from "../utils/markers";
 import { defaultMarkerName } from "../utils/markers";
 import { getMarkerSymbol } from "../utils/markers";
@@ -273,6 +415,8 @@ import type { TelemetryMarker } from "../utils/telemetry";
 
 const telemetry = useTelemetryStore();
 const markersStore = useMarkersStore();
+const zonesStore = useZonesStore();
+const toastStore = useToastStore();
 const mapSettingsStore = useMapSettingsStore();
 const navStore = useNavStore();
 const { isCollapsed: isNavCollapsed } = storeToRefs(navStore);
@@ -298,6 +442,7 @@ let pollerId: number | undefined;
 let telemetryInteractionReady = false;
 let telemetryIconInteractionReady = false;
 let markerInteractionReady = false;
+let zoneInteractionReady = false;
 let telemetryClusterRadius: number | null = null;
 let operatorClusterRadius: number | null = null;
 const markerImagesReady = ref(false);
@@ -321,11 +466,25 @@ const creatingMarker = ref(false);
 const draggingMarkerId = ref<string | null>(null);
 const draggingMarkerOrigin = ref<{ lat: number; lon: number } | null>(null);
 const dragPositions = ref(new Map<string, { lat: number; lon: number }>());
-type MarkerTab = "operator" | "telemetry";
+const zoneMode = ref(false);
+const zoneDraftPoints = ref<GeoPoint[]>([]);
+const zoneEditingId = ref("");
+const zoneEditingPoints = ref<GeoPoint[]>([]);
+const selectedZoneId = ref("");
+const zoneDraggingVertexIndex = ref<number | null>(null);
+const zonePromptOpen = ref(false);
+const zonePromptMode = ref<"create" | "rename">("create");
+const zonePromptZoneId = ref("");
+const zonePromptValue = ref("");
+const zonePromptPosition = ref({ left: 12, top: 12 });
+const zonePromptBusy = ref(false);
+const toolbarHoverHint = ref("");
+type MarkerTab = "operator" | "telemetry" | "zones";
 const activeMarkerTab = ref<MarkerTab>("operator");
 const ITEMS_PER_PAGE = 10;
 const operatorPage = ref(1);
 const telemetryPage = ref(1);
+const zonePage = ref(1);
 
 const formatCoordinate = (value: number | null | undefined) => {
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -368,9 +527,30 @@ const selectedMarkerLabel = computed(() => {
 const markerHintText = computed(() =>
   markerMode.value ? "Click map to create marker" : "Select marker type and arm placement"
 );
+const zoneHintText = computed(() => {
+  if (zoneEditingId.value) {
+    return "Edit vertices, then save or cancel";
+  }
+  if (zoneMode.value) {
+    return zoneDraftPoints.value.length >= 3
+      ? "Click map to add points, double-click to finish"
+      : "Click map to add at least three points";
+  }
+  return "Arm zone drawing to create a polygon";
+});
+const setToolbarHoverHint = (hint: string) => {
+  toolbarHoverHint.value = hint;
+};
+const clearToolbarHoverHint = () => {
+  toolbarHoverHint.value = "";
+};
 const markerRenameStyle = computed(() => ({
   left: `${markerRenamePosition.value.left}px`,
   top: `${markerRenamePosition.value.top}px`
+}));
+const zonePromptStyle = computed(() => ({
+  left: `${zonePromptPosition.value.left}px`,
+  top: `${zonePromptPosition.value.top}px`
 }));
 const handleInspectorViewportChange = () => {
   if (inspectorOpen.value && selected.value) {
@@ -401,6 +581,13 @@ const operatorMarkersSorted = computed(() => {
     return rightTime - leftTime;
   });
 });
+const zonesSorted = computed(() => {
+  return [...zonesStore.zones].sort((left, right) => {
+    const leftTime = toTimestamp(left.updatedAt ?? left.createdAt);
+    const rightTime = toTimestamp(right.updatedAt ?? right.createdAt);
+    return rightTime - leftTime;
+  });
+});
 
 const buildPagination = <T>(items: T[], page: number) => {
   const total = items.length;
@@ -420,6 +607,7 @@ const buildPagination = <T>(items: T[], page: number) => {
 
 const operatorPagination = computed(() => buildPagination(operatorMarkersSorted.value, operatorPage.value));
 const telemetryPagination = computed(() => buildPagination(telemetryMarkersSorted.value, telemetryPage.value));
+const zonePagination = computed(() => buildPagination(zonesSorted.value, zonePage.value));
 
 const updateOperatorPage = (delta: number) => {
   const totalPages = operatorPagination.value.totalPages;
@@ -429,6 +617,11 @@ const updateOperatorPage = (delta: number) => {
 const updateTelemetryPage = (delta: number) => {
   const totalPages = telemetryPagination.value.totalPages;
   telemetryPage.value = Math.min(totalPages, Math.max(1, telemetryPage.value + delta));
+};
+
+const updateZonePage = (delta: number) => {
+  const totalPages = zonePagination.value.totalPages;
+  zonePage.value = Math.min(totalPages, Math.max(1, zonePage.value + delta));
 };
 
 watch(
@@ -450,6 +643,49 @@ watch(
     }
   }
 );
+
+watch(
+  () => zonesSorted.value.length,
+  (total) => {
+    const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+    if (zonePage.value > totalPages) {
+      zonePage.value = totalPages;
+    }
+  }
+);
+
+const selectedZone = computed(() => {
+  if (!selectedZoneId.value) {
+    return undefined;
+  }
+  return zonesStore.zoneIndex.get(selectedZoneId.value);
+});
+
+watch(zoneMode, (armed) => {
+  const map = mapInstance.value;
+  if (!map) {
+    return;
+  }
+  if (armed) {
+    map.doubleClickZoom.disable();
+    return;
+  }
+  if (!zoneEditingId.value) {
+    map.doubleClickZoom.enable();
+  }
+});
+
+watch(
+  () => zonesStore.zones,
+  () => {
+    renderZones();
+  },
+  { deep: true }
+);
+
+watch(selectedZoneId, () => {
+  renderZones();
+});
 
 const markerIndex = computed(() => {
   const map = new Map<string, TelemetryMarker>();
@@ -490,9 +726,18 @@ const applyFilters = async () => {
   subscribeTelemetry();
 };
 
-const toggleMarkerMode = () => {
+const toggleZoneMode = () => {
   markerToolbarOpen.value = false;
-  markerMode.value = !markerMode.value;
+  markerMode.value = false;
+  if (zoneEditingId.value) {
+    cancelZoneEdit();
+    return;
+  }
+  zoneMode.value = !zoneMode.value;
+  if (!zoneMode.value) {
+    zoneDraftPoints.value = [];
+  }
+  renderZones();
 };
 
 const toggleMarkerToolbar = () => {
@@ -501,8 +746,188 @@ const toggleMarkerToolbar = () => {
 
 const selectMarkerSymbol = (symbolId: string) => {
   markerCategory.value = symbolId;
+  if (zoneMode.value) {
+    zoneMode.value = false;
+    zoneDraftPoints.value = [];
+  }
   markerMode.value = true;
   markerToolbarOpen.value = false;
+};
+
+const zoneAreaSummary = (points: GeoPoint[]) => {
+  const area = polygonAreaSquareMeters(points);
+  const km2 = area / 1_000_000;
+  return `${km2.toFixed(2)} km²`;
+};
+
+const closeZonePrompt = () => {
+  zonePromptOpen.value = false;
+  zonePromptMode.value = "create";
+  zonePromptZoneId.value = "";
+  zonePromptValue.value = "";
+  zonePromptBusy.value = false;
+};
+
+const openZonePrompt = (
+  mode: "create" | "rename",
+  options: { zoneId?: string; value?: string; point?: { x: number; y: number } } = {}
+) => {
+  const { zoneId = "", value = "", point = { x: 12, y: 12 } } = options;
+  const container = mapContainer.value;
+  if (!container) {
+    return;
+  }
+  const width = 260;
+  const height = 140;
+  const left = Math.min(Math.max(point.x + 12, 12), Math.max(12, container.clientWidth - width - 12));
+  const top = Math.min(Math.max(point.y + 12, 12), Math.max(12, container.clientHeight - height - 12));
+  zonePromptMode.value = mode;
+  zonePromptZoneId.value = zoneId;
+  zonePromptValue.value = value;
+  zonePromptPosition.value = { left, top };
+  zonePromptOpen.value = true;
+};
+
+const completeZoneDraft = () => {
+  if (!mapInstance.value || zoneDraftPoints.value.length < 3) {
+    toastStore.push("Add at least 3 points to create a zone.", "warning");
+    return;
+  }
+  const lastPoint = zoneDraftPoints.value[zoneDraftPoints.value.length - 1];
+  const projected = mapInstance.value.project([lastPoint.lon, lastPoint.lat]);
+  openZonePrompt("create", { point: { x: projected.x, y: projected.y } });
+};
+
+const submitZonePrompt = async () => {
+  const name = zonePromptValue.value.trim();
+  if (!name || zonePromptBusy.value) {
+    return;
+  }
+  zonePromptBusy.value = true;
+  try {
+    if (zonePromptMode.value === "create") {
+      if (zoneDraftPoints.value.length < 3) {
+        toastStore.push("A zone requires at least 3 points.", "warning");
+        return;
+      }
+      const created = await zonesStore.createZone({
+        name,
+        points: zoneDraftPoints.value.map((point) => ({ lat: point.lat, lon: point.lon })),
+      });
+      selectedZoneId.value = created.id;
+      activeMarkerTab.value = "zones";
+      zoneMode.value = false;
+      zoneDraftPoints.value = [];
+      toastStore.push("Zone created.", "success");
+    } else {
+      const zoneId = zonePromptZoneId.value;
+      if (!zoneId) {
+        return;
+      }
+      await zonesStore.updateZone(zoneId, { name });
+      toastStore.push("Zone renamed.", "success");
+    }
+    closeZonePrompt();
+    renderZones();
+  } catch (error) {
+    toastStore.push("Unable to save zone.", "danger");
+  } finally {
+    zonePromptBusy.value = false;
+  }
+};
+
+const startZoneEdit = (zoneId: string) => {
+  const zone = zonesStore.zoneIndex.get(zoneId);
+  if (!zone) {
+    return;
+  }
+  zoneMode.value = false;
+  markerMode.value = false;
+  zoneDraftPoints.value = [];
+  selectedZoneId.value = zoneId;
+  zoneEditingId.value = zoneId;
+  zoneEditingPoints.value = zone.points.map((point) => ({ lat: point.lat, lon: point.lon }));
+  activeMarkerTab.value = "zones";
+  renderZones();
+};
+
+const cancelZoneEdit = () => {
+  zoneEditingId.value = "";
+  zoneEditingPoints.value = [];
+  zoneDraggingVertexIndex.value = null;
+  renderZones();
+};
+
+const saveZoneEdit = async () => {
+  if (!zoneEditingId.value || zoneEditingPoints.value.length < 3) {
+    return;
+  }
+  try {
+    await zonesStore.updateZone(zoneEditingId.value, {
+      points: zoneEditingPoints.value.map((point) => ({ lat: point.lat, lon: point.lon })),
+    });
+    toastStore.push("Zone updated.", "success");
+    cancelZoneEdit();
+  } catch (error) {
+    toastStore.push("Unable to update zone.", "danger");
+  }
+};
+
+const focusZone = (zoneId: string) => {
+  const zone = zonesStore.zoneIndex.get(zoneId);
+  if (!zone || !zone.points.length || !mapInstance.value) {
+    return;
+  }
+  selectedZoneId.value = zoneId;
+  activeMarkerTab.value = "zones";
+  const bounds = zone.points.reduce(
+    (acc, point) => {
+      acc.minLat = Math.min(acc.minLat, point.lat);
+      acc.maxLat = Math.max(acc.maxLat, point.lat);
+      acc.minLon = Math.min(acc.minLon, point.lon);
+      acc.maxLon = Math.max(acc.maxLon, point.lon);
+      return acc;
+    },
+    { minLat: Number.POSITIVE_INFINITY, maxLat: Number.NEGATIVE_INFINITY, minLon: Number.POSITIVE_INFINITY, maxLon: Number.NEGATIVE_INFINITY }
+  );
+  mapInstance.value.fitBounds(
+    [
+      [bounds.minLon, bounds.minLat],
+      [bounds.maxLon, bounds.maxLat],
+    ],
+    { padding: 48, duration: 400 }
+  );
+  renderZones();
+};
+
+const openZoneRename = (zoneId: string) => {
+  const zone = zonesStore.zoneIndex.get(zoneId);
+  if (!zone || !mapInstance.value) {
+    return;
+  }
+  const centroid = polygonCentroid(zone.points) ?? zone.points[0];
+  const projected = mapInstance.value.project([centroid.lon, centroid.lat]);
+  openZonePrompt("rename", {
+    zoneId,
+    value: zone.name,
+    point: { x: projected.x, y: projected.y },
+  });
+};
+
+const deleteZone = async (zoneId: string) => {
+  try {
+    await zonesStore.deleteZone(zoneId);
+    if (selectedZoneId.value === zoneId) {
+      selectedZoneId.value = "";
+    }
+    if (zoneEditingId.value === zoneId) {
+      cancelZoneEdit();
+    }
+    toastStore.push("Zone deleted.", "warning");
+    renderZones();
+  } catch (error) {
+    toastStore.push("Unable to delete zone.", "danger");
+  }
 };
 
 const closeMarkerRename = () => {
@@ -603,6 +1028,13 @@ const pointHitsRenderedLayer = (
 
 const handleDocumentPointerDown = (event: MouseEvent) => {
   if (!markerToolbarOpen.value || !markerToolbarRef.value) {
+    if (zonePromptOpen.value) {
+      const target = event.target as Node | null;
+      const prompt = document.querySelector(".webmap-rename-popover");
+      if (!target || !prompt || !prompt.contains(target)) {
+        closeZonePrompt();
+      }
+    }
     return;
   }
   const target = event.target as Node | null;
@@ -641,6 +1073,34 @@ const handleMapClick = (event: maplibregl.MapMouseEvent) => {
   if (markerRenameOpen.value) {
     closeMarkerRename();
   }
+  if (zonePromptOpen.value) {
+    closeZonePrompt();
+  }
+  if (zoneMode.value) {
+    const clickDetail = (event.originalEvent as MouseEvent | undefined)?.detail ?? 1;
+    if (clickDetail > 1) {
+      return;
+    }
+    if (
+      pointHitsRenderedLayer(event.point, [
+        "operator-marker-layer",
+        "operator-marker-clusters",
+        "operator-marker-cluster-count",
+        "telemetry-icons",
+        "telemetry-clusters",
+        "telemetry-cluster-count",
+        "zone-fill",
+        "zone-outline",
+        "zone-handle-vertices",
+        "zone-handle-midpoints",
+      ])
+    ) {
+      return;
+    }
+    zoneDraftPoints.value = [...zoneDraftPoints.value, { lat: event.lngLat.lat, lon: event.lngLat.lng }];
+    renderZones();
+    return;
+  }
   if (!markerMode.value) {
     return;
   }
@@ -657,6 +1117,96 @@ const handleMapClick = (event: maplibregl.MapMouseEvent) => {
     return;
   }
   void createMarkerAt(event.lngLat);
+};
+
+const handleMapDoubleClick = (event: maplibregl.MapMouseEvent) => {
+  if (!zoneMode.value) {
+    return;
+  }
+  event.preventDefault();
+  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  completeZoneDraft();
+};
+
+const handleZoneVertexDrag = (event: maplibregl.MapMouseEvent) => {
+  const index = zoneDraggingVertexIndex.value;
+  if (index === null || !zoneEditingId.value) {
+    return;
+  }
+  const next = [...zoneEditingPoints.value];
+  next[index] = { lat: event.lngLat.lat, lon: event.lngLat.lng };
+  zoneEditingPoints.value = next;
+  renderZones();
+};
+
+const stopZoneVertexDrag = () => {
+  const map = mapInstance.value;
+  if (!map) {
+    zoneDraggingVertexIndex.value = null;
+    return;
+  }
+  map.off("mousemove", handleZoneVertexDrag);
+  map.dragPan.enable();
+  map.getCanvas().style.cursor = "";
+  zoneDraggingVertexIndex.value = null;
+};
+
+const startZoneVertexDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+  if (!zoneEditingId.value || !mapInstance.value) {
+    return;
+  }
+  const feature = event.features?.[0];
+  const rawIndex = feature?.properties?.index;
+  const index = typeof rawIndex === "string" ? Number(rawIndex) : Number(rawIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= zoneEditingPoints.value.length) {
+    return;
+  }
+  event.preventDefault();
+  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  zoneDraggingVertexIndex.value = index;
+  mapInstance.value.dragPan.disable();
+  mapInstance.value.getCanvas().style.cursor = "move";
+  mapInstance.value.on("mousemove", handleZoneVertexDrag);
+  mapInstance.value.once("mouseup", stopZoneVertexDrag);
+};
+
+const handleZoneMidpointClick = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+  if (!zoneEditingId.value) {
+    return;
+  }
+  const feature = event.features?.[0];
+  const rawIndex = feature?.properties?.edge_index;
+  const edgeIndex = typeof rawIndex === "string" ? Number(rawIndex) : Number(rawIndex);
+  if (!Number.isInteger(edgeIndex) || edgeIndex < 0) {
+    return;
+  }
+  const next = [...zoneEditingPoints.value];
+  const insertAt = Math.min(next.length, edgeIndex + 1);
+  next.splice(insertAt, 0, { lat: event.lngLat.lat, lon: event.lngLat.lng });
+  zoneEditingPoints.value = next;
+  renderZones();
+};
+
+const handleZoneVertexContextMenu = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+  if (!zoneEditingId.value) {
+    return;
+  }
+  const feature = event.features?.[0];
+  const rawIndex = feature?.properties?.index;
+  const index = typeof rawIndex === "string" ? Number(rawIndex) : Number(rawIndex);
+  if (!Number.isInteger(index) || index < 0) {
+    return;
+  }
+  event.preventDefault();
+  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  if (zoneEditingPoints.value.length <= 3) {
+    toastStore.push("A zone must keep at least 3 points.", "warning");
+    return;
+  }
+  const next = [...zoneEditingPoints.value];
+  next.splice(index, 1);
+  zoneEditingPoints.value = next;
+  renderZones();
 };
 
 const selectMarker = (marker: TelemetryMarker) => {
@@ -763,6 +1313,13 @@ const MARKER_LABEL_HALO_COLOR = "#06121E";
 const MARKER_LABEL_HALO_WIDTH = 1.2;
 const MARKER_LABEL_OFFSET: [number, number] = [0, 1.2];
 const MARKER_LABEL_SIZE = 12;
+const ZONE_FILL_COLOR = "#2d89ff";
+const ZONE_SELECTED_FILL_COLOR = "#55a8ff";
+const ZONE_OUTLINE_COLOR = "#78bfff";
+const ZONE_HANDLE_COLOR = "#9fd8ff";
+const ZONE_MIDPOINT_COLOR = "#6bb3ff";
+const ZONE_LABEL_TEXT_COLOR = "#f3fbff";
+const ZONE_LABEL_HALO_COLOR = "#06121E";
 
 const resolveMarkerLabelField = () => (showMarkerLabels.value ? ["get", "name"] : "");
 
@@ -862,6 +1419,7 @@ const handleClusterZoom = () => {
   if (!mapInstance.value || !mapReady.value) {
     return;
   }
+  renderZones();
   renderTelemetryMarkers();
   renderOperatorMarkers();
 };
@@ -1018,6 +1576,336 @@ const buildOperatorFeatureCollection = () =>
       };
     })
   }) as GeoJSON.FeatureCollection;
+
+const toZoneCoordinates = (points: GeoPoint[]) => {
+  return [closePolygonRing(points).map((point) => [point.lon, point.lat])] as [number, number][][];
+};
+
+const buildZoneFeatureCollection = () => {
+  return {
+    type: "FeatureCollection",
+    features: zonesStore.zones
+      .map((zone) => {
+        const points = zone.id === zoneEditingId.value ? zoneEditingPoints.value : zone.points;
+        if (points.length < 3) {
+          return null;
+        }
+        return {
+          type: "Feature",
+          geometry: {
+            type: "Polygon",
+            coordinates: toZoneCoordinates(points),
+          },
+          properties: {
+            id: zone.id,
+            name: zone.name,
+            selected: selectedZoneId.value === zone.id ? 1 : 0,
+          },
+        };
+      })
+      .filter((feature): feature is GeoJSON.Feature<GeoJSON.Polygon> => feature !== null),
+  } as GeoJSON.FeatureCollection;
+};
+
+const buildDraftZoneFeatureCollection = () => {
+  const points = zoneDraftPoints.value;
+  if (!zoneMode.value || points.length < 2) {
+    return { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection;
+  }
+  if (points.length >= 3) {
+    return {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Polygon",
+            coordinates: toZoneCoordinates(points),
+          },
+          properties: {},
+        },
+      ],
+    } as GeoJSON.FeatureCollection;
+  }
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: points.map((point) => [point.lon, point.lat]),
+        },
+        properties: {},
+      },
+    ],
+  } as GeoJSON.FeatureCollection;
+};
+
+const buildZoneHandleFeatureCollection = () => {
+  const points = zoneEditingId.value
+    ? zoneEditingPoints.value
+    : zoneMode.value
+      ? zoneDraftPoints.value
+      : [];
+  return {
+    type: "FeatureCollection",
+    features: points.map((point, index) => ({
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [point.lon, point.lat],
+      },
+      properties: {
+        index,
+      },
+    })),
+  } as GeoJSON.FeatureCollection;
+};
+
+const buildZoneMidpointFeatureCollection = () => {
+  if (!zoneEditingId.value || zoneEditingPoints.value.length < 2) {
+    return { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection;
+  }
+  const midpoints = polygonMidpoints(zoneEditingPoints.value);
+  return {
+    type: "FeatureCollection",
+    features: midpoints.map((point, edgeIndex) => ({
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [point.lon, point.lat],
+      },
+      properties: {
+        edge_index: edgeIndex,
+      },
+    })),
+  } as GeoJSON.FeatureCollection;
+};
+
+const buildZoneAreaLabelFeatureCollection = () => {
+  let points: GeoPoint[] = [];
+  if (zoneMode.value && zoneDraftPoints.value.length >= 3) {
+    points = zoneDraftPoints.value;
+  } else if (zoneEditingId.value && zoneEditingPoints.value.length >= 3) {
+    points = zoneEditingPoints.value;
+  } else if (selectedZone.value && selectedZone.value.points.length >= 3) {
+    points = selectedZone.value.points;
+  }
+  if (points.length < 3) {
+    return { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection;
+  }
+  const centroid = polygonCentroid(points);
+  if (!centroid) {
+    return { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection;
+  }
+  const label = formatAreaLabel(polygonAreaSquareMeters(points));
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [centroid.lon, centroid.lat],
+        },
+        properties: {
+          label,
+        },
+      },
+    ],
+  } as GeoJSON.FeatureCollection;
+};
+
+const addLayerWithBefore = (map: maplibregl.Map, layer: maplibregl.AnyLayer, beforeId?: string) => {
+  if (beforeId && map.getLayer(beforeId)) {
+    map.addLayer(layer, beforeId);
+    return;
+  }
+  map.addLayer(layer);
+};
+
+const renderZones = () => {
+  if (!mapInstance.value || !mapReady.value) {
+    return;
+  }
+  const map = mapInstance.value;
+  const zoneSourceId = "zones";
+  const zoneDraftSourceId = "zone-draft";
+  const zoneHandleSourceId = "zone-handles";
+  const zoneMidpointSourceId = "zone-midpoints";
+  const zoneLabelSourceId = "zone-area-label";
+  const beforeId = map.getLayer("operator-marker-layer") ? "operator-marker-layer" : undefined;
+
+  const updateSource = (sourceId: string, data: GeoJSON.FeatureCollection) => {
+    const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+    if (existing) {
+      existing.setData(data);
+      return;
+    }
+    map.addSource(sourceId, { type: "geojson", data });
+  };
+
+  updateSource(zoneSourceId, buildZoneFeatureCollection());
+  updateSource(zoneDraftSourceId, buildDraftZoneFeatureCollection());
+  updateSource(zoneHandleSourceId, buildZoneHandleFeatureCollection());
+  updateSource(zoneMidpointSourceId, buildZoneMidpointFeatureCollection());
+  updateSource(zoneLabelSourceId, buildZoneAreaLabelFeatureCollection());
+
+  if (!map.getLayer("zone-fill")) {
+    addLayerWithBefore(
+      map,
+      {
+        id: "zone-fill",
+        type: "fill",
+        source: zoneSourceId,
+        paint: {
+          "fill-color": ["case", ["==", ["get", "selected"], 1], ZONE_SELECTED_FILL_COLOR, ZONE_FILL_COLOR],
+          "fill-opacity": ["case", ["==", ["get", "selected"], 1], 0.28, 0.16],
+        },
+      },
+      beforeId
+    );
+  }
+  if (!map.getLayer("zone-outline")) {
+    addLayerWithBefore(
+      map,
+      {
+        id: "zone-outline",
+        type: "line",
+        source: zoneSourceId,
+        paint: {
+          "line-color": ZONE_OUTLINE_COLOR,
+          "line-width": ["case", ["==", ["get", "selected"], 1], 3, 2],
+          "line-opacity": 0.95,
+        },
+      },
+      beforeId
+    );
+  }
+  if (!map.getLayer("zone-draft-fill")) {
+    addLayerWithBefore(
+      map,
+      {
+        id: "zone-draft-fill",
+        type: "fill",
+        source: zoneDraftSourceId,
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: {
+          "fill-color": "#67b8ff",
+          "fill-opacity": 0.2,
+        },
+      },
+      beforeId
+    );
+  }
+  if (!map.getLayer("zone-draft-line")) {
+    addLayerWithBefore(
+      map,
+      {
+        id: "zone-draft-line",
+        type: "line",
+        source: zoneDraftSourceId,
+        paint: {
+          "line-color": "#8cd0ff",
+          "line-width": 2.2,
+          "line-dasharray": [1.2, 1.1],
+        },
+      },
+      beforeId
+    );
+  }
+  if (!map.getLayer("zone-handle-midpoints")) {
+    map.addLayer({
+      id: "zone-handle-midpoints",
+      type: "circle",
+      source: zoneMidpointSourceId,
+      paint: {
+        "circle-radius": 4,
+        "circle-color": ZONE_MIDPOINT_COLOR,
+        "circle-opacity": 0.95,
+        "circle-stroke-color": "#09314d",
+        "circle-stroke-width": 1,
+      },
+    });
+  }
+  if (!map.getLayer("zone-handle-vertices")) {
+    map.addLayer({
+      id: "zone-handle-vertices",
+      type: "circle",
+      source: zoneHandleSourceId,
+      paint: {
+        "circle-radius": 5,
+        "circle-color": ZONE_HANDLE_COLOR,
+        "circle-opacity": 0.95,
+        "circle-stroke-color": "#042136",
+        "circle-stroke-width": 1.3,
+      },
+    });
+  }
+  if (!map.getLayer("zone-area-label")) {
+    map.addLayer({
+      id: "zone-area-label",
+      type: "symbol",
+      source: zoneLabelSourceId,
+      layout: {
+        "text-field": ["get", "label"],
+        "text-size": 13,
+        "text-font": ["Noto Sans Regular"],
+        "text-anchor": "center",
+        "text-allow-overlap": true,
+      },
+      paint: {
+        "text-color": ZONE_LABEL_TEXT_COLOR,
+        "text-halo-color": ZONE_LABEL_HALO_COLOR,
+        "text-halo-width": 1.2,
+      },
+    });
+  }
+
+  if (!zoneInteractionReady) {
+    map.on("click", "zone-fill", (event) => {
+      if (zoneMode.value) {
+        return;
+      }
+      const zoneId = event.features?.[0]?.properties?.id as string | undefined;
+      if (!zoneId) {
+        return;
+      }
+      selectedZoneId.value = zoneId;
+      activeMarkerTab.value = "zones";
+      renderZones();
+    });
+    map.on("mousedown", "zone-handle-vertices", startZoneVertexDrag);
+    map.on("click", "zone-handle-midpoints", handleZoneMidpointClick);
+    map.on("contextmenu", "zone-handle-vertices", handleZoneVertexContextMenu);
+    map.on("mouseenter", "zone-fill", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "zone-fill", () => {
+      if (zoneDraggingVertexIndex.value === null) {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+    map.on("mouseenter", "zone-handle-vertices", () => {
+      map.getCanvas().style.cursor = "move";
+    });
+    map.on("mouseleave", "zone-handle-vertices", () => {
+      if (zoneDraggingVertexIndex.value === null) {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+    map.on("mouseenter", "zone-handle-midpoints", () => {
+      map.getCanvas().style.cursor = "crosshair";
+    });
+    map.on("mouseleave", "zone-handle-midpoints", () => {
+      if (zoneDraggingVertexIndex.value === null) {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+    zoneInteractionReady = true;
+  }
+};
 
 const startMarkerDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
   if (!mapInstance.value) {
@@ -1528,6 +2416,7 @@ const renderOperatorMarkers = () => {
 };
 
 const renderMarkers = () => {
+  renderZones();
   renderTelemetryMarkers();
   renderOperatorMarkers();
   applyMarkerLabelVisibility();
@@ -1562,6 +2451,7 @@ onMounted(async () => {
       await loadMarkerImages();
       renderMarkers();
       mapInstance.value?.on("click", handleMapClick);
+      mapInstance.value?.on("dblclick", handleMapDoubleClick);
       mapInstance.value?.on("mousemove", handleMapPointerMove);
       mapInstance.value?.on("mouseleave", handleMapPointerLeave);
       mapInstance.value?.on("zoomend", handleClusterZoom);
@@ -1570,7 +2460,7 @@ onMounted(async () => {
   }
   await telemetry.fetchTelemetry(sinceSeconds());
   await symbolsPromise;
-  await markersStore.fetchMarkers();
+  await Promise.all([markersStore.fetchMarkers(), zonesStore.fetchZones()]);
   renderMarkers();
 
   const ws = new WsClient(
@@ -1594,7 +2484,7 @@ onMounted(async () => {
 
   pollerId = window.setInterval(async () => {
     await telemetry.fetchTelemetry(sinceSeconds());
-    await markersStore.fetchMarkers();
+    await Promise.all([markersStore.fetchMarkers(), zonesStore.fetchZones()]);
     renderMarkers();
   }, 60000);
 
@@ -1615,8 +2505,11 @@ onUnmounted(() => {
     mapInstance.value.off("zoom", handleMarkerZoom);
     mapInstance.value.off("moveend", persistMapView);
     mapInstance.value.off("click", handleMapClick);
+    mapInstance.value.off("dblclick", handleMapDoubleClick);
     mapInstance.value.off("mousemove", handleMapPointerMove);
     mapInstance.value.off("mouseleave", handleMapPointerLeave);
+    mapInstance.value.off("mousemove", handleZoneVertexDrag);
+    mapInstance.value.doubleClickZoom.enable();
   }
   window.removeEventListener("resize", handleInspectorViewportChange);
   window.removeEventListener("scroll", handleInspectorViewportChange);
@@ -1797,23 +2690,18 @@ onUnmounted(() => {
   color: #ffe0bf;
 }
 
-.webmap-place-hint {
-  min-height: 46px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px dashed rgba(59, 244, 255, 0.22);
-  background: rgba(7, 18, 30, 0.85);
-  display: inline-flex;
-  align-items: center;
-  color: rgba(214, 251, 255, 0.62);
+.webmap-toolbar-hover-hint {
+  width: fit-content;
+  max-width: min(580px, 100%);
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px dashed rgba(59, 244, 255, 0.28);
+  background: rgba(7, 18, 30, 0.88);
+  color: rgba(219, 252, 255, 0.9);
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.13em;
   font-size: 10px;
-}
-
-.webmap-place-hint.active {
-  color: rgba(255, 215, 170, 0.9);
-  border-color: rgba(255, 179, 92, 0.55);
+  pointer-events: none;
 }
 
 .webmap-marker-menu {
@@ -2038,6 +2926,48 @@ onUnmounted(() => {
   text-decoration: line-through;
 }
 
+.webmap-list-item--selected {
+  border-color: rgba(255, 179, 92, 0.58);
+  box-shadow: inset 0 0 0 1px rgba(255, 179, 92, 0.22);
+}
+
+.webmap-zone-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.webmap-zone-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.webmap-zone-action {
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.32);
+  background: rgba(7, 18, 29, 0.82);
+  color: rgba(215, 251, 255, 0.9);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 3px 8px;
+}
+
+.webmap-zone-action:hover {
+  border-color: rgba(59, 244, 255, 0.62);
+}
+
+.webmap-zone-action--danger {
+  border-color: rgba(255, 120, 120, 0.5);
+  color: rgba(255, 200, 200, 0.92);
+}
+
+.webmap-zone-action--danger:hover {
+  border-color: rgba(255, 120, 120, 0.72);
+}
+
 .webmap-list-name {
   font-size: 12px;
   letter-spacing: 0.08em;
@@ -2091,7 +3021,7 @@ onUnmounted(() => {
     align-items: stretch;
   }
 
-  .webmap-place-hint {
+  .webmap-toolbar-hover-hint {
     width: 100%;
   }
 
@@ -2101,3 +3031,4 @@ onUnmounted(() => {
   }
 }
 </style>
+

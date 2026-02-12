@@ -107,6 +107,19 @@ export interface MarkerEntry {
   updated_at?: string;
 }
 
+export interface ZonePoint {
+  lat?: number;
+  lon?: number;
+}
+
+export interface ZoneEntry {
+  zone_id?: string;
+  name?: string;
+  points?: ZonePoint[];
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface MarkerSymbolEntry {
   id?: string;
   set?: string;

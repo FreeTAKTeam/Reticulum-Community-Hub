@@ -21,6 +21,8 @@ from reticulum_telemetry_hub.api.marker_identity import derive_marker_identity_k
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.api.zone_service import ZoneService
+from reticulum_telemetry_hub.api.zone_storage import ZoneStorage
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -35,6 +37,7 @@ from .routes_chat import register_chat_routes
 from .routes_control import ControlService
 from .routes_control import register_control_routes
 from .routes_markers import register_marker_routes
+from .routes_zones import register_zone_routes
 from .routes_rest import register_core_routes
 from .routes_subscribers import register_subscriber_routes
 from .routes_topics import register_topic_routes
@@ -89,6 +92,7 @@ def create_app(
     ] = None,
     marker_dispatcher: Optional[Callable[[Marker, str], bool]] = None,
     marker_service: Optional[MarkerService] = None,
+    zone_service: Optional[ZoneService] = None,
     origin_rch: Optional[str] = None,
     message_listener: Optional[
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
@@ -108,6 +112,7 @@ def create_app(
         auth (Optional[ApiAuth]): Auth validator.
         marker_dispatcher (Optional[Callable[[Marker, str], bool]]): Marker telemetry dispatcher.
         marker_service (Optional[MarkerService]): Marker service override.
+        zone_service (Optional[ZoneService]): Zone service override.
         origin_rch (Optional[str]): Originating hub identity hash.
         control (Optional[ControlService]): Optional gateway control surface.
 
@@ -153,6 +158,8 @@ def create_app(
             MarkerStorage(hub_db_path),
             identity_key_provider=lambda: marker_identity_key,
         )
+    if zone_service is None:
+        zone_service = ZoneService(ZoneStorage(hub_db_path))
     services = NorthboundServices(
         api=api,
         telemetry=telemetry_controller,
@@ -163,6 +170,7 @@ def create_app(
         message_dispatcher=message_dispatcher,
         marker_service=marker_service,
         marker_dispatcher=marker_dispatcher,
+        zone_service=zone_service,
         origin_rch=origin_rch or "",
     )
     auth = auth or ApiAuth()
@@ -208,6 +216,11 @@ def create_app(
         require_protected=require_protected,
     )
     register_marker_routes(
+        app,
+        services=services,
+        require_protected=require_protected,
+    )
+    register_zone_routes(
         app,
         services=services,
         require_protected=require_protected,

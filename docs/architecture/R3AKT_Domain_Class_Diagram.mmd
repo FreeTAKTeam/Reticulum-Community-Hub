@@ -1,283 +1,307 @@
 classDiagram
-    direction LR
+  direction LR
 
-    class Topic {
-        +string topic_id
-        +string topic_name
-        +string topic_path
-        +string topic_description
-    }
+  class missionRoleList {
+    <<enumeration>>
+    MISSION_OWNER
+    MISSION_SUBSCRIBER
+    MISSION_READONLY_SUBSCRIBER
+  }
 
-    class Subscriber {
-        +string subscriber_id
-        +string destination
-        +string topic_id
-        +int reject_tests
-        +dict metadata
-    }
+  class missionStatus {
+    <<enumeration>>
+    MISSION_ACTIVE
+    MISSION_PENDING
+    MISSION_DELETED
+    MISSION_COMPLETED_SUCCESS
+    MISSION_COMPLETED_FAILED
+  }
 
-    class NodeRecord {
-        +string node_id
-        +NodeType node_type
-        +RegisterNodeMetadata metadata
-    }
+  class MissionChangeType {
+    <<enumeration>>
+    CREATE_MISSION
+    DELETE_MISSION
+    ADD_CONTENT
+    REMOVE_CONTENT
+    CREATE_DATA_FEED
+    DELETE_DATA_FEED
+    MAP_LAYER
+  }
 
-    class NodeStats {
-        +float first_seen_ts
-        +float last_seen_ts
-        +float battery_pct
-        +float signal_quality
-    }
+  class TeamRole {
+    <<enumeration>>
+    TEAM_MEMBER
+    TEAM_LEAD
+    HQ
+    SNIPER
+    MEDIC
+    FORWARD_OBSERVER
+    RTO
+    K9
+  }
 
-    class Client {
-        +string identity
-        +datetime last_seen
-        +string display_name
-        +dict metadata
-    }
+  class checklistStatus {
+    <<enumeration>>
+    PENDING
+    COMPLETE
+    COMPLETE_LATE
+    LATE
+  }
 
-    class IdentityStatus {
-        +string identity
-        +string status
-        +datetime last_seen
-        +string display_name
-        +dict metadata
-        +bool is_banned
-        +bool is_blackholed
-    }
+  class checklistTaskStatus {
+    <<enumeration>>
+    PENDING
+    COMPLETE
+    COMPLETE_LATE
+    LATE
+  }
 
-    class IdentityStateRecord {
-        +string identity
-        +bool is_banned
-        +bool is_blackholed
-        +datetime updated_at
-    }
+  class checklistColumnType {
+    <<enumeration>>
+    SHORT_STRING
+    LONG_STRING
+    INTEGER
+    ACTUAL_TIME
+    RELATIVE_TIME
+  }
 
-    class IdentityAnnounceRecord {
-        +string destination_hash
-        +string display_name
-        +datetime first_seen
-        +datetime last_seen
-        +string source_interface
-    }
+  class AssetStatus {
+    <<enumeration>>
+    AVAILABLE
+    IN_USE
+    LOST
+    MAINTENANCE
+    RETIRED
+  }
 
-    class FileAttachment {
-        +int file_id
-        +string name
-        +string path
-        +string category
-        +int size
-        +string media_type
-        +string topic_id
-    }
+  class Mission {
+    <<TMF_JSON_Schema,dModelClass>>
+    <<BaseSchema>>
+    +Missionid: Long
+    +description: String
+    +Topic: String
+    +baselayer: String
+    +path: String
+    +classification: String
+    +tool: String
+    +keywords: String[0..*]
+    +parent: Mission[0..1]
+    +children: Mission[0..*]
+    +feeds: String[0..*]
+    -MissionTeam: Team
+    +passwordhash: String
+    +defaultrole: missionRoleList
+    -MissionPriority: int
+    -missionStatus: missionStatus
+    +ownerRole: missionRoleList
+    +token: String
+    +inviteonly: Boolean
+    +missionchanges: MissionChange[0..*]
+    +expiration: DateTime
+    +Mission_Associates_LogEntry: LogEntry[0..*]
+    +Mission_Associates_MissionRole: missionRoleList[0..1]
+  }
 
-    class ChatAttachment {
-        +int file_id
-        +string category
-        +string name
-        +int size
-        +string media_type
-    }
+  class Team {
+    <<TMF_JSON_Schema>>
+    <<WCMVFIvalue>>
+    +color: TeamColor
+    -uid: int
+    +teamName: String
+    +teamdescription: String
+  }
 
-    class ChatMessage {
-        +string message_id
-        +string direction
-        +string scope
-        +string state
-        +string content
-        +string source
-        +string destination
-        +string topic_id
-        +datetime created_at
-        +datetime updated_at
-    }
+  class TeamMember {
+    <<TMF_JSON_Schema>>
+    +icon: string
+    +role: TeamRole
+    +callsign: string
+    +freq: decimal[0..1]
+    +email: string[0..1]
+    +phone: string[0..1]
+    +modulation: string
+    -rnsIdentity: string
+  }
 
-    class Marker {
-        +string local_id
-        +string object_destination_hash
-        +string origin_rch
-        +string object_identity_storage_key
-        +string marker_type
-        +string symbol
-        +string name
-        +string category
-        +float lat
-        +float lon
-        +datetime time
-        +datetime stale_at
-    }
+  class LogEntry {
+    <<TMF_JSON_Schema,dModelClass>>
+    <<BaseSchema>>
+    +content: String
+    +entryuid: String
+    +missionUID: String
+    +servertime: DateTime
+    +clientTime: DateTime
+    +contenthashes: String[0..*]
+    +keywords: String[0..*]
+  }
 
-    class Telemeter {
-        +int id
-        +string peer_dest
-        +datetime time
-    }
+  class checklist {
+    <<TMF_JSON_Schema,dModelClass>>
+    <<XSElement>>
+    +checklistColumns: checklistColumn[1..*]
+    +checklistTasks: checklistTask[0..*]
+    -missionID: Mission[0..1]
+    -checklistStatus: checklistStatus
+    +name: string
+    +uid: string
+    +description: string
+    +startTime: string
+    +templateName: string
+  }
 
-    class Sensor {
-        +int id
-        +int sid
-        +float stale_time
-        +bytes data
-        +bool synthesized
-    }
+  class checklistTask {
+    <<TMF_JSON_Schema,dModelClass>>
+    +number: int
+    +uid: string
+    +value: string
+    +taskStatus: checklistTaskStatus
+    +customStatus: int
+    +completeBy: String
+    +dueRelativeTime: DateTime
+    +notes: string
+    +completedDTG: DateTime
+    +dueDTG: DateTime
+  }
 
-    class TelemetryLocation {
-        +float latitude
-        +float longitude
-        +float altitude
-        +float speed
-        +float bearing
-        +float accuracy
-        +datetime last_update
-    }
+  class checklistColumn {
+    <<TMF_JSON_Schema,dModelClass>>
+    +columnName: string
+    +columnType: checklistColumnType
+    +columnEditable: Boolean
+  }
 
-    class MissionStatus {
-        <<enumeration>>
-        PLANNED
-        ACTIVE
-        ON_HOLD
-        COMPLETED
-    }
+  class CheckListtemplate {
+    <<TMF_JSON_Schema,dModelClass>>
+    +checklist: checklist
+    -uid: String
+    -templateName: int
+  }
 
-    class TaskStatus {
-        <<enumeration>>
-        OPEN
-        IN_PROGRESS
-        BLOCKED
-        DONE
-    }
+  class MissionTaskAssignment {
+    <<TMF_JSON_Schema,dModelClass>>
+    +assignmentUid: String
+    +missionID: String
+    +taskUid: String
+    +memberUid: String
+    +assignedBy: String[0..1]
+    +assignedAt: DateTime
+    +dueDTG: DateTime[0..1]
+    +status: checklistTaskStatus
+    +notes: String[0..1]
+  }
 
-    class Mission {
-        +string mission_id
-        +string mission_name
-        +MissionStatus status
-        +string owner_identity
-        +datetime created_at
-        +datetime updated_at
-    }
+  class MissionChange {
+    <<TMF_JSON_Schema,dModelClass>>
+    +hashes: String[0..*]
+    +uid: String
+    +name: String
+    +creatorUid: String
+    +missionID: String
+    +timestamp: DateTime
+    +notes: String
+    +type: String
+    +changeType: MissionChangeType
+    +isFederatedChange: Boolean
+  }
 
-    class Task {
-        +string task_id
-        +string mission_id
-        +string title
-        +string details
-        +TaskStatus status
-        +string assignee_identity
-        +datetime due_at
-        +datetime created_at
-        +datetime updated_at
-    }
+  class Asset {
+    <<TMF_JSON_Schema,dModelClass>>
+    +assetUid: String
+    +name: String
+    +assetType: String
+    +serialNumber: String[0..1]
+    +status: AssetStatus
+    +location: String[0..1]
+    +notes: String[0..1]
+  }
 
-    class SitrepPriority {
-        <<enumeration>>
-        LOW
-        ROUTINE
-        HIGH
-        CRITICAL
-    }
+  class ClientProfile {
+    <<TMF_JSON_Schema,dModelClass>>
+    +profileUid: String
+    +memberUid: String
+    +displayName: string
+    +callsign: string
+    +role: TeamRole
+    +email: string[0..1]
+    +phone: string[0..1]
+    +availability: String[0..1]
+    +certifications: String[0..*]
+    +lastActive: DateTime[0..1]
+  }
 
-    class TelemetryCoordinateRef {
-        +int telemeter_id
-        +int sensor_id
-        +datetime sampled_at
-    }
+  class Skill {
+    <<TMF_JSON_Schema,dModelClass>>
+    +skillUid: String
+    +name: String
+    +category: String[0..1]
+    +description: String[0..1]
+    +proficiencyScale: String[0..1]
+  }
 
-    class Sitrep {
-        +string sitrep_id
-        +SitrepPriority priority
-        +TelemetryCoordinateRef coordinates_ref
-        +string notes
-        +datetime timestamp
-        +string origin_identity
-    }
+  class TeamMemberSkill {
+    <<TMF_JSON_Schema,dModelClass>>
+    +memberUid: String
+    +skillUid: String
+    +level: int
+    +validatedBy: String[0..1]
+    +validatedAt: DateTime[0..1]
+    +expiresAt: DateTime[0..1]
+  }
 
-    class SitrepDatapack {
-        +string schema_version
-        +string message_type
-        +bytes payload
-        +datetime created_at
-    }
+  class TaskSkillRequirement {
+    <<TMF_JSON_Schema,dModelClass>>
+    +taskUid: String
+    +skillUid: String
+    +minimumLevel: int
+    +isMandatory: Boolean
+  }
 
-    class ReticulumEnvelope {
-        +string source_identity
-        +string destination_hash
-        +bool encrypted
-        +bytes ciphertext
-        +bytes signature
-    }
+  class TeamColor {
+    <<enumeration>>
+    YELLOW
+    RED
+    BLUE
+    ORANGE
+    MAGENTA
+    MAROON
+    PURPLE
+    DARK_BLUE
+    CYAN
+    TEAL
+    GREEN
+    DARK_GREEN
+    BROWN
+  }
 
-    class SitrepGenerator {
-        +SitrepDatapack to_datapack(Sitrep sitrep)
-        +ReticulumEnvelope to_reticulum_packet(SitrepDatapack datapack)
-    }
+  Mission "0..1" --> "0..*" Mission : parent/children
+  Mission "1" o-- "0..*" MissionChange : Mission_Associates_MissionChange
+  Mission "1" o-- "0..*" LogEntry : Mission_Associates_LogEntry
+  Mission "1" o-- "1..*" Team : Mission_Associates_Team
+  Mission "1" o-- "0..*" MissionTaskAssignment : Mission_Associates_TaskAssignments
+  Team "1" o-- "1..*" TeamMember : Team_Associates_TeamMember
+  Team "1" o-- "0..*" Asset : Team_Associates_Assets
 
-    class SitrepParser {
-        +Sitrep parse_datapack(SitrepDatapack datapack)
-        +Sitrep parse_envelope(ReticulumEnvelope envelope)
-    }
+  Mission "1" --> "0..*" checklist : Mission_Associates_checklist
+  checklist "1" o-- "0..*" checklistTask : checklist_Associates_checklistTasks
+  checklist "1" o-- "1..*" checklistColumn : checklist_Associates_checklistColumns
+  checklist "1" --> "0..1" CheckListtemplate : checklist_Associates_templates
+  checklistTask "1" o-- "0..*" MissionTaskAssignment : task_Associates_assignments
+  checklistTask "1" o-- "0..*" TaskSkillRequirement : task_Associates_skillRequirements
+  TeamMember "1" o-- "0..*" MissionTaskAssignment : member_Associates_assignments
+  MissionTaskAssignment "0..*" -- "0..*" Asset : assignment_Associates_assets
+  TeamMember "1" --> "0..1" ClientProfile : TeamMember_Associates_Profile
+  TeamMember "1" o-- "0..*" TeamMemberSkill : TeamMember_Associates_Skills
+  Skill "1" o-- "0..*" TeamMemberSkill : Skill_Associates_members
+  Skill "1" o-- "0..*" TaskSkillRequirement : Skill_Associates_taskRequirements
 
-    class MissionChange {
-        +string mission_change_id
-        +string mission_id
-        +string task_id
-        +string change_type
-        +string source_identity
-        +string sitrep_id
-        +dict payload
-        +datetime created_at
-    }
-
-    class LogEntry {
-        +string log_entry_id
-        +string mission_id
-        +string task_id
-        +string level
-        +string category
-        +string message
-        +datetime created_at
-        +dict metadata
-    }
-
-    Topic "1" o-- "0..*" Subscriber : has
-    Topic "1" o-- "0..*" FileAttachment : scopes
-    Topic "1" o-- "0..*" ChatMessage : carries
-    ChatMessage "1" o-- "0..*" ChatAttachment : includes
-    ChatAttachment --> FileAttachment : references file_id
-
-    Subscriber --> NodeRecord : destination/subscriber_id
-    NodeRecord "1" o-- "1" NodeStats : runtime_status
-
-    Client ..> IdentityStatus : contributes
-    IdentityStateRecord ..> IdentityStatus : moderation_flags
-    IdentityAnnounceRecord ..> IdentityStatus : announce_metadata
-
-    NodeRecord --> Telemeter : peer_dest
-    Telemeter "1" o-- "0..*" Sensor : captures
-    Sensor <|-- TelemetryLocation
-    Marker ..> Telemeter : emitted_as_telemetry
-
-    Mission --> MissionStatus : state
-    Task --> TaskStatus : state
-    Mission "1" o-- "0..*" Task : contains
-
-    Sitrep --> SitrepPriority : uses
-    Sitrep --> TelemetryCoordinateRef : coordinates_ref
-    Sitrep ..> Mission : mission_context
-    Sitrep ..> Task : task_context
-    TelemetryCoordinateRef --> Telemeter : telemeter_id
-    TelemetryCoordinateRef --> TelemetryLocation : sensor_id/location
-
-    SitrepGenerator ..> Sitrep : serializes
-    SitrepGenerator --> SitrepDatapack : emits compact packet
-    SitrepDatapack --> ReticulumEnvelope : wrapped_for_transport
-
-    ReticulumEnvelope ..> SitrepParser : imported_packet
-    SitrepParser --> Sitrep : reconstructs
-    SitrepParser --> MissionChange : logs SITREP_IMPORTED
-    SitrepParser --> LogEntry : writes audit log
-    MissionChange --> Mission : references
-    MissionChange ..> Task : optional_target
-    MissionChange --> Sitrep : references
-    LogEntry ..> Mission : context
-    LogEntry ..> Task : context
-    LogEntry ..> MissionChange : contextual_link
+  Mission --> missionRoleList : defaultRole/ownerRole
+  Mission --> missionStatus : missionStatus
+  MissionChange --> MissionChangeType : changeType
+  Asset --> AssetStatus : status
+  Team --> TeamColor : color
+  TeamMember --> TeamRole : role
+  ClientProfile --> TeamRole : role
+  checklist --> checklistStatus : checklistStatus
+  checklistTask --> checklistTaskStatus : taskStatus
+  MissionTaskAssignment --> checklistTaskStatus : status
+  checklistColumn --> checklistColumnType : columnType
