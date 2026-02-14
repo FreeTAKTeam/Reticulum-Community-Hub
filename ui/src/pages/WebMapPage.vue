@@ -1685,12 +1685,16 @@ const buildZoneMidpointFeatureCollection = () => {
 
 const buildZoneAreaLabelFeatureCollection = () => {
   let points: GeoPoint[] = [];
+  let labelName = "";
   if (zoneMode.value && zoneDraftPoints.value.length >= 3) {
     points = zoneDraftPoints.value;
+    labelName = zonePromptValue.value.trim() || "Draft Zone";
   } else if (zoneEditingId.value && zoneEditingPoints.value.length >= 3) {
     points = zoneEditingPoints.value;
+    labelName = zonesStore.zoneIndex.get(zoneEditingId.value)?.name ?? "";
   } else if (selectedZone.value && selectedZone.value.points.length >= 3) {
     points = selectedZone.value.points;
+    labelName = selectedZone.value.name;
   }
   if (points.length < 3) {
     return { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection;
@@ -1699,7 +1703,8 @@ const buildZoneAreaLabelFeatureCollection = () => {
   if (!centroid) {
     return { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection;
   }
-  const label = formatAreaLabel(polygonAreaSquareMeters(points));
+  const areaLabel = formatAreaLabel(polygonAreaSquareMeters(points));
+  const label = labelName ? `${labelName}\n${areaLabel}` : areaLabel;
   return {
     type: "FeatureCollection",
     features: [
