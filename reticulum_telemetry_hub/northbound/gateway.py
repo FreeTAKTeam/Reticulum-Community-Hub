@@ -69,7 +69,7 @@ class GatewayConfig:
     storage_path: Path
     identity_path: Path
     config_path: Path
-    display_name: str
+    display_name: str | None
     announce_interval: int
     hub_telemetry_interval: int
     service_telemetry_interval: int
@@ -196,7 +196,7 @@ def _build_gateway_config(args: argparse.Namespace) -> GatewayConfig:
         config_path=config_path,
     )
     runtime_config = config_manager.config.runtime
-    display_name = args.display_name or runtime_config.display_name
+    display_name = args.display_name
     announce_interval = args.announce_interval or runtime_config.announce_interval
     hub_interval = _resolve_interval(
         args.hub_telemetry_interval,

@@ -106,7 +106,7 @@ class LXMFRouterConfig:
 class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     """Configuration values that guide the hub runtime defaults."""
 
-    display_name: str = "RTH"
+    display_name: str = ""
     announce_interval: int = DEFAULT_ANNOUNCE_INTERVAL
     marker_announce_interval_minutes: int = DEFAULT_MARKER_ANNOUNCE_INTERVAL_MINUTES
     announce_capabilities_enabled: bool = DEFAULT_ANNOUNCE_CAPABILITIES_ENABLED

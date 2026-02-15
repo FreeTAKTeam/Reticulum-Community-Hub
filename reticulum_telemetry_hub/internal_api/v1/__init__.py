@@ -34,7 +34,7 @@ from .schemas import RegisterNodePayload
 from .schemas import SubscribeTopicPayload
 from .schemas import SUPPORTED_API_VERSION
 
-CONTRACT_VERSION = "1.0"
+CONTRACT_VERSION = "1.1"
 
 __all__ = [
     "ApiEnvelopeBase",

@@ -325,6 +325,41 @@ def test_identity_announce_ignores_missing_name(tmp_path):
     assert api.resolve_identity_display_name("deadbeef") == "Sideband-Alice"
 
 
+def test_identity_announce_concurrent_upserts_do_not_duplicate_records(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    errors: list[Exception] = []
+
+    def _record(display_name: str) -> None:
+        try:
+            api.record_identity_announce("deadbeef", display_name=display_name)
+        except Exception as exc:  # pragma: no cover - defensive capture
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=_record, args=("Sideband-Alice",), daemon=True)
+        for _ in range(10)
+    ] + [
+        threading.Thread(target=_record, args=("Sideband-Bob",), daemon=True)
+        for _ in range(10)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    assert api.resolve_identity_display_name("deadbeef") in {
+        "Sideband-Alice",
+        "Sideband-Bob",
+    }
+    records = [
+        record
+        for record in api._storage.list_identity_announces()
+        if record.destination_hash == "deadbeef"
+    ]
+    assert len(records) == 1
+
+
 def test_identity_statuses_dedupe_case_insensitive(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     api.join("DeAdBeEf")

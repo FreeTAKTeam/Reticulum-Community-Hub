@@ -102,7 +102,7 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
   ```bash
   uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
   ```
-- Remote clients must authenticate. Set `RTH_API_KEY` and send it as `X-API-Key` or a Bearer token.
+- Remote clients must authenticate. Set `RTH_API_KEY` and send it as `X-API-Key` or a Bearer token (`RCH_API_KEY` remains a backward-compatible alias).
 - Loopback/local requests from the same machine are allowed without API credentials.
 - Marker identity encryption is derived from the hub identity (no extra key configuration required).
 - The admin UI sidebar can be collapsed and pinned (stored per-browser).

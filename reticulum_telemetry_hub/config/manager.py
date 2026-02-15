@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import string
 from configparser import ConfigParser
 from pathlib import Path
 from datetime import datetime, timezone
@@ -116,6 +117,35 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
     def reticulum_info_snapshot(self) -> dict:
         """Return a summary of Reticulum runtime configuration."""
         return self._config.to_reticulum_info_dict()
+
+    def resolve_hub_display_name(
+        self,
+        *,
+        override: str | None = None,
+        destination_hash: bytes | bytearray | memoryview | str | None = None,
+    ) -> str:
+        """Resolve the hub name from override/config/default template.
+
+        Args:
+            override (str | None): Optional explicit name (for CLI overrides).
+            destination_hash (bytes | bytearray | memoryview | str | None):
+                Destination hash used by the generated fallback.
+
+        Returns:
+            str: Resolved hub display name.
+        """
+
+        explicit = self._normalize_display_name(override)
+        if explicit is not None:
+            return explicit
+
+        configured = self._normalize_display_name(self.runtime_config.display_name)
+        if configured is not None:
+            return configured
+
+        version = self._normalize_name_token(getattr(self._config, "app_version", None))
+        dest_hash = self._normalize_destination_hash(destination_hash)
+        return f"RCH_{version}_{dest_hash}"
 
     def get_config_text(self) -> str:
         """Return the raw config.ini content when present."""
@@ -381,8 +411,12 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
                 announce_include_timestamp,
             )
 
+        display_name = self._normalize_display_name(hub_section.get("display_name"))
+        if display_name is None:
+            display_name = defaults.display_name
+
         return HubRuntimeConfig(
-            display_name=hub_section.get("display_name", defaults.display_name),
+            display_name=display_name,
             announce_interval=self._coerce_int(
                 hub_section.get("announce_interval"), defaults.announce_interval
             ),
@@ -582,6 +616,48 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         except ValueError:
             return None
         return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _normalize_display_name(value: str | None) -> str | None:
+        """Return a trimmed display name or ``None`` when empty."""
+
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @staticmethod
+    def _normalize_name_token(value: str | None, fallback: str = "unknown") -> str:
+        """Return a sanitized token suitable for generated names."""
+
+        if value is None:
+            return fallback
+        compact = str(value).strip()
+        if not compact:
+            return fallback
+        normalized = "".join(
+            ch if ch.isalnum() or ch in {".", "-", "_"} else "_" for ch in compact
+        )
+        normalized = normalized.strip("._-")
+        return normalized or fallback
+
+    @staticmethod
+    def _normalize_destination_hash(
+        value: bytes | bytearray | memoryview | str | None,
+    ) -> str:
+        """Return a lowercase destination-hash token for generated names."""
+
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return bytes(value).hex().lower()
+
+        if isinstance(value, str):
+            candidate = value.strip().lower()
+            if candidate.startswith("0x"):
+                candidate = candidate[2:]
+            if candidate and all(ch in string.hexdigits for ch in candidate):
+                return candidate
+
+        return "unknown"
 
     @staticmethod
     def _coerce_float(value: str | None, default: float) -> float:

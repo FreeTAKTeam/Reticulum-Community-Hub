@@ -8,6 +8,7 @@ from typing import Optional
 import uuid
 
 from sqlalchemy import create_engine
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
@@ -386,28 +387,28 @@ class HubStorage(HubStorageBase):
         identity = identity.lower()
         now = _utcnow()
         with self._session_scope() as session:
-            record = session.get(IdentityAnnounceRecord, identity)
-            if record is None:
-                record = IdentityAnnounceRecord(
-                    destination_hash=identity,
-                    display_name=display_name,
-                    first_seen=now,
-                    last_seen=now,
-                    source_interface=source_interface,
-                )
-                session.add(record)
-            else:
-                record.last_seen = now
-                if display_name and (
-                    record.display_name is None or record.display_name != display_name
-                ):
-                    record.display_name = display_name
-                if source_interface and (
-                    record.source_interface is None
-                    or record.source_interface != source_interface
-                ):
-                    record.source_interface = source_interface
+            insert_values = {
+                "destination_hash": identity,
+                "display_name": display_name,
+                "first_seen": now,
+                "last_seen": now,
+                "source_interface": source_interface,
+            }
+            update_values = {"last_seen": now}
+            if display_name:
+                update_values["display_name"] = display_name
+            if source_interface:
+                update_values["source_interface"] = source_interface
+            stmt = sqlite_insert(IdentityAnnounceRecord).values(**insert_values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[IdentityAnnounceRecord.destination_hash],
+                set_=update_values,
+            )
+            session.execute(stmt)
             session.commit()
+            record = session.get(IdentityAnnounceRecord, identity)
+            if record is None:  # pragma: no cover - defensive
+                raise RuntimeError("Failed to upsert identity announce record")
             return record
 
     def get_identity_announce(self, identity: str) -> IdentityAnnounceRecord | None:

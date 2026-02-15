@@ -22,7 +22,8 @@ class ApiAuth:
 
         Args:
             api_key (Optional[str]): API key override. When omitted, the
-                validator reads ``RTH_API_KEY`` from the environment.
+                validator reads ``RTH_API_KEY`` from the environment, falling
+                back to ``RCH_API_KEY`` for backward compatibility.
         """
 
         load_env()
@@ -110,7 +111,10 @@ class ApiAuth:
         if expected:
             return "Unauthorized"
         if not self.is_local_client(client_host):
-            return "Remote access requires authentication; set RTH_API_KEY."
+            return (
+                "Remote access requires authentication; set RTH_API_KEY "
+                "(RCH_API_KEY is also supported)."
+            )
         return "Unauthorized"
 
     @staticmethod
@@ -121,7 +125,7 @@ class ApiAuth:
             Optional[str]: API key string if defined.
         """
 
-        return os.environ.get("RTH_API_KEY")
+        return os.environ.get("RTH_API_KEY") or os.environ.get("RCH_API_KEY")
 
 
 def _parse_bearer_token(authorization: Optional[str]) -> Optional[str]:

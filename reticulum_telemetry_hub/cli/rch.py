@@ -121,6 +121,12 @@ def _resolve_data_dir(data_dir: Optional[str]) -> Path:
     return _expand_user_path(env_dir or DEFAULT_STORAGE_PATH)
 
 
+def _resolve_api_key() -> Optional[str]:
+    """Return API key from canonical and legacy environment variables."""
+
+    return os.environ.get("RTH_API_KEY") or os.environ.get("RCH_API_KEY")
+
+
 def _load_state(data_dir: Path) -> Optional[ControlState]:
     """Load the persisted state from disk, if present."""
 
@@ -255,7 +261,7 @@ def _start_command(args: argparse.Namespace) -> int:
         if args.port is not None
         else int(state.port) if state is not None else DEFAULT_PORT
     )
-    api_key = os.environ.get("RCH_API_KEY")
+    api_key = _resolve_api_key()
     client = ControlClient(port=port, api_key=api_key)
 
     if state is not None and client.status() is not None:
@@ -286,7 +292,7 @@ def _stop_command(args: argparse.Namespace) -> int:
     data_dir = _resolve_data_dir(args.data_dir)
     state = _load_state(data_dir)
     port = _control_port(args, state)
-    api_key = os.environ.get("RCH_API_KEY")
+    api_key = _resolve_api_key()
     client = ControlClient(port=port, api_key=api_key)
 
     if client.stop():
@@ -306,7 +312,7 @@ def _status_command(args: argparse.Namespace) -> int:
     data_dir = _resolve_data_dir(args.data_dir)
     state = _load_state(data_dir)
     port = _control_port(args, state)
-    api_key = os.environ.get("RCH_API_KEY")
+    api_key = _resolve_api_key()
     client = ControlClient(port=port, api_key=api_key)
 
     payload = client.status()

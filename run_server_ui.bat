@@ -5,7 +5,7 @@ rem Start the RTH hub + northbound API (FastAPI) + the RCH UI (Vite dev server).
 rem Override defaults via env vars:
 rem   VENV_DIR         (default: .venv)
 rem   RTH_STORAGE_DIR  (default: RTH_Store)
-rem   RTH_DISPLAY_NAME (default: RTH)
+rem   RTH_DISPLAY_NAME (optional; when set, overrides [hub].display_name)
 rem   RTH_HUB_MODE     (default: embedded)  [embedded|external]
 rem   RTH_DAEMON       (default: 0)         [1 to enable daemon mode]
 rem   RTH_SERVICES     (default: empty)     comma-separated (e.g. tak_cot,gpsd)
@@ -18,7 +18,6 @@ pushd "%REPO_ROOT%" >nul || exit /b 1
 
 if not defined VENV_DIR set "VENV_DIR=.venv"
 if not defined RTH_STORAGE_DIR set "RTH_STORAGE_DIR=RTH_Store"
-if not defined RTH_DISPLAY_NAME set "RTH_DISPLAY_NAME=RTH"
 if not defined RTH_HUB_MODE set "RTH_HUB_MODE=embedded"
 if not defined RTH_DAEMON set "RTH_DAEMON=0"
 if not defined RTH_SERVICES set "RTH_SERVICES="
@@ -69,6 +68,11 @@ set "HUB_ARGS="
 if /I "%RTH_HUB_MODE%"=="embedded" (
     set "HUB_ARGS=!HUB_ARGS! --embedded"
 )
+if defined RTH_DISPLAY_NAME (
+    if not "%RTH_DISPLAY_NAME%"=="" (
+        set "HUB_ARGS=!HUB_ARGS! --display_name \"%RTH_DISPLAY_NAME%\""
+    )
+)
 if "%RTH_DAEMON%"=="1" (
     set "HUB_ARGS=!HUB_ARGS! --daemon"
 )
@@ -79,7 +83,7 @@ for %%S in (!SERVICES_SPACED!) do (
 )
 
 echo Starting hub + northbound API at http://%RTH_API_HOST%:%RTH_API_PORT%
-start "RTH Hub + API" /D "%REPO_ROOT%" cmd /k ""%PYTHON_EXE%" -m reticulum_telemetry_hub.northbound.gateway --storage_dir "%RTH_STORAGE_DIR%" --display_name "%RTH_DISPLAY_NAME%" --api-host %RTH_API_HOST% --api-port %RTH_API_PORT% !HUB_ARGS! !HUB_FLAGS!"
+start "RTH Hub + API" /D "%REPO_ROOT%" cmd /k ""%PYTHON_EXE%" -m reticulum_telemetry_hub.northbound.gateway --storage_dir "%RTH_STORAGE_DIR%" --api-host %RTH_API_HOST% --api-port %RTH_API_PORT% !HUB_ARGS! !HUB_FLAGS!"
 
 echo Starting UI dev server at http://localhost:5173
 start "RTH UI" /D "%REPO_ROOT%ui" cmd /k "set \"VITE_RTH_BASE_URL=%VITE_RTH_BASE_URL%\" && npm run dev"

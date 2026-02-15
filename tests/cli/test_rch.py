@@ -13,6 +13,7 @@ from reticulum_telemetry_hub.cli.rch import _build_gateway_command
 from reticulum_telemetry_hub.cli.rch import _build_parser
 from reticulum_telemetry_hub.cli.rch import _control_port
 from reticulum_telemetry_hub.cli.rch import _load_state
+from reticulum_telemetry_hub.cli.rch import _resolve_api_key
 from reticulum_telemetry_hub.cli.rch import _resolve_data_dir
 from reticulum_telemetry_hub.cli.rch import _spawn_gateway_process
 from reticulum_telemetry_hub.cli.rch import _start_command
@@ -315,6 +316,24 @@ def test_resolve_data_dir_uses_env(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("RTH_STORAGE_DIR", str(tmp_path))
 
     assert _resolve_data_dir(None) == tmp_path
+
+
+def test_resolve_api_key_prefers_canonical_env(monkeypatch) -> None:
+    """Prefer RTH_API_KEY when both canonical and alias keys are configured."""
+
+    monkeypatch.setenv("RTH_API_KEY", "canonical")
+    monkeypatch.setenv("RCH_API_KEY", "legacy")
+
+    assert _resolve_api_key() == "canonical"
+
+
+def test_resolve_api_key_supports_legacy_alias(monkeypatch) -> None:
+    """Fall back to legacy RCH_API_KEY when canonical key is missing."""
+
+    monkeypatch.delenv("RTH_API_KEY", raising=False)
+    monkeypatch.setenv("RCH_API_KEY", "legacy")
+
+    assert _resolve_api_key() == "legacy"
 
 
 def test_stop_with_signal_handles_failure(monkeypatch) -> None:

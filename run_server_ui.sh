@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR"
 # Override defaults via env vars:
 #   VENV_DIR          (default: .venv)
 #   RTH_STORAGE_DIR   (default: RTH_Store)
-#   RTH_DISPLAY_NAME  (default: RTH)
+#   RTH_DISPLAY_NAME  (optional; when set, overrides [hub].display_name)
 #   RTH_HUB_MODE      (default: embedded) [embedded|external]
 #   RTH_DAEMON        (default: 0)        [1 to enable daemon mode]
 #   RTH_SERVICES      (default: empty)    comma-separated (e.g. tak_cot,gpsd)
@@ -18,7 +18,6 @@ cd "$SCRIPT_DIR"
 
 VENV_DIR="${VENV_DIR:-.venv}"
 RTH_STORAGE_DIR="${RTH_STORAGE_DIR:-RTH_Store}"
-RTH_DISPLAY_NAME="${RTH_DISPLAY_NAME:-RTH}"
 RTH_HUB_MODE="${RTH_HUB_MODE:-embedded}"
 RTH_DAEMON="${RTH_DAEMON:-0}"
 RTH_SERVICES="${RTH_SERVICES:-}"
@@ -69,6 +68,9 @@ fi
 if [[ "$RTH_DAEMON" == "1" ]]; then
   HUB_FLAGS+=("--daemon")
 fi
+if [[ -n "${RTH_DISPLAY_NAME:-}" ]]; then
+  HUB_FLAGS+=("--display_name" "$RTH_DISPLAY_NAME")
+fi
 
 IFS=',' read -r -a SERVICES_ARR <<< "$RTH_SERVICES"
 for service in "${SERVICES_ARR[@]}"; do
@@ -81,7 +83,6 @@ done
 echo "Starting hub + northbound API at http://${RTH_API_HOST}:${RTH_API_PORT}"
 "$PYTHON_EXE" -m reticulum_telemetry_hub.northbound.gateway \
   --storage_dir "$RTH_STORAGE_DIR" \
-  --display_name "$RTH_DISPLAY_NAME" \
   --api-host "$RTH_API_HOST" \
   --api-port "$RTH_API_PORT" \
   "${HUB_FLAGS[@]}" &

@@ -7,6 +7,8 @@ import LXMF
 import RNS
 
 from reticulum_telemetry_hub.api.models import Subscriber
+from reticulum_telemetry_hub.config import HubConfigurationManager
+from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
 from reticulum_telemetry_hub.reticulum_server import services
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
@@ -72,6 +74,36 @@ def test_daemon_sampler_collects_local_telemetry(tmp_path):
         hub.stop_daemon_workers()
         stored = hub.tel_controller.get_telemetry()
         assert stored, "Sampler did not persist telemetry in daemon mode"
+    finally:
+        hub.shutdown()
+
+
+def test_default_hub_name_includes_version_and_destination_hash(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[app]\n"
+        "version = 7.8.9\n"
+        "\n"
+        "[hub]\n"
+        "display_name =\n",
+        encoding="utf-8",
+    )
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+    hub = ReticulumTelemetryHub(
+        None,
+        str(tmp_path),
+        tmp_path / "identity",
+        config_manager=manager,
+    )
+
+    try:
+        destination_hash = hub.my_lxmf_dest.hash.hex()
+        expected_name = f"RCH_7.8.9_{destination_hash}"
+        assert hub.display_name == expected_name
+        assert getattr(hub.my_lxmf_dest, "display_name", None) == expected_name
+
+        app_data = hub._invoke_router_hook("get_announce_app_data", hub.my_lxmf_dest.hash)
+        assert display_name_from_app_data(app_data) == expected_name
     finally:
         hub.shutdown()
 

@@ -144,3 +144,48 @@ def test_lxmf_startup_options_loaded_from_propagation_section(tmp_path):
     assert lxmf.propagation_startup_prune_enabled is True
     assert lxmf.propagation_startup_max_messages == 20000
     assert lxmf.propagation_startup_max_age_days == 30
+
+
+def test_resolve_hub_display_name_prefers_configured_value(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[app]\n"
+        "version = 9.9.9\n"
+        "\n"
+        "[hub]\n"
+        "display_name = Mission Relay\n"
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+
+    resolved = manager.resolve_hub_display_name(destination_hash="aa" * 16)
+
+    assert resolved == "Mission Relay"
+
+
+def test_resolve_hub_display_name_uses_default_template_when_unset(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[app]\n"
+        "version = 1.2.3\n"
+        "\n"
+        "[hub]\n"
+        "display_name =\n"
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+
+    resolved = manager.resolve_hub_display_name(destination_hash="AA" * 16)
+
+    assert resolved == f"RCH_1.2.3_{'aa' * 16}"
+
+
+def test_resolve_hub_display_name_prefers_override(tmp_path):
+    manager = HubConfigurationManager(storage_path=tmp_path)
+
+    resolved = manager.resolve_hub_display_name(
+        override="CLI Relay",
+        destination_hash="bb" * 16,
+    )
+
+    assert resolved == "CLI Relay"

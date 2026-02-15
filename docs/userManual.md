@@ -318,8 +318,9 @@ Run only the API server (read-only unless you provide a message dispatcher):
 uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
 ```
 
-Set `RCH_API_KEY` to require auth on protected endpoints. The API accepts
-either the `X-API-Key` header or a bearer token in `Authorization`.
+Set `RTH_API_KEY` to require auth on protected endpoints. `RCH_API_KEY`
+remains supported as a backward-compatible alias. The API accepts either the
+`X-API-Key` header or a bearer token in `Authorization`.
 
 If you run the API separately from the hub process, set `RCH_STORAGE_DIR` to
 the same storage directory so the API reads the correct config and databases.

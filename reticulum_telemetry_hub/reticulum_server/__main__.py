@@ -32,6 +32,7 @@ import base64
 import binascii
 import json
 import mimetypes
+import queue
 import re
 import string
 import time
@@ -186,14 +187,83 @@ def _dispatch_coroutine(coroutine) -> None:
 class AnnounceHandler:
     """Track simple metadata about peers announcing on the Reticulum bus."""
 
+    _DEFAULT_PERSIST_QUEUE_SIZE = 1024
+    _DROP_LOG_INTERVAL = 100
+
     def __init__(
         self,
         identities: dict[str, str],
         api: ReticulumTelemetryHubAPI | None = None,
+        *,
+        persist_queue_size: int = _DEFAULT_PERSIST_QUEUE_SIZE,
     ):
         self.aspect_filter = APP_NAME
         self.identities = identities
         self._api = api
+        self._persist_queue: queue.Queue[tuple[str, str | None, str | None]] = queue.Queue(
+            maxsize=max(1, int(persist_queue_size))
+        )
+        self._persist_stop_event = threading.Event()
+        self._persist_worker: threading.Thread | None = None
+        self._persist_worker_lock = threading.Lock()
+        self._dropped_persist_count = 0
+
+    def close(self, *, timeout: float = 2.0) -> None:
+        """Stop the background persistence worker."""
+
+        worker = self._persist_worker
+        if worker is None:
+            return
+        self._persist_stop_event.set()
+        worker.join(timeout=timeout)
+        self._persist_worker = None
+
+    def _ensure_persist_worker(self) -> None:
+        """Start the background persistence worker once."""
+
+        worker = self._persist_worker
+        if worker is not None and worker.is_alive():
+            return
+        with self._persist_worker_lock:
+            worker = self._persist_worker
+            if worker is not None and worker.is_alive():
+                return
+            self._persist_stop_event.clear()
+            self._persist_worker = threading.Thread(
+                target=self._persist_worker_loop,
+                daemon=True,
+            )
+            self._persist_worker.start()
+
+    def _persist_worker_loop(self) -> None:
+        """Persist announce metadata from the bounded queue."""
+
+        while True:
+            if self._persist_stop_event.is_set() and self._persist_queue.empty():
+                return
+            try:
+                destination_hash, display_name, source_interface = self._persist_queue.get(
+                    timeout=0.2
+                )
+            except queue.Empty:
+                continue
+
+            try:
+                api = self._api
+                if api is None:
+                    continue
+                api.record_identity_announce(
+                    destination_hash,
+                    display_name=display_name,
+                    source_interface=source_interface,
+                )
+            except Exception as exc:  # pragma: no cover - defensive log
+                RNS.log(
+                    f"Failed to persist announce metadata for {destination_hash}: {exc}",
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
+            finally:
+                self._persist_queue.task_done()
 
     def received_announce(self, destination_hash, announced_identity, app_data):
         # RNS.log("\t+--- LXMF Announcement -----------------------------------------")
@@ -271,22 +341,23 @@ class AnnounceHandler:
         api = self._api
         if api is None:
             return
+        self._ensure_persist_worker()
 
-        def _persist() -> None:
-            try:
-                api.record_identity_announce(
-                    destination_hash,
-                    display_name=display_name,
-                    source_interface=source_interface,
-                )
-            except Exception as exc:  # pragma: no cover - defensive log
+        try:
+            self._persist_queue.put_nowait(
+                (destination_hash, display_name, source_interface)
+            )
+        except queue.Full:
+            self._dropped_persist_count += 1
+            dropped_count = self._dropped_persist_count
+            if dropped_count == 1 or dropped_count % self._DROP_LOG_INTERVAL == 0:
                 RNS.log(
-                    f"Failed to persist announce metadata for {destination_hash}: {exc}",
+                    (
+                        "Announce persistence queue is full; dropping metadata event "
+                        f"#{dropped_count} for {destination_hash}"
+                    ),
                     getattr(RNS, "LOG_WARNING", 2),
                 )
-
-        thread = threading.Thread(target=_persist, daemon=True)
-        thread.start()
 
 
 class ReticulumTelemetryHub:
@@ -358,9 +429,25 @@ class ReticulumTelemetryHub:
         router_callable = self._get_router_callable(self.lxm_router, attribute)
         return router_callable(*args, **kwargs)
 
+    @staticmethod
+    def _delivery_destination_hash(identity) -> str | None:
+        """Return the local LXMF delivery destination hash for ``identity``."""
+
+        if identity is None:
+            return None
+        try:
+            destination_hash = RNS.Destination.hash_from_name_and_identity(
+                APP_NAME, identity
+            )
+        except Exception:  # pragma: no cover - defensive
+            return None
+        if isinstance(destination_hash, (bytes, bytearray, memoryview)):
+            return bytes(destination_hash).hex().lower()
+        return None
+
     def __init__(
         self,
-        display_name: str,
+        display_name: str | None,
         storage_path: Path,
         identity_path: Path,
         *,
@@ -380,7 +467,7 @@ class ReticulumTelemetryHub:
         """Initialize the telemetry hub runtime container.
 
         Args:
-            display_name (str): Label announced with the LXMF destination.
+            display_name (str | None): Optional label announced with the LXMF destination.
             storage_path (Path): Directory containing hub storage files.
             identity_path (Path): Path to the persisted LXMF identity.
             embedded (bool): Whether to run the LXMF router threads in-process.
@@ -411,7 +498,6 @@ class ReticulumTelemetryHub:
         self.outbound_send_timeout = outbound_send_timeout
         self.outbound_backoff = outbound_backoff
         self.outbound_max_attempts = outbound_max_attempts
-        self.display_name = str(display_name).strip() if str(display_name).strip() else "Hub"
         self.config_manager: HubConfigurationManager | None = config_manager
         if self.config_manager is None:
             self.config_manager = HubConfigurationManager(
@@ -455,8 +541,14 @@ class ReticulumTelemetryHub:
         self._announce_capabilities_lock = threading.Lock()
         self._announce_capabilities_logged = False
         self.command_manager = None
+        self._announce_handler: AnnounceHandler | None = None
 
         identity = self.load_or_generate_identity(self.identity_path)
+        destination_hash = self._delivery_destination_hash(identity)
+        self.display_name = self.config_manager.resolve_hub_display_name(
+            override=display_name,
+            destination_hash=destination_hash,
+        )
 
         if ReticulumTelemetryHub._shared_lxm_router is None:
             ReticulumTelemetryHub._shared_lxm_router = LXMF.LXMRouter(
@@ -470,7 +562,7 @@ class ReticulumTelemetryHub:
         self.lxm_router = cast(LXMF.LXMRouter, shared_router)
 
         self.my_lxmf_dest = self._invoke_router_hook(
-            "register_delivery_identity", identity, display_name=display_name
+            "register_delivery_identity", identity, display_name=self.display_name
         )
 
         self.identities: dict[str, str] = {}
@@ -525,9 +617,8 @@ class ReticulumTelemetryHub:
         self.api.set_reticulum_destination(self._origin_rch_hex())
         self._backfill_identity_announces()
         self._load_persisted_clients()
-        RNS.Transport.register_announce_handler(
-            AnnounceHandler(self.identities, api=self.api)
-        )
+        self._announce_handler = AnnounceHandler(self.identities, api=self.api)
+        RNS.Transport.register_announce_handler(self._announce_handler)
         self.tel_controller.set_api(self.api)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
         tak_config_manager = self.config_manager
@@ -2707,6 +2798,9 @@ class ReticulumTelemetryHub:
             return
         self._shutdown = True
         self.stop_daemon_workers()
+        if self._announce_handler is not None:
+            self._announce_handler.close()
+            self._announce_handler = None
         if self.embedded_lxmd is not None:
             self.embedded_lxmd.stop()
             self.embedded_lxmd = None
@@ -2790,7 +2884,7 @@ if __name__ == "__main__":
     app_config = config_manager.config
     runtime_config = app_config.runtime
 
-    display_name = args.display_name or runtime_config.display_name
+    display_name = args.display_name
     announce_interval = args.announce_interval or runtime_config.announce_interval
     hub_interval = _resolve_interval(
         args.hub_telemetry_interval,

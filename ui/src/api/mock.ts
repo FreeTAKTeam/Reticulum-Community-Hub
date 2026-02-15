@@ -644,7 +644,7 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
   if (pathname === "/api/v1/app/info") {
     return jsonResponse({
       name: "RCH UI",
-      version: "1.34.0",
+      version: "1.35.0",
       description: "Mock hub",
       rns_version: "0.9.0",
       lxmf_version: "0.7.0",

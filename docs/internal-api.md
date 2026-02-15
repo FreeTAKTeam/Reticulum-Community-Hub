@@ -1,6 +1,6 @@
 # Reticulum Community Hub Internal API Specification
 
-Version: 1.0  
+Version: 1.1  
 Status: Proposed (Normative)  
 Audience: Core developers, Codex agents, future R3AKT integration
 
