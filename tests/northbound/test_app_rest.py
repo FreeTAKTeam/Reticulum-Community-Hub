@@ -97,7 +97,7 @@ def test_protected_endpoint_requires_api_key(tmp_path) -> None:
         telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),
         auth=ApiAuth(api_key="secret"),
     )
-    client = TestClient(app)
+    client = TestClient(app, client=("198.51.100.10", 50000))
 
     response = client.get("/Status")
 

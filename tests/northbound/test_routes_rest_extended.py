@@ -170,6 +170,22 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
     )
     assert reticulum_rollback_response.status_code == 200
 
+    capabilities_response = client.get(
+        "/Reticulum/Interfaces/Capabilities", headers=headers
+    )
+    assert capabilities_response.status_code == 200
+    capabilities_payload = capabilities_response.json()
+    assert "supported_interface_types" in capabilities_payload
+    assert "unsupported_interface_types" in capabilities_payload
+    assert "identity_hash_hex_length" in capabilities_payload
+
+    discovery_response = client.get("/Reticulum/Discovery", headers=headers)
+    assert discovery_response.status_code == 200
+    discovery_payload = discovery_response.json()
+    assert "runtime_active" in discovery_payload
+    assert "discovered_interfaces" in discovery_payload
+    assert "refreshed_at" in discovery_payload
+
     telemetry.save_telemetry(
         {
             SID_TIME: int(now.timestamp()),
@@ -263,3 +279,57 @@ def test_identity_moderation_routes(tmp_path: Path) -> None:
 
     identities_response = client.get("/Identities", headers=headers)
     assert identities_response.status_code == 200
+
+
+def test_reticulum_capabilities_route_runtime_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Return a safe capabilities response when runtime is unavailable."""
+
+    client, _, _, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    monkeypatch.setattr(
+        "reticulum_telemetry_hub.northbound.services.get_interface_capabilities",
+        lambda: {
+            "runtime_active": False,
+            "os": "windows",
+            "identity_hash_hex_length": 0,
+            "supported_interface_types": [],
+            "unsupported_interface_types": ["TCPClientInterface"],
+            "discoverable_interface_types": [],
+            "autoconnect_interface_types": [],
+            "rns_version": "unavailable",
+        },
+    )
+
+    response = client.get("/Reticulum/Interfaces/Capabilities", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["runtime_active"] is False
+
+
+def test_reticulum_discovery_route_runtime_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Return a safe discovery response when runtime is unavailable."""
+
+    client, _, _, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    monkeypatch.setattr(
+        "reticulum_telemetry_hub.northbound.services.get_discovery_snapshot",
+        lambda: {
+            "runtime_active": False,
+            "should_autoconnect": False,
+            "max_autoconnected_interfaces": None,
+            "required_discovery_value": None,
+            "interface_discovery_sources": [],
+            "discovered_interfaces": [],
+            "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    response = client.get("/Reticulum/Discovery", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["runtime_active"] is False
+    assert response.json()["discovered_interfaces"] == []

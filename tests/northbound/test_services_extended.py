@@ -170,3 +170,33 @@ def test_app_info_round_trip(tmp_path: Path) -> None:
     assert "app_name" in info
     assert "storage_path" in info
     assert "reticulum_destination" in info
+
+
+def test_reticulum_interface_capabilities_proxy(tmp_path: Path, monkeypatch) -> None:
+    """Return capabilities payload from the discovery helper."""
+
+    services, _, _, _ = _build_services(tmp_path)
+    monkeypatch.setattr(
+        "reticulum_telemetry_hub.northbound.services.get_interface_capabilities",
+        lambda: {"runtime_active": True, "supported_interface_types": ["TCPClientInterface"]},
+    )
+
+    payload = services.reticulum_interface_capabilities()
+
+    assert payload["runtime_active"] is True
+    assert payload["supported_interface_types"] == ["TCPClientInterface"]
+
+
+def test_reticulum_discovery_snapshot_proxy(tmp_path: Path, monkeypatch) -> None:
+    """Return discovery payload from the discovery helper."""
+
+    services, _, _, _ = _build_services(tmp_path)
+    monkeypatch.setattr(
+        "reticulum_telemetry_hub.northbound.services.get_discovery_snapshot",
+        lambda: {"runtime_active": False, "discovered_interfaces": []},
+    )
+
+    payload = services.reticulum_discovery_snapshot()
+
+    assert payload["runtime_active"] is False
+    assert payload["discovered_interfaces"] == []

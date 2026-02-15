@@ -17,6 +17,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.northbound import gateway
+from reticulum_telemetry_hub.northbound.gateway import DEFAULT_API_HOST
 from reticulum_telemetry_hub.northbound.gateway import LOCAL_API_HOST
 from reticulum_telemetry_hub.northbound.gateway import _build_gateway_config
 from reticulum_telemetry_hub.northbound.gateway import _build_log_levels
@@ -85,8 +86,8 @@ def test_parse_args_accepts_data_dir(monkeypatch) -> None:
     assert args.log_level == "info"
 
 
-def test_build_gateway_config_uses_localhost(tmp_path) -> None:
-    """Force localhost binding in gateway config."""
+def test_build_gateway_config_respects_requested_host(tmp_path) -> None:
+    """Use the requested API host in gateway config."""
 
     args = argparse.Namespace(
         storage_dir=str(tmp_path),
@@ -104,8 +105,31 @@ def test_build_gateway_config_uses_localhost(tmp_path) -> None:
     )
     config = _build_gateway_config(args)
 
-    assert config.api_host == LOCAL_API_HOST
+    assert config.api_host == "0.0.0.0"
     assert config.api_port == 8123
+
+
+def test_build_gateway_config_defaults_to_public_host(tmp_path) -> None:
+    """Default API host is 0.0.0.0 when no host is provided."""
+
+    args = argparse.Namespace(
+        storage_dir=str(tmp_path),
+        config_path=None,
+        display_name=None,
+        announce_interval=None,
+        hub_telemetry_interval=None,
+        service_telemetry_interval=None,
+        log_level=None,
+        embedded=None,
+        daemon=False,
+        services=[],
+        api_port=8123,
+        api_host=None,
+    )
+
+    config = _build_gateway_config(args)
+
+    assert config.api_host == DEFAULT_API_HOST
 
 
 def test_start_hub_thread_invokes_run() -> None:

@@ -112,7 +112,63 @@ const mockState = {
     "listen_ip = 0.0.0.0\n" +
     "listen_port = 4242\n" +
     "forward_ip = 255.255.255.255\n" +
-    "forward_port = 4242\n"
+    "forward_port = 4242\n",
+  reticulumCapabilities: {
+    runtime_active: true,
+    os: "windows",
+    identity_hash_hex_length: 20,
+    supported_interface_types: [
+      "AutoInterface",
+      "TCPClientInterface",
+      "TCPServerInterface",
+      "UDPInterface",
+      "I2PInterface",
+      "SerialInterface",
+      "KISSInterface",
+      "AX25KISSInterface",
+      "PipeInterface",
+      "RNodeInterface",
+      "RNodeMultiInterface"
+    ],
+    unsupported_interface_types: ["BackboneInterface", "RNodeIPInterface"],
+    discoverable_interface_types: ["AutoInterface", "BackboneInterface", "TCPServerInterface", "UDPInterface"],
+    autoconnect_interface_types: ["TCPClientInterface", "UDPInterface"],
+    rns_version: "1.1.3"
+  },
+  reticulumDiscovery: {
+    runtime_active: true,
+    should_autoconnect: true,
+    max_autoconnected_interfaces: 3,
+    required_discovery_value: 14,
+    interface_discovery_sources: [],
+    refreshed_at: nowIso(),
+    discovered_interfaces: [
+      {
+        discovery_hash: "d1c0very1",
+        status: "available",
+        status_code: 1,
+        type: "TCPClientInterface",
+        name: "Northern Relay",
+        transport: "tcp",
+        transport_id: "north-relay",
+        network_id: "field-net",
+        hops: 2,
+        value: 15,
+        received: nowIso(),
+        last_heard: nowIso(),
+        heard_count: 4,
+        reachable_on: "10.1.40.8",
+        port: 4242,
+        config_entry: {
+          name: "Northern Relay",
+          type: "TCPClientInterface",
+          interface_enabled: "yes",
+          target_host: "10.1.40.8",
+          target_port: "4242"
+        }
+      }
+    ]
+  }
 };
 
 const mockMarkerSymbols = [
@@ -383,6 +439,17 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
       mockState.reticulumConfigText = typeof body === "string" ? body : mockState.reticulumConfigText;
       return jsonResponse({ applied: true });
     }
+  }
+
+  if (pathname === "/Reticulum/Interfaces/Capabilities") {
+    return jsonResponse(mockState.reticulumCapabilities);
+  }
+
+  if (pathname === "/Reticulum/Discovery") {
+    return jsonResponse({
+      ...mockState.reticulumDiscovery,
+      refreshed_at: nowIso()
+    });
   }
 
   if (pathname === "/Config/Validate" && method === "POST") {

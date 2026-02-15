@@ -18,6 +18,8 @@ export const endpoints = {
   reticulumConfig: "/Reticulum/Config",
   reticulumConfigValidate: "/Reticulum/Config/Validate",
   reticulumConfigRollback: "/Reticulum/Config/Rollback",
+  reticulumInterfacesCapabilities: "/Reticulum/Interfaces/Capabilities",
+  reticulumDiscovery: "/Reticulum/Discovery",
   markers: "/api/markers",
   zones: "/api/zones",
   markerSymbols: "/api/markers/symbols",

@@ -538,6 +538,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConfigRollbackResult'
+  /Reticulum/Interfaces/Capabilities:
+    get:
+      x-scope: protected
+      tags:
+       - Reticulum
+      summary: Return Reticulum runtime interface capabilities.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Interface capabilities and runtime support summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReticulumInterfaceCapabilities'
+  /Reticulum/Discovery:
+    get:
+      x-scope: protected
+      tags:
+       - Reticulum
+      summary: Return a live snapshot of Reticulum interface discovery state.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Discovery snapshot payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReticulumDiscoveryState'
   /Command/FlushTelemetry:
     post:
       x-scope: protected
@@ -1657,6 +1689,183 @@ components:
         error:
           type: string
           nullable: true
+    ReticulumInterfaceCapabilities:
+      type: object
+      description: Runtime support matrix for Reticulum interface types.
+      properties:
+        runtime_active:
+          type: boolean
+        os:
+          type: string
+          enum:
+            - windows
+            - linux
+            - darwin
+            - other
+        identity_hash_hex_length:
+          type: integer
+        supported_interface_types:
+          type: array
+          items:
+            type: string
+        unsupported_interface_types:
+          type: array
+          items:
+            type: string
+        discoverable_interface_types:
+          type: array
+          items:
+            type: string
+        autoconnect_interface_types:
+          type: array
+          items:
+            type: string
+        rns_version:
+          type: string
+      required:
+        - runtime_active
+        - os
+        - identity_hash_hex_length
+        - supported_interface_types
+        - unsupported_interface_types
+        - discoverable_interface_types
+        - autoconnect_interface_types
+        - rns_version
+    ReticulumDiscoveredInterfaceEntry:
+      type: object
+      description: Discovered interface announce metadata.
+      properties:
+        discovery_hash:
+          type: string
+          nullable: true
+        status:
+          type: string
+          nullable: true
+        status_code:
+          oneOf:
+            - type: integer
+            - type: string
+          nullable: true
+        type:
+          type: string
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        transport:
+          type: string
+          nullable: true
+        transport_id:
+          type: string
+          nullable: true
+        network_id:
+          type: string
+          nullable: true
+        hops:
+          type: integer
+          nullable: true
+        value:
+          type: integer
+          nullable: true
+        received:
+          type: string
+          nullable: true
+        last_heard:
+          type: string
+          nullable: true
+        heard_count:
+          type: integer
+          nullable: true
+        reachable_on:
+          type: string
+          nullable: true
+        port:
+          oneOf:
+            - type: integer
+            - type: string
+          nullable: true
+        latitude:
+          type: number
+          nullable: true
+        longitude:
+          type: number
+          nullable: true
+        height:
+          type: number
+          nullable: true
+        frequency:
+          type: number
+          nullable: true
+        bandwidth:
+          type: number
+          nullable: true
+        sf:
+          type: number
+          nullable: true
+        cr:
+          type: number
+          nullable: true
+        modulation:
+          type: string
+          nullable: true
+        channel:
+          oneOf:
+            - type: integer
+            - type: string
+          nullable: true
+        config_entry:
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: string
+          nullable: true
+      required:
+        - discovery_hash
+        - status
+        - status_code
+        - type
+        - name
+        - transport
+        - transport_id
+        - network_id
+        - hops
+        - value
+        - received
+        - last_heard
+        - heard_count
+    ReticulumDiscoveryState:
+      type: object
+      description: Live Reticulum discovery snapshot.
+      properties:
+        runtime_active:
+          type: boolean
+        should_autoconnect:
+          type: boolean
+        max_autoconnected_interfaces:
+          type: integer
+          nullable: true
+        required_discovery_value:
+          type: integer
+          nullable: true
+        interface_discovery_sources:
+          type: array
+          items:
+            type: string
+        discovered_interfaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReticulumDiscoveredInterfaceEntry'
+        refreshed_at:
+          type: string
+          format: date-time
+      required:
+        - runtime_active
+        - should_autoconnect
+        - max_autoconnected_interfaces
+        - required_discovery_value
+        - interface_discovery_sources
+        - discovered_interfaces
+        - refreshed_at
     FlushTelemetryResult:
       type: object
       properties:

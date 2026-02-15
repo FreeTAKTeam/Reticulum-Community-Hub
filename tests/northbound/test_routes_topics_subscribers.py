@@ -19,7 +19,11 @@ from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 
 
-def _build_client(tmp_path: Path) -> tuple[TestClient, ReticulumTelemetryHubAPI]:
+def _build_client(
+    tmp_path: Path,
+    *,
+    client_address: tuple[str, int] = ("testclient", 50000),
+) -> tuple[TestClient, ReticulumTelemetryHubAPI]:
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "hub.sqlite")
     api = ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
@@ -35,7 +39,7 @@ def _build_client(tmp_path: Path) -> tuple[TestClient, ReticulumTelemetryHubAPI]
         event_log=event_log,
         auth=ApiAuth(api_key="secret"),
     )
-    return TestClient(app), api
+    return TestClient(app, client=client_address), api
 
 
 def test_topic_crud_and_subscribe_flow(tmp_path: Path) -> None:
@@ -64,7 +68,8 @@ def test_topic_crud_and_subscribe_flow(tmp_path: Path) -> None:
     )
     assert patch_response.status_code == 200
 
-    assoc_missing = client.post("/Topic/Associate", json={})
+    remote_client, _ = _build_client(tmp_path, client_address=("198.51.100.10", 50000))
+    assoc_missing = remote_client.post("/Topic/Associate", json={})
     assert assoc_missing.status_code == 401
 
     assoc_response = client.post(

@@ -57,7 +57,7 @@ Read our full manifesto: [docs/Manifesto_Reticulum_Community_Hub.md](docs/Manife
        --storage_dir ./RCH_Store \
        --display_name "RCH"
    ```
-   Or start the hub + northbound API locally with the new entrypoint:
+   Or start the hub + northbound API with the new entrypoint:
    ```bash
    rch start --data-dir ./RCH_Store --port 8000 --log-level info
    ```
@@ -90,9 +90,9 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 
 - Run the hub + API together (recommended for chat/message sending):
   ```bash
-  rch start --data-dir ./RCH_Store --port 8000 --log-level info
+  rch start --data-dir ./RCH_Store --port 8000 --api-host 0.0.0.0 --log-level info
   ```
-  The gateway binds to `127.0.0.1` for local-only access.
+  By default, the gateway binds to `0.0.0.0` (all interfaces).
 - Check or stop the backend:
   ```bash
   rch status --data-dir ./RCH_Store
@@ -100,9 +100,10 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
   ```
 - Run only the API server (read-only unless you provide a message dispatcher):
   ```bash
-  uvicorn reticulum_telemetry_hub.northbound.app:app --host 127.0.0.1 --port 8000
+  uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
   ```
-- Protect admin endpoints by setting `RCH_API_KEY` (accepts `X-API-Key` or Bearer token).
+- Remote clients must authenticate. Set `RTH_API_KEY` and send it as `X-API-Key` or a Bearer token.
+- Loopback/local requests from the same machine are allowed without API credentials.
 - Marker identity encryption is derived from the hub identity (no extra key configuration required).
 - The admin UI sidebar can be collapsed and pinned (stored per-browser).
 - Telemetry map markers render MDI icons when telemetry payloads include `telemetry_type`, `symbol`, `category`, or `type`.
@@ -120,7 +121,28 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 
   The UI uses Vite 6 (installed via `npm install`).
 
-  Set `VITE_RCH_BASE_URL` when the UI should target a different hub.
+  Set `VITE_RCH_BASE_URL` and `VITE_RTH_WS_BASE_URL` when the UI should target a different hub.
+
+### Remote access (LAN/WAN)
+
+1. Set an API key on the host that runs RCH:
+   ```bash
+   # Linux/macOS
+   export RTH_API_KEY="change-this"
+   # Windows PowerShell
+   $env:RTH_API_KEY = "change-this"
+   ```
+2. Start the gateway on a reachable interface and port:
+   ```bash
+   rch start --data-dir ./RCH_Store --api-host 0.0.0.0 --port 8000
+   ```
+3. Allow inbound TCP traffic on that port in the host firewall.
+4. From another machine, point the UI/API to the hub host IP:
+   - REST base URL: `http://<hub-ip>:8000`
+   - WebSocket base URL: `ws://<hub-ip>:8000`
+5. Authenticate remote requests with either:
+   - `X-API-Key: <your-key>`
+   - `Authorization: Bearer <your-key>`
 
 ## Electron desktop packaging (Windows + Raspberry Pi OS)
 

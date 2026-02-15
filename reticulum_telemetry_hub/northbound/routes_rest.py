@@ -241,6 +241,18 @@ def register_core_routes(
         services.record_event("reticulum_config_rolled_back", "Reticulum configuration rolled back")
         return result
 
+    @app.get("/Reticulum/Interfaces/Capabilities", dependencies=[Depends(require_protected)])
+    def get_reticulum_interface_capabilities() -> dict:
+        """Return interface capabilities for the active Reticulum runtime."""
+
+        return services.reticulum_interface_capabilities()
+
+    @app.get("/Reticulum/Discovery", dependencies=[Depends(require_protected)])
+    def get_reticulum_discovery() -> dict:
+        """Return live Reticulum discovery snapshot information."""
+
+        return services.reticulum_discovery_snapshot()
+
     @app.post("/Command/FlushTelemetry", dependencies=[Depends(require_protected)])
     def flush_telemetry() -> dict:
         """Flush stored telemetry entries.

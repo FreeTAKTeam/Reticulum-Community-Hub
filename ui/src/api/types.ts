@@ -160,3 +160,52 @@ export interface ChatMessage {
   created_at?: string;
   updated_at?: string;
 }
+
+export interface ReticulumInterfaceCapabilities {
+  runtime_active: boolean;
+  os: "windows" | "linux" | "darwin" | "other";
+  identity_hash_hex_length: number;
+  supported_interface_types: string[];
+  unsupported_interface_types: string[];
+  discoverable_interface_types: string[];
+  autoconnect_interface_types: string[];
+  rns_version: string;
+}
+
+export interface ReticulumDiscoveredInterfaceEntry {
+  discovery_hash: string | null;
+  status: string | null;
+  status_code: number | string | null;
+  type: string | null;
+  name: string | null;
+  transport: string | null;
+  transport_id: string | null;
+  network_id: string | null;
+  hops: number | null;
+  value: number | null;
+  received: string | null;
+  last_heard: string | null;
+  heard_count: number | null;
+  reachable_on?: string;
+  port?: number | string;
+  latitude?: number;
+  longitude?: number;
+  height?: number;
+  frequency?: number;
+  bandwidth?: number;
+  sf?: number;
+  cr?: number;
+  modulation?: string;
+  channel?: string | number;
+  config_entry?: Record<string, unknown> | string;
+}
+
+export interface ReticulumDiscoveryState {
+  runtime_active: boolean;
+  should_autoconnect: boolean;
+  max_autoconnected_interfaces: number | null;
+  required_discovery_value: number | null;
+  interface_discovery_sources: string[];
+  discovered_interfaces: ReticulumDiscoveredInterfaceEntry[];
+  refreshed_at: string;
+}

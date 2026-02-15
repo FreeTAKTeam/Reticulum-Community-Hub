@@ -488,7 +488,11 @@ def _get_message_data(message: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _validated_auth(
-    auth: ApiAuth, token: Optional[str], api_key: Optional[str]
+    auth: ApiAuth,
+    token: Optional[str],
+    api_key: Optional[str],
+    *,
+    client_host: Optional[str] = None,
 ) -> bool:
     """Return ``True`` when auth credentials are valid.
 
@@ -501,7 +505,32 @@ def _validated_auth(
         bool: ``True`` when credentials are valid.
     """
 
-    return auth.validate_credentials(api_key, token)
+    try:
+        return auth.validate_credentials(api_key, token, client_host=client_host)
+    except TypeError:
+        # Compatibility for tests/stubs that still expose the legacy signature.
+        return auth.validate_credentials(api_key, token)
+
+
+def _resolve_client_host(websocket: WebSocket) -> Optional[str]:
+    """Return the client host for a websocket when available."""
+
+    client = getattr(websocket, "client", None)
+    if client is None:
+        return None
+    host = getattr(client, "host", None)
+    if host is None:
+        return None
+    return str(host)
+
+
+def _auth_failure_detail(auth: ApiAuth, client_host: Optional[str]) -> str:
+    """Return an auth failure detail with compatibility fallback."""
+
+    detail_builder = getattr(auth, "failure_detail", None)
+    if callable(detail_builder):
+        return str(detail_builder(client_host))
+    return "Unauthorized"
 
 
 def _get_subscribe_flags(data: Dict[str, Any]) -> tuple[bool, bool, int]:
@@ -604,8 +633,11 @@ async def authenticate_websocket(
         return False
 
     token, api_key = _extract_auth_data(message)
-    if not _validated_auth(auth, token, api_key):
-        await websocket.send_json(build_error_message("unauthorized", "Unauthorized"))
+    client_host = _resolve_client_host(websocket)
+    if not _validated_auth(auth, token, api_key, client_host=client_host):
+        await websocket.send_json(
+            build_error_message("unauthorized", _auth_failure_detail(auth, client_host))
+        )
         await websocket.close(code=4003)
         return False
 

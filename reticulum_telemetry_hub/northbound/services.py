@@ -24,6 +24,12 @@ from reticulum_telemetry_hub.api.models import Zone
 from reticulum_telemetry_hub.api.models import ZonePoint
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.marker_service import MarkerUpdateResult
+from reticulum_telemetry_hub.api.reticulum_discovery import (
+    get_discovery_snapshot,
+)
+from reticulum_telemetry_hub.api.reticulum_discovery import (
+    get_interface_capabilities,
+)
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.zone_service import ZoneService
 from reticulum_telemetry_hub.api.zone_service import ZoneUpdateResult
@@ -436,6 +442,16 @@ class NorthboundServices:
         """
 
         return self.api.get_app_info()
+
+    def reticulum_interface_capabilities(self) -> Dict[str, object]:
+        """Return Reticulum interface capabilities for the current runtime."""
+
+        return get_interface_capabilities()
+
+    def reticulum_discovery_snapshot(self) -> Dict[str, object]:
+        """Return Reticulum interface discovery snapshot."""
+
+        return get_discovery_snapshot()
 
     def send_message(
         self,

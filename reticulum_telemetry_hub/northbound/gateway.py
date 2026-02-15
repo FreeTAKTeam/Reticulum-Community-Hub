@@ -32,6 +32,7 @@ from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetry
 
 
 LOCAL_API_HOST = "127.0.0.1"
+DEFAULT_API_HOST = "0.0.0.0"
 
 
 class GatewayHub(Protocol):
@@ -166,8 +167,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--api-host",
         dest="api_host",
-        default=LOCAL_API_HOST,
-        help="Host address for the northbound API (always 127.0.0.1).",
+        default=DEFAULT_API_HOST,
+        help="Host address for the northbound API (default: 0.0.0.0).",
     )
     parser.add_argument(
         "--port",
@@ -214,6 +215,8 @@ def _build_gateway_config(args: argparse.Namespace) -> GatewayConfig:
     requested_services = list(runtime_config.default_services)
     requested_services.extend(args.services or [])
     services = list(dict.fromkeys(requested_services))
+    requested_api_host = str(args.api_host).strip() if args.api_host is not None else ""
+    api_host = requested_api_host or DEFAULT_API_HOST
     return GatewayConfig(
         storage_path=storage_path,
         identity_path=identity_path,
@@ -226,7 +229,7 @@ def _build_gateway_config(args: argparse.Namespace) -> GatewayConfig:
         embedded=embedded,
         daemon_mode=bool(args.daemon),
         services=services,
-        api_host=LOCAL_API_HOST,
+        api_host=api_host,
         api_port=int(args.api_port),
     )
 
