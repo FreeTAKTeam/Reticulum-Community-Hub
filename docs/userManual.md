@@ -90,6 +90,8 @@ The storage directory (default `./RCH_Store`) contains:
 
 RCH reads defaults from a unified `config.ini` file in the storage directory.
 CLI flags override values from the file.
+When `config.ini` is missing, RCH bootstraps it from
+`reticulum_telemetry_hub/config/default_config.ini`.
 
 Example configuration:
 

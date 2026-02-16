@@ -7,6 +7,10 @@ readme = "README.md"
 packages = [
     { include = "reticulum_telemetry_hub" },
 ]
+include = [
+    { path = "reticulum_telemetry_hub/config/default_config.ini", format = "sdist" },
+    { path = "reticulum_telemetry_hub/config/default_config.ini", format = "wheel" },
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"

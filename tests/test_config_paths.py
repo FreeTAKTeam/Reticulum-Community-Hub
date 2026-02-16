@@ -35,6 +35,33 @@ def test_config_manager_expands_optional_config_overrides(monkeypatch, tmp_path)
     assert manager.lxmf_router_config_path == tmp_path / "custom/.lxmd/config"
 
 
+def test_missing_config_is_bootstrapped_from_default_template(tmp_path):
+    manager = HubConfigurationManager(storage_path=tmp_path)
+    config_path = tmp_path / "config.ini"
+
+    assert config_path.exists()
+    assert manager.config_parser.has_section("hub")
+    assert manager.config_parser.has_option("hub", "telemetry_filename")
+    assert manager.config_parser.has_section("announce.capabilities")
+    assert manager.config_parser.has_option("announce.capabilities", "enabled")
+    assert manager.config_parser.has_section("TAK")
+    assert manager.config_parser.has_option("TAK", "fts_compat")
+    assert manager.config_parser.has_section("telemetry")
+    assert manager.config_parser.has_option("telemetry", "enable_time")
+    assert manager.config_parser.has_option("telemetry", "location_latitude")
+
+
+def test_existing_config_is_not_overwritten_by_bootstrap(tmp_path):
+    config_path = tmp_path / "config.ini"
+    existing = "[app]\nname = Existing Hub\n"
+    config_path.write_text(existing, encoding="utf-8")
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+
+    assert manager.config_parser["app"]["name"] == "Existing Hub"
+    assert config_path.read_text(encoding="utf-8") == existing
+
+
 def test_tak_config_includes_proto_and_compat(tmp_path):
     config_path = tmp_path / "config.ini"
     config_path.write_text(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import string
 from configparser import ConfigParser
+from importlib import resources
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Mapping, Optional
@@ -35,6 +36,23 @@ def _expand_user_path(value: Path | str) -> Path:
     return Path(value_str).expanduser()
 
 
+def _load_default_config_template_text() -> str:
+    """Return the packaged default config template text when available."""
+
+    try:
+        template = resources.files("reticulum_telemetry_hub.config").joinpath(
+            "default_config.ini"
+        )
+        return template.read_text(encoding="utf-8")
+    except (
+        FileNotFoundError,
+        ModuleNotFoundError,
+        OSError,
+        AttributeError,
+    ):
+        return ""
+
+
 class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
     """Load hub related configuration files and expose them as Python objects."""
 
@@ -59,6 +77,7 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         self.config_path = _expand_user_path(
             config_path or self.storage_path / "config.ini"
         )
+        self._write_default_config_if_missing()
         self._config_parser = self._load_config_parser(self.config_path)
         self.runtime_config = self._load_runtime_config()
 
@@ -108,11 +127,18 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         Returns:
             HubAppConfig: Freshly parsed application configuration.
         """
+        self._write_default_config_if_missing()
         self._config_parser = self._load_config_parser(self.config_path)
         self.runtime_config = self._load_runtime_config()
         self._tak_config = self._load_tak_config()
         self._config = self._load()
         return self._config
+
+    @staticmethod
+    def default_config_template_text() -> str:
+        """Return the shipped config.ini template text."""
+
+        return _load_default_config_template_text()
 
     def reticulum_info_snapshot(self) -> dict:
         """Return a summary of Reticulum runtime configuration."""
@@ -290,6 +316,21 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
     # ------------------------------------------------------------------ #
     # private helpers
     # ------------------------------------------------------------------ #
+    def _write_default_config_if_missing(self) -> None:
+        """Create ``config.ini`` from the shipped template when absent."""
+
+        if self.config_path.exists():
+            return
+        template_text = _load_default_config_template_text()
+        if not template_text:
+            return
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            self.config_path.write_text(template_text, encoding="utf-8")
+        except OSError:
+            # Reason: config.ini is optional and startup should proceed with built-in defaults.
+            return
+
     def _load_config_parser(self, path: Path) -> ConfigParser:
         """Return a parser populated from ``config.ini`` when present."""
 
