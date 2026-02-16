@@ -1079,7 +1079,18 @@ class ReticulumTelemetryHub:
             )
             source_hex = self._message_source_hex(message)
             exclude = {source_hex} if source_hex else None
-            self.send_message(msg, topic=topic_id, exclude=exclude)
+            relay_fields = self._merge_standard_fields(
+                source_fields=message.fields,
+                extra_fields={
+                    LXMF.FIELD_EVENT: self._build_event_field(
+                        event_type="rch.message.relay",
+                        direction="inbound",
+                        topic_id=topic_id,
+                        source_hash=source_hex,
+                    )
+                },
+            )
+            self.send_message(msg, topic=topic_id, exclude=exclude, fields=relay_fields)
         except Exception as e:
             RNS.log(f"Error: {e}")
 
@@ -1227,6 +1238,19 @@ class ReticulumTelemetryHub:
                     f"Failed to build attachment fields: {exc}",
                     getattr(RNS, "LOG_WARNING", 2),
                 )
+        lxmf_fields = self._merge_standard_fields(
+            source_fields=fields,
+            extra_fields=lxmf_fields,
+        )
+        if lxmf_fields is None:
+            lxmf_fields = {}
+        if LXMF.FIELD_EVENT not in lxmf_fields:
+            lxmf_fields[LXMF.FIELD_EVENT] = self._build_event_field(
+                event_type="rch.message.outbound",
+                direction="outbound",
+                topic_id=topic_id,
+                destination=destination,
+            )
         sent = self.send_message(
             outbound_message,
             topic=topic_id,
@@ -1847,6 +1871,66 @@ class ReticulumTelemetryHub:
                     if topic_id:
                         return str(topic_id)
         return None
+
+    @staticmethod
+    def _relay_standard_fields(fields: dict | None) -> dict | None:
+        """Return relay-safe standard LXMF metadata fields.
+
+        The hub forwards threading and group metadata so downstream clients keep
+        conversation context when messages are relayed.
+        """
+
+        if not isinstance(fields, dict):
+            return None
+        relayed: dict = {}
+        for key in (LXMF.FIELD_THREAD, LXMF.FIELD_GROUP):
+            value = fields.get(key)
+            if value is not None:
+                relayed[key] = value
+        return relayed or None
+
+    @classmethod
+    def _merge_standard_fields(
+        cls,
+        *,
+        source_fields: dict | None,
+        extra_fields: dict | None,
+    ) -> dict | None:
+        """Merge relay-safe standard fields with explicit outbound fields."""
+
+        merged: dict = {}
+        relayed = cls._relay_standard_fields(source_fields)
+        if relayed:
+            merged.update(relayed)
+        if isinstance(extra_fields, dict):
+            merged.update(extra_fields)
+        return merged or None
+
+    @staticmethod
+    def _build_event_field(
+        *,
+        event_type: str,
+        direction: str | None = None,
+        topic_id: str | None = None,
+        source_hash: str | None = None,
+        destination: str | None = None,
+    ) -> dict[str, object]:
+        """Return a structured event payload for FIELD_EVENT."""
+
+        payload: dict[str, object] = {
+            "event_type": event_type,
+            "ts": int(time.time()),
+            "source": "rch",
+        }
+        if direction:
+            payload["direction"] = direction
+        if topic_id:
+            payload["topic_id"] = topic_id
+        if source_hash:
+            payload["source_hash"] = source_hash
+        if destination:
+            payload["destination"] = destination
+        return payload
 
     def _format_chat_broadcast_text(
         self,
@@ -2660,11 +2744,23 @@ class ReticulumTelemetryHub:
                     getattr(RNS, "LOG_WARNING", 2),
                 )
                 return None
+        response_fields = self._merge_standard_fields(
+            source_fields=message.fields,
+            extra_fields=fields,
+        )
+        if response_fields is None:
+            response_fields = {}
+        if LXMF.FIELD_EVENT not in response_fields:
+            response_fields[LXMF.FIELD_EVENT] = self._build_event_field(
+                event_type="rch.reply",
+                direction="outbound",
+                topic_id=self._extract_target_topic(message.fields),
+            )
         return LXMF.LXMessage(
             destination,
             self.my_lxmf_dest,
             content,
-            fields=apply_icon_appearance(fields),
+            fields=apply_icon_appearance(response_fields),
             desired_method=LXMF.LXMessage.DIRECT,
         )
 

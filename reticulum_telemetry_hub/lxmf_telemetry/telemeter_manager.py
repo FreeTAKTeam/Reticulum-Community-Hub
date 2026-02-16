@@ -159,27 +159,40 @@ class TelemetryRuntimeConfig:
 
         telemetry_filename = manager.runtime_config.telemetry_filename or filename
 
+        merged_section: dict[str, str] = {}
         if manager.config_parser.has_section("telemetry"):
-            return cls.from_section(manager.config_parser["telemetry"])
+            merged_section.update(dict(manager.config_parser["telemetry"]))
 
         path = Path(manager.storage_path) / telemetry_filename
-        return cls.from_file(path)
+        file_section = cls._load_section_from_file(path)
+        if file_section:
+            merged_section.update(file_section)
+
+        if merged_section:
+            return cls.from_section(merged_section)
+        return cls()
 
     @classmethod
     def from_file(cls, path: Path | None) -> "TelemetryRuntimeConfig":
         if path is None:
             return cls()
 
+        return cls.from_section(cls._load_section_from_file(path))
+
+    @staticmethod
+    def _load_section_from_file(path: Path | None) -> Mapping[str, str]:
+        """Return telemetry section values from ``path`` when available."""
+
+        if path is None:
+            return {}
+
         parser = ConfigParser()
         if path.exists():
             parser.read(path)
 
         if parser.has_section("telemetry"):
-            section: Mapping[str, str] = parser["telemetry"]
-        else:
-            section = {}
-
-        return cls.from_section(section)
+            return dict(parser["telemetry"])
+        return {}
 
     @classmethod
     def from_section(cls, section: Mapping[str, str]) -> "TelemetryRuntimeConfig":

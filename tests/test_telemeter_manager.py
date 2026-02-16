@@ -78,6 +78,48 @@ def test_manager_respects_sensor_enable_flags(tmp_path):
     assert SID_BATTERY in payload
 
 
+def test_manager_telemetry_file_overrides_config_section(tmp_path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    telemetry_file = storage / "telemetry.ini"
+    telemetry_file.write_text(
+        "[telemetry]\n"
+        "enable_battery = no\n"
+        "static_information = Callsign From Telemetry File\n"
+    )
+    config_file = storage / "config.ini"
+    config_file.write_text(
+        "[hub]\n"
+        "telemetry_filename = telemetry.ini\n"
+        "\n"
+        "[telemetry]\n"
+        "enable_battery = yes\n"
+        "static_information = Callsign From Config\n"
+    )
+    reticulum_cfg = tmp_path / "reticulum.ini"
+    reticulum_cfg.write_text("[reticulum]\n")
+    lxmf_cfg = tmp_path / "lxmf.ini"
+    lxmf_cfg.write_text("[lxmf]\n")
+
+    config_manager = HubConfigurationManager(
+        storage_path=storage,
+        config_path=config_file,
+        reticulum_config_path=reticulum_cfg,
+        lxmf_router_config_path=lxmf_cfg,
+    )
+    manager = TelemeterManager(config_manager=config_manager)
+    battery = manager.get_sensor("battery")
+    assert battery is not None
+    setattr(battery, "charge_percent", 50.0)
+
+    payload = manager.snapshot()
+
+    info_sensor = manager.get_sensor("information")
+    assert info_sensor is not None
+    assert getattr(info_sensor, "contents") == "Callsign From Telemetry File"
+    assert SID_BATTERY not in payload
+
+
 def test_manager_plugins_extend_snapshot(tmp_path):
     manager = TelemeterManager()
 

@@ -531,6 +531,67 @@ def test_handle_command_routes_telemetry_request_name_with_leading_zero():
     assert telemetry_controller.calls
 
 
+def test_command_reply_sets_results_and_preserves_context_fields(tmp_path):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    manager, server_dest = make_command_manager(api)
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    command = {PLUGIN_COMMAND: CommandManager.CMD_GET_APP_INFO}
+    message = LXMF.LXMessage(
+        server_dest,
+        client_dest,
+        fields={
+            LXMF.FIELD_COMMANDS: [command],
+            LXMF.FIELD_THREAD: "thread-app-info",
+            LXMF.FIELD_GROUP: {"id": "ops"},
+        },
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.pack()
+    message.signature_validated = True
+
+    reply = manager.handle_command(command, message)
+
+    assert reply is not None
+    assert reply.fields[LXMF.FIELD_THREAD] == "thread-app-info"
+    assert reply.fields[LXMF.FIELD_GROUP] == {"id": "ops"}
+    assert isinstance(reply.fields.get(LXMF.FIELD_RESULTS), dict)
+    assert reply.fields[LXMF.FIELD_RESULTS]["name"] == "TestHub"
+    assert reply.fields[LXMF.FIELD_EVENT]["event_type"] == "rch.command.result"
+    assert reply.fields[LXMF.FIELD_EVENT]["command"] == CommandManager.CMD_GET_APP_INFO
+
+
+def test_help_reply_sets_markdown_renderer_hint(tmp_path):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    manager, server_dest = make_command_manager(api)
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    command = {PLUGIN_COMMAND: CommandManager.CMD_HELP}
+    message = LXMF.LXMessage(
+        server_dest,
+        client_dest,
+        fields={LXMF.FIELD_COMMANDS: [command]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.pack()
+    message.signature_validated = True
+
+    reply = manager.handle_command(command, message)
+
+    assert reply is not None
+    assert reply.fields[LXMF.FIELD_RENDERER] == getattr(LXMF, "RENDERER_MARKDOWN", 0x02)
+    assert reply.fields[LXMF.FIELD_EVENT]["event_type"] == "rch.command.result"
+    assert reply.fields[LXMF.FIELD_EVENT]["command"] == CommandManager.CMD_HELP
+
+
 def test_create_topic_accepts_snake_case_fields():
     class DummyAPI:
         def __init__(self) -> None:
@@ -901,6 +962,7 @@ def test_dispatch_northbound_message_prefixes_topic_payload():
     assert queued.content == "/ops/live: HubNode > status ping"
     assert sent["message"] == "/ops/live: HubNode > status ping"
     assert sent["topic"] == "topic-live"
+    assert sent["fields"][LXMF.FIELD_EVENT]["event_type"] == "rch.message.outbound"
 
 
 def test_dispatch_northbound_message_keeps_existing_sender_prefix():
@@ -936,6 +998,7 @@ def test_dispatch_northbound_message_keeps_existing_sender_prefix():
     assert queued.content == "var.venezuela: RCH - win test > this is about Venezuela"
     assert sent["message"] == "var.venezuela: RCH - win test > this is about Venezuela"
     assert sent["topic"] == "topic-venezuela"
+    assert sent["fields"][LXMF.FIELD_EVENT]["event_type"] == "rch.message.outbound"
 
 
 def test_help_command_lists_examples(tmp_path):
@@ -1276,7 +1339,11 @@ def test_delivery_callback_honors_topic_field():
         hub.my_lxmf_dest,
         dest_two,
         "topic-message",
-        fields={"TopicID": "topic-beta"},
+        fields={
+            "TopicID": "topic-beta",
+            LXMF.FIELD_THREAD: "topic-thread-beta",
+            LXMF.FIELD_GROUP: {"id": "ops-beta"},
+        },
     )
     incoming.signature_validated = True
 
@@ -1290,6 +1357,9 @@ def test_delivery_callback_honors_topic_field():
         router_messages[0].content_as_string()
         == "/ops/beta: user-beta > topic-message"
     )
+    assert router_messages[0].fields[LXMF.FIELD_THREAD] == "topic-thread-beta"
+    assert router_messages[0].fields[LXMF.FIELD_GROUP] == {"id": "ops-beta"}
+    assert router_messages[0].fields[LXMF.FIELD_EVENT]["event_type"] == "rch.message.relay"
 
 
 def test_delivery_callback_skips_sender_echo():

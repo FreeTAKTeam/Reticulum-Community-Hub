@@ -85,6 +85,10 @@ class CommandManager:
         CMD_RETRIEVE_IMAGE: ["FileID"],
         CMD_ASSOCIATE_TOPIC_ID: ["TopicID"],
     }
+    _REPLY_CONTEXT_FIELDS = (LXMF.FIELD_THREAD, LXMF.FIELD_GROUP)
+    _MAX_RESULT_TEXT_BYTES = 1024
+    _EVENT_TYPE_REPLY = "rch.reply"
+    _EVENT_TYPE_COMMAND_RESULT = "rch.command.result"
 
     def __init__(
         self,
@@ -540,14 +544,28 @@ class CommandManager:
             }
             handler = dispatch_map.get(name)
             if handler is not None:
-                return handler()
+                return self._finalize_command_response(
+                    handler(), command_name=name, status="ok"
+                )
             if telemetry_request_present and is_telemetry_command:
-                return self.tel_controller.handle_command(
+                telemetry_reply = self.tel_controller.handle_command(
                     command, message, self.my_lxmf_dest
                 )
-            return self._handle_unknown_command(name, message)
+                return self._finalize_command_response(
+                    telemetry_reply, command_name=name, status="ok"
+                )
+            return self._finalize_command_response(
+                self._handle_unknown_command(name, message),
+                command_name=name,
+                status="unknown_command",
+            )
         # Delegate to telemetry controller for telemetry related commands
-        return self.tel_controller.handle_command(command, message, self.my_lxmf_dest)
+        telemetry_reply = self.tel_controller.handle_command(
+            command, message, self.my_lxmf_dest
+        )
+        return self._finalize_command_response(
+            telemetry_reply, command_name="TelemetryRequest", status="ok"
+        )
 
     # ------------------------------------------------------------------
     # command implementations
@@ -778,10 +796,18 @@ class CommandManager:
         return self._reply(message, "\n".join(lines))
 
     def _handle_help(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
-        return self._reply(message, build_help_text(self))
+        return self._reply(
+            message,
+            build_help_text(self),
+            fields={LXMF.FIELD_RENDERER: self._markdown_renderer_value()},
+        )
 
     def _handle_examples(self, message: LXMF.LXMessage) -> LXMF.LXMessage:
-        return self._reply(message, build_examples_text(self))
+        return self._reply(
+            message,
+            build_examples_text(self),
+            fields={LXMF.FIELD_RENDERER: self._markdown_renderer_value()},
+        )
 
     def _handle_unknown_command(
         self, name: str, message: LXMF.LXMessage
@@ -1177,13 +1203,115 @@ class CommandManager:
         self, message: LXMF.LXMessage, content: str, *, fields: Optional[dict] = None
     ) -> LXMF.LXMessage:
         dest = self._create_dest(message.source.identity)
+        resolved_fields = self._compose_reply_fields(
+            message=message,
+            content=content,
+            fields=fields,
+        )
         return LXMF.LXMessage(
             dest,
             self.my_lxmf_dest,
             content,
-            fields=apply_icon_appearance(fields),
+            fields=apply_icon_appearance(resolved_fields),
             desired_method=LXMF.LXMessage.DIRECT,
         )
+
+    def _finalize_command_response(
+        self,
+        response: Optional[LXMF.LXMessage],
+        *,
+        command_name: str | None,
+        status: str,
+    ) -> Optional[LXMF.LXMessage]:
+        """Ensure command replies include structured event metadata."""
+
+        if response is None:
+            return None
+        if not hasattr(response, "fields"):
+            return response
+        response_fields = dict(response.fields or {})
+        response_fields[LXMF.FIELD_EVENT] = self._build_event_field(
+            event_type=self._EVENT_TYPE_COMMAND_RESULT,
+            command_name=command_name,
+            status=status,
+        )
+        response.fields = apply_icon_appearance(response_fields)
+        return response
+
+    def _compose_reply_fields(
+        self,
+        *,
+        message: LXMF.LXMessage,
+        content: str,
+        fields: Optional[dict],
+    ) -> dict:
+        """Return reply fields with context metadata and command results."""
+
+        merged: dict = {}
+        source_fields = message.fields if isinstance(message.fields, dict) else {}
+        for key in self._REPLY_CONTEXT_FIELDS:
+            if key in source_fields and source_fields.get(key) is not None:
+                merged[key] = source_fields.get(key)
+        if fields:
+            merged.update(fields)
+        if LXMF.FIELD_RESULTS not in merged:
+            merged[LXMF.FIELD_RESULTS] = self._build_results_field(content)
+        if LXMF.FIELD_EVENT not in merged:
+            merged[LXMF.FIELD_EVENT] = self._build_event_field(
+                event_type=self._EVENT_TYPE_REPLY,
+                command_name=None,
+                status="ok",
+            )
+        return merged
+
+    @classmethod
+    def _build_results_field(cls, content: str):
+        """Return a compact FIELD_RESULTS payload for command replies."""
+
+        text = str(content or "")
+        stripped = text.strip()
+        if stripped:
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+            if parsed is not None:
+                return parsed
+
+        encoded_len = len(text.encode("utf-8", errors="ignore"))
+        if encoded_len <= cls._MAX_RESULT_TEXT_BYTES:
+            return text
+
+        return {
+            "truncated": True,
+            "content_length_bytes": encoded_len,
+            "preview": text[: cls._MAX_RESULT_TEXT_BYTES],
+        }
+
+    @staticmethod
+    def _build_event_field(
+        *,
+        event_type: str,
+        command_name: str | None,
+        status: str,
+    ) -> dict[str, object]:
+        """Return a structured event payload for FIELD_EVENT."""
+
+        payload: dict[str, object] = {
+            "event_type": event_type,
+            "status": status,
+            "ts": int(time.time()),
+            "source": "rch",
+        }
+        if command_name:
+            payload["command"] = command_name
+        return payload
+
+    @staticmethod
+    def _markdown_renderer_value() -> int:
+        """Return the FIELD_RENDERER value for markdown content."""
+
+        return int(getattr(LXMF, "RENDERER_MARKDOWN", 0x02))
 
     @staticmethod
     def _extract_topic_id(command: dict) -> Optional[str]:

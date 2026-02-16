@@ -508,8 +508,11 @@ class TelemetryController:
                         message,
                         my_lxm_dest,
                         "Telemetry request denied: sender is not subscribed to the topic.",
+                        topic_id=topic_id,
+                        status="denied",
                     )
                 packed_tels = []
+                incoming_fields = message.fields if isinstance(message.fields, dict) else {}
                 dest = RNS.Destination(
                     message.source.identity,
                     RNS.Destination.OUT,
@@ -544,7 +547,17 @@ class TelemetryController:
                 )
             # Sideband expects telemetry streams as plain lists; avoid
             # double-encoding the field so clients can iterate entries directly.
-            message.fields[LXMF.FIELD_TELEMETRY_STREAM] = packed_tels
+            message.fields = self._merge_standard_fields(
+                source_fields=incoming_fields,
+                extra_fields={
+                    LXMF.FIELD_TELEMETRY_STREAM: packed_tels,
+                    LXMF.FIELD_EVENT: self._build_event_field(
+                        event_type="rch.telemetry.response",
+                        topic_id=topic_id,
+                        status="ok",
+                    ),
+                },
+            )
             message.fields = apply_icon_appearance(message.fields)
             readable_json = json.dumps(
                 self._json_safe(human_readable_entries), default=str
@@ -735,7 +748,12 @@ class TelemetryController:
 
     @staticmethod
     def _reply(
-        message: LXMF.LXMessage, my_lxm_dest, content: str
+        message: LXMF.LXMessage,
+        my_lxm_dest,
+        content: str,
+        *,
+        topic_id: str | None = None,
+        status: str = "ok",
     ) -> LXMF.LXMessage:
         """Return an LXMF reply message to the sender."""
 
@@ -750,9 +768,91 @@ class TelemetryController:
             dest,
             my_lxm_dest,
             content,
-            fields=apply_icon_appearance(None),
+            fields=apply_icon_appearance(
+                TelemetryController._merge_standard_fields(
+                    source_fields=message.fields,
+                    extra_fields={
+                        LXMF.FIELD_RESULTS: TelemetryController._build_results_field(content),
+                        LXMF.FIELD_EVENT: TelemetryController._build_event_field(
+                            event_type="rch.telemetry.response",
+                            topic_id=topic_id,
+                            status=status,
+                        ),
+                    },
+                )
+            ),
             desired_method=LXMF.LXMessage.DIRECT,
         )
+
+    @staticmethod
+    def _relay_standard_fields(fields: dict | None) -> dict | None:
+        """Return relay-safe standard LXMF metadata fields."""
+
+        if not isinstance(fields, dict):
+            return None
+        relayed: dict = {}
+        for key in (LXMF.FIELD_THREAD, LXMF.FIELD_GROUP):
+            value = fields.get(key)
+            if value is not None:
+                relayed[key] = value
+        return relayed or None
+
+    @classmethod
+    def _merge_standard_fields(
+        cls,
+        *,
+        source_fields: dict | None,
+        extra_fields: dict | None,
+    ) -> dict:
+        """Merge relay-safe standard fields with explicit outbound fields."""
+
+        merged: dict = {}
+        relayed = cls._relay_standard_fields(source_fields)
+        if relayed:
+            merged.update(relayed)
+        if isinstance(extra_fields, dict):
+            merged.update(extra_fields)
+        return merged
+
+    @staticmethod
+    def _build_results_field(content: str):
+        """Return a compact FIELD_RESULTS payload for textual telemetry replies."""
+
+        text_value = str(content or "")
+        stripped = text_value.strip()
+        if stripped:
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+            if parsed is not None:
+                return parsed
+        if len(text_value.encode("utf-8", errors="ignore")) <= 1024:
+            return text_value
+        return {
+            "truncated": True,
+            "content_length_bytes": len(text_value.encode("utf-8", errors="ignore")),
+            "preview": text_value[:1024],
+        }
+
+    @staticmethod
+    def _build_event_field(
+        *,
+        event_type: str,
+        topic_id: str | None,
+        status: str,
+    ) -> dict[str, object]:
+        """Return a structured event payload for FIELD_EVENT."""
+
+        payload: dict[str, object] = {
+            "event_type": event_type,
+            "status": status,
+            "ts": int(time.time()),
+            "source": "rch",
+        }
+        if topic_id:
+            payload["topic_id"] = topic_id
+        return payload
 
     @staticmethod
     def _extract_topic_id(command: dict) -> Optional[str]:
