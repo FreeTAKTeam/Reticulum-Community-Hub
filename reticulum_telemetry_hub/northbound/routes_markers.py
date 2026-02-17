@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import timezone
 from typing import Callable
 from typing import Optional
 
@@ -118,3 +120,18 @@ def register_marker_routes(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
             ) from exc
         return {"status": "ok", "updated_at": result.marker.updated_at.isoformat()}
+
+    @app.delete(
+        "/api/markers/{object_destination_hash}",
+        dependencies=[Depends(require_protected)],
+    )
+    def delete_marker(object_destination_hash: str) -> dict:
+        """Delete a marker."""
+
+        try:
+            services.delete_marker(object_destination_hash)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        return {"status": "ok", "deleted_at": datetime.now(timezone.utc).isoformat()}

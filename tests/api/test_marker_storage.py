@@ -43,9 +43,16 @@ def test_marker_storage_crud(tmp_path):
     assert updated.lat == 5.5
     assert updated.lon == -4.2
 
+    deleted = storage.delete_marker("dest-1")
+    assert deleted is not None
+    assert deleted.object_destination_hash == "dest-1"
+    assert storage.get_marker("dest-1") is None
+    assert storage.list_markers() == []
+
 
 def test_marker_storage_missing_returns_none(tmp_path):
     storage = MarkerStorage(tmp_path / "hub.sqlite")
 
     assert storage.get_marker("missing") is None
     assert storage.update_marker_position("missing", lat=0.0, lon=0.0) is None
+    assert storage.delete_marker("missing") is None

@@ -57,7 +57,7 @@ def _build_client(
     return TestClient(app), dispatched
 
 
-def test_marker_routes_create_and_update(tmp_path: Path, monkeypatch) -> None:
+def test_marker_routes_create_update_and_delete(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("RTH_MARKER_IDENTITY_KEY", "11" * 32)
     client, dispatched = _build_client(tmp_path)
     headers = {"X-API-Key": "secret"}
@@ -116,10 +116,24 @@ def test_marker_routes_create_and_update(tmp_path: Path, monkeypatch) -> None:
     )
     assert renamed["name"] == "Renamed Alpha"
 
-    assert len(dispatched) == 3
+    delete_response = client.delete(f"/api/markers/{marker_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert delete_response.json()["status"] == "ok"
+
+    after_delete = client.get("/api/markers", headers=headers)
+    assert after_delete.status_code == 200
+    assert all(
+        item["object_destination_hash"] != marker_id for item in after_delete.json()
+    )
+
+    missing_delete = client.delete(f"/api/markers/{marker_id}", headers=headers)
+    assert missing_delete.status_code == 404
+
+    assert len(dispatched) == 4
     assert dispatched[0] == "marker.created"
     assert dispatched[1] == "marker.updated"
     assert dispatched[2] == "marker.updated"
+    assert dispatched[3] == "marker.deleted"
 
 
 def test_marker_symbols_route(tmp_path: Path) -> None:

@@ -325,6 +325,14 @@ class NorthboundServices:
             self._record_marker_event("marker.updated", result.marker)
         return result
 
+    def delete_marker(self, object_destination_hash: str) -> Marker:
+        """Delete a marker and dispatch marker.deleted."""
+
+        service = self._require_marker_service()
+        marker = service.delete_marker(object_destination_hash)
+        self._record_marker_event("marker.deleted", marker)
+        return marker
+
     def list_zones(self) -> list[Zone]:
         """Return stored operational zones."""
 
@@ -630,7 +638,10 @@ class NorthboundServices:
 
         if marker.stale_at is None:
             return False
-        return datetime.now(timezone.utc) > marker.stale_at
+        stale_at = marker.stale_at
+        if stale_at.tzinfo is None or stale_at.tzinfo.utcoffset(stale_at) is None:
+            stale_at = stale_at.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > stale_at
 
     def _require_marker_service(self) -> MarkerService:
         """Return the marker service or raise when missing."""

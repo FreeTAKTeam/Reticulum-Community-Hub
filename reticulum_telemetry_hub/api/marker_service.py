@@ -306,6 +306,14 @@ class MarkerService:
             raise KeyError(f"Marker '{object_destination_hash}' not found")
         return MarkerUpdateResult(marker=updated, changed=True)
 
+    def delete_marker(self, object_destination_hash: str) -> Marker:
+        """Delete a marker."""
+
+        removed = self._storage.delete_marker(object_destination_hash)
+        if removed is None:
+            raise KeyError(f"Marker '{object_destination_hash}' not found")
+        return removed
+
     def migrate_markers(self, *, origin_rch: str) -> list[Marker]:
         """Migrate legacy markers to identity-backed objects.
 

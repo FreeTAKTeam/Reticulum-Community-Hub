@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { endpoints } from "../api/endpoints";
+import { del } from "../api/client";
 import { get } from "../api/client";
 import { patch } from "../api/client";
 import { post } from "../api/client";
@@ -168,6 +169,15 @@ export const useMarkersStore = defineStore("markers", () => {
     );
   };
 
+  const deleteMarker = async (markerId: string) => {
+    try {
+      await del(`${endpoints.markers}/${markerId}`);
+    } catch {
+      // Keep optimistic local delete when the backend does not support this route.
+    }
+    markers.value = markers.value.filter((marker) => marker.id !== markerId);
+  };
+
   return {
     markers,
     loading,
@@ -176,6 +186,7 @@ export const useMarkersStore = defineStore("markers", () => {
     fetchMarkers,
     createMarker,
     updateMarkerPosition,
-    updateMarkerName
+    updateMarkerName,
+    deleteMarker
   };
 });

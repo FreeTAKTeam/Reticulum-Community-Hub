@@ -141,6 +141,29 @@ class MarkerStorage(HubStorageBase):
             record = session.get(MarkerRecord, local_id)
             return self._marker_from_record(record) if record else None
 
+    def delete_marker(self, object_destination_hash: str) -> Optional[Marker]:
+        """Delete a marker record.
+
+        Args:
+            object_destination_hash (str): Marker destination hash.
+
+        Returns:
+            Optional[Marker]: Removed marker or None when missing.
+        """
+
+        with self._session_scope() as session:
+            record = (
+                session.query(MarkerRecord)
+                .filter(MarkerRecord.object_destination_hash == object_destination_hash)
+                .one_or_none()
+            )
+            if not record:
+                return None
+            marker = self._marker_from_record(record)
+            session.delete(record)
+            session.commit()
+            return marker
+
     def update_marker_position(
         self,
         object_destination_hash: str,

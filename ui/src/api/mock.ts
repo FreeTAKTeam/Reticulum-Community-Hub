@@ -623,6 +623,15 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
   }
 
   const markerUpdateMatch = pathname.match(/^\/api\/markers\/(.+?)$/);
+  if (markerUpdateMatch && method === "DELETE") {
+    const markerId = markerUpdateMatch[1];
+    const index = mockState.markers.findIndex((entry) => entry.object_destination_hash === markerId);
+    if (index < 0) {
+      return jsonResponse({ detail: "Marker not found" }, 404);
+    }
+    const [removed] = mockState.markers.splice(index, 1);
+    return jsonResponse({ status: "ok", deleted_at: removed.updated_at ?? nowIso() });
+  }
   if (markerUpdateMatch && method === "PATCH") {
     const markerId = markerUpdateMatch[1];
     const body = (await parseBody(options.body)) as any;

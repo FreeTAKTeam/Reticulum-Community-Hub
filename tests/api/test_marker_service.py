@@ -145,3 +145,26 @@ def test_marker_service_handles_naive_timestamps(tmp_path, monkeypatch):
     )
 
     assert result.marker.object_destination_hash == marker.object_destination_hash
+
+
+def test_marker_service_deletes_marker(tmp_path, monkeypatch):
+    monkeypatch.setenv("RTH_MARKER_IDENTITY_KEY", _marker_key())
+    storage = MarkerStorage(tmp_path / "hub.sqlite")
+    service = MarkerService(storage)
+    marker = service.create_marker(
+        name="alpha",
+        marker_type="fire",
+        symbol="fire",
+        category="napsg",
+        lat=1.0,
+        lon=2.0,
+        origin_rch="origin",
+    )
+
+    removed = service.delete_marker(marker.object_destination_hash or "")
+
+    assert removed.object_destination_hash == marker.object_destination_hash
+    assert service.list_markers() == []
+
+    with pytest.raises(KeyError, match="not found"):
+        service.delete_marker(marker.object_destination_hash or "")
