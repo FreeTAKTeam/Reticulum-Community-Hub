@@ -4,7 +4,13 @@
 
 - `../README.md` (project overview and quickstart)
 - `userManual.md` (user and operator guide)
-- `../architecture.md` (system overview and references)
+- `architecture.md` (system overview and references)
+
+## Architecture
+
+- `architecture.md` (system architecture and component/data-flow overview)
+- `dataArchitecture.md` (domain class diagram including SITREP and zone models)
+- `architecture/R3AKT_Domain_Class_Diagram.mmd` (standalone Mermaid source)
 
 ## API and commands
 
@@ -27,7 +33,7 @@
 ## UI
 
 - `../ui/README.md` (UI dev/build steps)
-- `../ui-architecture.md` (UI architecture)
+- `ui-architecture.md` (UI architecture)
 - `ui-design.md` (UI design)
 - `ui-wireframe.md` (UI wireframes)
 

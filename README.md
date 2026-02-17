@@ -212,7 +212,7 @@ Marker management endpoints (used by the WebMap UI):
 
 - `docs/README.md` (documentation map)
 - `docs/userManual.md` (user and operator guide)
-- `architecture.md` (system overview and references)
+- `docs/architecture.md` (system overview and references)
 - `API/ReticulumCommunityHub-OAS.yaml` (REST/OpenAPI reference)
 
 ## Contributing

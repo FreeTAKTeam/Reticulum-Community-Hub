@@ -215,6 +215,21 @@ classDiagram
     +notes: String[0..1]
   }
 
+  class Zone {
+    <<TMF_JSON_Schema,dModelClass>>
+    +zoneId: String
+    +name: String
+    +points: ZonePoint[3..200]
+    +createdAt: DateTime
+    +updatedAt: DateTime
+  }
+
+  class ZonePoint {
+    <<TMF_JSON_Schema,dModelClass>>
+    +lat: float
+    +lon: float
+  }
+
   class ClientProfile {
     <<TMF_JSON_Schema,dModelClass>>
     +profileUid: String
@@ -280,6 +295,7 @@ classDiagram
   Mission "1" o-- "0..*" MissionTaskAssignment : Mission_Associates_TaskAssignments
   Team "1" o-- "1..*" TeamMember : Team_Associates_TeamMember
   Team "1" o-- "0..*" Asset : Team_Associates_Assets
+  Zone "1" o-- "3..200" ZonePoint : Zone_Associates_Points
 
   Mission "1" --> "0..*" checklist : Mission_Associates_checklist
   checklist "1" o-- "0..*" checklistTask : checklist_Associates_checklistTasks

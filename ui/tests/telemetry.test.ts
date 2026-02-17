@@ -21,4 +21,33 @@ describe("telemetry markers", () => {
     expect(markers[0].lat).toBe(1);
     expect(markers[0].lon).toBe(2);
   });
+
+  it("skips operator marker telemetry entries", () => {
+    const markers = deriveMarkers([
+      {
+        id: "1",
+        identity_id: "f4c1d2e3",
+        display_name: "Saddam",
+        location: { lat: 1, lon: 2 },
+        data: {
+          custom: {
+            marker: [{ object_type: "marker", event_type: "marker.created", symbol: "hostile" }, null]
+          }
+        }
+      },
+      {
+        id: "2",
+        identity_id: "deadbeef03",
+        display_name: "Bravo",
+        location: { lat: 3, lon: 4 },
+        data: {
+          telemetry_type: "person"
+        }
+      }
+    ]);
+
+    expect(markers).toHaveLength(1);
+    expect(markers[0].id).toBe("deadbeef03");
+    expect(markers[0].name).toBe("Bravo");
+  });
 });

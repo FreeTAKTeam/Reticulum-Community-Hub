@@ -12,7 +12,7 @@ transport-agnostic integrations.
 - `reticulum_telemetry_hub/reticulum_server/`: Hub runtime, command manager,
   message dispatch, event log, outbound queue, and Reticulum wiring.
 - `reticulum_telemetry_hub/api/`: API service and storage facade for topics,
-  subscribers, identities, and attachments.
+  subscribers, identities, attachments, map markers, and zones.
 - `reticulum_telemetry_hub/lxmf_telemetry/`: Telemetry ingestion, persistence,
   and sampling/broadcast logic.
 - `reticulum_telemetry_hub/northbound/`: FastAPI REST + WebSocket interface.
@@ -29,6 +29,9 @@ transport-agnostic integrations.
   filtered by topic.
 - **Northbound API**: REST endpoints map to the same command and storage paths,
   while WebSocket streams read from the event log and telemetry broadcaster.
+- **Operational zones**: zone create/list/update/delete requests are validated
+  by `ZoneService` and persisted to the `zones` store for WebMap polygon
+  overlays and mission-area awareness.
 
 ## DR-2 Structured SITREP Generation and Parsing
 
@@ -90,6 +93,19 @@ R3AKT supports structured registry management for:
   skills, including validation metadata.
 - `TaskSkillRequirement` captures minimum skill requirements per task.
 
+## Operational Zone Model
+
+RCH supports operator-managed polygon zones used by the WebMap UI.
+
+### Domain model coverage
+
+- `Zone` stores zone identity, name, polygon points, and lifecycle timestamps.
+- `ZonePoint` stores each polygon vertex as latitude/longitude.
+- Zone validation enforces bounded coordinates, a minimum of 3 points, a
+  maximum of 200 points, and non-self-intersecting polygons.
+- Northbound REST exposes CRUD endpoints under `/api/zones` for UI and
+  automation clients.
+
 ## Reference documents
 
 - `docs/internal-api.md` (normative internal API contract)
@@ -103,5 +119,5 @@ R3AKT supports structured registry management for:
 - `docs/ui-design.md` (UI design spec)
 - `docs/ui-wireframe.md` (UI wireframes)
 - `ui/README.md` (UI dev/build steps)
-- `docs/dataArchitecture.md` (domain class diagram including DR-2 SITREP model)
+- `docs/dataArchitecture.md` (domain class diagram including SITREP and zone models)
 - `docs/architecture/R3AKT_Domain_Class_Diagram.mmd` (standalone Mermaid source)
