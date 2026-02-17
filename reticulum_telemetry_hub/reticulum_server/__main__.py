@@ -2331,7 +2331,10 @@ class ReticulumTelemetryHub:
         """
 
         entries = payload
-        if not isinstance(payload, (list, tuple)):
+        if isinstance(payload, (list, tuple)):
+            if self._is_single_attachment_sequence(payload):
+                entries = [payload]
+        else:
             entries = [payload]
         normalized: list[dict] = []
         for index, entry in enumerate(entries):
@@ -2341,6 +2344,28 @@ class ReticulumTelemetryHub:
             if parsed is not None:
                 normalized.append(parsed)
         return normalized
+
+    @staticmethod
+    def _is_single_attachment_sequence(payload: list | tuple) -> bool:
+        """Return True when a sequence most likely represents one attachment entry."""
+
+        if not payload:
+            return False
+        if all(isinstance(item, int) for item in payload):
+            return True
+        first = payload[0]
+        if isinstance(first, (dict, list, tuple)):
+            return False
+        if any(
+            ReticulumTelemetryHub._is_binary_attachment_candidate(item)
+            for item in payload
+        ):
+            return True
+        if len(payload) == 1:
+            return True
+        if len(payload) <= 3 and isinstance(first, str):
+            return True
+        return False
 
     def _parse_attachment_entry(
         self, entry, *, category: str, default_prefix: str, index: int
@@ -2361,6 +2386,7 @@ class ReticulumTelemetryHub:
         data = None
         media_type = None
         name = None
+        extension_hint = None
         if isinstance(entry, dict):
             data = self._first_present_value(
                 entry, ["data", "bytes", "content", "blob"]
@@ -2376,13 +2402,12 @@ class ReticulumTelemetryHub:
         elif isinstance(entry, str):
             data = entry
         elif isinstance(entry, (list, tuple)):
-            if len(entry) >= 2:
-                name = entry[0] if isinstance(entry[0], str) else name
-                data = entry[1]
-                if len(entry) >= 3 and isinstance(entry[2], str):
-                    media_type = entry[2]
-            elif entry:
-                data = entry[0]
+            parsed = self._parse_sequence_attachment_entry(entry)
+            if parsed:
+                data = parsed.get("data")
+                media_type = parsed.get("media_type")
+                name = parsed.get("name")
+                extension_hint = parsed.get("extension_hint")
 
         if data is None:
             reason = "Missing attachment data"
@@ -2414,8 +2439,15 @@ class ReticulumTelemetryHub:
             return {"error": f"{reason}: {attachment_name}"}
         if not media_type and category == "image":
             media_type = self._infer_image_media_type(data)
+        if not media_type and category == "image" and extension_hint:
+            media_type = self._guess_image_media_type_from_extension(extension_hint)
+        generated_name = None
+        if category == "image" and not name and extension_hint:
+            generated_name = self._image_name_from_extension(extension_hint)
         safe_name = self._sanitize_attachment_name(
-            name or self._default_attachment_name(default_prefix, index, media_type)
+            name
+            or generated_name
+            or self._default_attachment_name(default_prefix, index, media_type)
         )
         if media_type and not Path(safe_name).suffix:
             extension = self._guess_media_type_extension(media_type)
@@ -2423,6 +2455,188 @@ class ReticulumTelemetryHub:
                 safe_name = f"{safe_name}{extension}"
         media_type = media_type or self._guess_media_type(safe_name, category)
         return {"data": data, "name": safe_name, "media_type": media_type}
+
+    def _parse_sequence_attachment_entry(self, entry: list | tuple) -> dict:
+        """Parse list/tuple attachment formats into name/data/media_type parts."""
+
+        if not entry:
+            return {}
+
+        if all(isinstance(item, int) for item in entry):
+            return {"data": list(entry), "name": None, "media_type": None}
+
+        data_index = None
+        for index, item in enumerate(entry):
+            if self._is_binary_attachment_candidate(item):
+                data_index = index
+                break
+
+        if data_index is None:
+            data_index = 1 if len(entry) >= 2 else 0
+
+        data = entry[data_index]
+
+        string_tokens: list[tuple[int, str]] = []
+        for index, item in enumerate(entry):
+            if index == data_index or not isinstance(item, str):
+                continue
+            token = item.strip()
+            if token:
+                string_tokens.append((index, token))
+
+        media_type = None
+        for _, token in string_tokens:
+            if self._looks_like_media_type(token):
+                media_type = token
+                break
+
+        name = self._select_attachment_name_token(
+            string_tokens, media_type=media_type
+        )
+        extension_hint = self._extract_extension_hint_from_tokens(string_tokens)
+
+        return {
+            "data": data,
+            "name": name,
+            "media_type": media_type,
+            "extension_hint": extension_hint,
+        }
+
+    @staticmethod
+    def _is_binary_attachment_candidate(value) -> bool:
+        """Return True for values that are likely raw attachment bytes."""
+
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return True
+        return isinstance(value, (list, tuple)) and bool(value) and all(
+            isinstance(item, int) for item in value
+        )
+
+    @staticmethod
+    def _looks_like_media_type(value: str) -> bool:
+        """Return True when a token resembles a MIME media type."""
+
+        return bool(
+            re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*",
+                value,
+            )
+        )
+
+    @staticmethod
+    def _looks_like_extension_label(value: str) -> bool:
+        """Return True when a token looks like an extension-only label."""
+
+        token = value.strip().lstrip(".").lower()
+        return token in {
+            "jpg",
+            "jpeg",
+            "png",
+            "gif",
+            "bmp",
+            "webp",
+            "tif",
+            "tiff",
+            "heic",
+            "heif",
+        }
+
+    @staticmethod
+    def _looks_like_filename_token(value: str) -> bool:
+        """Return True when a token is likely an actual filename."""
+
+        candidate = Path(value).name
+        if not candidate:
+            return False
+        if any(separator in value for separator in ("/", "\\")):
+            return True
+        if Path(candidate).suffix:
+            return True
+        return False
+
+    def _select_attachment_name_token(
+        self,
+        string_tokens: list[tuple[int, str]],
+        *,
+        media_type: str | None,
+    ) -> str | None:
+        """Pick the most likely filename token from string values."""
+
+        if not string_tokens:
+            return None
+        non_media_tokens = [
+            token for _, token in string_tokens if not media_type or token != media_type
+        ]
+        if not non_media_tokens:
+            return None
+
+        for token in non_media_tokens:
+            if self._looks_like_filename_token(token):
+                return token
+
+        for token in non_media_tokens:
+            if not self._looks_like_extension_label(token):
+                return token
+
+        return None
+
+    def _extract_extension_hint_from_tokens(
+        self, string_tokens: list[tuple[int, str]]
+    ) -> str | None:
+        """Return an image extension hint from string tokens when present."""
+
+        if not string_tokens:
+            return None
+        for _, token in string_tokens:
+            normalized = self._normalize_extension_token(token)
+            if normalized:
+                return normalized
+        return None
+
+    @staticmethod
+    def _normalize_extension_token(value: str) -> str | None:
+        """Normalize a token into an extension string without a leading dot."""
+
+        token = value.strip().lower()
+        if not token:
+            return None
+        if "/" in token and ReticulumTelemetryHub._looks_like_media_type(token):
+            guessed = ReticulumTelemetryHub._guess_media_type_extension(token)
+            if guessed:
+                token = guessed.lstrip(".").lower()
+        token = token.lstrip(".")
+        if not token:
+            return None
+        if re.fullmatch(r"[a-z0-9]{2,8}", token):
+            return token
+        return None
+
+    @staticmethod
+    def _image_name_from_extension(extension: str) -> str:
+        """Build timestamped image name from an extension hint."""
+
+        timestamp = datetime.now().strftime("Image_%Y_%m_%d_%H_%M_%S")
+        return f"{timestamp}.{extension}"
+
+    @staticmethod
+    def _guess_image_media_type_from_extension(extension: str) -> str | None:
+        """Return an image media type from a file extension."""
+
+        normalized = extension.strip().lstrip(".").lower()
+        if not normalized:
+            return None
+        guessed, _ = mimetypes.guess_type(f"image.{normalized}")
+        if guessed:
+            return guessed
+        fallback = {
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "bmp": "image/bmp",
+            "webp": "image/webp",
+        }
+        return fallback.get(normalized)
 
     @staticmethod
     def _sanitize_attachment_name(name: str) -> str:
@@ -2484,6 +2698,17 @@ class ReticulumTelemetryHub:
         if not media_type:
             return ""
         guessed = mimetypes.guess_extension(media_type) or ""
+        if guessed:
+            return guessed
+        fallback = {
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "image/bmp": ".bmp",
+            "image/webp": ".webp",
+        }
+        guessed = fallback.get(media_type.lower(), "")
         return guessed
 
     @staticmethod

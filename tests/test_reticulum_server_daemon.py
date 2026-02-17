@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import re
 import time
 from pathlib import Path
 
@@ -404,6 +405,103 @@ def test_delivery_callback_stores_image_field(tmp_path):
         ack_texts = [msg.content_as_string() for msg in sent]
         assert any("Stored images" in text for text in ack_texts if text)
         assert any(str(stored_images[0].file_id) in text for text in ack_texts if text)
+    finally:
+        hub.shutdown()
+
+
+def test_delivery_callback_treats_flat_image_list_payload_as_single_attachment(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    image_bytes = b"\xff\xd8\xfftest-jpeg"
+    image_payload = ["jpg", image_bytes]
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_IMAGE: image_payload},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        stored_images = hub.api.list_images()
+        assert len(stored_images) == 1
+        assert re.fullmatch(
+            r"Image_\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}\.jpg",
+            stored_images[0].name,
+        )
+        stored_path = Path(stored_images[0].path)
+        assert stored_path.read_bytes() == image_bytes
+        assert stored_images[0].size == len(image_bytes)
+        assert sent
+    finally:
+        hub.shutdown()
+
+
+def test_delivery_callback_prefers_original_name_from_image_sequence_payload(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    image_bytes = b"\xff\xd8\xfftest-jpeg"
+    image_payload = ["jpg", image_bytes, "image/jpeg", "IMG_20260217_122233.JPG"]
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_IMAGE: image_payload},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        stored_images = hub.api.list_images()
+        assert len(stored_images) == 1
+        assert stored_images[0].name == "IMG_20260217_122233.JPG"
+        stored_path = Path(stored_images[0].path)
+        assert stored_path.read_bytes() == image_bytes
+        assert sent
+    finally:
+        hub.shutdown()
+
+
+def test_delivery_callback_extension_label_uses_generated_image_name(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    image_bytes = b"RIFFxxxxWEBPpayload"
+    image_payload = ["webp", image_bytes, "image/webp"]
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_IMAGE: image_payload},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        stored_images = hub.api.list_images()
+        assert len(stored_images) == 1
+        assert re.fullmatch(
+            r"Image_\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}\.webp",
+            stored_images[0].name,
+        )
+        stored_path = Path(stored_images[0].path)
+        assert stored_path.read_bytes() == image_bytes
+        assert sent
     finally:
         hub.shutdown()
 

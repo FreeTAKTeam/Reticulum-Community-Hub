@@ -167,8 +167,8 @@ const previewName = ref("");
 const previewLoading = ref(false);
 const filesPage = ref(1);
 const imagesPage = ref(1);
-const filesPageSize = 6;
-const imagesPageSize = 4;
+const filesPageSize = 8;
+const imagesPageSize = 8;
 
 const pagedFiles = computed(() => {
   const start = (filesPage.value - 1) * filesPageSize;
