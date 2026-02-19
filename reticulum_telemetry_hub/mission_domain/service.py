@@ -263,6 +263,11 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
     def _ensure_asset_exists(session: Session, asset_uid: str) -> None:
         if session.get(R3aktAssetRecord, asset_uid) is None:
             raise ValueError(f"Asset '{asset_uid}' not found")
+
+    @staticmethod
+    def _ensure_task_exists(session: Session, task_uid: str) -> None:
+        if session.get(R3aktChecklistTaskRecord, task_uid) is None:
+            raise ValueError(f"Task '{task_uid}' not found")
     @staticmethod
     def _serialize_mission(row: R3aktMissionRecord) -> dict[str, Any]:
         return {
@@ -584,6 +589,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         if not task_uid or not skill_uid:
             raise ValueError("task_uid and skill_uid are required")
         with self._session() as session:
+            self._ensure_task_exists(session, task_uid)
             self._ensure_skill_exists(session, skill_uid)
             row = (
                 session.query(R3aktTaskSkillRequirementRecord)
@@ -638,6 +644,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             raise ValueError("mission_uid, task_uid and team_member_rns_identity are required")
         with self._session() as session:
             self._ensure_mission_exists(session, mission_uid)
+            self._ensure_task_exists(session, task_uid)
             self._ensure_team_member_identity_exists(session, member)
             assets = list(payload.get("assets") or [])
             for asset_uid in assets:

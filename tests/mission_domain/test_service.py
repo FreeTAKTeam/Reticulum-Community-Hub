@@ -196,6 +196,29 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
         == member_skill["uid"]
     )
 
+    template = service.create_checklist_template(
+        {
+            "uid": "registry-template",
+            "template_name": "Registry Template",
+            "description": "Template used for registry task references",
+            "created_by_team_member_rns_identity": "peer-a",
+            "columns": _columns(),
+        }
+    )
+    checklist = service.create_checklist_online(
+        {
+            "template_uid": template["uid"],
+            "name": "Registry Checklist",
+            "mission_uid": mission["uid"],
+            "source_identity": "peer-a",
+        }
+    )
+    checklist_with_task = service.add_checklist_task_row(
+        checklist["uid"],
+        {"number": 1},
+    )
+    task_uid = checklist_with_task["tasks"][0]["task_uid"]
+
     with pytest.raises(ValueError):
         service.upsert_task_skill_requirement({"task_uid": "task-1"})
 
@@ -208,17 +231,26 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
             }
         )
 
+    with pytest.raises(ValueError):
+        service.upsert_task_skill_requirement(
+            {
+                "uid": "req-missing-task",
+                "task_uid": "missing-task",
+                "skill_uid": "skill-1",
+            }
+        )
+
     requirement = service.upsert_task_skill_requirement(
         {
             "uid": "req-1",
-            "task_uid": "task-1",
+            "task_uid": task_uid,
             "skill_uid": "skill-1",
             "minimum_level": 2,
             "is_mandatory": True,
         }
     )
     assert (
-        service.list_task_skill_requirements(task_uid="task-1")[0]["uid"]
+        service.list_task_skill_requirements(task_uid=task_uid)[0]["uid"]
         == requirement["uid"]
     )
 
@@ -240,8 +272,18 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
             {
                 "assignment_uid": "assign-missing-member",
                 "mission_uid": "mission-1",
-                "task_uid": "task-1",
+                "task_uid": task_uid,
                 "team_member_rns_identity": "missing-member",
+            }
+        )
+
+    with pytest.raises(ValueError):
+        service.upsert_assignment(
+            {
+                "assignment_uid": "assign-missing-task",
+                "mission_uid": "mission-1",
+                "task_uid": "missing-task",
+                "team_member_rns_identity": "peer-a",
             }
         )
 
@@ -250,7 +292,7 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
             {
                 "assignment_uid": "assign-missing-asset",
                 "mission_uid": "mission-1",
-                "task_uid": "task-1",
+                "task_uid": task_uid,
                 "team_member_rns_identity": "peer-a",
                 "assets": ["missing-asset"],
             }
@@ -260,7 +302,7 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
         {
             "assignment_uid": "assign-1",
             "mission_uid": "mission-1",
-            "task_uid": "task-1",
+            "task_uid": task_uid,
             "team_member_rns_identity": "peer-a",
             "assigned_by": "peer-b",
             "status": "PENDING",
@@ -269,7 +311,7 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
         }
     )
     assert service.list_assignments(mission_uid="mission-1")[0]["assignment_uid"] == assignment["assignment_uid"]
-    assert service.list_assignments(task_uid="task-1")[0]["assignment_uid"] == assignment["assignment_uid"]
+    assert service.list_assignments(task_uid=task_uid)[0]["assignment_uid"] == assignment["assignment_uid"]
 
     assert service.list_domain_events(limit=10)
     assert service.list_domain_snapshots(limit=10)

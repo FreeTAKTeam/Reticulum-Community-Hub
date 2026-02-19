@@ -533,6 +533,57 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     )
     assert skill.status_code == 200
 
+    template = client.post(
+        "/checklists/templates",
+        json={
+            "template": {
+                "template_name": "Registry Template",
+                "description": "Template for registry route task references",
+                "created_by_team_member_rns_identity": "peer-a",
+                "columns": [
+                    {
+                        "column_name": "Due",
+                        "display_order": 1,
+                        "column_type": "RELATIVE_TIME",
+                        "column_editable": False,
+                        "is_removable": False,
+                        "system_key": "DUE_RELATIVE_DTG",
+                    },
+                    {
+                        "column_name": "Task",
+                        "display_order": 2,
+                        "column_type": "SHORT_STRING",
+                        "column_editable": True,
+                        "is_removable": True,
+                    },
+                ],
+            }
+        },
+        headers=headers,
+    )
+    assert template.status_code == 200
+    template_uid = template.json()["uid"]
+
+    checklist = client.post(
+        "/checklists",
+        json={
+            "template_uid": template_uid,
+            "name": "Registry Checklist",
+            "mission_uid": mission_uid,
+        },
+        headers=headers,
+    )
+    assert checklist.status_code == 200
+    checklist_uid = checklist.json()["uid"]
+
+    task_row = client.post(
+        f"/checklists/{checklist_uid}/tasks",
+        json={"number": 1},
+        headers=headers,
+    )
+    assert task_row.status_code == 200
+    task_uid = task_row.json()["tasks"][0]["task_uid"]
+
     member_skill_invalid = client.post(
         "/api/r3akt/team-member-skills",
         json={"team_member_rns_identity": "peer-a"},
@@ -563,13 +614,25 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         "/api/r3akt/task-skill-requirements",
         json={
             "uid": "req-1",
-            "task_uid": "task-1",
+            "task_uid": task_uid,
             "skill_uid": "skill-1",
             "minimum_level": 2,
         },
         headers=headers,
     )
     assert requirement.status_code == 200
+
+    requirement_missing_task = client.post(
+        "/api/r3akt/task-skill-requirements",
+        json={
+            "uid": "req-missing-task",
+            "task_uid": "missing-task",
+            "skill_uid": "skill-1",
+            "minimum_level": 2,
+        },
+        headers=headers,
+    )
+    assert requirement_missing_task.status_code == 400
 
     assignment_invalid = client.post(
         "/api/r3akt/assignments",
@@ -583,13 +646,25 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         json={
             "assignment_uid": "assignment-1",
             "mission_uid": mission_uid,
-            "task_uid": "task-1",
+            "task_uid": task_uid,
             "team_member_rns_identity": "peer-a",
             "assets": ["asset-1"],
         },
         headers=headers,
     )
     assert assignment.status_code == 200
+
+    assignment_missing_task = client.post(
+        "/api/r3akt/assignments",
+        json={
+            "assignment_uid": "assignment-missing-task",
+            "mission_uid": mission_uid,
+            "task_uid": "missing-task",
+            "team_member_rns_identity": "peer-a",
+        },
+        headers=headers,
+    )
+    assert assignment_missing_task.status_code == 400
 
     assert client.get("/api/r3akt/missions", headers=headers).status_code == 200
     assert client.get("/api/r3akt/mission-changes", headers=headers).status_code == 200
