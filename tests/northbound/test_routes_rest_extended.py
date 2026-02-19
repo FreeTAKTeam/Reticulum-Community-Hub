@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import base64
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -218,6 +219,85 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
     leave_response = client.put("/RTH", params={"identity": "dest-1"})
     assert leave_response.status_code == 200
 
+    join_alias_response = client.post("/RCH", params={"identity": "dest-2"})
+    assert join_alias_response.status_code == 200
+
+    leave_alias_response = client.put("/RCH", params={"identity": "dest-2"})
+    assert leave_alias_response.status_code == 200
+
+    capability_response = client.put(
+        "/api/r3akt/capabilities/dest-1/mission.join",
+        json={"granted_by": "tester"},
+        headers=headers,
+    )
+    assert capability_response.status_code == 200
+
+    missions_response = client.post(
+        "/api/r3akt/missions",
+        json={"mission_name": "Mission Alpha"},
+        headers=headers,
+    )
+    assert missions_response.status_code == 200
+    mission_uid = missions_response.json()["uid"]
+
+    mission_get_response = client.get(
+        f"/api/r3akt/missions/{mission_uid}",
+        headers=headers,
+    )
+    assert mission_get_response.status_code == 200
+
+    template_response = client.post(
+        "/checklists/templates",
+        json={
+            "template": {
+                "template_name": "Template Alpha",
+                "description": "Template",
+                "created_by_team_member_rns_identity": "dest-1",
+                "columns": [
+                    {
+                        "column_name": "Due",
+                        "display_order": 1,
+                        "column_type": "RELATIVE_TIME",
+                        "column_editable": False,
+                        "is_removable": False,
+                        "system_key": "DUE_RELATIVE_DTG",
+                    },
+                    {
+                        "column_name": "Task",
+                        "display_order": 2,
+                        "column_type": "SHORT_STRING",
+                        "column_editable": True,
+                        "is_removable": True,
+                    },
+                ],
+            }
+        },
+        headers=headers,
+    )
+    assert template_response.status_code == 200
+    template_uid = template_response.json()["uid"]
+
+    checklist_response = client.post(
+        "/checklists",
+        json={
+            "template_uid": template_uid,
+            "name": "Checklist Alpha",
+            "description": "Checklist",
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "source_identity": "dest-1",
+        },
+        headers=headers,
+    )
+    assert checklist_response.status_code == 200
+    checklist_uid = checklist_response.json()["uid"]
+
+    task_add_response = client.post(
+        f"/checklists/{checklist_uid}/tasks",
+        json={"number": 1, "due_relative_minutes": 10},
+        headers=headers,
+    )
+    assert task_add_response.status_code == 200
+
     client_list = client.get("/Client", headers=headers)
     assert client_list.status_code == 200
 
@@ -333,3 +413,410 @@ def test_reticulum_discovery_route_runtime_fallback(
     assert response.status_code == 200
     assert response.json()["runtime_active"] is False
     assert response.json()["discovered_interfaces"] == []
+
+def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
+    client, _, _, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    invalid_grant = client.put(
+        "/api/r3akt/capabilities/peer-a/mission.join",
+        json={"expires_at": "not-iso"},
+        headers=headers,
+    )
+    assert invalid_grant.status_code == 400
+
+    grant = client.put(
+        "/api/r3akt/capabilities/peer-a/mission.join",
+        json={
+            "granted_by": "admin",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        },
+        headers=headers,
+    )
+    assert grant.status_code == 200
+
+    capabilities = client.get("/api/r3akt/capabilities/peer-a", headers=headers)
+    assert capabilities.status_code == 200
+    assert "mission.join" in capabilities.json()["capabilities"]
+
+    revoke = client.delete(
+        "/api/r3akt/capabilities/peer-a/mission.join",
+        headers=headers,
+    )
+    assert revoke.status_code == 200
+
+    mission = client.post(
+        "/api/r3akt/missions",
+        json={"uid": "mission-1", "mission_name": "Mission One"},
+        headers=headers,
+    )
+    assert mission.status_code == 200
+    mission_uid = mission.json()["uid"]
+
+    mission_get = client.get(f"/api/r3akt/missions/{mission_uid}", headers=headers)
+    assert mission_get.status_code == 200
+
+    mission_missing = client.get("/api/r3akt/missions/missing", headers=headers)
+    assert mission_missing.status_code == 404
+
+    mission_change_invalid = client.post(
+        "/api/r3akt/mission-changes",
+        json={"name": "bad"},
+        headers=headers,
+    )
+    assert mission_change_invalid.status_code == 400
+
+    mission_change = client.post(
+        "/api/r3akt/mission-changes",
+        json={"uid": "change-1", "mission_uid": mission_uid, "name": "Updated"},
+        headers=headers,
+    )
+    assert mission_change.status_code == 200
+
+    team = client.post(
+        "/api/r3akt/teams",
+        json={"uid": "team-1", "mission_uid": mission_uid, "team_name": "Ops"},
+        headers=headers,
+    )
+    assert team.status_code == 200
+
+    member_invalid = client.post("/api/r3akt/team-members", json={}, headers=headers)
+    assert member_invalid.status_code == 400
+
+    member = client.post(
+        "/api/r3akt/team-members",
+        json={
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+        },
+        headers=headers,
+    )
+    assert member.status_code == 200
+
+    asset = client.post(
+        "/api/r3akt/assets",
+        json={
+            "asset_uid": "asset-1",
+            "team_member_uid": "member-1",
+            "name": "Radio",
+            "asset_type": "COMM",
+        },
+        headers=headers,
+    )
+    assert asset.status_code == 200
+
+    skill = client.post(
+        "/api/r3akt/skills",
+        json={"skill_uid": "skill-1", "name": "Navigation"},
+        headers=headers,
+    )
+    assert skill.status_code == 200
+
+    member_skill_invalid = client.post(
+        "/api/r3akt/team-member-skills",
+        json={"team_member_rns_identity": "peer-a"},
+        headers=headers,
+    )
+    assert member_skill_invalid.status_code == 400
+
+    member_skill = client.post(
+        "/api/r3akt/team-member-skills",
+        json={
+            "uid": "member-skill-1",
+            "team_member_rns_identity": "peer-a",
+            "skill_uid": "skill-1",
+            "level": 3,
+        },
+        headers=headers,
+    )
+    assert member_skill.status_code == 200
+
+    req_invalid = client.post(
+        "/api/r3akt/task-skill-requirements",
+        json={"task_uid": "task-1"},
+        headers=headers,
+    )
+    assert req_invalid.status_code == 400
+
+    requirement = client.post(
+        "/api/r3akt/task-skill-requirements",
+        json={
+            "uid": "req-1",
+            "task_uid": "task-1",
+            "skill_uid": "skill-1",
+            "minimum_level": 2,
+        },
+        headers=headers,
+    )
+    assert requirement.status_code == 200
+
+    assignment_invalid = client.post(
+        "/api/r3akt/assignments",
+        json={"mission_uid": mission_uid},
+        headers=headers,
+    )
+    assert assignment_invalid.status_code == 400
+
+    assignment = client.post(
+        "/api/r3akt/assignments",
+        json={
+            "assignment_uid": "assignment-1",
+            "mission_uid": mission_uid,
+            "task_uid": "task-1",
+            "team_member_rns_identity": "peer-a",
+            "assets": ["asset-1"],
+        },
+        headers=headers,
+    )
+    assert assignment.status_code == 200
+
+    assert client.get("/api/r3akt/missions", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/mission-changes", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/teams", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/team-members", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/assets", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/skills", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/team-member-skills", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/task-skill-requirements", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/assignments", headers=headers).status_code == 200
+
+    events = client.get("/api/r3akt/events", headers=headers)
+    snapshots = client.get("/api/r3akt/snapshots", headers=headers)
+    assert events.status_code == 200
+    assert snapshots.status_code == 200
+    assert events.json()
+
+
+def test_checklist_routes_matrix_and_errors(tmp_path: Path) -> None:
+    client, _, _, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    template_bad_payload = client.post(
+        "/checklists/templates",
+        json={"template": "invalid"},
+        headers=headers,
+    )
+    assert template_bad_payload.status_code == 400
+
+    template = client.post(
+        "/checklists/templates",
+        json={
+            "template": {
+                "template_name": "Template Alpha",
+                "description": "Template",
+                "created_by_team_member_rns_identity": "peer-a",
+                "columns": [
+                    {
+                        "column_name": "Due",
+                        "display_order": 1,
+                        "column_type": "RELATIVE_TIME",
+                        "column_editable": False,
+                        "is_removable": False,
+                        "system_key": "DUE_RELATIVE_DTG",
+                    },
+                    {
+                        "column_name": "Task",
+                        "display_order": 2,
+                        "column_type": "SHORT_STRING",
+                        "column_editable": True,
+                        "is_removable": True,
+                    },
+                ],
+            }
+        },
+        headers=headers,
+    )
+    assert template.status_code == 200
+    template_uid = template.json()["uid"]
+
+    list_templates = client.get("/checklists/templates", headers=headers)
+    assert list_templates.status_code == 200
+
+    patch_bad_payload = client.patch(
+        f"/checklists/templates/{template_uid}",
+        json={"patch": "invalid"},
+        headers=headers,
+    )
+    assert patch_bad_payload.status_code == 400
+
+    patch_template = client.patch(
+        f"/checklists/templates/{template_uid}",
+        json={"patch": {"template_name": "Template Beta"}},
+        headers=headers,
+    )
+    assert patch_template.status_code == 200
+
+    clone_missing_name = client.post(
+        f"/checklists/templates/{template_uid}/clone",
+        json={},
+        headers=headers,
+    )
+    assert clone_missing_name.status_code == 400
+
+    clone_template = client.post(
+        f"/checklists/templates/{template_uid}/clone",
+        json={"template_name": "Template Clone", "description": "Clone"},
+        headers=headers,
+    )
+    assert clone_template.status_code == 200
+    clone_uid = clone_template.json()["uid"]
+
+    delete_missing_template = client.delete(
+        "/checklists/templates/missing-template",
+        headers=headers,
+    )
+    assert delete_missing_template.status_code == 404
+
+    checklist_online_bad = client.post(
+        "/checklists",
+        json={"name": "Missing template"},
+        headers=headers,
+    )
+    assert checklist_online_bad.status_code == 400
+
+    checklist_online = client.post(
+        "/checklists",
+        json={
+            "template_uid": template_uid,
+            "name": "Checklist Online",
+            "description": "Online checklist",
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "source_identity": "peer-a",
+        },
+        headers=headers,
+    )
+    assert checklist_online.status_code == 200
+    checklist_uid = checklist_online.json()["uid"]
+
+    checklist_offline = client.post(
+        "/checklists/offline",
+        json={
+            "name": "Checklist Offline",
+            "description": "Offline checklist",
+            "source_identity": "peer-a",
+            "origin_type": "BLANK_TEMPLATE",
+        },
+        headers=headers,
+    )
+    assert checklist_offline.status_code == 200
+    offline_uid = checklist_offline.json()["uid"]
+
+    list_checklists = client.get("/checklists", headers=headers)
+    assert list_checklists.status_code == 200
+
+    join_missing = client.post("/checklists/missing/join", json={}, headers=headers)
+    assert join_missing.status_code == 404
+
+    join_checklist = client.post(
+        f"/checklists/{checklist_uid}/join",
+        json={"source_identity": "peer-a"},
+        headers=headers,
+    )
+    assert join_checklist.status_code == 200
+
+    get_checklist = client.get(f"/checklists/{checklist_uid}", headers=headers)
+    assert get_checklist.status_code == 200
+
+    upload_missing = client.post("/checklists/missing/upload", json={}, headers=headers)
+    assert upload_missing.status_code == 404
+
+    upload_checklist = client.post(
+        f"/checklists/{offline_uid}/upload",
+        json={"source_identity": "peer-a"},
+        headers=headers,
+    )
+    assert upload_checklist.status_code == 200
+
+    publish_missing = client.post(
+        "/checklists/missing/feeds/feed-1",
+        json={},
+        headers=headers,
+    )
+    assert publish_missing.status_code == 404
+
+    publish_feed = client.post(
+        f"/checklists/{offline_uid}/feeds/feed-1",
+        json={"source_identity": "peer-a"},
+        headers=headers,
+    )
+    assert publish_feed.status_code == 200
+
+    task_add = client.post(
+        f"/checklists/{checklist_uid}/tasks",
+        json={"number": 1, "due_relative_minutes": 10},
+        headers=headers,
+    )
+    assert task_add.status_code == 200
+    task_uid = task_add.json()["tasks"][0]["task_uid"]
+    column_uid = next(
+        item["column_uid"]
+        for item in task_add.json()["columns"]
+        if item["column_type"] == "SHORT_STRING"
+    )
+
+    task_status_invalid = client.post(
+        f"/checklists/{checklist_uid}/tasks/{task_uid}/status",
+        json={"user_status": "INVALID"},
+        headers=headers,
+    )
+    assert task_status_invalid.status_code == 400
+
+    task_status = client.post(
+        f"/checklists/{checklist_uid}/tasks/{task_uid}/status",
+        json={"user_status": "COMPLETE", "changed_by_team_member_rns_identity": "peer-a"},
+        headers=headers,
+    )
+    assert task_status.status_code == 200
+
+    task_style = client.patch(
+        f"/checklists/{checklist_uid}/tasks/{task_uid}/row-style",
+        json={"row_background_color": "#112233", "line_break_enabled": True},
+        headers=headers,
+    )
+    assert task_style.status_code == 200
+
+    task_cell_missing = client.patch(
+        f"/checklists/{checklist_uid}/tasks/{task_uid}/cells/missing",
+        json={"value": "x"},
+        headers=headers,
+    )
+    assert task_cell_missing.status_code == 404
+
+    task_cell = client.patch(
+        f"/checklists/{checklist_uid}/tasks/{task_uid}/cells/{column_uid}",
+        json={"value": "Inspect", "updated_by_team_member_rns_identity": "peer-a"},
+        headers=headers,
+    )
+    assert task_cell.status_code == 200
+
+    task_delete = client.delete(
+        f"/checklists/{checklist_uid}/tasks/{task_uid}",
+        headers=headers,
+    )
+    assert task_delete.status_code == 200
+
+    task_delete_missing = client.delete(
+        f"/checklists/{checklist_uid}/tasks/{task_uid}",
+        headers=headers,
+    )
+    assert task_delete_missing.status_code == 404
+
+    import_missing_csv = client.post(
+        "/checklists/import/csv",
+        json={},
+        headers=headers,
+    )
+    assert import_missing_csv.status_code == 400
+
+    encoded_csv = base64.b64encode(b"10,Task 1\n20,Task 2\n").decode("ascii")
+    import_csv = client.post(
+        "/checklists/import/csv",
+        json={"csv_filename": "import.csv", "csv_base64": encoded_csv},
+        headers=headers,
+    )
+    assert import_csv.status_code == 200
+
+    delete_clone = client.delete(f"/checklists/templates/{clone_uid}", headers=headers)
+    assert delete_clone.status_code == 200
