@@ -842,6 +842,17 @@ paths:
       tags:
        - Checklist
       summary: List checklist templates.
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '200':
           description: Checklist template list.
@@ -854,6 +865,12 @@ paths:
       tags:
        - Checklist
       summary: Create checklist template.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
       responses:
         '200':
           description: Created checklist template.
@@ -898,12 +915,53 @@ paths:
             application/json:
               schema:
                 type: object
+  /checklists/templates/{template_id}/clone:
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Clone checklist template.
+      parameters:
+        - name: template_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Cloned checklist template.
+          content:
+            application/json:
+              schema:
+                type: object
   /checklists:
     get:
       x-scope: protected
       tags:
        - Checklist
       summary: List active checklists.
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '200':
           description: Checklist list.
@@ -916,6 +974,12 @@ paths:
       tags:
        - Checklist
       summary: Create online checklist.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
       responses:
         '200':
           description: Created checklist.
@@ -929,6 +993,12 @@ paths:
       tags:
        - Checklist
       summary: Create offline checklist.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
       responses:
         '200':
           description: Created checklist.
@@ -942,6 +1012,12 @@ paths:
       tags:
        - Checklist
       summary: Import checklist from CSV.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
       responses:
         '200':
           description: Imported checklist.
@@ -964,6 +1040,230 @@ paths:
       responses:
         '200':
           description: Checklist details.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/{checklist_id}/join:
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Join checklist updates.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Checklist details.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/{checklist_id}/upload:
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Upload checklist and mark synced.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Uploaded checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/{checklist_id}/feeds/{feed_id}:
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Publish checklist to mission feed.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: feed_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Feed publication record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/{checklist_id}/tasks:
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Add checklist task row.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Updated checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/{checklist_id}/tasks/{task_id}:
+    delete:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Delete checklist task row.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/{checklist_id}/tasks/{task_id}/status:
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Set checklist task status.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Updated checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/{checklist_id}/tasks/{task_id}/row-style:
+    patch:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Set checklist task row style.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Updated checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/{checklist_id}/tasks/{task_id}/cells/{column_id}:
+    patch:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Set checklist task cell value.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: column_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Updated checklist.
           content:
             application/json:
               schema:
@@ -995,6 +1295,380 @@ paths:
             application/json:
               schema:
                 type: object
+  /api/r3akt/missions/{mission_uid}:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Retrieve mission by identifier.
+      parameters:
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Mission record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/mission-changes:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List mission changes.
+      parameters:
+        - name: mission_uid
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Mission change list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update mission change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Mission change record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/teams:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List teams.
+      parameters:
+        - name: mission_uid
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update team.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Team record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/team-members:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List team members.
+      parameters:
+        - name: team_uid
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team member list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update team member.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Team member record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/assets:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List assets.
+      parameters:
+        - name: team_member_uid
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Asset list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update asset.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Asset record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/skills:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List skills.
+      responses:
+        '200':
+          description: Skill list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update skill.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Skill record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/team-member-skills:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List team member skills.
+      parameters:
+        - name: team_member_rns_identity
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team member skill list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update team member skill.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Team member skill record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/task-skill-requirements:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List task skill requirements.
+      parameters:
+        - name: task_uid
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task skill requirement list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update task skill requirement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Task skill requirement record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/assignments:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List mission task assignments.
+      parameters:
+        - name: mission_uid
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: task_uid
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Assignment list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update assignment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Assignment record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/events:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List domain events.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Domain event list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /api/r3akt/snapshots:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List domain snapshots.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Domain snapshot list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
   /api/r3akt/capabilities/{identity}:
     get:
       x-scope: protected
@@ -1010,6 +1684,59 @@ paths:
       responses:
         '200':
           description: Capability grants.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/capabilities/{identity}/{capability}:
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Grant capability to identity.
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: capability
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Capability grant record.
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Revoke capability from identity.
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: capability
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Revocation result.
           content:
             application/json:
               schema:
