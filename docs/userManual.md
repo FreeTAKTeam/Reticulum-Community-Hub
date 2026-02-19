@@ -7,11 +7,28 @@ This manual is for:
 
 ## What is RCH?
 
-RCH is a hub that connects LXMF messaging clients. It forwards messages between
-people, keeps topic-based groups, stores telemetry snapshots, and can relay
-location and chat updates into TAK when that service is enabled.
+RCH is a Reticulum/LXMF hub for mesh coordination. It can relay and persist chat,
+maintain topic subscriptions, store telemetry and attachments, manage map markers
+and zones, and expose REST/WebSocket interfaces for operators and UI clients.
 
-## Client support matrix
+## Current Functionality Summary
+
+RCH currently provides:
+- LXMF message fan-out (broadcast, topic-scoped, and direct destination sends)
+- Topic and subscriber management
+- Public and protected LXMF command handling (with flexible payload key aliases)
+- Telemetry ingest, storage, query, and stream updates
+- File/image attachment persistence, retrieval, raw download, and delete
+- Chat history and outbound chat dispatch with file/image attachments
+- Operator marker CRUD with symbol registry support and marker telemetry events
+- Zone (polygon) CRUD with geometry validation
+- Identity moderation (ban, unban, blackhole) and routing snapshots
+- Config management for both hub `config.ini` and Reticulum config file
+- Reticulum discovery and interface capability reporting
+- Gateway control endpoints (status, start, stop, immediate announce)
+- Admin UI with Dashboard, WebMap, Topics, Files, Chat, Users, Configure, About, and Connect pages
+
+## Client Support Matrix
 
 ### Sideband
 
@@ -39,7 +56,7 @@ Supported:
 Not supported:
 - Telemetry
 
-## Operator quickstart
+## Operator Quickstart
 
 ### Install from PyPI
 
@@ -60,331 +77,404 @@ python -m pip install ReticulumCommunityHub
 git clone https://github.com/FreeTAKTeam/Reticulum-Community-Hub.git
 cd Reticulum-Community-Hub
 python -m venv .venv
+# Linux/macOS
 source .venv/bin/activate
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-### Start the hub
+### Start hub only (LXMF runtime)
 
 ```bash
 python -m reticulum_telemetry_hub.reticulum_server \
-    --storage_dir ./RCH_Store \
+    --storage_dir ./RTH_Store \
     --display_name "RCH"
 ```
 
-### Storage layout
-
-The storage directory (default `./RCH_Store`) contains:
-
-- `config.ini` (runtime configuration)
-- `identity` (hub identity)
-- `telemetry.db` (telemetry snapshots)
-- `reticulum.db` (client and topic state)
-- `rch_api.sqlite` (northbound API state)
-- `events.jsonl` (event log)
-- `files/` (stored file attachments)
-- `images/` (stored image attachments)
-
-### Configuration (`config.ini`)
-
-RCH reads defaults from a unified `config.ini` file in the storage directory.
-CLI flags override values from the file.
-When `config.ini` is missing, RCH bootstraps it from
-`reticulum_telemetry_hub/config/default_config.ini`.
-
-Example configuration:
-
-```ini
-[app]
-name = Reticulum Community Hub
-version = 0.0.0
-description = Public-facing hub for the mesh network
-
-[hub]
-display_name = RCH
-announce_interval = 60
-hub_telemetry_interval = 600
-service_telemetry_interval = 900
-log_level = info
-embedded_lxmd = false
-services = gpsd, tak_cot
-reticulum_config_path = ~/.reticulum/config
-lxmf_router_config_path = ~/.lxmd/config
-telemetry_filename = telemetry.ini
-
-[announce.capabilities]
-enabled = true
-max_bytes = 256
-include_version = true
-include_timestamp = false
-
-[reticulum]
-enable_transport = true
-share_instance = true
-
-[interfaces]
-type = TCPServerInterface
-interface_enabled = true
-listen_ip = 0.0.0.0
-listen_port = 4242
-
-[propagation]
-enable_node = yes
-announce_interval = 10
-propagation_transfer_max_accepted_size = 1024
-startup_mode = background
-startup_prune_enabled = no
-# startup_max_messages = 20000
-# startup_max_age_days = 30
-
-[lxmf]
-display_name = RCH_router
-
-[gpsd]
-host = 127.0.0.1
-port = 2947
-
-[files]
-# path = /var/lib/rth/files
-
-[images]
-# directory = /var/lib/rth/images
-
-[TAK]
-cot_url = tcp://127.0.0.1:8087
-callsign = RCH
-poll_interval_seconds = 30
-keepalive_interval_seconds = 60
-# tls_client_cert = /path/to/cert.pem
-# tls_client_key = /path/to/key.pem
-# tls_ca = /path/to/ca.pem
-# tls_insecure = true
-tak_proto = 0
-fts_compat = 1
-```
-
-Notes:
-- `services` is a comma-separated list of daemon services to start by default.
-- `reticulum_config_path` and `lxmf_router_config_path` point to external configs
-  when you run against existing Reticulum/LXMF daemons.
-- File and image storage directories default to `<storage_dir>/files` and
-  `<storage_dir>/images` when not set.
-- `startup_mode` controls propagation startup behavior:
-  `blocking` waits for full message-store indexing, `background` starts indexing
-  in a worker thread so the hub/API can become ready sooner.
-- `startup_prune_enabled` allows pre-index cleanup. Optional
-  `startup_max_messages` and `startup_max_age_days` prune old/overflowed files
-  before LXMF begins indexing.
-
-### Command-line options
-
-| Flag | Description |
-| --- | --- |
-| `--config` | Path to `config.ini` (defaults to `<storage_dir>/config.ini`). |
-| `--storage_dir` | Storage directory path (defaults to `./RCH_Store`). |
-| `--display_name` | Display name for the hub identity (defaults to `[hub].display_name`). |
-| `--announce-interval` | Seconds between LXMF announces (defaults to `[hub].announce_interval`). |
-| `--hub-telemetry-interval` | Seconds between local telemetry snapshots. |
-| `--service-telemetry-interval` | Seconds between service telemetry polls. |
-| `--log-level` | Log level to emit (`error`, `warning`, `info`, `debug`). |
-| `--embedded` / `--no-embedded` | Run the LXMF daemon in-process (default from `[hub].embedded_lxmd`). |
-| `--daemon` | Start telemetry collectors and optional services. |
-| `--service NAME` | Enable an optional service (repeat for multiple). |
-
-### Running as a service (systemd)
-
-Create `/etc/systemd/system/RCH.service`:
-
-```ini
-[Unit]
-Description=Reticulum Community Hub
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-ExecStart=/usr/local/bin/RCH
-Restart=on-failure
-User=root
-WorkingDirectory=/usr/local/bin
-ExecReload=/bin/kill -HUP $MAINPID
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start it:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable RCH.service
-sudo systemctl start RCH.service
-```
-
-## Using RCH with LXMF clients
-
-### Join the hub
-
-1. Add or select the RCH identity in your LXMF client.
-2. Start a chat and send `join`:
-   - If your client supports the `Commands` field (numeric field ID `9`):
-     ```json
-     [{"Command": "join"}]
-     ```
-   - If your client does not support `Commands`, prefix the message body with
-     `\\\` so the hub treats it as a command:
-     ```
-     \\\join
-     ```
-
-If a sender has not joined yet, RCH automatically replies with `getAppInfo`
-so the client can identify the hub.
-
-### Sending commands
-
-Commands are JSON objects inside the `Commands` field. The command name may be
-supplied as `Command` or numeric key `0`. Supported shapes:
-
-```json
-[{"Command": "CreateTopic", "TopicName": "Weather", "TopicPath": "environment/weather"}]
-```
-
-```json
-["{\"Command\":\"CreateTopic\",\"TopicName\":\"Weather\",\"TopicPath\":\"environment/weather\"}"]
-```
-
-```json
-[{"0": "{\"Command\":\"CreateTopic\",\"TopicName\":\"Weather\",\"TopicPath\":\"environment/weather\"}"}]
-```
-
-If a required field is missing, the hub replies with a prompt and merges the
-follow-up payload. You can respond with only the missing fields.
-
-Use `Help` for a short list of commands and `Examples` for example payloads.
-The full list of commands is in `docs/supportedCommands.md`.
-
-### Topic-targeted messages
-
-Create a topic and subscribe:
-
-```json
-[{"Command": "CreateTopic", "TopicName": "Weather", "TopicPath": "environment/weather"}]
-```
-
-```json
-[{"Command": "SubscribeTopic", "TopicID": "<TopicID>"}]
-```
-
-Any message with a `TopicID` in the command payload (or LXMF fields) is only
-forwarded to subscribers of that topic.
-
-### Telemetry requests (Sideband)
-
-Send `TelemetryRequest` using numeric key `1` with a unix timestamp:
-
-```json
-[{"1": 1700000000}]
-```
-
-If you include `TopicID`, the hub filters telemetry to that topic and denies
-requests from senders who are not subscribed to it.
-
-### Attachments
-
-- List stored items: `ListFiles`, `ListImages`
-- Retrieve items: `RetrieveFile`, `RetrieveImage` (by ID)
-- Associate stored attachments with a topic: `AssociateTopicID`
-
-Attachments are delivered in LXMF fields (`FIELD_FILE_ATTACHMENTS` and
-`FIELD_IMAGE`) so clients like Sideband can save them directly. Incoming
-attachments sent in those fields are persisted automatically to the configured
-storage directories.
-
-## Northbound API and admin UI
-
-The northbound API is a FastAPI service that maps REST to LXMF commands and
-streams telemetry/events over WebSocket.
-
-Run it alongside the hub (recommended for chat/message sending):
+### Start hub + API gateway in one process
 
 ```bash
 python -m reticulum_telemetry_hub.northbound.gateway \
-    --storage_dir ./RCH_Store \
+    --data-dir ./RTH_Store \
     --api-host 0.0.0.0 \
-    --api-port 8000
+    --port 8000
 ```
 
-Run only the API server (read-only unless you provide a message dispatcher):
+### Run API server only (standalone app)
 
 ```bash
 uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
 ```
 
-Set `RTH_API_KEY` to require auth on protected endpoints. `RCH_API_KEY`
-remains supported as a backward-compatible alias. The API accepts either the
-`X-API-Key` header or a bearer token in `Authorization`.
+Notes:
+- This mode is read-only unless you provide a message dispatcher in-process.
+- Set `RTH_STORAGE_DIR` so the API reads the same storage/config as your hub runtime.
 
-If you run the API separately from the hub process, set `RCH_STORAGE_DIR` to
-the same storage directory so the API reads the correct config and databases.
+### Use the `rch` runtime controller
 
-The OpenAPI spec is in `API/ReticulumCommunityHub-OAS.yaml` and is exposed at
-`/openapi.yaml` when the repo is available on disk.
+`rch` manages a background gateway process and writes runtime state/log files.
 
-The admin UI lives in `ui/`. See `ui/README.md` for dev and build steps.
+```bash
+rch --data-dir ./RTH_Store --port 8000 start --log-level info
+rch --data-dir ./RTH_Store --port 8000 status
+rch --data-dir ./RTH_Store --port 8000 stop
+```
 
-## Daemon mode and services
+Notes:
+- `rch` global options (`--data-dir`, `--port`) must appear before the subcommand.
+- The `rch start` workflow runs the API on `127.0.0.1` (local-only bind).
+- For LAN/WAN API binds, run `reticulum_telemetry_hub.northbound.gateway` directly with `--api-host`.
 
-Use `--daemon` to enable telemetry sampling and optional services. Services can
-be provided via `--service` flags or the `[hub].services` config value.
+## Storage Layout
 
-Available services:
-- `gpsd` (requires gpsd + gpsdclient)
-- `tak_cot` (bridges telemetry and chat into a TAK endpoint)
+Default storage directory is `./RTH_Store`.
 
-RCH can run the LXMF router in-process with `--embedded` or connect to an
-external `lxmd` daemon (default). Use `reticulum_config_path` and
-`lxmf_router_config_path` to point at existing Reticulum/LXMF configs when
-running against external daemons.
+Typical contents:
+- `config.ini` (hub runtime configuration)
+- `identity` (hub identity)
+- `telemetry.db` (telemetry snapshots)
+- `rth_api.sqlite` (topics/subscribers/files/images/chat/identity state)
+- `events.jsonl` (shared event log)
+- `files/` (stored file attachments)
+- `images/` (stored image attachments)
 
-## Python API (attachments)
+When using `rch start`, you also get:
+- `rch_state.json` (runtime PID/port metadata)
+- `rch.log` (gateway stdout/stderr log)
 
-The API service exposes helpers for recording attachments stored on disk:
+## Configuration (`config.ini`)
 
-- `ReticulumCommunityHubAPI.store_file(path, name=None, media_type=None, topic_id=None)`
-- `ReticulumCommunityHubAPI.store_image(path, name=None, media_type=None, topic_id=None)`
-- `list_files()` / `list_images()` return stored metadata.
-- `retrieve_file(id)` / `retrieve_image(id)` return a single record by ID.
+RCH loads defaults from `<storage_dir>/config.ini`. If missing, it is bootstrapped
+from `reticulum_telemetry_hub/config/default_config.ini`.
+
+CLI flags override config file values.
+
+Current config template supports these sections:
+- `[app]`
+- `[hub]`
+- `[announce.capabilities]`
+- `[reticulum]`
+- `[interfaces]`
+- `[propagation]`
+- `[lxmf]`
+- `[gpsd]`
+- `[files]`
+- `[images]`
+- `[TAK]`
+- `[telemetry]`
+
+Useful runtime keys include:
+- `announce_interval`
+- `marker_announce_interval_minutes`
+- `hub_telemetry_interval`
+- `service_telemetry_interval`
+- `embedded_lxmd`
+- `services`
+- `reticulum_config_path`
+- `lxmf_router_config_path`
+
+Config apply/rollback endpoints create and use backup files (`*.bak.*`).
+
+## LXMF Command and Messaging Functionality
+
+### Join and leave
+
+- Send `join` to register your destination with the hub.
+- Send `leave` to remove it.
+
+For clients without command field support, prefix the body with `\\\`.
+
+Examples:
+```text
+\\\join
+```
+
+```text
+\\\{"Command":"SubscribeTopic","TopicID":"<TopicID>"}
+```
+
+### Command payload formats
+
+Commands are accepted in multiple forms (object, stringified JSON, alias keys).
+Required-field prompts are supported and follow-up payloads are merged.
+
+Use:
+- `Help` for available command names
+- `Examples` for payload examples
+- `docs/supportedCommands.md` for full public/protected command coverage
+
+### Topic-targeted messages
+
+- Create topic: `CreateTopic`
+- Subscribe: `SubscribeTopic`
+- Include `TopicID` in command fields/LXMF fields to scope delivery
+
+### Telemetry request
+
+Use numeric key `1` (`TelemetryRequest`) with a Unix timestamp:
+
+```json
+[{"1": 1700000000, "TopicID": "<TopicID>"}]
+```
+
+### Attachments
+
+- Incoming LXMF file/image fields are persisted automatically.
+- List/retrieve via commands: `ListFiles`, `ListImages`, `RetrieveFile`, `RetrieveImage`.
+- Topic-tag attachments with `TopicID` or `AssociateTopicID`.
+- API also supports raw download and delete operations.
+
+## Northbound API Functionality
+
+RCH exposes REST endpoints through FastAPI.
+
+### Core routes
+
+- `/Help`, `/Examples`
+- `/Status` (protected)
+- `/Events` (protected)
+- `/Telemetry?since=<unix>&topic_id=<optional>`
+- `/Message` (protected)
+- `/Command/FlushTelemetry` (protected)
+- `/Command/ReloadConfig` (protected)
+- `/Command/DumpRouting` (protected)
+- `/api/v1/app/info`
+- `/openapi.yaml`
+
+### Topic and subscriber routes
+
+- `/Topic` (list/create/patch/delete)
+- `/Topic/{topic_id}`
+- `/Topic/Subscribe`
+- `/Topic/Associate`
+- `/Subscriber` (list/create/patch/delete, protected)
+- `/Subscriber/Add` (protected)
+- `/Subscriber/{subscriber_id}` (protected)
+
+### Identity and client routes
+
+- `/Client` (protected)
+- `/Identities` (protected)
+- `/Client/{identity}/Ban` (protected)
+- `/Client/{identity}/Unban` (protected)
+- `/Client/{identity}/Blackhole` (protected)
+- `/RTH` (POST join, PUT leave)
+
+### Config routes
+
+Hub config:
+- `GET /Config` (protected)
+- `PUT /Config` (protected)
+- `POST /Config/Validate` (protected)
+- `POST /Config/Rollback` (protected)
+
+Reticulum config:
+- `GET /Reticulum/Config` (protected)
+- `PUT /Reticulum/Config` (protected)
+- `POST /Reticulum/Config/Validate` (protected)
+- `POST /Reticulum/Config/Rollback` (protected)
+
+Reticulum runtime insight:
+- `GET /Reticulum/Interfaces/Capabilities` (protected)
+- `GET /Reticulum/Discovery` (protected)
+
+### File and image routes
+
+- `/File`, `/File/{id}`, `/File/{id}/raw`, `DELETE /File/{id}`
+- `/Image`, `/Image/{id}`, `/Image/{id}/raw`, `DELETE /Image/{id}`
+
+### Chat routes
+
+- `GET /Chat/Messages` (protected)
+- `POST /Chat/Message` (protected)
+- `POST /Chat/Attachment` (protected)
+
+Attachment upload notes:
+- `category` must be `file` or `image`
+- max payload is 8 MiB per upload
+- optional `sha256` integrity check is supported
+
+### Marker and zone routes
+
+Markers (protected):
+- `GET /api/markers`
+- `GET /api/markers/symbols`
+- `POST /api/markers`
+- `PATCH /api/markers/{object_destination_hash}`
+- `PATCH /api/markers/{object_destination_hash}/position`
+- `DELETE /api/markers/{object_destination_hash}`
+
+Zones (protected):
+- `GET /api/zones`
+- `POST /api/zones`
+- `PATCH /api/zones/{zone_id}`
+- `DELETE /api/zones/{zone_id}`
+
+Zone validation includes polygon size/shape constraints (min/max points, no self-intersections).
+
+### Control routes (gateway mode)
+
+Only available when running the gateway process (not plain standalone app):
+- `GET /Control/Status` (protected)
+- `POST /Control/Start` (protected)
+- `POST /Control/Stop` (protected)
+- `POST /Control/Announce` (protected)
+
+## WebSocket Functionality
+
+Streams:
+- `/events/system`
+- `/telemetry/stream`
+- `/messages/stream`
+
+All streams expect an auth message first:
+
+```json
+{"type":"auth","ts":"<iso8601>","data":{"token":"<optional>","api_key":"<optional>"}}
+```
+
+Then subscribe/send:
+
+System stream:
+```json
+{"type":"system.subscribe","ts":"<iso8601>","data":{"include_status":true,"include_events":true,"events_limit":50}}
+```
+
+Telemetry stream:
+```json
+{"type":"telemetry.subscribe","ts":"<iso8601>","data":{"since":1700000000,"topic_id":"<optional>","follow":true}}
+```
+
+Message stream:
+```json
+{"type":"message.subscribe","ts":"<iso8601>","data":{"topic_id":"<optional>","source_hash":"<optional>","follow":true}}
+```
+
+```json
+{"type":"message.send","ts":"<iso8601>","data":{"content":"hello","topic_id":"<optional>","destination":"<optional>"}}
+```
+
+Ping/pong keepalive is supported (`ping` from server, `pong` from client).
+
+## Authentication Model
+
+- Use `RTH_API_KEY` to enable API-key auth (`RCH_API_KEY` remains a compatible alias).
+- Protected HTTP routes and WebSocket auth accept:
+  - `X-API-Key: <key>`
+  - `Authorization: Bearer <key>`
+- Local loopback access is allowed without credentials.
+- Remote access to protected surfaces is denied unless valid credentials are provided.
+
+## Admin UI Functionality
+
+The UI (in `ui/`) currently includes:
+
+- `Dashboard`:
+  - status cards, event feed, telemetry trend graph
+  - backend controls (start, stop, status, announce)
+- `WebMap`:
+  - telemetry markers + operator markers
+  - marker create/move/rename/delete
+  - zone draw/edit/rename/delete
+  - live cursor latitude/longitude readout
+  - marker symbol catalog from `rch-symbols.yaml`
+- `Topics`:
+  - topic CRUD
+  - subscriber CRUD and branch filtering
+- `Files`:
+  - file/image listing
+  - raw download
+  - image preview
+  - delete from metadata and disk
+- `Chat`:
+  - DM/topic/broadcast composer
+  - attachment upload and send
+  - live message feed via WebSocket
+- `Users`:
+  - clients and identities list
+  - moderation (ban/unban/blackhole)
+  - join/leave identity
+  - routing snapshot view
+- `Configure`:
+  - load/validate/apply/rollback hub config
+  - Reticulum config editor
+  - Reticulum discovery snapshot and interface import
+  - diagnostics tools (status, dump routing, list clients)
+- `About`:
+  - app/runtime versions
+  - destination hash
+  - storage path inventory
+  - command docs and examples viewer
+- `Connect`:
+  - base URL + WS URL
+  - auth mode and credential fields
+
+Additional UI behavior:
+- Sidebar collapse/pin state is persisted.
+- WebMap marker label visibility is toggleable and persisted.
+- Map view (lat/lon/zoom) is persisted locally.
+
+## Daemon Mode and Optional Services
+
+Use daemon mode for telemetry workers and optional integrations:
+
+```bash
+python -m reticulum_telemetry_hub.reticulum_server \
+    --storage_dir ./RTH_Store \
+    --daemon \
+    --service gpsd \
+    --service tak_cot
+```
+
+Available optional services:
+- `gpsd`
+- `tak_cot`
+
+RCH can run with:
+- embedded LXMF router (`--embedded`)
+- external `lxmd` (`--no-embedded` or config default)
+
+## Python API Helpers (Attachments)
+
+The internal service exposes helpers:
+- `ReticulumTelemetryHubAPI.store_file(path, name=None, media_type=None, topic_id=None)`
+- `ReticulumTelemetryHubAPI.store_image(path, name=None, media_type=None, topic_id=None)`
+- `list_files()` / `list_images()`
+- `retrieve_file(id)` / `retrieve_image(id)`
+- `delete_file(id)` / `delete_image(id)`
 
 ## Troubleshooting
 
-### I cannot see the hub or other users
+### The UI cannot connect
 
-- Confirm the client is talking to the correct hub identity.
-- Verify the client is subscribed to the right topic.
-- Check that the hub process is running and reachable.
+- Verify base URL/WS URL in Connect page.
+- If remote, verify `RTH_API_KEY` and client auth headers/token.
+- Confirm API is reachable on the expected host/port.
 
-### Commands do not work
+### WebSocket never becomes live
 
-- Ensure you are sending valid JSON in the `Commands` field or using the `\\\`
-  escape prefix.
-- Run `Help` or `Examples` to confirm the hub is responding.
+- Ensure client sends the initial `auth` message first.
+- Confirm credentials (or local loopback access) are valid.
 
-### Telemetry is missing
+### Marker or zone updates fail
 
-- Telemetry is only supported in Sideband.
-- Ensure telemetry is enabled in the Sideband settings.
-- Confirm the hub is running with telemetry sampling enabled if you expect
-  fresh telemetry snapshots.
+- Check API credentials for protected routes.
+- For zones, ensure at least 3 points and non-self-intersecting geometry.
 
-### Attachments are not stored
+### Reticulum config apply succeeds but runtime did not change
 
-- Confirm file/image storage paths in `config.ini`.
-- Ensure the hub process has write access to those directories.
+- Reticulum config changes take effect after hub restart.
 
-## Getting help
+### Attachments are missing
+
+- Verify `[files]` and `[images]` paths in `config.ini`.
+- Ensure the process has write permission to storage directories.
+
+## Getting Help
 
 If you need help:
-
-- Open an issue on GitHub: https://github.com/FreeTAKTeam/Reticulum-Community-Hub
-- Include your client name (Sideband, MeshChat, or Columba).
-- Share the time and a short description of the issue.
+- Open an issue: https://github.com/FreeTAKTeam/Reticulum-Community-Hub
+- Include client type (Sideband, MeshChat, Columba, or API/UI)
+- Include approximate time and a short reproduction summary
