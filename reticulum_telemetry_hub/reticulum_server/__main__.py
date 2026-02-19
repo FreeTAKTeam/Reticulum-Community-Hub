@@ -53,6 +53,9 @@ from reticulum_telemetry_hub.api.models import Marker
 from reticulum_telemetry_hub.api.marker_identity import derive_marker_identity_key
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
+from reticulum_telemetry_hub.api.zone_service import ZoneService
+from reticulum_telemetry_hub.api.zone_storage import ZoneStorage
+from reticulum_telemetry_hub.checklist_sync import ChecklistSyncRouter
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.config.manager import _expand_user_path
@@ -88,6 +91,8 @@ from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import ReticulumInternalAdapter
 from reticulum_telemetry_hub.reticulum_server.marker_objects import MarkerObjectManager
+from reticulum_telemetry_hub.mission_domain import MissionDomainService
+from reticulum_telemetry_hub.mission_sync import MissionSyncRouter
 from .command_manager import CommandManager
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
@@ -383,8 +388,12 @@ class ReticulumTelemetryHub:
     telemeter_manager: TelemeterManager | None
     tak_connector: TakConnector | None
     marker_service: MarkerService | None
+    zone_service: ZoneService | None
     marker_manager: MarkerObjectManager | None
     command_manager: CommandManager | None
+    mission_sync_router: MissionSyncRouter | None
+    checklist_sync_router: ChecklistSyncRouter | None
+    mission_domain_service: MissionDomainService | None
     _active_services: dict[str, HubService]
 
     TELEMETRY_PLACEHOLDERS = {"telemetry data", "telemetry update"}
@@ -541,6 +550,9 @@ class ReticulumTelemetryHub:
         self._announce_capabilities_lock = threading.Lock()
         self._announce_capabilities_logged = False
         self.command_manager = None
+        self.mission_sync_router = None
+        self.checklist_sync_router = None
+        self.mission_domain_service = None
         self._announce_handler: AnnounceHandler | None = None
 
         identity = self.load_or_generate_identity(self.identity_path)
@@ -575,6 +587,7 @@ class ReticulumTelemetryHub:
             MarkerStorage(hub_db_path),
             identity_key_provider=lambda: marker_identity_key,
         )
+        self.zone_service = ZoneService(ZoneStorage(hub_db_path))
         runtime_config = self.config_manager.runtime_config
         marker_interval_minutes = getattr(
             runtime_config, "marker_announce_interval_minutes", 15
@@ -614,6 +627,11 @@ class ReticulumTelemetryHub:
             config_manager=self.config_manager,
             on_config_reload=self._handle_config_reload,
         )
+        event_retention_days = getattr(runtime_config, "event_retention_days", 90)
+        self.mission_domain_service = MissionDomainService(
+            hub_db_path,
+            event_retention_days=event_retention_days,
+        )
         self.api.set_reticulum_destination(self._origin_rch_hex())
         self._backfill_identity_announces()
         self._load_persisted_clients()
@@ -647,6 +665,30 @@ class ReticulumTelemetryHub:
             config_manager=self.config_manager,
             event_log=self.event_log,
         )
+        self.mission_sync_router = MissionSyncRouter(
+            api=self.api,
+            send_message=lambda content, topic_id, destination: self.send_message(
+                content,
+                topic=topic_id,
+                destination=destination,
+            ),
+            marker_service=self.marker_service,
+            zone_service=self.zone_service,
+            event_log=self.event_log,
+            hub_identity_resolver=self._origin_rch_hex,
+            field_results=LXMF.FIELD_RESULTS,
+            field_event=LXMF.FIELD_EVENT,
+            field_group=LXMF.FIELD_GROUP,
+        )
+        self.checklist_sync_router = ChecklistSyncRouter(
+            api=self.api,
+            domain_service=self.mission_domain_service,
+            event_log=self.event_log,
+            hub_identity_resolver=self._origin_rch_hex,
+            field_results=LXMF.FIELD_RESULTS,
+            field_event=LXMF.FIELD_EVENT,
+            field_group=LXMF.FIELD_GROUP,
+        )
         self.internal_adapter = ReticulumInternalAdapter(send_message=self.send_message)
         self.topic_subscribers: dict[str, set[str]] = {}
         self._topic_registry_last_refresh: float = 0.0
@@ -675,10 +717,111 @@ class ReticulumTelemetryHub:
                 getattr(RNS, "LOG_WARNING", 2),
             )
             return []
-        responses = manager.handle_commands(commands, message)
-        if self._commands_affect_subscribers(commands):
+
+        mission_commands: list[dict[str, Any]] = []
+        checklist_commands: list[dict[str, Any]] = []
+        legacy_commands: list[Any] = []
+        for command in commands:
+            if not isinstance(command, dict):
+                legacy_commands.append(command)
+                continue
+            command_type = command.get("command_type")
+            if isinstance(command_type, str) and command_type.strip():
+                if command_type.startswith("checklist."):
+                    checklist_commands.append(command)
+                else:
+                    mission_commands.append(command)
+            else:
+                legacy_commands.append(command)
+
+        responses: list[LXMF.LXMessage] = []
+        source_identity = self._message_source_hex(message)
+        message_fields = message.fields if isinstance(message.fields, dict) else {}
+        group = message_fields.get(LXMF.FIELD_GROUP)
+
+        mission_router = getattr(self, "mission_sync_router", None)
+        if mission_commands and mission_router is not None:
+            mission_replies = mission_router.handle_commands(
+                mission_commands,
+                source_identity=source_identity,
+                group=group,
+            )
+            responses.extend(
+                [
+                    response
+                    for response in (
+                        self._mission_sync_response_to_lxmf(message, entry)
+                        for entry in mission_replies
+                    )
+                    if response is not None
+                ]
+            )
+
+        checklist_router = getattr(self, "checklist_sync_router", None)
+        if checklist_commands and checklist_router is not None:
+            checklist_replies = checklist_router.handle_commands(
+                checklist_commands,
+                source_identity=source_identity,
+                group=group,
+            )
+            responses.extend(
+                [
+                    response
+                    for response in (
+                        self._mission_sync_response_to_lxmf(message, entry)
+                        for entry in checklist_replies
+                    )
+                    if response is not None
+                ]
+            )
+
+        if legacy_commands:
+            responses.extend(manager.handle_commands(legacy_commands, message))
+
+        if self._commands_affect_subscribers(legacy_commands) or self._mission_commands_affect_subscribers(
+            mission_commands
+        ):
             self._refresh_topic_registry()
         return responses
+
+    def _mission_sync_response_to_lxmf(
+        self, message: LXMF.LXMessage, response
+    ) -> LXMF.LXMessage | None:
+        """Convert a mission/checklist sync response to a reply LXMF message."""
+
+        if self.my_lxmf_dest is None:
+            return None
+        destination = None
+        command_manager = getattr(self, "command_manager", None)
+        try:
+            if command_manager is not None and hasattr(command_manager, "_create_dest"):
+                destination = command_manager._create_dest(  # pylint: disable=protected-access
+                    message.source.identity
+                )
+        except Exception:
+            destination = None
+        if destination is None:
+            try:
+                destination = RNS.Destination(
+                    message.source.identity,
+                    RNS.Destination.OUT,
+                    RNS.Destination.SINGLE,
+                    "lxmf",
+                    "delivery",
+                )
+            except Exception:
+                return None
+        merged_fields = self._merge_standard_fields(
+            source_fields=message.fields,
+            extra_fields=response.fields if isinstance(response.fields, dict) else {},
+        )
+        return LXMF.LXMessage(
+            destination,
+            self.my_lxmf_dest,
+            str(response.content or ""),
+            fields=apply_icon_appearance(merged_fields or {}),
+            desired_method=LXMF.LXMessage.DIRECT,
+        )
 
     def register_message_listener(
         self, listener: Callable[[dict[str, object]], None]
@@ -2053,6 +2196,20 @@ class ReticulumTelemetryHub:
             if name in subscriber_commands:
                 return True
 
+        return False
+
+    @staticmethod
+    def _mission_commands_affect_subscribers(commands: list[dict] | None) -> bool:
+        """Return True when mission-sync commands modify subscriber mappings."""
+
+        if not commands:
+            return False
+        for command in commands:
+            if not isinstance(command, dict):
+                continue
+            command_type = command.get("command_type")
+            if command_type == "topic.subscribe":
+                return True
         return False
 
     @staticmethod

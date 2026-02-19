@@ -127,6 +127,7 @@ class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     reticulum_config_path: Path | None = None
     lxmf_router_config_path: Path | None = None
     telemetry_filename: str = "telemetry.ini"
+    event_retention_days: int = 90
     file_storage_path: Path | None = None
     image_storage_path: Path | None = None
 

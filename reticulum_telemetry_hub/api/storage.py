@@ -8,6 +8,7 @@ from typing import Optional
 import uuid
 
 from sqlalchemy import create_engine
+from sqlalchemy import or_
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
@@ -26,6 +27,7 @@ from .storage_models import ChatMessageRecord
 from .storage_models import ClientRecord
 from .storage_models import FileRecord
 from .storage_models import IdentityAnnounceRecord
+from .storage_models import IdentityCapabilityGrantRecord
 from .storage_models import IdentityStateRecord
 from .storage_models import SubscriberRecord
 from .storage_models import TopicRecord
@@ -422,6 +424,100 @@ class HubStorage(HubStorageBase):
 
         with self._session_scope() as session:
             return session.query(IdentityAnnounceRecord).all()
+
+    def upsert_identity_capability(
+        self,
+        identity: str,
+        capability: str,
+        *,
+        granted: bool = True,
+        granted_by: str | None = None,
+        expires_at=None,
+    ) -> IdentityCapabilityGrantRecord:
+        """Insert or update a capability grant for an identity."""
+
+        identity = identity.strip().lower()
+        capability = capability.strip()
+        now = _utcnow()
+        with self._session_scope() as session:
+            insert_values = {
+                "grant_uid": uuid.uuid4().hex,
+                "identity": identity,
+                "capability": capability,
+                "granted": bool(granted),
+                "granted_by": granted_by,
+                "granted_at": now,
+                "expires_at": expires_at,
+                "updated_at": now,
+            }
+            update_values = {
+                "granted": bool(granted),
+                "granted_by": granted_by,
+                "updated_at": now,
+                "expires_at": expires_at,
+            }
+            if granted:
+                update_values["granted_at"] = now
+            stmt = sqlite_insert(IdentityCapabilityGrantRecord).values(**insert_values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[
+                    IdentityCapabilityGrantRecord.identity,
+                    IdentityCapabilityGrantRecord.capability,
+                ],
+                set_=update_values,
+            )
+            session.execute(stmt)
+            session.commit()
+            record = (
+                session.query(IdentityCapabilityGrantRecord)
+                .filter(
+                    IdentityCapabilityGrantRecord.identity == identity,
+                    IdentityCapabilityGrantRecord.capability == capability,
+                )
+                .first()
+            )
+            if record is None:  # pragma: no cover - defensive
+                raise RuntimeError("Failed to persist identity capability grant")
+            return record
+
+    def list_identity_capabilities(self, identity: str) -> List[str]:
+        """Return active capabilities granted to an identity."""
+
+        identity = identity.strip().lower()
+        now = _utcnow()
+        with self._session_scope() as session:
+            rows = (
+                session.query(IdentityCapabilityGrantRecord.capability)
+                .filter(
+                    IdentityCapabilityGrantRecord.identity == identity,
+                    IdentityCapabilityGrantRecord.granted.is_(True),
+                    or_(
+                        IdentityCapabilityGrantRecord.expires_at.is_(None),
+                        IdentityCapabilityGrantRecord.expires_at > now,
+                    ),
+                )
+                .all()
+            )
+            return sorted({row[0] for row in rows})
+
+    def list_identity_capability_grants(
+        self, identity: str | None = None
+    ) -> List[IdentityCapabilityGrantRecord]:
+        """Return persisted capability grants."""
+
+        with self._session_scope() as session:
+            query = session.query(IdentityCapabilityGrantRecord)
+            if identity:
+                query = query.filter(
+                    IdentityCapabilityGrantRecord.identity == identity.strip().lower()
+                )
+            return (
+                query.order_by(
+                    IdentityCapabilityGrantRecord.identity,
+                    IdentityCapabilityGrantRecord.capability,
+                )
+                .all()
+            )
 
     def get_identity_state(self, identity: str) -> IdentityStateRecord | None:
         """Return the moderation state for an identity when present."""

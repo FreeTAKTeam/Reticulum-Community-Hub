@@ -393,6 +393,18 @@ def register_core_routes(
 
         return api.leave(identity)
 
+    @app.post("/RCH")
+    def rch_join(identity: str = Query(alias="identity")) -> bool:
+        """Join the Reticulum Community Hub (canonical alias)."""
+
+        return api.join(identity)
+
+    @app.put("/RCH")
+    def rch_leave(identity: str = Query(alias="identity")) -> bool:
+        """Leave the Reticulum Community Hub (canonical alias)."""
+
+        return api.leave(identity)
+
     @app.get("/Client", dependencies=[Depends(require_protected)])
     def list_clients() -> list[dict]:
         """List clients.
