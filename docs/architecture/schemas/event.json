@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://r3akt.local/schema/event.json",
+  "title": "R3AKTEvent",
+  "description": "Immutable event/fact envelope. Transport class is LXMF FIELD_EVENT (0x0D).",
+  "type": "object",
+  "required": [
+    "event_id",
+    "source",
+    "timestamp",
+    "event_type",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique event id, derived from (source identity + timestamp)."
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "rns_identity"
+      ],
+      "properties": {
+        "rns_identity": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "topics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Event fan-out topics. May be mirrored in LXMF FIELD_GROUP (0x0B) metadata."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "object_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "namespace_identity",
+          "path"
+        ],
+        "properties": {
+          "namespace_identity": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "payload": {
+      "type": "object"
+    },
+    "meta": {
+      "type": "object",
+      "description": "Supplemental event metadata that does not alter the immutable event fact."
+    }
+  }
+}

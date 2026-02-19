@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://r3akt.local/schema/command.json",
+  "title": "R3AKTCommand",
+  "description": "Control-plane command envelope. Transport class is LXMF FIELD_COMMANDS (0x09).",
+  "type": "object",
+  "required": [
+    "command_id",
+    "source",
+    "timestamp",
+    "command_type",
+    "args"
+  ],
+  "properties": {
+    "command_id": {
+      "type": "string",
+      "description": "Unique command identifier used to correlate FIELD_RESULTS (0x0A) replies."
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "rns_identity"
+      ],
+      "properties": {
+        "rns_identity": {
+          "type": "string"
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "command_type": {
+      "type": "string"
+    },
+    "topics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Logical topic intent. May be mirrored in LXMF FIELD_GROUP (0x0B) metadata for scoped fan-out."
+    },
+    "args": {
+      "type": "object"
+    },
+    "correlation_id": {
+      "type": "string",
+      "description": "Client-supplied correlation token preserved in command outcome messages."
+    }
+  }
+}

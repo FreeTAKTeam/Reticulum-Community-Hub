@@ -330,6 +330,13 @@ classDiagram
 
 - These diagrams represent active runtime/data classes and their direct
   relationships.
+- R3AKT mission/checklist backend persistence now includes additive `r3akt_*`
+  tables in `rth_api.sqlite` for `Mission`, `MissionChange`, `Team`,
+  `TeamMember`, `Asset`, `Skill`, `TeamMemberSkill`, `TaskSkillRequirement`,
+  `Checklist`, `ChecklistTemplate`, `ChecklistTask`, `ChecklistColumn`,
+  `ChecklistCell`, `ChecklistFeedPublication`, and `MissionTaskAssignment`.
+- Domain auditability is provided by immutable `r3akt_domain_events` and
+  `r3akt_domain_snapshots` tables with retention.
 - Schema-only transport models are not expanded here (for example
   `northbound/models.py` and `internal_api/v1/schemas.py`).
 - Additional telemetry sensor subclasses live under

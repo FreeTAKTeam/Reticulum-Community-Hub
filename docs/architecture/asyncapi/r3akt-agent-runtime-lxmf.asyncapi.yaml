@@ -1,0 +1,233 @@
+asyncapi: "2.6.0"
+id: "urn:r3akt:asyncapi:agent-runtime-lxmf"
+info:
+  title: "R3AKT Agent Runtime LXMF Contract"
+  version: "0.1.0"
+  description: >
+    AsyncAPI contract for agent runtime management over Reticulum LXMF.
+    Agents remain constrained to analytics and publication-only behaviors.
+defaultContentType: application/json
+tags:
+  - name: agents
+    description: Agent registration and lifecycle operations.
+servers:
+  reticulum_lxmf:
+    protocol: lxmf
+    description: Reticulum LXMF destination for the agent runtime service.
+    bindings:
+      x-lxmf:
+        delivery: at-least-once
+        propagation_nodes: supported
+        encryption: reticulum-e2e
+        signature: required
+        field_constants:
+          FIELD_COMMANDS: "0x09"
+          FIELD_RESULTS: "0x0A"
+          FIELD_GROUP: "0x0B"
+          FIELD_EVENT: "0x0D"
+channels:
+  r3akt.agent.commands:
+    description: Agent runtime management commands (`FIELD_COMMANDS` / `0x09`).
+    x-lxmf-fields:
+      required:
+        - FIELD_COMMANDS
+      optional:
+        - FIELD_GROUP
+    publish:
+      operationId: publishAgentCommand
+      description: Every command is explicitly authorized against caller capabilities.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/AgentListCommand"
+          - $ref: "#/components/messages/AgentRegisterCommand"
+          - $ref: "#/components/messages/AgentStartCommand"
+          - $ref: "#/components/messages/AgentStopCommand"
+  r3akt.agent.replies:
+    description: ACK, reject, and result messages for agent commands (`FIELD_RESULTS` / `0x0A`).
+    x-lxmf-fields:
+      required:
+        - FIELD_RESULTS
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeAgentReplies
+      message:
+        oneOf:
+          - $ref: "#/components/messages/CommandAccepted"
+          - $ref: "#/components/messages/CommandRejected"
+          - $ref: "#/components/messages/CommandResult"
+  r3akt.agent.events:
+    description: Agent runtime lifecycle and policy events (`FIELD_EVENT` / `0x0D`).
+    x-lxmf-fields:
+      required:
+        - FIELD_EVENT
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeAgentEvents
+      message:
+        $ref: "#/components/messages/AgentRuntimeEvent"
+components:
+  messages:
+    AgentListCommand:
+      name: AgentListCommand
+      title: List agents command
+      summary: Maps to HTTP operation `listAgents`.
+      x-http-operation: "GET /agents"
+      x-capability-required:
+        - agent.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: agent.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    AgentRegisterCommand:
+      name: AgentRegisterCommand
+      title: Register agent command
+      summary: Maps to HTTP operation `registerAgent`.
+      x-http-operation: "POST /agents"
+      x-capability-required:
+        - agent.register
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: agent.register
+              args:
+                type: object
+                required: [agent_id]
+                properties:
+                  agent_id:
+                    type: string
+                  capabilities:
+                    type: array
+                    items:
+                      type: string
+                  publish_topics:
+                    type: array
+                    items:
+                      type: string
+            required: [command_type, args]
+    AgentStartCommand:
+      name: AgentStartCommand
+      title: Start agent command
+      summary: Maps to HTTP operation `startAgent`.
+      x-http-operation: "POST /agents/{agent_id}/start"
+      x-capability-required:
+        - agent.start
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: agent.start
+              args:
+                type: object
+                required: [agent_id]
+                properties:
+                  agent_id:
+                    type: string
+            required: [command_type, args]
+    AgentStopCommand:
+      name: AgentStopCommand
+      title: Stop agent command
+      summary: Maps to HTTP operation `stopAgent`.
+      x-http-operation: "POST /agents/{agent_id}/stop"
+      x-capability-required:
+        - agent.stop
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: agent.stop
+              args:
+                type: object
+                required: [agent_id]
+                properties:
+                  agent_id:
+                    type: string
+            required: [command_type, args]
+    CommandAccepted:
+      name: CommandAccepted
+      title: Command accepted
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, accepted_at]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: accepted
+          accepted_at:
+            type: string
+            format: date-time
+    CommandRejected:
+      name: CommandRejected
+      title: Command rejected
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, reason_code]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: rejected
+          reason_code:
+            type: string
+            enum: [unauthorized, invalid_payload, unknown_command, internal_error]
+          reason:
+            type: string
+    CommandResult:
+      name: CommandResult
+      title: Command result
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, result]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: result
+          result:
+            type: object
+            additionalProperties: true
+    AgentRuntimeEvent:
+      name: AgentRuntimeEvent
+      title: Agent runtime event envelope
+      summary: Uses the shared event envelope with agent-runtime-specific event_type values.
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        allOf:
+          - $ref: "../schemas/event.json"
+          - type: object
+            properties:
+              event_type:
+                type: string
+                enum:
+                  - agent.registered
+                  - agent.started
+                  - agent.stopped
+                  - agent.policy.violation

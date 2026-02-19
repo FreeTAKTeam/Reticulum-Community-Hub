@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://r3akt.local/schema/object.json",
+  "title": "R3AKTDomainObject",
+  "description": "Derived domain object snapshot payload. When emitted over LXMF event channels it is carried in FIELD_EVENT (0x0D).",
+  "type": "object",
+  "required": [
+    "object_id",
+    "namespace_identity",
+    "path",
+    "object_type",
+    "state"
+  ],
+  "properties": {
+    "object_id": {
+      "type": "string"
+    },
+    "namespace_identity": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "object_type": {
+      "type": "string"
+    },
+    "state": {
+      "type": "object"
+    },
+    "state_confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "object"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+          }
+        }
+      }
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

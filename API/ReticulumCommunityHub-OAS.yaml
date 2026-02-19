@@ -803,6 +803,217 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReticulumInfo'
+  /RTH:
+    post:
+      x-scope: public
+      x-compat-alias-for: /RCH
+      tags:
+       - RCH
+      description: Legacy compatibility alias for join.
+      operationId: RTHjoin
+      parameters:
+        - $ref: '#/components/parameters/identity'
+      responses:
+        '200':
+          description: True when the identity is recorded or updated.
+          content:
+            application/json:
+              schema:
+                type: boolean
+    put:
+      x-scope: public
+      x-compat-alias-for: /RCH
+      tags:
+       - RCH
+      description: Legacy compatibility alias for leave.
+      operationId: RTHLeave
+      parameters:
+        - $ref: '#/components/parameters/identity'
+      responses:
+        '200':
+          description: True when the identity existed and was removed.
+          content:
+            application/json:
+              schema:
+                type: boolean
+  /checklists/templates:
+    get:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: List checklist templates.
+      responses:
+        '200':
+          description: Checklist template list.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Create checklist template.
+      responses:
+        '200':
+          description: Created checklist template.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/templates/{template_id}:
+    patch:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Update checklist template.
+      parameters:
+        - name: template_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated checklist template.
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Delete checklist template.
+      parameters:
+        - name: template_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted checklist template.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists:
+    get:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: List active checklists.
+      responses:
+        '200':
+          description: Checklist list.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Create online checklist.
+      responses:
+        '200':
+          description: Created checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/offline:
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Create offline checklist.
+      responses:
+        '200':
+          description: Created checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/import/csv:
+    post:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Import checklist from CSV.
+      responses:
+        '200':
+          description: Imported checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+  /checklists/{checklist_id}:
+    get:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Get checklist details.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Checklist details.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/missions:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List missions.
+      responses:
+        '200':
+          description: Mission list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update mission.
+      responses:
+        '200':
+          description: Mission record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/capabilities/{identity}:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List capability grants for an identity.
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Capability grants.
+          content:
+            application/json:
+              schema:
+                type: object
   /File:
     get:
       x-scope: public

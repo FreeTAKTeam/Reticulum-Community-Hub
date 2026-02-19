@@ -1,0 +1,953 @@
+asyncapi: "2.6.0"
+id: "urn:r3akt:asyncapi:checklist-lxmf"
+info:
+  title: "R3AKT Checklist LXMF Contract"
+  version: "0.1.0"
+  description: >
+    Authoritative AsyncAPI contract for checklist lifecycle management over Reticulum LXMF.
+    Covers template management, checklist execution, offline upload, and mission feed publication.
+defaultContentType: application/json
+tags:
+  - name: checklist
+    description: Checklist and template lifecycle messaging.
+  - name: commands
+    description: Commands that require explicit capability authorization.
+  - name: events
+    description: Immutable checklist domain events and snapshots.
+servers:
+  reticulum_lxmf:
+    protocol: lxmf
+    description: Reticulum LXMF destination for the authoritative R3AKT checklist service.
+    bindings:
+      x-lxmf:
+        delivery: at-least-once
+        propagation_nodes: supported
+        encryption: reticulum-e2e
+        signature: required
+        field_constants:
+          FIELD_COMMANDS: "0x09"
+          FIELD_RESULTS: "0x0A"
+          FIELD_GROUP: "0x0B"
+          FIELD_EVENT: "0x0D"
+channels:
+  r3akt.checklist.commands:
+    description: Checklist commands submitted over LXMF (`FIELD_COMMANDS` / `0x09`).
+    x-lxmf-fields:
+      required:
+        - FIELD_COMMANDS
+      optional:
+        - FIELD_GROUP
+    publish:
+      operationId: publishChecklistCommand
+      summary: Send a command envelope to the checklist service.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ChecklistTemplateListCommand"
+          - $ref: "#/components/messages/ChecklistTemplateCreateCommand"
+          - $ref: "#/components/messages/ChecklistTemplateUpdateCommand"
+          - $ref: "#/components/messages/ChecklistTemplateCloneCommand"
+          - $ref: "#/components/messages/ChecklistTemplateDeleteCommand"
+          - $ref: "#/components/messages/ChecklistListActiveCommand"
+          - $ref: "#/components/messages/ChecklistCreateOnlineCommand"
+          - $ref: "#/components/messages/ChecklistCreateOfflineCommand"
+          - $ref: "#/components/messages/ChecklistImportCsvCommand"
+          - $ref: "#/components/messages/ChecklistJoinCommand"
+          - $ref: "#/components/messages/ChecklistGetCommand"
+          - $ref: "#/components/messages/ChecklistUploadCommand"
+          - $ref: "#/components/messages/ChecklistFeedPublishCommand"
+          - $ref: "#/components/messages/ChecklistTaskStatusSetCommand"
+          - $ref: "#/components/messages/ChecklistTaskRowAddCommand"
+          - $ref: "#/components/messages/ChecklistTaskRowDeleteCommand"
+          - $ref: "#/components/messages/ChecklistTaskRowStyleSetCommand"
+          - $ref: "#/components/messages/ChecklistTaskCellSetCommand"
+  r3akt.checklist.replies:
+    description: Command acknowledgement and result envelopes (`FIELD_RESULTS` / `0x0A`).
+    x-lxmf-fields:
+      required:
+        - FIELD_RESULTS
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeChecklistReplies
+      summary: Receive command execution replies from checklist service.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/CommandAccepted"
+          - $ref: "#/components/messages/CommandRejected"
+          - $ref: "#/components/messages/CommandResult"
+  r3akt.checklist.events:
+    description: Checklist event stream and snapshots (`FIELD_EVENT` / `0x0D`).
+    x-lxmf-fields:
+      required:
+        - FIELD_EVENT
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeChecklistEvents
+      summary: Receive checklist domain events and snapshots.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ChecklistEvent"
+          - $ref: "#/components/messages/ChecklistSnapshot"
+components:
+  messages:
+    ChecklistTemplateListCommand:
+      name: ChecklistTemplateListCommand
+      title: List checklist templates command
+      summary: Maps to HTTP operation `listChecklistTemplates`.
+      x-http-operation: "GET /checklists/templates"
+      x-capability-required:
+        - checklist.template.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.template.list
+              args:
+                $ref: "#/components/schemas/ChecklistTemplateListArgs"
+            required: [command_type, args]
+    ChecklistTemplateCreateCommand:
+      name: ChecklistTemplateCreateCommand
+      title: Create checklist template command
+      summary: Maps to HTTP operation `createChecklistTemplate`.
+      x-http-operation: "POST /checklists/templates"
+      x-capability-required:
+        - checklist.template.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.template.create
+              args:
+                $ref: "#/components/schemas/ChecklistTemplateCreateArgs"
+            required: [command_type, args]
+    ChecklistTemplateUpdateCommand:
+      name: ChecklistTemplateUpdateCommand
+      title: Update checklist template command
+      summary: Maps to HTTP operation `updateChecklistTemplate`.
+      x-http-operation: "PATCH /checklists/templates/{template_id}"
+      x-capability-required:
+        - checklist.template.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.template.update
+              args:
+                $ref: "#/components/schemas/ChecklistTemplateUpdateArgs"
+            required: [command_type, args]
+    ChecklistTemplateCloneCommand:
+      name: ChecklistTemplateCloneCommand
+      title: Clone checklist template command
+      summary: Maps to HTTP operation `cloneChecklistTemplate`.
+      x-http-operation: "POST /checklists/templates/{template_id}/clone"
+      x-capability-required:
+        - checklist.template.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.template.clone
+              args:
+                $ref: "#/components/schemas/ChecklistTemplateCloneArgs"
+            required: [command_type, args]
+    ChecklistTemplateDeleteCommand:
+      name: ChecklistTemplateDeleteCommand
+      title: Delete checklist template command
+      summary: Maps to HTTP operation `deleteChecklistTemplate`.
+      x-http-operation: "DELETE /checklists/templates/{template_id}"
+      x-capability-required:
+        - checklist.template.delete
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.template.delete
+              args:
+                $ref: "#/components/schemas/ChecklistTemplateDeleteArgs"
+            required: [command_type, args]
+    ChecklistListActiveCommand:
+      name: ChecklistListActiveCommand
+      title: List active checklists command
+      summary: Maps to HTTP operation `listActiveChecklists`.
+      x-http-operation: "GET /checklists?state=active"
+      x-capability-required:
+        - checklist.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.list.active
+              args:
+                $ref: "#/components/schemas/ChecklistListActiveArgs"
+            required: [command_type, args]
+    ChecklistCreateOnlineCommand:
+      name: ChecklistCreateOnlineCommand
+      title: Create online checklist command
+      summary: Maps to HTTP operation `createChecklistOnline`.
+      x-http-operation: "POST /checklists"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.create.online
+              args:
+                $ref: "#/components/schemas/ChecklistCreateOnlineArgs"
+            required: [command_type, args]
+    ChecklistCreateOfflineCommand:
+      name: ChecklistCreateOfflineCommand
+      title: Create offline checklist command
+      summary: Maps to HTTP operation `createChecklistOffline`.
+      x-http-operation: "POST /checklists/offline"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.create.offline
+              args:
+                $ref: "#/components/schemas/ChecklistCreateOfflineArgs"
+            required: [command_type, args]
+    ChecklistImportCsvCommand:
+      name: ChecklistImportCsvCommand
+      title: Import checklist CSV command
+      summary: Maps to HTTP operation `importChecklistCsv`.
+      x-http-operation: "POST /checklists/import/csv"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.import.csv
+              args:
+                $ref: "#/components/schemas/ChecklistImportCsvArgs"
+            required: [command_type, args]
+    ChecklistJoinCommand:
+      name: ChecklistJoinCommand
+      title: Join active checklist command
+      summary: Maps to HTTP operation `joinChecklist`.
+      x-http-operation: "POST /checklists/{checklist_id}/join"
+      x-capability-required:
+        - checklist.join
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.join
+              args:
+                $ref: "#/components/schemas/ChecklistJoinArgs"
+            required: [command_type, args]
+    ChecklistGetCommand:
+      name: ChecklistGetCommand
+      title: Get checklist command
+      summary: Maps to HTTP operation `getChecklist`.
+      x-http-operation: "GET /checklists/{checklist_id}"
+      x-capability-required:
+        - checklist.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.get
+              args:
+                $ref: "#/components/schemas/ChecklistGetArgs"
+            required: [command_type, args]
+    ChecklistUploadCommand:
+      name: ChecklistUploadCommand
+      title: Upload offline checklist command
+      summary: Maps to HTTP operation `uploadChecklist`.
+      x-http-operation: "POST /checklists/{checklist_id}/upload"
+      x-capability-required:
+        - checklist.upload
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.upload
+              args:
+                $ref: "#/components/schemas/ChecklistUploadArgs"
+            required: [command_type, args]
+    ChecklistFeedPublishCommand:
+      name: ChecklistFeedPublishCommand
+      title: Publish checklist to mission feed command
+      summary: Maps to HTTP operation `publishChecklistFeed`.
+      x-http-operation: "POST /checklists/{checklist_id}/feeds/{feed_id}"
+      x-capability-required:
+        - checklist.feed.publish
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.feed.publish
+              args:
+                $ref: "#/components/schemas/ChecklistFeedPublishArgs"
+            required: [command_type, args]
+    ChecklistTaskStatusSetCommand:
+      name: ChecklistTaskStatusSetCommand
+      title: Set checklist task status command
+      summary: Maps to HTTP operation `setChecklistTaskStatus`.
+      x-http-operation: "POST /checklists/{checklist_id}/tasks/{task_id}/status"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.task.status.set
+              args:
+                $ref: "#/components/schemas/ChecklistTaskStatusSetArgs"
+            required: [command_type, args]
+    ChecklistTaskRowAddCommand:
+      name: ChecklistTaskRowAddCommand
+      title: Add checklist task row command
+      summary: Maps to HTTP operation `addChecklistTaskRow`.
+      x-http-operation: "POST /checklists/{checklist_id}/tasks"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.task.row.add
+              args:
+                $ref: "#/components/schemas/ChecklistTaskRowAddArgs"
+            required: [command_type, args]
+    ChecklistTaskRowDeleteCommand:
+      name: ChecklistTaskRowDeleteCommand
+      title: Delete checklist task row command
+      summary: Maps to HTTP operation `deleteChecklistTaskRow`.
+      x-http-operation: "DELETE /checklists/{checklist_id}/tasks/{task_id}"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.task.row.delete
+              args:
+                $ref: "#/components/schemas/ChecklistTaskRowDeleteArgs"
+            required: [command_type, args]
+    ChecklistTaskRowStyleSetCommand:
+      name: ChecklistTaskRowStyleSetCommand
+      title: Set checklist task row style command
+      summary: Maps to HTTP operation `setChecklistTaskRowStyle`.
+      x-http-operation: "PATCH /checklists/{checklist_id}/tasks/{task_id}/row-style"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.task.row.style.set
+              args:
+                $ref: "#/components/schemas/ChecklistTaskRowStyleSetArgs"
+            required: [command_type, args]
+    ChecklistTaskCellSetCommand:
+      name: ChecklistTaskCellSetCommand
+      title: Set checklist task cell command
+      summary: Maps to HTTP operation `setChecklistTaskCell`.
+      x-http-operation: "PATCH /checklists/{checklist_id}/tasks/{task_id}/cells/{column_id}"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.task.cell.set
+              args:
+                $ref: "#/components/schemas/ChecklistTaskCellSetArgs"
+            required: [command_type, args]
+    CommandAccepted:
+      name: CommandAccepted
+      title: Command accepted
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, accepted_at]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: accepted
+          accepted_at:
+            type: string
+            format: date-time
+          by_identity:
+            type: string
+    CommandRejected:
+      name: CommandRejected
+      title: Command rejected
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, reason_code]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: rejected
+          reason_code:
+            type: string
+            enum: [unauthorized, invalid_payload, unknown_command, internal_error]
+          reason:
+            type: string
+          required_capabilities:
+            type: array
+            items:
+              type: string
+    CommandResult:
+      name: CommandResult
+      title: Command result
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, result]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: result
+          result:
+            type: object
+            additionalProperties: true
+    ChecklistEvent:
+      name: ChecklistEvent
+      title: Checklist event envelope
+      summary: Uses the shared event envelope with checklist-specific event_type values.
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        allOf:
+          - $ref: "../schemas/event.json"
+          - type: object
+            properties:
+              event_type:
+                type: string
+                enum:
+                  - checklist.template.created
+                  - checklist.template.updated
+                  - checklist.template.deleted
+                  - checklist.created
+                  - checklist.imported.csv
+                  - checklist.joined
+                  - checklist.uploaded
+                  - checklist.task.status.changed
+                  - checklist.task.marked.late
+                  - checklist.progress.changed
+                  - checklist.feed.published
+              payload:
+                oneOf:
+                  - $ref: "#/components/schemas/Checklist"
+                  - $ref: "#/components/schemas/ChecklistTemplate"
+                  - $ref: "#/components/schemas/ChecklistFeedPublication"
+                  - $ref: "#/components/schemas/ChecklistTaskStatusDelta"
+    ChecklistSnapshot:
+      name: ChecklistSnapshot
+      title: Checklist snapshot
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        allOf:
+          - $ref: "../schemas/object.json"
+          - type: object
+            properties:
+              object_type:
+                const: checklist.snapshot
+              state:
+                $ref: "#/components/schemas/Checklist"
+            required: [object_type, state]
+  schemas:
+    ChecklistMode:
+      type: string
+      enum: [ONLINE, OFFLINE]
+    ChecklistSyncState:
+      type: string
+      enum: [LOCAL_ONLY, UPLOAD_PENDING, SYNCED]
+    ChecklistOriginType:
+      type: string
+      enum: [RCH_TEMPLATE, BLANK_TEMPLATE, CSV_IMPORT, EXISTING_TEMPLATE_CLONE]
+    ChecklistUserTaskStatus:
+      type: string
+      enum: [PENDING, COMPLETE]
+    ChecklistTaskStatus:
+      type: string
+      enum: [PENDING, COMPLETE, COMPLETE_LATE, LATE]
+    ChecklistColumnType:
+      type: string
+      enum: [SHORT_STRING, LONG_STRING, INTEGER, ACTUAL_TIME, RELATIVE_TIME]
+    ChecklistSystemColumnKey:
+      type: string
+      enum: [DUE_RELATIVE_DTG]
+    ChecklistStatusCounts:
+      type: object
+      required: [pending_count, late_count, complete_count]
+      properties:
+        pending_count:
+          type: integer
+          minimum: 0
+        late_count:
+          type: integer
+          minimum: 0
+        complete_count:
+          type: integer
+          minimum: 0
+    ChecklistColumn:
+      type: object
+      required: [column_uid, column_name, display_order, column_type, column_editable, is_removable]
+      properties:
+        column_uid:
+          type: string
+        column_name:
+          type: string
+        display_order:
+          type: integer
+        column_type:
+          $ref: "#/components/schemas/ChecklistColumnType"
+        column_editable:
+          type: boolean
+        background_color:
+          type: string
+        text_color:
+          type: string
+        is_removable:
+          type: boolean
+        system_key:
+          $ref: "#/components/schemas/ChecklistSystemColumnKey"
+    ChecklistCell:
+      type: object
+      required: [cell_uid, task_uid, column_uid, updated_at]
+      properties:
+        cell_uid:
+          type: string
+        task_uid:
+          type: string
+        column_uid:
+          type: string
+        value:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        updated_by_team_member_rns_identity:
+          type: string
+    ChecklistTask:
+      type: object
+      required:
+        [task_uid, number, user_status, task_status, line_break_enabled, due_dtg, is_late, cells]
+      properties:
+        task_uid:
+          type: string
+        number:
+          type: integer
+        user_status:
+          $ref: "#/components/schemas/ChecklistUserTaskStatus"
+        task_status:
+          $ref: "#/components/schemas/ChecklistTaskStatus"
+        is_late:
+          type: boolean
+        custom_status:
+          type: integer
+        due_relative_minutes:
+          type: integer
+          minimum: 0
+        due_dtg:
+          type: string
+          format: date-time
+        notes:
+          type: string
+        row_background_color:
+          type: string
+        line_break_enabled:
+          type: boolean
+        completed_at:
+          type: string
+          format: date-time
+        completed_by_team_member_rns_identity:
+          type: string
+        legacy_value:
+          type: string
+          description: Legacy denormalized value field retained only for migration compatibility.
+        cells:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChecklistCell"
+    ChecklistTemplate:
+      type: object
+      required:
+        [
+          uid,
+          template_name,
+          description,
+          created_at,
+          created_by_team_member_rns_identity,
+          updated_at,
+          server_only,
+          columns,
+        ]
+      properties:
+        uid:
+          type: string
+        template_name:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        created_by_team_member_rns_identity:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        source_template_uid:
+          type: string
+        server_only:
+          type: boolean
+          const: true
+        columns:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ChecklistColumn"
+    ChecklistFeedPublication:
+      type: object
+      required:
+        [
+          publication_uid,
+          checklist_uid,
+          mission_feed_uid,
+          published_at,
+          published_by_team_member_rns_identity,
+        ]
+      properties:
+        publication_uid:
+          type: string
+        checklist_uid:
+          type: string
+        mission_feed_uid:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+        published_by_team_member_rns_identity:
+          type: string
+    Checklist:
+      type: object
+      required:
+        [
+          uid,
+          name,
+          description,
+          start_time,
+          mode,
+          sync_state,
+          origin_type,
+          created_at,
+          created_by_team_member_rns_identity,
+          updated_at,
+          checklist_status,
+          progress_percent,
+          counts,
+          columns,
+          tasks,
+        ]
+      properties:
+        uid:
+          type: string
+        mission_id:
+          type: string
+        template_uid:
+          type: string
+        template_version:
+          type: integer
+        template_name:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        mode:
+          $ref: "#/components/schemas/ChecklistMode"
+        sync_state:
+          $ref: "#/components/schemas/ChecklistSyncState"
+        origin_type:
+          $ref: "#/components/schemas/ChecklistOriginType"
+        checklist_status:
+          $ref: "#/components/schemas/ChecklistTaskStatus"
+        created_at:
+          type: string
+          format: date-time
+        created_by_team_member_rns_identity:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        uploaded_at:
+          type: string
+          format: date-time
+        progress_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+        counts:
+          $ref: "#/components/schemas/ChecklistStatusCounts"
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChecklistColumn"
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChecklistTask"
+    ChecklistTaskStatusDelta:
+      type: object
+      required: [checklist_uid, task_uid, previous_status, current_status, changed_at]
+      properties:
+        checklist_uid:
+          type: string
+        task_uid:
+          type: string
+        previous_status:
+          $ref: "#/components/schemas/ChecklistTaskStatus"
+        current_status:
+          $ref: "#/components/schemas/ChecklistTaskStatus"
+        changed_by_team_member_rns_identity:
+          type: string
+        changed_at:
+          type: string
+          format: date-time
+    ChecklistTemplateListArgs:
+      type: object
+      additionalProperties: false
+      properties:
+        search:
+          type: string
+        sort_by:
+          type: string
+          enum: [name_asc, name_desc, created_at_asc, created_at_desc]
+    ChecklistTemplateCreateArgs:
+      type: object
+      additionalProperties: false
+      required: [template]
+      properties:
+        template:
+          $ref: "#/components/schemas/ChecklistTemplate"
+    ChecklistTemplateUpdateArgs:
+      type: object
+      additionalProperties: false
+      required: [template_uid, patch]
+      properties:
+        template_uid:
+          type: string
+        patch:
+          type: object
+          additionalProperties: true
+    ChecklistTemplateCloneArgs:
+      type: object
+      additionalProperties: false
+      required: [source_template_uid, template_name]
+      properties:
+        source_template_uid:
+          type: string
+        template_name:
+          type: string
+        description:
+          type: string
+    ChecklistTemplateDeleteArgs:
+      type: object
+      additionalProperties: false
+      required: [template_uid]
+      properties:
+        template_uid:
+          type: string
+    ChecklistListActiveArgs:
+      type: object
+      additionalProperties: false
+      properties:
+        search:
+          type: string
+        sort_by:
+          type: string
+          enum: [name_asc, name_desc, created_at_asc, created_at_desc]
+    ChecklistCreateOnlineArgs:
+      type: object
+      additionalProperties: false
+      required: [template_uid, name, description, start_time]
+      properties:
+        template_uid:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+    ChecklistCreateOfflineArgs:
+      type: object
+      additionalProperties: false
+      required: [origin_type, name, description, start_time]
+      properties:
+        origin_type:
+          $ref: "#/components/schemas/ChecklistOriginType"
+        template_uid:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+    ChecklistImportCsvArgs:
+      type: object
+      additionalProperties: false
+      required: [csv_filename, csv_base64]
+      properties:
+        csv_filename:
+          type: string
+        csv_base64:
+          type: string
+    ChecklistJoinArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid]
+      properties:
+        checklist_uid:
+          type: string
+    ChecklistGetArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid]
+      properties:
+        checklist_uid:
+          type: string
+    ChecklistUploadArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid]
+      properties:
+        checklist_uid:
+          type: string
+    ChecklistFeedPublishArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid, mission_feed_uid]
+      properties:
+        checklist_uid:
+          type: string
+        mission_feed_uid:
+          type: string
+    ChecklistTaskStatusSetArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid, task_uid, user_status]
+      properties:
+        checklist_uid:
+          type: string
+        task_uid:
+          type: string
+        user_status:
+          $ref: "#/components/schemas/ChecklistUserTaskStatus"
+        changed_by_team_member_rns_identity:
+          type: string
+    ChecklistTaskRowAddArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid, number]
+      properties:
+        checklist_uid:
+          type: string
+        number:
+          type: integer
+        due_relative_minutes:
+          type: integer
+          minimum: 0
+        due_dtg:
+          type: string
+          format: date-time
+    ChecklistTaskRowDeleteArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid, task_uid]
+      properties:
+        checklist_uid:
+          type: string
+        task_uid:
+          type: string
+    ChecklistTaskRowStyleSetArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid, task_uid]
+      properties:
+        checklist_uid:
+          type: string
+        task_uid:
+          type: string
+        row_background_color:
+          type: string
+        line_break_enabled:
+          type: boolean
+    ChecklistTaskCellSetArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid, task_uid, column_uid, value]
+      properties:
+        checklist_uid:
+          type: string
+        task_uid:
+          type: string
+        column_uid:
+          type: string
+        value:
+          type: string

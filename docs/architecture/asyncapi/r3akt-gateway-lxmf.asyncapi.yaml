@@ -1,0 +1,235 @@
+asyncapi: "2.6.0"
+id: "urn:r3akt:asyncapi:gateway-lxmf"
+info:
+  title: "R3AKT Gateway LXMF Contract"
+  version: "0.1.0"
+  description: >
+    AsyncAPI contract for ATAK/CoT and Meshtastic gateway interactions over Reticulum LXMF.
+    Aligns gateway control operations with mesh-native command and event flows.
+defaultContentType: application/json
+tags:
+  - name: gateway
+    description: CoT and Meshtastic gateway operations.
+servers:
+  reticulum_lxmf:
+    protocol: lxmf
+    description: Reticulum LXMF destination for gateway auxiliary services.
+    bindings:
+      x-lxmf:
+        delivery: at-least-once
+        propagation_nodes: supported
+        encryption: reticulum-e2e
+        signature: required
+        field_constants:
+          FIELD_COMMANDS: "0x09"
+          FIELD_RESULTS: "0x0A"
+          FIELD_GROUP: "0x0B"
+          FIELD_EVENT: "0x0D"
+channels:
+  r3akt.gateway.commands:
+    description: Gateway management commands (`FIELD_COMMANDS` / `0x09`).
+    x-lxmf-fields:
+      required:
+        - FIELD_COMMANDS
+      optional:
+        - FIELD_GROUP
+    publish:
+      operationId: publishGatewayCommand
+      description: Every command is explicitly authorized against caller capabilities.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/CotConfigGetCommand"
+          - $ref: "#/components/messages/CotConfigSetCommand"
+          - $ref: "#/components/messages/CotBridgeStatusGetCommand"
+          - $ref: "#/components/messages/MeshtasticLinksListCommand"
+          - $ref: "#/components/messages/MeshtasticConfigSetCommand"
+  r3akt.gateway.replies:
+    description: ACK, reject, and result messages for gateway commands (`FIELD_RESULTS` / `0x0A`).
+    x-lxmf-fields:
+      required:
+        - FIELD_RESULTS
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeGatewayReplies
+      message:
+        oneOf:
+          - $ref: "#/components/messages/CommandAccepted"
+          - $ref: "#/components/messages/CommandRejected"
+          - $ref: "#/components/messages/CommandResult"
+  r3akt.gateway.events:
+    description: Gateway-translated events and bridge lifecycle events (`FIELD_EVENT` / `0x0D`).
+    x-lxmf-fields:
+      required:
+        - FIELD_EVENT
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeGatewayEvents
+      message:
+        $ref: "#/components/messages/GatewayEvent"
+components:
+  messages:
+    CotConfigGetCommand:
+      name: CotConfigGetCommand
+      title: Get CoT gateway config command
+      summary: Maps to HTTP operation `getConfig`.
+      x-http-operation: "GET /config (CoT gateway)"
+      x-capability-required:
+        - gateway.cot.config.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: gateway.cot.config.get
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    CotConfigSetCommand:
+      name: CotConfigSetCommand
+      title: Set CoT gateway config command
+      summary: Maps to HTTP operation `setConfig`.
+      x-http-operation: "PUT /config (CoT gateway)"
+      x-capability-required:
+        - gateway.cot.config.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: gateway.cot.config.set
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    CotBridgeStatusGetCommand:
+      name: CotBridgeStatusGetCommand
+      title: Get CoT bridge status command
+      summary: Maps to HTTP operation `getBridgeStatus`.
+      x-http-operation: "GET /bridge/status"
+      x-capability-required:
+        - gateway.cot.status.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: gateway.cot.status.get
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    MeshtasticLinksListCommand:
+      name: MeshtasticLinksListCommand
+      title: List Meshtastic links command
+      summary: Maps to HTTP operation `listLinks`.
+      x-http-operation: "GET /links"
+      x-capability-required:
+        - gateway.mesh.link.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: gateway.mesh.links.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    MeshtasticConfigSetCommand:
+      name: MeshtasticConfigSetCommand
+      title: Set Meshtastic gateway config command
+      summary: Maps to HTTP operation `setGatewayConfig`.
+      x-http-operation: "PUT /config (Meshtastic gateway)"
+      x-capability-required:
+        - gateway.mesh.config.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: gateway.mesh.config.set
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    CommandAccepted:
+      name: CommandAccepted
+      title: Command accepted
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, accepted_at]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: accepted
+          accepted_at:
+            type: string
+            format: date-time
+    CommandRejected:
+      name: CommandRejected
+      title: Command rejected
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, reason_code]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: rejected
+          reason_code:
+            type: string
+            enum: [unauthorized, invalid_payload, unknown_command, internal_error]
+          reason:
+            type: string
+    CommandResult:
+      name: CommandResult
+      title: Command result
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, result]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: result
+          result:
+            type: object
+            additionalProperties: true
+    GatewayEvent:
+      name: GatewayEvent
+      title: Gateway event envelope
+      summary: Uses the shared event envelope with gateway-specific event_type values.
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        allOf:
+          - $ref: "../schemas/event.json"
+          - type: object
+            properties:
+              event_type:
+                type: string
+                enum:
+                  - gateway.cot.event.translated
+                  - gateway.cot.status.changed
+                  - gateway.mesh.packet.translated
+                  - gateway.mesh.link.changed
