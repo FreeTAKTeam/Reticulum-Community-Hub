@@ -41,3 +41,18 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 
 - `/RTH` and legacy command payloads are retained for dual-stack rollout.
 - Migration to mission/checklist command envelopes can proceed incrementally per client capability.
+
+## Compatibility Timeline
+
+1. Feature-branch and pre-release validation:
+   `/RCH`, `/RTH`, mission/checklist envelopes, and legacy command payloads all
+   remain enabled.
+2. First release containing full R3AKT backend milestones:
+   `/RCH` is canonical; `/RTH` and legacy command payloads are documented as
+   compatibility-only.
+3. Post-rollout stabilization:
+   keep `/RTH` and legacy payload support for at least two stable minor releases
+   and a minimum 90-day notice window before any removal decision.
+4. Removal:
+   not scheduled in this branch; final cutover is a separate change after
+   compatibility SLOs and client migration checks pass.

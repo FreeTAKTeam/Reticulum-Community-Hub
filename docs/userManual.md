@@ -260,7 +260,12 @@ RCH exposes REST endpoints through FastAPI.
 - `/Client/{identity}/Ban` (protected)
 - `/Client/{identity}/Unban` (protected)
 - `/Client/{identity}/Blackhole` (protected)
-- `/RTH` (POST join, PUT leave)
+- `/RCH` (POST join, PUT leave, canonical)
+- `/RTH` (POST join, PUT leave, compatibility alias for `/RCH`)
+
+Compatibility timeline:
+- `/RTH` is retained for dual-stack clients during Phase 1/2 rollout.
+- Deprecation window is two stable minor releases plus at least 90 days notice.
 
 ### Config routes
 
