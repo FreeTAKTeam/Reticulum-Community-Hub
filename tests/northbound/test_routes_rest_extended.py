@@ -473,6 +473,13 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     )
     assert mission_change.status_code == 200
 
+    team_invalid = client.post(
+        "/api/r3akt/teams",
+        json={"uid": "team-invalid", "mission_uid": "missing-mission", "team_name": "Ops"},
+        headers=headers,
+    )
+    assert team_invalid.status_code == 400
+
     team = client.post(
         "/api/r3akt/teams",
         json={"uid": "team-1", "mission_uid": mission_uid, "team_name": "Ops"},
@@ -494,6 +501,18 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         headers=headers,
     )
     assert member.status_code == 200
+
+    asset_invalid = client.post(
+        "/api/r3akt/assets",
+        json={
+            "asset_uid": "asset-invalid",
+            "team_member_uid": "missing-member",
+            "name": "Radio",
+            "asset_type": "COMM",
+        },
+        headers=headers,
+    )
+    assert asset_invalid.status_code == 400
 
     asset = client.post(
         "/api/r3akt/assets",

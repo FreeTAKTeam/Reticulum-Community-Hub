@@ -226,6 +226,43 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 }
                 for row in rows
             ]
+
+    @staticmethod
+    def _ensure_mission_exists(session: Session, mission_uid: str) -> None:
+        if session.get(R3aktMissionRecord, mission_uid) is None:
+            raise ValueError(f"Mission '{mission_uid}' not found")
+
+    @staticmethod
+    def _ensure_team_exists(session: Session, team_uid: str) -> None:
+        if session.get(R3aktTeamRecord, team_uid) is None:
+            raise ValueError(f"Team '{team_uid}' not found")
+
+    @staticmethod
+    def _ensure_team_member_uid_exists(session: Session, team_member_uid: str) -> None:
+        if session.get(R3aktTeamMemberRecord, team_member_uid) is None:
+            raise ValueError(f"Team member '{team_member_uid}' not found")
+
+    @staticmethod
+    def _ensure_team_member_identity_exists(session: Session, rns_identity: str) -> None:
+        row = (
+            session.query(R3aktTeamMemberRecord.uid)
+            .filter(R3aktTeamMemberRecord.rns_identity == rns_identity)
+            .first()
+        )
+        if row is None:
+            raise ValueError(
+                f"Team member identity '{rns_identity}' not found"
+            )
+
+    @staticmethod
+    def _ensure_skill_exists(session: Session, skill_uid: str) -> None:
+        if session.get(R3aktSkillRecord, skill_uid) is None:
+            raise ValueError(f"Skill '{skill_uid}' not found")
+
+    @staticmethod
+    def _ensure_asset_exists(session: Session, asset_uid: str) -> None:
+        if session.get(R3aktAssetRecord, asset_uid) is None:
+            raise ValueError(f"Asset '{asset_uid}' not found")
     @staticmethod
     def _serialize_mission(row: R3aktMissionRecord) -> dict[str, Any]:
         return {
@@ -296,6 +333,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         if not mission_uid:
             raise ValueError("mission_uid is required")
         with self._session() as session:
+            self._ensure_mission_exists(session, mission_uid)
             row = session.get(R3aktMissionChangeRecord, uid)
             if row is None:
                 row = R3aktMissionChangeRecord(uid=uid, mission_uid=mission_uid)
@@ -340,7 +378,10 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if row is None:
                 row = R3aktTeamRecord(uid=uid, team_name="Team")
                 session.add(row)
-            row.mission_uid = payload.get("mission_uid") or row.mission_uid
+            mission_uid = payload.get("mission_uid") or row.mission_uid
+            if mission_uid:
+                self._ensure_mission_exists(session, str(mission_uid))
+            row.mission_uid = mission_uid
             row.color = payload.get("color") or row.color
             row.team_name = str(payload.get("team_name") or payload.get("name") or row.team_name)
             row.team_description = str(payload.get("team_description") or payload.get("description") or row.team_description or "")
@@ -379,7 +420,10 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if row is None:
                 row = R3aktTeamMemberRecord(uid=uid, team_uid=None, rns_identity=identity, display_name=identity)
                 session.add(row)
-            row.team_uid = payload.get("team_uid") or row.team_uid
+            team_uid = payload.get("team_uid") or row.team_uid
+            if team_uid:
+                self._ensure_team_exists(session, str(team_uid))
+            row.team_uid = team_uid
             row.rns_identity = identity
             row.display_name = str(payload.get("display_name") or payload.get("callsign") or row.display_name)
             row.role = payload.get("role") or row.role
@@ -417,7 +461,10 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if row is None:
                 row = R3aktAssetRecord(asset_uid=uid, team_member_uid=None, name="Asset", asset_type="generic", status="AVAILABLE")
                 session.add(row)
-            row.team_member_uid = payload.get("team_member_uid") or row.team_member_uid
+            team_member_uid = payload.get("team_member_uid") or row.team_member_uid
+            if team_member_uid:
+                self._ensure_team_member_uid_exists(session, str(team_member_uid))
+            row.team_member_uid = team_member_uid
             row.name = str(payload.get("name") or row.name)
             row.asset_type = str(payload.get("asset_type") or row.asset_type)
             row.serial_number = payload.get("serial_number") or row.serial_number
@@ -487,6 +534,8 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         if not member or not skill_uid:
             raise ValueError("team_member_rns_identity and skill_uid are required")
         with self._session() as session:
+            self._ensure_team_member_identity_exists(session, member)
+            self._ensure_skill_exists(session, skill_uid)
             row = (
                 session.query(R3aktTeamMemberSkillRecord)
                 .filter(
@@ -535,6 +584,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         if not task_uid or not skill_uid:
             raise ValueError("task_uid and skill_uid are required")
         with self._session() as session:
+            self._ensure_skill_exists(session, skill_uid)
             row = (
                 session.query(R3aktTaskSkillRequirementRecord)
                 .filter(
@@ -587,6 +637,11 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         if not mission_uid or not task_uid or not member:
             raise ValueError("mission_uid, task_uid and team_member_rns_identity are required")
         with self._session() as session:
+            self._ensure_mission_exists(session, mission_uid)
+            self._ensure_team_member_identity_exists(session, member)
+            assets = list(payload.get("assets") or [])
+            for asset_uid in assets:
+                self._ensure_asset_exists(session, str(asset_uid))
             row = session.get(R3aktMissionTaskAssignmentRecord, uid)
             if row is None:
                 row = R3aktMissionTaskAssignmentRecord(assignment_uid=uid, mission_uid=mission_uid, task_uid=task_uid, team_member_rns_identity=member, status=CHECKLIST_TASK_PENDING)
@@ -600,7 +655,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             row.status = str(payload.get("status") or row.status)
             row.notes = payload.get("notes") or row.notes
             if payload.get("assets") is not None:
-                row.assets_json = list(payload.get("assets") or [])
+                row.assets_json = assets
             session.flush()
             data = self._serialize_assignment(row)
             self._record_event(session, domain="mission", aggregate_type="assignment", aggregate_uid=uid, event_type="assignment.upserted", payload=data)
@@ -973,6 +1028,8 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
 
     def _create_checklist(self, *, mode: str, sync_state: str, origin_type: str, name: str, description: str, start_time: datetime, created_by: str, mission_uid: str | None = None, template_uid: str | None = None) -> dict[str, Any]:
         with self._session() as session:
+            if mission_uid:
+                self._ensure_mission_exists(session, str(mission_uid))
             if template_uid:
                 template = session.get(R3aktChecklistTemplateRecord, template_uid)
                 if template is None:

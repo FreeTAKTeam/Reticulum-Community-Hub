@@ -78,6 +78,9 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     )
     assert service.list_mission_changes(mission_uid="mission-1")[0]["uid"] == change["uid"]
 
+    with pytest.raises(ValueError):
+        service.upsert_team({"uid": "team-invalid", "mission_uid": "missing", "team_name": "Ops"})
+
     team = service.upsert_team(
         {
             "uid": "team-1",
@@ -91,6 +94,15 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     with pytest.raises(ValueError):
         service.upsert_team_member({"uid": "member-invalid"})
 
+    with pytest.raises(ValueError):
+        service.upsert_team_member(
+            {
+                "uid": "member-invalid-team",
+                "team_uid": "missing-team",
+                "rns_identity": "peer-missing",
+            }
+        )
+
     member = service.upsert_team_member(
         {
             "uid": "member-1",
@@ -102,6 +114,16 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
         }
     )
     assert service.list_team_members(team_uid="team-1")[0]["uid"] == member["uid"]
+
+    with pytest.raises(ValueError):
+        service.upsert_asset(
+            {
+                "asset_uid": "asset-invalid",
+                "team_member_uid": "missing-member",
+                "name": "Invalid",
+                "asset_type": "COMM",
+            }
+        )
 
     asset = service.upsert_asset(
         {
@@ -131,6 +153,24 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     with pytest.raises(ValueError):
         service.upsert_team_member_skill({"team_member_rns_identity": "peer-a"})
 
+    with pytest.raises(ValueError):
+        service.upsert_team_member_skill(
+            {
+                "uid": "member-skill-missing-member",
+                "team_member_rns_identity": "missing-member",
+                "skill_uid": "skill-1",
+            }
+        )
+
+    with pytest.raises(ValueError):
+        service.upsert_team_member_skill(
+            {
+                "uid": "member-skill-missing-skill",
+                "team_member_rns_identity": "peer-a",
+                "skill_uid": "missing-skill",
+            }
+        )
+
     member_skill = service.upsert_team_member_skill(
         {
             "uid": "member-skill-1",
@@ -159,6 +199,15 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     with pytest.raises(ValueError):
         service.upsert_task_skill_requirement({"task_uid": "task-1"})
 
+    with pytest.raises(ValueError):
+        service.upsert_task_skill_requirement(
+            {
+                "uid": "req-missing-skill",
+                "task_uid": "task-1",
+                "skill_uid": "missing-skill",
+            }
+        )
+
     requirement = service.upsert_task_skill_requirement(
         {
             "uid": "req-1",
@@ -175,6 +224,37 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         service.upsert_assignment({"mission_uid": "mission-1"})
+
+    with pytest.raises(ValueError):
+        service.upsert_assignment(
+            {
+                "assignment_uid": "assign-missing-mission",
+                "mission_uid": "missing-mission",
+                "task_uid": "task-1",
+                "team_member_rns_identity": "peer-a",
+            }
+        )
+
+    with pytest.raises(ValueError):
+        service.upsert_assignment(
+            {
+                "assignment_uid": "assign-missing-member",
+                "mission_uid": "mission-1",
+                "task_uid": "task-1",
+                "team_member_rns_identity": "missing-member",
+            }
+        )
+
+    with pytest.raises(ValueError):
+        service.upsert_assignment(
+            {
+                "assignment_uid": "assign-missing-asset",
+                "mission_uid": "mission-1",
+                "task_uid": "task-1",
+                "team_member_rns_identity": "peer-a",
+                "assets": ["missing-asset"],
+            }
+        )
 
     assignment = service.upsert_assignment(
         {
@@ -282,7 +362,26 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
         service.create_checklist_online({"template_uid": template["uid"]})
 
     with pytest.raises(ValueError):
+        service.create_checklist_online(
+            {
+                "template_uid": template["uid"],
+                "name": "Invalid Mission Checklist",
+                "mission_uid": "missing-mission",
+            }
+        )
+
+    with pytest.raises(ValueError):
         service.create_checklist_offline({"description": "missing name"})
+
+    with pytest.raises(ValueError):
+        service.create_checklist_offline(
+            {
+                "name": "Offline Invalid Mission",
+                "mission_uid": "missing-mission",
+            }
+        )
+
+    service.upsert_mission({"uid": "mission-1", "mission_name": "Mission One"})
 
     online = service.create_checklist_online(
         {

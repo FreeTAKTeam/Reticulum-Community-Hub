@@ -118,7 +118,10 @@ def register_r3akt_routes(
 
     @app.post("/api/r3akt/teams", dependencies=[Depends(require_protected)])
     def upsert_team(payload: dict = Body(default_factory=dict)) -> dict:
-        return domain.upsert_team(payload)
+        try:
+            return domain.upsert_team(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get("/api/r3akt/team-members", dependencies=[Depends(require_protected)])
     def list_team_members(team_uid: str | None = Query(default=None)) -> list[dict]:
@@ -137,7 +140,10 @@ def register_r3akt_routes(
 
     @app.post("/api/r3akt/assets", dependencies=[Depends(require_protected)])
     def upsert_asset(payload: dict = Body(default_factory=dict)) -> dict:
-        return domain.upsert_asset(payload)
+        try:
+            return domain.upsert_asset(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get("/api/r3akt/skills", dependencies=[Depends(require_protected)])
     def list_skills() -> list[dict]:
