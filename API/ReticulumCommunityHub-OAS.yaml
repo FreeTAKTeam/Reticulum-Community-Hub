@@ -1044,6 +1044,24 @@ paths:
             application/json:
               schema:
                 type: object
+    delete:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Delete checklist instance.
+      parameters:
+        - name: checklist_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted checklist.
+          content:
+            application/json:
+              schema:
+                type: object
   /checklists/{checklist_id}/join:
     post:
       x-scope: protected

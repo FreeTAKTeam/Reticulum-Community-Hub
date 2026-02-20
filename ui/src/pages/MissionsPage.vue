@@ -253,42 +253,228 @@
               </article>
             </div>
 
-            <div v-else-if="showChecklistArea" class="screen-grid two-col">
+            <div v-else-if="secondaryScreen === 'checklistImportCsv'" class="screen-grid two-col">
               <article class="stage-card">
-                <h4>{{ checklistPanelTitle }}</h4>
-                <div class="checklist-list">
-                  <button
-                    v-for="checklist in missionChecklists"
-                    :key="checklist.uid"
-                    class="checklist-item"
-                    :class="{ active: checklist.uid === selectedChecklistUid }"
-                    type="button"
-                    @click="selectedChecklistUid = checklist.uid"
-                  >
-                    <span>{{ checklist.name }}</span>
-                    <span>{{ checklist.progress }}%</span>
-                  </button>
+                <h4>CSV Upload</h4>
+                <div class="field-grid single-col">
+                  <label class="field-control full">
+                    <span>Select CSV File</span>
+                    <input type="file" accept=".csv,text/csv" @change="handleCsvUpload" />
+                  </label>
                 </div>
+                <ul class="stack-list csv-meta">
+                  <li>
+                    <strong>Selected File</strong>
+                    <span>{{ csvImportFilename || "No file selected" }}</span>
+                  </li>
+                  <li>
+                    <strong>Header Columns</strong>
+                    <span>{{ csvImportHeaders.length }}</span>
+                  </li>
+                  <li>
+                    <strong>Task Rows</strong>
+                    <span>{{ csvImportRows.length }}</span>
+                  </li>
+                  <li>
+                    <strong>Mission Scope</strong>
+                    <span>{{ selectedMission?.mission_name || "Unscoped import" }}</span>
+                  </li>
+                </ul>
               </article>
 
               <article class="stage-card">
-                <h4>Checklist Run Detail</h4>
-                <table class="mini-table">
-                  <thead>
-                    <tr>
-                      <th>Task</th>
-                      <th>Status</th>
-                      <th>Assignee</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="task in selectedChecklist?.tasks || []" :key="task.id">
-                      <td>{{ task.name }}</td>
-                      <td>{{ task.status }}</td>
-                      <td>{{ task.assignee }}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                <h4>CSV Task Preview</h4>
+                <div v-if="csvImportHeaders.length && csvImportRows.length" class="csv-preview">
+                  <table class="mini-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th v-for="(header, headerIndex) in csvImportHeaders" :key="`csv-header-${headerIndex}`">
+                          {{ header }}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, rowIndex) in csvImportPreviewRows" :key="`csv-row-${rowIndex}`">
+                        <td>{{ rowIndex + 1 }}</td>
+                        <td
+                          v-for="(header, columnIndex) in csvImportHeaders"
+                          :key="`csv-cell-${rowIndex}-${columnIndex}`"
+                        >
+                          {{ row[columnIndex] || "-" }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p v-if="csvImportRows.length > csvImportPreviewRows.length" class="csv-preview-note">
+                    Showing first {{ csvImportPreviewRows.length }} of {{ csvImportRows.length }} task rows.
+                  </p>
+                </div>
+                <div v-else class="builder-preview">
+                  <p>Upload a CSV file to preview its header and task rows.</p>
+                  <p>The first row becomes the checklist header and each remaining row becomes a task.</p>
+                </div>
+              </article>
+            </div>
+
+            <div v-else-if="showChecklistArea" class="screen-grid">
+              <article class="stage-card checklist-workspace">
+                <div class="checklist-overview-tabs">
+                  <button type="button" class="checklist-overview-tab active" @click="navigateToChecklistOverview">
+                    Active Checklists ({{ missionChecklists.length }})
+                  </button>
+                  <button type="button" class="checklist-overview-tab" @click="navigateToTemplateLibrary">
+                    Templates ({{ checklistTemplateOptions.length }})
+                  </button>
+                </div>
+
+                <div v-if="checklistDetailRecord" class="checklist-detail-view">
+                  <div class="checklist-detail-header">
+                    <BaseButton variant="ghost" size="sm" @click="closeChecklistDetailView">Back</BaseButton>
+                    <div class="checklist-detail-title">
+                      <h4>{{ checklistDetailRecord.name }}</h4>
+                      <p>{{ checklistDescriptionLabel(checklistDetailRecord.description) }}</p>
+                      <div class="checklist-chip-row">
+                        <span class="checklist-chip" :class="modeChipClass(checklistDetailRecord.mode)">
+                          {{ checklistDetailRecord.mode }}
+                        </span>
+                        <span class="checklist-chip" :class="syncChipClass(checklistDetailRecord.sync_state)">
+                          {{ checklistDetailRecord.sync_state }}
+                        </span>
+                        <span class="checklist-chip" :class="statusChipClass(checklistDetailRecord.checklist_status)">
+                          {{ checklistDetailRecord.checklist_status }}
+                        </span>
+                        <span class="checklist-chip checklist-chip-muted">
+                          {{ checklistOriginLabel(checklistDetailRecord.origin_type) }}
+                        </span>
+                      </div>
+                      <BaseButton
+                        v-if="canCreateFromDetailTemplate"
+                        size="sm"
+                        variant="secondary"
+                        @click="createChecklistFromDetailTemplate"
+                      >
+                        Create Checklist from Template
+                      </BaseButton>
+                      <BaseButton size="sm" variant="danger" :disabled="checklistDeleteBusy" @click="deleteChecklistFromDetail">
+                        Remove Checklist
+                      </BaseButton>
+                    </div>
+                    <div class="checklist-detail-progress">
+                      <strong>{{ Math.round(checklistDetailRecord.progress) }}%</strong>
+                      <span>Complete</span>
+                    </div>
+                  </div>
+
+                  <div class="checklist-progress-track">
+                    <span class="checklist-progress-value" :style="{ width: progressWidth(checklistDetailRecord.progress) }"></span>
+                  </div>
+
+                  <div class="checklist-detail-summary">
+                    <span>{{ checklistDetailRecord.complete_count }} Complete</span>
+                    <span>{{ checklistDetailRecord.pending_count }} Pending</span>
+                    <span>{{ checklistDetailRecord.late_count }} Late</span>
+                  </div>
+
+                  <div class="checklist-task-toolbar">
+                    <label class="checklist-task-input">
+                      <input v-model="checklistTaskDueDraft" type="number" step="1" min="-1440" />
+                      <span>Due minutes</span>
+                    </label>
+                    <BaseButton size="sm" @click="addChecklistTaskFromDetail">Add Task</BaseButton>
+                  </div>
+
+                  <table class="mini-table checklist-detail-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Done</th>
+                        <th v-for="column in checklistDetailColumns" :key="`detail-header-${column.uid}`">
+                          {{ column.name }}
+                        </th>
+                        <th>Due Relative DTG</th>
+                        <th>Status</th>
+                        <th>Complete DTG</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="row in checklistDetailRows"
+                        :key="row.id"
+                        :class="{ 'checklist-row-complete': row.done }"
+                      >
+                        <td>{{ row.number }}</td>
+                        <td>
+                          <button
+                            type="button"
+                            class="checklist-done-button"
+                            :disabled="!row.task_uid || checklistTaskStatusBusyByTaskUid[row.task_uid]"
+                            @click="toggleChecklistTaskDone(row)"
+                          >
+                            <span class="checklist-done-indicator" :class="{ done: row.done }">{{ row.done ? "X" : "" }}</span>
+                          </button>
+                        </td>
+                        <td v-for="column in checklistDetailColumns" :key="`detail-cell-${row.id}-${column.uid}`">
+                          {{ row.column_values[column.uid] || "-" }}
+                        </td>
+                        <td>{{ row.due }}</td>
+                        <td>
+                          <span class="checklist-chip" :class="statusChipClass(row.status)">{{ row.status }}</span>
+                        </td>
+                        <td>{{ row.completeDtg }}</td>
+                      </tr>
+                      <tr v-if="!checklistDetailRows.length">
+                        <td :colspan="checklistDetailColumns.length + 5">No tasks yet.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div v-else class="checklist-overview-list">
+                  <button
+                    v-for="checklist in missionChecklistsSorted"
+                    :key="checklist.uid"
+                    class="checklist-overview-card"
+                    type="button"
+                    @click="openChecklistDetailView(checklist.uid)"
+                  >
+                    <div class="checklist-overview-content">
+                      <div class="checklist-overview-head">
+                        <h4>{{ checklist.name }}</h4>
+                        <div class="checklist-chip-row">
+                          <span class="checklist-chip" :class="modeChipClass(checklist.mode)">{{ checklist.mode }}</span>
+                          <span class="checklist-chip" :class="syncChipClass(checklist.sync_state)">{{ checklist.sync_state }}</span>
+                          <span class="checklist-chip" :class="statusChipClass(checklist.checklist_status)">
+                            {{ checklist.checklist_status }}
+                          </span>
+                          <span class="checklist-chip checklist-chip-muted">
+                            {{ checklistOriginLabel(checklist.origin_type) }}
+                          </span>
+                        </div>
+                      </div>
+                      <p>{{ checklistDescriptionLabel(checklist.description) }}</p>
+                      <div class="checklist-overview-meta">
+                        <span>{{ formatChecklistDateTime(checklist.created_at) }}</span>
+                        <span>Tasks: {{ checklist.tasks.length }}</span>
+                        <span>Progress: {{ Math.round(checklist.progress) }}%</span>
+                      </div>
+                    </div>
+                    <div class="checklist-overview-stats">
+                      <div class="checklist-overview-counts">
+                        <span>{{ checklist.complete_count }} Complete</span>
+                        <span>{{ checklist.pending_count }} Pending</span>
+                        <span>{{ checklist.late_count }} Late</span>
+                      </div>
+                      <div class="checklist-progress-track compact">
+                        <span class="checklist-progress-value" :style="{ width: progressWidth(checklist.progress) }"></span>
+                      </div>
+                      <span class="checklist-overview-arrow" aria-hidden="true">›</span>
+                    </div>
+                  </button>
+                  <p v-if="!missionChecklistsSorted.length" class="template-modal-empty">
+                    No active checklist instances for this mission.
+                  </p>
+                </div>
               </article>
             </div>
 
@@ -437,15 +623,56 @@
         </section>
       </div>
     </div>
+
+    <BaseModal
+      :open="checklistTemplateModalOpen"
+      title="Create Checklist from Template"
+      @close="closeChecklistTemplateModal"
+    >
+      <div class="template-modal">
+        <label class="field-control full">
+          <span>Checklist Name</span>
+          <input v-model="checklistTemplateNameDraft" type="text" placeholder="Mission Checklist" />
+        </label>
+
+        <div v-if="checklistTemplateOptions.length" class="template-modal-list">
+          <BaseSelect
+            v-model="checklistTemplateSelectionUid"
+            label="Template"
+            :options="checklistTemplateSelectOptions"
+          />
+          <p v-if="selectedChecklistTemplateOption" class="template-modal-hint">
+            {{ selectedChecklistTemplateOption.columns }} columns
+            <span v-if="selectedChecklistTemplateOption.task_rows > 0">
+              | {{ selectedChecklistTemplateOption.task_rows }} tasks
+            </span>
+            <span v-if="selectedChecklistTemplateOption.source_type === 'csv_import'"> | sourced from CSV import</span>
+          </p>
+        </div>
+        <p v-else class="template-modal-empty">No checklist templates available.</p>
+
+        <div class="template-modal-actions">
+          <BaseButton variant="ghost" @click="closeChecklistTemplateModal">Cancel</BaseButton>
+          <BaseButton
+            :disabled="checklistTemplateSubmitting || !checklistTemplateSelectionUid"
+            @click="submitChecklistTemplateSelection"
+          >
+            {{ checklistTemplateSubmitting ? "Creating..." : "Create Checklist" }}
+          </BaseButton>
+        </div>
+      </div>
+    </BaseModal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import type { ApiError } from "../api/client";
-import { get, patch as patchRequest, post } from "../api/client";
+import { del as deleteRequest, get, patch as patchRequest, post } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import BaseButton from "../components/BaseButton.vue";
+import BaseModal from "../components/BaseModal.vue";
+import BaseSelect from "../components/BaseSelect.vue";
 import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
@@ -485,8 +712,28 @@ interface Checklist {
   uid: string;
   mission_uid: string;
   name: string;
+  description: string;
+  created_at: string;
+  mode: string;
+  sync_state: string;
+  origin_type: string;
+  checklist_status: string;
   progress: number;
-  tasks: Array<{ id: string; name: string; status: string; assignee: string }>;
+  pending_count: number;
+  late_count: number;
+  complete_count: number;
+  tasks: Array<{
+    id: string;
+    number: number;
+    name: string;
+    description: string;
+    status: string;
+    assignee: string;
+    due_dtg: string;
+    due_relative_minutes: number | null;
+    completed_at: string;
+    cells: number;
+  }>;
 }
 
 interface Team {
@@ -540,6 +787,14 @@ interface Template {
   columns: number;
 }
 
+interface ChecklistTemplateOption {
+  uid: string;
+  name: string;
+  columns: number;
+  source_type: "template" | "csv_import";
+  task_rows: number;
+}
+
 interface MissionRaw {
   uid?: string;
   mission_name?: string | null;
@@ -556,9 +811,14 @@ interface ChecklistCellRaw {
 interface ChecklistTaskRaw {
   task_uid?: string;
   number?: number;
+  due_relative_minutes?: number | null;
   user_status?: string | null;
   task_status?: string | null;
+  due_dtg?: string | null;
+  completed_at?: string | null;
+  is_late?: boolean | null;
   completed_by_team_member_rns_identity?: string | null;
+  legacy_value?: string | null;
   cells?: ChecklistCellRaw[];
 }
 
@@ -578,10 +838,18 @@ interface ChecklistRaw {
   uid?: string;
   mission_id?: string | null;
   name?: string | null;
+  description?: string | null;
+  created_at?: string | null;
   progress_percent?: number | null;
+  origin_type?: string | null;
   checklist_status?: string | null;
   mode?: string | null;
   sync_state?: string | null;
+  counts?: {
+    pending_count?: number | null;
+    late_count?: number | null;
+    complete_count?: number | null;
+  } | null;
   tasks?: ChecklistTaskRaw[];
   columns?: ChecklistColumnRaw[];
 }
@@ -761,6 +1029,10 @@ const resolveChecklistTaskName = (
   if (typeof firstTextCell?.value === "string") {
     return firstTextCell.value.trim();
   }
+  const legacyValue = String(task.legacy_value ?? "").trim();
+  if (legacyValue) {
+    return legacyValue;
+  }
   if (typeof task.number === "number") {
     return `Task ${task.number}`;
   }
@@ -769,6 +1041,49 @@ const resolveChecklistTaskName = (
     return `Task ${taskUid.slice(0, 8)}`;
   }
   return "Task";
+};
+
+const resolveColumnUidByNames = (checklist: ChecklistRaw, candidateNames: string[]): string | undefined => {
+  const normalizedCandidates = candidateNames.map((name) => name.trim().toUpperCase()).filter((name) => name.length > 0);
+  if (!normalizedCandidates.length) {
+    return undefined;
+  }
+  const columns = toArray<ChecklistColumnRaw>(checklist.columns);
+  const exactMatch = columns.find((column) =>
+    normalizedCandidates.includes(String(column.column_name ?? "").trim().toUpperCase())
+  );
+  if (exactMatch?.column_uid) {
+    return exactMatch.column_uid;
+  }
+  return undefined;
+};
+
+const resolveTaskDescription = (
+  checklist: ChecklistRaw,
+  task: ChecklistTaskRaw,
+  preferredDescriptionColumnUid?: string,
+  preferredTaskColumnUid?: string
+): string => {
+  const cells = toArray<ChecklistCellRaw>(task.cells);
+  if (preferredDescriptionColumnUid) {
+    const descriptionCell = cells.find(
+      (cell) => String(cell.column_uid ?? "").trim() === preferredDescriptionColumnUid
+    );
+    if (typeof descriptionCell?.value === "string" && descriptionCell.value.trim()) {
+      return descriptionCell.value.trim();
+    }
+  }
+  const fallback = cells.find((cell) => {
+    const columnUid = String(cell.column_uid ?? "").trim();
+    if (!columnUid || (preferredTaskColumnUid && columnUid === preferredTaskColumnUid)) {
+      return false;
+    }
+    return typeof cell.value === "string" && cell.value.trim().length > 0;
+  });
+  if (typeof fallback?.value === "string") {
+    return fallback.value.trim();
+  }
+  return "";
 };
 
 const extractErrorDetail = (error: ApiError): string | undefined => {
@@ -810,6 +1125,30 @@ const formatAuditTime = (value?: string | null): string => {
     return value;
   }
   return parsed.toLocaleTimeString([], { hour12: false });
+};
+
+const formatChecklistDateTime = (value?: string | null): string => {
+  if (!value) {
+    return "--";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+};
+
+const formatDueRelativeMinutesLabel = (value?: number | null): string => {
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes)) {
+    return "-";
+  }
+  const rounded = Math.trunc(minutes);
+  const sign = rounded < 0 ? "-" : "+";
+  const abs = Math.abs(rounded);
+  const hours = String(Math.trunc(abs / 60)).padStart(2, "0");
+  const mins = String(abs % 60).padStart(2, "0");
+  return `T${sign}${hours}:${mins}`;
 };
 
 const formatDomainEventMessage = (event: DomainEventRaw): string => {
@@ -860,6 +1199,146 @@ const downloadText = (filename: string, payload: string, contentType = "text/pla
   URL.revokeObjectURL(url);
 };
 
+const parseCsvRows = (payload: string): string[][] => {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let index = 0; index < payload.length; index += 1) {
+    const char = payload[index];
+    if (inQuotes) {
+      if (char === "\"") {
+        if (payload[index + 1] === "\"") {
+          cell += "\"";
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inQuotes = true;
+      continue;
+    }
+    if (char === ",") {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (char === "\n" || char === "\r") {
+      if (char === "\r" && payload[index + 1] === "\n") {
+        index += 1;
+      }
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+};
+
+const normalizeCsvRows = (rows: string[][]): string[][] => {
+  return rows
+    .map((row, rowIndex) =>
+      row.map((cell, columnIndex) => {
+        const cleanCell = rowIndex === 0 && columnIndex === 0 ? cell.replace(/^\uFEFF/, "") : cell;
+        return cleanCell.trim();
+      })
+    )
+    .filter((row) => row.some((cell) => cell.length > 0));
+};
+
+const uint8ArrayToBase64 = (bytes: Uint8Array): string => {
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+};
+
+const escapeCsvCell = (value: string): string => {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, "\"\"")}"`;
+  }
+  return value;
+};
+
+const csvImportFilename = ref("");
+const csvImportBase64 = ref("");
+const csvImportHeaders = ref<string[]>([]);
+const csvImportRows = ref<string[][]>([]);
+
+const csvImportPreviewRows = computed(() => csvImportRows.value.slice(0, 12));
+
+const clearCsvUpload = () => {
+  csvImportFilename.value = "";
+  csvImportBase64.value = "";
+  csvImportHeaders.value = [];
+  csvImportRows.value = [];
+};
+
+const renderUploadedCsv = (): string => {
+  const rows = [csvImportHeaders.value, ...csvImportRows.value];
+  return rows.map((row) => row.map((cell) => escapeCsvCell(String(cell ?? ""))).join(",")).join("\n");
+};
+
+const handleCsvUpload = async (event: Event) => {
+  const target = event.target as HTMLInputElement | null;
+  const file = target?.files?.[0];
+  if (!file) {
+    clearCsvUpload();
+    return;
+  }
+  try {
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      throw new Error("Select a file with .csv extension");
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const text = new TextDecoder("utf-8").decode(bytes);
+    const parsedRows = normalizeCsvRows(parseCsvRows(text));
+    if (parsedRows.length < 2) {
+      throw new Error("CSV must include a header row and at least one task row");
+    }
+    const headerRow = parsedRows[0];
+    const taskRows = parsedRows.slice(1);
+    const maxColumns = taskRows.reduce((max, row) => Math.max(max, row.length), headerRow.length);
+    if (maxColumns <= 0) {
+      throw new Error("CSV header row is empty");
+    }
+    const headers = Array.from({ length: maxColumns }, (_, index) => {
+      const value = String(headerRow[index] ?? "").trim();
+      return value || `Column ${index + 1}`;
+    });
+    const normalizedTaskRows = taskRows.map((row) =>
+      headers.map((_, columnIndex) => String(row[columnIndex] ?? "").trim())
+    );
+    csvImportFilename.value = file.name;
+    csvImportBase64.value = uint8ArrayToBase64(bytes);
+    csvImportHeaders.value = headers;
+    csvImportRows.value = normalizedTaskRows;
+    toastStore.push(`Loaded ${file.name}: ${normalizedTaskRows.length} task rows`, "info");
+  } catch (error) {
+    clearCsvUpload();
+    if (error instanceof Error) {
+      toastStore.push(`CSV upload failed: ${error.message}`, "warning");
+      return;
+    }
+    toastStore.push("CSV upload failed", "warning");
+  }
+};
+
 const missions = ref<Mission[]>([]);
 const checklistRecords = ref<ChecklistRaw[]>([]);
 const teamRecords = ref<TeamRaw[]>([]);
@@ -877,6 +1356,31 @@ const taskSkillRequirementRecords = ref<TaskSkillRequirementRaw[]>([]);
 const loadingWorkspace = ref(false);
 const zoneDraftByMission = ref<Record<string, string[]>>({});
 
+const upsertChecklistRecord = (record: ChecklistRaw) => {
+  const uid = String(record.uid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  const next = [...checklistRecords.value];
+  const index = next.findIndex((entry) => String(entry.uid ?? "").trim() === uid);
+  if (index >= 0) {
+    next[index] = record;
+  } else {
+    next.push(record);
+  }
+  checklistRecords.value = next;
+};
+
+const hydrateChecklistRecord = async (checklistUid: string): Promise<ChecklistRaw | null> => {
+  const uid = String(checklistUid ?? "").trim();
+  if (!uid) {
+    return null;
+  }
+  const detail = await get<ChecklistRaw>(`${endpoints.checklists}/${uid}`);
+  upsertChecklistRecord(detail);
+  return detail;
+};
+
 const checklists = computed<Checklist[]>(() => {
   return checklistRecords.value
     .map((entry) => {
@@ -885,24 +1389,68 @@ const checklists = computed<Checklist[]>(() => {
         return null;
       }
       const preferredTaskColumnUid = resolveTaskNameColumnUid(entry);
-      const tasks = toArray<ChecklistTaskRaw>(entry.tasks).map((task) => {
-        const taskUid = String(task.task_uid ?? "").trim();
-        const taskStatus = normalizeTaskStatus(task.task_status ?? task.user_status);
-        const taskName = resolveChecklistTaskName(entry, task, preferredTaskColumnUid);
-        const assignee = String(task.completed_by_team_member_rns_identity ?? "").trim();
-        return {
-          id: taskUid || `${checklistUid}-task-${String(task.number ?? "0")}`,
-          name: taskName,
-          status: taskStatus,
-          assignee: assignee || "-"
-        };
-      });
+      const preferredDescriptionColumnUid = resolveColumnUidByNames(entry, ["DESCRIPTION", "DETAILS", "NOTES"]);
+      const tasks = toArray<ChecklistTaskRaw>(entry.tasks)
+        .map((task) => {
+          const taskUid = String(task.task_uid ?? "").trim();
+          const taskStatus = normalizeTaskStatus(task.task_status ?? task.user_status);
+          const taskName = resolveChecklistTaskName(entry, task, preferredTaskColumnUid);
+          const taskDescription = resolveTaskDescription(
+            entry,
+            task,
+            preferredDescriptionColumnUid,
+            preferredTaskColumnUid
+          );
+          const assignee = String(task.completed_by_team_member_rns_identity ?? "").trim();
+          return {
+            id: taskUid || `${checklistUid}-task-${String(task.number ?? "0")}`,
+            number: Number(task.number ?? 0),
+            name: taskName,
+            description: taskDescription,
+            status: taskStatus,
+            assignee: assignee || "-",
+            due_dtg: String(task.due_dtg ?? ""),
+            due_relative_minutes: Number.isFinite(Number(task.due_relative_minutes))
+              ? Math.trunc(Number(task.due_relative_minutes))
+              : null,
+            completed_at: String(task.completed_at ?? ""),
+            cells: toArray<ChecklistCellRaw>(task.cells).length
+          };
+        })
+        .sort((left, right) => left.number - right.number);
       const missionUid = String(entry.mission_id ?? "").trim();
+      const pendingCount = Number(entry.counts?.pending_count ?? NaN);
+      const lateCount = Number(entry.counts?.late_count ?? NaN);
+      const completeCount = Number(entry.counts?.complete_count ?? NaN);
+      let computedPending = 0;
+      let computedLate = 0;
+      let computedComplete = 0;
+      tasks.forEach((task) => {
+        const status = normalizeTaskStatus(task.status);
+        if (status.startsWith("COMPLETE")) {
+          computedComplete += 1;
+          return;
+        }
+        if (status === "LATE") {
+          computedLate += 1;
+          return;
+        }
+        computedPending += 1;
+      });
       return {
         uid: checklistUid,
         mission_uid: missionUid,
         name: String(entry.name ?? checklistUid),
+        description: String(entry.description ?? ""),
+        created_at: String(entry.created_at ?? ""),
+        mode: String(entry.mode ?? "UNKNOWN"),
+        sync_state: String(entry.sync_state ?? "UNKNOWN"),
+        origin_type: String(entry.origin_type ?? ""),
+        checklist_status: normalizeTaskStatus(entry.checklist_status),
         progress: Number(entry.progress_percent ?? 0),
+        pending_count: Number.isFinite(pendingCount) ? pendingCount : computedPending,
+        late_count: Number.isFinite(lateCount) ? lateCount : computedLate,
+        complete_count: Number.isFinite(completeCount) ? completeCount : computedComplete,
         tasks
       };
     })
@@ -926,8 +1474,23 @@ const teams = computed<Team[]>(() => {
     .filter((entry): entry is Team => entry !== null);
 });
 
-const templates = computed<Template[]>(() => {
-  return templateRecords.value
+const hasPopulatedChecklistCells = (checklist: ChecklistRaw): boolean =>
+  toArray<ChecklistTaskRaw>(checklist.tasks).some((task) =>
+    toArray<ChecklistCellRaw>(task.cells).some((cell) => String(cell.value ?? "").trim().length > 0)
+  );
+
+const isRenderableCsvImportTemplate = (checklist: ChecklistRaw): boolean => {
+  const nonDueColumns = toArray<ChecklistColumnRaw>(checklist.columns).filter(
+    (column) => String(column.system_key ?? "").trim().toUpperCase() !== "DUE_RELATIVE_DTG"
+  );
+  if (nonDueColumns.length > 1) {
+    return true;
+  }
+  return hasPopulatedChecklistCells(checklist);
+};
+
+const collectChecklistTemplateOptions = (): ChecklistTemplateOption[] => {
+  const serverTemplates = templateRecords.value
     .map((entry) => {
       const uid = String(entry.uid ?? "").trim();
       if (!uid) {
@@ -936,11 +1499,71 @@ const templates = computed<Template[]>(() => {
       return {
         uid,
         name: String(entry.template_name ?? uid),
-        columns: toArray<unknown>(entry.columns).length
+        columns: toArray<ChecklistColumnRaw>(entry.columns).length,
+        source_type: "template" as const,
+        task_rows: 0
       };
     })
-    .filter((entry): entry is Template => entry !== null);
+    .filter((entry): entry is ChecklistTemplateOption => entry !== null);
+
+  const csvImportedTemplates = checklistRecords.value
+    .map((entry) => {
+      const uid = String(entry.uid ?? "").trim();
+      if (!uid) {
+        return null;
+      }
+      const originType = String(entry.origin_type ?? "").trim().toUpperCase();
+      if (originType !== "CSV_IMPORT") {
+        return null;
+      }
+      if (!isRenderableCsvImportTemplate(entry)) {
+        return null;
+      }
+      return {
+        uid,
+        name: String(entry.name ?? uid),
+        columns: toArray<ChecklistColumnRaw>(entry.columns).length,
+        source_type: "csv_import" as const,
+        task_rows: toArray<ChecklistTaskRaw>(entry.tasks).length
+      };
+    })
+    .filter((entry): entry is ChecklistTemplateOption => entry !== null);
+
+  const seen = new Set<string>();
+  return [...serverTemplates, ...csvImportedTemplates].filter((entry) => {
+    if (seen.has(entry.uid)) {
+      return false;
+    }
+    seen.add(entry.uid);
+    return true;
+  });
+};
+
+const templates = computed<Template[]>(() => {
+  return collectChecklistTemplateOptions().map((entry) => ({
+    uid: entry.uid,
+    name: entry.name,
+    columns: entry.columns
+  }));
 });
+
+const checklistTemplateOptions = computed<ChecklistTemplateOption[]>(() => {
+  return collectChecklistTemplateOptions().sort((left, right) => left.name.localeCompare(right.name));
+});
+
+const checklistTemplateSelectOptions = computed(() => {
+  return checklistTemplateOptions.value.map((entry) => ({
+    value: entry.uid,
+    label:
+      entry.source_type === "csv_import"
+        ? `${entry.name} (${entry.columns} columns, CSV import)`
+        : entry.name
+  }));
+});
+
+const selectedChecklistTemplateOption = computed(() =>
+  checklistTemplateOptions.value.find((entry) => entry.uid === checklistTemplateSelectionUid.value)
+);
 
 const skillNameByUid = computed(() => {
   const map = new Map<string, string>();
@@ -1051,13 +1674,13 @@ const screensByTab: Record<PrimaryTab, Array<{ id: ScreenId; label: string }>> =
     { id: "checklistCreation", label: "Checklist Creation Page" },
     { id: "checklistRunDetail", label: "Checklist Run Detail" },
     { id: "taskAssignmentWorkspace", label: "Task Assignment Workspace" },
-    { id: "checklistImportCsv", label: "Checklist Import from CSV" },
     { id: "checklistPublish", label: "Checklist Publish to Mission" },
     { id: "checklistProgress", label: "Checklist Progress & Compliance" }
   ],
   templates: [
     { id: "templateLibrary", label: "Excheck Template Library" },
-    { id: "templateBuilder", label: "Excheck Template Builder" }
+    { id: "templateBuilder", label: "Excheck Template Builder" },
+    { id: "checklistImportCsv", label: "Import from CSV" }
   ],
   board: [{ id: "missionExcheckBoard", label: "Mission Excheck Board" }]
 };
@@ -1076,7 +1699,7 @@ const screenMeta: Record<ScreenId, { title: string; subtitle: string; actions: s
   checklistCreation: { title: "Checklist Creation Page", subtitle: "Create online/offline checklist runs from templates.", actions: ["Create", "Validate"] },
   checklistRunDetail: { title: "Checklist Run Detail", subtitle: "Task status transitions and operator updates.", actions: ["Set Status", "Upload"] },
   taskAssignmentWorkspace: { title: "Task Assignment Workspace", subtitle: "Task ownership and asset mapping controls.", actions: ["Assign", "Reassign"] },
-  checklistImportCsv: { title: "Checklist Import from CSV", subtitle: "Import checklist rows from CSV payloads.", actions: ["Import", "Preview"] },
+  checklistImportCsv: { title: "Import from CSV", subtitle: "Import checklist rows from CSV payloads.", actions: ["Import", "Preview"] },
   checklistPublish: { title: "Checklist Publish to Mission", subtitle: "Publish checklist feed to mission sync channel.", actions: ["Join", "Publish"] },
   checklistProgress: { title: "Checklist Progress & Compliance", subtitle: "Progress metrics and on-time compliance views.", actions: ["Recompute", "Export"] },
   templateLibrary: { title: "Excheck Template Library", subtitle: "Template catalog with versions and ownership.", actions: ["Clone", "Archive"] },
@@ -1092,6 +1715,14 @@ const missionDraftName = ref("");
 const missionDraftTopic = ref("");
 const missionDraftStatus = ref("MISSION_ACTIVE");
 const missionDraftDescription = ref("");
+const checklistTemplateModalOpen = ref(false);
+const checklistTemplateSelectionUid = ref("");
+const checklistTemplateNameDraft = ref("");
+const checklistTemplateSubmitting = ref(false);
+const checklistDetailUid = ref("");
+const checklistTaskDueDraft = ref("10");
+const checklistTaskStatusBusyByTaskUid = ref<Record<string, boolean>>({});
+const checklistDeleteBusy = ref(false);
 
 const missionStatusOptions = [
   "MISSION_ACTIVE",
@@ -1127,10 +1758,134 @@ const currentScreen = computed(() => screenMeta[secondaryScreen.value]);
 
 const selectedMission = computed(() => missions.value.find((entry) => entry.uid === selectedMissionUid.value));
 const missionChecklists = computed(() => checklists.value.filter((entry) => entry.mission_uid === selectedMissionUid.value));
-const selectedChecklist = computed(() => missionChecklists.value.find((entry) => entry.uid === selectedChecklistUid.value));
 const selectedChecklistRaw = computed(() =>
   checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === selectedChecklistUid.value)
 );
+const missionChecklistsSorted = computed(() => {
+  return [...missionChecklists.value].sort((left, right) => {
+    const diff = toEpoch(right.created_at) - toEpoch(left.created_at);
+    if (diff !== 0) {
+      return diff;
+    }
+    return left.name.localeCompare(right.name);
+  });
+});
+
+const resolvedChecklistDetailUid = computed(() => {
+  if (checklistDetailUid.value) {
+    return checklistDetailUid.value;
+  }
+  if (["checklistDetails", "checklistRunDetail"].includes(secondaryScreen.value)) {
+    return selectedChecklistUid.value;
+  }
+  return "";
+});
+
+const checklistDetailRecord = computed(() => {
+  const detailUid = resolvedChecklistDetailUid.value;
+  if (!detailUid) {
+    return null;
+  }
+  return missionChecklists.value.find((entry) => entry.uid === detailUid) ?? null;
+});
+
+const canCreateFromDetailTemplate = computed(() => {
+  const detailUid = checklistDetailRecord.value?.uid ?? "";
+  if (!detailUid) {
+    return false;
+  }
+  return checklistTemplateOptions.value.some((entry) => entry.uid === detailUid);
+});
+
+const checklistDetailRaw = computed(() => {
+  const detailUid = resolvedChecklistDetailUid.value;
+  if (!detailUid) {
+    return null;
+  }
+  return checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === detailUid) ?? null;
+});
+
+const checklistDetailColumns = computed(() => {
+  const checklist = checklistDetailRaw.value;
+  if (!checklist) {
+    return [] as Array<{ uid: string; name: string }>;
+  }
+  const columns = toArray<ChecklistColumnRaw>(checklist.columns)
+    .map((column) => ({
+      uid: String(column.column_uid ?? "").trim(),
+      name: String(column.column_name ?? "").trim(),
+      system_key: String(column.system_key ?? "").trim().toUpperCase(),
+      display_order: Number(column.display_order ?? 0)
+    }))
+    .filter((column) => column.uid.length > 0 && column.system_key !== "DUE_RELATIVE_DTG")
+    .sort((left, right) => left.display_order - right.display_order);
+  return columns.map((column, index) => ({
+    uid: column.uid,
+    name: column.name || `Column ${index + 1}`
+  }));
+});
+
+const checklistDetailRows = computed(() => {
+  const checklist = checklistDetailRaw.value;
+  if (!checklist) {
+    return [] as Array<{
+      id: string;
+      task_uid: string;
+      number: number;
+      done: boolean;
+      column_values: Record<string, string>;
+      due: string;
+      status: string;
+      completeDtg: string;
+    }>;
+  }
+  const preferredTaskColumnUid = resolveTaskNameColumnUid(checklist);
+  const dueColumnUid =
+    toArray<ChecklistColumnRaw>(checklist.columns).find(
+      (column) => String(column.system_key ?? "").trim().toUpperCase() === "DUE_RELATIVE_DTG"
+    )?.column_uid ?? "";
+  return toArray<ChecklistTaskRaw>(checklist.tasks)
+    .map((task) => {
+      const taskUid = String(task.task_uid ?? "").trim();
+      const status = normalizeTaskStatus(task.task_status ?? task.user_status);
+      const done = status.startsWith("COMPLETE");
+      const dueDtg = String(task.due_dtg ?? "").trim();
+      let due = dueDtg ? formatChecklistDateTime(dueDtg) : "-";
+      if (!dueDtg && task.due_relative_minutes !== null && task.due_relative_minutes !== undefined) {
+        due = formatDueRelativeMinutesLabel(task.due_relative_minutes);
+      } else if (!dueDtg && dueColumnUid) {
+        const dueCell = toArray<ChecklistCellRaw>(task.cells).find(
+          (cell) => String(cell.column_uid ?? "").trim() === String(dueColumnUid).trim()
+        );
+        if (typeof dueCell?.value === "string" && dueCell.value.trim()) {
+          due = dueCell.value.trim();
+        }
+      }
+      return {
+        id: taskUid || `task-${String(task.number ?? 0)}`,
+        task_uid: taskUid,
+        number: Number(task.number ?? 0),
+        done,
+        column_values: (() => {
+          const values = toArray<ChecklistCellRaw>(task.cells).reduce((map, cell) => {
+            const columnUid = String(cell.column_uid ?? "").trim();
+            if (columnUid) {
+              map[columnUid] = String(cell.value ?? "").trim();
+            }
+            return map;
+          }, {} as Record<string, string>);
+          if (preferredTaskColumnUid && !values[preferredTaskColumnUid]) {
+            values[preferredTaskColumnUid] = resolveChecklistTaskName(checklist, task, preferredTaskColumnUid);
+          }
+          return values;
+        })(),
+        due,
+        status,
+        completeDtg: formatChecklistDateTime(task.completed_at)
+      };
+    })
+    .sort((left, right) => left.number - right.number);
+});
 
 const missionChecklistCountByMission = computed(() => {
   const map = new Map<string, number>();
@@ -1432,7 +2187,6 @@ const showChecklistArea = computed(() => {
     "checklistDetails",
     "checklistCreation",
     "checklistRunDetail",
-    "checklistImportCsv",
     "checklistPublish",
     "checklistProgress"
   ].includes(secondaryScreen.value);
@@ -1446,18 +2200,196 @@ const showTemplateArea = computed(() => {
   return ["templateLibrary", "templateBuilder"].includes(secondaryScreen.value);
 });
 
-const checklistPanelTitle = computed(() => {
-  if (secondaryScreen.value === "checklistProgress") {
-    return "Checklist Progress & Compliance";
+const progressWidth = (value: number): string => {
+  if (!Number.isFinite(value)) {
+    return "0%";
   }
-  if (secondaryScreen.value === "checklistPublish") {
-    return "Checklist Publish to Mission";
+  return `${Math.max(0, Math.min(100, Math.round(value)))}%`;
+};
+
+const statusChipClass = (status: string): string => {
+  const normalized = normalizeTaskStatus(status);
+  if (normalized.startsWith("COMPLETE")) {
+    return "checklist-chip-success";
   }
-  if (secondaryScreen.value === "checklistImportCsv") {
-    return "Checklist Import from CSV";
+  if (normalized === "LATE") {
+    return "checklist-chip-warning";
   }
-  return "Checklist Overview";
-});
+  return "checklist-chip-info";
+};
+
+const syncChipClass = (syncState: string): string => {
+  const normalized = String(syncState ?? "").trim().toUpperCase();
+  if (normalized === "SYNCED") {
+    return "checklist-chip-success";
+  }
+  if (normalized === "PENDING") {
+    return "checklist-chip-warning";
+  }
+  return "checklist-chip-info";
+};
+
+const modeChipClass = (mode: string): string => {
+  const normalized = String(mode ?? "").trim().toUpperCase();
+  if (normalized === "ONLINE") {
+    return "checklist-chip-info";
+  }
+  if (normalized === "OFFLINE") {
+    return "checklist-chip-warning";
+  }
+  return "checklist-chip-muted";
+};
+
+const checklistOriginLabel = (originType: string): string => {
+  const normalized = String(originType ?? "").trim().toUpperCase();
+  if (normalized === "CSV_IMPORT") {
+    return "CSV IMPORT";
+  }
+  if (normalized === "RCH_TEMPLATE") {
+    return "TEMPLATE";
+  }
+  if (normalized === "BLANK_TEMPLATE") {
+    return "BLANK";
+  }
+  return normalized || "UNSPECIFIED";
+};
+
+const checklistDescriptionLabel = (description: string): string => {
+  const text = String(description ?? "").trim();
+  return text || "No description provided";
+};
+
+const openChecklistDetailView = async (checklistUid: string) => {
+  const uid = String(checklistUid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  selectedChecklistUid.value = uid;
+  checklistDetailUid.value = uid;
+  try {
+    await hydrateChecklistRecord(uid);
+  } catch (error) {
+    handleApiError(error, "Unable to load checklist details");
+  }
+};
+
+const closeChecklistDetailView = () => {
+  checklistDetailUid.value = "";
+  if (secondaryScreen.value === "checklistDetails" || secondaryScreen.value === "checklistRunDetail") {
+    secondaryScreen.value = "checklistOverview";
+  }
+};
+
+const createChecklistFromDetailTemplate = () => {
+  const detailUid = checklistDetailRecord.value?.uid ?? "";
+  if (!detailUid) {
+    return;
+  }
+  if (checklistTemplateOptions.value.some((entry) => entry.uid === detailUid)) {
+    checklistTemplateSelectionUid.value = detailUid;
+  }
+  try {
+    openChecklistTemplateModal();
+  } catch (error) {
+    handleApiError(error, "Unable to open checklist template selector");
+  }
+};
+
+const deleteChecklistFromDetail = async () => {
+  if (checklistDeleteBusy.value) {
+    return;
+  }
+  const checklistUid = String(checklistDetailRecord.value?.uid ?? "").trim();
+  if (!checklistUid) {
+    toastStore.push("Select a checklist first", "warning");
+    return;
+  }
+  const checklistName = String(checklistDetailRecord.value?.name ?? checklistUid).trim() || checklistUid;
+  if (!window.confirm(`Delete checklist "${checklistName}"?`)) {
+    return;
+  }
+  checklistDeleteBusy.value = true;
+  try {
+    await deleteRequest(`${endpoints.checklists}/${checklistUid}`);
+    if (selectedChecklistUid.value === checklistUid) {
+      selectedChecklistUid.value = "";
+    }
+    if (checklistDetailUid.value === checklistUid) {
+      checklistDetailUid.value = "";
+    }
+    await loadWorkspace();
+    toastStore.push("Checklist removed", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to remove checklist");
+  } finally {
+    checklistDeleteBusy.value = false;
+  }
+};
+
+const navigateToTemplateLibrary = () => {
+  setPrimaryTab("templates");
+  secondaryScreen.value = "templateLibrary";
+};
+
+const navigateToChecklistOverview = () => {
+  setPrimaryTab("checklists");
+  secondaryScreen.value = "checklistOverview";
+  checklistDetailUid.value = "";
+};
+
+const addChecklistTaskFromDetail = async () => {
+  const checklist = checklistDetailRecord.value;
+  if (!checklist?.uid) {
+    toastStore.push("Select a checklist first", "warning");
+    return;
+  }
+  selectedChecklistUid.value = checklist.uid;
+  try {
+    const nextNumber = checklistDetailRows.value.reduce((max, row) => Math.max(max, row.number), 0) + 1;
+    const payload: Record<string, unknown> = { number: nextNumber };
+    const parsedDue = Number(checklistTaskDueDraft.value);
+    if (Number.isFinite(parsedDue)) {
+      payload.due_relative_minutes = Math.trunc(parsedDue);
+    }
+    await post(`${endpoints.checklists}/${checklist.uid}/tasks`, payload);
+    await loadWorkspace();
+    toastStore.push("Checklist task added", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to add checklist task");
+  }
+};
+
+const toggleChecklistTaskDone = async (row: { task_uid: string; done: boolean }) => {
+  const checklist = checklistDetailRaw.value;
+  const checklistUid = String(checklist?.uid ?? "").trim();
+  const taskUid = String(row.task_uid ?? "").trim();
+  if (!checklistUid || !taskUid) {
+    toastStore.push("Unable to update task status", "warning");
+    return;
+  }
+  if (checklistTaskStatusBusyByTaskUid.value[taskUid]) {
+    return;
+  }
+  checklistTaskStatusBusyByTaskUid.value = {
+    ...checklistTaskStatusBusyByTaskUid.value,
+    [taskUid]: true
+  };
+  try {
+    const userStatus = row.done ? "PENDING" : "COMPLETE";
+    await post(`${endpoints.checklists}/${checklistUid}/tasks/${taskUid}/status`, {
+      user_status: userStatus,
+      changed_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
+    });
+    await loadWorkspace();
+    toastStore.push("Task status updated", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to update task status");
+  } finally {
+    const next = { ...checklistTaskStatusBusyByTaskUid.value };
+    delete next[taskUid];
+    checklistTaskStatusBusyByTaskUid.value = next;
+  }
+};
 
 const setPrimaryTab = (tab: PrimaryTab) => {
   primaryTab.value = tab;
@@ -1525,6 +2457,15 @@ const loadWorkspace = async () => {
     skillRecords.value = toArray<SkillRaw>(skillData);
     teamMemberSkillRecords.value = toArray<TeamMemberSkillRaw>(teamMemberSkillData);
     taskSkillRequirementRecords.value = toArray<TaskSkillRequirementRaw>(taskSkillRequirementData);
+
+    const activeDetailUid = String(checklistDetailUid.value || selectedChecklistUid.value || "").trim();
+    if (activeDetailUid) {
+      try {
+        await hydrateChecklistRecord(activeDetailUid);
+      } catch (error) {
+        handleApiError(error, "Checklist detail refresh failed");
+      }
+    }
   } finally {
     loadingWorkspace.value = false;
   }
@@ -1755,15 +2696,421 @@ const createChecklistAction = async () => {
   await loadWorkspace();
 };
 
-const importChecklistAction = async () => {
-  const csvPayload = "10,Task 1\n20,Task 2\n";
-  const encoded = btoa(csvPayload);
-  await post<ChecklistRaw>(endpoints.checklistsImportCsv, {
-    csv_filename: `mission-import-${Date.now()}.csv`,
-    csv_base64: encoded,
-    source_identity: DEFAULT_SOURCE_IDENTITY
+const toSortedChecklistColumns = (columns: ChecklistColumnRaw[]): ChecklistColumnRaw[] => {
+  return [...columns].sort((left, right) => {
+    const leftOrder = Number(left.display_order ?? 0);
+    const rightOrder = Number(right.display_order ?? 0);
+    return leftOrder - rightOrder;
   });
+};
+
+const toChecklistColumnPayload = (columns: ChecklistColumnRaw[]) => {
+  return toSortedChecklistColumns(columns).map((column, index) => ({
+    column_name: String(column.column_name ?? `Column ${index + 1}`),
+    display_order: index + 1,
+    column_type: String(column.column_type ?? "SHORT_STRING"),
+    column_editable: Boolean(column.column_editable ?? true),
+    is_removable: Boolean(column.is_removable ?? true),
+    system_key: column.system_key ?? undefined,
+    background_color: column.background_color ?? undefined,
+    text_color: column.text_color ?? undefined
+  }));
+};
+
+const findDueColumnUid = (columns: ChecklistColumnRaw[]): string => {
+  return (
+    toSortedChecklistColumns(columns)
+      .find((column) => String(column.system_key ?? "").trim().toUpperCase() === "DUE_RELATIVE_DTG")
+      ?.column_uid?.trim() || ""
+  );
+};
+
+const parseDueRelativeMinutes = (task: ChecklistTaskRaw, sourceDueColumnUid: string): number | undefined => {
+  if (task.due_relative_minutes !== null && task.due_relative_minutes !== undefined) {
+    const dueRelative = Number(task.due_relative_minutes);
+    if (!Number.isNaN(dueRelative) && Number.isFinite(dueRelative)) {
+      return Math.trunc(dueRelative);
+    }
+  }
+  if (!sourceDueColumnUid) {
+    return undefined;
+  }
+  const dueCell = toArray<ChecklistCellRaw>(task.cells).find(
+    (cell) => String(cell.column_uid ?? "").trim() === sourceDueColumnUid
+  );
+  const parsed = Number(String(dueCell?.value ?? "").trim());
+  if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
+    return undefined;
+  }
+  return Math.trunc(parsed);
+};
+
+const parseCsvDueRelativeMinutes = (value: string): number | undefined => {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return undefined;
+  }
+  const direct = Number(raw);
+  if (Number.isFinite(direct)) {
+    return Math.trunc(direct);
+  }
+  const match = raw.match(/^T?\s*([+-])?\s*(\d{1,3})(?::(\d{1,2}))?$/i);
+  if (!match) {
+    return undefined;
+  }
+  const sign = match[1] === "-" ? -1 : 1;
+  const hours = Number(match[2] ?? "0");
+  const minutes = Number(match[3] ?? "0");
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return undefined;
+  }
+  return sign * (Math.trunc(hours) * 60 + Math.trunc(minutes));
+};
+
+const normalizeCsvHeaderLabel = (value: string): string =>
+  String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[_-]/g, " ")
+    .replace(/\s+/g, " ");
+
+const createChecklistFromUploadedCsvAction = async (
+  checklistName: string,
+  missionUid?: string
+): Promise<ChecklistRaw> => {
+  const headers = [...csvImportHeaders.value];
+  const rows = [...csvImportRows.value];
+  if (!headers.length || !rows.length) {
+    throw new Error("Upload a CSV file before importing");
+  }
+
+  const dueAliases = new Set(["DUE", "DUE RELATIVE MINUTES", "DUE MINUTES"]);
+  const dueHeaderIndex = headers.findIndex((header) => dueAliases.has(normalizeCsvHeaderLabel(header)));
+  const columns: Array<Record<string, unknown>> = [];
+  if (dueHeaderIndex < 0) {
+    columns.push({
+      column_name: "Due",
+      display_order: 1,
+      column_type: "RELATIVE_TIME",
+      column_editable: false,
+      is_removable: false,
+      system_key: "DUE_RELATIVE_DTG"
+    });
+    headers.forEach((header, index) => {
+      columns.push({
+        column_name: header || `Column ${index + 1}`,
+        display_order: index + 2,
+        column_type: "SHORT_STRING",
+        column_editable: true,
+        is_removable: true
+      });
+    });
+  } else {
+    headers.forEach((header, index) => {
+      if (index === dueHeaderIndex) {
+        columns.push({
+          column_name: header || "Due",
+          display_order: index + 1,
+          column_type: "RELATIVE_TIME",
+          column_editable: false,
+          is_removable: false,
+          system_key: "DUE_RELATIVE_DTG"
+        });
+        return;
+      }
+      columns.push({
+        column_name: header || `Column ${index + 1}`,
+        display_order: index + 1,
+        column_type: "SHORT_STRING",
+        column_editable: true,
+        is_removable: true
+      });
+    });
+  }
+
+  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, {
+    mission_uid: missionUid,
+    name: checklistName,
+    origin_type: "CSV_IMPORT",
+    source_identity: DEFAULT_SOURCE_IDENTITY,
+    columns
+  });
+  const createdChecklistUid = String(created.uid ?? "").trim();
+  if (!createdChecklistUid) {
+    throw new Error("Checklist import failed");
+  }
+
+  const createdColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(created.columns));
+  const dueColumnOrder = dueHeaderIndex < 0 ? 1 : dueHeaderIndex + 1;
+  const dueColumnUid =
+    createdColumns.find((column) => Number(column.display_order ?? 0) === dueColumnOrder)?.column_uid ?? "";
+  const targetByHeaderIndex = new Map<number, string>();
+  headers.forEach((_, headerIndex) => {
+    if (headerIndex === dueHeaderIndex) {
+      return;
+    }
+    const displayOrder = dueHeaderIndex < 0 ? headerIndex + 2 : headerIndex + 1;
+    const columnUid = createdColumns.find((column) => Number(column.display_order ?? 0) === displayOrder)?.column_uid ?? "";
+    if (columnUid) {
+      targetByHeaderIndex.set(headerIndex, columnUid);
+    }
+  });
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    const taskNumber = rowIndex + 1;
+    const taskPayload: Record<string, unknown> = { number: taskNumber };
+    const rowLegacyValue =
+      headers
+        .map((_, headerIndex) => ({
+          headerIndex,
+          value: String(row[headerIndex] ?? "").trim()
+        }))
+        .find(
+          (entry) =>
+            entry.value.length > 0 &&
+            (dueHeaderIndex < 0 || entry.headerIndex !== dueHeaderIndex)
+        )?.value ?? "";
+    if (rowLegacyValue) {
+      taskPayload.legacy_value = rowLegacyValue;
+    }
+    if (dueHeaderIndex >= 0) {
+      const dueValue = String(row[dueHeaderIndex] ?? "").trim();
+      const dueMinutes = parseCsvDueRelativeMinutes(dueValue);
+      if (dueMinutes !== undefined) {
+        taskPayload.due_relative_minutes = dueMinutes;
+      }
+    }
+    const taskCreated = await post<ChecklistRaw>(`${endpoints.checklists}/${createdChecklistUid}/tasks`, taskPayload);
+    const createdTaskUid = String(
+      toArray<ChecklistTaskRaw>(taskCreated.tasks).find((task) => Number(task.number ?? 0) === taskNumber)?.task_uid ?? ""
+    ).trim();
+    if (!createdTaskUid) {
+      continue;
+    }
+    for (const [headerIndex, targetColumnUid] of targetByHeaderIndex.entries()) {
+      const value = String(row[headerIndex] ?? "").trim();
+      if (!value) {
+        continue;
+      }
+      if (targetColumnUid === dueColumnUid) {
+        continue;
+      }
+      await patchRequest(`${endpoints.checklists}/${createdChecklistUid}/tasks/${createdTaskUid}/cells/${targetColumnUid}`, {
+        value,
+        updated_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
+      });
+    }
+  }
+
+  const hydrated = await hydrateChecklistRecord(createdChecklistUid);
+  return hydrated ?? created;
+};
+
+const createChecklistFromCsvImportAction = async (
+  sourceChecklistUid: string,
+  checklistName: string,
+  missionUid?: string
+): Promise<ChecklistRaw> => {
+  let sourceChecklist = checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === sourceChecklistUid);
+  try {
+    const hydrated = await hydrateChecklistRecord(sourceChecklistUid);
+    if (hydrated) {
+      sourceChecklist = hydrated;
+    }
+  } catch (error) {
+    if (!sourceChecklist) {
+      throw error;
+    }
+  }
+  if (!sourceChecklist) {
+    throw new Error("Selected CSV template could not be found");
+  }
+  const sourceColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(sourceChecklist.columns));
+  if (!sourceColumns.length) {
+    throw new Error("Selected CSV template has no columns");
+  }
+
+  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, {
+    mission_uid: missionUid,
+    name: checklistName,
+    origin_type: "CSV_IMPORT",
+    source_identity: DEFAULT_SOURCE_IDENTITY,
+    columns: toChecklistColumnPayload(sourceColumns)
+  });
+
+  const createdChecklistUid = String(created.uid ?? "").trim();
+  if (!createdChecklistUid) {
+    throw new Error("Checklist creation failed");
+  }
+
+  const createdColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(created.columns));
+  const sourceColumnUidByOrder = new Map<number, string>();
+  sourceColumns.forEach((column, index) => {
+    const columnUid = String(column.column_uid ?? "").trim();
+    if (!columnUid) {
+      return;
+    }
+    sourceColumnUidByOrder.set(index + 1, columnUid);
+  });
+  const targetColumnUidByOrder = new Map<number, string>();
+  createdColumns.forEach((column, index) => {
+    const columnUid = String(column.column_uid ?? "").trim();
+    if (!columnUid) {
+      return;
+    }
+    targetColumnUidByOrder.set(index + 1, columnUid);
+  });
+  const sourceToTargetColumnUid = new Map<string, string>();
+  sourceColumnUidByOrder.forEach((sourceColumnUid, order) => {
+    const targetColumnUid = targetColumnUidByOrder.get(order);
+    if (!targetColumnUid) {
+      return;
+    }
+    sourceToTargetColumnUid.set(sourceColumnUid, targetColumnUid);
+  });
+
+  const sourceDueColumnUid = findDueColumnUid(sourceColumns);
+  const sourceTasks = [...toArray<ChecklistTaskRaw>(sourceChecklist.tasks)].sort(
+    (left, right) => Number(left.number ?? 0) - Number(right.number ?? 0)
+  );
+
+  for (let index = 0; index < sourceTasks.length; index += 1) {
+    const sourceTask = sourceTasks[index];
+    const taskNumber = index + 1;
+    const dueRelativeMinutes = parseDueRelativeMinutes(sourceTask, sourceDueColumnUid);
+    const taskPayload: Record<string, unknown> = { number: taskNumber };
+    const legacyValue = String(sourceTask.legacy_value ?? "").trim() || resolveChecklistTaskName(sourceChecklist, sourceTask);
+    if (legacyValue) {
+      taskPayload.legacy_value = legacyValue;
+    }
+    if (dueRelativeMinutes !== undefined) {
+      taskPayload.due_relative_minutes = dueRelativeMinutes;
+    }
+    const taskCreated = await post<ChecklistRaw>(`${endpoints.checklists}/${createdChecklistUid}/tasks`, taskPayload);
+    const createdTaskUid = String(
+      toArray<ChecklistTaskRaw>(taskCreated.tasks).find((task) => Number(task.number ?? 0) === taskNumber)?.task_uid ?? ""
+    ).trim();
+    if (!createdTaskUid) {
+      continue;
+    }
+
+    const sourceCells = toArray<ChecklistCellRaw>(sourceTask.cells);
+    for (const sourceCell of sourceCells) {
+      const sourceColumnUid = String(sourceCell.column_uid ?? "").trim();
+      const targetColumnUid = sourceToTargetColumnUid.get(sourceColumnUid);
+      const value = String(sourceCell.value ?? "").trim();
+      if (!sourceColumnUid || !targetColumnUid || !value) {
+        continue;
+      }
+      if (sourceColumnUid === sourceDueColumnUid) {
+        continue;
+      }
+      await patchRequest(
+        `${endpoints.checklists}/${createdChecklistUid}/tasks/${createdTaskUid}/cells/${targetColumnUid}`,
+        {
+          value,
+          updated_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
+        }
+      );
+    }
+  }
+
+  const hydrated = await hydrateChecklistRecord(createdChecklistUid);
+  return hydrated ?? created;
+};
+
+const buildChecklistDraftName = (): string => {
+  const missionName = selectedMission.value?.mission_name || "Mission";
+  const suffix = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+  return `${missionName} Checklist ${suffix}`;
+};
+
+const openChecklistTemplateModal = () => {
+  if (!checklistTemplateOptions.value.length) {
+    throw new Error("No checklist templates available. Create a template first");
+  }
+  checklistTemplateNameDraft.value = buildChecklistDraftName();
+  if (!checklistTemplateOptions.value.some((entry) => entry.uid === checklistTemplateSelectionUid.value)) {
+    checklistTemplateSelectionUid.value = checklistTemplateOptions.value[0].uid;
+  }
+  checklistTemplateModalOpen.value = true;
+};
+
+const closeChecklistTemplateModal = () => {
+  if (checklistTemplateSubmitting.value) {
+    return;
+  }
+  checklistTemplateModalOpen.value = false;
+};
+
+const createChecklistFromSelectedTemplateAction = async () => {
+  const selectionUid = checklistTemplateSelectionUid.value.trim();
+  if (!selectionUid) {
+    throw new Error("Select a checklist template");
+  }
+  const selectedTemplate = checklistTemplateOptions.value.find((entry) => entry.uid === selectionUid);
+  if (!selectedTemplate) {
+    throw new Error("Selected checklist template could not be found");
+  }
+  const missionUid = selectedMissionUid.value || undefined;
+  const checklistName = checklistTemplateNameDraft.value.trim() || buildChecklistDraftName();
+  const created =
+    selectedTemplate.source_type === "template"
+      ? await post<ChecklistRaw>(endpoints.checklists, {
+          template_uid: selectionUid,
+          mission_uid: missionUid,
+          name: checklistName,
+          source_identity: DEFAULT_SOURCE_IDENTITY
+        })
+      : await createChecklistFromCsvImportAction(selectionUid, checklistName, missionUid);
   await loadWorkspace();
+  const createdUid = String(created.uid ?? "").trim();
+  if (createdUid) {
+    selectedChecklistUid.value = createdUid;
+    checklistDetailUid.value = createdUid;
+    try {
+      await hydrateChecklistRecord(createdUid);
+    } catch (error) {
+      handleApiError(error, "Checklist run created but detail refresh failed");
+    }
+  }
+};
+
+const submitChecklistTemplateSelection = async () => {
+  if (checklistTemplateSubmitting.value) {
+    return;
+  }
+  checklistTemplateSubmitting.value = true;
+  try {
+    await createChecklistFromSelectedTemplateAction();
+    checklistTemplateModalOpen.value = false;
+    toastStore.push("Checklist run created", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to create checklist run");
+  } finally {
+    checklistTemplateSubmitting.value = false;
+  }
+};
+
+const importChecklistAction = async () => {
+  if (!csvImportBase64.value || !csvImportHeaders.value.length || !csvImportRows.value.length) {
+    throw new Error("Upload a CSV file before importing");
+  }
+  const missionUid = selectedMissionUid.value || undefined;
+  const baseName = (csvImportFilename.value || "Checklist CSV").replace(/\.csv$/i, "").trim() || "Checklist CSV";
+  const imported = await createChecklistFromUploadedCsvAction(baseName, missionUid);
+  await loadWorkspace();
+  const importedUid = String(imported.uid ?? "").trim();
+  if (importedUid) {
+    selectedChecklistUid.value = importedUid;
+    checklistDetailUid.value = importedUid;
+    try {
+      await hydrateChecklistRecord(importedUid);
+    } catch (error) {
+      handleApiError(error, "Checklist imported but detail refresh failed");
+    }
+  }
 };
 
 const joinChecklistAction = async () => {
@@ -2115,8 +3462,12 @@ const exportChecklistProgressAction = async () => {
 };
 
 const previewCsvAction = async () => {
-  const csv = ["due_relative_minutes,task", "10,Task 1", "20,Task 2", "30,Task 3"].join("\n");
-  downloadText(`checklist-import-preview-${buildTimestampTag()}.csv`, csv, "text/csv");
+  if (!csvImportHeaders.value.length || !csvImportRows.value.length) {
+    throw new Error("Upload a CSV file before previewing");
+  }
+  const csv = renderUploadedCsv();
+  const baseName = (csvImportFilename.value || "checklist-import").replace(/\.csv$/i, "");
+  downloadText(`${baseName}-preview-${buildTimestampTag()}.csv`, csv, "text/csv");
 };
 
 const previewAction = async (action: string) => {
@@ -2205,7 +3556,11 @@ const previewAction = async (action: string) => {
   }
 
   if (action === "Start New" || (action === "Create" && secondaryScreen.value === "checklistCreation")) {
-    await runAction(createChecklistAction, "Checklist run created", "Unable to create checklist run");
+    try {
+      openChecklistTemplateModal();
+    } catch (error) {
+      handleApiError(error, "Unable to open checklist template selector");
+    }
     return;
   }
 
@@ -2328,6 +3683,9 @@ watch(
   (entries) => {
     if (!entries.some((entry) => entry.uid === selectedChecklistUid.value)) {
       selectedChecklistUid.value = entries[0]?.uid ?? "";
+    }
+    if (checklistDetailUid.value && !entries.some((entry) => entry.uid === checklistDetailUid.value)) {
+      checklistDetailUid.value = "";
     }
   },
   { immediate: true }
@@ -2682,28 +4040,299 @@ onMounted(() => {
   border-bottom: 1px solid rgba(55, 242, 255, 0.14);
 }
 
-.checklist-list {
-  display: grid;
-  gap: 6px;
+.checklist-workspace {
+  gap: 12px;
 }
 
-.checklist-item {
-  border: 1px solid rgba(55, 242, 255, 0.3);
-  background: rgba(7, 18, 28, 0.75);
-  color: #dffcff;
+.checklist-overview-tabs {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid rgba(55, 242, 255, 0.34);
   border-radius: 8px;
-  padding: 8px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  letter-spacing: 0.1em;
+  padding: 2px;
+  width: fit-content;
+  background: rgba(2, 10, 16, 0.85);
+}
+
+.checklist-overview-tab {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(207, 249, 255, 0.86);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   font-size: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
 }
 
-.checklist-item.active {
-  border-color: rgba(55, 242, 255, 0.65);
-  background: rgba(55, 242, 255, 0.12);
+.checklist-overview-tab.active {
+  background: rgba(23, 164, 225, 0.35);
+  color: #7ef4ff;
+}
+
+.checklist-overview-list {
+  display: grid;
+  gap: 10px;
+}
+
+.checklist-overview-card {
+  width: 100%;
+  border: 1px solid rgba(55, 242, 255, 0.35);
+  background: rgba(4, 16, 24, 0.78);
+  border-radius: 10px;
+  color: #dffcff;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  text-align: left;
+}
+
+.checklist-overview-card:hover {
+  border-color: rgba(55, 242, 255, 0.75);
+  background: rgba(9, 24, 35, 0.88);
+}
+
+.checklist-overview-content {
+  display: grid;
+  gap: 10px;
+}
+
+.checklist-overview-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.checklist-overview-head h4 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+
+.checklist-overview-content p {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(202, 245, 255, 0.9);
+}
+
+.checklist-overview-meta {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: rgba(159, 238, 255, 0.9);
+}
+
+.checklist-overview-stats {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+  min-width: 250px;
+}
+
+.checklist-overview-counts {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: rgba(133, 241, 255, 0.92);
+}
+
+.checklist-overview-arrow {
+  font-size: 26px;
+  color: #2be8ff;
+  line-height: 1;
+}
+
+.checklist-chip-row {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.checklist-chip {
+  border: 1px solid rgba(55, 242, 255, 0.35);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.checklist-chip-info {
+  border-color: rgba(47, 214, 255, 0.65);
+  color: #53efff;
+  background: rgba(47, 214, 255, 0.12);
+}
+
+.checklist-chip-success {
+  border-color: rgba(58, 244, 179, 0.62);
+  color: #42f2b2;
+  background: rgba(43, 199, 141, 0.16);
+}
+
+.checklist-chip-warning {
+  border-color: rgba(255, 178, 92, 0.72);
+  color: #ffb35c;
+  background: rgba(255, 179, 92, 0.16);
+}
+
+.checklist-chip-muted {
+  border-color: rgba(139, 176, 198, 0.42);
+  color: rgba(200, 221, 233, 0.92);
+  background: rgba(92, 118, 133, 0.18);
+}
+
+.checklist-progress-track {
+  position: relative;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 64, 84, 0.72);
+  overflow: hidden;
+}
+
+.checklist-progress-track.compact {
+  max-width: 240px;
+}
+
+.checklist-progress-value {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, rgba(33, 223, 255, 0.95), rgba(17, 178, 226, 0.8));
+}
+
+.checklist-detail-view {
+  display: grid;
+  gap: 12px;
+}
+
+.checklist-detail-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.checklist-detail-title {
+  display: grid;
+  gap: 7px;
+}
+
+.checklist-detail-title h4 {
+  margin: 0;
+  font-size: 38px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+
+.checklist-detail-title p {
+  margin: 0;
+  font-size: 20px;
+  color: rgba(182, 242, 255, 0.92);
+}
+
+.checklist-detail-progress {
+  text-align: right;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.checklist-detail-progress strong {
+  font-size: 44px;
+  line-height: 1;
+  color: #2fe7ff;
+}
+
+.checklist-detail-progress span {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  color: rgba(167, 242, 255, 0.88);
+}
+
+.checklist-detail-summary {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  font-size: 18px;
+  color: rgba(130, 239, 255, 0.96);
+}
+
+.checklist-task-toolbar {
+  border: 1px solid rgba(55, 242, 255, 0.28);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  background: rgba(7, 17, 27, 0.68);
+}
+
+.checklist-task-input {
+  display: grid;
+  gap: 4px;
+}
+
+.checklist-task-input input {
+  width: 120px;
+  border: 1px solid rgba(55, 242, 255, 0.32);
+  border-radius: 7px;
+  background: rgba(4, 13, 22, 0.85);
+  color: #ddfbff;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.checklist-task-input span {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(204, 248, 255, 0.72);
+}
+
+.checklist-detail-table td {
+  vertical-align: top;
+}
+
+.checklist-row-complete td {
+  background: rgba(125, 192, 84, 0.78);
+  color: #072312;
+}
+
+.checklist-done-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.checklist-done-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.checklist-done-indicator {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(190, 214, 225, 0.42);
+  border-radius: 3px;
+  display: inline-grid;
+  place-items: center;
+  color: transparent;
+}
+
+.checklist-done-indicator.done {
+  border-color: rgba(58, 244, 179, 0.62);
+  background: rgba(58, 244, 179, 0.2);
+  color: #42f2b2;
 }
 
 .board-preview {
@@ -2749,6 +4378,10 @@ onMounted(() => {
   gap: 10px;
 }
 
+.field-grid.single-col {
+  grid-template-columns: 1fr;
+}
+
 .field-control {
   display: grid;
   gap: 6px;
@@ -2779,6 +4412,61 @@ onMounted(() => {
 
 .field-control textarea {
   resize: vertical;
+}
+
+.template-modal {
+  display: grid;
+  gap: 12px;
+}
+
+.template-modal-list {
+  display: grid;
+  gap: 8px;
+}
+
+.template-modal-hint {
+  margin: 0;
+  font-size: 11px;
+  color: rgba(204, 248, 255, 0.76);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.template-modal-empty {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(204, 248, 255, 0.75);
+}
+
+.template-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.template-modal :deep(.cui-combobox) {
+  width: 100%;
+}
+
+.field-control input[type="file"] {
+  padding: 6px;
+}
+
+.csv-meta {
+  margin-top: 10px;
+}
+
+.csv-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.csv-preview-note {
+  margin: 0;
+  font-size: 10px;
+  color: rgba(205, 248, 255, 0.7);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .board-lanes {
@@ -2843,6 +4531,24 @@ onMounted(() => {
   .screen-grid.two-col {
     grid-template-columns: 1fr;
   }
+
+  .checklist-overview-card {
+    grid-template-columns: 1fr;
+  }
+
+  .checklist-overview-stats {
+    justify-items: start;
+    min-width: 0;
+  }
+
+  .checklist-detail-header {
+    grid-template-columns: 1fr;
+  }
+
+  .checklist-detail-progress {
+    justify-items: start;
+    text-align: left;
+  }
 }
 
 @media (max-width: 800px) {
@@ -2862,6 +4568,25 @@ onMounted(() => {
   .registry-status {
     justify-content: center;
     flex-wrap: wrap;
+  }
+
+  .checklist-overview-meta,
+  .checklist-overview-counts,
+  .checklist-detail-summary {
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  .checklist-detail-title h4 {
+    font-size: 24px;
+  }
+
+  .checklist-detail-title p {
+    font-size: 14px;
+  }
+
+  .checklist-detail-progress strong {
+    font-size: 30px;
   }
 }
 </style>

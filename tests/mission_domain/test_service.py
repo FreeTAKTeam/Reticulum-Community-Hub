@@ -571,6 +571,12 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
     with pytest.raises(KeyError):
         service.publish_checklist_feed("missing-checklist", "feed-1", source_identity="peer-a")
 
+    deleted_checklist = service.delete_checklist(offline["uid"])
+    assert deleted_checklist["uid"] == offline["uid"]
+
+    with pytest.raises(KeyError):
+        service.delete_checklist(offline["uid"])
+
     deleted_row = service.delete_checklist_task_row(online["uid"], task_uid)
     assert deleted_row["tasks"] == []
 
@@ -583,7 +589,7 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
     with pytest.raises(ValueError):
         service.import_checklist_csv({"csv_base64": "abc"})
 
-    encoded_csv = base64.b64encode(b"10,Task 1\n20,Task 2\nX,Task 3\n").decode("ascii")
+    encoded_csv = base64.b64encode(b"Task,Description\nTask 1,Inspect ridge\nTask 2,Secure path\nTask 3,Report status\n").decode("ascii")
     imported = service.import_checklist_csv(
         {
             "csv_filename": "ops.csv",
@@ -594,6 +600,25 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
     assert imported["origin_type"] == "CSV_IMPORT"
     assert imported["name"] == "ops"
     assert len(imported["tasks"]) == 3
+    assert any(column["column_name"] == "Task" for column in imported["columns"])
+    assert any(column["column_name"] == "Description" for column in imported["columns"])
+    task_column_uid = next(
+        column["column_uid"]
+        for column in imported["columns"]
+        if column["column_name"] == "Task"
+    )
+    description_column_uid = next(
+        column["column_uid"]
+        for column in imported["columns"]
+        if column["column_name"] == "Description"
+    )
+    first_task_cells = {
+        cell["column_uid"]: cell["value"]
+        for cell in imported["tasks"][0]["cells"]
+    }
+    assert first_task_cells[task_column_uid] == "Task 1"
+    assert first_task_cells[description_column_uid] == "Inspect ridge"
+    assert imported["tasks"][0]["legacy_value"] == "Task 1"
 
 
 def test_domain_history_retention_prunes_old_rows(tmp_path) -> None:

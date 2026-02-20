@@ -813,6 +813,9 @@ def test_checklist_routes_matrix_and_errors(tmp_path: Path) -> None:
     get_checklist = client.get(f"/checklists/{checklist_uid}", headers=headers)
     assert get_checklist.status_code == 200
 
+    delete_missing_checklist = client.delete("/checklists/missing", headers=headers)
+    assert delete_missing_checklist.status_code == 404
+
     upload_missing = client.post("/checklists/missing/upload", json={}, headers=headers)
     assert upload_missing.status_code == 404
 
@@ -904,13 +907,20 @@ def test_checklist_routes_matrix_and_errors(tmp_path: Path) -> None:
     )
     assert import_missing_csv.status_code == 400
 
-    encoded_csv = base64.b64encode(b"10,Task 1\n20,Task 2\n").decode("ascii")
+    encoded_csv = base64.b64encode(b"Task,Description\nTask 1,Inspect\nTask 2,Secure\n").decode("ascii")
     import_csv = client.post(
         "/checklists/import/csv",
         json={"csv_filename": "import.csv", "csv_base64": encoded_csv},
         headers=headers,
     )
     assert import_csv.status_code == 200
+    import_payload = import_csv.json()
+    assert len(import_payload["tasks"]) == 2
+    assert any(column["column_name"] == "Task" for column in import_payload["columns"])
+    assert import_payload["tasks"][0]["legacy_value"] == "Task 1"
+
+    delete_checklist = client.delete(f"/checklists/{offline_uid}", headers=headers)
+    assert delete_checklist.status_code == 200
 
     delete_clone = client.delete(f"/checklists/templates/{clone_uid}", headers=headers)
     assert delete_clone.status_code == 200

@@ -135,6 +135,13 @@ def register_checklist_routes(
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
+    @app.delete("/checklists/{checklist_id}", dependencies=[Depends(require_protected)])
+    def delete_checklist(checklist_id: str) -> dict:
+        try:
+            return domain.delete_checklist(checklist_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
     @app.post("/checklists/{checklist_id}/upload", dependencies=[Depends(require_protected)])
     def upload_checklist(checklist_id: str, payload: dict = Body(default_factory=dict)) -> dict:
         try:
