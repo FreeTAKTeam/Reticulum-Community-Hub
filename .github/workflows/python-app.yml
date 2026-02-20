@@ -30,7 +30,7 @@ jobs:
         pip install ruff pytest pytest-cov sqlalchemy
     - name: Lint with Ruff
       run: |
-        ruff check .
+        ruff check . --fix
     - name: Test with pytest
       run: |
         pytest
