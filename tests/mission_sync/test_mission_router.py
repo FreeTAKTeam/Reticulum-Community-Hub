@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timezone
 
-import pytest
-
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
