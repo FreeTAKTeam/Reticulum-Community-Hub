@@ -231,138 +231,142 @@ class MissionSyncRouter:
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
         command_type = envelope.command_type
         args = dict(envelope.args or {})
-        if command_type == "mission.join":
-            identity = str(args.get("identity") or source_identity)
-            joined = self._api.join(identity)
-            payload = {"identity": identity, "joined": bool(joined)}
-            return payload, "mission.joined", payload
-        if command_type == "mission.leave":
-            identity = str(args.get("identity") or source_identity)
-            left = self._api.leave(identity)
-            payload = {"identity": identity, "left": bool(left)}
-            return payload, "mission.left", payload
-        if command_type == "mission.events.list":
-            events = self._event_log.list_events(limit=50) if self._event_log else []
-            payload = {"events": events}
-            return payload, "mission.events.listed", payload
-        if command_type == "mission.message.send":
-            content = str(args.get("content") or "").strip()
-            if not content:
-                raise MissionCommandError("invalid_payload", "content is required")
-            topic_id = self._value_as_str(args.get("topic_id"))
-            destination = self._value_as_str(args.get("destination"))
-            sent = self._send_message(content, topic_id, destination)
-            payload = {
-                "sent": bool(sent),
-                "content": content,
-                "topic_id": topic_id,
-                "destination": destination,
-            }
-            return payload, "mission.message.sent", payload
-        if command_type == "topic.list":
-            topics = [topic.to_dict() for topic in self._api.list_topics()]
-            payload = {"topics": topics}
-            return payload, "mission.topic.listed", payload
-        if command_type == "topic.create":
-            topic = self._build_topic_from_args(args)
-            created = self._api.create_topic(topic)
-            payload = created.to_dict()
-            return payload, "mission.topic.created", payload
-        if command_type == "topic.patch":
-            topic_id = self._require_topic_id(args)
-            topic = self._api.patch_topic(
-                topic_id,
-                topic_name=args.get("topic_name"),
-                topic_path=args.get("topic_path"),
-                topic_description=args.get("topic_description"),
-            )
-            payload = topic.to_dict()
-            return payload, "mission.topic.updated", payload
-        if command_type == "topic.delete":
-            topic_id = self._require_topic_id(args)
-            topic = self._api.delete_topic(topic_id)
-            payload = topic.to_dict()
-            return payload, "mission.topic.deleted", payload
-        if command_type == "topic.subscribe":
-            topic_id = self._require_topic_id(args)
-            destination = self._value_as_str(args.get("destination")) or source_identity
-            subscriber = self._api.subscribe_topic(
-                topic_id,
-                destination,
-                reject_tests=self._value_as_int(args.get("reject_tests")),
-                metadata=args.get("metadata") if isinstance(args.get("metadata"), dict) else None,
-            )
-            payload = subscriber.to_dict()
-            return payload, "mission.topic.subscribed", payload
-        if command_type == "mission.marker.list":
-            service = self._require_marker_service()
-            markers = [marker.to_dict() for marker in service.list_markers()]
-            payload = {"markers": markers}
-            return payload, "mission.marker.listed", payload
-        if command_type == "mission.marker.create":
-            service = self._require_marker_service()
-            lat = self._required_float(args.get("lat"), field_name="lat")
-            lon = self._required_float(args.get("lon"), field_name="lon")
-            marker = service.create_marker(
-                name=self._value_as_str(args.get("name")),
-                marker_type=self._value_as_str(args.get("marker_type")) or "marker",
-                symbol=self._value_as_str(args.get("symbol")) or "marker",
-                category=self._value_as_str(args.get("category")) or "marker",
-                lat=lat,
-                lon=lon,
-                origin_rch=self._hub_identity_resolver() or "",
-                notes=self._value_as_str(args.get("notes")),
-                ttl_seconds=self._value_as_int(args.get("ttl_seconds")),
-            )
-            payload = marker.to_dict()
-            return payload, "mission.marker.created", payload
-        if command_type == "mission.marker.position.patch":
-            service = self._require_marker_service()
-            marker_hash = self._value_as_str(args.get("object_destination_hash"))
-            if not marker_hash:
-                raise MissionCommandError(
-                    "invalid_payload", "object_destination_hash is required"
+        try:
+            if command_type == "mission.join":
+                identity = str(args.get("identity") or source_identity)
+                joined = self._api.join(identity)
+                payload = {"identity": identity, "joined": bool(joined)}
+                return payload, "mission.joined", payload
+            if command_type == "mission.leave":
+                identity = str(args.get("identity") or source_identity)
+                left = self._api.leave(identity)
+                payload = {"identity": identity, "left": bool(left)}
+                return payload, "mission.left", payload
+            if command_type == "mission.events.list":
+                events = self._event_log.list_events(limit=50) if self._event_log else []
+                payload = {"events": events}
+                return payload, "mission.events.listed", payload
+            if command_type == "mission.message.send":
+                content = str(args.get("content") or "").strip()
+                if not content:
+                    raise MissionCommandError("invalid_payload", "content is required")
+                topic_id = self._value_as_str(args.get("topic_id"))
+                destination = self._value_as_str(args.get("destination"))
+                sent = self._send_message(content, topic_id, destination)
+                payload = {
+                    "sent": bool(sent),
+                    "content": content,
+                    "topic_id": topic_id,
+                    "destination": destination,
+                }
+                return payload, "mission.message.sent", payload
+            if command_type == "topic.list":
+                topics = [topic.to_dict() for topic in self._api.list_topics()]
+                payload = {"topics": topics}
+                return payload, "mission.topic.listed", payload
+            if command_type == "topic.create":
+                topic = self._build_topic_from_args(args)
+                created = self._api.create_topic(topic)
+                payload = created.to_dict()
+                return payload, "mission.topic.created", payload
+            if command_type == "topic.patch":
+                topic_id = self._require_topic_id(args)
+                topic = self._api.patch_topic(
+                    topic_id,
+                    topic_name=args.get("topic_name"),
+                    topic_path=args.get("topic_path"),
+                    topic_description=args.get("topic_description"),
                 )
-            lat = self._required_float(args.get("lat"), field_name="lat")
-            lon = self._required_float(args.get("lon"), field_name="lon")
-            updated = service.update_marker_position(marker_hash, lat=lat, lon=lon)
-            payload = updated.marker.to_dict()
-            return payload, "mission.marker.position.updated", payload
-        if command_type == "mission.zone.list":
-            service = self._require_zone_service()
-            zones = [zone.to_dict() for zone in service.list_zones()]
-            payload = {"zones": zones}
-            return payload, "mission.zone.listed", payload
-        if command_type == "mission.zone.create":
-            service = self._require_zone_service()
-            name = self._value_as_str(args.get("name")) or "Zone"
-            points = self._coerce_zone_points(args.get("points"))
-            zone = service.create_zone(name=name, points=points)
-            payload = zone.to_dict()
-            return payload, "mission.zone.created", payload
-        if command_type == "mission.zone.patch":
-            service = self._require_zone_service()
-            zone_id = self._value_as_str(args.get("zone_id"))
-            if not zone_id:
-                raise MissionCommandError("invalid_payload", "zone_id is required")
-            points = None
-            if "points" in args:
+                payload = topic.to_dict()
+                return payload, "mission.topic.updated", payload
+            if command_type == "topic.delete":
+                topic_id = self._require_topic_id(args)
+                topic = self._api.delete_topic(topic_id)
+                payload = topic.to_dict()
+                return payload, "mission.topic.deleted", payload
+            if command_type == "topic.subscribe":
+                topic_id = self._require_topic_id(args)
+                destination = self._value_as_str(args.get("destination")) or source_identity
+                subscriber = self._api.subscribe_topic(
+                    topic_id,
+                    destination,
+                    reject_tests=self._value_as_int(args.get("reject_tests")),
+                    metadata=args.get("metadata") if isinstance(args.get("metadata"), dict) else None,
+                )
+                payload = subscriber.to_dict()
+                return payload, "mission.topic.subscribed", payload
+            if command_type == "mission.marker.list":
+                service = self._require_marker_service()
+                markers = [marker.to_dict() for marker in service.list_markers()]
+                payload = {"markers": markers}
+                return payload, "mission.marker.listed", payload
+            if command_type == "mission.marker.create":
+                service = self._require_marker_service()
+                lat = self._required_float(args.get("lat"), field_name="lat")
+                lon = self._required_float(args.get("lon"), field_name="lon")
+                marker = service.create_marker(
+                    name=self._value_as_str(args.get("name")),
+                    marker_type=self._value_as_str(args.get("marker_type")) or "marker",
+                    symbol=self._value_as_str(args.get("symbol")) or "marker",
+                    category=self._value_as_str(args.get("category")) or "marker",
+                    lat=lat,
+                    lon=lon,
+                    origin_rch=self._hub_identity_resolver() or "",
+                    notes=self._value_as_str(args.get("notes")),
+                    ttl_seconds=self._value_as_int(args.get("ttl_seconds")),
+                )
+                payload = marker.to_dict()
+                return payload, "mission.marker.created", payload
+            if command_type == "mission.marker.position.patch":
+                service = self._require_marker_service()
+                marker_hash = self._value_as_str(args.get("object_destination_hash"))
+                if not marker_hash:
+                    raise MissionCommandError(
+                        "invalid_payload", "object_destination_hash is required"
+                    )
+                lat = self._required_float(args.get("lat"), field_name="lat")
+                lon = self._required_float(args.get("lon"), field_name="lon")
+                updated = service.update_marker_position(marker_hash, lat=lat, lon=lon)
+                payload = updated.marker.to_dict()
+                return payload, "mission.marker.position.updated", payload
+            if command_type == "mission.zone.list":
+                service = self._require_zone_service()
+                zones = [zone.to_dict() for zone in service.list_zones()]
+                payload = {"zones": zones}
+                return payload, "mission.zone.listed", payload
+            if command_type == "mission.zone.create":
+                service = self._require_zone_service()
+                name = self._value_as_str(args.get("name")) or "Zone"
                 points = self._coerce_zone_points(args.get("points"))
-            result = service.update_zone(
-                zone_id,
-                name=self._value_as_str(args.get("name")),
-                points=points,
-            )
-            payload = result.zone.to_dict()
-            return payload, "mission.zone.updated", payload
-        if command_type == "mission.zone.delete":
-            service = self._require_zone_service()
-            zone_id = self._value_as_str(args.get("zone_id"))
-            if not zone_id:
-                raise MissionCommandError("invalid_payload", "zone_id is required")
-            zone = service.delete_zone(zone_id)
-            payload = zone.to_dict()
-            return payload, "mission.zone.deleted", payload
+                zone = service.create_zone(name=name, points=points)
+                payload = zone.to_dict()
+                return payload, "mission.zone.created", payload
+            if command_type == "mission.zone.patch":
+                service = self._require_zone_service()
+                zone_id = self._value_as_str(args.get("zone_id"))
+                if not zone_id:
+                    raise MissionCommandError("invalid_payload", "zone_id is required")
+                points = None
+                if "points" in args:
+                    points = self._coerce_zone_points(args.get("points"))
+                result = service.update_zone(
+                    zone_id,
+                    name=self._value_as_str(args.get("name")),
+                    points=points,
+                )
+                payload = result.zone.to_dict()
+                return payload, "mission.zone.updated", payload
+            if command_type == "mission.zone.delete":
+                service = self._require_zone_service()
+                zone_id = self._value_as_str(args.get("zone_id"))
+                if not zone_id:
+                    raise MissionCommandError("invalid_payload", "zone_id is required")
+                zone = service.delete_zone(zone_id)
+                payload = zone.to_dict()
+                return payload, "mission.zone.deleted", payload
+        except (KeyError, ValueError) as exc:
+            raise MissionCommandError("invalid_payload", str(exc)) from exc
+
         raise MissionCommandError(
             "unsupported_operation",
             f"Unsupported mission operation '{command_type}'",

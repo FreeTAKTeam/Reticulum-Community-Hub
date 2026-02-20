@@ -426,6 +426,18 @@ def test_mission_command_error_paths(tmp_path) -> None:
     )
     assert zone_patch_invalid[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
+    zone_patch_unknown = router_with_zone.handle_commands(
+        [
+            _command(
+                "mission.zone.patch",
+                {"zone_id": "missing-zone", "name": "x"},
+                command_id="cmd-zone-patch-unknown",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert zone_patch_unknown[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+
     zone_delete_invalid = router_with_zone.handle_commands(
         [_command("mission.zone.delete", {}, command_id="cmd-zone-delete-invalid")],
         source_identity="peer-a",

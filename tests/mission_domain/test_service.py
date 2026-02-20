@@ -191,6 +191,14 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     )
     assert updated_member_skill["uid"] == member_skill["uid"]
     assert updated_member_skill["level"] == 4
+    zeroed_member_skill = service.upsert_team_member_skill(
+        {
+            "team_member_rns_identity": "peer-a",
+            "skill_uid": "skill-1",
+            "level": 0,
+        }
+    )
+    assert zeroed_member_skill["level"] == 0
     assert (
         service.list_team_member_skills(team_member_rns_identity="peer-a")[0]["uid"]
         == member_skill["uid"]
@@ -253,6 +261,14 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
         service.list_task_skill_requirements(task_uid=task_uid)[0]["uid"]
         == requirement["uid"]
     )
+    zeroed_requirement = service.upsert_task_skill_requirement(
+        {
+            "task_uid": task_uid,
+            "skill_uid": "skill-1",
+            "minimum_level": 0,
+        }
+    )
+    assert zeroed_requirement["minimum_level"] == 0
 
     with pytest.raises(ValueError):
         service.upsert_assignment({"mission_uid": "mission-1"})

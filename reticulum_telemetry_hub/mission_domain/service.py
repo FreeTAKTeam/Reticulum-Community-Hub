@@ -556,7 +556,8 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 session.add(row)
             row.team_member_rns_identity = member
             row.skill_uid = skill_uid
-            row.level = int(payload.get("level") or row.level or 0)
+            level = payload.get("level")
+            row.level = int(level) if level is not None else int(row.level or 0)
             row.validated_by = payload.get("validated_by") or row.validated_by
             row.validated_at = _as_datetime(payload.get("validated_at"), default=row.validated_at)
             row.expires_at = _as_datetime(payload.get("expires_at"), default=row.expires_at)
@@ -606,7 +607,12 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 session.add(row)
             row.task_uid = task_uid
             row.skill_uid = skill_uid
-            row.minimum_level = int(payload.get("minimum_level") or row.minimum_level or 0)
+            minimum_level = payload.get("minimum_level")
+            row.minimum_level = (
+                int(minimum_level)
+                if minimum_level is not None
+                else int(row.minimum_level or 0)
+            )
             row.is_mandatory = bool(payload.get("is_mandatory", row.is_mandatory))
             session.flush()
             data = self._serialize_task_skill_requirement(row)
