@@ -24,6 +24,7 @@ const connectionStore = useConnectionStore();
 const title = computed(() => {
   const mapping: Record<string, string> = {
     "/": "Dashboard",
+    "/missions": "Missions",
     "/webmap": "WebMap",
     "/topics": "Topics",
     "/files": "Files",
