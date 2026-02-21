@@ -473,6 +473,69 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     )
     assert mission_change.status_code == 200
 
+    marker = client.post(
+        "/api/markers",
+        json={
+            "name": "Log Marker",
+            "type": "marker",
+            "symbol": "marker",
+            "category": "test",
+            "lat": 35.0,
+            "lon": -120.0,
+        },
+        headers=headers,
+    )
+    assert marker.status_code == 201
+    marker_ref = marker.json()["object_destination_hash"]
+
+    log_missing_mission = client.post(
+        "/api/r3akt/log-entries",
+        json={"entry_uid": "log-missing-mission", "content": "No mission"},
+        headers=headers,
+    )
+    assert log_missing_mission.status_code == 400
+
+    log_missing_marker = client.post(
+        "/api/r3akt/log-entries",
+        json={
+            "entry_uid": "log-missing-marker",
+            "mission_uid": mission_uid,
+            "content": "Bad marker ref",
+            "content_hashes": ["missing-marker"],
+        },
+        headers=headers,
+    )
+    assert log_missing_marker.status_code == 400
+
+    log_entry = client.post(
+        "/api/r3akt/log-entries",
+        json={
+            "entry_uid": "log-1",
+            "mission_uid": mission_uid,
+            "content": "Marker observed",
+            "content_hashes": [marker_ref],
+            "keywords": ["marker", "observation"],
+        },
+        headers=headers,
+    )
+    assert log_entry.status_code == 200
+
+    logs_by_mission = client.get(
+        "/api/r3akt/log-entries",
+        params={"mission_uid": mission_uid},
+        headers=headers,
+    )
+    assert logs_by_mission.status_code == 200
+    assert logs_by_mission.json()[0]["entry_uid"] == "log-1"
+
+    logs_by_marker = client.get(
+        "/api/r3akt/log-entries",
+        params={"marker_ref": marker_ref},
+        headers=headers,
+    )
+    assert logs_by_marker.status_code == 200
+    assert logs_by_marker.json()[0]["entry_uid"] == "log-1"
+
     team_invalid = client.post(
         "/api/r3akt/teams",
         json={"uid": "team-invalid", "mission_uid": "missing-mission", "team_name": "Ops"},
@@ -513,6 +576,19 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         headers=headers,
     )
     assert asset_invalid.status_code == 400
+
+    asset_invalid_status = client.post(
+        "/api/r3akt/assets",
+        json={
+            "asset_uid": "asset-invalid-status",
+            "team_member_uid": "member-1",
+            "name": "Radio",
+            "asset_type": "COMM",
+            "status": "BROKEN",
+        },
+        headers=headers,
+    )
+    assert asset_invalid_status.status_code == 400
 
     asset = client.post(
         "/api/r3akt/assets",
@@ -668,6 +744,7 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
 
     assert client.get("/api/r3akt/missions", headers=headers).status_code == 200
     assert client.get("/api/r3akt/mission-changes", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/log-entries", headers=headers).status_code == 200
     assert client.get("/api/r3akt/teams", headers=headers).status_code == 200
     assert client.get("/api/r3akt/team-members", headers=headers).status_code == 200
     assert client.get("/api/r3akt/assets", headers=headers).status_code == 200

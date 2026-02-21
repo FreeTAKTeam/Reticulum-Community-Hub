@@ -112,6 +112,20 @@ def register_r3akt_routes(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    @app.get("/api/r3akt/log-entries", dependencies=[Depends(require_protected)])
+    def list_log_entries(
+        mission_uid: str | None = Query(default=None),
+        marker_ref: str | None = Query(default=None),
+    ) -> list[dict]:
+        return domain.list_log_entries(mission_uid=mission_uid, marker_ref=marker_ref)
+
+    @app.post("/api/r3akt/log-entries", dependencies=[Depends(require_protected)])
+    def upsert_log_entry(payload: dict = Body(default_factory=dict)) -> dict:
+        try:
+            return domain.upsert_log_entry(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     @app.get("/api/r3akt/teams", dependencies=[Depends(require_protected)])
     def list_teams(mission_uid: str | None = Query(default=None)) -> list[dict]:
         return domain.list_teams(mission_uid=mission_uid)

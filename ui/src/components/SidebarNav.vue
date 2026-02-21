@@ -101,6 +101,7 @@ const { isCollapsed, isPinned } = storeToRefs(navStore);
 const navItems = [
   { label: "Home", to: "/", icon: "home" },
   { label: "Missions", to: "/missions", icon: "missions" },
+  { label: "Checklists", to: "/checklists", icon: "checklists" },
   { label: "WebMap", to: "/webmap", icon: "map" },
   { label: "Topics", to: "/topics", icon: "topics" },
   { label: "Files", to: "/files", icon: "files" },
@@ -118,6 +119,13 @@ const navIcons: Record<string, string[]> = {
     "M9 12h8",
     "M9 16h5",
     "M4 7h2M4 12h2M4 17h2"
+  ],
+  checklists: [
+    "M8 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
+    "M9 9l1.5 1.5L13 8",
+    "M9 14l1.5 1.5L13 13",
+    "M15 9h3",
+    "M15 14h3"
   ],
   map: ["M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2z", "M9 4v14", "M15 6v14"],
   topics: ["M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M5 12a7 7 0 0 1 14 0", "M8 12a4 4 0 0 1 8 0"],

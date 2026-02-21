@@ -2,7 +2,7 @@
   <div class="missions-workspace">
     <div class="registry-shell">
       <header class="registry-top">
-        <div class="registry-title">Mission Workspace</div>
+        <div class="registry-title">{{ isChecklistPrimaryTab ? "Checklist" : "Mission Workspace" }}</div>
         <div class="registry-status">
           <OnlineHelpLauncher />
           <span class="cui-status-pill" :class="connectionClass">{{ connectionLabel }}</span>
@@ -11,7 +11,7 @@
         </div>
       </header>
 
-      <section class="mission-kpis">
+      <section v-if="!isChecklistPrimaryTab" class="mission-kpis">
         <article class="kpi-card">
           <span class="kpi-label">Total Missions</span>
           <strong class="kpi-value">{{ missions.length }}</strong>
@@ -30,8 +30,8 @@
         </article>
       </section>
 
-      <div class="registry-grid">
-        <aside class="panel registry-tree">
+      <div class="registry-grid" :class="{ 'registry-grid-full': !showMissionDirectoryPanel }">
+        <aside v-if="showMissionDirectoryPanel" class="panel registry-tree">
           <div class="panel-header">
             <div>
               <div class="panel-title">Mission Directory</div>
@@ -57,10 +57,10 @@
         </aside>
 
         <section class="panel registry-main">
-          <div class="panel-header">
+          <div v-if="!isChecklistPrimaryTab" class="panel-header">
             <div>
-              <div class="panel-title">{{ selectedMission?.mission_name || "Mission Details" }}</div>
-              <div class="panel-subtitle">{{ selectedMission?.topic || "Select a mission" }}</div>
+              <div class="panel-title">{{ workspacePanelTitle }}</div>
+              <div class="panel-subtitle">{{ workspacePanelSubtitle }}</div>
             </div>
             <div class="panel-tabs">
               <button
@@ -76,7 +76,7 @@
             </div>
           </div>
 
-          <div class="screen-tabs">
+          <div v-if="activeScreens.length > 1" class="screen-tabs">
             <button
               v-for="screen in activeScreens"
               :key="screen.id"
@@ -90,15 +90,25 @@
           </div>
 
           <article class="screen-shell">
-            <header class="screen-header">
+            <header v-if="showScreenHeader" class="screen-header">
               <h3>{{ currentScreen.title }}</h3>
               <p>{{ currentScreen.subtitle }}</p>
               <div class="screen-actions">
+                <BaseButton
+                  v-if="secondaryScreen === 'checklistImportCsv'"
+                  variant="secondary"
+                  size="sm"
+                  icon-left="chevron-left"
+                  @click="navigateToChecklistTemplateList"
+                >
+                  Template List
+                </BaseButton>
                 <BaseButton
                   v-for="action in currentScreen.actions"
                   :key="`${secondaryScreen}-${action}`"
                   variant="secondary"
                   size="sm"
+                  :icon-left="iconForAction(action)"
                   @click="previewAction(action)"
                 >
                   {{ action }}
@@ -259,7 +269,19 @@
                 <div class="field-grid single-col">
                   <label class="field-control full">
                     <span>Select CSV File</span>
-                    <input type="file" accept=".csv,text/csv" @change="handleCsvUpload" />
+                    <input
+                      ref="csvUploadInputRef"
+                      class="csv-upload-native"
+                      type="file"
+                      accept=".csv,text/csv"
+                      @change="handleCsvUpload"
+                    />
+                    <div class="csv-upload-picker">
+                      <BaseButton size="sm" variant="secondary" icon-left="upload" @click="openCsvUploadPicker">
+                        Choose File
+                      </BaseButton>
+                      <span class="csv-upload-filename">{{ csvImportFilename || "No file chosen" }}</span>
+                    </div>
                   </label>
                 </div>
                 <ul class="stack-list csv-meta">
@@ -319,161 +341,460 @@
 
             <div v-else-if="showChecklistArea" class="screen-grid">
               <article class="stage-card checklist-workspace">
+                <div class="checklist-manager-controls">
+                  <label class="field-control full checklist-manager-search">
+                    <input
+                      v-model="checklistSearchQuery"
+                      type="search"
+                      placeholder="Search checklists and templates..."
+                    />
+                  </label>
+                  <div class="checklist-manager-actions">
+                    <BaseButton size="sm" icon-left="plus" @click="openChecklistCreationModal">New</BaseButton>
+                    <BaseButton size="sm" variant="secondary" icon-left="filter" @click="showChecklistFilterNotice">Filter</BaseButton>
+                    <BaseButton size="sm" variant="secondary" icon-left="edit" @click="openTemplateBuilderFromChecklist">
+                      Template Builder
+                    </BaseButton>
+                    <BaseButton size="sm" variant="secondary" icon-left="upload" @click="openChecklistImportFromChecklist">
+                      Import from CSV
+                    </BaseButton>
+                  </div>
+                </div>
+
                 <div class="checklist-overview-tabs">
-                  <button type="button" class="checklist-overview-tab active" @click="navigateToChecklistOverview">
-                    Active Checklists ({{ missionChecklists.length }})
-                  </button>
-                  <button type="button" class="checklist-overview-tab" @click="navigateToTemplateLibrary">
-                    Templates ({{ checklistTemplateOptions.length }})
-                  </button>
-                </div>
-
-                <div v-if="checklistDetailRecord" class="checklist-detail-view">
-                  <div class="checklist-detail-header">
-                    <BaseButton variant="ghost" size="sm" @click="closeChecklistDetailView">Back</BaseButton>
-                    <div class="checklist-detail-title">
-                      <h4>{{ checklistDetailRecord.name }}</h4>
-                      <p>{{ checklistDescriptionLabel(checklistDetailRecord.description) }}</p>
-                      <div class="checklist-chip-row">
-                        <span class="checklist-chip" :class="modeChipClass(checklistDetailRecord.mode)">
-                          {{ checklistDetailRecord.mode }}
-                        </span>
-                        <span class="checklist-chip" :class="syncChipClass(checklistDetailRecord.sync_state)">
-                          {{ checklistDetailRecord.sync_state }}
-                        </span>
-                        <span class="checklist-chip" :class="statusChipClass(checklistDetailRecord.checklist_status)">
-                          {{ checklistDetailRecord.checklist_status }}
-                        </span>
-                        <span class="checklist-chip checklist-chip-muted">
-                          {{ checklistOriginLabel(checklistDetailRecord.origin_type) }}
-                        </span>
-                      </div>
-                      <BaseButton
-                        v-if="canCreateFromDetailTemplate"
-                        size="sm"
-                        variant="secondary"
-                        @click="createChecklistFromDetailTemplate"
-                      >
-                        Create Checklist from Template
-                      </BaseButton>
-                      <BaseButton size="sm" variant="danger" :disabled="checklistDeleteBusy" @click="deleteChecklistFromDetail">
-                        Remove Checklist
-                      </BaseButton>
-                    </div>
-                    <div class="checklist-detail-progress">
-                      <strong>{{ Math.round(checklistDetailRecord.progress) }}%</strong>
-                      <span>Complete</span>
-                    </div>
-                  </div>
-
-                  <div class="checklist-progress-track">
-                    <span class="checklist-progress-value" :style="{ width: progressWidth(checklistDetailRecord.progress) }"></span>
-                  </div>
-
-                  <div class="checklist-detail-summary">
-                    <span>{{ checklistDetailRecord.complete_count }} Complete</span>
-                    <span>{{ checklistDetailRecord.pending_count }} Pending</span>
-                    <span>{{ checklistDetailRecord.late_count }} Late</span>
-                  </div>
-
-                  <div class="checklist-task-toolbar">
-                    <label class="checklist-task-input">
-                      <input v-model="checklistTaskDueDraft" type="number" step="1" min="-1440" />
-                      <span>Due minutes</span>
-                    </label>
-                    <BaseButton size="sm" @click="addChecklistTaskFromDetail">Add Task</BaseButton>
-                  </div>
-
-                  <table class="mini-table checklist-detail-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Done</th>
-                        <th v-for="column in checklistDetailColumns" :key="`detail-header-${column.uid}`">
-                          {{ column.name }}
-                        </th>
-                        <th>Due Relative DTG</th>
-                        <th>Status</th>
-                        <th>Complete DTG</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr
-                        v-for="row in checklistDetailRows"
-                        :key="row.id"
-                        :class="{ 'checklist-row-complete': row.done }"
-                      >
-                        <td>{{ row.number }}</td>
-                        <td>
-                          <button
-                            type="button"
-                            class="checklist-done-button"
-                            :disabled="!row.task_uid || checklistTaskStatusBusyByTaskUid[row.task_uid]"
-                            @click="toggleChecklistTaskDone(row)"
-                          >
-                            <span class="checklist-done-indicator" :class="{ done: row.done }">{{ row.done ? "X" : "" }}</span>
-                          </button>
-                        </td>
-                        <td v-for="column in checklistDetailColumns" :key="`detail-cell-${row.id}-${column.uid}`">
-                          {{ row.column_values[column.uid] || "-" }}
-                        </td>
-                        <td>{{ row.due }}</td>
-                        <td>
-                          <span class="checklist-chip" :class="statusChipClass(row.status)">{{ row.status }}</span>
-                        </td>
-                        <td>{{ row.completeDtg }}</td>
-                      </tr>
-                      <tr v-if="!checklistDetailRows.length">
-                        <td :colspan="checklistDetailColumns.length + 5">No tasks yet.</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <div v-else class="checklist-overview-list">
                   <button
-                    v-for="checklist in missionChecklistsSorted"
-                    :key="checklist.uid"
-                    class="checklist-overview-card"
                     type="button"
-                    @click="openChecklistDetailView(checklist.uid)"
+                    class="checklist-overview-tab"
+                    :class="{ active: checklistWorkspaceView === 'active' }"
+                    @click="setChecklistWorkspaceView('active')"
                   >
-                    <div class="checklist-overview-content">
-                      <div class="checklist-overview-head">
-                        <h4>{{ checklist.name }}</h4>
+                    Active Checklists ({{ checklistActiveCount }})
+                  </button>
+                  <button
+                    type="button"
+                    class="checklist-overview-tab"
+                    :class="{ active: checklistWorkspaceView === 'templates' }"
+                    @click="setChecklistWorkspaceView('templates')"
+                  >
+                    Templates ({{ checklistTemplateCount }})
+                  </button>
+                </div>
+
+                <div v-if="checklistWorkspaceView === 'active'">
+                  <div v-if="checklistDetailRecord" class="checklist-detail-view">
+                    <div class="checklist-detail-header">
+                      <BaseButton variant="ghost" size="sm" icon-left="chevron-left" @click="closeChecklistDetailView">Back</BaseButton>
+                      <div class="checklist-detail-title">
+                        <h4>{{ checklistDetailRecord.name }}</h4>
+                        <p>{{ checklistDescriptionLabel(checklistDetailRecord.description) }}</p>
                         <div class="checklist-chip-row">
-                          <span class="checklist-chip" :class="modeChipClass(checklist.mode)">{{ checklist.mode }}</span>
-                          <span class="checklist-chip" :class="syncChipClass(checklist.sync_state)">{{ checklist.sync_state }}</span>
-                          <span class="checklist-chip" :class="statusChipClass(checklist.checklist_status)">
-                            {{ checklist.checklist_status }}
+                          <span class="checklist-chip" :class="modeChipClass(checklistDetailRecord.mode)">
+                            {{ checklistDetailRecord.mode }}
+                          </span>
+                          <span class="checklist-chip" :class="syncChipClass(checklistDetailRecord.sync_state)">
+                            {{ checklistDetailRecord.sync_state }}
+                          </span>
+                          <span class="checklist-chip" :class="statusChipClass(checklistDetailRecord.checklist_status)">
+                            {{ checklistDetailRecord.checklist_status }}
                           </span>
                           <span class="checklist-chip checklist-chip-muted">
-                            {{ checklistOriginLabel(checklist.origin_type) }}
+                            {{ checklistOriginLabel(checklistDetailRecord.origin_type) }}
+                          </span>
+                          <span class="checklist-chip checklist-chip-muted">
+                            {{ checklistMissionLabel(checklistDetailRecord.mission_uid) }}
                           </span>
                         </div>
+                        <div class="checklist-detail-actions">
+                          <BaseButton
+                            v-if="canCreateFromDetailTemplate"
+                            size="sm"
+                            variant="secondary"
+                            icon-left="plus"
+                            @click="createChecklistFromDetailTemplate"
+                          >
+                            Create from Template
+                          </BaseButton>
+                          <BaseButton
+                            size="sm"
+                            variant="danger"
+                            icon-left="trash"
+                            :disabled="checklistDeleteBusy"
+                            @click="deleteChecklistFromDetail"
+                          >
+                            Delete
+                          </BaseButton>
+                        </div>
                       </div>
-                      <p>{{ checklistDescriptionLabel(checklist.description) }}</p>
-                      <div class="checklist-overview-meta">
-                        <span>{{ formatChecklistDateTime(checklist.created_at) }}</span>
-                        <span>Tasks: {{ checklist.tasks.length }}</span>
-                        <span>Progress: {{ Math.round(checklist.progress) }}%</span>
+                      <div class="checklist-detail-progress">
+                        <strong>{{ Math.round(checklistDetailRecord.progress) }}%</strong>
+                        <span>Complete</span>
                       </div>
                     </div>
-                    <div class="checklist-overview-stats">
-                      <div class="checklist-overview-counts">
-                        <span>{{ checklist.complete_count }} Complete</span>
-                        <span>{{ checklist.pending_count }} Pending</span>
-                        <span>{{ checklist.late_count }} Late</span>
-                      </div>
-                      <div class="checklist-progress-track compact">
-                        <span class="checklist-progress-value" :style="{ width: progressWidth(checklist.progress) }"></span>
-                      </div>
-                      <span class="checklist-overview-arrow" aria-hidden="true">›</span>
+
+                    <div class="checklist-progress-track">
+                      <span class="checklist-progress-value" :style="{ width: progressWidth(checklistDetailRecord.progress) }"></span>
                     </div>
-                  </button>
-                  <p v-if="!missionChecklistsSorted.length" class="template-modal-empty">
-                    No active checklist instances for this mission.
-                  </p>
+
+                    <div class="checklist-detail-summary">
+                      <span>{{ checklistDetailRecord.complete_count }} Complete</span>
+                      <span>{{ checklistDetailRecord.pending_count }} Pending</span>
+                      <span>{{ checklistDetailRecord.late_count }} Late</span>
+                    </div>
+
+                    <div class="checklist-task-toolbar">
+                      <label class="checklist-task-input">
+                        <input v-model="checklistTaskDueDraft" type="number" step="1" min="-1440" />
+                        <span>Due minutes</span>
+                      </label>
+                      <BaseButton size="sm" icon-left="plus" @click="addChecklistTaskFromDetail">Add</BaseButton>
+                    </div>
+
+                    <table class="mini-table checklist-detail-table">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Done</th>
+                          <th v-for="column in checklistDetailColumns" :key="`detail-header-${column.uid}`">
+                            {{ column.name }}
+                          </th>
+                          <th>Due Relative DTG</th>
+                          <th>Status</th>
+                          <th>Complete DTG</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="row in checklistDetailRows"
+                          :key="row.id"
+                          :class="{ 'checklist-row-complete': row.done }"
+                        >
+                          <td>{{ row.number }}</td>
+                          <td>
+                            <button
+                              type="button"
+                              class="checklist-done-button"
+                              :disabled="!row.task_uid || checklistTaskStatusBusyByTaskUid[row.task_uid]"
+                              @click="toggleChecklistTaskDone(row)"
+                            >
+                              <span class="checklist-done-indicator" :class="{ done: row.done }">{{ row.done ? "X" : "" }}</span>
+                            </button>
+                          </td>
+                          <td v-for="column in checklistDetailColumns" :key="`detail-cell-${row.id}-${column.uid}`">
+                            {{ row.column_values[column.uid] || "-" }}
+                          </td>
+                          <td>{{ row.due }}</td>
+                          <td>
+                            <span class="checklist-chip" :class="statusChipClass(row.status)">{{ row.status }}</span>
+                          </td>
+                          <td>{{ row.completeDtg }}</td>
+                        </tr>
+                        <tr v-if="!checklistDetailRows.length">
+                          <td :colspan="checklistDetailColumns.length + 5">No tasks yet.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div v-else class="checklist-overview-list">
+                    <button
+                      v-for="checklist in filteredChecklistCards"
+                      :key="checklist.uid"
+                      class="checklist-overview-card"
+                      type="button"
+                      @click="openChecklistDetailView(checklist.uid)"
+                    >
+                      <div class="checklist-overview-content">
+                        <div class="checklist-overview-head">
+                          <h4>{{ checklist.name }}</h4>
+                          <div class="checklist-chip-row">
+                            <span class="checklist-chip" :class="modeChipClass(checklist.mode)">{{ checklist.mode }}</span>
+                            <span class="checklist-chip" :class="syncChipClass(checklist.sync_state)">{{ checklist.sync_state }}</span>
+                            <span class="checklist-chip" :class="statusChipClass(checklist.checklist_status)">
+                              {{ checklist.checklist_status }}
+                            </span>
+                            <span class="checklist-chip checklist-chip-muted">
+                              {{ checklistOriginLabel(checklist.origin_type) }}
+                            </span>
+                            <span class="checklist-chip checklist-chip-muted">
+                              {{ checklistMissionLabel(checklist.mission_uid) }}
+                            </span>
+                          </div>
+                        </div>
+                        <p>{{ checklistDescriptionLabel(checklist.description) }}</p>
+                        <div class="checklist-overview-meta">
+                          <span>{{ formatChecklistDateTime(checklist.created_at) }}</span>
+                          <span>Tasks: {{ checklist.tasks.length }}</span>
+                          <span>Progress: {{ Math.round(checklist.progress) }}%</span>
+                        </div>
+                      </div>
+                      <div class="checklist-overview-stats">
+                        <div class="checklist-overview-counts">
+                          <span>{{ checklist.complete_count }} Complete</span>
+                          <span>{{ checklist.pending_count }} Pending</span>
+                          <span>{{ checklist.late_count }} Late</span>
+                        </div>
+                        <div class="checklist-progress-track compact">
+                          <span class="checklist-progress-value" :style="{ width: progressWidth(checklist.progress) }"></span>
+                        </div>
+                        <span class="checklist-overview-arrow" aria-hidden="true">></span>
+                      </div>
+                    </button>
+                    <p v-if="!filteredChecklistCards.length" class="template-modal-empty">
+                      No active checklist instances match your search.
+                    </p>
+                  </div>
+                </div>
+
+                <div v-else class="checklist-template-list">
+                  <div class="checklist-template-workspace">
+                    <article class="checklist-template-library-pane">
+                      <div class="checklist-template-library-head">
+                        <h4>Template Library</h4>
+                        <p>Select a template or CSV import entry to edit.</p>
+                      </div>
+                      <div class="checklist-template-library-list">
+                        <button
+                          v-for="template in filteredChecklistTemplates"
+                          :key="`checklist-template-${template.uid}`"
+                          type="button"
+                          class="checklist-template-library-item"
+                          :class="{
+                            active:
+                              checklistTemplateEditorSelectionUid === template.uid &&
+                              checklistTemplateEditorSelectionSourceType === template.source_type
+                          }"
+                          @click="selectChecklistTemplateForEditor(template.uid, template.source_type)"
+                        >
+                          <div class="checklist-template-head">
+                            <h4>{{ template.name }}</h4>
+                            <div class="checklist-chip-row">
+                              <span class="checklist-chip checklist-chip-info">{{ template.columns }} Columns</span>
+                              <span v-if="template.source_type === 'csv_import'" class="checklist-chip checklist-chip-muted">
+                                CSV Import
+                              </span>
+                            </div>
+                          </div>
+                          <p>{{ template.description || "Template catalog entry for checklist creation." }}</p>
+                          <div class="checklist-template-meta">
+                            <span v-if="template.created_at">Created: {{ formatChecklistDateTime(template.created_at) }}</span>
+                            <span v-if="template.owner">By: {{ template.owner }}</span>
+                            <span v-if="template.task_rows > 0">Tasks: {{ template.task_rows }}</span>
+                          </div>
+                        </button>
+                        <p v-if="!filteredChecklistTemplates.length" class="template-modal-empty">
+                          No templates match your search.
+                        </p>
+                      </div>
+                    </article>
+
+                    <article class="checklist-template-editor-pane">
+                      <div class="checklist-template-editor-header">
+                        <div>
+                          <h4>{{ checklistTemplateEditorTitle }}</h4>
+                          <p>{{ checklistTemplateEditorSubtitle }}</p>
+                        </div>
+                        <div class="checklist-template-editor-actions">
+                          <BaseButton size="sm" icon-left="plus" @click="startNewChecklistTemplateDraft">New</BaseButton>
+                          <BaseButton
+                            size="sm"
+                            variant="secondary"
+                            icon-left="plus"
+                            :disabled="!canAddChecklistTemplateColumn"
+                            @click="addChecklistTemplateColumn"
+                          >
+                            Add Column
+                          </BaseButton>
+                          <BaseButton
+                            size="sm"
+                            variant="secondary"
+                            icon-left="save"
+                            :disabled="!canSaveChecklistTemplateDraft"
+                            @click="saveChecklistTemplateDraft"
+                          >
+                            Save
+                          </BaseButton>
+                          <BaseButton
+                            size="sm"
+                            variant="secondary"
+                            icon-left="save"
+                            :disabled="!canSaveChecklistTemplateDraftAsNew"
+                            @click="saveChecklistTemplateDraftAsNew"
+                          >
+                            Save As New
+                          </BaseButton>
+                          <BaseButton
+                            size="sm"
+                            variant="secondary"
+                            icon-left="layers"
+                            :disabled="!canCloneChecklistTemplateDraft"
+                            @click="cloneChecklistTemplateDraft"
+                          >
+                            Clone
+                          </BaseButton>
+                          <BaseButton
+                            size="sm"
+                            variant="secondary"
+                            icon-left="file"
+                            :disabled="!canArchiveChecklistTemplateDraft"
+                            @click="archiveChecklistTemplateDraft"
+                          >
+                            Archive
+                          </BaseButton>
+                          <BaseButton
+                            size="sm"
+                            variant="secondary"
+                            icon-left="upload"
+                            :disabled="!canConvertChecklistTemplateDraft"
+                            @click="convertChecklistTemplateDraftToServerTemplate"
+                          >
+                            Convert to Template
+                          </BaseButton>
+                          <BaseButton
+                            size="sm"
+                            variant="danger"
+                            icon-left="trash"
+                            :disabled="!canDeleteChecklistTemplateDraft"
+                            @click="deleteChecklistTemplateDraft"
+                          >
+                            Delete
+                          </BaseButton>
+                        </div>
+                      </div>
+
+                      <div class="checklist-template-editor-form">
+                        <div class="field-grid">
+                          <label class="field-control">
+                            <span>Template Name</span>
+                            <input
+                              v-model="checklistTemplateDraftName"
+                              type="text"
+                              :disabled="isChecklistTemplateDraftReadonly"
+                            />
+                          </label>
+                          <label class="field-control full">
+                            <span>Description</span>
+                            <textarea
+                              v-model="checklistTemplateDraftDescription"
+                              rows="3"
+                              :disabled="isChecklistTemplateDraftReadonly"
+                            ></textarea>
+                          </label>
+                        </div>
+
+                        <p class="checklist-template-editor-note">
+                          System column <strong>DUE_RELATIVE_DTG</strong> is pinned first and enforced as
+                          <strong>RELATIVE_TIME</strong>.
+                        </p>
+
+                        <div class="checklist-template-column-scroll">
+                          <table class="mini-table checklist-template-column-table">
+                            <thead>
+                              <tr>
+                                <th>#</th>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Editable</th>
+                                <th>BG</th>
+                                <th>Text</th>
+                                <th>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr
+                                v-for="(column, columnIndex) in checklistTemplateDraftColumns"
+                                :key="`checklist-template-column-${column.column_uid || columnIndex}`"
+                              >
+                                <td>{{ columnIndex + 1 }}</td>
+                                <td>
+                                  <input
+                                    class="checklist-template-column-input"
+                                    :value="column.column_name"
+                                    type="text"
+                                    :disabled="isChecklistTemplateDraftReadonly || isChecklistTemplateDueColumn(column)"
+                                    @input="setChecklistTemplateColumnName(columnIndex, $event)"
+                                  />
+                                </td>
+                                <td>
+                                  <select
+                                    class="checklist-template-column-input"
+                                    :value="column.column_type"
+                                    :disabled="isChecklistTemplateDraftReadonly || isChecklistTemplateDueColumn(column)"
+                                    @change="setChecklistTemplateColumnType(columnIndex, $event)"
+                                  >
+                                    <option v-for="columnType in checklistTemplateColumnTypeOptions" :key="columnType" :value="columnType">
+                                      {{ columnType }}
+                                    </option>
+                                  </select>
+                                </td>
+                                <td class="checklist-template-column-checkbox">
+                                  <input
+                                    type="checkbox"
+                                    :checked="Boolean(column.column_editable)"
+                                    :disabled="isChecklistTemplateDraftReadonly || isChecklistTemplateDueColumn(column)"
+                                    @change="setChecklistTemplateColumnEditable(columnIndex, $event)"
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    class="checklist-template-color-input"
+                                    type="color"
+                                    :value="checklistTemplateColumnColorValue(column.background_color)"
+                                    :disabled="isChecklistTemplateDraftReadonly"
+                                    @input="setChecklistTemplateColumnBackgroundColor(columnIndex, $event)"
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    class="checklist-template-color-input"
+                                    type="color"
+                                    :value="checklistTemplateColumnColorValue(column.text_color)"
+                                    :disabled="isChecklistTemplateDraftReadonly"
+                                    @input="setChecklistTemplateColumnTextColor(columnIndex, $event)"
+                                  />
+                                </td>
+                                <td>
+                                  <div class="checklist-template-column-actions">
+                                    <BaseButton
+                                      size="sm"
+                                      variant="secondary"
+                                      icon-left="chevron-left"
+                                      :disabled="!canMoveChecklistTemplateColumnUp(columnIndex)"
+                                      @click="moveChecklistTemplateColumnUp(columnIndex)"
+                                    >
+                                      Up
+                                    </BaseButton>
+                                    <BaseButton
+                                      size="sm"
+                                      variant="secondary"
+                                      icon-left="chevron-right"
+                                      :disabled="!canMoveChecklistTemplateColumnDown(columnIndex)"
+                                      @click="moveChecklistTemplateColumnDown(columnIndex)"
+                                    >
+                                      Down
+                                    </BaseButton>
+                                    <BaseButton
+                                      size="sm"
+                                      variant="danger"
+                                      icon-left="trash"
+                                      :disabled="!canDeleteChecklistTemplateColumn(columnIndex)"
+                                      @click="deleteChecklistTemplateColumn(columnIndex)"
+                                    >
+                                      Delete
+                                    </BaseButton>
+                                  </div>
+                                </td>
+                              </tr>
+                              <tr v-if="!checklistTemplateDraftColumns.length">
+                                <td colspan="7">No columns configured.</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <p class="template-modal-hint">{{ checklistTemplateEditorStatusLabel }}</p>
+                      </div>
+                    </article>
+                  </div>
                 </div>
               </article>
             </div>
@@ -569,27 +890,6 @@
               </article>
             </div>
 
-            <div v-else-if="showTemplateArea" class="screen-grid two-col">
-              <article class="stage-card">
-                <h4>Excheck Template Library</h4>
-                <ul class="stack-list">
-                  <li v-for="template in templates" :key="template.uid">
-                    <strong>{{ template.name }}</strong>
-                    <span>{{ template.columns }} columns</span>
-                  </li>
-                </ul>
-              </article>
-
-              <article class="stage-card">
-                <h4>Excheck Template Builder</h4>
-                <div class="builder-preview">
-                  <p>System Column: <strong>DUE_RELATIVE_DTG</strong></p>
-                  <p>Custom Columns: Task, Callsign, Location, Codeword, Notes</p>
-                  <BaseButton size="sm" @click="previewAction('Save Template')">Save Template</BaseButton>
-                </div>
-              </article>
-            </div>
-
             <div v-else class="screen-grid two-col">
               <article class="stage-card">
                 <h4>Mission Overview</h4>
@@ -652,12 +952,13 @@
         <p v-else class="template-modal-empty">No checklist templates available.</p>
 
         <div class="template-modal-actions">
-          <BaseButton variant="ghost" @click="closeChecklistTemplateModal">Cancel</BaseButton>
+          <BaseButton variant="ghost" icon-left="undo" @click="closeChecklistTemplateModal">Cancel</BaseButton>
           <BaseButton
+            icon-left="plus"
             :disabled="checklistTemplateSubmitting || !checklistTemplateSelectionUid"
             @click="submitChecklistTemplateSelection"
           >
-            {{ checklistTemplateSubmitting ? "Creating..." : "Create Checklist" }}
+            {{ checklistTemplateSubmitting ? "Creating..." : "Create" }}
           </BaseButton>
         </div>
       </div>
@@ -667,6 +968,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import type { ApiError } from "../api/client";
 import { del as deleteRequest, get, patch as patchRequest, post } from "../api/client";
 import { endpoints } from "../api/endpoints";
@@ -677,7 +979,7 @@ import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
 
-type PrimaryTab = "mission" | "checklists" | "templates" | "board";
+type PrimaryTab = "mission" | "checklists" | "board";
 
 type ScreenId =
   | "missionDirectory"
@@ -696,9 +998,37 @@ type ScreenId =
   | "checklistImportCsv"
   | "checklistPublish"
   | "checklistProgress"
-  | "templateLibrary"
-  | "templateBuilder"
   | "missionExcheckBoard";
+
+type ButtonIconName =
+  | "refresh"
+  | "plus"
+  | "edit"
+  | "trash"
+  | "check"
+  | "download"
+  | "ban"
+  | "unban"
+  | "blackhole"
+  | "filter"
+  | "eye"
+  | "save"
+  | "link"
+  | "upload"
+  | "undo"
+  | "send"
+  | "route"
+  | "users"
+  | "help"
+  | "list"
+  | "chevron-left"
+  | "chevron-right"
+  | "layers"
+  | "file"
+  | "image"
+  | "fingerprint"
+  | "settings"
+  | "tool";
 
 interface Mission {
   uid: string;
@@ -781,18 +1111,31 @@ interface AuditEvent {
   message: string;
 }
 
-interface Template {
-  uid: string;
-  name: string;
-  columns: number;
-}
-
 interface ChecklistTemplateOption {
   uid: string;
   name: string;
   columns: number;
   source_type: "template" | "csv_import";
   task_rows: number;
+  description: string;
+  created_at: string;
+  owner: string;
+}
+
+type ChecklistTemplateSourceType = ChecklistTemplateOption["source_type"];
+type ChecklistTemplateEditorMode = "create" | "edit" | "csv_readonly";
+type ChecklistTemplateColumnType = "SHORT_STRING" | "LONG_STRING" | "INTEGER" | "ACTUAL_TIME" | "RELATIVE_TIME";
+
+interface ChecklistTemplateDraftColumn {
+  column_uid: string;
+  column_name: string;
+  display_order: number;
+  column_type: ChecklistTemplateColumnType;
+  column_editable: boolean;
+  is_removable: boolean;
+  system_key?: string | null;
+  background_color?: string | null;
+  text_color?: string | null;
 }
 
 interface MissionRaw {
@@ -840,6 +1183,7 @@ interface ChecklistRaw {
   name?: string | null;
   description?: string | null;
   created_at?: string | null;
+  created_by_team_member_rns_identity?: string | null;
   progress_percent?: number | null;
   origin_type?: string | null;
   checklist_status?: string | null;
@@ -916,6 +1260,9 @@ interface ZoneRaw {
 interface TemplateRaw {
   uid?: string;
   template_name?: string | null;
+  description?: string | null;
+  created_at?: string | null;
+  created_by_team_member_rns_identity?: string | null;
   columns?: unknown;
 }
 
@@ -936,8 +1283,19 @@ interface TaskSkillRequirementRaw {
 
 const connectionStore = useConnectionStore();
 const toastStore = useToastStore();
+const route = useRoute();
+const router = useRouter();
 
 const DEFAULT_SOURCE_IDENTITY = "ui.operator";
+const SYSTEM_DUE_COLUMN_KEY = "DUE_RELATIVE_DTG";
+const checklistTemplateColumnTypeOptions: ChecklistTemplateColumnType[] = [
+  "SHORT_STRING",
+  "LONG_STRING",
+  "INTEGER",
+  "ACTUAL_TIME",
+  "RELATIVE_TIME"
+];
+const checklistTemplateColumnTypeSet = new Set<ChecklistTemplateColumnType>(checklistTemplateColumnTypeOptions);
 
 const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
@@ -1275,10 +1633,161 @@ const escapeCsvCell = (value: string): string => {
   return value;
 };
 
+const normalizeChecklistTemplateColumnType = (value?: string | null): ChecklistTemplateColumnType => {
+  const normalized = String(value ?? "").trim().toUpperCase() as ChecklistTemplateColumnType;
+  if (checklistTemplateColumnTypeSet.has(normalized)) {
+    return normalized;
+  }
+  return "SHORT_STRING";
+};
+
+const isChecklistTemplateDueColumn = (column?: { system_key?: string | null }): boolean =>
+  String(column?.system_key ?? "")
+    .trim()
+    .toUpperCase() === SYSTEM_DUE_COLUMN_KEY;
+
+const buildChecklistTemplateColumnUid = (): string =>
+  `tmpl-col-${buildTimestampTag().slice(-10)}-${Math.floor(Math.random() * 1_000_000)
+    .toString(16)
+    .padStart(5, "0")}`;
+
+const createDueChecklistTemplateDraftColumn = (): ChecklistTemplateDraftColumn => ({
+  column_uid: buildChecklistTemplateColumnUid(),
+  column_name: "Due",
+  display_order: 1,
+  column_type: "RELATIVE_TIME",
+  column_editable: false,
+  is_removable: false,
+  system_key: SYSTEM_DUE_COLUMN_KEY,
+  background_color: null,
+  text_color: null
+});
+
+const createTaskChecklistTemplateDraftColumn = (): ChecklistTemplateDraftColumn => ({
+  column_uid: buildChecklistTemplateColumnUid(),
+  column_name: "Task",
+  display_order: 2,
+  column_type: "SHORT_STRING",
+  column_editable: true,
+  is_removable: true,
+  system_key: null,
+  background_color: null,
+  text_color: null
+});
+
+const normalizeChecklistTemplateColor = (value?: string | null): string | null => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+    return normalized.toUpperCase();
+  }
+  return null;
+};
+
+const checklistTemplateColumnColorValue = (value?: string | null): string =>
+  normalizeChecklistTemplateColor(value) ?? "#001F2B";
+
+const normalizeChecklistTemplateDraftColumns = (
+  columns: Array<ChecklistColumnRaw | ChecklistTemplateDraftColumn>,
+  options?: { ensureTaskColumn?: boolean }
+): ChecklistTemplateDraftColumn[] => {
+  const normalizedRows = columns.map((column, index) => ({
+    column_uid: String(column.column_uid ?? "").trim() || buildChecklistTemplateColumnUid(),
+    column_name: String(column.column_name ?? `Column ${index + 1}`).trim() || `Column ${index + 1}`,
+    display_order: Number(column.display_order ?? index + 1),
+    column_type: normalizeChecklistTemplateColumnType(column.column_type),
+    column_editable: Boolean(column.column_editable ?? true),
+    is_removable: Boolean(column.is_removable ?? true),
+    system_key: String(column.system_key ?? "").trim() || null,
+    background_color: normalizeChecklistTemplateColor(column.background_color),
+    text_color: normalizeChecklistTemplateColor(column.text_color)
+  }));
+
+  const sorted = [...normalizedRows].sort((left, right) => left.display_order - right.display_order);
+  const dueColumn = sorted.find((column) => isChecklistTemplateDueColumn(column)) ?? createDueChecklistTemplateDraftColumn();
+  const normalizedDueColumn: ChecklistTemplateDraftColumn = {
+    ...dueColumn,
+    column_name: String(dueColumn.column_name || "Due"),
+    column_type: "RELATIVE_TIME",
+    column_editable: false,
+    is_removable: false,
+    system_key: SYSTEM_DUE_COLUMN_KEY
+  };
+
+  const customColumns = sorted
+    .filter((column) => !isChecklistTemplateDueColumn(column))
+    .map((column) => ({
+      ...column,
+      system_key: null,
+      column_type: normalizeChecklistTemplateColumnType(column.column_type)
+    }));
+
+  if (options?.ensureTaskColumn && !customColumns.length) {
+    customColumns.push(createTaskChecklistTemplateDraftColumn());
+  }
+
+  return [normalizedDueColumn, ...customColumns].map((column, index) => ({
+    ...column,
+    display_order: index + 1
+  }));
+};
+
+const toChecklistTemplateColumnPayload = (columns: ChecklistTemplateDraftColumn[]) =>
+  normalizeChecklistTemplateDraftColumns(columns).map((column, index) => ({
+    column_uid: column.column_uid || buildChecklistTemplateColumnUid(),
+    column_name: String(column.column_name ?? "").trim() || `Column ${index + 1}`,
+    display_order: index + 1,
+    column_type: normalizeChecklistTemplateColumnType(column.column_type),
+    column_editable: isChecklistTemplateDueColumn(column) ? false : Boolean(column.column_editable),
+    is_removable: isChecklistTemplateDueColumn(column) ? false : Boolean(column.is_removable),
+    system_key: isChecklistTemplateDueColumn(column) ? SYSTEM_DUE_COLUMN_KEY : undefined,
+    background_color: normalizeChecklistTemplateColor(column.background_color) ?? undefined,
+    text_color: normalizeChecklistTemplateColor(column.text_color) ?? undefined
+  }));
+
+const validateChecklistTemplateDraftPayload = (
+  templateName: string,
+  columns: ChecklistTemplateDraftColumn[]
+): string | null => {
+  if (!templateName.trim()) {
+    return "Template name is required";
+  }
+  const normalizedColumns = normalizeChecklistTemplateDraftColumns(columns);
+  if (!normalizedColumns.length) {
+    return "Template must include at least one column";
+  }
+  if (!isChecklistTemplateDueColumn(normalizedColumns[0])) {
+    return "Due Relative DTG system column must be first";
+  }
+  const dueColumns = normalizedColumns.filter((column) => isChecklistTemplateDueColumn(column));
+  if (dueColumns.length !== 1) {
+    return "Exactly one Due Relative DTG system column is required";
+  }
+  if (dueColumns[0].column_type !== "RELATIVE_TIME") {
+    return "Due Relative DTG system column must be RELATIVE_TIME";
+  }
+  if (dueColumns[0].is_removable) {
+    return "Due Relative DTG system column cannot be removable";
+  }
+  const invalidType = normalizedColumns.find((column) => !checklistTemplateColumnTypeSet.has(column.column_type));
+  if (invalidType) {
+    return `Unsupported column type: ${invalidType.column_type}`;
+  }
+  return null;
+};
+
+const createBlankChecklistTemplateDraftColumns = (): ChecklistTemplateDraftColumn[] =>
+  normalizeChecklistTemplateDraftColumns([createDueChecklistTemplateDraftColumn(), createTaskChecklistTemplateDraftColumn()], {
+    ensureTaskColumn: true
+  });
+
 const csvImportFilename = ref("");
 const csvImportBase64 = ref("");
 const csvImportHeaders = ref<string[]>([]);
 const csvImportRows = ref<string[][]>([]);
+const csvUploadInputRef = ref<HTMLInputElement | null>(null);
 
 const csvImportPreviewRows = computed(() => csvImportRows.value.slice(0, 12));
 
@@ -1287,6 +1796,10 @@ const clearCsvUpload = () => {
   csvImportBase64.value = "";
   csvImportHeaders.value = [];
   csvImportRows.value = [];
+};
+
+const openCsvUploadPicker = () => {
+  csvUploadInputRef.value?.click();
 };
 
 const renderUploadedCsv = (): string => {
@@ -1501,7 +2014,10 @@ const collectChecklistTemplateOptions = (): ChecklistTemplateOption[] => {
         name: String(entry.template_name ?? uid),
         columns: toArray<ChecklistColumnRaw>(entry.columns).length,
         source_type: "template" as const,
-        task_rows: 0
+        task_rows: 0,
+        description: String(entry.description ?? "").trim(),
+        created_at: String(entry.created_at ?? ""),
+        owner: String(entry.created_by_team_member_rns_identity ?? "").trim()
       };
     })
     .filter((entry): entry is ChecklistTemplateOption => entry !== null);
@@ -1524,7 +2040,10 @@ const collectChecklistTemplateOptions = (): ChecklistTemplateOption[] => {
         name: String(entry.name ?? uid),
         columns: toArray<ChecklistColumnRaw>(entry.columns).length,
         source_type: "csv_import" as const,
-        task_rows: toArray<ChecklistTaskRaw>(entry.tasks).length
+        task_rows: toArray<ChecklistTaskRaw>(entry.tasks).length,
+        description: String(entry.description ?? "").trim(),
+        created_at: String(entry.created_at ?? ""),
+        owner: String(entry.created_by_team_member_rns_identity ?? "").trim()
       };
     })
     .filter((entry): entry is ChecklistTemplateOption => entry !== null);
@@ -1538,14 +2057,6 @@ const collectChecklistTemplateOptions = (): ChecklistTemplateOption[] => {
     return true;
   });
 };
-
-const templates = computed<Template[]>(() => {
-  return collectChecklistTemplateOptions().map((entry) => ({
-    uid: entry.uid,
-    name: entry.name,
-    columns: entry.columns
-  }));
-});
 
 const checklistTemplateOptions = computed<ChecklistTemplateOption[]>(() => {
   return collectChecklistTemplateOptions().sort((left, right) => left.name.localeCompare(right.name));
@@ -1653,7 +2164,6 @@ const assetNameByUid = computed(() => {
 const primaryTabs = [
   { id: "mission", label: "Mission" },
   { id: "checklists", label: "Checklists" },
-  { id: "templates", label: "Excheck Templates" },
   { id: "board", label: "Excheck Board" }
 ] as const;
 
@@ -1668,20 +2178,7 @@ const screensByTab: Record<PrimaryTab, Array<{ id: ScreenId; label: string }>> =
     { id: "missionAudit", label: "Mission Activity / Audit" },
     { id: "assetRegistry", label: "Asset Registry" }
   ],
-  checklists: [
-    { id: "checklistOverview", label: "Checklist Overview" },
-    { id: "checklistDetails", label: "Checklist Details" },
-    { id: "checklistCreation", label: "Checklist Creation Page" },
-    { id: "checklistRunDetail", label: "Checklist Run Detail" },
-    { id: "taskAssignmentWorkspace", label: "Task Assignment Workspace" },
-    { id: "checklistPublish", label: "Checklist Publish to Mission" },
-    { id: "checklistProgress", label: "Checklist Progress & Compliance" }
-  ],
-  templates: [
-    { id: "templateLibrary", label: "Excheck Template Library" },
-    { id: "templateBuilder", label: "Excheck Template Builder" },
-    { id: "checklistImportCsv", label: "Import from CSV" }
-  ],
+  checklists: [{ id: "checklistOverview", label: "Checklist Management" }],
   board: [{ id: "missionExcheckBoard", label: "Mission Excheck Board" }]
 };
 
@@ -1694,7 +2191,7 @@ const screenMeta: Record<ScreenId, { title: string; subtitle: string; actions: s
   assignZones: { title: "Assign Zones to Mission", subtitle: "Zone selection and geographic mission boundaries.", actions: ["Commit", "New Zone"] },
   missionAudit: { title: "Mission Activity / Audit", subtitle: "Mission timeline, status transitions, and forensic log.", actions: ["Export Log", "Snapshot"] },
   assetRegistry: { title: "Asset Registry", subtitle: "Hardware inventory, status, and readiness.", actions: ["Deploy", "Filter"] },
-  checklistOverview: { title: "Checklist Overview", subtitle: "Checklist runs mapped to this mission.", actions: ["Start New", "Join"] },
+  checklistOverview: { title: "Checklists", subtitle: "Manage checklist instances and templates.", actions: [] },
   checklistDetails: { title: "Checklist Details", subtitle: "Task grid, callsigns, due relative DTG, and status.", actions: ["Edit Cell", "Sync"] },
   checklistCreation: { title: "Checklist Creation Page", subtitle: "Create online/offline checklist runs from templates.", actions: ["Create", "Validate"] },
   checklistRunDetail: { title: "Checklist Run Detail", subtitle: "Task status transitions and operator updates.", actions: ["Set Status", "Upload"] },
@@ -1702,10 +2199,47 @@ const screenMeta: Record<ScreenId, { title: string; subtitle: string; actions: s
   checklistImportCsv: { title: "Import from CSV", subtitle: "Import checklist rows from CSV payloads.", actions: ["Import", "Preview"] },
   checklistPublish: { title: "Checklist Publish to Mission", subtitle: "Publish checklist feed to mission sync channel.", actions: ["Join", "Publish"] },
   checklistProgress: { title: "Checklist Progress & Compliance", subtitle: "Progress metrics and on-time compliance views.", actions: ["Recompute", "Export"] },
-  templateLibrary: { title: "Excheck Template Library", subtitle: "Template catalog with versions and ownership.", actions: ["Clone", "Archive"] },
-  templateBuilder: { title: "Excheck Template Builder", subtitle: "Template columns and system field configuration.", actions: ["Add Column", "Save"] },
   missionExcheckBoard: { title: "Mission Excheck Board", subtitle: "Board lanes for pending, late, and completed tasks.", actions: ["Sync Board", "Publish"] }
 };
+
+const actionIconMap: Record<string, ButtonIconName> = {
+  Filter: "filter",
+  Export: "download",
+  Save: "save",
+  "Save Mission": "save",
+  "Save Template": "save",
+  Reset: "undo",
+  Refresh: "refresh",
+  Recompute: "refresh",
+  Sync: "refresh",
+  "Sync Board": "refresh",
+  Broadcast: "send",
+  "Add Team": "users",
+  "Add Member": "plus",
+  Assign: "link",
+  Reassign: "route",
+  Revoke: "ban",
+  Commit: "check",
+  "New Zone": "plus",
+  "Start New": "plus",
+  Create: "plus",
+  Import: "upload",
+  Preview: "eye",
+  Join: "link",
+  Upload: "upload",
+  Publish: "send",
+  "Set Status": "check",
+  "Edit Cell": "edit",
+  Validate: "check",
+  "Export Log": "download",
+  Snapshot: "image",
+  Deploy: "send",
+  Clone: "layers",
+  Archive: "file",
+  "Add Column": "plus"
+};
+
+const iconForAction = (action: string): ButtonIconName => actionIconMap[action] ?? "tool";
 
 const selectedMissionUid = ref("");
 const selectedChecklistUid = ref("");
@@ -1723,6 +2257,19 @@ const checklistDetailUid = ref("");
 const checklistTaskDueDraft = ref("10");
 const checklistTaskStatusBusyByTaskUid = ref<Record<string, boolean>>({});
 const checklistDeleteBusy = ref(false);
+const checklistTemplateDeleteBusyByUid = ref<Record<string, boolean>>({});
+const checklistSearchQuery = ref("");
+const checklistWorkspaceView = ref<"active" | "templates">("active");
+const checklistTemplateEditorSelectionUid = ref("");
+const checklistTemplateEditorSelectionSourceType = ref<ChecklistTemplateSourceType | "">("");
+const checklistTemplateEditorMode = ref<ChecklistTemplateEditorMode>("create");
+const checklistTemplateEditorDirty = ref(false);
+const checklistTemplateEditorSaving = ref(false);
+const checklistTemplateEditorHydrating = ref(false);
+const checklistTemplateDraftTemplateUid = ref("");
+const checklistTemplateDraftName = ref("");
+const checklistTemplateDraftDescription = ref("");
+const checklistTemplateDraftColumns = ref<ChecklistTemplateDraftColumn[]>(createBlankChecklistTemplateDraftColumns());
 
 const missionStatusOptions = [
   "MISSION_ACTIVE",
@@ -1755,14 +2302,37 @@ const wsClass = computed(() => {
 
 const activeScreens = computed(() => screensByTab[primaryTab.value]);
 const currentScreen = computed(() => screenMeta[secondaryScreen.value]);
+const isChecklistPrimaryTab = computed(() => primaryTab.value === "checklists");
+const showScreenHeader = computed(
+  () => !isChecklistPrimaryTab.value || secondaryScreen.value === "checklistImportCsv"
+);
 
 const selectedMission = computed(() => missions.value.find((entry) => entry.uid === selectedMissionUid.value));
+const showMissionDirectoryPanel = computed(() => primaryTab.value !== "checklists");
+const workspacePanelTitle = computed(() => {
+  if (primaryTab.value === "checklists") {
+    return "Checklists";
+  }
+  if (primaryTab.value === "board") {
+    return selectedMission.value?.mission_name || "Mission Board";
+  }
+  return selectedMission.value?.mission_name || "Mission Details";
+});
+const workspacePanelSubtitle = computed(() => {
+  if (primaryTab.value === "checklists") {
+    return "Manage checklist instances and templates.";
+  }
+  if (primaryTab.value === "board") {
+    return selectedMission.value?.topic || "Select a mission";
+  }
+  return selectedMission.value?.topic || "Select a mission";
+});
 const missionChecklists = computed(() => checklists.value.filter((entry) => entry.mission_uid === selectedMissionUid.value));
 const selectedChecklistRaw = computed(() =>
   checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === selectedChecklistUid.value)
 );
-const missionChecklistsSorted = computed(() => {
-  return [...missionChecklists.value].sort((left, right) => {
+const allChecklistsSorted = computed(() => {
+  return [...checklists.value].sort((left, right) => {
     const diff = toEpoch(right.created_at) - toEpoch(left.created_at);
     if (diff !== 0) {
       return diff;
@@ -1786,7 +2356,7 @@ const checklistDetailRecord = computed(() => {
   if (!detailUid) {
     return null;
   }
-  return missionChecklists.value.find((entry) => entry.uid === detailUid) ?? null;
+  return checklists.value.find((entry) => entry.uid === detailUid) ?? null;
 });
 
 const canCreateFromDetailTemplate = computed(() => {
@@ -1810,6 +2380,12 @@ const checklistDetailColumns = computed(() => {
   if (!checklist) {
     return [] as Array<{ uid: string; name: string }>;
   }
+
+  const dueColumnUid =
+    toArray<ChecklistColumnRaw>(checklist.columns).find(
+      (column) => String(column.system_key ?? "").trim().toUpperCase() === "DUE_RELATIVE_DTG"
+    )?.column_uid ?? "";
+
   const columns = toArray<ChecklistColumnRaw>(checklist.columns)
     .map((column) => ({
       uid: String(column.column_uid ?? "").trim(),
@@ -1819,7 +2395,25 @@ const checklistDetailColumns = computed(() => {
     }))
     .filter((column) => column.uid.length > 0 && column.system_key !== "DUE_RELATIVE_DTG")
     .sort((left, right) => left.display_order - right.display_order);
-  return columns.map((column, index) => ({
+  const mergedColumns = [...columns];
+  const knownColumnUids = new Set(mergedColumns.map((column) => column.uid));
+  toArray<ChecklistTaskRaw>(checklist.tasks).forEach((task) => {
+    toArray<ChecklistCellRaw>(task.cells).forEach((cell) => {
+      const columnUid = String(cell.column_uid ?? "").trim();
+      if (!columnUid || columnUid === String(dueColumnUid).trim() || knownColumnUids.has(columnUid)) {
+        return;
+      }
+      knownColumnUids.add(columnUid);
+      mergedColumns.push({
+        uid: columnUid,
+        name: "",
+        system_key: "",
+        display_order: mergedColumns.length + 1000
+      });
+    });
+  });
+
+  return mergedColumns.map((column, index) => ({
     uid: column.uid,
     name: column.name || `Column ${index + 1}`
   }));
@@ -1886,6 +2480,574 @@ const checklistDetailRows = computed(() => {
     })
     .sort((left, right) => left.number - right.number);
 });
+
+const missionNameByUid = computed(() => {
+  const map = new Map<string, string>();
+  missions.value.forEach((mission) => {
+    map.set(mission.uid, mission.mission_name);
+  });
+  return map;
+});
+
+const checklistMissionLabel = (missionUid: string): string => {
+  const uid = String(missionUid ?? "").trim();
+  if (!uid) {
+    return "Unscoped";
+  }
+  return missionNameByUid.value.get(uid) ?? uid;
+};
+
+const checklistSearchNeedle = computed(() => checklistSearchQuery.value.trim().toUpperCase());
+
+const checklistActiveCount = computed(() => allChecklistsSorted.value.length);
+const checklistTemplateCount = computed(() => checklistTemplateOptions.value.length);
+
+const filteredChecklistCards = computed(() => {
+  const needle = checklistSearchNeedle.value;
+  if (!needle) {
+    return allChecklistsSorted.value;
+  }
+  return allChecklistsSorted.value.filter((checklist) => {
+    const haystack = [
+      checklist.name,
+      checklist.description,
+      checklist.checklist_status,
+      checklist.mode,
+      checklist.sync_state,
+      checklistMissionLabel(checklist.mission_uid)
+    ]
+      .join(" ")
+      .toUpperCase();
+    return haystack.includes(needle);
+  });
+});
+
+const filteredChecklistTemplates = computed(() => {
+  const sorted = [...checklistTemplateOptions.value].sort((left, right) => left.name.localeCompare(right.name));
+  const needle = checklistSearchNeedle.value;
+  if (!needle) {
+    return sorted;
+  }
+  return sorted.filter((template) => {
+    const haystack = [template.name, template.description, template.owner, template.source_type]
+      .join(" ")
+      .toUpperCase();
+    return haystack.includes(needle);
+  });
+});
+
+const selectedChecklistTemplateEditorOption = computed(() => {
+  const uid = checklistTemplateEditorSelectionUid.value.trim();
+  const sourceType = checklistTemplateEditorSelectionSourceType.value;
+  if (!uid || !sourceType) {
+    return null;
+  }
+  return (
+    checklistTemplateOptions.value.find((entry) => entry.uid === uid && entry.source_type === sourceType) ?? null
+  );
+});
+
+const checklistTemplateEditorTitle = computed(() => {
+  if (checklistTemplateEditorMode.value === "create") {
+    return "New Checklist Template";
+  }
+  if (checklistTemplateEditorMode.value === "csv_readonly") {
+    return "CSV Import Template (Read Only)";
+  }
+  return "Checklist Template Editor";
+});
+
+const checklistTemplateEditorSubtitle = computed(() => {
+  if (checklistTemplateEditorMode.value === "create") {
+    return "Build a new server template with metadata and ordered columns.";
+  }
+  if (checklistTemplateEditorMode.value === "csv_readonly") {
+    return "CSV-derived entries are read-only until converted into a server template.";
+  }
+  return "Edit template metadata and columns. Save updates or save as new.";
+});
+
+const checklistTemplateEditorStatusLabel = computed(() => {
+  const state = checklistTemplateEditorDirty.value ? "Unsaved changes" : "Saved";
+  if (checklistTemplateEditorSaving.value) {
+    return "Saving...";
+  }
+  if (checklistTemplateEditorMode.value === "csv_readonly") {
+    return "Read-only CSV entry";
+  }
+  if (checklistTemplateEditorMode.value === "create") {
+    return checklistTemplateEditorDirty.value ? "Draft not saved" : "Blank template draft";
+  }
+  return state;
+});
+
+const isChecklistTemplateDraftReadonly = computed(() => checklistTemplateEditorMode.value === "csv_readonly");
+
+const canAddChecklistTemplateColumn = computed(
+  () => !isChecklistTemplateDraftReadonly.value && !checklistTemplateEditorSaving.value
+);
+
+const canSaveChecklistTemplateDraft = computed(
+  () =>
+    checklistTemplateEditorMode.value === "edit" &&
+    !isChecklistTemplateDraftReadonly.value &&
+    checklistTemplateDraftTemplateUid.value.trim().length > 0 &&
+    checklistTemplateEditorDirty.value &&
+    !checklistTemplateEditorSaving.value
+);
+
+const canSaveChecklistTemplateDraftAsNew = computed(
+  () =>
+    checklistTemplateEditorMode.value !== "csv_readonly" &&
+    !checklistTemplateEditorSaving.value &&
+    checklistTemplateDraftName.value.trim().length > 0
+);
+
+const canCloneChecklistTemplateDraft = computed(
+  () =>
+    checklistTemplateEditorMode.value === "edit" &&
+    checklistTemplateDraftTemplateUid.value.trim().length > 0 &&
+    !checklistTemplateEditorSaving.value
+);
+
+const canArchiveChecklistTemplateDraft = computed(
+  () =>
+    checklistTemplateEditorMode.value === "edit" &&
+    checklistTemplateDraftTemplateUid.value.trim().length > 0 &&
+    !checklistTemplateEditorSaving.value
+);
+
+const canConvertChecklistTemplateDraft = computed(
+  () =>
+    checklistTemplateEditorMode.value === "csv_readonly" &&
+    checklistTemplateEditorSelectionUid.value.trim().length > 0 &&
+    !checklistTemplateEditorSaving.value
+);
+
+const canDeleteChecklistTemplateDraft = computed(() => {
+  const selected = selectedChecklistTemplateEditorOption.value;
+  if (!selected || checklistTemplateEditorSaving.value) {
+    return false;
+  }
+  return !checklistTemplateDeleteBusyByUid.value[selected.uid];
+});
+
+const buildChecklistTemplateDraftName = (): string => `Template ${buildTimestampTag().slice(-6)}`;
+
+const applyChecklistTemplateEditorDraft = (payload: {
+  selectionUid: string;
+  selectionSourceType: ChecklistTemplateSourceType | "";
+  mode: ChecklistTemplateEditorMode;
+  templateUid: string;
+  templateName: string;
+  description: string;
+  columns: Array<ChecklistColumnRaw | ChecklistTemplateDraftColumn>;
+  ensureTaskColumn?: boolean;
+}) => {
+  checklistTemplateEditorHydrating.value = true;
+  checklistTemplateEditorSelectionUid.value = payload.selectionUid;
+  checklistTemplateEditorSelectionSourceType.value = payload.selectionSourceType;
+  checklistTemplateEditorMode.value = payload.mode;
+  checklistTemplateDraftTemplateUid.value = payload.templateUid;
+  checklistTemplateDraftName.value = payload.templateName.trim() || buildChecklistTemplateDraftName();
+  checklistTemplateDraftDescription.value = payload.description;
+  checklistTemplateDraftColumns.value = normalizeChecklistTemplateDraftColumns(payload.columns, {
+    ensureTaskColumn: payload.ensureTaskColumn ?? payload.mode !== "csv_readonly"
+  });
+  checklistTemplateEditorDirty.value = false;
+  checklistTemplateEditorHydrating.value = false;
+};
+
+const startNewChecklistTemplateDraft = () => {
+  applyChecklistTemplateEditorDraft({
+    selectionUid: "",
+    selectionSourceType: "",
+    mode: "create",
+    templateUid: "",
+    templateName: buildChecklistTemplateDraftName(),
+    description: "",
+    columns: createBlankChecklistTemplateDraftColumns(),
+    ensureTaskColumn: true
+  });
+};
+
+const selectChecklistTemplateForEditor = (templateUid: string, sourceType: ChecklistTemplateSourceType) => {
+  const uid = String(templateUid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  const option =
+    checklistTemplateOptions.value.find((entry) => entry.uid === uid && entry.source_type === sourceType) ?? null;
+  if (!option) {
+    return;
+  }
+  checklistTemplateSelectionUid.value = option.uid;
+  if (option.source_type === "template") {
+    const templateRecord =
+      templateRecords.value.find((entry) => String(entry.uid ?? "").trim() === option.uid) ?? null;
+    if (!templateRecord) {
+      toastStore.push("Selected template is unavailable", "warning");
+      return;
+    }
+    applyChecklistTemplateEditorDraft({
+      selectionUid: option.uid,
+      selectionSourceType: option.source_type,
+      mode: "edit",
+      templateUid: option.uid,
+      templateName: String(templateRecord.template_name ?? option.name),
+      description: String(templateRecord.description ?? ""),
+      columns: toArray<ChecklistColumnRaw>(templateRecord.columns),
+      ensureTaskColumn: true
+    });
+    return;
+  }
+  const checklistRecord =
+    checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === option.uid) ?? null;
+  if (!checklistRecord) {
+    toastStore.push("Selected CSV entry is unavailable", "warning");
+    return;
+  }
+  applyChecklistTemplateEditorDraft({
+    selectionUid: option.uid,
+    selectionSourceType: option.source_type,
+    mode: "csv_readonly",
+    templateUid: "",
+    templateName: String(checklistRecord.name ?? option.name),
+    description: String(checklistRecord.description ?? ""),
+    columns: toArray<ChecklistColumnRaw>(checklistRecord.columns),
+    ensureTaskColumn: false
+  });
+};
+
+const syncChecklistTemplateEditorSelection = (preferredUid = "", preferredType: ChecklistTemplateSourceType | "" = "") => {
+  const options = checklistTemplateOptions.value;
+  if (!options.length) {
+    startNewChecklistTemplateDraft();
+    return;
+  }
+  const preferred =
+    (preferredUid && preferredType
+      ? options.find((entry) => entry.uid === preferredUid && entry.source_type === preferredType)
+      : null) ?? null;
+  if (preferred) {
+    selectChecklistTemplateForEditor(preferred.uid, preferred.source_type);
+    return;
+  }
+  const selected = selectedChecklistTemplateEditorOption.value;
+  if (selected) {
+    if (checklistTemplateEditorMode.value !== "create") {
+      selectChecklistTemplateForEditor(selected.uid, selected.source_type);
+    }
+    return;
+  }
+  selectChecklistTemplateForEditor(options[0].uid, options[0].source_type);
+};
+
+const mutateChecklistTemplateDraftColumns = (
+  mutate: (columns: ChecklistTemplateDraftColumn[]) => ChecklistTemplateDraftColumn[]
+) => {
+  if (isChecklistTemplateDraftReadonly.value || checklistTemplateEditorSaving.value) {
+    return;
+  }
+  const cloned = checklistTemplateDraftColumns.value.map((column) => ({ ...column }));
+  const mutated = mutate(cloned);
+  checklistTemplateDraftColumns.value = normalizeChecklistTemplateDraftColumns(mutated, { ensureTaskColumn: true });
+};
+
+const setChecklistTemplateColumnName = (columnIndex: number, event: Event) => {
+  const value = String((event.target as HTMLInputElement | null)?.value ?? "");
+  mutateChecklistTemplateDraftColumns((columns) =>
+    columns.map((column, index) =>
+      index === columnIndex && !isChecklistTemplateDueColumn(column)
+        ? { ...column, column_name: value.trim() || column.column_name }
+        : column
+    )
+  );
+};
+
+const setChecklistTemplateColumnType = (columnIndex: number, event: Event) => {
+  const value = String((event.target as HTMLSelectElement | null)?.value ?? "");
+  mutateChecklistTemplateDraftColumns((columns) =>
+    columns.map((column, index) =>
+      index === columnIndex && !isChecklistTemplateDueColumn(column)
+        ? { ...column, column_type: normalizeChecklistTemplateColumnType(value) }
+        : column
+    )
+  );
+};
+
+const setChecklistTemplateColumnEditable = (columnIndex: number, event: Event) => {
+  const checked = Boolean((event.target as HTMLInputElement | null)?.checked);
+  mutateChecklistTemplateDraftColumns((columns) =>
+    columns.map((column, index) =>
+      index === columnIndex && !isChecklistTemplateDueColumn(column)
+        ? { ...column, column_editable: checked }
+        : column
+    )
+  );
+};
+
+const setChecklistTemplateColumnBackgroundColor = (columnIndex: number, event: Event) => {
+  const value = String((event.target as HTMLInputElement | null)?.value ?? "");
+  mutateChecklistTemplateDraftColumns((columns) =>
+    columns.map((column, index) =>
+      index === columnIndex
+        ? { ...column, background_color: normalizeChecklistTemplateColor(value) }
+        : column
+    )
+  );
+};
+
+const setChecklistTemplateColumnTextColor = (columnIndex: number, event: Event) => {
+  const value = String((event.target as HTMLInputElement | null)?.value ?? "");
+  mutateChecklistTemplateDraftColumns((columns) =>
+    columns.map((column, index) =>
+      index === columnIndex
+        ? { ...column, text_color: normalizeChecklistTemplateColor(value) }
+        : column
+    )
+  );
+};
+
+const addChecklistTemplateColumn = () => {
+  mutateChecklistTemplateDraftColumns((columns) => {
+    const customCount = columns.filter((column) => !isChecklistTemplateDueColumn(column)).length;
+    return [
+      ...columns,
+      {
+        column_uid: buildChecklistTemplateColumnUid(),
+        column_name: `Field ${customCount + 1}`,
+        display_order: columns.length + 1,
+        column_type: "SHORT_STRING",
+        column_editable: true,
+        is_removable: true,
+        system_key: null,
+        background_color: null,
+        text_color: null
+      }
+    ];
+  });
+};
+
+const canMoveChecklistTemplateColumnUp = (columnIndex: number): boolean => {
+  if (isChecklistTemplateDraftReadonly.value || checklistTemplateEditorSaving.value) {
+    return false;
+  }
+  const column = checklistTemplateDraftColumns.value[columnIndex];
+  if (!column || isChecklistTemplateDueColumn(column)) {
+    return false;
+  }
+  if (columnIndex <= 1) {
+    return false;
+  }
+  return true;
+};
+
+const canMoveChecklistTemplateColumnDown = (columnIndex: number): boolean => {
+  if (isChecklistTemplateDraftReadonly.value || checklistTemplateEditorSaving.value) {
+    return false;
+  }
+  const columns = checklistTemplateDraftColumns.value;
+  const column = columns[columnIndex];
+  if (!column || isChecklistTemplateDueColumn(column)) {
+    return false;
+  }
+  return columnIndex >= 1 && columnIndex < columns.length - 1;
+};
+
+const moveChecklistTemplateColumnUp = (columnIndex: number) => {
+  if (!canMoveChecklistTemplateColumnUp(columnIndex)) {
+    return;
+  }
+  mutateChecklistTemplateDraftColumns((columns) => {
+    const next = [...columns];
+    const previousIndex = columnIndex - 1;
+    [next[previousIndex], next[columnIndex]] = [next[columnIndex], next[previousIndex]];
+    return next;
+  });
+};
+
+const moveChecklistTemplateColumnDown = (columnIndex: number) => {
+  if (!canMoveChecklistTemplateColumnDown(columnIndex)) {
+    return;
+  }
+  mutateChecklistTemplateDraftColumns((columns) => {
+    const next = [...columns];
+    const nextIndex = columnIndex + 1;
+    [next[nextIndex], next[columnIndex]] = [next[columnIndex], next[nextIndex]];
+    return next;
+  });
+};
+
+const canDeleteChecklistTemplateColumn = (columnIndex: number): boolean => {
+  if (isChecklistTemplateDraftReadonly.value || checklistTemplateEditorSaving.value) {
+    return false;
+  }
+  const column = checklistTemplateDraftColumns.value[columnIndex];
+  if (!column || isChecklistTemplateDueColumn(column)) {
+    return false;
+  }
+  return Boolean(column.is_removable);
+};
+
+const deleteChecklistTemplateColumn = (columnIndex: number) => {
+  if (!canDeleteChecklistTemplateColumn(columnIndex)) {
+    return;
+  }
+  mutateChecklistTemplateDraftColumns((columns) => columns.filter((_, index) => index !== columnIndex));
+};
+
+const buildChecklistTemplateDraftPayload = () => {
+  const templateName = checklistTemplateDraftName.value.trim();
+  const validationError = validateChecklistTemplateDraftPayload(templateName, checklistTemplateDraftColumns.value);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+  return {
+    template_name: templateName,
+    description: checklistTemplateDraftDescription.value.trim(),
+    columns: toChecklistTemplateColumnPayload(checklistTemplateDraftColumns.value)
+  };
+};
+
+const saveChecklistTemplateDraft = async () => {
+  if (!canSaveChecklistTemplateDraft.value) {
+    return;
+  }
+  const templateUid = checklistTemplateDraftTemplateUid.value.trim();
+  if (!templateUid) {
+    return;
+  }
+  checklistTemplateEditorSaving.value = true;
+  try {
+    const payload = buildChecklistTemplateDraftPayload();
+    await patchRequest(`${endpoints.checklistTemplates}/${templateUid}`, { patch: payload });
+    await loadWorkspace();
+    syncChecklistTemplateEditorSelection(templateUid, "template");
+    toastStore.push("Template saved", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to save template");
+  } finally {
+    checklistTemplateEditorSaving.value = false;
+  }
+};
+
+const saveChecklistTemplateDraftAsNew = async () => {
+  if (!canSaveChecklistTemplateDraftAsNew.value) {
+    return;
+  }
+  checklistTemplateEditorSaving.value = true;
+  try {
+    const payload = buildChecklistTemplateDraftPayload();
+    const created = await post<TemplateRaw>(endpoints.checklistTemplates, {
+      template: {
+        ...payload,
+        created_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
+      }
+    });
+    await loadWorkspace();
+    const createdUid = String(created.uid ?? "").trim();
+    if (createdUid) {
+      syncChecklistTemplateEditorSelection(createdUid, "template");
+    } else {
+      syncChecklistTemplateEditorSelection();
+    }
+    toastStore.push("Template created", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to create template");
+  } finally {
+    checklistTemplateEditorSaving.value = false;
+  }
+};
+
+const cloneChecklistTemplateDraft = async () => {
+  if (!canCloneChecklistTemplateDraft.value) {
+    return;
+  }
+  const templateUid = checklistTemplateDraftTemplateUid.value.trim();
+  if (!templateUid) {
+    return;
+  }
+  checklistTemplateEditorSaving.value = true;
+  try {
+    const baseName = checklistTemplateDraftName.value.trim() || "Template";
+    const cloned = await post<TemplateRaw>(`${endpoints.checklistTemplates}/${templateUid}/clone`, {
+      template_name: `${baseName} Copy ${buildTimestampTag().slice(-4)}`,
+      description: checklistTemplateDraftDescription.value.trim(),
+      created_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
+    });
+    await loadWorkspace();
+    const clonedUid = String(cloned.uid ?? "").trim();
+    if (clonedUid) {
+      syncChecklistTemplateEditorSelection(clonedUid, "template");
+    } else {
+      syncChecklistTemplateEditorSelection();
+    }
+    toastStore.push("Template cloned", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to clone template");
+  } finally {
+    checklistTemplateEditorSaving.value = false;
+  }
+};
+
+const archiveChecklistTemplateDraft = async () => {
+  if (!canArchiveChecklistTemplateDraft.value) {
+    return;
+  }
+  const templateUid = checklistTemplateDraftTemplateUid.value.trim();
+  if (!templateUid) {
+    return;
+  }
+  const templateName = checklistTemplateDraftName.value.trim() || "Template";
+  if (/\[ARCHIVED\]/i.test(templateName)) {
+    toastStore.push("Template already archived", "info");
+    return;
+  }
+  checklistTemplateEditorSaving.value = true;
+  try {
+    await patchRequest(`${endpoints.checklistTemplates}/${templateUid}`, {
+      patch: {
+        template_name: `${templateName} [ARCHIVED]`
+      }
+    });
+    await loadWorkspace();
+    syncChecklistTemplateEditorSelection(templateUid, "template");
+    toastStore.push("Template archived", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to archive template");
+  } finally {
+    checklistTemplateEditorSaving.value = false;
+  }
+};
+
+const convertChecklistTemplateDraftToServerTemplate = async () => {
+  if (!canConvertChecklistTemplateDraft.value) {
+    return;
+  }
+  checklistTemplateEditorSaving.value = true;
+  try {
+    const payload = buildChecklistTemplateDraftPayload();
+    const created = await post<TemplateRaw>(endpoints.checklistTemplates, {
+      template: {
+        ...payload,
+        created_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
+      }
+    });
+    await loadWorkspace();
+    const createdUid = String(created.uid ?? "").trim();
+    if (createdUid) {
+      syncChecklistTemplateEditorSelection(createdUid, "template");
+    } else {
+      syncChecklistTemplateEditorSelection();
+    }
+    toastStore.push("CSV template converted", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to convert CSV template");
+  } finally {
+    checklistTemplateEditorSaving.value = false;
+  }
+};
 
 const missionChecklistCountByMission = computed(() => {
   const map = new Map<string, number>();
@@ -2182,22 +3344,11 @@ const boardLaneTasks = computed(() => {
 });
 
 const showChecklistArea = computed(() => {
-  return [
-    "checklistOverview",
-    "checklistDetails",
-    "checklistCreation",
-    "checklistRunDetail",
-    "checklistPublish",
-    "checklistProgress"
-  ].includes(secondaryScreen.value);
+  return primaryTab.value === "checklists";
 });
 
 const showAssetArea = computed(() => {
   return ["assetRegistry", "assignAssets", "taskAssignmentWorkspace"].includes(secondaryScreen.value);
-});
-
-const showTemplateArea = computed(() => {
-  return ["templateLibrary", "templateBuilder"].includes(secondaryScreen.value);
 });
 
 const progressWidth = (value: number): string => {
@@ -2295,6 +3446,115 @@ const createChecklistFromDetailTemplate = () => {
   }
 };
 
+const openChecklistCreationModal = () => {
+  try {
+    openChecklistTemplateModal();
+  } catch (error) {
+    handleApiError(error, "Unable to open checklist template selector");
+  }
+};
+
+const showChecklistFilterNotice = () => {
+  toastStore.push("Checklist filter presets can be added from this workspace", "info");
+};
+
+const setChecklistWorkspaceView = (view: "active" | "templates") => {
+  checklistWorkspaceView.value = view;
+  if (view === "templates") {
+    checklistDetailUid.value = "";
+    syncChecklistTemplateEditorSelection();
+  }
+};
+
+const openTemplateBuilderFromChecklist = () => {
+  setPrimaryTab("checklists");
+  secondaryScreen.value = "checklistOverview";
+  setChecklistWorkspaceView("templates");
+};
+
+const openChecklistImportFromChecklist = () => {
+  setPrimaryTab("checklists");
+  secondaryScreen.value = "checklistImportCsv";
+};
+
+const navigateToChecklistTemplateList = () => {
+  setPrimaryTab("checklists");
+  secondaryScreen.value = "checklistOverview";
+  setChecklistWorkspaceView("templates");
+};
+
+const isChecklistTemplateDeleteBusy = (templateUid: string): boolean => {
+  const uid = String(templateUid ?? "").trim();
+  if (!uid) {
+    return false;
+  }
+  return Boolean(checklistTemplateDeleteBusyByUid.value[uid]);
+};
+
+const deleteChecklistTemplateFromCard = async (
+  templateUid: string,
+  sourceType: ChecklistTemplateOption["source_type"],
+  templateName: string
+): Promise<boolean> => {
+  const uid = String(templateUid ?? "").trim();
+  if (!uid || isChecklistTemplateDeleteBusy(uid)) {
+    return false;
+  }
+  const name = String(templateName ?? uid).trim() || uid;
+  const targetLabel = sourceType === "template" ? "template" : "CSV import template";
+  if (!window.confirm(`Delete ${targetLabel} "${name}"?`)) {
+    return false;
+  }
+  checklistTemplateDeleteBusyByUid.value = {
+    ...checklistTemplateDeleteBusyByUid.value,
+    [uid]: true
+  };
+  try {
+    if (sourceType === "template") {
+      await deleteRequest(`${endpoints.checklistTemplates}/${uid}`);
+    } else {
+      await deleteRequest(`${endpoints.checklists}/${uid}`);
+      if (selectedChecklistUid.value === uid) {
+        selectedChecklistUid.value = "";
+      }
+      if (checklistDetailUid.value === uid) {
+        checklistDetailUid.value = "";
+      }
+    }
+    if (checklistTemplateSelectionUid.value === uid) {
+      checklistTemplateSelectionUid.value = "";
+    }
+    await loadWorkspace();
+    toastStore.push(sourceType === "template" ? "Template deleted" : "CSV import template deleted", "success");
+    return true;
+  } catch (error) {
+    handleApiError(
+      error,
+      sourceType === "template" ? "Unable to delete template" : "Unable to delete CSV import template"
+    );
+    return false;
+  } finally {
+    const next = { ...checklistTemplateDeleteBusyByUid.value };
+    delete next[uid];
+    checklistTemplateDeleteBusyByUid.value = next;
+  }
+};
+
+const deleteChecklistTemplateDraft = async () => {
+  if (!canDeleteChecklistTemplateDraft.value) {
+    return;
+  }
+  const selected = selectedChecklistTemplateEditorOption.value;
+  if (!selected) {
+    return;
+  }
+  const removed = await deleteChecklistTemplateFromCard(selected.uid, selected.source_type, selected.name);
+  if (!removed) {
+    return;
+  }
+  syncChecklistTemplateEditorSelection();
+};
+
 const deleteChecklistFromDetail = async () => {
   if (checklistDeleteBusy.value) {
     return;
@@ -2324,17 +3584,6 @@ const deleteChecklistFromDetail = async () => {
   } finally {
     checklistDeleteBusy.value = false;
   }
-};
-
-const navigateToTemplateLibrary = () => {
-  setPrimaryTab("templates");
-  secondaryScreen.value = "templateLibrary";
-};
-
-const navigateToChecklistOverview = () => {
-  setPrimaryTab("checklists");
-  secondaryScreen.value = "checklistOverview";
-  checklistDetailUid.value = "";
 };
 
 const addChecklistTaskFromDetail = async () => {
@@ -2391,9 +3640,27 @@ const toggleChecklistTaskDone = async (row: { task_uid: string; done: boolean })
   }
 };
 
-const setPrimaryTab = (tab: PrimaryTab) => {
+const setPrimaryTab = (tab: PrimaryTab, syncRoute = true) => {
   primaryTab.value = tab;
   secondaryScreen.value = screensByTab[tab][0].id;
+  if (tab !== "checklists") {
+    checklistDetailUid.value = "";
+  }
+  if (tab === "checklists" && !checklistDetailUid.value) {
+    checklistWorkspaceView.value = "active";
+  }
+  if (!syncRoute) {
+    return;
+  }
+  if (tab === "checklists") {
+    if (route.path !== "/checklists") {
+      router.push("/checklists").catch(() => undefined);
+    }
+    return;
+  }
+  if (route.path === "/checklists") {
+    router.push("/missions").catch(() => undefined);
+  }
 };
 
 const loadWorkspace = async () => {
@@ -2934,7 +4201,7 @@ const createChecklistFromCsvImportAction = async (
   const created = await post<ChecklistRaw>(endpoints.checklistsOffline, {
     mission_uid: missionUid,
     name: checklistName,
-    origin_type: "CSV_IMPORT",
+    origin_type: "RCH_TEMPLATE",
     source_identity: DEFAULT_SOURCE_IDENTITY,
     columns: toChecklistColumnPayload(sourceColumns)
   });
@@ -3069,6 +4336,7 @@ const createChecklistFromSelectedTemplateAction = async () => {
   if (createdUid) {
     selectedChecklistUid.value = createdUid;
     checklistDetailUid.value = createdUid;
+    checklistWorkspaceView.value = "active";
     try {
       await hydrateChecklistRecord(createdUid);
     } catch (error) {
@@ -3105,6 +4373,7 @@ const importChecklistAction = async () => {
   if (importedUid) {
     selectedChecklistUid.value = importedUid;
     checklistDetailUid.value = importedUid;
+    checklistWorkspaceView.value = "active";
     try {
       await hydrateChecklistRecord(importedUid);
     } catch (error) {
@@ -3211,35 +4480,6 @@ const commitZonesAction = async () => {
   const nextDraft = { ...zoneDraftByMission.value };
   delete nextDraft[missionUid];
   zoneDraftByMission.value = nextDraft;
-  await loadWorkspace();
-};
-
-const saveTemplateAction = async () => {
-  const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
-  await post(endpoints.checklistTemplates, {
-    template: {
-      template_name: `Workspace Template ${timestamp}`,
-      description: "Generated from Mission Workspace",
-      created_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY,
-      columns: [
-        {
-          column_name: "Due",
-          display_order: 1,
-          column_type: "RELATIVE_TIME",
-          column_editable: false,
-          is_removable: false,
-          system_key: "DUE_RELATIVE_DTG"
-        },
-        {
-          column_name: "Task",
-          display_order: 2,
-          column_type: "SHORT_STRING",
-          column_editable: true,
-          is_removable: true
-        }
-      ]
-    }
-  });
   await loadWorkspace();
 };
 
@@ -3375,67 +4615,6 @@ const validateChecklistAction = async () => {
   if (!templates.length) {
     throw new Error("No checklist templates found");
   }
-};
-
-const cloneTemplateAction = async () => {
-  const template = templateRecords.value[0];
-  if (!template?.uid) {
-    throw new Error("No template available for cloning");
-  }
-  await post(`${endpoints.checklistTemplates}/${template.uid}/clone`, {
-    template_name: `${String(template.template_name ?? "Template")} Copy ${buildTimestampTag().slice(-4)}`,
-    description: "Cloned from Mission workspace",
-    created_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
-  });
-  await loadWorkspace();
-};
-
-const archiveTemplateAction = async () => {
-  const template = templateRecords.value[0];
-  if (!template?.uid) {
-    throw new Error("No template available to archive");
-  }
-  const name = String(template.template_name ?? "Template");
-  const archivedName = name.includes("[ARCHIVED]") ? name : `${name} [ARCHIVED]`;
-  await patchRequest(`${endpoints.checklistTemplates}/${template.uid}`, {
-    patch: { template_name: archivedName }
-  });
-  await loadWorkspace();
-};
-
-const addTemplateColumnAction = async () => {
-  const template = templateRecords.value[0];
-  if (!template?.uid) {
-    throw new Error("No template available to update");
-  }
-  const existing = toArray<ChecklistColumnRaw>(template.columns);
-  if (!existing.length) {
-    throw new Error("Template has no base columns");
-  }
-  const nextOrder = Math.max(...existing.map((column) => Number(column.display_order ?? 0)), 0) + 1;
-  const nextColumns = existing.map((column, index) => ({
-    column_uid: String(column.column_uid ?? `${template.uid}-col-${index + 1}`),
-    column_name: String(column.column_name ?? `Column ${index + 1}`),
-    display_order: Number(column.display_order ?? index + 1),
-    column_type: String(column.column_type ?? "SHORT_STRING"),
-    column_editable: Boolean(column.column_editable ?? true),
-    is_removable: Boolean(column.is_removable ?? true),
-    system_key: column.system_key ?? undefined,
-    background_color: column.background_color ?? undefined,
-    text_color: column.text_color ?? undefined
-  }));
-  nextColumns.push({
-    column_uid: `${template.uid}-custom-${buildTimestampTag().slice(-6)}`,
-    column_name: `Field ${nextOrder}`,
-    display_order: nextOrder,
-    column_type: "SHORT_STRING",
-    column_editable: true,
-    is_removable: true
-  });
-  await patchRequest(`${endpoints.checklistTemplates}/${template.uid}`, {
-    patch: { columns: nextColumns }
-  });
-  await loadWorkspace();
 };
 
 const exportMissionsAction = async () => {
@@ -3619,26 +4798,6 @@ const previewAction = async (action: string) => {
     return;
   }
 
-  if (action === "Clone") {
-    await runAction(cloneTemplateAction, "Template cloned", "Unable to clone template");
-    return;
-  }
-
-  if (action === "Archive") {
-    await runAction(archiveTemplateAction, "Template archived", "Unable to archive template");
-    return;
-  }
-
-  if (action === "Add Column") {
-    await runAction(addTemplateColumnAction, "Template column added", "Unable to add template column");
-    return;
-  }
-
-  if (action === "Save Template" || (action === "Save" && secondaryScreen.value === "templateBuilder")) {
-    await runAction(saveTemplateAction, "Checklist template saved", "Unable to save checklist template");
-    return;
-  }
-
   toastStore.push(`${currentScreen.value.title}: ${action} not wired yet`, "info");
 };
 
@@ -3661,6 +4820,60 @@ const toggleZone = (zoneUid: string) => {
 };
 
 watch(
+  [checklistTemplateDraftName, checklistTemplateDraftDescription, checklistTemplateDraftColumns],
+  () => {
+    if (checklistTemplateEditorHydrating.value || checklistTemplateEditorMode.value === "csv_readonly") {
+      return;
+    }
+    checklistTemplateEditorDirty.value = true;
+  },
+  { deep: true }
+);
+
+watch(
+  checklistTemplateOptions,
+  (entries) => {
+    if (checklistTemplateSelectionUid.value && !entries.some((entry) => entry.uid === checklistTemplateSelectionUid.value)) {
+      checklistTemplateSelectionUid.value = entries[0]?.uid ?? "";
+    }
+
+    const selected = selectedChecklistTemplateEditorOption.value;
+    if (selected) {
+      return;
+    }
+
+    if (!entries.length) {
+      if (checklistWorkspaceView.value === "templates") {
+        startNewChecklistTemplateDraft();
+      }
+      return;
+    }
+
+    if (checklistTemplateEditorMode.value === "create") {
+      return;
+    }
+    const first = entries[0];
+    selectChecklistTemplateForEditor(first.uid, first.source_type);
+  },
+  { immediate: true }
+);
+
+watch(
+  checklistWorkspaceView,
+  (view) => {
+    if (view !== "templates") {
+      return;
+    }
+    if (checklistTemplateOptions.value.length) {
+      syncChecklistTemplateEditorSelection();
+      return;
+    }
+    startNewChecklistTemplateDraft();
+  },
+  { immediate: true }
+);
+
+watch(
   missions,
   (entries) => {
     if (!entries.some((entry) => entry.uid === selectedMissionUid.value)) {
@@ -3679,13 +4892,24 @@ watch(
 );
 
 watch(
-  missionChecklists,
+  checklists,
   (entries) => {
-    if (!entries.some((entry) => entry.uid === selectedChecklistUid.value)) {
-      selectedChecklistUid.value = entries[0]?.uid ?? "";
+    if (selectedChecklistUid.value && !entries.some((entry) => entry.uid === selectedChecklistUid.value)) {
+      selectedChecklistUid.value = "";
     }
     if (checklistDetailUid.value && !entries.some((entry) => entry.uid === checklistDetailUid.value)) {
       checklistDetailUid.value = "";
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => route.path,
+  (path) => {
+    const desiredTab: PrimaryTab = path === "/checklists" ? "checklists" : "mission";
+    if (primaryTab.value !== desiredTab) {
+      setPrimaryTab(desiredTab, false);
     }
   },
   { immediate: true }
@@ -3794,6 +5018,10 @@ onMounted(() => {
   z-index: 1;
   position: relative;
   margin-top: 14px;
+}
+
+.registry-grid-full {
+  grid-template-columns: 1fr;
 }
 
 .panel {
@@ -4042,6 +5270,29 @@ onMounted(() => {
 
 .checklist-workspace {
   gap: 12px;
+  --checklist-scroll-max-height: clamp(260px, calc(100vh - 340px), 640px);
+}
+
+.checklist-manager-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.checklist-manager-search {
+  margin: 0;
+}
+
+.checklist-manager-search input {
+  min-height: 42px;
+}
+
+.checklist-manager-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .checklist-overview-tabs {
@@ -4074,6 +5325,235 @@ onMounted(() => {
 .checklist-overview-list {
   display: grid;
   gap: 10px;
+  max-height: var(--checklist-scroll-max-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-content: start;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
+}
+
+.checklist-template-list {
+  min-height: var(--checklist-scroll-max-height);
+}
+
+.checklist-template-workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.92fr) minmax(0, 1.48fr);
+  gap: 10px;
+  min-height: var(--checklist-scroll-max-height);
+  max-height: var(--checklist-scroll-max-height);
+}
+
+.checklist-template-library-pane,
+.checklist-template-editor-pane {
+  border: 1px solid rgba(55, 242, 255, 0.32);
+  border-radius: 10px;
+  background: rgba(6, 18, 28, 0.76);
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.checklist-template-library-head {
+  display: grid;
+  gap: 4px;
+}
+
+.checklist-template-library-head h4 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0.05em;
+  text-transform: none;
+}
+
+.checklist-template-library-head p {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(190, 243, 255, 0.78);
+}
+
+.checklist-template-library-list {
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-content: start;
+  min-height: 0;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
+}
+
+.checklist-overview-list::-webkit-scrollbar,
+.checklist-template-library-list::-webkit-scrollbar,
+.checklist-template-column-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.checklist-overview-list::-webkit-scrollbar-track,
+.checklist-template-library-list::-webkit-scrollbar-track,
+.checklist-template-column-scroll::-webkit-scrollbar-track {
+  background: rgba(4, 18, 29, 0.68);
+  border-radius: 999px;
+}
+
+.checklist-overview-list::-webkit-scrollbar-thumb,
+.checklist-template-library-list::-webkit-scrollbar-thumb,
+.checklist-template-column-scroll::-webkit-scrollbar-thumb {
+  background: rgba(55, 242, 255, 0.5);
+  border-radius: 999px;
+  border: 2px solid rgba(4, 18, 29, 0.68);
+}
+
+.checklist-overview-list::-webkit-scrollbar-thumb:hover,
+.checklist-template-library-list::-webkit-scrollbar-thumb:hover,
+.checklist-template-column-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(55, 242, 255, 0.72);
+}
+
+.checklist-template-library-item {
+  border: 1px solid rgba(55, 242, 255, 0.32);
+  border-radius: 10px;
+  background: rgba(6, 18, 28, 0.72);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  color: #dffcff;
+  width: 100%;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.checklist-template-library-item:hover {
+  border-color: rgba(55, 242, 255, 0.7);
+  background: rgba(10, 28, 41, 0.86);
+}
+
+.checklist-template-library-item.active {
+  border-color: rgba(55, 242, 255, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(55, 242, 255, 0.28);
+}
+
+.checklist-template-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.checklist-template-head h4 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.05em;
+  text-transform: none;
+}
+
+.checklist-template-library-item p {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(190, 243, 255, 0.88);
+}
+
+.checklist-template-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(155, 237, 255, 0.88);
+}
+
+.checklist-template-editor-pane {
+  grid-template-rows: auto 1fr;
+}
+
+.checklist-template-editor-header {
+  display: grid;
+  gap: 8px;
+}
+
+.checklist-template-editor-header h4 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+
+.checklist-template-editor-header p {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(190, 243, 255, 0.82);
+}
+
+.checklist-template-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.checklist-template-editor-form {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.checklist-template-editor-note {
+  margin: 0;
+  font-size: 11px;
+  color: rgba(186, 240, 255, 0.86);
+  letter-spacing: 0.06em;
+}
+
+.checklist-template-column-scroll {
+  border: 1px solid rgba(55, 242, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(3, 12, 20, 0.68);
+  padding: 8px;
+  overflow: auto;
+  max-height: calc(var(--checklist-scroll-max-height) - 250px);
+  min-height: 180px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
+}
+
+.checklist-template-column-table {
+  table-layout: fixed;
+}
+
+.checklist-template-column-input {
+  width: 100%;
+  border: 1px solid rgba(55, 242, 255, 0.32);
+  border-radius: 6px;
+  background: rgba(5, 16, 26, 0.9);
+  color: #dffcff;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+.checklist-template-column-checkbox {
+  text-align: center;
+}
+
+.checklist-template-color-input {
+  width: 44px;
+  height: 28px;
+  border: 1px solid rgba(55, 242, 255, 0.35);
+  border-radius: 6px;
+  background: transparent;
+  padding: 0;
+}
+
+.checklist-template-column-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .checklist-overview-card {
@@ -4222,6 +5702,13 @@ onMounted(() => {
 .checklist-detail-title {
   display: grid;
   gap: 7px;
+}
+
+.checklist-detail-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-self: start;
 }
 
 .checklist-detail-title h4 {
@@ -4452,6 +5939,26 @@ onMounted(() => {
   padding: 6px;
 }
 
+.csv-upload-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.csv-upload-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.csv-upload-filename {
+  font-size: 12px;
+  color: rgba(201, 248, 255, 0.9);
+}
+
 .csv-meta {
   margin-top: 10px;
 }
@@ -4532,6 +6039,27 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 
+  .checklist-manager-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .checklist-manager-actions {
+    justify-content: flex-start;
+  }
+
+  .checklist-workspace {
+    --checklist-scroll-max-height: clamp(220px, calc(100vh - 320px), 520px);
+  }
+
+  .checklist-template-workspace {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+
+  .checklist-template-library-pane {
+    max-height: 220px;
+  }
+
   .checklist-overview-card {
     grid-template-columns: 1fr;
   }
@@ -4588,5 +6116,22 @@ onMounted(() => {
   .checklist-detail-progress strong {
     font-size: 30px;
   }
+
+  .checklist-template-head {
+    align-items: flex-start;
+  }
+
+  .checklist-workspace {
+    --checklist-scroll-max-height: clamp(190px, calc(100vh - 290px), 420px);
+  }
+
+  .checklist-template-column-actions {
+    width: 100%;
+  }
+
+  .checklist-template-column-scroll {
+    max-height: 260px;
+  }
 }
 </style>
+

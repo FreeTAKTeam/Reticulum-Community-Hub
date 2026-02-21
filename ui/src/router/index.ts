@@ -16,6 +16,7 @@ const router = createRouter({
   routes: [
     { path: "/", name: "dashboard", component: DashboardPage },
     { path: "/missions", name: "missions", component: MissionsPage },
+    { path: "/checklists", name: "checklists", component: MissionsPage },
     { path: "/webmap", name: "webmap", component: WebMapPage },
     { path: "/topics", name: "topics", component: TopicsPage },
     { path: "/files", name: "files", component: FilesPage },

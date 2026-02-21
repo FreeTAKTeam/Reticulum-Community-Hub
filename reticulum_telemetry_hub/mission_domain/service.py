@@ -20,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from reticulum_telemetry_hub.api.storage_models import Base
+from reticulum_telemetry_hub.api.storage_models import MarkerRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktAssetRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktChecklistCellRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktChecklistColumnRecord
@@ -29,6 +30,7 @@ from reticulum_telemetry_hub.api.storage_models import R3aktChecklistTaskRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktChecklistTemplateRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktDomainEventRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktDomainSnapshotRecord
+from reticulum_telemetry_hub.api.storage_models import R3aktLogEntryRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionChangeRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionTaskAssignmentRecord
@@ -50,6 +52,18 @@ CHECKLIST_MODE_OFFLINE = "OFFLINE"
 CHECKLIST_SYNC_LOCAL_ONLY = "LOCAL_ONLY"
 CHECKLIST_SYNC_SYNCED = "SYNCED"
 SYSTEM_COLUMN_KEY_DUE_RELATIVE_DTG = "DUE_RELATIVE_DTG"
+ASSET_STATUS_AVAILABLE = "AVAILABLE"
+ASSET_STATUS_IN_USE = "IN_USE"
+ASSET_STATUS_LOST = "LOST"
+ASSET_STATUS_MAINTENANCE = "MAINTENANCE"
+ASSET_STATUS_RETIRED = "RETIRED"
+ALLOWED_ASSET_STATUSES = {
+    ASSET_STATUS_AVAILABLE,
+    ASSET_STATUS_IN_USE,
+    ASSET_STATUS_LOST,
+    ASSET_STATUS_MAINTENANCE,
+    ASSET_STATUS_RETIRED,
+}
 
 
 def _utcnow() -> datetime:
@@ -268,6 +282,48 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
     def _ensure_task_exists(session: Session, task_uid: str) -> None:
         if session.get(R3aktChecklistTaskRecord, task_uid) is None:
             raise ValueError(f"Task '{task_uid}' not found")
+
+    @staticmethod
+    def _ensure_marker_exists(session: Session, marker_ref: str) -> None:
+        value = str(marker_ref or "").strip()
+        if not value:
+            raise ValueError("marker reference cannot be empty")
+        row = (
+            session.query(MarkerRecord.id)
+            .filter(
+                (MarkerRecord.id == value)
+                | (MarkerRecord.object_destination_hash == value)
+            )
+            .first()
+        )
+        if row is None:
+            raise ValueError(f"Marker '{value}' not found")
+
+    @staticmethod
+    def _normalize_string_list(value: Any, *, field_name: str) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError(f"{field_name} must be a list")
+        items: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if not text:
+                continue
+            items.append(text)
+        return items
+
+    @staticmethod
+    def _normalize_asset_status(value: Any, *, default: str) -> str:
+        if value is None:
+            return default
+        text = str(value).strip().upper()
+        if not text:
+            return default
+        if text not in ALLOWED_ASSET_STATUSES:
+            allowed = ", ".join(sorted(ALLOWED_ASSET_STATUSES))
+            raise ValueError(f"status must be one of: {allowed}")
+        return text
     @staticmethod
     def _serialize_mission(row: R3aktMissionRecord) -> dict[str, Any]:
         return {
@@ -363,6 +419,120 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if mission_uid:
                 query = query.filter(R3aktMissionChangeRecord.mission_uid == mission_uid)
             return [self._serialize_mission_change(row) for row in query.order_by(R3aktMissionChangeRecord.timestamp.desc()).all()]
+
+    @staticmethod
+    def _serialize_log_entry(row: R3aktLogEntryRecord) -> dict[str, Any]:
+        return {
+            "entry_uid": row.entry_uid,
+            "mission_uid": row.mission_uid,
+            "content": row.content,
+            "server_time": _dt(row.server_time),
+            "client_time": _dt(row.client_time),
+            "content_hashes": list(row.content_hashes_json or []),
+            "keywords": list(row.keywords_json or []),
+            "created_at": _dt(row.created_at),
+            "updated_at": _dt(row.updated_at),
+        }
+
+    def upsert_log_entry(self, payload: dict[str, Any]) -> dict[str, Any]:
+        uid = str(payload.get("entry_uid") or payload.get("uid") or uuid.uuid4().hex)
+        mission_uid = str(payload.get("mission_uid") or payload.get("mission_id") or "").strip()
+        if not mission_uid:
+            raise ValueError("mission_uid is required")
+        raw_content = payload.get("content")
+        with self._session() as session:
+            self._ensure_mission_exists(session, mission_uid)
+            row = session.get(R3aktLogEntryRecord, uid)
+            if row is None:
+                content_text = str(raw_content or "").strip()
+                if not content_text:
+                    raise ValueError("content is required")
+                row = R3aktLogEntryRecord(
+                    entry_uid=uid,
+                    mission_uid=mission_uid,
+                    content=content_text,
+                )
+                session.add(row)
+            row.mission_uid = mission_uid
+            if raw_content is not None:
+                content_text = str(raw_content).strip()
+                if not content_text:
+                    raise ValueError("content must not be empty")
+                row.content = content_text
+
+            raw_server_time = payload.get("server_time")
+            if raw_server_time is None:
+                raw_server_time = payload.get("servertime")
+            row.server_time = (
+                _as_datetime(raw_server_time, default=row.server_time or _utcnow())
+                or _utcnow()
+            )
+
+            has_client_time = any(
+                key in payload for key in ("client_time", "clientTime", "clienttime")
+            )
+            if has_client_time:
+                raw_client_time = payload.get("client_time")
+                if raw_client_time is None:
+                    raw_client_time = payload.get("clientTime")
+                if raw_client_time is None:
+                    raw_client_time = payload.get("clienttime")
+                row.client_time = _as_datetime(raw_client_time, default=None)
+
+            has_content_hashes = "content_hashes" in payload or "contenthashes" in payload
+            if has_content_hashes:
+                raw_hashes = payload.get("content_hashes")
+                if raw_hashes is None:
+                    raw_hashes = payload.get("contenthashes")
+                content_hashes = self._normalize_string_list(
+                    raw_hashes, field_name="content_hashes"
+                )
+                for marker_ref in content_hashes:
+                    self._ensure_marker_exists(session, marker_ref)
+                row.content_hashes_json = content_hashes
+            elif row.content_hashes_json is None:
+                row.content_hashes_json = []
+
+            if "keywords" in payload:
+                row.keywords_json = self._normalize_string_list(
+                    payload.get("keywords"),
+                    field_name="keywords",
+                )
+            elif row.keywords_json is None:
+                row.keywords_json = []
+
+            row.updated_at = _utcnow()
+            session.flush()
+            data = self._serialize_log_entry(row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="log_entry",
+                aggregate_uid=uid,
+                event_type="mission.log_entry.upserted",
+                payload=data,
+            )
+            return data
+
+    def list_log_entries(
+        self,
+        *,
+        mission_uid: str | None = None,
+        marker_ref: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._session() as session:
+            query = session.query(R3aktLogEntryRecord)
+            if mission_uid:
+                query = query.filter(R3aktLogEntryRecord.mission_uid == mission_uid)
+            rows = query.order_by(R3aktLogEntryRecord.server_time.desc()).all()
+            entries = [self._serialize_log_entry(row) for row in rows]
+            if marker_ref:
+                value = str(marker_ref).strip()
+                if value:
+                    entries = [
+                        entry for entry in entries if value in entry["content_hashes"]
+                    ]
+            return entries
 
     @staticmethod
     def _serialize_team(row: R3aktTeamRecord) -> dict[str, Any]:
@@ -464,7 +634,13 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         with self._session() as session:
             row = session.get(R3aktAssetRecord, uid)
             if row is None:
-                row = R3aktAssetRecord(asset_uid=uid, team_member_uid=None, name="Asset", asset_type="generic", status="AVAILABLE")
+                row = R3aktAssetRecord(
+                    asset_uid=uid,
+                    team_member_uid=None,
+                    name="Asset",
+                    asset_type="generic",
+                    status=ASSET_STATUS_AVAILABLE,
+                )
                 session.add(row)
             team_member_uid = payload.get("team_member_uid") or row.team_member_uid
             if team_member_uid:
@@ -473,7 +649,10 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             row.name = str(payload.get("name") or row.name)
             row.asset_type = str(payload.get("asset_type") or row.asset_type)
             row.serial_number = payload.get("serial_number") or row.serial_number
-            row.status = str(payload.get("status") or row.status)
+            row.status = self._normalize_asset_status(
+                payload.get("status"),
+                default=str(row.status or ASSET_STATUS_AVAILABLE),
+            )
             row.location = payload.get("location") or row.location
             row.notes = payload.get("notes") or row.notes
             session.flush()

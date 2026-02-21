@@ -36,6 +36,19 @@ class MissionChange:
 
 
 @dataclass
+class LogEntry:
+    """Mission log entry."""
+
+    entry_uid: str
+    mission_uid: str
+    content: str
+    server_time: datetime
+    client_time: datetime | None = None
+    content_hashes: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Team:
     """Team metadata."""
 
@@ -64,7 +77,11 @@ class Asset:
     asset_uid: str
     name: str
     asset_type: str
+    team_member_uid: str | None = None
+    serial_number: str | None = None
     status: str = "AVAILABLE"
+    location: str | None = None
+    notes: str | None = None
 
 
 @dataclass

@@ -1371,6 +1371,50 @@ paths:
             application/json:
               schema:
                 type: object
+  /api/r3akt/log-entries:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List mission log entries.
+      parameters:
+        - name: mission_uid
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: marker_ref
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Mission log entry list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update mission log entry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Mission log entry record.
+          content:
+            application/json:
+              schema:
+                type: object
   /api/r3akt/teams:
     get:
       x-scope: protected

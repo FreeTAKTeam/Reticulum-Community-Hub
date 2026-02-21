@@ -12,6 +12,7 @@ export type HelpScreen = {
 export const HELP_BY_PATH: Record<string, HelpProfile> = {
   "/": { title: "Mission Control // Dashboard", fileName: "dashboard.txt" },
   "/missions": { title: "Mission Workspace // Missions", fileName: "missions.txt" },
+  "/checklists": { title: "Mission Workspace // Checklists", fileName: "missions.txt" },
   "/webmap": { title: "Atlas Operations // WebMap", fileName: "webmap.txt" },
   "/topics": { title: "Signal Matrix // Topics", fileName: "topics.txt" },
   "/files": { title: "Asset Vault // Files", fileName: "files.txt" },

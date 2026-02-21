@@ -9,6 +9,7 @@ import pytest
 
 from reticulum_telemetry_hub.api.storage_models import R3aktDomainEventRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktDomainSnapshotRecord
+from reticulum_telemetry_hub.api.storage_models import MarkerRecord
 from reticulum_telemetry_hub.mission_domain.service import CHECKLIST_TASK_COMPLETE
 from reticulum_telemetry_hub.mission_domain.service import CHECKLIST_TASK_COMPLETE_LATE
 from reticulum_telemetry_hub.mission_domain.service import CHECKLIST_TASK_LATE
@@ -79,6 +80,49 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     assert service.list_mission_changes(mission_uid="mission-1")[0]["uid"] == change["uid"]
 
     with pytest.raises(ValueError):
+        service.upsert_log_entry({"content": "Mission log without mission"})
+
+    with service._session() as session:  # pylint: disable=protected-access
+        session.add(
+            MarkerRecord(
+                id="marker-1",
+                object_destination_hash="hash-1",
+                marker_type="marker",
+                symbol="marker",
+                name="Marker One",
+                category="test",
+                lat=34.1,
+                lon=-117.2,
+            )
+        )
+
+    with pytest.raises(ValueError):
+        service.upsert_log_entry(
+            {
+                "entry_uid": "log-invalid-marker",
+                "mission_uid": "mission-1",
+                "content": "Bad marker reference",
+                "content_hashes": ["missing-marker"],
+            }
+        )
+
+    log_entry = service.upsert_log_entry(
+        {
+            "entry_uid": "log-1",
+            "mission_uid": "mission-1",
+            "content": "Marker observed at waypoint",
+            "server_time": datetime.now(timezone.utc).isoformat(),
+            "client_time": datetime.now(timezone.utc).isoformat(),
+            "content_hashes": ["hash-1"],
+            "keywords": ["marker", "waypoint"],
+        }
+    )
+    assert log_entry["entry_uid"] == "log-1"
+    assert log_entry["content_hashes"] == ["hash-1"]
+    assert service.list_log_entries(mission_uid="mission-1")[0]["entry_uid"] == "log-1"
+    assert service.list_log_entries(marker_ref="hash-1")[0]["entry_uid"] == "log-1"
+
+    with pytest.raises(ValueError):
         service.upsert_team({"uid": "team-invalid", "mission_uid": "missing", "team_name": "Ops"})
 
     team = service.upsert_team(
@@ -122,6 +166,17 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
                 "team_member_uid": "missing-member",
                 "name": "Invalid",
                 "asset_type": "COMM",
+            }
+        )
+
+    with pytest.raises(ValueError):
+        service.upsert_asset(
+            {
+                "asset_uid": "asset-invalid-status",
+                "team_member_uid": "member-1",
+                "name": "Invalid Status",
+                "asset_type": "COMM",
+                "status": "BROKEN",
             }
         )
 

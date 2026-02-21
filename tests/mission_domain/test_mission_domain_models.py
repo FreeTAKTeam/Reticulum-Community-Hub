@@ -11,6 +11,15 @@ def test_domain_models_and_json_safe() -> None:
 
     mission = models.Mission(uid="m1", mission_name="Mission", created_at=now, updated_at=now)
     change = models.MissionChange(uid="mc1", mission_uid="m1", timestamp=now)
+    log_entry = models.LogEntry(
+        entry_uid="log1",
+        mission_uid="m1",
+        content="Marker observed",
+        server_time=now,
+        client_time=now,
+        content_hashes=["marker-1"],
+        keywords=["marker", "observation"],
+    )
     team = models.Team(uid="t1", team_name="Alpha", mission_uid="m1")
     member = models.TeamMember(
         uid="tm1",
@@ -18,7 +27,15 @@ def test_domain_models_and_json_safe() -> None:
         rns_identity="peer-a",
         display_name="Peer A",
     )
-    asset = models.Asset(asset_uid="a1", name="Radio", asset_type="COMM")
+    asset = models.Asset(
+        asset_uid="a1",
+        name="Radio",
+        asset_type="COMM",
+        serial_number="SN-1",
+        status="IN_USE",
+        location="truck",
+        notes="primary",
+    )
     skill = models.Skill(skill_uid="s1", name="Navigation")
     team_skill = models.TeamMemberSkill(
         uid="ts1",
@@ -113,9 +130,12 @@ def test_domain_models_and_json_safe() -> None:
 
     assert mission.uid == "m1"
     assert change.mission_uid == "m1"
+    assert log_entry.content_hashes == ["marker-1"]
     assert team.team_name == "Alpha"
     assert member.display_name == "Peer A"
     assert asset.asset_type == "COMM"
+    assert asset.serial_number == "SN-1"
+    assert asset.status == "IN_USE"
     assert skill.name == "Navigation"
     assert team_skill.level == 3
     assert requirement.minimum_level == 2

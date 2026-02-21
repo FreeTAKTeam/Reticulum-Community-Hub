@@ -224,6 +224,24 @@ class R3aktMissionChangeRecord(Base):  # pylint: disable=too-few-public-methods
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
+class R3aktLogEntryRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for mission log entries."""
+
+    __tablename__ = "r3akt_log_entries"
+
+    entry_uid = Column(String, primary_key=True)
+    mission_uid = Column(String, nullable=False)
+    content = Column(String, nullable=False)
+    server_time = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    client_time = Column(DateTime(timezone=True), nullable=True)
+    content_hashes_json = Column("content_hashes", JSON, nullable=True)
+    keywords_json = Column("keywords", JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
 class R3aktTeamRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for R3AKT teams."""
 

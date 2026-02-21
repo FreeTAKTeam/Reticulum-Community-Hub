@@ -166,6 +166,13 @@ classDiagram
     -rnsIdentity: string
   }
 
+  class Client {
+    +identity: str
+    +last_seen: datetime
+    +display_name: Optional[str]
+    +metadata: Dict[str, Any]
+  }
+
   class LogEntry {
     +content: String
     +entryuid: String
@@ -355,6 +362,7 @@ classDiagram
   Mission "1" o-- "0..*" Zone : Mission_Associates_Zones
   Mission "1" o-- "0..*" MissionTaskAssignment : Mission_Associates_TaskAssignments
   Team "1" o-- "1..*" TeamMember : Team_Associates_TeamMember
+  TeamMember "0..*" --> "0..1" Client : TeamMember_Associates_Client
   TeamMember "1" o-- "0..*" Asset : TeamMember_Associates_Assets
   Zone "1" o-- "3..200" ZonePoint : Zone_Associates_Points
 

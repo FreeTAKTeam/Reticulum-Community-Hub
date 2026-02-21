@@ -46,6 +46,7 @@ def test_openapi_includes_phase2_r3akt_paths() -> None:
         "/api/r3akt/missions": {"get", "post"},
         "/api/r3akt/missions/{mission_uid}": {"get"},
         "/api/r3akt/mission-changes": {"get", "post"},
+        "/api/r3akt/log-entries": {"get", "post"},
         "/api/r3akt/teams": {"get", "post"},
         "/api/r3akt/team-members": {"get", "post"},
         "/api/r3akt/assets": {"get", "post"},

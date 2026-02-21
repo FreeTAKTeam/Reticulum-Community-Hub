@@ -11,6 +11,7 @@ REQUIRED_PHASE2_TABLES = {
     "identity_capability_grants",
     "r3akt_missions",
     "r3akt_mission_changes",
+    "r3akt_log_entries",
     "r3akt_teams",
     "r3akt_team_members",
     "r3akt_assets",
