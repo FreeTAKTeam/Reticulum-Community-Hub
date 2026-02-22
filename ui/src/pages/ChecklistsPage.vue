@@ -28,9 +28,6 @@
                 <BaseButton size="sm" variant="secondary" icon-left="edit" @click="openTemplateBuilderFromChecklist">
                   Template Builder
                 </BaseButton>
-                <BaseButton size="sm" variant="secondary" icon-left="upload" @click="openChecklistImportFromChecklist">
-                  Import from CSV
-                </BaseButton>
               </div>
             </div>
 
@@ -54,56 +51,7 @@
             </div>
 
             <div v-if="checklistWorkspaceView === 'active'">
-              <div v-if="showChecklistImportCsv" class="screen-grid two-col">
-                <article class="stage-card">
-                  <h4>CSV Upload</h4>
-                  <div class="field-grid single-col">
-                    <label class="field-control full">
-                      <span>Select CSV File</span>
-                      <input ref="csvUploadInputRef" class="csv-upload-native" type="file" accept=".csv,text/csv" @change="handleCsvUpload" />
-                      <div class="csv-upload-picker">
-                        <BaseButton size="sm" variant="secondary" icon-left="upload" @click="openCsvUploadPicker">Choose File</BaseButton>
-                        <span class="csv-upload-filename">{{ csvImportFilename || "No file chosen" }}</span>
-                      </div>
-                    </label>
-                  </div>
-                  <ul class="stack-list csv-meta">
-                    <li><strong>Selected File</strong><span>{{ csvImportFilename || "No file selected" }}</span></li>
-                    <li><strong>Header Columns</strong><span>{{ csvImportHeaders.length }}</span></li>
-                    <li><strong>Task Rows</strong><span>{{ csvImportRows.length }}</span></li>
-                    <li><strong>Mission Scope</strong><span>Unscoped import</span></li>
-                  </ul>
-                  <div class="template-modal-actions" style="margin-top: 12px;">
-                    <BaseButton variant="ghost" size="sm" icon-left="chevron-left" @click="closeChecklistImportView">Back</BaseButton>
-                    <BaseButton size="sm" variant="secondary" icon-left="eye" @click="previewCsvAction" :disabled="!csvImportHeaders.length">Preview</BaseButton>
-                    <BaseButton size="sm" icon-left="upload" @click="importChecklistFromCsvAction" :disabled="!csvImportHeaders.length || !csvImportRows.length">Import</BaseButton>
-                  </div>
-                </article>
-
-                <article class="stage-card">
-                  <h4>CSV Task Preview</h4>
-                  <div v-if="csvImportHeaders.length && csvImportRows.length" class="csv-preview">
-                    <table class="mini-table">
-                      <thead>
-                        <tr><th>#</th><th v-for="(header, headerIndex) in csvImportHeaders" :key="`csv-header-${headerIndex}`">{{ header }}</th></tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="(row, rowIndex) in csvImportPreviewRows" :key="`csv-row-${rowIndex}`">
-                          <td>{{ rowIndex + 1 }}</td>
-                          <td v-for="(header, columnIndex) in csvImportHeaders" :key="`csv-cell-${rowIndex}-${columnIndex}`">{{ row[columnIndex] || "-" }}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                    <p v-if="csvImportRows.length > csvImportPreviewRows.length" class="csv-preview-note">Showing first {{ csvImportPreviewRows.length }} of {{ csvImportRows.length }} task rows.</p>
-                  </div>
-                  <div v-else class="builder-preview">
-                    <p>Upload a CSV file to preview its header and task rows.</p>
-                    <p>The first row becomes the checklist header and each remaining row becomes a task.</p>
-                  </div>
-                </article>
-              </div>
-
-              <div v-else-if="checklistDetailRecord" class="checklist-detail-view">
+              <div v-if="checklistDetailRecord" class="checklist-detail-view">
                 <div class="checklist-detail-header">
                   <BaseButton variant="ghost" size="sm" icon-left="chevron-left" @click="closeChecklistDetailView">Back</BaseButton>
                   <div class="checklist-detail-title">
@@ -277,7 +225,56 @@
             </div>
 
             <div v-else class="checklist-template-list">
-              <div class="checklist-template-workspace">
+              <div v-if="showChecklistImportCsv" class="screen-grid two-col">
+                <article class="stage-card">
+                  <h4>CSV Upload</h4>
+                  <div class="field-grid single-col">
+                    <label class="field-control full">
+                      <span>Select CSV File</span>
+                      <input ref="csvUploadInputRef" class="csv-upload-native" type="file" accept=".csv,text/csv" @change="handleCsvUpload" />
+                      <div class="csv-upload-picker">
+                        <BaseButton size="sm" variant="secondary" icon-left="upload" @click="openCsvUploadPicker">Choose File</BaseButton>
+                        <span class="csv-upload-filename">{{ csvImportFilename || "No file chosen" }}</span>
+                      </div>
+                    </label>
+                  </div>
+                  <ul class="stack-list csv-meta">
+                    <li><strong>Selected File</strong><span>{{ csvImportFilename || "No file selected" }}</span></li>
+                    <li><strong>Header Columns</strong><span>{{ csvImportHeaders.length }}</span></li>
+                    <li><strong>Task Rows</strong><span>{{ csvImportRows.length }}</span></li>
+                    <li><strong>Template Type</strong><span>CSV Import</span></li>
+                  </ul>
+                  <div class="template-modal-actions" style="margin-top: 12px;">
+                    <BaseButton variant="ghost" size="sm" icon-left="chevron-left" @click="closeChecklistImportView">Back</BaseButton>
+                    <BaseButton size="sm" variant="secondary" icon-left="eye" @click="previewCsvAction" :disabled="!csvImportHeaders.length">Preview</BaseButton>
+                    <BaseButton size="sm" icon-left="upload" @click="importChecklistFromCsvAction" :disabled="!csvImportHeaders.length || !csvImportRows.length || checklistCsvImportLoading">Import</BaseButton>
+                  </div>
+                </article>
+
+                <article class="stage-card">
+                  <h4>CSV Preview</h4>
+                  <div v-if="csvImportHeaders.length && csvImportRows.length" class="csv-preview">
+                    <table class="mini-table">
+                      <thead>
+                        <tr><th>#</th><th v-for="(header, headerIndex) in csvImportHeaders" :key="`csv-header-${headerIndex}`">{{ header }}</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(row, rowIndex) in csvImportPreviewRows" :key="`csv-row-${rowIndex}`">
+                          <td>{{ rowIndex + 1 }}</td>
+                          <td v-for="(header, columnIndex) in csvImportHeaders" :key="`csv-cell-${rowIndex}-${columnIndex}`">{{ row[columnIndex] || "-" }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <p v-if="csvImportRows.length > csvImportPreviewRows.length" class="csv-preview-note">Showing first {{ csvImportPreviewRows.length }} of {{ csvImportRows.length }} rows.</p>
+                  </div>
+                  <div v-else class="builder-preview">
+                    <p>Upload a CSV file to preview its columns.</p>
+                    <p>The first row becomes the column headers for your template.</p>
+                  </div>
+                </article>
+              </div>
+
+              <div v-else class="checklist-template-workspace">
                 <article class="checklist-template-library-pane">
                   <div class="checklist-template-library-head">
                     <h4>Template Library</h4>
@@ -316,6 +313,15 @@
                       No templates match your search.
                     </p>
                   </div>
+                  <BaseButton
+                    size="sm"
+                    variant="secondary"
+                    icon-left="upload"
+                    @click="openChecklistImportFromChecklist"
+                    style="margin-top: 12px; width: 100%; flex-shrink: 0;"
+                  >
+                    Import from CSV
+                  </BaseButton>
                 </article>
 
                 <article class="checklist-template-editor-pane">
@@ -990,6 +996,7 @@ const checklistTemplateEditorMode = ref<ChecklistTemplateEditorMode>("create");
 const checklistTemplateEditorDirty = ref(false);
 const checklistTemplateEditorSaving = ref(false);
 const checklistTemplateEditorHydrating = ref(false);
+const checklistCsvImportLoading = ref(false);
 const checklistTemplateDraftTemplateUid = ref("");
 const checklistTemplateDraftName = ref("");
 const checklistTemplateDraftDescription = ref("");
@@ -1435,22 +1442,27 @@ const setChecklistWorkspaceView = (view: "active" | "templates") => {
   if (view === "templates") { checklistDetailUid.value = ""; syncChecklistTemplateEditorSelection(); }
 };
 const openTemplateBuilderFromChecklist = () => { setChecklistWorkspaceView("templates"); };
-const openChecklistImportFromChecklist = () => { checklistCsvImportView.value = true; };
+const openChecklistImportFromChecklist = () => { checklistCsvImportView.value = true; checklistTemplateEditorSelectionUid.value = ""; checklistTemplateEditorSelectionSourceType.value = ""; };
 const closeChecklistImportView = () => { checklistCsvImportView.value = false; clearCsvUpload(); };
 const importChecklistFromCsvAction = async () => {
-  if (!csvImportBase64.value || !csvImportHeaders.value.length || !csvImportRows.value.length) {
+  if (!csvImportHeaders.value.length || !csvImportRows.value.length) {
     throw new Error("Upload a CSV file before importing");
   }
-  const baseName = (csvImportFilename.value || "Checklist CSV").replace(/\.csv$/i, "").trim() || "Checklist CSV";
-  const imported = await createChecklistFromUploadedCsvAction(baseName);
-  await loadWorkspace();
-  const importedUid = String(imported.uid ?? "").trim();
-  if (importedUid) {
-    checklistDetailUid.value = importedUid;
-    checklistWorkspaceView.value = "active";
-    checklistCsvImportView.value = false;
-    clearCsvUpload();
-    try { await hydrateChecklistRecord(importedUid); } catch (error) { handleApiError(error, "Checklist imported but detail refresh failed"); }
+  checklistCsvImportLoading.value = true;
+  try {
+    const baseName = (csvImportFilename.value || "CSV Template").replace(/\.csv$/i, "").trim() || "CSV Template";
+    const imported = await createTemplateFromUploadedCsvAction(baseName);
+    await loadWorkspace();
+    const importedUid = String(imported.uid ?? "").trim();
+    if (importedUid) {
+      checklistCsvImportView.value = false;
+      clearCsvUpload();
+      // Select the imported CSV as a template option
+      syncChecklistTemplateEditorSelection(importedUid, "csv_import");
+      toastStore.push("Template imported from CSV", "success");
+    }
+  } finally {
+    checklistCsvImportLoading.value = false;
   }
 };
 const previewCsvAction = () => {
@@ -1470,7 +1482,7 @@ const previewCsvAction = () => {
   URL.revokeObjectURL(url);
 };
 const normalizeCsvHeaderLabel = (value: string): string => String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, " ");
-const createChecklistFromUploadedCsvAction = async (checklistName: string, missionUid?: string): Promise<ChecklistRaw> => {
+const createTemplateFromUploadedCsvAction = async (templateName: string): Promise<ChecklistRaw> => {
   const headers = [...csvImportHeaders.value];
   const rows = [...csvImportRows.value];
   if (!headers.length || !rows.length) throw new Error("Upload a CSV file before importing");
@@ -1486,32 +1498,61 @@ const createChecklistFromUploadedCsvAction = async (checklistName: string, missi
       columns.push({ column_name: header || `Column ${index + 1}`, display_order: index + 1, column_type: "SHORT_STRING", column_editable: true, is_removable: true });
     });
   }
-  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, { mission_uid: missionUid, name: checklistName, origin_type: "CSV_IMPORT", source_identity: DEFAULT_SOURCE_IDENTITY, columns });
+  
+  // Create checklist with CSV_IMPORT origin (acts as a template with rows)
+  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, {
+    name: templateName,
+    origin_type: "CSV_IMPORT",
+    source_identity: DEFAULT_SOURCE_IDENTITY,
+    columns
+  });
   const createdChecklistUid = String(created.uid ?? "").trim();
-  if (!createdChecklistUid) throw new Error("Checklist creation failed");
+  if (!createdChecklistUid) throw new Error("Template creation failed");
+  
+  // Create tasks from CSV rows
   const createdColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(created.columns));
-  const targetColumnUidByOrder = new Map<number, string>();
-  createdColumns.forEach((column, index) => { const columnUid = String(column.column_uid ?? "").trim(); if (columnUid) targetColumnUidByOrder.set(index + 1, columnUid); });
+  const targetByHeaderIndex = new Map<number, string>();
+  headers.forEach((_, headerIndex) => {
+    if (headerIndex === dueHeaderIndex) return;
+    const displayOrder = dueHeaderIndex < 0 ? headerIndex + 2 : headerIndex + 1;
+    const columnUid = createdColumns.find((column) => Number(column.display_order ?? 0) === displayOrder)?.column_uid ?? "";
+    if (columnUid) targetByHeaderIndex.set(headerIndex, columnUid);
+  });
+  
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const row = rows[rowIndex];
     const taskNumber = rowIndex + 1;
-    const dueValue = dueHeaderIndex >= 0 ? String(row[dueHeaderIndex] ?? "").trim() : "";
-    const dueMinutes = dueValue ? Math.trunc(Number(dueValue)) : undefined;
     const taskPayload: Record<string, unknown> = { number: taskNumber };
-    if (dueMinutes !== undefined && !Number.isNaN(dueMinutes)) taskPayload.due_relative_minutes = dueMinutes;
+    
+    // Get first non-due cell value as legacy value
+    const rowLegacyValue = headers.map((_, headerIndex) => ({ headerIndex, value: String(row[headerIndex] ?? "").trim() }))
+      .find((entry) => entry.value.length > 0 && (dueHeaderIndex < 0 || entry.headerIndex !== dueHeaderIndex))?.value ?? "";
+    if (rowLegacyValue) taskPayload.legacy_value = rowLegacyValue;
+    
+    // Set due minutes if present
+    if (dueHeaderIndex >= 0) {
+      const dueValue = String(row[dueHeaderIndex] ?? "").trim();
+      const dueMinutes = dueValue ? Math.trunc(Number(dueValue)) : undefined;
+      if (dueMinutes !== undefined && !Number.isNaN(dueMinutes)) taskPayload.due_relative_minutes = dueMinutes;
+    }
+    
+    // Create task
     const taskCreated = await post<ChecklistRaw>(`${endpoints.checklists}/${createdChecklistUid}/tasks`, taskPayload);
     const createdTaskUid = String(toArray<ChecklistTaskRaw>(taskCreated.tasks).find((task) => Number(task.number ?? 0) === taskNumber)?.task_uid ?? "").trim();
     if (!createdTaskUid) continue;
-    row.forEach((cellValue, columnIndex) => {
-      if (columnIndex === dueHeaderIndex) return;
-      const targetColumnUid = targetColumnUidByOrder.get(columnIndex + 1);
-      const value = String(cellValue ?? "").trim();
-      if (!targetColumnUid || !value) return;
-      patchRequest(`${endpoints.checklists}/${createdChecklistUid}/tasks/${createdTaskUid}/cells/${targetColumnUid}`, { value, updated_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY }).catch(() => {});
-    });
+    
+    // Set cell values
+    for (const [headerIndex, targetColumnUid] of targetByHeaderIndex.entries()) {
+      const value = String(row[headerIndex] ?? "").trim();
+      if (!value) continue;
+      await patchRequest(`${endpoints.checklists}/${createdChecklistUid}/tasks/${createdTaskUid}/cells/${targetColumnUid}`, {
+        value,
+        updated_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
+      });
+    }
   }
-  const hydrated = await hydrateChecklistRecord(createdChecklistUid);
-  return hydrated ?? created;
+  
+  return created;
 };
 const buildChecklistTemplateDraftName = (): string => `Template ${buildTimestampTag().slice(-6)}`;
 const applyChecklistTemplateEditorDraft = (payload: { selectionUid: string; selectionSourceType: ChecklistTemplateSourceType | ""; mode: ChecklistTemplateEditorMode; templateUid: string; templateName: string; description: string; columns: Array<ChecklistColumnRaw | ChecklistTemplateDraftColumn>; ensureTaskColumn?: boolean }) => {
@@ -1908,15 +1949,15 @@ onMounted(() => { loadWorkspace().catch((error) => { handleApiError(error, "Unab
 .checklist-overview-list { display: grid; gap: 10px; max-height: var(--checklist-scroll-max-height); overflow-y: auto; overscroll-behavior: contain; align-content: start; padding-right: 6px; scrollbar-width: thin; scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68); }
 .checklist-template-list { min-height: var(--checklist-scroll-max-height); }
 .checklist-template-workspace { display: grid; grid-template-columns: minmax(280px, 0.92fr) minmax(0, 1.48fr); gap: 10px; min-height: var(--checklist-scroll-max-height); max-height: var(--checklist-scroll-max-height); }
-.checklist-template-library-pane, .checklist-template-editor-pane { border: 1px solid rgba(55, 242, 255, 0.32); border-radius: 10px; background: rgba(6, 18, 28, 0.76); padding: 10px; display: grid; gap: 10px; min-height: 0; }
+.checklist-template-library-pane, .checklist-template-editor-pane { border: 1px solid rgba(55, 242, 255, 0.32); border-radius: 10px; background: rgba(6, 18, 28, 0.76); padding: 10px; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden; }
 .checklist-template-library-head { display: grid; gap: 4px; }
 .checklist-template-library-head h4 { margin: 0; font-size: 18px; letter-spacing: 0.05em; text-transform: none; }
 .checklist-template-library-head p { margin: 0; font-size: 12px; color: rgba(190, 243, 255, 0.78); }
-.checklist-template-library-list { display: grid; gap: 8px; overflow-y: auto; overscroll-behavior: contain; align-content: start; min-height: 0; padding-right: 6px; scrollbar-width: thin; scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68); }
-.checklist-overview-list::-webkit-scrollbar, .checklist-template-library-list::-webkit-scrollbar, .checklist-template-column-scroll::-webkit-scrollbar { width: 10px; }
-.checklist-overview-list::-webkit-scrollbar-track, .checklist-template-library-list::-webkit-scrollbar-track, .checklist-template-column-scroll::-webkit-scrollbar-track { background: rgba(4, 18, 29, 0.68); border-radius: 999px; }
-.checklist-overview-list::-webkit-scrollbar-thumb, .checklist-template-library-list::-webkit-scrollbar-thumb, .checklist-template-column-scroll::-webkit-scrollbar-thumb { background: rgba(55, 242, 255, 0.5); border-radius: 999px; border: 2px solid rgba(4, 18, 29, 0.68); }
-.checklist-overview-list::-webkit-scrollbar-thumb:hover, .checklist-template-library-list::-webkit-scrollbar-thumb:hover, .checklist-template-column-scroll::-webkit-scrollbar-thumb:hover { background: rgba(55, 242, 255, 0.72); }
+.checklist-template-library-list { display: flex; flex-direction: column; gap: 8px; overflow-y: scroll; overscroll-behavior: contain; flex: 1; min-height: 0; max-height: calc(var(--checklist-scroll-max-height) - 120px); padding-right: 6px; scrollbar-width: thin; scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68); }
+.checklist-overview-list::-webkit-scrollbar, .checklist-template-library-list::-webkit-scrollbar, .checklist-template-column-scroll::-webkit-scrollbar { width: 12px; }
+.checklist-overview-list::-webkit-scrollbar-track, .checklist-template-library-list::-webkit-scrollbar-track, .checklist-template-column-scroll::-webkit-scrollbar-track { background: rgba(4, 18, 29, 0.9); border-radius: 999px; border: 1px solid rgba(55, 242, 255, 0.2); }
+.checklist-overview-list::-webkit-scrollbar-thumb, .checklist-template-library-list::-webkit-scrollbar-thumb, .checklist-template-column-scroll::-webkit-scrollbar-thumb { background: rgba(55, 242, 255, 0.7); border-radius: 999px; border: 2px solid rgba(4, 18, 29, 0.9); }
+.checklist-overview-list::-webkit-scrollbar-thumb:hover, .checklist-template-library-list::-webkit-scrollbar-thumb:hover, .checklist-template-column-scroll::-webkit-scrollbar-thumb:hover { background: rgba(55, 242, 255, 0.95); }
 .checklist-template-library-item { border: 1px solid rgba(55, 242, 255, 0.32); border-radius: 10px; background: rgba(6, 18, 28, 0.72); padding: 12px; display: grid; gap: 8px; text-align: left; color: #dffcff; width: 100%; cursor: pointer; font-family: inherit; }
 .checklist-template-library-item:hover { border-color: rgba(55, 242, 255, 0.7); background: rgba(10, 28, 41, 0.86); }
 .checklist-template-library-item.active { border-color: rgba(55, 242, 255, 0.9); box-shadow: inset 0 0 0 1px rgba(55, 242, 255, 0.28); }
