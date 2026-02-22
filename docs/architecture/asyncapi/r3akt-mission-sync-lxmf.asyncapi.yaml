@@ -58,6 +58,16 @@ channels:
           - $ref: "#/components/messages/ZoneCreateCommand"
           - $ref: "#/components/messages/ZonePatchCommand"
           - $ref: "#/components/messages/ZoneDeleteCommand"
+          - $ref: "#/components/messages/MissionRegistryPatchCommand"
+          - $ref: "#/components/messages/MissionRegistryDeleteCommand"
+          - $ref: "#/components/messages/MissionRegistryParentSetCommand"
+          - $ref: "#/components/messages/MissionRegistryZoneLinkCommand"
+          - $ref: "#/components/messages/MissionRegistryZoneUnlinkCommand"
+          - $ref: "#/components/messages/MissionRegistryRdeSetCommand"
+          - $ref: "#/components/messages/TeamMemberClientLinkCommand"
+          - $ref: "#/components/messages/TeamMemberClientUnlinkCommand"
+          - $ref: "#/components/messages/AssignmentAssetLinkCommand"
+          - $ref: "#/components/messages/AssignmentAssetUnlinkCommand"
   r3akt.mission.replies:
     description: Mission-sync command outcomes (`FIELD_RESULTS` / `0x0A`).
     x-lxmf-fields:
@@ -318,6 +328,204 @@ components:
               command_type:
                 const: mission.zone.delete
               args: { $ref: "#/components/schemas/ZoneIdArgs" }
+            required: [command_type, args]
+    MissionRegistryPatchCommand:
+      name: MissionRegistryPatchCommand
+      x-http-operation: "PATCH /api/r3akt/missions/{mission_uid}"
+      x-capability-required:
+        - mission.registry.mission.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.patch
+              args:
+                type: object
+                additionalProperties: true
+                required: [mission_uid]
+                properties:
+                  mission_uid: { type: string }
+            required: [command_type, args]
+    MissionRegistryDeleteCommand:
+      name: MissionRegistryDeleteCommand
+      x-http-operation: "DELETE /api/r3akt/missions/{mission_uid}"
+      x-capability-required:
+        - mission.registry.mission.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.delete
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid]
+                properties:
+                  mission_uid: { type: string }
+            required: [command_type, args]
+    MissionRegistryParentSetCommand:
+      name: MissionRegistryParentSetCommand
+      x-http-operation: "PUT /api/r3akt/missions/{mission_uid}/parent"
+      x-capability-required:
+        - mission.registry.mission.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.parent.set
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid]
+                properties:
+                  mission_uid: { type: string }
+                  parent_uid: { type: string }
+            required: [command_type, args]
+    MissionRegistryZoneLinkCommand:
+      name: MissionRegistryZoneLinkCommand
+      x-http-operation: "PUT /api/r3akt/missions/{mission_uid}/zones/{zone_id}"
+      x-capability-required:
+        - mission.zone.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.zone.link
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid, zone_id]
+                properties:
+                  mission_uid: { type: string }
+                  zone_id: { type: string }
+            required: [command_type, args]
+    MissionRegistryZoneUnlinkCommand:
+      name: MissionRegistryZoneUnlinkCommand
+      x-http-operation: "DELETE /api/r3akt/missions/{mission_uid}/zones/{zone_id}"
+      x-capability-required:
+        - mission.zone.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.zone.unlink
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid, zone_id]
+                properties:
+                  mission_uid: { type: string }
+                  zone_id: { type: string }
+            required: [command_type, args]
+    MissionRegistryRdeSetCommand:
+      name: MissionRegistryRdeSetCommand
+      x-http-operation: "PUT /api/r3akt/missions/{mission_uid}/rde"
+      x-capability-required:
+        - mission.registry.mission.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.rde.set
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid, role]
+                properties:
+                  mission_uid: { type: string }
+                  role: { type: string }
+            required: [command_type, args]
+    TeamMemberClientLinkCommand:
+      name: TeamMemberClientLinkCommand
+      x-http-operation: "PUT /api/r3akt/team-members/{team_member_uid}/clients/{client_identity}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.client.link
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_member_uid, client_identity]
+                properties:
+                  team_member_uid: { type: string }
+                  client_identity: { type: string }
+            required: [command_type, args]
+    TeamMemberClientUnlinkCommand:
+      name: TeamMemberClientUnlinkCommand
+      x-http-operation: "DELETE /api/r3akt/team-members/{team_member_uid}/clients/{client_identity}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.client.unlink
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_member_uid, client_identity]
+                properties:
+                  team_member_uid: { type: string }
+                  client_identity: { type: string }
+            required: [command_type, args]
+    AssignmentAssetLinkCommand:
+      name: AssignmentAssetLinkCommand
+      x-http-operation: "PUT /api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}"
+      x-capability-required:
+        - mission.registry.assignment.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.assignment.asset.link
+              args:
+                type: object
+                additionalProperties: false
+                required: [assignment_uid, asset_uid]
+                properties:
+                  assignment_uid: { type: string }
+                  asset_uid: { type: string }
+            required: [command_type, args]
+    AssignmentAssetUnlinkCommand:
+      name: AssignmentAssetUnlinkCommand
+      x-http-operation: "DELETE /api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}"
+      x-capability-required:
+        - mission.registry.assignment.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.assignment.asset.unlink
+              args:
+                type: object
+                additionalProperties: false
+                required: [assignment_uid, asset_uid]
+                properties:
+                  assignment_uid: { type: string }
+                  asset_uid: { type: string }
             required: [command_type, args]
     CommandAccepted:
       name: CommandAccepted

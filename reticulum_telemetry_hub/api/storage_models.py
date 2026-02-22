@@ -501,6 +501,64 @@ class R3aktMissionTaskAssignmentRecord(Base):  # pylint: disable=too-few-public-
     assets_json = Column("assets", JSON, nullable=True)
 
 
+class R3aktAssignmentAssetLinkRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for assignment-to-asset links."""
+
+    __tablename__ = "r3akt_assignment_assets"
+    __table_args__ = (
+        UniqueConstraint("assignment_uid", "asset_uid", name="uq_assignment_asset_link"),
+    )
+
+    link_uid = Column(String, primary_key=True)
+    assignment_uid = Column(String, nullable=False)
+    asset_uid = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class R3aktMissionZoneLinkRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for mission-to-zone links."""
+
+    __tablename__ = "r3akt_mission_zone_links"
+    __table_args__ = (
+        UniqueConstraint("mission_uid", "zone_id", name="uq_mission_zone_link"),
+    )
+
+    link_uid = Column(String, primary_key=True)
+    mission_uid = Column(String, nullable=False)
+    zone_id = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class R3aktTeamMemberClientLinkRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record linking team members to client identities."""
+
+    __tablename__ = "r3akt_team_member_client_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "team_member_uid",
+            "client_identity",
+            name="uq_team_member_client_link",
+        ),
+    )
+
+    link_uid = Column(String, primary_key=True)
+    team_member_uid = Column(String, nullable=False)
+    client_identity = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class R3aktMissionRdeRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for mission role descriptor entry."""
+
+    __tablename__ = "r3akt_mission_rde"
+
+    mission_uid = Column(String, primary_key=True)
+    role = Column(String, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
 class R3aktDomainEventRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for immutable R3AKT domain events."""
 

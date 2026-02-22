@@ -20,7 +20,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from reticulum_telemetry_hub.api.storage_models import Base
+from reticulum_telemetry_hub.api.storage_models import ClientRecord
 from reticulum_telemetry_hub.api.storage_models import MarkerRecord
+from reticulum_telemetry_hub.api.storage_models import R3aktAssignmentAssetLinkRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktAssetRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktChecklistCellRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktChecklistColumnRecord
@@ -33,37 +35,57 @@ from reticulum_telemetry_hub.api.storage_models import R3aktDomainSnapshotRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktLogEntryRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionChangeRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionRecord
+from reticulum_telemetry_hub.api.storage_models import R3aktMissionRdeRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionTaskAssignmentRecord
+from reticulum_telemetry_hub.api.storage_models import R3aktMissionZoneLinkRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktSkillRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktTaskSkillRequirementRecord
+from reticulum_telemetry_hub.api.storage_models import R3aktTeamMemberClientLinkRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktTeamMemberRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktTeamMemberSkillRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktTeamRecord
+from reticulum_telemetry_hub.api.storage_models import TopicRecord
+from reticulum_telemetry_hub.api.storage_models import ZoneRecord
+from reticulum_telemetry_hub.mission_domain.enums import AssetStatus
+from reticulum_telemetry_hub.mission_domain.enums import ChecklistColumnType
+from reticulum_telemetry_hub.mission_domain.enums import ChecklistMode
+from reticulum_telemetry_hub.mission_domain.enums import ChecklistOriginType
+from reticulum_telemetry_hub.mission_domain.enums import ChecklistStatus
+from reticulum_telemetry_hub.mission_domain.enums import ChecklistSyncState
+from reticulum_telemetry_hub.mission_domain.enums import ChecklistSystemColumnKey
+from reticulum_telemetry_hub.mission_domain.enums import ChecklistTaskStatus
+from reticulum_telemetry_hub.mission_domain.enums import ChecklistUserTaskStatus
+from reticulum_telemetry_hub.mission_domain.enums import MISSION_PRIORITY_MAX
+from reticulum_telemetry_hub.mission_domain.enums import MISSION_PRIORITY_MIN
+from reticulum_telemetry_hub.mission_domain.enums import MissionChangeType
+from reticulum_telemetry_hub.mission_domain.enums import MissionRole
+from reticulum_telemetry_hub.mission_domain.enums import MissionStatus
+from reticulum_telemetry_hub.mission_domain.enums import SKILL_LEVEL_MAX
+from reticulum_telemetry_hub.mission_domain.enums import SKILL_LEVEL_MIN
+from reticulum_telemetry_hub.mission_domain.enums import TeamColor
+from reticulum_telemetry_hub.mission_domain.enums import TeamRole
+from reticulum_telemetry_hub.mission_domain.enums import enum_values
+from reticulum_telemetry_hub.mission_domain.enums import normalize_enum_value
 
 
-CHECKLIST_USER_PENDING = "PENDING"
-CHECKLIST_USER_COMPLETE = "COMPLETE"
-CHECKLIST_TASK_PENDING = "PENDING"
-CHECKLIST_TASK_COMPLETE = "COMPLETE"
-CHECKLIST_TASK_COMPLETE_LATE = "COMPLETE_LATE"
-CHECKLIST_TASK_LATE = "LATE"
-CHECKLIST_MODE_ONLINE = "ONLINE"
-CHECKLIST_MODE_OFFLINE = "OFFLINE"
-CHECKLIST_SYNC_LOCAL_ONLY = "LOCAL_ONLY"
-CHECKLIST_SYNC_SYNCED = "SYNCED"
-SYSTEM_COLUMN_KEY_DUE_RELATIVE_DTG = "DUE_RELATIVE_DTG"
-ASSET_STATUS_AVAILABLE = "AVAILABLE"
-ASSET_STATUS_IN_USE = "IN_USE"
-ASSET_STATUS_LOST = "LOST"
-ASSET_STATUS_MAINTENANCE = "MAINTENANCE"
-ASSET_STATUS_RETIRED = "RETIRED"
-ALLOWED_ASSET_STATUSES = {
-    ASSET_STATUS_AVAILABLE,
-    ASSET_STATUS_IN_USE,
-    ASSET_STATUS_LOST,
-    ASSET_STATUS_MAINTENANCE,
-    ASSET_STATUS_RETIRED,
-}
+CHECKLIST_USER_PENDING = ChecklistUserTaskStatus.PENDING.value
+CHECKLIST_USER_COMPLETE = ChecklistUserTaskStatus.COMPLETE.value
+CHECKLIST_TASK_PENDING = ChecklistTaskStatus.PENDING.value
+CHECKLIST_TASK_COMPLETE = ChecklistTaskStatus.COMPLETE.value
+CHECKLIST_TASK_COMPLETE_LATE = ChecklistTaskStatus.COMPLETE_LATE.value
+CHECKLIST_TASK_LATE = ChecklistTaskStatus.LATE.value
+CHECKLIST_MODE_ONLINE = ChecklistMode.ONLINE.value
+CHECKLIST_MODE_OFFLINE = ChecklistMode.OFFLINE.value
+CHECKLIST_SYNC_LOCAL_ONLY = ChecklistSyncState.LOCAL_ONLY.value
+CHECKLIST_SYNC_UPLOAD_PENDING = ChecklistSyncState.UPLOAD_PENDING.value
+CHECKLIST_SYNC_SYNCED = ChecklistSyncState.SYNCED.value
+SYSTEM_COLUMN_KEY_DUE_RELATIVE_DTG = ChecklistSystemColumnKey.DUE_RELATIVE_DTG.value
+ASSET_STATUS_AVAILABLE = AssetStatus.AVAILABLE.value
+ASSET_STATUS_IN_USE = AssetStatus.IN_USE.value
+ASSET_STATUS_LOST = AssetStatus.LOST.value
+ASSET_STATUS_MAINTENANCE = AssetStatus.MAINTENANCE.value
+ASSET_STATUS_RETIRED = AssetStatus.RETIRED.value
+ALLOWED_ASSET_STATUSES = enum_values(AssetStatus)
 
 
 def _utcnow() -> datetime:
@@ -315,64 +337,509 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
 
     @staticmethod
     def _normalize_asset_status(value: Any, *, default: str) -> str:
+        return normalize_enum_value(
+            value,
+            field_name="status",
+            allowed_values=ALLOWED_ASSET_STATUSES,
+            default=default,
+        )
+
+    @staticmethod
+    def _normalize_optional_enum(
+        value: Any,
+        *,
+        field_name: str,
+        allowed_values: set[str],
+        current: str | None = None,
+    ) -> str | None:
+        if value is None:
+            return current
+        if str(value).strip() == "":
+            return current
+        return normalize_enum_value(
+            value,
+            field_name=field_name,
+            allowed_values=allowed_values,
+            default=current,
+        )
+
+    @staticmethod
+    def _normalize_integer(
+        value: Any,
+        *,
+        field_name: str,
+        minimum: int,
+        maximum: int,
+        default: int | None = None,
+    ) -> int | None:
         if value is None:
             return default
-        text = str(value).strip().upper()
-        if not text:
-            return default
-        if text not in ALLOWED_ASSET_STATUSES:
-            allowed = ", ".join(sorted(ALLOWED_ASSET_STATUSES))
-            raise ValueError(f"status must be one of: {allowed}")
-        return text
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} must be an integer") from exc
+        if normalized < minimum or normalized > maximum:
+            raise ValueError(f"{field_name} must be between {minimum} and {maximum}")
+        return normalized
+
     @staticmethod
-    def _serialize_mission(row: R3aktMissionRecord) -> dict[str, Any]:
+    def _normalize_identity(value: Any, *, field_name: str) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            raise ValueError(f"{field_name} is required")
+        return text
+
+    @staticmethod
+    def _normalize_task_status(value: Any, *, current: str | None = None) -> str:
+        return normalize_enum_value(
+            value,
+            field_name="status",
+            allowed_values=enum_values(ChecklistTaskStatus),
+            default=current or CHECKLIST_TASK_PENDING,
+        )
+    @staticmethod
+    def _topic_payload(session: Session, topic_id: str | None) -> dict[str, Any] | None:
+        if not topic_id:
+            return None
+        topic = session.get(TopicRecord, topic_id)
+        if topic is None:
+            return None
         return {
+            "topic_id": topic.id,
+            "topic_name": topic.name,
+            "topic_path": topic.path,
+            "topic_description": topic.description or "",
+        }
+
+    @staticmethod
+    def _mission_children(session: Session, mission_uid: str) -> list[str]:
+        rows = (
+            session.query(R3aktMissionRecord.uid)
+            .filter(R3aktMissionRecord.parent_uid == mission_uid)
+            .order_by(R3aktMissionRecord.created_at.asc())
+            .all()
+        )
+        return [str(row[0]) for row in rows]
+
+    @staticmethod
+    def _mission_zone_ids(session: Session, mission_uid: str) -> list[str]:
+        rows = (
+            session.query(R3aktMissionZoneLinkRecord.zone_id)
+            .filter(R3aktMissionZoneLinkRecord.mission_uid == mission_uid)
+            .order_by(R3aktMissionZoneLinkRecord.created_at.asc())
+            .all()
+        )
+        return [str(row[0]) for row in rows]
+
+    @staticmethod
+    def _mission_rde(session: Session, mission_uid: str) -> str | None:
+        row = session.get(R3aktMissionRdeRecord, mission_uid)
+        if row is None:
+            return None
+        return row.role
+
+    def _serialize_mission(
+        self,
+        session: Session,
+        row: R3aktMissionRecord,
+        *,
+        expand_topic: bool = False,
+    ) -> dict[str, Any]:
+        payload = {
             "uid": row.uid,
             "mission_name": row.mission_name,
             "description": row.description or "",
             "topic_id": row.topic_id,
-            "mission_status": row.mission_status,
+            "path": row.path,
+            "classification": row.classification,
+            "tool": row.tool,
+            "keywords": list(row.keywords_json or []),
+            "parent_uid": row.parent_uid,
+            "children": self._mission_children(session, row.uid),
+            "feeds": list(row.feeds_json or []),
+            "zones": self._mission_zone_ids(session, row.uid),
+            "password_hash": row.password_hash,
             "default_role": row.default_role,
+            "mission_priority": row.mission_priority,
+            "mission_status": row.mission_status,
             "owner_role": row.owner_role,
+            "token": row.token,
             "invite_only": bool(row.invite_only),
+            "expiration": _dt(row.expiration),
+            "mission_rde_role": self._mission_rde(session, row.uid),
             "created_at": _dt(row.created_at),
             "updated_at": _dt(row.updated_at),
         }
+        if expand_topic:
+            payload["topic"] = self._topic_payload(session, row.topic_id)
+        return payload
+
+    @staticmethod
+    def _resolve_parent_uid(payload: dict[str, Any], current: str | None) -> str | None:
+        if "parent_uid" in payload:
+            raw_parent = payload.get("parent_uid")
+        elif "parent" in payload:
+            raw_parent = payload.get("parent")
+            if isinstance(raw_parent, dict):
+                raw_parent = raw_parent.get("uid")
+        else:
+            return current
+        value = str(raw_parent or "").strip()
+        return value or None
+
+    @staticmethod
+    def _ensure_parent_chain_is_acyclic(
+        session: Session, *, mission_uid: str, parent_uid: str | None
+    ) -> None:
+        if parent_uid is None:
+            return
+        if parent_uid == mission_uid:
+            raise ValueError("parent_uid cannot reference itself")
+        seen: set[str] = {mission_uid}
+        current = parent_uid
+        while current:
+            if current in seen:
+                raise ValueError("mission parent relationship would create a cycle")
+            seen.add(current)
+            parent_row = session.get(R3aktMissionRecord, current)
+            if parent_row is None:
+                raise ValueError(f"Parent mission '{current}' not found")
+            current = parent_row.parent_uid
 
     def upsert_mission(self, payload: dict[str, Any]) -> dict[str, Any]:
-        uid = str(payload.get("uid") or payload.get("mission_id") or uuid.uuid4().hex)
+        uid = str(payload.get("uid") or payload.get("mission_id") or uuid.uuid4().hex).strip()
+        if not uid:
+            raise ValueError("uid is required")
         with self._session() as session:
             row = session.get(R3aktMissionRecord, uid)
             if row is None:
                 row = R3aktMissionRecord(uid=uid, mission_name="Mission")
                 session.add(row)
-            row.mission_name = str(payload.get("mission_name") or payload.get("name") or row.mission_name)
+
+            row.mission_name = str(payload.get("mission_name") or payload.get("name") or row.mission_name).strip()
+            if not row.mission_name:
+                raise ValueError("mission_name is required")
             row.description = str(payload.get("description") or row.description or "")
-            row.topic_id = payload.get("topic_id") or row.topic_id
-            row.mission_status = payload.get("mission_status") or row.mission_status or "MISSION_ACTIVE"
-            row.default_role = payload.get("default_role") or row.default_role
-            row.owner_role = payload.get("owner_role") or row.owner_role
+
+            topic_id = payload.get("topic_id")
+            if topic_id is not None:
+                topic_text = str(topic_id).strip()
+                if topic_text:
+                    if session.get(TopicRecord, topic_text) is None:
+                        raise ValueError(f"Topic '{topic_text}' not found")
+                    row.topic_id = topic_text
+                else:
+                    row.topic_id = None
+
+            row.path = (
+                str(payload.get("path")).strip()
+                if payload.get("path") is not None
+                else row.path
+            )
+            row.classification = (
+                str(payload.get("classification")).strip()
+                if payload.get("classification") is not None
+                else row.classification
+            )
+            row.tool = (
+                str(payload.get("tool")).strip()
+                if payload.get("tool") is not None
+                else row.tool
+            )
+            if "keywords" in payload:
+                row.keywords_json = self._normalize_string_list(
+                    payload.get("keywords"),
+                    field_name="keywords",
+                )
+            elif row.keywords_json is None:
+                row.keywords_json = []
+
+            parent_uid = self._resolve_parent_uid(payload, row.parent_uid)
+            self._ensure_parent_chain_is_acyclic(session, mission_uid=uid, parent_uid=parent_uid)
+            row.parent_uid = parent_uid
+
+            if "feeds" in payload:
+                row.feeds_json = self._normalize_string_list(
+                    payload.get("feeds"),
+                    field_name="feeds",
+                )
+            elif row.feeds_json is None:
+                row.feeds_json = []
+
+            if payload.get("password_hash") is not None:
+                row.password_hash = str(payload.get("password_hash")).strip() or None
+
+            row.default_role = self._normalize_optional_enum(
+                payload.get("default_role"),
+                field_name="default_role",
+                allowed_values=enum_values(MissionRole),
+                current=row.default_role,
+            )
+            row.owner_role = self._normalize_optional_enum(
+                payload.get("owner_role"),
+                field_name="owner_role",
+                allowed_values=enum_values(MissionRole),
+                current=row.owner_role,
+            )
+            row.mission_status = normalize_enum_value(
+                payload.get("mission_status"),
+                field_name="mission_status",
+                allowed_values=enum_values(MissionStatus),
+                default=row.mission_status or MissionStatus.MISSION_ACTIVE.value,
+            )
+            row.mission_priority = self._normalize_integer(
+                payload.get("mission_priority"),
+                field_name="mission_priority",
+                minimum=MISSION_PRIORITY_MIN,
+                maximum=MISSION_PRIORITY_MAX,
+                default=row.mission_priority,
+            )
+            if payload.get("token") is not None:
+                row.token = str(payload.get("token")).strip() or None
             if payload.get("invite_only") is not None:
                 row.invite_only = bool(payload.get("invite_only"))
+            if payload.get("expiration") is not None:
+                row.expiration = _as_datetime(payload.get("expiration"), default=None)
+
+            mission_rde_role = payload.get("mission_rde_role")
+            if mission_rde_role is not None:
+                normalized_role = normalize_enum_value(
+                    mission_rde_role,
+                    field_name="mission_rde_role",
+                    allowed_values=enum_values(MissionRole),
+                    default=MissionRole.MISSION_SUBSCRIBER.value,
+                )
+                rde_row = session.get(R3aktMissionRdeRecord, uid)
+                if rde_row is None:
+                    session.add(
+                        R3aktMissionRdeRecord(
+                            mission_uid=uid,
+                            role=normalized_role,
+                        )
+                    )
+                else:
+                    rde_row.role = normalized_role
+
             session.flush()
-            data = self._serialize_mission(row)
-            self._record_event(session, domain="mission", aggregate_type="mission", aggregate_uid=uid, event_type="mission.upserted", payload=data)
-            self._record_snapshot(session, domain="mission", aggregate_type="mission", aggregate_uid=uid, state=data)
+            data = self._serialize_mission(session, row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=uid,
+                event_type="mission.upserted",
+                payload=data,
+            )
+            self._record_snapshot(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=uid,
+                state=data,
+            )
             return data
 
-    def list_missions(self) -> list[dict[str, Any]]:
+    def patch_mission(self, mission_uid: str, patch: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(patch, dict):
+            raise ValueError("patch must be an object")
         with self._session() as session:
-            return [
-                self._serialize_mission(row)
-                for row in session.query(R3aktMissionRecord).order_by(R3aktMissionRecord.created_at.desc()).all()
-            ]
+            if session.get(R3aktMissionRecord, mission_uid) is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+        return self.upsert_mission({"uid": mission_uid, **patch})
 
-    def get_mission(self, mission_uid: str) -> dict[str, Any]:
+    def delete_mission(self, mission_uid: str) -> dict[str, Any]:
         with self._session() as session:
             row = session.get(R3aktMissionRecord, mission_uid)
             if row is None:
                 raise KeyError(f"Mission '{mission_uid}' not found")
-            return self._serialize_mission(row)
+            row.mission_status = MissionStatus.MISSION_DELETED.value
+            row.updated_at = _utcnow()
+            session.flush()
+            data = self._serialize_mission(session, row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=mission_uid,
+                event_type="mission.deleted",
+                payload=data,
+            )
+            self._record_snapshot(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=mission_uid,
+                state=data,
+            )
+            return data
+
+    def list_missions(self, *, expand_topic: bool = False) -> list[dict[str, Any]]:
+        with self._session() as session:
+            return [
+                self._serialize_mission(session, row, expand_topic=expand_topic)
+                for row in session.query(R3aktMissionRecord)
+                .order_by(R3aktMissionRecord.created_at.desc())
+                .all()
+            ]
+
+    def get_mission(
+        self, mission_uid: str, *, expand_topic: bool = False
+    ) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktMissionRecord, mission_uid)
+            if row is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+            return self._serialize_mission(session, row, expand_topic=expand_topic)
+
+    def set_mission_parent(
+        self, mission_uid: str, *, parent_uid: str | None
+    ) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktMissionRecord, mission_uid)
+            if row is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+            normalized_parent = str(parent_uid or "").strip() or None
+            self._ensure_parent_chain_is_acyclic(
+                session,
+                mission_uid=mission_uid,
+                parent_uid=normalized_parent,
+            )
+            row.parent_uid = normalized_parent
+            row.updated_at = _utcnow()
+            session.flush()
+            data = self._serialize_mission(session, row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=mission_uid,
+                event_type="mission.parent.updated",
+                payload={"mission_uid": mission_uid, "parent_uid": normalized_parent},
+            )
+            self._record_snapshot(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=mission_uid,
+                state=data,
+            )
+            return data
+
+    def link_mission_zone(self, mission_uid: str, zone_id: str) -> dict[str, Any]:
+        zone_id = str(zone_id or "").strip()
+        if not zone_id:
+            raise ValueError("zone_id is required")
+        with self._session() as session:
+            mission = session.get(R3aktMissionRecord, mission_uid)
+            if mission is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+            if session.get(ZoneRecord, zone_id) is None:
+                raise ValueError(f"Zone '{zone_id}' not found")
+            row = (
+                session.query(R3aktMissionZoneLinkRecord)
+                .filter(
+                    R3aktMissionZoneLinkRecord.mission_uid == mission_uid,
+                    R3aktMissionZoneLinkRecord.zone_id == zone_id,
+                )
+                .first()
+            )
+            if row is None:
+                session.add(
+                    R3aktMissionZoneLinkRecord(
+                        link_uid=uuid.uuid4().hex,
+                        mission_uid=mission_uid,
+                        zone_id=zone_id,
+                    )
+                )
+            session.flush()
+            data = self._serialize_mission(session, mission)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=mission_uid,
+                event_type="mission.zone.linked",
+                payload={"mission_uid": mission_uid, "zone_id": zone_id},
+            )
+            return data
+
+    def unlink_mission_zone(self, mission_uid: str, zone_id: str) -> dict[str, Any]:
+        zone_id = str(zone_id or "").strip()
+        if not zone_id:
+            raise ValueError("zone_id is required")
+        with self._session() as session:
+            mission = session.get(R3aktMissionRecord, mission_uid)
+            if mission is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+            (
+                session.query(R3aktMissionZoneLinkRecord)
+                .filter(
+                    R3aktMissionZoneLinkRecord.mission_uid == mission_uid,
+                    R3aktMissionZoneLinkRecord.zone_id == zone_id,
+                )
+                .delete(synchronize_session=False)
+            )
+            session.flush()
+            data = self._serialize_mission(session, mission)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=mission_uid,
+                event_type="mission.zone.unlinked",
+                payload={"mission_uid": mission_uid, "zone_id": zone_id},
+            )
+            return data
+
+    def list_mission_zones(self, mission_uid: str) -> list[str]:
+        with self._session() as session:
+            if session.get(R3aktMissionRecord, mission_uid) is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+            return self._mission_zone_ids(session, mission_uid)
+
+    def upsert_mission_rde(self, mission_uid: str, role: str) -> dict[str, Any]:
+        normalized_role = normalize_enum_value(
+            role,
+            field_name="role",
+            allowed_values=enum_values(MissionRole),
+            default=MissionRole.MISSION_SUBSCRIBER.value,
+        )
+        with self._session() as session:
+            self._ensure_mission_exists(session, mission_uid)
+            row = session.get(R3aktMissionRdeRecord, mission_uid)
+            if row is None:
+                row = R3aktMissionRdeRecord(mission_uid=mission_uid, role=normalized_role)
+                session.add(row)
+            else:
+                row.role = normalized_role
+            session.flush()
+            payload = {
+                "mission_uid": mission_uid,
+                "role": row.role,
+                "updated_at": _dt(row.updated_at),
+            }
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="mission_rde",
+                aggregate_uid=mission_uid,
+                event_type="mission.rde.upserted",
+                payload=payload,
+            )
+            return payload
+
+    def get_mission_rde(self, mission_uid: str) -> dict[str, Any]:
+        with self._session() as session:
+            if session.get(R3aktMissionRecord, mission_uid) is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+            row = session.get(R3aktMissionRdeRecord, mission_uid)
+            if row is None:
+                return {"mission_uid": mission_uid, "role": None, "updated_at": None}
+            return {
+                "mission_uid": mission_uid,
+                "role": row.role,
+                "updated_at": _dt(row.updated_at),
+            }
 
     @staticmethod
     def _serialize_mission_change(row: R3aktMissionChangeRecord) -> dict[str, Any]:
@@ -404,10 +871,18 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             row.team_member_rns_identity = payload.get("team_member_rns_identity")
             row.timestamp = _as_datetime(payload.get("timestamp"), default=_utcnow()) or _utcnow()
             row.notes = payload.get("notes")
-            row.change_type = payload.get("change_type")
+            row.change_type = normalize_enum_value(
+                payload.get("change_type"),
+                field_name="change_type",
+                allowed_values=enum_values(MissionChangeType),
+                default=row.change_type or MissionChangeType.ADD_CONTENT.value,
+            )
             if payload.get("is_federated_change") is not None:
                 row.is_federated_change = bool(payload.get("is_federated_change"))
-            row.hashes_json = payload.get("hashes")
+            hashes = self._normalize_string_list(payload.get("hashes"), field_name="hashes")
+            for marker_ref in hashes:
+                self._ensure_marker_exists(session, marker_ref)
+            row.hashes_json = hashes
             session.flush()
             data = self._serialize_mission_change(row)
             self._record_event(session, domain="mission", aggregate_type="mission_change", aggregate_uid=uid, event_type="mission.change.upserted", payload=data)
@@ -557,7 +1032,12 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if mission_uid:
                 self._ensure_mission_exists(session, str(mission_uid))
             row.mission_uid = mission_uid
-            row.color = payload.get("color") or row.color
+            row.color = self._normalize_optional_enum(
+                payload.get("color"),
+                field_name="color",
+                allowed_values=enum_values(TeamColor),
+                current=row.color,
+            )
             row.team_name = str(payload.get("team_name") or payload.get("name") or row.team_name)
             row.team_description = str(payload.get("team_description") or payload.get("description") or row.team_description or "")
             session.flush()
@@ -572,15 +1052,36 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 query = query.filter(R3aktTeamRecord.mission_uid == mission_uid)
             return [self._serialize_team(row) for row in query.order_by(R3aktTeamRecord.team_name.asc()).all()]
 
-    @staticmethod
-    def _serialize_team_member(row: R3aktTeamMemberRecord) -> dict[str, Any]:
+    def _team_member_clients(
+        self, session: Session, team_member_uid: str
+    ) -> list[str]:
+        rows = (
+            session.query(R3aktTeamMemberClientLinkRecord.client_identity)
+            .filter(R3aktTeamMemberClientLinkRecord.team_member_uid == team_member_uid)
+            .order_by(R3aktTeamMemberClientLinkRecord.created_at.asc())
+            .all()
+        )
+        return [str(row[0]) for row in rows]
+
+    def _serialize_team_member(
+        self, session: Session, row: R3aktTeamMemberRecord
+    ) -> dict[str, Any]:
         return {
             "uid": row.uid,
             "team_uid": row.team_uid,
             "rns_identity": row.rns_identity,
             "display_name": row.display_name,
+            "icon": row.icon,
             "role": row.role,
             "callsign": row.callsign,
+            "freq": row.freq,
+            "email": row.email,
+            "phone": row.phone,
+            "modulation": row.modulation,
+            "availability": row.availability,
+            "certifications": list(row.certifications_json or []),
+            "last_active": _dt(row.last_active),
+            "client_identities": self._team_member_clients(session, row.uid),
             "created_at": _dt(row.created_at),
             "updated_at": _dt(row.updated_at),
         }
@@ -601,10 +1102,34 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             row.team_uid = team_uid
             row.rns_identity = identity
             row.display_name = str(payload.get("display_name") or payload.get("callsign") or row.display_name)
-            row.role = payload.get("role") or row.role
+            row.icon = payload.get("icon") or row.icon
+            row.role = self._normalize_optional_enum(
+                payload.get("role"),
+                field_name="role",
+                allowed_values=enum_values(TeamRole),
+                current=row.role,
+            )
             row.callsign = payload.get("callsign") or row.callsign
+            if payload.get("freq") is not None:
+                try:
+                    row.freq = float(payload.get("freq"))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("freq must be numeric") from exc
+            row.email = payload.get("email") or row.email
+            row.phone = payload.get("phone") or row.phone
+            row.modulation = payload.get("modulation") or row.modulation
+            row.availability = payload.get("availability") or row.availability
+            if "certifications" in payload:
+                row.certifications_json = self._normalize_string_list(
+                    payload.get("certifications"),
+                    field_name="certifications",
+                )
+            elif row.certifications_json is None:
+                row.certifications_json = []
+            if payload.get("last_active") is not None:
+                row.last_active = _as_datetime(payload.get("last_active"), default=None)
             session.flush()
-            data = self._serialize_team_member(row)
+            data = self._serialize_team_member(session, row)
             self._record_event(session, domain="mission", aggregate_type="team_member", aggregate_uid=uid, event_type="team_member.upserted", payload=data)
             return data
 
@@ -613,7 +1138,88 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             query = session.query(R3aktTeamMemberRecord)
             if team_uid:
                 query = query.filter(R3aktTeamMemberRecord.team_uid == team_uid)
-            return [self._serialize_team_member(row) for row in query.order_by(R3aktTeamMemberRecord.display_name.asc()).all()]
+            return [
+                self._serialize_team_member(session, row)
+                for row in query.order_by(R3aktTeamMemberRecord.display_name.asc()).all()
+            ]
+
+    def link_team_member_client(self, team_member_uid: str, client_identity: str) -> dict[str, Any]:
+        normalized_identity = self._normalize_identity(
+            client_identity, field_name="client_identity"
+        )
+        with self._session() as session:
+            member = session.get(R3aktTeamMemberRecord, team_member_uid)
+            if member is None:
+                raise KeyError(f"Team member '{team_member_uid}' not found")
+            row = (
+                session.query(R3aktTeamMemberClientLinkRecord)
+                .filter(
+                    R3aktTeamMemberClientLinkRecord.team_member_uid == team_member_uid,
+                    R3aktTeamMemberClientLinkRecord.client_identity
+                    == normalized_identity,
+                )
+                .first()
+            )
+            if row is None:
+                session.add(
+                    R3aktTeamMemberClientLinkRecord(
+                        link_uid=uuid.uuid4().hex,
+                        team_member_uid=team_member_uid,
+                        client_identity=normalized_identity,
+                    )
+                )
+            session.flush()
+            data = self._serialize_team_member(session, member)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="team_member",
+                aggregate_uid=team_member_uid,
+                event_type="team_member.client.linked",
+                payload={
+                    "team_member_uid": team_member_uid,
+                    "client_identity": normalized_identity,
+                },
+            )
+            return data
+
+    def unlink_team_member_client(self, team_member_uid: str, client_identity: str) -> dict[str, Any]:
+        normalized_identity = self._normalize_identity(
+            client_identity, field_name="client_identity"
+        )
+        with self._session() as session:
+            member = session.get(R3aktTeamMemberRecord, team_member_uid)
+            if member is None:
+                raise KeyError(f"Team member '{team_member_uid}' not found")
+            (
+                session.query(R3aktTeamMemberClientLinkRecord)
+                .filter(
+                    R3aktTeamMemberClientLinkRecord.team_member_uid == team_member_uid,
+                    R3aktTeamMemberClientLinkRecord.client_identity
+                    == normalized_identity,
+                )
+                .delete(synchronize_session=False)
+            )
+            session.flush()
+            data = self._serialize_team_member(session, member)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="team_member",
+                aggregate_uid=team_member_uid,
+                event_type="team_member.client.unlinked",
+                payload={
+                    "team_member_uid": team_member_uid,
+                    "client_identity": normalized_identity,
+                },
+            )
+            return data
+
+    def list_team_member_clients(self, team_member_uid: str) -> list[str]:
+        with self._session() as session:
+            if session.get(R3aktTeamMemberRecord, team_member_uid) is None:
+                raise KeyError(f"Team member '{team_member_uid}' not found")
+            return self._team_member_clients(session, team_member_uid)
     @staticmethod
     def _serialize_asset(row: R3aktAssetRecord) -> dict[str, Any]:
         return {
@@ -736,10 +1342,21 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             row.team_member_rns_identity = member
             row.skill_uid = skill_uid
             level = payload.get("level")
-            row.level = int(level) if level is not None else int(row.level or 0)
+            row.level = int(
+                self._normalize_integer(
+                    level,
+                    field_name="level",
+                    minimum=SKILL_LEVEL_MIN,
+                    maximum=SKILL_LEVEL_MAX,
+                    default=int(row.level or 0),
+                )
+                or 0
+            )
             row.validated_by = payload.get("validated_by") or row.validated_by
             row.validated_at = _as_datetime(payload.get("validated_at"), default=row.validated_at)
             row.expires_at = _as_datetime(payload.get("expires_at"), default=row.expires_at)
+            if row.expires_at and row.validated_at and row.expires_at <= row.validated_at:
+                raise ValueError("expires_at must be greater than validated_at")
             session.flush()
             data = self._serialize_team_member_skill(row)
             self._record_event(session, domain="mission", aggregate_type="team_member_skill", aggregate_uid=row.uid, event_type="team_member_skill.upserted", payload=data)
@@ -787,10 +1404,15 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             row.task_uid = task_uid
             row.skill_uid = skill_uid
             minimum_level = payload.get("minimum_level")
-            row.minimum_level = (
-                int(minimum_level)
-                if minimum_level is not None
-                else int(row.minimum_level or 0)
+            row.minimum_level = int(
+                self._normalize_integer(
+                    minimum_level,
+                    field_name="minimum_level",
+                    minimum=SKILL_LEVEL_MIN,
+                    maximum=SKILL_LEVEL_MAX,
+                    default=int(row.minimum_level or 0),
+                )
+                or 0
             )
             row.is_mandatory = bool(payload.get("is_mandatory", row.is_mandatory))
             session.flush()
@@ -806,7 +1428,24 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             return [self._serialize_task_skill_requirement(row) for row in query.order_by(R3aktTaskSkillRequirementRecord.task_uid.asc()).all()]
 
     @staticmethod
-    def _serialize_assignment(row: R3aktMissionTaskAssignmentRecord) -> dict[str, Any]:
+    def _assignment_assets(
+        session: Session,
+        assignment_uid: str,
+        fallback_assets: list[str] | None = None,
+    ) -> list[str]:
+        rows = (
+            session.query(R3aktAssignmentAssetLinkRecord.asset_uid)
+            .filter(R3aktAssignmentAssetLinkRecord.assignment_uid == assignment_uid)
+            .order_by(R3aktAssignmentAssetLinkRecord.created_at.asc())
+            .all()
+        )
+        if rows:
+            return [str(row[0]) for row in rows]
+        return list(fallback_assets or [])
+
+    def _serialize_assignment(
+        self, session: Session, row: R3aktMissionTaskAssignmentRecord
+    ) -> dict[str, Any]:
         return {
             "assignment_uid": row.assignment_uid,
             "mission_uid": row.mission_uid,
@@ -817,7 +1456,11 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             "due_dtg": _dt(row.due_dtg),
             "status": row.status,
             "notes": row.notes,
-            "assets": list(row.assets_json or []),
+            "assets": self._assignment_assets(
+                session,
+                row.assignment_uid,
+                fallback_assets=list(row.assets_json or []),
+            ),
         }
 
     def upsert_assignment(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -844,12 +1487,28 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             row.assigned_by = payload.get("assigned_by") or row.assigned_by
             row.assigned_at = _as_datetime(payload.get("assigned_at"), default=row.assigned_at or _utcnow()) or _utcnow()
             row.due_dtg = _as_datetime(payload.get("due_dtg"), default=row.due_dtg)
-            row.status = str(payload.get("status") or row.status)
+            row.status = self._normalize_task_status(
+                payload.get("status"),
+                current=row.status,
+            )
             row.notes = payload.get("notes") or row.notes
             if payload.get("assets") is not None:
                 row.assets_json = assets
+                (
+                    session.query(R3aktAssignmentAssetLinkRecord)
+                    .filter(R3aktAssignmentAssetLinkRecord.assignment_uid == uid)
+                    .delete(synchronize_session=False)
+                )
+                for asset_uid in assets:
+                    session.add(
+                        R3aktAssignmentAssetLinkRecord(
+                            link_uid=uuid.uuid4().hex,
+                            assignment_uid=uid,
+                            asset_uid=str(asset_uid),
+                        )
+                    )
             session.flush()
-            data = self._serialize_assignment(row)
+            data = self._serialize_assignment(session, row)
             self._record_event(session, domain="mission", aggregate_type="assignment", aggregate_uid=uid, event_type="assignment.upserted", payload=data)
             return data
 
@@ -860,7 +1519,126 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 query = query.filter(R3aktMissionTaskAssignmentRecord.mission_uid == mission_uid)
             if task_uid:
                 query = query.filter(R3aktMissionTaskAssignmentRecord.task_uid == task_uid)
-            return [self._serialize_assignment(row) for row in query.order_by(R3aktMissionTaskAssignmentRecord.assigned_at.desc()).all()]
+            return [
+                self._serialize_assignment(session, row)
+                for row in query.order_by(R3aktMissionTaskAssignmentRecord.assigned_at.desc()).all()
+            ]
+
+    def set_assignment_assets(self, assignment_uid: str, asset_uids: list[str]) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktMissionTaskAssignmentRecord, assignment_uid)
+            if row is None:
+                raise KeyError(f"Assignment '{assignment_uid}' not found")
+            normalized_assets = [str(item).strip() for item in asset_uids if str(item).strip()]
+            for asset_uid in normalized_assets:
+                self._ensure_asset_exists(session, asset_uid)
+            row.assets_json = normalized_assets
+            (
+                session.query(R3aktAssignmentAssetLinkRecord)
+                .filter(R3aktAssignmentAssetLinkRecord.assignment_uid == assignment_uid)
+                .delete(synchronize_session=False)
+            )
+            for asset_uid in normalized_assets:
+                session.add(
+                    R3aktAssignmentAssetLinkRecord(
+                        link_uid=uuid.uuid4().hex,
+                        assignment_uid=assignment_uid,
+                        asset_uid=asset_uid,
+                    )
+                )
+            session.flush()
+            data = self._serialize_assignment(session, row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="assignment",
+                aggregate_uid=assignment_uid,
+                event_type="assignment.assets.updated",
+                payload=data,
+            )
+            return data
+
+    def link_assignment_asset(self, assignment_uid: str, asset_uid: str) -> dict[str, Any]:
+        asset_value = str(asset_uid or "").strip()
+        if not asset_value:
+            raise ValueError("asset_uid is required")
+        with self._session() as session:
+            row = session.get(R3aktMissionTaskAssignmentRecord, assignment_uid)
+            if row is None:
+                raise KeyError(f"Assignment '{assignment_uid}' not found")
+            self._ensure_asset_exists(session, asset_value)
+            existing_assets = self._assignment_assets(
+                session,
+                assignment_uid,
+                fallback_assets=list(row.assets_json or []),
+            )
+            if asset_value not in existing_assets:
+                existing_assets.append(asset_value)
+            row.assets_json = existing_assets
+            (
+                session.query(R3aktAssignmentAssetLinkRecord)
+                .filter(
+                    R3aktAssignmentAssetLinkRecord.assignment_uid == assignment_uid,
+                    R3aktAssignmentAssetLinkRecord.asset_uid == asset_value,
+                )
+                .delete(synchronize_session=False)
+            )
+            session.add(
+                R3aktAssignmentAssetLinkRecord(
+                    link_uid=uuid.uuid4().hex,
+                    assignment_uid=assignment_uid,
+                    asset_uid=asset_value,
+                )
+            )
+            session.flush()
+            data = self._serialize_assignment(session, row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="assignment",
+                aggregate_uid=assignment_uid,
+                event_type="assignment.asset.linked",
+                payload={"assignment_uid": assignment_uid, "asset_uid": asset_value},
+            )
+            return data
+
+    def unlink_assignment_asset(self, assignment_uid: str, asset_uid: str) -> dict[str, Any]:
+        asset_value = str(asset_uid or "").strip()
+        if not asset_value:
+            raise ValueError("asset_uid is required")
+        with self._session() as session:
+            row = session.get(R3aktMissionTaskAssignmentRecord, assignment_uid)
+            if row is None:
+                raise KeyError(f"Assignment '{assignment_uid}' not found")
+            existing_assets = [
+                item
+                for item in self._assignment_assets(
+                    session,
+                    assignment_uid,
+                    fallback_assets=list(row.assets_json or []),
+                )
+                if item != asset_value
+            ]
+            row.assets_json = existing_assets
+            (
+                session.query(R3aktAssignmentAssetLinkRecord)
+                .filter(
+                    R3aktAssignmentAssetLinkRecord.assignment_uid == assignment_uid,
+                    R3aktAssignmentAssetLinkRecord.asset_uid == asset_value,
+                )
+                .delete(synchronize_session=False)
+            )
+            session.flush()
+            data = self._serialize_assignment(session, row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="assignment",
+                aggregate_uid=assignment_uid,
+                event_type="assignment.asset.unlinked",
+                payload={"assignment_uid": assignment_uid, "asset_uid": asset_value},
+            )
+            return data
     def _default_columns(self) -> list[dict[str, Any]]:
         return [
             {
@@ -888,14 +1666,30 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         ]
 
     def _normalize_column(self, payload: dict[str, Any], *, order: int) -> dict[str, Any]:
+        column_type = normalize_enum_value(
+            payload.get("column_type"),
+            field_name="column_type",
+            allowed_values=enum_values(ChecklistColumnType),
+            default=ChecklistColumnType.SHORT_STRING.value,
+        )
+        system_key = payload.get("system_key")
+        if system_key is not None and str(system_key).strip():
+            system_key = normalize_enum_value(
+                system_key,
+                field_name="system_key",
+                allowed_values=enum_values(ChecklistSystemColumnKey),
+                default=None,
+            )
+        else:
+            system_key = None
         return {
             "column_uid": str(payload.get("column_uid") or payload.get("uid") or uuid.uuid4().hex),
             "column_name": str(payload.get("column_name") or payload.get("name") or "Column"),
             "display_order": int(payload.get("display_order") or order),
-            "column_type": str(payload.get("column_type") or "SHORT_STRING"),
+            "column_type": column_type,
             "column_editable": bool(payload.get("column_editable", True)),
             "is_removable": bool(payload.get("is_removable", True)),
-            "system_key": payload.get("system_key"),
+            "system_key": system_key,
             "background_color": payload.get("background_color"),
             "text_color": payload.get("text_color"),
         }
@@ -1232,6 +2026,24 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         template_uid: str | None = None,
         columns: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        mode = normalize_enum_value(
+            mode,
+            field_name="mode",
+            allowed_values=enum_values(ChecklistMode),
+            default=CHECKLIST_MODE_ONLINE,
+        )
+        sync_state = normalize_enum_value(
+            sync_state,
+            field_name="sync_state",
+            allowed_values=enum_values(ChecklistSyncState),
+            default=CHECKLIST_SYNC_LOCAL_ONLY,
+        )
+        origin_type = normalize_enum_value(
+            origin_type,
+            field_name="origin_type",
+            allowed_values=enum_values(ChecklistOriginType),
+            default=ChecklistOriginType.BLANK_TEMPLATE.value,
+        )
         with self._session() as session:
             if mission_uid:
                 self._ensure_mission_exists(session, str(mission_uid))
@@ -1323,7 +2135,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         return self._create_checklist(
             mode=CHECKLIST_MODE_ONLINE,
             sync_state=CHECKLIST_SYNC_SYNCED,
-            origin_type="RCH_TEMPLATE",
+            origin_type=ChecklistOriginType.RCH_TEMPLATE.value,
             name=name,
             description=str(args.get("description") or ""),
             start_time=_as_datetime(args.get("start_time"), default=_utcnow()) or _utcnow(),
@@ -1338,10 +2150,13 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             raise ValueError("name is required")
         raw_columns = args.get("columns")
         columns = list(raw_columns) if isinstance(raw_columns, list) else None
+        requested_sync_state = args.get("sync_state")
         return self._create_checklist(
             mode=CHECKLIST_MODE_OFFLINE,
-            sync_state=CHECKLIST_SYNC_LOCAL_ONLY,
-            origin_type=str(args.get("origin_type") or "BLANK_TEMPLATE"),
+            sync_state=str(requested_sync_state or CHECKLIST_SYNC_LOCAL_ONLY),
+            origin_type=str(
+                args.get("origin_type") or ChecklistOriginType.BLANK_TEMPLATE.value
+            ),
             name=name,
             description=str(args.get("description") or ""),
             start_time=_as_datetime(args.get("start_time"), default=_utcnow()) or _utcnow(),
@@ -1378,6 +2193,38 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 if mission_uid:
                     self._ensure_mission_exists(session, mission_uid)
                 row.mission_uid = mission_uid
+
+            if patch.get("mode") is not None:
+                row.mode = normalize_enum_value(
+                    patch.get("mode"),
+                    field_name="mode",
+                    allowed_values=enum_values(ChecklistMode),
+                    default=row.mode or CHECKLIST_MODE_ONLINE,
+                )
+
+            if patch.get("sync_state") is not None:
+                row.sync_state = normalize_enum_value(
+                    patch.get("sync_state"),
+                    field_name="sync_state",
+                    allowed_values=enum_values(ChecklistSyncState),
+                    default=row.sync_state or CHECKLIST_SYNC_LOCAL_ONLY,
+                )
+
+            if patch.get("origin_type") is not None:
+                row.origin_type = normalize_enum_value(
+                    patch.get("origin_type"),
+                    field_name="origin_type",
+                    allowed_values=enum_values(ChecklistOriginType),
+                    default=row.origin_type or ChecklistOriginType.BLANK_TEMPLATE.value,
+                )
+
+            if patch.get("checklist_status") is not None:
+                row.checklist_status = normalize_enum_value(
+                    patch.get("checklist_status"),
+                    field_name="checklist_status",
+                    allowed_values=enum_values(ChecklistStatus),
+                    default=row.checklist_status or ChecklistStatus.PENDING.value,
+                )
 
             row.updated_at = _utcnow()
             session.flush()
@@ -1448,6 +2295,37 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 raise KeyError(f"Checklist '{checklist_uid}' not found")
             data = self._serialize_checklist(session, row)
             self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.joined", payload={"checklist": data, "joined_by_team_member_rns_identity": source_identity})
+            return data
+
+    def mark_checklist_upload_pending(
+        self, checklist_uid: str, *, source_identity: str | None = None
+    ) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktChecklistRecord, checklist_uid)
+            if row is None:
+                raise KeyError(f"Checklist '{checklist_uid}' not found")
+            row.sync_state = CHECKLIST_SYNC_UPLOAD_PENDING
+            row.updated_at = _utcnow()
+            session.flush()
+            data = self._serialize_checklist(session, row)
+            self._record_event(
+                session,
+                domain="checklist",
+                aggregate_type="checklist",
+                aggregate_uid=checklist_uid,
+                event_type="checklist.upload.pending",
+                payload={
+                    "checklist": data,
+                    "marked_by_team_member_rns_identity": source_identity,
+                },
+            )
+            self._record_snapshot(
+                session,
+                domain="checklist",
+                aggregate_type="checklist",
+                aggregate_uid=checklist_uid,
+                state=data,
+            )
             return data
 
     def upload_checklist(self, checklist_uid: str, *, source_identity: str | None = None) -> dict[str, Any]:

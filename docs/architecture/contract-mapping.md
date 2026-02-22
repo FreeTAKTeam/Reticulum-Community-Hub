@@ -19,6 +19,7 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 
 - `mission.*`, `topic.*` are routed by `reticulum_telemetry_hub/mission_sync/router.py`.
 - Capability ACL is enforced via persisted grants in `identity_capability_grants`.
+- Envelope source identity must match transport-derived sender identity.
 - Legacy command path (`Command` / `PLUGIN_COMMAND`) remains active via `command_manager.py`.
 
 ## Checklist Commands
@@ -36,6 +37,8 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 
 - Checklist lifecycle: `/checklists/*`.
 - Registry + ACL + domain audit: `/api/r3akt/*`.
+- Mission association routes now include parent/zone/rde operations and
+  assignment/team-member link management.
 
 ## Deprecation Notes
 

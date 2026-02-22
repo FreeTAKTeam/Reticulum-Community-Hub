@@ -1316,6 +1316,12 @@ paths:
       tags:
        - R3AKT
       summary: List missions.
+      parameters:
+        - name: expand
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '200':
           description: Mission list.
@@ -1349,9 +1355,190 @@ paths:
           required: true
           schema:
             type: string
+        - name: expand
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '200':
           description: Mission record.
+          content:
+            application/json:
+              schema:
+                type: object
+    patch:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Patch mission fields.
+      parameters:
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Updated mission record.
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Soft-delete mission.
+      parameters:
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted mission record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/missions/{mission_uid}/parent:
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Set or clear mission parent.
+      parameters:
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Mission record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/missions/{mission_uid}/zones:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List mission zone identifiers.
+      parameters:
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Mission zone identifier list.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/missions/{mission_uid}/zones/{zone_id}:
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Link mission to zone.
+      parameters:
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: zone_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Mission record.
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Unlink mission from zone.
+      parameters:
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: zone_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Mission record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/missions/{mission_uid}/rde:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Retrieve mission role descriptor.
+      parameters:
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Mission RDE record.
+          content:
+            application/json:
+              schema:
+                type: object
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Create or update mission role descriptor.
+      parameters:
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Mission RDE record.
           content:
             application/json:
               schema:
@@ -1510,6 +1697,72 @@ paths:
           application/json:
             schema:
               type: object
+      responses:
+        '200':
+          description: Team member record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/team-members/{team_member_uid}/clients:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List linked client identities for a team member.
+      parameters:
+        - name: team_member_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team member client links.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/team-members/{team_member_uid}/clients/{client_identity}:
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Link a team member to a client identity.
+      parameters:
+        - name: team_member_uid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: client_identity
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team member record.
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Unlink a team member from a client identity.
+      parameters:
+        - name: team_member_uid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: client_identity
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Team member record.
@@ -1704,6 +1957,78 @@ paths:
           application/json:
             schema:
               type: object
+      responses:
+        '200':
+          description: Assignment record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/assignments/{assignment_uid}/assets:
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Replace assignment asset links.
+      parameters:
+        - name: assignment_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Assignment record.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}:
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Link assignment to asset.
+      parameters:
+        - name: assignment_uid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: asset_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Assignment record.
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Unlink assignment from asset.
+      parameters:
+        - name: assignment_uid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: asset_uid
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Assignment record.

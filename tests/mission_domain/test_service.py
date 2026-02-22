@@ -10,6 +10,9 @@ import pytest
 from reticulum_telemetry_hub.api.storage_models import R3aktDomainEventRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktDomainSnapshotRecord
 from reticulum_telemetry_hub.api.storage_models import MarkerRecord
+from reticulum_telemetry_hub.api.storage_models import ClientRecord
+from reticulum_telemetry_hub.api.storage_models import TopicRecord
+from reticulum_telemetry_hub.api.storage_models import ZoneRecord
 from reticulum_telemetry_hub.mission_domain.service import CHECKLIST_TASK_COMPLETE
 from reticulum_telemetry_hub.mission_domain.service import CHECKLIST_TASK_COMPLETE_LATE
 from reticulum_telemetry_hub.mission_domain.service import CHECKLIST_TASK_LATE
@@ -46,6 +49,17 @@ def _columns() -> list[dict[str, object]]:
 def test_registry_domain_crud_and_filters(tmp_path) -> None:
     service = _service(tmp_path)
 
+    with service._session() as session:  # pylint: disable=protected-access
+        session.add(
+            TopicRecord(
+                id="topic-alpha",
+                name="Topic Alpha",
+                path="/topic-alpha",
+                description="Topic for mission tests",
+            )
+        )
+        session.add(ClientRecord(identity="peer-a"))
+
     mission = service.upsert_mission(
         {
             "uid": "mission-1",
@@ -58,6 +72,49 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     assert mission["uid"] == "mission-1"
     assert service.get_mission("mission-1")["mission_name"] == "Mission Alpha"
     assert service.list_missions()[0]["uid"] == "mission-1"
+    assert service.get_mission("mission-1", expand_topic=True)["topic"]["topic_id"] == "topic-alpha"
+
+    mission_two = service.upsert_mission({"uid": "mission-2", "mission_name": "Mission Two"})
+    service.set_mission_parent("mission-2", parent_uid="mission-1")
+    assert service.get_mission("mission-2")["parent_uid"] == "mission-1"
+    with pytest.raises(ValueError):
+        service.set_mission_parent("mission-1", parent_uid="mission-2")
+
+    with service._session() as session:  # pylint: disable=protected-access
+        session.add(
+            ZoneRecord(
+                id="zone-1",
+                name="Zone One",
+                points_json=[
+                    {"lat": 1.0, "lon": 1.0},
+                    {"lat": 1.0, "lon": 2.0},
+                    {"lat": 2.0, "lon": 1.0},
+                ],
+            )
+        )
+    linked_mission = service.link_mission_zone("mission-1", "zone-1")
+    assert linked_mission["zones"] == ["zone-1"]
+    assert service.list_mission_zones("mission-1") == ["zone-1"]
+    unlinked_mission = service.unlink_mission_zone("mission-1", "zone-1")
+    assert unlinked_mission["zones"] == []
+
+    mission_rde = service.upsert_mission_rde("mission-1", "MISSION_OWNER")
+    assert mission_rde["role"] == "MISSION_OWNER"
+    assert service.get_mission_rde("mission-1")["role"] == "MISSION_OWNER"
+
+    patched_mission = service.patch_mission(
+        "mission-1",
+        {
+            "mission_priority": 10,
+            "default_role": "MISSION_SUBSCRIBER",
+            "owner_role": "MISSION_OWNER",
+            "feeds": ["feed-a"],
+        },
+    )
+    assert patched_mission["mission_priority"] == 10
+    assert patched_mission["feeds"] == ["feed-a"]
+    deleted = service.delete_mission("mission-2")
+    assert deleted["mission_status"] == "MISSION_DELETED"
 
     with pytest.raises(KeyError):
         service.get_mission("missing")
@@ -72,9 +129,9 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
             "name": "Mission updated",
             "team_member_rns_identity": "peer-a",
             "notes": "Changed objectives",
-            "change_type": "EDIT",
+            "change_type": "ADD_CONTENT",
             "is_federated_change": True,
-            "hashes": ["abc"],
+            "hashes": [],
         }
     )
     assert service.list_mission_changes(mission_uid="mission-1")[0]["uid"] == change["uid"]
@@ -130,7 +187,7 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
             "uid": "team-1",
             "mission_uid": "mission-1",
             "team_name": "Ops",
-            "color": "#ff0000",
+            "color": "RED",
         }
     )
     assert service.list_teams(mission_uid="mission-1")[0]["uid"] == team["uid"]
@@ -153,11 +210,15 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
             "team_uid": "team-1",
             "rns_identity": "peer-a",
             "display_name": "Peer A",
-            "role": "LEAD",
+            "role": "TEAM_LEAD",
             "callsign": "ALPHA",
         }
     )
     assert service.list_team_members(team_uid="team-1")[0]["uid"] == member["uid"]
+
+    linked_member = service.link_team_member_client("member-1", "peer-a")
+    assert linked_member["client_identities"] == ["peer-a"]
+    assert service.list_team_member_clients("member-1") == ["peer-a"]
 
     with pytest.raises(ValueError):
         service.upsert_asset(
@@ -383,6 +444,25 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     )
     assert service.list_assignments(mission_uid="mission-1")[0]["assignment_uid"] == assignment["assignment_uid"]
     assert service.list_assignments(task_uid=task_uid)[0]["assignment_uid"] == assignment["assignment_uid"]
+    assert service.list_assignments(task_uid=task_uid)[0]["assets"] == ["asset-1"]
+
+    linked_assignment = service.link_assignment_asset("assign-1", "asset-1")
+    assert linked_assignment["assets"] == ["asset-1"]
+    service.upsert_asset(
+        {
+            "asset_uid": "asset-2",
+            "team_member_uid": "member-1",
+            "name": "Spare Radio",
+            "asset_type": "COMM",
+            "status": "AVAILABLE",
+        }
+    )
+    linked_assignment = service.link_assignment_asset("assign-1", "asset-2")
+    assert linked_assignment["assets"] == ["asset-1", "asset-2"]
+    unlinked_assignment = service.unlink_assignment_asset("assign-1", "asset-1")
+    assert unlinked_assignment["assets"] == ["asset-2"]
+    reset_assets = service.set_assignment_assets("assign-1", ["asset-1"])
+    assert reset_assets["assets"] == ["asset-1"]
 
     assert service.list_domain_events(limit=10)
     assert service.list_domain_snapshots(limit=10)
@@ -606,6 +686,9 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         service.publish_checklist_feed(offline["uid"], "feed-1", source_identity="peer-a")
+
+    pending_upload = service.mark_checklist_upload_pending(offline["uid"], source_identity="peer-a")
+    assert pending_upload["sync_state"] == "UPLOAD_PENDING"
 
     uploaded = service.upload_checklist(offline["uid"], source_identity="peer-a")
     assert uploaded["sync_state"] == "SYNCED"

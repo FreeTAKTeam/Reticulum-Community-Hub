@@ -674,6 +674,7 @@ class ReticulumTelemetryHub:
             ),
             marker_service=self.marker_service,
             zone_service=self.zone_service,
+            domain_service=self.mission_domain_service,
             event_log=self.event_log,
             hub_identity_resolver=self._origin_rch_hex,
             field_results=LXMF.FIELD_RESULTS,

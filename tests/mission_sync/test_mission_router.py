@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timezone
 
+from reticulum_telemetry_hub.api.storage_models import ClientRecord
+from reticulum_telemetry_hub.api.storage_models import ZoneRecord
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.zone_service import ZoneService
 from reticulum_telemetry_hub.api.zone_storage import ZoneStorage
+from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_sync.capabilities import MISSION_COMMAND_CAPABILITIES
 from reticulum_telemetry_hub.mission_sync.router import MissionSyncRouter
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
@@ -39,6 +42,7 @@ def _router(
         else None
     )
     zone_service = ZoneService(ZoneStorage(cfg.config.hub_database_path)) if include_zone else None
+    domain_service = MissionDomainService(cfg.config.hub_database_path)
     event_log = EventLog() if include_event_log else None
     sent_messages: list[tuple[str, str | None, str | None]] = []
 
@@ -51,6 +55,7 @@ def _router(
         send_message=_send_message,
         marker_service=marker_service,
         zone_service=zone_service,
+        domain_service=domain_service,
         event_log=event_log,
         hub_identity_resolver=lambda: "hub-1",
         field_results=FIELD_RESULTS,
@@ -457,3 +462,155 @@ def test_mission_command_error_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert marker_patch_invalid[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+
+
+def test_mission_registry_command_paths(tmp_path) -> None:
+    api, router, _sent, _log = _router(tmp_path, include_zone=True)
+    _grant_all_mission_capabilities(api, "peer-a")
+    domain = router._domain  # pylint: disable=protected-access
+    assert domain is not None
+
+    domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission 1"})
+    domain.upsert_mission({"uid": "mission-2", "mission_name": "Mission 2"})
+    domain.upsert_team({"uid": "team-1", "mission_uid": "mission-1", "team_name": "Team"})
+    domain.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+        }
+    )
+    domain.upsert_asset(
+        {
+            "asset_uid": "asset-1",
+            "team_member_uid": "member-1",
+            "name": "Radio",
+            "asset_type": "COMM",
+        }
+    )
+    with domain._session() as session:  # pylint: disable=protected-access
+        session.add(ClientRecord(identity="peer-a"))
+        session.add(
+            ZoneRecord(
+                id="zone-1",
+                name="Zone One",
+                points_json=[
+                    {"lat": 10.0, "lon": 10.0},
+                    {"lat": 10.0, "lon": 11.0},
+                    {"lat": 11.0, "lon": 10.0},
+                ],
+            )
+        )
+
+    patch = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission.patch",
+                {"mission_uid": "mission-1", "mission_priority": 5},
+                command_id="cmd-registry-patch",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(patch)["mission_priority"] == 5
+
+    parent = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission.parent.set",
+                {"mission_uid": "mission-2", "parent_uid": "mission-1"},
+                command_id="cmd-registry-parent",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(parent)["parent_uid"] == "mission-1"
+
+    zone_link = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission.zone.link",
+                {"mission_uid": "mission-1", "zone_id": "zone-1"},
+                command_id="cmd-registry-zone-link",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert "zone-1" in _result(zone_link)["zones"]
+
+    rde = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission.rde.set",
+                {"mission_uid": "mission-1", "role": "MISSION_OWNER"},
+                command_id="cmd-registry-rde",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(rde)["role"] == "MISSION_OWNER"
+
+    member_link = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team_member.client.link",
+                {"team_member_uid": "member-1", "client_identity": "peer-a"},
+                command_id="cmd-registry-member-link",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert "peer-a" in _result(member_link)["client_identities"]
+
+    checklist = domain.create_checklist_offline(
+        {
+            "name": "Offline",
+            "origin_type": "BLANK_TEMPLATE",
+            "source_identity": "peer-a",
+            "mission_uid": "mission-1",
+        }
+    )
+    task_uid = domain.add_checklist_task_row(checklist["uid"], {"number": 1})["tasks"][0]["task_uid"]
+    domain.upsert_assignment(
+        {
+            "assignment_uid": "assignment-1",
+            "mission_uid": "mission-1",
+            "task_uid": task_uid,
+            "team_member_rns_identity": "peer-a",
+            "assets": [],
+        }
+    )
+    asset_link = router.handle_commands(
+        [
+            _command(
+                "mission.registry.assignment.asset.link",
+                {"assignment_uid": "assignment-1", "asset_uid": "asset-1"},
+                command_id="cmd-registry-asset-link",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(asset_link)["assets"] == ["asset-1"]
+
+    delete = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission.delete",
+                {"mission_uid": "mission-2"},
+                command_id="cmd-registry-delete",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(delete)["mission_status"] == "MISSION_DELETED"
+
+
+def test_mission_command_rejects_source_identity_mismatch(tmp_path) -> None:
+    api, router, _sent, _log = _router(tmp_path)
+    api.grant_identity_capability("peer-a", "mission.join")
+    responses = router.handle_commands(
+        [_command("mission.join", {"identity": "peer-a"}, command_id="cmd-mismatch")],
+        source_identity="peer-b",
+    )
+    assert responses[0].fields[FIELD_RESULTS]["reason_code"] == "unauthorized"

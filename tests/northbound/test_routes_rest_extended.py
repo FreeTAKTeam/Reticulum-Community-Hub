@@ -459,6 +459,63 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     mission_missing = client.get("/api/r3akt/missions/missing", headers=headers)
     assert mission_missing.status_code == 404
 
+    mission_patch = client.patch(
+        f"/api/r3akt/missions/{mission_uid}",
+        json={
+            "mission_priority": 12,
+            "default_role": "MISSION_SUBSCRIBER",
+            "owner_role": "MISSION_OWNER",
+            "feeds": ["feed-1"],
+        },
+        headers=headers,
+    )
+    assert mission_patch.status_code == 200
+    assert mission_patch.json()["mission_priority"] == 12
+
+    mission_rde = client.put(
+        f"/api/r3akt/missions/{mission_uid}/rde",
+        json={"role": "MISSION_OWNER"},
+        headers=headers,
+    )
+    assert mission_rde.status_code == 200
+    mission_rde_get = client.get(f"/api/r3akt/missions/{mission_uid}/rde", headers=headers)
+    assert mission_rde_get.status_code == 200
+    assert mission_rde_get.json()["role"] == "MISSION_OWNER"
+
+    parent_mission = client.post(
+        "/api/r3akt/missions",
+        json={"uid": "mission-parent", "mission_name": "Mission Parent"},
+        headers=headers,
+    )
+    assert parent_mission.status_code == 200
+    set_parent = client.put(
+        f"/api/r3akt/missions/{mission_uid}/parent",
+        json={"parent_uid": "mission-parent"},
+        headers=headers,
+    )
+    assert set_parent.status_code == 200
+    assert set_parent.json()["parent_uid"] == "mission-parent"
+
+    zone_create = client.post(
+        "/api/zones",
+        headers=headers,
+        json={
+            "name": "Mission Zone",
+            "points": [
+                {"lat": 30.0, "lon": -110.0},
+                {"lat": 30.1, "lon": -110.0},
+                {"lat": 30.1, "lon": -109.9},
+            ],
+        },
+    )
+    assert zone_create.status_code == 201
+    zone_id = zone_create.json()["zone_id"]
+    zone_link = client.put(f"/api/r3akt/missions/{mission_uid}/zones/{zone_id}", headers=headers)
+    assert zone_link.status_code == 200
+    mission_zones = client.get(f"/api/r3akt/missions/{mission_uid}/zones", headers=headers)
+    assert mission_zones.status_code == 200
+    assert zone_id in mission_zones.json()["zone_ids"]
+
     mission_change_invalid = client.post(
         "/api/r3akt/mission-changes",
         json={"name": "bad"},
@@ -564,6 +621,20 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         headers=headers,
     )
     assert member.status_code == 200
+
+    join_client = client.post("/RCH", params={"identity": "peer-a"})
+    assert join_client.status_code == 200
+    member_client_link = client.put(
+        "/api/r3akt/team-members/member-1/clients/peer-a",
+        headers=headers,
+    )
+    assert member_client_link.status_code == 200
+    member_clients = client.get(
+        "/api/r3akt/team-members/member-1/clients",
+        headers=headers,
+    )
+    assert member_clients.status_code == 200
+    assert "peer-a" in member_clients.json()["client_identities"]
 
     asset_invalid = client.post(
         "/api/r3akt/assets",
@@ -729,6 +800,22 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         headers=headers,
     )
     assert assignment.status_code == 200
+    assignment_asset_link = client.put(
+        "/api/r3akt/assignments/assignment-1/assets/asset-1",
+        headers=headers,
+    )
+    assert assignment_asset_link.status_code == 200
+    assignment_asset_set = client.put(
+        "/api/r3akt/assignments/assignment-1/assets",
+        json={"assets": ["asset-1"]},
+        headers=headers,
+    )
+    assert assignment_asset_set.status_code == 200
+    assignment_asset_unlink = client.delete(
+        "/api/r3akt/assignments/assignment-1/assets/asset-1",
+        headers=headers,
+    )
+    assert assignment_asset_unlink.status_code == 200
 
     assignment_missing_task = client.post(
         "/api/r3akt/assignments",
@@ -752,6 +839,18 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     assert client.get("/api/r3akt/team-member-skills", headers=headers).status_code == 200
     assert client.get("/api/r3akt/task-skill-requirements", headers=headers).status_code == 200
     assert client.get("/api/r3akt/assignments", headers=headers).status_code == 200
+    mission_zone_unlink = client.delete(
+        f"/api/r3akt/missions/{mission_uid}/zones/{zone_id}",
+        headers=headers,
+    )
+    assert mission_zone_unlink.status_code == 200
+    member_client_unlink = client.delete(
+        "/api/r3akt/team-members/member-1/clients/peer-a",
+        headers=headers,
+    )
+    assert member_client_unlink.status_code == 200
+    mission_delete = client.delete("/api/r3akt/missions/mission-parent", headers=headers)
+    assert mission_delete.status_code == 200
 
     events = client.get("/api/r3akt/events", headers=headers)
     snapshots = client.get("/api/r3akt/snapshots", headers=headers)

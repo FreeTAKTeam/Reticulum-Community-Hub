@@ -90,6 +90,16 @@ class ChecklistSyncRouter:
             )
             return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
 
+        envelope_source = str(envelope.source.rns_identity or "").strip().lower()
+        if source_identity and envelope_source and envelope_source != source_identity.lower():
+            rejected = MissionCommandRejected(
+                command_id=envelope.command_id,
+                reason_code="unauthorized",
+                reason="Envelope source identity does not match transport sender",
+                correlation_id=envelope.correlation_id,
+            )
+            return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
+
         required_capability = CHECKLIST_COMMAND_CAPABILITIES.get(envelope.command_type)
         if required_capability is None:
             rejected = MissionCommandRejected(

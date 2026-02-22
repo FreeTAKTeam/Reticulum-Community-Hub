@@ -87,19 +87,106 @@ def register_r3akt_routes(
         return domain.list_domain_snapshots(limit=limit)
 
     @app.get("/api/r3akt/missions", dependencies=[Depends(require_protected)])
-    def list_missions() -> list[dict]:
-        return domain.list_missions()
+    def list_missions(expand: str | None = Query(default=None)) -> list[dict]:
+        expand_topic = bool(expand and "topic" in {item.strip().lower() for item in expand.split(",")})
+        return domain.list_missions(expand_topic=expand_topic)
 
     @app.post("/api/r3akt/missions", dependencies=[Depends(require_protected)])
     def upsert_mission(payload: dict = Body(default_factory=dict)) -> dict:
-        return domain.upsert_mission(payload)
+        try:
+            return domain.upsert_mission(payload)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
 
     @app.get("/api/r3akt/missions/{mission_uid}", dependencies=[Depends(require_protected)])
-    def get_mission(mission_uid: str) -> dict:
+    def get_mission(
+        mission_uid: str,
+        expand: str | None = Query(default=None),
+    ) -> dict:
+        expand_topic = bool(expand and "topic" in {item.strip().lower() for item in expand.split(",")})
         try:
-            return domain.get_mission(mission_uid)
+            return domain.get_mission(mission_uid, expand_topic=expand_topic)
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.patch("/api/r3akt/missions/{mission_uid}", dependencies=[Depends(require_protected)])
+    def patch_mission(mission_uid: str, payload: dict = Body(default_factory=dict)) -> dict:
+        patch = payload.get("patch") if "patch" in payload else payload
+        if not isinstance(patch, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="patch payload must be an object",
+            )
+        try:
+            return domain.patch_mission(mission_uid, patch)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.delete("/api/r3akt/missions/{mission_uid}", dependencies=[Depends(require_protected)])
+    def delete_mission(mission_uid: str) -> dict:
+        try:
+            return domain.delete_mission(mission_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.put("/api/r3akt/missions/{mission_uid}/parent", dependencies=[Depends(require_protected)])
+    def set_mission_parent(mission_uid: str, payload: dict = Body(default_factory=dict)) -> dict:
+        parent_uid = payload.get("parent_uid")
+        try:
+            return domain.set_mission_parent(mission_uid, parent_uid=parent_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.get("/api/r3akt/missions/{mission_uid}/zones", dependencies=[Depends(require_protected)])
+    def list_mission_zones(mission_uid: str) -> dict:
+        try:
+            return {"zone_ids": domain.list_mission_zones(mission_uid)}
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.put("/api/r3akt/missions/{mission_uid}/zones/{zone_id}", dependencies=[Depends(require_protected)])
+    def link_mission_zone(mission_uid: str, zone_id: str) -> dict:
+        try:
+            return domain.link_mission_zone(mission_uid, zone_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.delete("/api/r3akt/missions/{mission_uid}/zones/{zone_id}", dependencies=[Depends(require_protected)])
+    def unlink_mission_zone(mission_uid: str, zone_id: str) -> dict:
+        try:
+            return domain.unlink_mission_zone(mission_uid, zone_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.get("/api/r3akt/missions/{mission_uid}/rde", dependencies=[Depends(require_protected)])
+    def get_mission_rde(mission_uid: str) -> dict:
+        try:
+            return domain.get_mission_rde(mission_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.put("/api/r3akt/missions/{mission_uid}/rde", dependencies=[Depends(require_protected)])
+    def put_mission_rde(mission_uid: str, payload: dict = Body(default_factory=dict)) -> dict:
+        role = payload.get("role")
+        try:
+            return domain.upsert_mission_rde(mission_uid, str(role or ""))
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get("/api/r3akt/mission-changes", dependencies=[Depends(require_protected)])
     def list_mission_changes(mission_uid: str | None = Query(default=None)) -> list[dict]:
@@ -145,6 +232,37 @@ def register_r3akt_routes(
     def upsert_team_member(payload: dict = Body(default_factory=dict)) -> dict:
         try:
             return domain.upsert_team_member(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.get("/api/r3akt/team-members/{team_member_uid}/clients", dependencies=[Depends(require_protected)])
+    def list_team_member_clients(team_member_uid: str) -> dict:
+        try:
+            return {"client_identities": domain.list_team_member_clients(team_member_uid)}
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.put(
+        "/api/r3akt/team-members/{team_member_uid}/clients/{client_identity}",
+        dependencies=[Depends(require_protected)],
+    )
+    def link_team_member_client(team_member_uid: str, client_identity: str) -> dict:
+        try:
+            return domain.link_team_member_client(team_member_uid, client_identity)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.delete(
+        "/api/r3akt/team-members/{team_member_uid}/clients/{client_identity}",
+        dependencies=[Depends(require_protected)],
+    )
+    def unlink_team_member_client(team_member_uid: str, client_identity: str) -> dict:
+        try:
+            return domain.unlink_team_member_client(team_member_uid, client_identity)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -204,5 +322,38 @@ def register_r3akt_routes(
     def upsert_assignment(payload: dict = Body(default_factory=dict)) -> dict:
         try:
             return domain.upsert_assignment(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.put("/api/r3akt/assignments/{assignment_uid}/assets", dependencies=[Depends(require_protected)])
+    def set_assignment_assets(assignment_uid: str, payload: dict = Body(default_factory=dict)) -> dict:
+        assets = payload.get("assets")
+        if not isinstance(assets, list):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="assets must be a list",
+            )
+        try:
+            return domain.set_assignment_assets(assignment_uid, [str(item) for item in assets])
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.put("/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}", dependencies=[Depends(require_protected)])
+    def link_assignment_asset(assignment_uid: str, asset_uid: str) -> dict:
+        try:
+            return domain.link_assignment_asset(assignment_uid, asset_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.delete("/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}", dependencies=[Depends(require_protected)])
+    def unlink_assignment_asset(assignment_uid: str, asset_uid: str) -> dict:
+        try:
+            return domain.unlink_assignment_asset(assignment_uid, asset_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

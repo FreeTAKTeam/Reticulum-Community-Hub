@@ -530,3 +530,13 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert missing_row_add[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+
+
+def test_checklist_command_rejects_source_identity_mismatch(tmp_path) -> None:
+    api, _domain, router, _log = _router(tmp_path)
+    api.grant_identity_capability("peer-a", "checklist.template.read")
+    responses = router.handle_commands(
+        [_command("checklist.template.list", {}, command_id="cmd-source-mismatch")],
+        source_identity="peer-b",
+    )
+    assert responses[0].fields[FIELD_RESULTS]["reason_code"] == "unauthorized"

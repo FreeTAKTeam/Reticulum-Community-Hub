@@ -15,10 +15,20 @@ class Mission:
     mission_name: str
     description: str = ""
     topic_id: str | None = None
+    path: str | None = None
+    classification: str | None = None
+    tool: str | None = None
+    keywords: list[str] = field(default_factory=list)
+    parent_uid: str | None = None
+    feeds: list[str] = field(default_factory=list)
+    password_hash: str | None = None
+    mission_priority: int | None = None
     mission_status: str = "MISSION_ACTIVE"
     default_role: str | None = None
     owner_role: str | None = None
+    token: str | None = None
     invite_only: bool = False
+    expiration: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -68,6 +78,15 @@ class TeamMember:
     rns_identity: str
     display_name: str
     role: str | None = None
+    icon: str | None = None
+    callsign: str | None = None
+    freq: float | None = None
+    email: str | None = None
+    phone: str | None = None
+    modulation: str | None = None
+    availability: str | None = None
+    certifications: list[str] = field(default_factory=list)
+    last_active: datetime | None = None
 
 
 @dataclass
@@ -91,6 +110,8 @@ class Skill:
     skill_uid: str
     name: str
     category: str | None = None
+    description: str | None = None
+    proficiency_scale: str | None = None
 
 
 @dataclass
@@ -101,6 +122,9 @@ class TeamMemberSkill:
     team_member_rns_identity: str
     skill_uid: str
     level: int = 0
+    validated_by: str | None = None
+    validated_at: datetime | None = None
+    expires_at: datetime | None = None
 
 
 @dataclass
@@ -224,6 +248,14 @@ class MissionTaskAssignment:
     assigned_by: str | None = None
     due_dtg: datetime | None = None
     notes: str | None = None
+
+
+@dataclass
+class MissionRde:
+    """Mission role-descriptor association."""
+
+    mission_uid: str
+    role: str
 
 
 def json_safe(value: Any) -> Any:

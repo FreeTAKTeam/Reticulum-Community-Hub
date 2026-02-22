@@ -17,6 +17,7 @@ from reticulum_telemetry_hub.api.models import ZonePoint
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.zone_service import ZoneService
+from reticulum_telemetry_hub.mission_domain.service import MissionDomainService
 from reticulum_telemetry_hub.mission_sync.capabilities import MISSION_COMMAND_CAPABILITIES
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandAccepted
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
@@ -65,6 +66,7 @@ class MissionSyncRouter:
         send_message: Callable[[str, str | None, str | None], bool],
         marker_service: MarkerService | None,
         zone_service: ZoneService | None,
+        domain_service: MissionDomainService | None,
         event_log: EventLog | None,
         hub_identity_resolver: Callable[[], str | None],
         field_results: int,
@@ -75,6 +77,7 @@ class MissionSyncRouter:
         self._send_message = send_message
         self._marker_service = marker_service
         self._zone_service = zone_service
+        self._domain = domain_service
         self._event_log = event_log
         self._hub_identity_resolver = hub_identity_resolver
         self._field_results = field_results
@@ -118,6 +121,16 @@ class MissionSyncRouter:
                 reason_code="invalid_payload",
                 reason=str(exc),
                 correlation_id=correlation_id,
+            )
+            return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
+
+        envelope_source = str(envelope.source.rns_identity or "").strip().lower()
+        if source_identity and envelope_source and envelope_source != source_identity.lower():
+            rejected = MissionCommandRejected(
+                command_id=envelope.command_id,
+                reason_code="unauthorized",
+                reason="Envelope source identity does not match transport sender",
+                correlation_id=envelope.correlation_id,
             )
             return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
 
@@ -364,6 +377,104 @@ class MissionSyncRouter:
                 zone = service.delete_zone(zone_id)
                 payload = zone.to_dict()
                 return payload, "mission.zone.deleted", payload
+            if command_type == "mission.registry.mission.patch":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                if not mission_uid:
+                    raise MissionCommandError("invalid_payload", "mission_uid is required")
+                patch = args.get("patch")
+                resolved_patch = patch if isinstance(patch, dict) else {
+                    key: value for key, value in args.items() if key != "mission_uid"
+                }
+                updated = domain.patch_mission(mission_uid, resolved_patch)
+                return updated, "mission.registry.mission.updated", updated
+            if command_type == "mission.registry.mission.delete":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                if not mission_uid:
+                    raise MissionCommandError("invalid_payload", "mission_uid is required")
+                deleted = domain.delete_mission(mission_uid)
+                return deleted, "mission.registry.mission.deleted", deleted
+            if command_type == "mission.registry.mission.parent.set":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                if not mission_uid:
+                    raise MissionCommandError("invalid_payload", "mission_uid is required")
+                parent_uid = self._value_as_str(args.get("parent_uid"))
+                updated = domain.set_mission_parent(mission_uid, parent_uid=parent_uid)
+                return updated, "mission.registry.mission.parent.updated", updated
+            if command_type == "mission.registry.mission.zone.link":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                zone_id = self._value_as_str(args.get("zone_id"))
+                if not mission_uid or not zone_id:
+                    raise MissionCommandError(
+                        "invalid_payload", "mission_uid and zone_id are required"
+                    )
+                updated = domain.link_mission_zone(mission_uid, zone_id)
+                return updated, "mission.registry.mission.zone.linked", updated
+            if command_type == "mission.registry.mission.zone.unlink":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                zone_id = self._value_as_str(args.get("zone_id"))
+                if not mission_uid or not zone_id:
+                    raise MissionCommandError(
+                        "invalid_payload", "mission_uid and zone_id are required"
+                    )
+                updated = domain.unlink_mission_zone(mission_uid, zone_id)
+                return updated, "mission.registry.mission.zone.unlinked", updated
+            if command_type == "mission.registry.mission.rde.set":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                role = self._value_as_str(args.get("role"))
+                if not mission_uid or not role:
+                    raise MissionCommandError(
+                        "invalid_payload", "mission_uid and role are required"
+                    )
+                updated = domain.upsert_mission_rde(mission_uid, role)
+                return updated, "mission.registry.mission.rde.updated", updated
+            if command_type == "mission.registry.team_member.client.link":
+                domain = self._require_domain_service()
+                team_member_uid = self._value_as_str(args.get("team_member_uid"))
+                client_identity = self._value_as_str(args.get("client_identity"))
+                if not team_member_uid or not client_identity:
+                    raise MissionCommandError(
+                        "invalid_payload",
+                        "team_member_uid and client_identity are required",
+                    )
+                updated = domain.link_team_member_client(team_member_uid, client_identity)
+                return updated, "mission.registry.team_member.client.linked", updated
+            if command_type == "mission.registry.team_member.client.unlink":
+                domain = self._require_domain_service()
+                team_member_uid = self._value_as_str(args.get("team_member_uid"))
+                client_identity = self._value_as_str(args.get("client_identity"))
+                if not team_member_uid or not client_identity:
+                    raise MissionCommandError(
+                        "invalid_payload",
+                        "team_member_uid and client_identity are required",
+                    )
+                updated = domain.unlink_team_member_client(team_member_uid, client_identity)
+                return updated, "mission.registry.team_member.client.unlinked", updated
+            if command_type == "mission.registry.assignment.asset.link":
+                domain = self._require_domain_service()
+                assignment_uid = self._value_as_str(args.get("assignment_uid"))
+                asset_uid = self._value_as_str(args.get("asset_uid"))
+                if not assignment_uid or not asset_uid:
+                    raise MissionCommandError(
+                        "invalid_payload", "assignment_uid and asset_uid are required"
+                    )
+                updated = domain.link_assignment_asset(assignment_uid, asset_uid)
+                return updated, "mission.registry.assignment.asset.linked", updated
+            if command_type == "mission.registry.assignment.asset.unlink":
+                domain = self._require_domain_service()
+                assignment_uid = self._value_as_str(args.get("assignment_uid"))
+                asset_uid = self._value_as_str(args.get("asset_uid"))
+                if not assignment_uid or not asset_uid:
+                    raise MissionCommandError(
+                        "invalid_payload", "assignment_uid and asset_uid are required"
+                    )
+                updated = domain.unlink_assignment_asset(assignment_uid, asset_uid)
+                return updated, "mission.registry.assignment.asset.unlinked", updated
         except (KeyError, ValueError) as exc:
             raise MissionCommandError("invalid_payload", str(exc)) from exc
 
@@ -502,6 +613,13 @@ class MissionSyncRouter:
                 "unsupported_operation", "zone service is not configured"
             )
         return self._zone_service
+
+    def _require_domain_service(self) -> MissionDomainService:
+        if self._domain is None:
+            raise MissionCommandError(
+                "unsupported_operation", "mission domain service is not configured"
+            )
+        return self._domain
 
     def _record_event(self, event_type: str, metadata: dict[str, Any]) -> None:
         if self._event_log is None:
