@@ -235,6 +235,24 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
     )
     offline_uid = _result(create_offline)["uid"]
 
+    checklist_update = router.handle_commands(
+        [
+            _command(
+                "checklist.update",
+                {
+                    "checklist_uid": offline_uid,
+                    "patch": {
+                        "name": "Checklist Offline Updated",
+                        "description": "Updated offline checklist",
+                    },
+                },
+                command_id="cmd-checklist-update",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(checklist_update)["name"] == "Checklist Offline Updated"
+
     list_active = router.handle_commands(
         [_command("checklist.list.active", {}, command_id="cmd-checklist-list")],
         source_identity="peer-a",
@@ -372,6 +390,18 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert _result(feed_publish)["mission_feed_uid"] == "feed-1"
+
+    checklist_delete = router.handle_commands(
+        [
+            _command(
+                "checklist.delete",
+                {"checklist_uid": offline_uid},
+                command_id="cmd-checklist-delete",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(checklist_delete)["uid"] == offline_uid
 
     delete_row = router.handle_commands(
         [
@@ -530,6 +560,18 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert missing_row_add[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+
+    missing_update_fields = router.handle_commands(
+        [
+            _command(
+                "checklist.update",
+                {"checklist_uid": "x"},
+                command_id="cmd-checklist-update-missing",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert missing_update_fields[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
 
 def test_checklist_command_rejects_source_identity_mismatch(tmp_path) -> None:

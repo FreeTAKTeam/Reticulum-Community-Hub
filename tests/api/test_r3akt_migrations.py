@@ -27,6 +27,7 @@ REQUIRED_PHASE2_TABLES = {
     "r3akt_checklist_feed_publications",
     "r3akt_mission_task_assignments",
     "r3akt_assignment_assets",
+    "r3akt_mission_team_links",
     "r3akt_mission_zone_links",
     "r3akt_team_member_client_links",
     "r3akt_mission_rde",

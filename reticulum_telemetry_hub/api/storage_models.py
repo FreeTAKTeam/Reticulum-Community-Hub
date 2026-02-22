@@ -529,6 +529,20 @@ class R3aktMissionZoneLinkRecord(Base):  # pylint: disable=too-few-public-method
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
+class R3aktMissionTeamLinkRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for mission-to-team links."""
+
+    __tablename__ = "r3akt_mission_team_links"
+    __table_args__ = (
+        UniqueConstraint("mission_uid", "team_uid", name="uq_mission_team_link"),
+    )
+
+    link_uid = Column(String, primary_key=True)
+    mission_uid = Column(String, nullable=False)
+    team_uid = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
 class R3aktTeamMemberClientLinkRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record linking team members to client identities."""
 

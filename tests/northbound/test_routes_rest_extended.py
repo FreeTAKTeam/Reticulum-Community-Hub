@@ -606,6 +606,23 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         headers=headers,
     )
     assert team.status_code == 200
+    assert team.json()["mission_uids"] == [mission_uid]
+    team_missions = client.get("/api/r3akt/teams/team-1/missions", headers=headers)
+    assert team_missions.status_code == 200
+    assert team_missions.json()["mission_uids"] == [mission_uid]
+    team_link_second = client.put(
+        "/api/r3akt/teams/team-1/missions/mission-parent",
+        headers=headers,
+    )
+    assert team_link_second.status_code == 200
+    assert set(team_link_second.json()["mission_uids"]) == {mission_uid, "mission-parent"}
+    teams_for_parent = client.get(
+        "/api/r3akt/teams",
+        params={"mission_uid": "mission-parent"},
+        headers=headers,
+    )
+    assert teams_for_parent.status_code == 200
+    assert any(item["uid"] == "team-1" for item in teams_for_parent.json())
 
     member_invalid = client.post("/api/r3akt/team-members", json={}, headers=headers)
     assert member_invalid.status_code == 400
@@ -849,6 +866,12 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         headers=headers,
     )
     assert member_client_unlink.status_code == 200
+    team_unlink_second = client.delete(
+        "/api/r3akt/teams/team-1/missions/mission-parent",
+        headers=headers,
+    )
+    assert team_unlink_second.status_code == 200
+    assert team_unlink_second.json()["mission_uids"] == [mission_uid]
     mission_delete = client.delete("/api/r3akt/missions/mission-parent", headers=headers)
     assert mission_delete.status_code == 200
 

@@ -118,6 +118,11 @@ LOG_LEVELS = {
     "debug": getattr(RNS, "LOG_DEBUG", DEFAULT_LOG_LEVEL),
 }
 TOPIC_REGISTRY_TTL_SECONDS = 5
+R3AKT_CUSTOM_TYPE_IDENTIFIER = "r3akt.mission.change.v1"
+R3AKT_CUSTOM_META_VERSION = "1.0"
+R3AKT_CUSTOM_TYPE_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_TYPE", 0xFB))
+R3AKT_CUSTOM_DATA_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_DATA", 0xFC))
+R3AKT_CUSTOM_META_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_META", 0xFD))
 ESCAPED_COMMAND_PREFIX = "\\\\\\"
 DEFAULT_OUTBOUND_QUEUE_SIZE = 64
 DEFAULT_OUTBOUND_WORKERS = 2
@@ -747,6 +752,10 @@ class ReticulumTelemetryHub:
                 source_identity=source_identity,
                 group=group,
             )
+            self._fanout_mission_team_events(
+                mission_replies,
+                source_fields=message_fields,
+            )
             responses.extend(
                 [
                     response
@@ -812,9 +821,11 @@ class ReticulumTelemetryHub:
                 )
             except Exception:
                 return None
+        response_fields = response.fields if isinstance(response.fields, dict) else {}
+        outbound_fields = self._augment_r3akt_custom_fields(response_fields)
         merged_fields = self._merge_standard_fields(
             source_fields=message.fields,
-            extra_fields=response.fields if isinstance(response.fields, dict) else {},
+            extra_fields=outbound_fields,
         )
         return LXMF.LXMessage(
             destination,
@@ -823,6 +834,130 @@ class ReticulumTelemetryHub:
             fields=apply_icon_appearance(merged_fields or {}),
             desired_method=LXMF.LXMessage.DIRECT,
         )
+
+    @staticmethod
+    def _extract_mission_uid_from_response_fields(
+        fields: dict[int | str, object] | None,
+    ) -> str | None:
+        if not isinstance(fields, dict):
+            return None
+        event_field = fields.get(LXMF.FIELD_EVENT)
+        if not isinstance(event_field, dict):
+            return None
+        event_type = str(event_field.get("event_type") or "").strip()
+        payload = event_field.get("payload")
+        if not isinstance(payload, dict):
+            return None
+
+        mission_uid = str(
+            payload.get("mission_uid") or payload.get("mission_id") or ""
+        ).strip()
+        if mission_uid:
+            return mission_uid
+
+        if event_type.startswith("mission.registry.mission."):
+            fallback_uid = str(payload.get("uid") or "").strip()
+            if fallback_uid:
+                return fallback_uid
+
+        result_field = fields.get(LXMF.FIELD_RESULTS)
+        if isinstance(result_field, dict):
+            result_payload = result_field.get("result")
+            if isinstance(result_payload, dict):
+                mission_uid = str(
+                    result_payload.get("mission_uid")
+                    or result_payload.get("mission_id")
+                    or ""
+                ).strip()
+                if mission_uid:
+                    return mission_uid
+                if event_type.startswith("mission.registry.mission."):
+                    fallback_uid = str(result_payload.get("uid") or "").strip()
+                    if fallback_uid:
+                        return fallback_uid
+
+        return None
+
+    @staticmethod
+    def _build_r3akt_custom_fields(
+        *,
+        mission_uid: str,
+        event_envelope: dict[str, object],
+    ) -> dict[int | str, object]:
+        event_type = str(event_envelope.get("event_type") or "").strip()
+        return {
+            R3AKT_CUSTOM_TYPE_FIELD: R3AKT_CUSTOM_TYPE_IDENTIFIER,
+            R3AKT_CUSTOM_DATA_FIELD: {
+                "mission_uid": mission_uid,
+                "event": event_envelope,
+            },
+            R3AKT_CUSTOM_META_FIELD: {
+                "version": R3AKT_CUSTOM_META_VERSION,
+                "event_type": event_type,
+                "mission_uid": mission_uid,
+                "encoding": "json",
+                "source": "rch",
+            },
+        }
+
+    def _augment_r3akt_custom_fields(
+        self,
+        fields: dict[int | str, object],
+    ) -> dict[int | str, object]:
+        merged = dict(fields or {})
+        mission_uid = self._extract_mission_uid_from_response_fields(merged)
+        event_field = merged.get(LXMF.FIELD_EVENT)
+        if not mission_uid or not isinstance(event_field, dict):
+            return merged
+        merged.update(
+            self._build_r3akt_custom_fields(
+                mission_uid=mission_uid,
+                event_envelope=event_field,
+            )
+        )
+        return merged
+
+    def _fanout_mission_team_events(
+        self,
+        mission_replies: list[Any],
+        *,
+        source_fields: dict | None,
+    ) -> None:
+        if not mission_replies:
+            return
+        domain = getattr(self, "mission_domain_service", None)
+        if domain is None:
+            return
+        for reply in mission_replies:
+            fields = getattr(reply, "fields", None)
+            if not isinstance(fields, dict):
+                continue
+            event_field = fields.get(LXMF.FIELD_EVENT)
+            if not isinstance(event_field, dict):
+                continue
+            mission_uid = self._extract_mission_uid_from_response_fields(fields)
+            if not mission_uid:
+                continue
+            try:
+                destinations = domain.list_mission_team_member_identities(mission_uid)
+            except (KeyError, ValueError):
+                continue
+            if not destinations:
+                continue
+            extra_fields = self._augment_r3akt_custom_fields(fields)
+            outbound_fields = self._merge_standard_fields(
+                source_fields=source_fields,
+                extra_fields=extra_fields,
+            )
+            payload_text = f"r3akt mission event {event_field.get('event_type') or ''}".strip()
+            for destination in destinations:
+                if not destination:
+                    continue
+                self.send_message(
+                    payload_text,
+                    destination=destination,
+                    fields=outbound_fields,
+                )
 
     def register_message_listener(
         self, listener: Callable[[dict[str, object]], None]

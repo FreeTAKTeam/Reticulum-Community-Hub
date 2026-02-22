@@ -859,7 +859,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklistTemplateListResponse'
     post:
       x-scope: protected
       tags:
@@ -870,14 +870,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistTemplateCreateRequest'
       responses:
         '200':
           description: Created checklist template.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklistTemplate'
   /checklists/templates/{template_id}:
     patch:
       x-scope: protected
@@ -896,7 +896,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklistTemplate'
     delete:
       x-scope: protected
       tags:
@@ -914,7 +914,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklistTemplate'
   /checklists/templates/{template_id}/clone:
     post:
       x-scope: protected
@@ -932,14 +932,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistTemplateCloneRequest'
       responses:
         '200':
           description: Cloned checklist template.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklistTemplate'
   /checklists:
     get:
       x-scope: protected
@@ -968,7 +968,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklistListResponse'
     post:
       x-scope: protected
       tags:
@@ -979,14 +979,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistCreateOnlineRequest'
       responses:
         '200':
           description: Created checklist.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/offline:
     post:
       x-scope: protected
@@ -998,14 +998,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistCreateOfflineRequest'
       responses:
         '200':
           description: Created checklist.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/import/csv:
     post:
       x-scope: protected
@@ -1017,14 +1017,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistImportCsvRequest'
       responses:
         '200':
           description: Imported checklist.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/{checklist_id}:
     get:
       x-scope: protected
@@ -1043,7 +1043,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
     patch:
       x-scope: protected
       tags:
@@ -1060,14 +1060,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistUpdateRequest'
       responses:
         '200':
           description: Updated checklist.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
     delete:
       x-scope: protected
       tags:
@@ -1085,7 +1085,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/{checklist_id}/join:
     post:
       x-scope: protected
@@ -1103,14 +1103,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistSourceIdentityRequest'
       responses:
         '200':
           description: Checklist details.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/{checklist_id}/upload:
     post:
       x-scope: protected
@@ -1128,14 +1128,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistSourceIdentityRequest'
       responses:
         '200':
           description: Uploaded checklist.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/{checklist_id}/feeds/{feed_id}:
     post:
       x-scope: protected
@@ -1158,14 +1158,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistSourceIdentityRequest'
       responses:
         '200':
           description: Feed publication record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklistFeedPublication'
   /checklists/{checklist_id}/tasks:
     post:
       x-scope: protected
@@ -1183,14 +1183,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistTaskAddRequest'
       responses:
         '200':
           description: Updated checklist.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/{checklist_id}/tasks/{task_id}:
     delete:
       x-scope: protected
@@ -1214,7 +1214,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/{checklist_id}/tasks/{task_id}/status:
     post:
       x-scope: protected
@@ -1237,14 +1237,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistTaskStatusRequest'
       responses:
         '200':
           description: Updated checklist.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/{checklist_id}/tasks/{task_id}/row-style:
     patch:
       x-scope: protected
@@ -1267,14 +1267,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistTaskRowStyleRequest'
       responses:
         '200':
           description: Updated checklist.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /checklists/{checklist_id}/tasks/{task_id}/cells/{column_id}:
     patch:
       x-scope: protected
@@ -1302,14 +1302,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktChecklistTaskCellRequest'
       responses:
         '200':
           description: Updated checklist.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktChecklist'
   /api/r3akt/missions:
     get:
       x-scope: protected
@@ -1330,19 +1330,25 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktMission'
     post:
       x-scope: protected
       tags:
        - R3AKT
       summary: Create or update mission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/R3aktMissionUpsertRequest'
       responses:
         '200':
           description: Mission record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMission'
   /api/r3akt/missions/{mission_uid}:
     get:
       x-scope: protected
@@ -1366,7 +1372,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMission'
     patch:
       x-scope: protected
       tags:
@@ -1383,14 +1389,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktMissionPatchRequest'
       responses:
         '200':
           description: Updated mission record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMission'
     delete:
       x-scope: protected
       tags:
@@ -1408,7 +1414,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMission'
   /api/r3akt/missions/{mission_uid}/parent:
     put:
       x-scope: protected
@@ -1426,14 +1432,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktMissionParentRequest'
       responses:
         '200':
           description: Mission record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMission'
   /api/r3akt/missions/{mission_uid}/zones:
     get:
       x-scope: protected
@@ -1452,7 +1458,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMissionZonesResponse'
   /api/r3akt/missions/{mission_uid}/zones/{zone_id}:
     put:
       x-scope: protected
@@ -1476,7 +1482,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMission'
     delete:
       x-scope: protected
       tags:
@@ -1499,7 +1505,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMission'
   /api/r3akt/missions/{mission_uid}/rde:
     get:
       x-scope: protected
@@ -1518,7 +1524,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMissionRde'
     put:
       x-scope: protected
       tags:
@@ -1535,14 +1541,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktMissionRdeRequest'
       responses:
         '200':
           description: Mission RDE record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMissionRde'
   /api/r3akt/mission-changes:
     get:
       x-scope: protected
@@ -1563,7 +1569,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktMissionChange'
     post:
       x-scope: protected
       tags:
@@ -1574,14 +1580,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktMissionChangeUpsertRequest'
       responses:
         '200':
           description: Mission change record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMissionChange'
   /api/r3akt/log-entries:
     get:
       x-scope: protected
@@ -1607,7 +1613,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktLogEntry'
     post:
       x-scope: protected
       tags:
@@ -1618,14 +1624,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktLogEntryUpsertRequest'
       responses:
         '200':
           description: Mission log entry record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktLogEntry'
   /api/r3akt/teams:
     get:
       x-scope: protected
@@ -1646,7 +1652,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktTeam'
     post:
       x-scope: protected
       tags:
@@ -1657,14 +1663,80 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktTeamUpsertRequest'
       responses:
         '200':
           description: Team record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktTeam'
+  /api/r3akt/teams/{team_uid}/missions:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List mission assignments for a team.
+      parameters:
+        - name: team_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team mission links.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktMissionUidsResponse'
+  /api/r3akt/teams/{team_uid}/missions/{mission_uid}:
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Link a team to a mission.
+      parameters:
+        - name: team_uid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktTeam'
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Unlink a team from a mission.
+      parameters:
+        - name: team_uid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: mission_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktTeam'
   /api/r3akt/team-members:
     get:
       x-scope: protected
@@ -1685,7 +1757,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktTeamMember'
     post:
       x-scope: protected
       tags:
@@ -1696,14 +1768,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktTeamMemberUpsertRequest'
       responses:
         '200':
           description: Team member record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktTeamMember'
   /api/r3akt/team-members/{team_member_uid}/clients:
     get:
       x-scope: protected
@@ -1722,7 +1794,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktClientIdentitiesResponse'
   /api/r3akt/team-members/{team_member_uid}/clients/{client_identity}:
     put:
       x-scope: protected
@@ -1746,7 +1818,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktTeamMember'
     delete:
       x-scope: protected
       tags:
@@ -1769,7 +1841,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktTeamMember'
   /api/r3akt/assets:
     get:
       x-scope: protected
@@ -1790,7 +1862,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktAsset'
     post:
       x-scope: protected
       tags:
@@ -1801,14 +1873,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktAssetUpsertRequest'
       responses:
         '200':
           description: Asset record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktAsset'
   /api/r3akt/skills:
     get:
       x-scope: protected
@@ -1823,7 +1895,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktSkill'
     post:
       x-scope: protected
       tags:
@@ -1834,14 +1906,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktSkillUpsertRequest'
       responses:
         '200':
           description: Skill record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktSkill'
   /api/r3akt/team-member-skills:
     get:
       x-scope: protected
@@ -1862,7 +1934,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktTeamMemberSkill'
     post:
       x-scope: protected
       tags:
@@ -1873,14 +1945,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktTeamMemberSkillUpsertRequest'
       responses:
         '200':
           description: Team member skill record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktTeamMemberSkill'
   /api/r3akt/task-skill-requirements:
     get:
       x-scope: protected
@@ -1901,7 +1973,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktTaskSkillRequirement'
     post:
       x-scope: protected
       tags:
@@ -1912,14 +1984,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktTaskSkillRequirementUpsertRequest'
       responses:
         '200':
           description: Task skill requirement record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktTaskSkillRequirement'
   /api/r3akt/assignments:
     get:
       x-scope: protected
@@ -1945,7 +2017,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktMissionTaskAssignment'
     post:
       x-scope: protected
       tags:
@@ -1956,14 +2028,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktMissionTaskAssignmentUpsertRequest'
       responses:
         '200':
           description: Assignment record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMissionTaskAssignment'
   /api/r3akt/assignments/{assignment_uid}/assets:
     put:
       x-scope: protected
@@ -1981,14 +2053,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktAssignmentAssetSetRequest'
       responses:
         '200':
           description: Assignment record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMissionTaskAssignment'
   /api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}:
     put:
       x-scope: protected
@@ -2012,7 +2084,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMissionTaskAssignment'
     delete:
       x-scope: protected
       tags:
@@ -2035,7 +2107,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktMissionTaskAssignment'
   /api/r3akt/events:
     get:
       x-scope: protected
@@ -2057,7 +2129,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktDomainEvent'
   /api/r3akt/snapshots:
     get:
       x-scope: protected
@@ -2079,7 +2151,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
+                  $ref: '#/components/schemas/R3aktDomainSnapshot'
   /api/r3akt/capabilities/{identity}:
     get:
       x-scope: protected
@@ -2098,7 +2170,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktCapabilityState'
   /api/r3akt/capabilities/{identity}/{capability}:
     put:
       x-scope: protected
@@ -2121,14 +2193,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/R3aktCapabilityGrantRequest'
       responses:
         '200':
           description: Capability grant record.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktCapabilityGrant'
     delete:
       x-scope: protected
       tags:
@@ -2145,13 +2217,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/R3aktCapabilityGrantRequest'
       responses:
         '200':
           description: Revocation result.
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/R3aktCapabilityGrant'
   /File:
     get:
       x-scope: public
@@ -3227,6 +3305,1153 @@ components:
           type: array
           items:
             type: string
+    FileAttachment:
+      type: object
+      properties:
+        FileID:
+          type: integer
+        Name:
+          type: string
+        Path:
+          type: string
+        Category:
+          type: string
+        MediaType:
+          type: string
+          nullable: true
+        TopicID:
+          type: string
+          nullable: true
+        Size:
+          type: integer
+        CreatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        UpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - Name
+        - Path
+        - Category
+        - Size
+    Client:
+      type: object
+      properties:
+        identity:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+        - identity
+    MarkerSymbol:
+      type: object
+      properties:
+        id:
+          type: string
+        set:
+          type: string
+          enum:
+            - napsg
+            - mdi
+      required:
+        - id
+        - set
+    Marker:
+      type: object
+      properties:
+        object_destination_hash:
+          type: string
+        origin_rch:
+          type: string
+          nullable: true
+        type:
+          type: string
+        symbol:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        position:
+          type: object
+          properties:
+            lat:
+              type: number
+            lon:
+              type: number
+          required:
+            - lat
+            - lon
+        time:
+          type: string
+          format: date-time
+          nullable: true
+        stale_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - object_destination_hash
+        - type
+        - symbol
+        - name
+        - category
+        - position
+    MarkerCreateRequest:
+      type: object
+      properties:
+        type:
+          type: string
+        symbol:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        lat:
+          type: number
+        lon:
+          type: number
+        notes:
+          type: string
+          nullable: true
+        ttl_seconds:
+          type: integer
+          nullable: true
+      required:
+        - type
+        - symbol
+        - lat
+        - lon
+    MarkerCreateResponse:
+      type: object
+      properties:
+        object_destination_hash:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - object_destination_hash
+        - created_at
+    MarkerPositionUpdate:
+      type: object
+      required:
+        - lat
+        - lon
+      properties:
+        lat:
+          type: number
+        lon:
+          type: number
+    ZonePoint:
+      type: object
+      properties:
+        lat:
+          type: number
+        lon:
+          type: number
+      required:
+        - lat
+        - lon
+    Zone:
+      type: object
+      properties:
+        zone_id:
+          type: string
+        name:
+          type: string
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/ZonePoint'
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - zone_id
+        - name
+        - points
+    ZoneCreateRequest:
+      type: object
+      required:
+        - name
+        - points
+      properties:
+        name:
+          type: string
+        points:
+          type: array
+          minItems: 3
+          items:
+            $ref: '#/components/schemas/ZonePoint'
+    ZoneUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        points:
+          type: array
+          minItems: 3
+          items:
+            $ref: '#/components/schemas/ZonePoint'
+    ZoneCreateResponse:
+      type: object
+      properties:
+        zone_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - zone_id
+        - created_at
+    R3aktCapabilityGrantRequest:
+      type: object
+      properties:
+        granted_by:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+    R3aktCapabilityGrant:
+      type: object
+      additionalProperties: true
+      properties:
+        identity:
+          type: string
+        capability:
+          type: string
+        granted_by:
+          type: string
+          nullable: true
+        granted_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked:
+          type: boolean
+          nullable: true
+      required:
+        - identity
+        - capability
+    R3aktCapabilityState:
+      type: object
+      properties:
+        identity:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktCapabilityGrant'
+      required:
+        - identity
+        - capabilities
+        - grants
+    R3aktDomainEvent:
+      type: object
+      properties:
+        event_uid:
+          type: string
+        domain:
+          type: string
+        aggregate_type:
+          type: string
+        aggregate_uid:
+          type: string
+        event_type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - event_uid
+        - domain
+        - aggregate_type
+        - aggregate_uid
+        - event_type
+        - payload
+    R3aktDomainSnapshot:
+      type: object
+      properties:
+        snapshot_uid:
+          type: string
+        domain:
+          type: string
+        aggregate_type:
+          type: string
+        aggregate_uid:
+          type: string
+        version:
+          type: integer
+        state:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - snapshot_uid
+        - domain
+        - aggregate_type
+        - aggregate_uid
+        - version
+        - state
+    R3aktMission:
+      type: object
+      properties:
+        uid:
+          type: string
+        mission_name:
+          type: string
+        description:
+          type: string
+        topic_id:
+          type: string
+          nullable: true
+        topic:
+          type: object
+          additionalProperties: true
+          nullable: true
+        path:
+          type: string
+          nullable: true
+        classification:
+          type: string
+          nullable: true
+        tool:
+          type: string
+          nullable: true
+        keywords:
+          type: array
+          items:
+            type: string
+        parent_uid:
+          type: string
+          nullable: true
+        children:
+          type: array
+          items:
+            type: string
+        feeds:
+          type: array
+          items:
+            type: string
+        zones:
+          type: array
+          items:
+            type: string
+        password_hash:
+          type: string
+          nullable: true
+        default_role:
+          type: string
+          nullable: true
+        mission_priority:
+          type: integer
+          nullable: true
+        mission_status:
+          type: string
+        owner_role:
+          type: string
+          nullable: true
+        token:
+          type: string
+          nullable: true
+        invite_only:
+          type: boolean
+        expiration:
+          type: string
+          format: date-time
+          nullable: true
+        mission_rde_role:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - uid
+        - mission_name
+        - mission_status
+        - invite_only
+    R3aktMissionUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktMissionPatchRequest:
+      type: object
+      additionalProperties: true
+    R3aktMissionParentRequest:
+      type: object
+      properties:
+        parent_uid:
+          type: string
+          nullable: true
+    R3aktMissionZonesResponse:
+      type: object
+      properties:
+        zone_ids:
+          type: array
+          items:
+            type: string
+      required:
+        - zone_ids
+    R3aktMissionRde:
+      type: object
+      properties:
+        mission_uid:
+          type: string
+        role:
+          type: string
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - mission_uid
+    R3aktMissionRdeRequest:
+      type: object
+      required:
+        - role
+      properties:
+        role:
+          type: string
+    R3aktMissionChange:
+      type: object
+      properties:
+        uid:
+          type: string
+        mission_uid:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        change_type:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        team_member_rns_identity:
+          type: string
+          nullable: true
+        is_federated_change:
+          type: boolean
+        hashes:
+          type: array
+          items:
+            type: string
+      required:
+        - uid
+        - mission_uid
+        - timestamp
+    R3aktMissionChangeUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktLogEntry:
+      type: object
+      properties:
+        entry_uid:
+          type: string
+        mission_uid:
+          type: string
+        content:
+          type: string
+        server_time:
+          type: string
+          format: date-time
+          nullable: true
+        client_time:
+          type: string
+          format: date-time
+          nullable: true
+        content_hashes:
+          type: array
+          items:
+            type: string
+        keywords:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - entry_uid
+        - mission_uid
+        - content
+    R3aktLogEntryUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktTeam:
+      type: object
+      properties:
+        uid:
+          type: string
+        mission_uid:
+          type: string
+          nullable: true
+        mission_uids:
+          type: array
+          items:
+            type: string
+        color:
+          type: string
+          nullable: true
+        team_name:
+          type: string
+        team_description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - uid
+        - team_name
+        - mission_uids
+    R3aktTeamUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktMissionUidsResponse:
+      type: object
+      properties:
+        mission_uids:
+          type: array
+          items:
+            type: string
+      required:
+        - mission_uids
+    R3aktTeamMember:
+      type: object
+      properties:
+        uid:
+          type: string
+        team_uid:
+          type: string
+          nullable: true
+        rns_identity:
+          type: string
+        display_name:
+          type: string
+        icon:
+          type: string
+          nullable: true
+        role:
+          type: string
+          nullable: true
+        callsign:
+          type: string
+          nullable: true
+        freq:
+          type: number
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        modulation:
+          type: string
+          nullable: true
+        availability:
+          type: string
+          nullable: true
+        certifications:
+          type: array
+          items:
+            type: string
+        last_active:
+          type: string
+          format: date-time
+          nullable: true
+        client_identities:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - uid
+        - rns_identity
+        - display_name
+        - client_identities
+    R3aktTeamMemberUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktClientIdentitiesResponse:
+      type: object
+      properties:
+        client_identities:
+          type: array
+          items:
+            type: string
+      required:
+        - client_identities
+    R3aktAsset:
+      type: object
+      properties:
+        asset_uid:
+          type: string
+        team_member_uid:
+          type: string
+          nullable: true
+        name:
+          type: string
+        asset_type:
+          type: string
+        serial_number:
+          type: string
+          nullable: true
+        status:
+          type: string
+        location:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - asset_uid
+        - name
+        - asset_type
+        - status
+    R3aktAssetUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktSkill:
+      type: object
+      properties:
+        skill_uid:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        proficiency_scale:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - skill_uid
+        - name
+    R3aktSkillUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktTeamMemberSkill:
+      type: object
+      properties:
+        uid:
+          type: string
+        team_member_rns_identity:
+          type: string
+        skill_uid:
+          type: string
+        level:
+          type: integer
+        validated_by:
+          type: string
+          nullable: true
+        validated_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - uid
+        - team_member_rns_identity
+        - skill_uid
+        - level
+    R3aktTeamMemberSkillUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktTaskSkillRequirement:
+      type: object
+      properties:
+        uid:
+          type: string
+        task_uid:
+          type: string
+        skill_uid:
+          type: string
+        minimum_level:
+          type: integer
+        is_mandatory:
+          type: boolean
+      required:
+        - uid
+        - task_uid
+        - skill_uid
+        - minimum_level
+        - is_mandatory
+    R3aktTaskSkillRequirementUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktMissionTaskAssignment:
+      type: object
+      properties:
+        assignment_uid:
+          type: string
+        mission_uid:
+          type: string
+        task_uid:
+          type: string
+        team_member_rns_identity:
+          type: string
+        assigned_by:
+          type: string
+          nullable: true
+        assigned_at:
+          type: string
+          format: date-time
+          nullable: true
+        due_dtg:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        assets:
+          type: array
+          items:
+            type: string
+      required:
+        - assignment_uid
+        - mission_uid
+        - task_uid
+        - team_member_rns_identity
+        - status
+        - assets
+    R3aktMissionTaskAssignmentUpsertRequest:
+      type: object
+      additionalProperties: true
+    R3aktAssignmentAssetSetRequest:
+      type: object
+      required:
+        - assets
+      properties:
+        assets:
+          type: array
+          items:
+            type: string
+    R3aktChecklistColumn:
+      type: object
+      properties:
+        column_uid:
+          type: string
+        column_name:
+          type: string
+        display_order:
+          type: integer
+        column_type:
+          type: string
+        column_editable:
+          type: boolean
+        background_color:
+          type: string
+          nullable: true
+        text_color:
+          type: string
+          nullable: true
+        is_removable:
+          type: boolean
+        system_key:
+          type: string
+          nullable: true
+      required:
+        - column_uid
+        - column_name
+        - display_order
+        - column_type
+        - column_editable
+        - is_removable
+    R3aktChecklistCell:
+      type: object
+      properties:
+        cell_uid:
+          type: string
+        task_uid:
+          type: string
+        column_uid:
+          type: string
+        value:
+          type: string
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_by_team_member_rns_identity:
+          type: string
+          nullable: true
+      required:
+        - cell_uid
+        - task_uid
+        - column_uid
+    R3aktChecklistTask:
+      type: object
+      properties:
+        task_uid:
+          type: string
+        number:
+          type: integer
+        user_status:
+          type: string
+        task_status:
+          type: string
+        is_late:
+          type: boolean
+        custom_status:
+          type: integer
+          nullable: true
+        due_relative_minutes:
+          type: integer
+          nullable: true
+        due_dtg:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        row_background_color:
+          type: string
+          nullable: true
+        line_break_enabled:
+          type: boolean
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_by_team_member_rns_identity:
+          type: string
+          nullable: true
+        legacy_value:
+          type: string
+          nullable: true
+        cells:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktChecklistCell'
+      required:
+        - task_uid
+        - number
+        - user_status
+        - task_status
+        - is_late
+        - line_break_enabled
+        - cells
+    R3aktChecklistTemplate:
+      type: object
+      properties:
+        uid:
+          type: string
+        template_name:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by_team_member_rns_identity:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        source_template_uid:
+          type: string
+          nullable: true
+        server_only:
+          type: boolean
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktChecklistColumn'
+      required:
+        - uid
+        - template_name
+        - description
+        - created_by_team_member_rns_identity
+        - server_only
+        - columns
+    R3aktChecklistFeedPublication:
+      type: object
+      properties:
+        publication_uid:
+          type: string
+        checklist_uid:
+          type: string
+        mission_feed_uid:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        published_by_team_member_rns_identity:
+          type: string
+      required:
+        - publication_uid
+        - checklist_uid
+        - mission_feed_uid
+        - published_by_team_member_rns_identity
+    R3aktChecklist:
+      type: object
+      properties:
+        uid:
+          type: string
+        mission_uid:
+          type: string
+          nullable: true
+        template_uid:
+          type: string
+          nullable: true
+        template_version:
+          type: integer
+          nullable: true
+        template_name:
+          type: string
+          nullable: true
+        name:
+          type: string
+        description:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+        mode:
+          type: string
+        sync_state:
+          type: string
+        origin_type:
+          type: string
+        checklist_status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by_team_member_rns_identity:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        uploaded_at:
+          type: string
+          format: date-time
+          nullable: true
+        progress_percent:
+          type: number
+        counts:
+          type: object
+          properties:
+            pending_count:
+              type: integer
+            late_count:
+              type: integer
+            complete_count:
+              type: integer
+          required:
+            - pending_count
+            - late_count
+            - complete_count
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktChecklistColumn'
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktChecklistTask'
+        feed_publications:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktChecklistFeedPublication'
+      required:
+        - uid
+        - name
+        - description
+        - mode
+        - sync_state
+        - origin_type
+        - checklist_status
+        - created_by_team_member_rns_identity
+        - progress_percent
+        - counts
+        - columns
+        - tasks
+        - feed_publications
+    R3aktChecklistTemplateCreateRequest:
+      type: object
+      required:
+        - template
+      properties:
+        template:
+          $ref: '#/components/schemas/R3aktChecklistTemplate'
+    R3aktChecklistTemplateCloneRequest:
+      type: object
+      required:
+        - template_name
+      properties:
+        template_name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        created_by_team_member_rns_identity:
+          type: string
+          nullable: true
+    R3aktChecklistTemplateListResponse:
+      type: object
+      properties:
+        templates:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktChecklistTemplate'
+      required:
+        - templates
+    R3aktChecklistListResponse:
+      type: object
+      properties:
+        checklists:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktChecklist'
+      required:
+        - checklists
+    R3aktChecklistCreateOnlineRequest:
+      type: object
+      additionalProperties: true
+    R3aktChecklistCreateOfflineRequest:
+      type: object
+      additionalProperties: true
+    R3aktChecklistImportCsvRequest:
+      type: object
+      required:
+        - csv_filename
+        - csv_base64
+      properties:
+        csv_filename:
+          type: string
+        csv_base64:
+          type: string
+        mission_uid:
+          type: string
+          nullable: true
+        source_identity:
+          type: string
+          nullable: true
+    R3aktChecklistUpdateRequest:
+      type: object
+      additionalProperties: true
+    R3aktChecklistSourceIdentityRequest:
+      type: object
+      properties:
+        source_identity:
+          type: string
+          nullable: true
+    R3aktChecklistTaskAddRequest:
+      type: object
+      additionalProperties: true
+    R3aktChecklistTaskStatusRequest:
+      type: object
+      additionalProperties: true
+    R3aktChecklistTaskRowStyleRequest:
+      type: object
+      additionalProperties: true
+    R3aktChecklistTaskCellRequest:
+      type: object
+      additionalProperties: true
     SubscribeTopicRequest:
       type: object
       description: Payload for SubscribeTopic (topic subscription request).

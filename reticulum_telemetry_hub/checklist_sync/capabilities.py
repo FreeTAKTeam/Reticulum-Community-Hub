@@ -12,6 +12,8 @@ CHECKLIST_COMMAND_CAPABILITIES: dict[str, str] = {
     "checklist.list.active": "checklist.read",
     "checklist.create.online": "checklist.write",
     "checklist.create.offline": "checklist.write",
+    "checklist.update": "checklist.write",
+    "checklist.delete": "checklist.write",
     "checklist.import.csv": "checklist.write",
     "checklist.join": "checklist.join",
     "checklist.get": "checklist.read",

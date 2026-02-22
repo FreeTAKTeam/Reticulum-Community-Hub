@@ -377,6 +377,25 @@ class MissionSyncRouter:
                 zone = service.delete_zone(zone_id)
                 payload = zone.to_dict()
                 return payload, "mission.zone.deleted", payload
+            if command_type == "mission.registry.mission.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_mission(args)
+                return updated, "mission.registry.mission.upserted", updated
+            if command_type == "mission.registry.mission.get":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                if not mission_uid:
+                    raise MissionCommandError("invalid_payload", "mission_uid is required")
+                mission = domain.get_mission(
+                    mission_uid,
+                    expand_topic=bool(args.get("expand_topic")),
+                )
+                return mission, "mission.registry.mission.retrieved", mission
+            if command_type == "mission.registry.mission.list":
+                domain = self._require_domain_service()
+                missions = domain.list_missions(expand_topic=bool(args.get("expand_topic")))
+                payload = {"missions": missions}
+                return payload, "mission.registry.mission.listed", payload
             if command_type == "mission.registry.mission.patch":
                 domain = self._require_domain_service()
                 mission_uid = self._value_as_str(args.get("mission_uid"))
@@ -403,6 +422,59 @@ class MissionSyncRouter:
                 parent_uid = self._value_as_str(args.get("parent_uid"))
                 updated = domain.set_mission_parent(mission_uid, parent_uid=parent_uid)
                 return updated, "mission.registry.mission.parent.updated", updated
+            if command_type == "mission.registry.mission_change.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_mission_change(args)
+                return updated, "mission.registry.mission_change.upserted", updated
+            if command_type == "mission.registry.mission_change.list":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                payload = {"mission_changes": domain.list_mission_changes(mission_uid=mission_uid)}
+                return payload, "mission.registry.mission_change.listed", payload
+            if command_type == "mission.registry.log_entry.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_log_entry(args)
+                return updated, "mission.registry.log_entry.upserted", updated
+            if command_type == "mission.registry.log_entry.list":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                marker_ref = self._value_as_str(args.get("marker_ref"))
+                payload = {
+                    "log_entries": domain.list_log_entries(
+                        mission_uid=mission_uid,
+                        marker_ref=marker_ref,
+                    )
+                }
+                return payload, "mission.registry.log_entry.listed", payload
+            if command_type == "mission.registry.team.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_team(args)
+                return updated, "mission.registry.team.upserted", updated
+            if command_type == "mission.registry.team.list":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                payload = {"teams": domain.list_teams(mission_uid=mission_uid)}
+                return payload, "mission.registry.team.listed", payload
+            if command_type == "mission.registry.team.mission.link":
+                domain = self._require_domain_service()
+                team_uid = self._value_as_str(args.get("team_uid"))
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                if not team_uid or not mission_uid:
+                    raise MissionCommandError(
+                        "invalid_payload", "team_uid and mission_uid are required"
+                    )
+                updated = domain.link_team_mission(team_uid, mission_uid)
+                return updated, "mission.registry.team.mission.linked", updated
+            if command_type == "mission.registry.team.mission.unlink":
+                domain = self._require_domain_service()
+                team_uid = self._value_as_str(args.get("team_uid"))
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                if not team_uid or not mission_uid:
+                    raise MissionCommandError(
+                        "invalid_payload", "team_uid and mission_uid are required"
+                    )
+                updated = domain.unlink_team_mission(team_uid, mission_uid)
+                return updated, "mission.registry.team.mission.unlinked", updated
             if command_type == "mission.registry.mission.zone.link":
                 domain = self._require_domain_service()
                 mission_uid = self._value_as_str(args.get("mission_uid"))
@@ -433,6 +505,15 @@ class MissionSyncRouter:
                     )
                 updated = domain.upsert_mission_rde(mission_uid, role)
                 return updated, "mission.registry.mission.rde.updated", updated
+            if command_type == "mission.registry.team_member.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_team_member(args)
+                return updated, "mission.registry.team_member.upserted", updated
+            if command_type == "mission.registry.team_member.list":
+                domain = self._require_domain_service()
+                team_uid = self._value_as_str(args.get("team_uid"))
+                payload = {"team_members": domain.list_team_members(team_uid=team_uid)}
+                return payload, "mission.registry.team_member.listed", payload
             if command_type == "mission.registry.team_member.client.link":
                 domain = self._require_domain_service()
                 team_member_uid = self._value_as_str(args.get("team_member_uid"))
@@ -455,6 +536,79 @@ class MissionSyncRouter:
                     )
                 updated = domain.unlink_team_member_client(team_member_uid, client_identity)
                 return updated, "mission.registry.team_member.client.unlinked", updated
+            if command_type == "mission.registry.asset.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_asset(args)
+                return updated, "mission.registry.asset.upserted", updated
+            if command_type == "mission.registry.asset.list":
+                domain = self._require_domain_service()
+                team_member_uid = self._value_as_str(args.get("team_member_uid"))
+                payload = {"assets": domain.list_assets(team_member_uid=team_member_uid)}
+                return payload, "mission.registry.asset.listed", payload
+            if command_type == "mission.registry.skill.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_skill(args)
+                return updated, "mission.registry.skill.upserted", updated
+            if command_type == "mission.registry.skill.list":
+                domain = self._require_domain_service()
+                payload = {"skills": domain.list_skills()}
+                return payload, "mission.registry.skill.listed", payload
+            if command_type == "mission.registry.team_member_skill.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_team_member_skill(args)
+                return updated, "mission.registry.team_member_skill.upserted", updated
+            if command_type == "mission.registry.team_member_skill.list":
+                domain = self._require_domain_service()
+                team_member_identity = self._value_as_str(
+                    args.get("team_member_rns_identity")
+                )
+                payload = {
+                    "team_member_skills": domain.list_team_member_skills(
+                        team_member_rns_identity=team_member_identity
+                    )
+                }
+                return payload, "mission.registry.team_member_skill.listed", payload
+            if command_type == "mission.registry.task_skill_requirement.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_task_skill_requirement(args)
+                return updated, "mission.registry.task_skill_requirement.upserted", updated
+            if command_type == "mission.registry.task_skill_requirement.list":
+                domain = self._require_domain_service()
+                task_uid = self._value_as_str(args.get("task_uid"))
+                payload = {
+                    "task_skill_requirements": domain.list_task_skill_requirements(
+                        task_uid=task_uid
+                    )
+                }
+                return payload, "mission.registry.task_skill_requirement.listed", payload
+            if command_type == "mission.registry.assignment.upsert":
+                domain = self._require_domain_service()
+                updated = domain.upsert_assignment(args)
+                return updated, "mission.registry.assignment.upserted", updated
+            if command_type == "mission.registry.assignment.list":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                task_uid = self._value_as_str(args.get("task_uid"))
+                payload = {
+                    "assignments": domain.list_assignments(
+                        mission_uid=mission_uid,
+                        task_uid=task_uid,
+                    )
+                }
+                return payload, "mission.registry.assignment.listed", payload
+            if command_type == "mission.registry.assignment.asset.set":
+                domain = self._require_domain_service()
+                assignment_uid = self._value_as_str(args.get("assignment_uid"))
+                assets = args.get("assets")
+                if not assignment_uid or not isinstance(assets, list):
+                    raise MissionCommandError(
+                        "invalid_payload", "assignment_uid and assets[] are required"
+                    )
+                updated = domain.set_assignment_assets(
+                    assignment_uid,
+                    [str(item) for item in assets],
+                )
+                return updated, "mission.registry.assignment.asset.set", updated
             if command_type == "mission.registry.assignment.asset.link":
                 domain = self._require_domain_service()
                 assignment_uid = self._value_as_str(args.get("assignment_uid"))

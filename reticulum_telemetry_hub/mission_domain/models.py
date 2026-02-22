@@ -65,6 +65,7 @@ class Team:
     uid: str
     team_name: str
     mission_uid: str | None = None
+    mission_uids: list[str] = field(default_factory=list)
     team_description: str = ""
     color: str | None = None
 

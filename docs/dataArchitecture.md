@@ -336,8 +336,9 @@ classDiagram
   `Checklist`, `ChecklistTemplate`, `ChecklistTask`, `ChecklistColumn`,
   `ChecklistCell`, `ChecklistFeedPublication`, and `MissionTaskAssignment`.
 - Relationship normalization tables include `r3akt_mission_zone_links`,
-  `r3akt_team_member_client_links`, `r3akt_assignment_assets`, and
-  `r3akt_mission_rde` for explicit association integrity.
+  `r3akt_mission_team_links`, `r3akt_team_member_client_links`,
+  `r3akt_assignment_assets`, and `r3akt_mission_rde` for explicit
+  association integrity.
 - Domain auditability is provided by immutable `r3akt_domain_events` and
   `r3akt_domain_snapshots` tables with retention.
 - Schema-only transport models are not expanded here (for example

@@ -503,6 +503,139 @@ def test_mission_registry_command_paths(tmp_path) -> None:
             )
         )
 
+    mission_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission.upsert",
+                {"uid": "mission-3", "mission_name": "Mission 3"},
+                command_id="cmd-registry-mission-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(mission_upsert)["uid"] == "mission-3"
+
+    mission_get = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission.get",
+                {"mission_uid": "mission-1"},
+                command_id="cmd-registry-mission-get",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(mission_get)["uid"] == "mission-1"
+
+    mission_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission.list",
+                {"expand_topic": False},
+                command_id="cmd-registry-mission-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert any(item["uid"] == "mission-1" for item in _result(mission_list)["missions"])
+
+    mission_change_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission_change.upsert",
+                {
+                    "uid": "change-1",
+                    "mission_uid": "mission-1",
+                    "name": "Updated objective",
+                    "change_type": "ADD_CONTENT",
+                },
+                command_id="cmd-registry-change-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(mission_change_upsert)["uid"] == "change-1"
+
+    mission_change_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission_change.list",
+                {"mission_uid": "mission-1"},
+                command_id="cmd-registry-change-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(mission_change_list)["mission_changes"]
+
+    log_entry_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.log_entry.upsert",
+                {
+                    "entry_uid": "log-1",
+                    "mission_uid": "mission-1",
+                    "content": "Log event",
+                },
+                command_id="cmd-registry-log-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(log_entry_upsert)["entry_uid"] == "log-1"
+
+    log_entry_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.log_entry.list",
+                {"mission_uid": "mission-1"},
+                command_id="cmd-registry-log-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(log_entry_list)["log_entries"]
+
+    team_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team.upsert",
+                {
+                    "uid": "team-2",
+                    "team_name": "Bravo",
+                    "mission_uid": "mission-1",
+                },
+                command_id="cmd-registry-team-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(team_upsert)["uid"] == "team-2"
+
+    team_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team.list",
+                {"mission_uid": "mission-1"},
+                command_id="cmd-registry-team-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(team_list)["teams"]
+
+    team_mission_link = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team.mission.link",
+                {"team_uid": "team-1", "mission_uid": "mission-2"},
+                command_id="cmd-registry-team-mission-link",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert "mission-2" in _result(team_mission_link)["mission_uids"]
+
     patch = router.handle_commands(
         [
             _command(
@@ -551,6 +684,35 @@ def test_mission_registry_command_paths(tmp_path) -> None:
     )
     assert _result(rde)["role"] == "MISSION_OWNER"
 
+    member_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team_member.upsert",
+                {
+                    "uid": "member-2",
+                    "team_uid": "team-1",
+                    "rns_identity": "peer-b",
+                    "display_name": "Peer B",
+                },
+                command_id="cmd-registry-member-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(member_upsert)["uid"] == "member-2"
+
+    member_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team_member.list",
+                {"team_uid": "team-1"},
+                command_id="cmd-registry-member-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(member_list)["team_members"]
+
     member_link = router.handle_commands(
         [
             _command(
@@ -562,6 +724,91 @@ def test_mission_registry_command_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert "peer-a" in _result(member_link)["client_identities"]
+
+    asset_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.asset.upsert",
+                {
+                    "asset_uid": "asset-2",
+                    "team_member_uid": "member-1",
+                    "name": "Battery Pack",
+                    "asset_type": "POWER",
+                },
+                command_id="cmd-registry-asset-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(asset_upsert)["asset_uid"] == "asset-2"
+
+    asset_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.asset.list",
+                {"team_member_uid": "member-1"},
+                command_id="cmd-registry-asset-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(asset_list)["assets"]
+
+    skill_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.skill.upsert",
+                {
+                    "skill_uid": "skill-1",
+                    "name": "Navigation",
+                },
+                command_id="cmd-registry-skill-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(skill_upsert)["skill_uid"] == "skill-1"
+
+    skill_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.skill.list",
+                {},
+                command_id="cmd-registry-skill-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(skill_list)["skills"]
+
+    member_skill_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team_member_skill.upsert",
+                {
+                    "uid": "member-skill-1",
+                    "team_member_rns_identity": "peer-a",
+                    "skill_uid": "skill-1",
+                    "level": 3,
+                },
+                command_id="cmd-registry-member-skill-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(member_skill_upsert)["uid"] == "member-skill-1"
+
+    member_skill_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team_member_skill.list",
+                {"team_member_rns_identity": "peer-a"},
+                command_id="cmd-registry-member-skill-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(member_skill_list)["team_member_skills"]
 
     checklist = domain.create_checklist_offline(
         {
@@ -581,6 +828,77 @@ def test_mission_registry_command_paths(tmp_path) -> None:
             "assets": [],
         }
     )
+
+    requirement_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.task_skill_requirement.upsert",
+                {
+                    "uid": "requirement-1",
+                    "task_uid": task_uid,
+                    "skill_uid": "skill-1",
+                    "minimum_level": 2,
+                },
+                command_id="cmd-registry-requirement-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(requirement_upsert)["uid"] == "requirement-1"
+
+    requirement_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.task_skill_requirement.list",
+                {"task_uid": task_uid},
+                command_id="cmd-registry-requirement-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(requirement_list)["task_skill_requirements"]
+
+    assignment_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.assignment.upsert",
+                {
+                    "assignment_uid": "assignment-2",
+                    "mission_uid": "mission-1",
+                    "task_uid": task_uid,
+                    "team_member_rns_identity": "peer-a",
+                },
+                command_id="cmd-registry-assignment-upsert",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(assignment_upsert)["assignment_uid"] == "assignment-2"
+
+    assignment_list = router.handle_commands(
+        [
+            _command(
+                "mission.registry.assignment.list",
+                {"mission_uid": "mission-1"},
+                command_id="cmd-registry-assignment-list",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(assignment_list)["assignments"]
+
+    asset_set = router.handle_commands(
+        [
+            _command(
+                "mission.registry.assignment.asset.set",
+                {"assignment_uid": "assignment-1", "assets": ["asset-1"]},
+                command_id="cmd-registry-asset-set",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(asset_set)["assets"] == ["asset-1"]
+
     asset_link = router.handle_commands(
         [
             _command(
@@ -592,6 +910,18 @@ def test_mission_registry_command_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert _result(asset_link)["assets"] == ["asset-1"]
+
+    team_mission_unlink = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team.mission.unlink",
+                {"team_uid": "team-1", "mission_uid": "mission-2"},
+                command_id="cmd-registry-team-mission-unlink",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert "mission-2" not in _result(team_mission_unlink)["mission_uids"]
 
     delete = router.handle_commands(
         [

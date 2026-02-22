@@ -13,6 +13,9 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 - `FIELD_COMMANDS (0x09)`: command envelopes with `command_type`, `args`, `command_id`, `source`, `timestamp`, optional `correlation_id`.
 - `FIELD_RESULTS (0x0A)`: standard `{status: accepted|rejected|result}` payloads.
 - `FIELD_EVENT (0x0D)`: mission/checklist event envelopes with `event_type` and `payload`.
+- `FIELD_CUSTOM_TYPE (0xFB)`: set to `r3akt.mission.change.v1` for mission-team fanout.
+- `FIELD_CUSTOM_DATA (0xFC)`: mission event payload object (`mission_uid` + event envelope).
+- `FIELD_CUSTOM_META (0xFD)`: metadata (`version`, `event_type`, `mission_uid`, `encoding`, `source`).
 - `FIELD_GROUP (0x0B)`: preserved from ingress to egress for scoped fan-out compatibility.
 
 ## Mission-Sync Commands
@@ -20,11 +23,19 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 - `mission.*`, `topic.*` are routed by `reticulum_telemetry_hub/mission_sync/router.py`.
 - Capability ACL is enforced via persisted grants in `identity_capability_grants`.
 - Envelope source identity must match transport-derived sender identity.
+- Mission events carrying a `mission_uid` are fanned out to all identities
+  associated with team members of mission-assigned teams.
+- Registry command coverage includes mission, mission-change, log-entry, team,
+  team-member, asset, skill, team-member-skill, task-skill-requirement,
+  assignment, and mission/team-member/assignment association operations.
 - Legacy command path (`Command` / `PLUGIN_COMMAND`) remains active via `command_manager.py`.
 
 ## Checklist Commands
 
 - `checklist.*` are routed by `reticulum_telemetry_hub/checklist_sync/router.py`.
+- Checklist command coverage includes template CRUD/clone, checklist
+  create/read/update/delete, upload/feed publication, CSV import, and task
+  row/cell/status operations.
 - Checklist/domain state is persisted through `reticulum_telemetry_hub/mission_domain/service.py` and `r3akt_*` tables.
 - Domain events and snapshots are persisted in `r3akt_domain_events` and `r3akt_domain_snapshots` with retention.
 

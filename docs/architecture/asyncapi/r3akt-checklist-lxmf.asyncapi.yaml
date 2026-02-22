@@ -50,6 +50,8 @@ channels:
           - $ref: "#/components/messages/ChecklistListActiveCommand"
           - $ref: "#/components/messages/ChecklistCreateOnlineCommand"
           - $ref: "#/components/messages/ChecklistCreateOfflineCommand"
+          - $ref: "#/components/messages/ChecklistUpdateCommand"
+          - $ref: "#/components/messages/ChecklistDeleteCommand"
           - $ref: "#/components/messages/ChecklistImportCsvCommand"
           - $ref: "#/components/messages/ChecklistJoinCommand"
           - $ref: "#/components/messages/ChecklistGetCommand"
@@ -226,6 +228,40 @@ components:
                 const: checklist.create.offline
               args:
                 $ref: "#/components/schemas/ChecklistCreateOfflineArgs"
+            required: [command_type, args]
+    ChecklistUpdateCommand:
+      name: ChecklistUpdateCommand
+      title: Update checklist command
+      summary: Maps to HTTP operation `updateChecklist`.
+      x-http-operation: "PATCH /checklists/{checklist_id}"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.update
+              args:
+                $ref: "#/components/schemas/ChecklistUpdateArgs"
+            required: [command_type, args]
+    ChecklistDeleteCommand:
+      name: ChecklistDeleteCommand
+      title: Delete checklist command
+      summary: Maps to HTTP operation `deleteChecklist`.
+      x-http-operation: "DELETE /checklists/{checklist_id}"
+      x-capability-required:
+        - checklist.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.delete
+              args:
+                $ref: "#/components/schemas/ChecklistDeleteArgs"
             required: [command_type, args]
     ChecklistImportCsvCommand:
       name: ChecklistImportCsvCommand
@@ -476,6 +512,8 @@ components:
                   - checklist.template.updated
                   - checklist.template.deleted
                   - checklist.created
+                  - checklist.updated
+                  - checklist.deleted
                   - checklist.imported.csv
                   - checklist.joined
                   - checklist.uploaded
@@ -849,6 +887,23 @@ components:
         start_time:
           type: string
           format: date-time
+    ChecklistUpdateArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid, patch]
+      properties:
+        checklist_uid:
+          type: string
+        patch:
+          type: object
+          additionalProperties: true
+    ChecklistDeleteArgs:
+      type: object
+      additionalProperties: false
+      required: [checklist_uid]
+      properties:
+        checklist_uid:
+          type: string
     ChecklistImportCsvArgs:
       type: object
       additionalProperties: false

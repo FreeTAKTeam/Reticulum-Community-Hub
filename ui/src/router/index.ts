@@ -6,6 +6,7 @@ import ConnectPage from "../pages/ConnectPage.vue";
 import DashboardPage from "../pages/DashboardPage.vue";
 import FilesPage from "../pages/FilesPage.vue";
 import ChatPage from "../pages/ChatPage.vue";
+import ChecklistsPage from "../pages/ChecklistsPage.vue";
 import MissionsPage from "../pages/MissionsPage.vue";
 import TopicsPage from "../pages/TopicsPage.vue";
 import UsersPage from "../pages/UsersPage.vue";
@@ -16,7 +17,7 @@ const router = createRouter({
   routes: [
     { path: "/", name: "dashboard", component: DashboardPage },
     { path: "/missions", name: "missions", component: MissionsPage },
-    { path: "/checklists", name: "checklists", component: MissionsPage },
+    { path: "/checklists", name: "checklists", component: ChecklistsPage },
     { path: "/webmap", name: "webmap", component: WebMapPage },
     { path: "/topics", name: "topics", component: TopicsPage },
     { path: "/files", name: "files", component: FilesPage },

@@ -12,6 +12,10 @@ def _spec_paths() -> dict:
     return spec["paths"]
 
 
+def _spec() -> dict:
+    return yaml.safe_load(Path("API/ReticulumCommunityHub-OAS.yaml").read_text(encoding="utf-8"))
+
+
 def test_openapi_includes_phase2_checklist_paths() -> None:
     paths = _spec_paths()
 
@@ -52,6 +56,8 @@ def test_openapi_includes_phase2_r3akt_paths() -> None:
         "/api/r3akt/mission-changes": {"get", "post"},
         "/api/r3akt/log-entries": {"get", "post"},
         "/api/r3akt/teams": {"get", "post"},
+        "/api/r3akt/teams/{team_uid}/missions": {"get"},
+        "/api/r3akt/teams/{team_uid}/missions/{mission_uid}": {"put", "delete"},
         "/api/r3akt/team-members": {"get", "post"},
         "/api/r3akt/team-members/{team_member_uid}/clients": {"get"},
         "/api/r3akt/team-members/{team_member_uid}/clients/{client_identity}": {"put", "delete"},
@@ -84,3 +90,57 @@ def test_openapi_keeps_rch_and_rth_alias_paths() -> None:
     assert "/RTH" in paths
     assert "post" in paths["/RTH"]
     assert "put" in paths["/RTH"]
+
+
+def test_openapi_exposes_r3akt_domain_schemas() -> None:
+    schemas = _spec()["components"]["schemas"]
+
+    required = {
+        "R3aktMission",
+        "R3aktMissionChange",
+        "R3aktLogEntry",
+        "R3aktTeam",
+        "R3aktTeamMember",
+        "R3aktAsset",
+        "R3aktSkill",
+        "R3aktTeamMemberSkill",
+        "R3aktTaskSkillRequirement",
+        "R3aktMissionTaskAssignment",
+        "R3aktChecklist",
+        "R3aktChecklistTask",
+        "R3aktChecklistCell",
+        "R3aktChecklistColumn",
+        "R3aktChecklistTemplate",
+        "R3aktChecklistFeedPublication",
+    }
+
+    assert required.issubset(set(schemas))
+
+
+def test_openapi_r3akt_endpoints_reference_domain_schemas() -> None:
+    paths = _spec_paths()
+
+    assert (
+        paths["/api/r3akt/missions"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["items"]["$ref"]
+        == "#/components/schemas/R3aktMission"
+    )
+    assert (
+        paths["/api/r3akt/teams"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/R3aktTeam"
+    )
+    assert (
+        paths["/api/r3akt/team-members"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/R3aktTeamMember"
+    )
+    assert (
+        paths["/api/r3akt/assignments"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["items"]["$ref"]
+        == "#/components/schemas/R3aktMissionTaskAssignment"
+    )
+    assert (
+        paths["/checklists/{checklist_id}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/R3aktChecklist"
+    )
+    assert (
+        paths["/checklists/templates"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/R3aktChecklistTemplateListResponse"
+    )

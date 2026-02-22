@@ -481,11 +481,12 @@ Real-time events broadcast via WebSocket:
 
 ### Before Committing
 
-1. All tests pass
-2. Coverage >= 90%
-3. Ruff linting passes
-4. Google-style docstrings present
-5. Type hints complete
+1. **All tests pass**
+2. **Coverage >= 90%**
+3. **Ruff linting passes**
+4. **Google-style docstrings present**
+5. **Type hints complete**
+6. **MUST test the code before declaring it's done** - For UI changes, verify the component renders without errors; for backend changes, verify the endpoint/function works as expected. Do not rely solely on automated tests.
 
 ### Task Completion
 

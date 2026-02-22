@@ -35,6 +35,10 @@ def test_diagram_relationship_methods_exist(tmp_path) -> None:
         "list_mission_zones",
         "upsert_mission_rde",
         "get_mission_rde",
+        "link_team_mission",
+        "unlink_team_mission",
+        "list_team_missions",
+        "list_mission_team_member_identities",
         "link_team_member_client",
         "unlink_team_member_client",
         "list_team_member_clients",
@@ -55,6 +59,7 @@ def test_diagram_relation_tables_exist(tmp_path) -> None:
         ).fetchall()
     table_names = {row[0] for row in rows}
     assert "r3akt_mission_zone_links" in table_names
+    assert "r3akt_mission_team_links" in table_names
     assert "r3akt_team_member_client_links" in table_names
     assert "r3akt_assignment_assets" in table_names
     assert "r3akt_mission_rde" in table_names

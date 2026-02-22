@@ -272,6 +272,23 @@ class ChecklistSyncRouter:
                     }
                 )
                 return payload, "checklist.created", payload
+            if ctype == "checklist.update":
+                checklist_uid = str(args.get("checklist_uid") or "").strip()
+                patch = args.get("patch")
+                if not checklist_uid or not isinstance(patch, dict):
+                    raise ChecklistCommandError(
+                        "invalid_payload", "checklist_uid and patch are required"
+                    )
+                payload = self._domain.update_checklist(checklist_uid, patch)
+                return payload, "checklist.updated", payload
+            if ctype == "checklist.delete":
+                checklist_uid = str(args.get("checklist_uid") or "").strip()
+                if not checklist_uid:
+                    raise ChecklistCommandError(
+                        "invalid_payload", "checklist_uid is required"
+                    )
+                payload = self._domain.delete_checklist(checklist_uid)
+                return payload, "checklist.deleted", payload
             if ctype == "checklist.import.csv":
                 payload = self._domain.import_checklist_csv(
                     {

@@ -2,6 +2,7 @@ import asyncio
 import base64
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import LXMF
@@ -611,5 +612,124 @@ def test_subscriber_cache_refresh_after_subscribe(tmp_path):
         assert dest_two.identity.hash in destinations
         topic_hexes = hub.topic_subscribers.get(topic_id, set())
         assert dest_two.identity.hash.hex().lower() in topic_hexes
+    finally:
+        hub.shutdown()
+
+
+def test_mission_registry_event_fanout_uses_custom_fields(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+
+    source_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    peer_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    source_identity = source_dest.identity.hash.hex().lower()
+    peer_identity = peer_dest.identity.hash.hex().lower()
+
+    hub.connections = {
+        source_dest.identity.hash: source_dest,
+        peer_dest.identity.hash: peer_dest,
+    }
+
+    outbound: list[dict[str, object]] = []
+
+    def _capture_send(
+        message: str,
+        *,
+        topic: str | None = None,
+        destination: str | None = None,
+        exclude: set[str] | None = None,
+        fields: dict | None = None,
+        sender: RNS.Destination | None = None,
+    ) -> bool:
+        outbound.append(
+            {
+                "message": message,
+                "topic": topic,
+                "destination": destination,
+                "exclude": exclude,
+                "fields": fields,
+                "sender": sender,
+            }
+        )
+        return True
+
+    hub.send_message = _capture_send  # type: ignore[assignment]
+
+    try:
+        hub.api.grant_identity_capability(source_identity, "mission.registry.mission.write")
+        assert hub.mission_domain_service is not None
+        domain = hub.mission_domain_service
+        domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission"})
+        domain.upsert_team(
+            {
+                "uid": "team-1",
+                "team_name": "Ops",
+                "mission_uids": ["mission-1"],
+            }
+        )
+        domain.upsert_team_member(
+            {
+                "uid": "member-1",
+                "team_uid": "team-1",
+                "rns_identity": source_identity,
+                "display_name": "Source",
+            }
+        )
+        domain.upsert_team_member(
+            {
+                "uid": "member-2",
+                "team_uid": "team-1",
+                "rns_identity": peer_identity,
+                "display_name": "Peer",
+            }
+        )
+
+        command = {
+            "command_id": "cmd-fanout-1",
+            "source": {"rns_identity": source_identity},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "command_type": "mission.registry.mission.patch",
+            "args": {"mission_uid": "mission-1", "mission_priority": 8},
+        }
+        message = LXMF.LXMessage(
+            hub.my_lxmf_dest,
+            source_dest,
+            fields={LXMF.FIELD_COMMANDS: [command]},
+            desired_method=LXMF.LXMessage.DIRECT,
+        )
+        message.pack()
+        message.signature_validated = True
+
+        responses = hub.command_handler([command], message)
+        assert responses
+
+        custom_type_field = int(getattr(LXMF, "FIELD_CUSTOM_TYPE", 0xFB))
+        custom_data_field = int(getattr(LXMF, "FIELD_CUSTOM_DATA", 0xFC))
+        custom_meta_field = int(getattr(LXMF, "FIELD_CUSTOM_META", 0xFD))
+
+        fanout = [
+            item
+            for item in outbound
+            if isinstance(item.get("fields"), dict)
+            and custom_type_field in item["fields"]
+        ]
+        assert len(fanout) == 2
+        assert {item["destination"] for item in fanout} == {
+            source_identity,
+            peer_identity,
+        }
+        for item in fanout:
+            fields = item["fields"]
+            assert isinstance(fields, dict)
+            assert fields[custom_type_field] == "r3akt.mission.change.v1"
+            assert fields[custom_data_field]["mission_uid"] == "mission-1"
+            assert (
+                fields[custom_meta_field]["event_type"]
+                == "mission.registry.mission.updated"
+            )
     finally:
         hub.shutdown()

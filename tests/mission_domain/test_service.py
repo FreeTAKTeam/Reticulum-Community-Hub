@@ -191,6 +191,10 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
         }
     )
     assert service.list_teams(mission_uid="mission-1")[0]["uid"] == team["uid"]
+    assert service.list_team_missions("team-1") == ["mission-1"]
+    linked_team = service.link_team_mission("team-1", "mission-2")
+    assert set(linked_team["mission_uids"]) == {"mission-1", "mission-2"}
+    assert any(item["uid"] == "team-1" for item in service.list_teams(mission_uid="mission-2"))
 
     with pytest.raises(ValueError):
         service.upsert_team_member({"uid": "member-invalid"})
@@ -219,6 +223,7 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     linked_member = service.link_team_member_client("member-1", "peer-a")
     assert linked_member["client_identities"] == ["peer-a"]
     assert service.list_team_member_clients("member-1") == ["peer-a"]
+    assert service.list_mission_team_member_identities("mission-1") == ["peer-a"]
 
     with pytest.raises(ValueError):
         service.upsert_asset(

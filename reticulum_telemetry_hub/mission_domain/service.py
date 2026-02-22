@@ -20,7 +20,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from reticulum_telemetry_hub.api.storage_models import Base
-from reticulum_telemetry_hub.api.storage_models import ClientRecord
 from reticulum_telemetry_hub.api.storage_models import MarkerRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktAssignmentAssetLinkRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktAssetRecord
@@ -37,6 +36,7 @@ from reticulum_telemetry_hub.api.storage_models import R3aktMissionChangeRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionRdeRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionTaskAssignmentRecord
+from reticulum_telemetry_hub.api.storage_models import R3aktMissionTeamLinkRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionZoneLinkRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktSkillRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktTaskSkillRequirementRecord
@@ -430,6 +430,68 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             .all()
         )
         return [str(row[0]) for row in rows]
+
+    @staticmethod
+    def _dedupe_non_empty(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for raw in values:
+            text = str(raw or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @staticmethod
+    def _team_mission_ids(session: Session, team_uid: str) -> list[str]:
+        linked_rows = (
+            session.query(R3aktMissionTeamLinkRecord.mission_uid)
+            .filter(R3aktMissionTeamLinkRecord.team_uid == team_uid)
+            .order_by(R3aktMissionTeamLinkRecord.created_at.asc())
+            .all()
+        )
+        mission_uids = [str(row[0]) for row in linked_rows]
+        team_row = session.get(R3aktTeamRecord, team_uid)
+        if team_row is not None and team_row.mission_uid:
+            mission_uids.append(str(team_row.mission_uid))
+        return MissionDomainService._dedupe_non_empty(mission_uids)
+
+    @staticmethod
+    def _mission_team_uids(session: Session, mission_uid: str) -> list[str]:
+        linked_rows = (
+            session.query(R3aktMissionTeamLinkRecord.team_uid)
+            .filter(R3aktMissionTeamLinkRecord.mission_uid == mission_uid)
+            .order_by(R3aktMissionTeamLinkRecord.created_at.asc())
+            .all()
+        )
+        team_uids = [str(row[0]) for row in linked_rows]
+        legacy_rows = (
+            session.query(R3aktTeamRecord.uid)
+            .filter(R3aktTeamRecord.mission_uid == mission_uid)
+            .order_by(R3aktTeamRecord.created_at.asc())
+            .all()
+        )
+        team_uids.extend(str(row[0]) for row in legacy_rows)
+        return MissionDomainService._dedupe_non_empty(team_uids)
+
+    @staticmethod
+    def _set_team_mission_links(
+        session: Session, *, team_uid: str, mission_uids: list[str]
+    ) -> None:
+        (
+            session.query(R3aktMissionTeamLinkRecord)
+            .filter(R3aktMissionTeamLinkRecord.team_uid == team_uid)
+            .delete(synchronize_session=False)
+        )
+        for mission_uid in mission_uids:
+            session.add(
+                R3aktMissionTeamLinkRecord(
+                    link_uid=uuid.uuid4().hex,
+                    mission_uid=mission_uid,
+                    team_uid=team_uid,
+                )
+            )
 
     @staticmethod
     def _mission_rde(session: Session, mission_uid: str) -> str | None:
@@ -1009,11 +1071,13 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                     ]
             return entries
 
-    @staticmethod
-    def _serialize_team(row: R3aktTeamRecord) -> dict[str, Any]:
+    def _serialize_team(self, session: Session, row: R3aktTeamRecord) -> dict[str, Any]:
+        mission_uids = self._team_mission_ids(session, row.uid)
+        mission_uid = mission_uids[0] if mission_uids else None
         return {
             "uid": row.uid,
-            "mission_uid": row.mission_uid,
+            "mission_uid": mission_uid,
+            "mission_uids": mission_uids,
             "color": row.color,
             "team_name": row.team_name,
             "team_description": row.team_description or "",
@@ -1028,10 +1092,34 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if row is None:
                 row = R3aktTeamRecord(uid=uid, team_name="Team")
                 session.add(row)
-            mission_uid = payload.get("mission_uid") or row.mission_uid
-            if mission_uid:
-                self._ensure_mission_exists(session, str(mission_uid))
-            row.mission_uid = mission_uid
+
+            mission_refs_provided = any(
+                key in payload for key in ("mission_uid", "mission_id", "mission_uids")
+            )
+            if mission_refs_provided:
+                mission_uids: list[str] = []
+                if "mission_uids" in payload:
+                    mission_uids = self._normalize_string_list(
+                        payload.get("mission_uids"),
+                        field_name="mission_uids",
+                    )
+                single_mission = str(
+                    payload.get("mission_uid") or payload.get("mission_id") or ""
+                ).strip()
+                if single_mission:
+                    mission_uids.append(single_mission)
+                mission_uids = self._dedupe_non_empty(mission_uids)
+                for mission_uid in mission_uids:
+                    self._ensure_mission_exists(session, mission_uid)
+                self._set_team_mission_links(
+                    session,
+                    team_uid=uid,
+                    mission_uids=mission_uids,
+                )
+            else:
+                mission_uids = self._team_mission_ids(session, uid)
+
+            row.mission_uid = mission_uids[0] if mission_uids else None
             row.color = self._normalize_optional_enum(
                 payload.get("color"),
                 field_name="color",
@@ -1041,7 +1129,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             row.team_name = str(payload.get("team_name") or payload.get("name") or row.team_name)
             row.team_description = str(payload.get("team_description") or payload.get("description") or row.team_description or "")
             session.flush()
-            data = self._serialize_team(row)
+            data = self._serialize_team(session, row)
             self._record_event(session, domain="mission", aggregate_type="team", aggregate_uid=uid, event_type="team.upserted", payload=data)
             return data
 
@@ -1049,8 +1137,102 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         with self._session() as session:
             query = session.query(R3aktTeamRecord)
             if mission_uid:
-                query = query.filter(R3aktTeamRecord.mission_uid == mission_uid)
-            return [self._serialize_team(row) for row in query.order_by(R3aktTeamRecord.team_name.asc()).all()]
+                team_uids = self._mission_team_uids(session, str(mission_uid))
+                if not team_uids:
+                    return []
+                query = query.filter(R3aktTeamRecord.uid.in_(team_uids))
+            return [
+                self._serialize_team(session, row)
+                for row in query.order_by(R3aktTeamRecord.team_name.asc()).all()
+            ]
+
+    def list_team_missions(self, team_uid: str) -> list[str]:
+        with self._session() as session:
+            row = session.get(R3aktTeamRecord, team_uid)
+            if row is None:
+                raise KeyError(f"Team '{team_uid}' not found")
+            return self._team_mission_ids(session, team_uid)
+
+    def link_team_mission(self, team_uid: str, mission_uid: str) -> dict[str, Any]:
+        mission_uid = str(mission_uid or "").strip()
+        if not mission_uid:
+            raise ValueError("mission_uid is required")
+        with self._session() as session:
+            row = session.get(R3aktTeamRecord, team_uid)
+            if row is None:
+                raise KeyError(f"Team '{team_uid}' not found")
+            self._ensure_mission_exists(session, mission_uid)
+            existing = self._team_mission_ids(session, team_uid)
+            if mission_uid not in existing:
+                existing.append(mission_uid)
+            existing = self._dedupe_non_empty(existing)
+            self._set_team_mission_links(
+                session,
+                team_uid=team_uid,
+                mission_uids=existing,
+            )
+            row.mission_uid = existing[0] if existing else None
+            session.flush()
+            data = self._serialize_team(session, row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="team",
+                aggregate_uid=team_uid,
+                event_type="team.mission.linked",
+                payload={"team_uid": team_uid, "mission_uid": mission_uid},
+            )
+            return data
+
+    def unlink_team_mission(self, team_uid: str, mission_uid: str) -> dict[str, Any]:
+        mission_uid = str(mission_uid or "").strip()
+        if not mission_uid:
+            raise ValueError("mission_uid is required")
+        with self._session() as session:
+            row = session.get(R3aktTeamRecord, team_uid)
+            if row is None:
+                raise KeyError(f"Team '{team_uid}' not found")
+            remaining = [
+                item
+                for item in self._team_mission_ids(session, team_uid)
+                if item != mission_uid
+            ]
+            self._set_team_mission_links(
+                session,
+                team_uid=team_uid,
+                mission_uids=remaining,
+            )
+            row.mission_uid = remaining[0] if remaining else None
+            session.flush()
+            data = self._serialize_team(session, row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="team",
+                aggregate_uid=team_uid,
+                event_type="team.mission.unlinked",
+                payload={"team_uid": team_uid, "mission_uid": mission_uid},
+            )
+            return data
+
+    def list_mission_team_member_identities(self, mission_uid: str) -> list[str]:
+        with self._session() as session:
+            self._ensure_mission_exists(session, mission_uid)
+            team_uids = self._mission_team_uids(session, mission_uid)
+            if not team_uids:
+                return []
+            members = (
+                session.query(R3aktTeamMemberRecord)
+                .filter(R3aktTeamMemberRecord.team_uid.in_(team_uids))
+                .order_by(R3aktTeamMemberRecord.created_at.asc())
+                .all()
+            )
+            identities: list[str] = []
+            for member in members:
+                if member.rns_identity:
+                    identities.append(str(member.rns_identity).strip().lower())
+                identities.extend(self._team_member_clients(session, member.uid))
+            return self._dedupe_non_empty(identities)
 
     def _team_member_clients(
         self, session: Session, team_member_uid: str
