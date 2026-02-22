@@ -1358,6 +1358,47 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 raise KeyError(f"Checklist '{checklist_uid}' not found")
             return self._serialize_checklist(session, row)
 
+    def update_checklist(self, checklist_uid: str, patch: dict[str, Any]) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktChecklistRecord, checklist_uid)
+            if row is None:
+                raise KeyError(f"Checklist '{checklist_uid}' not found")
+
+            if patch.get("name") is not None:
+                row.name = str(patch.get("name"))
+
+            if patch.get("description") is not None:
+                row.description = str(patch.get("description"))
+
+            if "mission_uid" in patch or "mission_id" in patch:
+                raw_mission_uid = patch.get("mission_uid")
+                if raw_mission_uid is None and "mission_uid" not in patch:
+                    raw_mission_uid = patch.get("mission_id")
+                mission_uid = str(raw_mission_uid or "").strip() or None
+                if mission_uid:
+                    self._ensure_mission_exists(session, mission_uid)
+                row.mission_uid = mission_uid
+
+            row.updated_at = _utcnow()
+            session.flush()
+            data = self._serialize_checklist(session, row)
+            self._record_event(
+                session,
+                domain="checklist",
+                aggregate_type="checklist",
+                aggregate_uid=checklist_uid,
+                event_type="checklist.updated",
+                payload=data,
+            )
+            self._record_snapshot(
+                session,
+                domain="checklist",
+                aggregate_type="checklist",
+                aggregate_uid=checklist_uid,
+                state=data,
+            )
+            return data
+
     def delete_checklist(self, checklist_uid: str) -> dict[str, Any]:
         with self._session() as session:
             checklist = session.get(R3aktChecklistRecord, checklist_uid)

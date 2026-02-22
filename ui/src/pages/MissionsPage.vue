@@ -416,6 +416,15 @@
                           </BaseButton>
                           <BaseButton
                             size="sm"
+                            variant="secondary"
+                            icon-left="link"
+                            :disabled="checklistLinkMissionSubmitting"
+                            @click="openChecklistMissionLinkModal"
+                          >
+                            Link Mission
+                          </BaseButton>
+                          <BaseButton
+                            size="sm"
                             variant="danger"
                             icon-left="trash"
                             :disabled="checklistDeleteBusy"
@@ -959,6 +968,34 @@
             @click="submitChecklistTemplateSelection"
           >
             {{ checklistTemplateSubmitting ? "Creating..." : "Create" }}
+          </BaseButton>
+        </div>
+      </div>
+    </BaseModal>
+
+    <BaseModal
+      :open="checklistLinkMissionModalOpen"
+      title="Link Checklist to Mission"
+      @close="closeChecklistMissionLinkModal"
+    >
+      <div class="template-modal">
+        <p class="template-modal-hint">Associate this checklist with a mission or leave it unscoped.</p>
+        <BaseSelect v-model="checklistLinkMissionSelectionUid" label="Mission" :options="checklistMissionLinkSelectOptions" />
+        <div class="template-modal-actions">
+          <BaseButton
+            variant="ghost"
+            icon-left="undo"
+            :disabled="checklistLinkMissionSubmitting"
+            @click="closeChecklistMissionLinkModal"
+          >
+            Cancel
+          </BaseButton>
+          <BaseButton
+            icon-left="link"
+            :disabled="checklistLinkMissionSubmitting || !canSubmitChecklistMissionLink"
+            @click="submitChecklistMissionLink"
+          >
+            {{ checklistLinkMissionSubmitting ? "Saving..." : checklistLinkMissionActionLabel }}
           </BaseButton>
         </div>
       </div>
@@ -2257,6 +2294,9 @@ const checklistDetailUid = ref("");
 const checklistTaskDueDraft = ref("10");
 const checklistTaskStatusBusyByTaskUid = ref<Record<string, boolean>>({});
 const checklistDeleteBusy = ref(false);
+const checklistLinkMissionModalOpen = ref(false);
+const checklistLinkMissionSelectionUid = ref("");
+const checklistLinkMissionSubmitting = ref(false);
 const checklistTemplateDeleteBusyByUid = ref<Record<string, boolean>>({});
 const checklistSearchQuery = ref("");
 const checklistWorkspaceView = ref<"active" | "templates">("active");
@@ -2496,6 +2536,46 @@ const checklistMissionLabel = (missionUid: string): string => {
   }
   return missionNameByUid.value.get(uid) ?? uid;
 };
+
+const checklistDetailMissionUid = computed(() => String(checklistDetailRecord.value?.mission_uid ?? "").trim());
+
+const checklistMissionLinkSelectOptions = computed(() => {
+  const options: Array<{ label: string; value: string }> = [{ label: "Unscoped", value: "" }];
+  const seen = new Set<string>([""]);
+  [...missions.value]
+    .sort((left, right) => left.mission_name.localeCompare(right.mission_name))
+    .forEach((mission) => {
+      const uid = String(mission.uid ?? "").trim();
+      if (!uid || seen.has(uid)) {
+        return;
+      }
+      seen.add(uid);
+      options.push({
+        value: uid,
+        label: String(mission.mission_name ?? "").trim() || uid
+      });
+    });
+  const currentMissionUid = checklistDetailMissionUid.value;
+  if (currentMissionUid && !seen.has(currentMissionUid)) {
+    options.push({
+      value: currentMissionUid,
+      label: `${currentMissionUid} (Unavailable)`
+    });
+  }
+  return options;
+});
+
+const checklistLinkMissionActionLabel = computed(() =>
+  checklistLinkMissionSelectionUid.value.trim() ? "Link Mission" : "Clear Link"
+);
+
+const canSubmitChecklistMissionLink = computed(() => {
+  const checklistUid = String(checklistDetailRecord.value?.uid ?? "").trim();
+  if (!checklistUid) {
+    return false;
+  }
+  return checklistLinkMissionSelectionUid.value.trim() !== checklistDetailMissionUid.value;
+});
 
 const checklistSearchNeedle = computed(() => checklistSearchQuery.value.trim().toUpperCase());
 
@@ -3425,6 +3505,7 @@ const openChecklistDetailView = async (checklistUid: string) => {
 };
 
 const closeChecklistDetailView = () => {
+  checklistLinkMissionModalOpen.value = false;
   checklistDetailUid.value = "";
   if (secondaryScreen.value === "checklistDetails" || secondaryScreen.value === "checklistRunDetail") {
     secondaryScreen.value = "checklistOverview";
@@ -3454,11 +3535,36 @@ const openChecklistCreationModal = () => {
   }
 };
 
+const openChecklistMissionLinkModal = () => {
+  const checklist = checklistDetailRecord.value;
+  if (!checklist?.uid) {
+    toastStore.push("Select a checklist first", "warning");
+    return;
+  }
+  const currentMissionUid = String(checklist.mission_uid ?? "").trim();
+  if (currentMissionUid) {
+    checklistLinkMissionSelectionUid.value = currentMissionUid;
+  } else {
+    const preferredMissionUid = String(selectedMissionUid.value ?? "").trim();
+    const missionExists = missions.value.some((mission) => mission.uid === preferredMissionUid);
+    checklistLinkMissionSelectionUid.value = missionExists ? preferredMissionUid : "";
+  }
+  checklistLinkMissionModalOpen.value = true;
+};
+
+const closeChecklistMissionLinkModal = () => {
+  if (checklistLinkMissionSubmitting.value) {
+    return;
+  }
+  checklistLinkMissionModalOpen.value = false;
+};
+
 const showChecklistFilterNotice = () => {
   toastStore.push("Checklist filter presets can be added from this workspace", "info");
 };
 
 const setChecklistWorkspaceView = (view: "active" | "templates") => {
+  checklistLinkMissionModalOpen.value = false;
   checklistWorkspaceView.value = view;
   if (view === "templates") {
     checklistDetailUid.value = "";
@@ -3577,12 +3683,49 @@ const deleteChecklistFromDetail = async () => {
     if (checklistDetailUid.value === checklistUid) {
       checklistDetailUid.value = "";
     }
+    checklistLinkMissionModalOpen.value = false;
     await loadWorkspace();
     toastStore.push("Checklist removed", "success");
   } catch (error) {
     handleApiError(error, "Unable to remove checklist");
   } finally {
     checklistDeleteBusy.value = false;
+  }
+};
+
+const submitChecklistMissionLink = async () => {
+  if (checklistLinkMissionSubmitting.value) {
+    return;
+  }
+  const checklistUid = String(checklistDetailRecord.value?.uid ?? "").trim();
+  if (!checklistUid) {
+    toastStore.push("Select a checklist first", "warning");
+    return;
+  }
+  if (!canSubmitChecklistMissionLink.value) {
+    checklistLinkMissionModalOpen.value = false;
+    return;
+  }
+  checklistLinkMissionSubmitting.value = true;
+  const missionUid = checklistLinkMissionSelectionUid.value.trim();
+  try {
+    await patchRequest(`${endpoints.checklists}/${checklistUid}`, {
+      patch: { mission_uid: missionUid || null }
+    });
+    await loadWorkspace();
+    selectedChecklistUid.value = checklistUid;
+    checklistDetailUid.value = checklistUid;
+    try {
+      await hydrateChecklistRecord(checklistUid);
+    } catch (error) {
+      handleApiError(error, "Checklist mission link saved but detail refresh failed");
+    }
+    checklistLinkMissionModalOpen.value = false;
+    toastStore.push(missionUid ? "Checklist linked to mission" : "Checklist mission link cleared", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to link checklist to mission");
+  } finally {
+    checklistLinkMissionSubmitting.value = false;
   }
 };
 

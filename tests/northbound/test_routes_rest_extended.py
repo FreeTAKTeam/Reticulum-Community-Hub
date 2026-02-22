@@ -890,6 +890,43 @@ def test_checklist_routes_matrix_and_errors(tmp_path: Path) -> None:
     get_checklist = client.get(f"/checklists/{checklist_uid}", headers=headers)
     assert get_checklist.status_code == 200
 
+    mission = client.post(
+        "/api/r3akt/missions",
+        json={"mission_name": "Checklist Link Mission"},
+        headers=headers,
+    )
+    assert mission.status_code == 200
+    mission_uid = mission.json()["uid"]
+
+    checklist_patch_bad_payload = client.patch(
+        f"/checklists/{checklist_uid}",
+        json={"patch": "invalid"},
+        headers=headers,
+    )
+    assert checklist_patch_bad_payload.status_code == 400
+
+    checklist_patch_missing = client.patch(
+        "/checklists/missing",
+        json={"patch": {"mission_uid": mission_uid}},
+        headers=headers,
+    )
+    assert checklist_patch_missing.status_code == 404
+
+    checklist_patch_missing_mission = client.patch(
+        f"/checklists/{checklist_uid}",
+        json={"patch": {"mission_uid": "missing-mission"}},
+        headers=headers,
+    )
+    assert checklist_patch_missing_mission.status_code == 400
+
+    checklist_patch = client.patch(
+        f"/checklists/{checklist_uid}",
+        json={"patch": {"mission_uid": mission_uid}},
+        headers=headers,
+    )
+    assert checklist_patch.status_code == 200
+    assert checklist_patch.json()["mission_id"] == mission_uid
+
     delete_missing_checklist = client.delete("/checklists/missing", headers=headers)
     assert delete_missing_checklist.status_code == 404
 

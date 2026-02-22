@@ -22,7 +22,7 @@ def test_openapi_includes_phase2_checklist_paths() -> None:
         "/checklists": {"get", "post"},
         "/checklists/offline": {"post"},
         "/checklists/import/csv": {"post"},
-        "/checklists/{checklist_id}": {"get", "delete"},
+        "/checklists/{checklist_id}": {"get", "patch", "delete"},
         "/checklists/{checklist_id}/join": {"post"},
         "/checklists/{checklist_id}/upload": {"post"},
         "/checklists/{checklist_id}/feeds/{feed_id}": {"post"},
