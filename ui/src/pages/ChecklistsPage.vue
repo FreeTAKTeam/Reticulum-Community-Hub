@@ -14,41 +14,43 @@
       <section class="panel registry-main">
         <div class="screen-shell">
           <article class="stage-card checklist-workspace">
-            <div class="checklist-manager-controls">
-              <label class="field-control full checklist-manager-search">
-                <input
-                  v-model="checklistSearchQuery"
-                  type="search"
-                  placeholder="Search checklists and templates..."
-                />
-              </label>
-              <div class="checklist-manager-actions">
-                <BaseButton size="sm" icon-left="plus" @click="openChecklistCreationModal">New</BaseButton>
-                <BaseButton size="sm" variant="secondary" icon-left="filter" @click="showChecklistFilterNotice">Filter</BaseButton>
-                <BaseButton size="sm" variant="secondary" icon-left="edit" @click="openTemplateBuilderFromChecklist">
-                  Template Builder
-                </BaseButton>
+            <template v-if="!checklistDetailRecord">
+              <div class="checklist-manager-controls">
+                <label class="field-control full checklist-manager-search">
+                  <input
+                    v-model="checklistSearchQuery"
+                    type="search"
+                    placeholder="Search checklists and templates..."
+                  />
+                </label>
+                <div class="checklist-manager-actions">
+                  <BaseButton size="sm" icon-left="plus" @click="openChecklistCreationModal">New</BaseButton>
+                  <BaseButton size="sm" variant="secondary" icon-left="filter" @click="showChecklistFilterNotice">Filter</BaseButton>
+                  <BaseButton size="sm" variant="secondary" icon-left="edit" @click="openTemplateBuilderFromChecklist">
+                    Template Builder
+                  </BaseButton>
+                </div>
               </div>
-            </div>
 
-            <div class="checklist-overview-tabs">
-              <button
-                type="button"
-                class="checklist-overview-tab"
-                :class="{ active: checklistWorkspaceView === 'active' }"
-                @click="setChecklistWorkspaceView('active')"
-              >
-                Active Checklists ({{ checklistActiveCount }})
-              </button>
-              <button
-                type="button"
-                class="checklist-overview-tab"
-                :class="{ active: checklistWorkspaceView === 'templates' }"
-                @click="setChecklistWorkspaceView('templates')"
-              >
-                Templates ({{ checklistTemplateCount }})
-              </button>
-            </div>
+              <div class="checklist-overview-tabs">
+                <button
+                  type="button"
+                  class="checklist-overview-tab"
+                  :class="{ active: checklistWorkspaceView === 'active' }"
+                  @click="setChecklistWorkspaceView('active')"
+                >
+                  Active Checklists ({{ checklistActiveCount }})
+                </button>
+                <button
+                  type="button"
+                  class="checklist-overview-tab"
+                  :class="{ active: checklistWorkspaceView === 'templates' }"
+                  @click="setChecklistWorkspaceView('templates')"
+                >
+                  Templates ({{ checklistTemplateCount }})
+                </button>
+              </div>
+            </template>
 
             <div v-if="checklistWorkspaceView === 'active'">
               <div v-if="checklistDetailRecord" class="checklist-detail-view">
