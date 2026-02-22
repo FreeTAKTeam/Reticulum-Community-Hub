@@ -43,6 +43,7 @@ channels:
       message:
         oneOf:
           - $ref: "#/components/messages/ChecklistTemplateListCommand"
+          - $ref: "#/components/messages/ChecklistTemplateGetCommand"
           - $ref: "#/components/messages/ChecklistTemplateCreateCommand"
           - $ref: "#/components/messages/ChecklistTemplateUpdateCommand"
           - $ref: "#/components/messages/ChecklistTemplateCloneCommand"
@@ -109,6 +110,23 @@ components:
                 const: checklist.template.list
               args:
                 $ref: "#/components/schemas/ChecklistTemplateListArgs"
+            required: [command_type, args]
+    ChecklistTemplateGetCommand:
+      name: ChecklistTemplateGetCommand
+      title: Get checklist template command
+      summary: Maps to HTTP operation `getChecklistTemplate`.
+      x-http-operation: "GET /checklists/templates/{template_id}"
+      x-capability-required:
+        - checklist.template.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: checklist.template.get
+              args:
+                $ref: "#/components/schemas/ChecklistTemplateGetArgs"
             required: [command_type, args]
     ChecklistTemplateCreateCommand:
       name: ChecklistTemplateCreateCommand
@@ -813,6 +831,13 @@ components:
         sort_by:
           type: string
           enum: [name_asc, name_desc, created_at_asc, created_at_desc]
+    ChecklistTemplateGetArgs:
+      type: object
+      additionalProperties: false
+      required: [template_uid]
+      properties:
+        template_uid:
+          type: string
     ChecklistTemplateCreateArgs:
       type: object
       additionalProperties: false

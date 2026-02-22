@@ -612,6 +612,18 @@ def test_mission_registry_command_paths(tmp_path) -> None:
     )
     assert _result(team_upsert)["uid"] == "team-2"
 
+    team_get = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team.get",
+                {"team_uid": "team-2"},
+                command_id="cmd-registry-team-get",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(team_get)["uid"] == "team-2"
+
     team_list = router.handle_commands(
         [
             _command(
@@ -701,6 +713,18 @@ def test_mission_registry_command_paths(tmp_path) -> None:
     )
     assert _result(member_upsert)["uid"] == "member-2"
 
+    member_get = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team_member.get",
+                {"team_member_uid": "member-2"},
+                command_id="cmd-registry-member-get",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(member_get)["uid"] == "member-2"
+
     member_list = router.handle_commands(
         [
             _command(
@@ -741,6 +765,18 @@ def test_mission_registry_command_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert _result(asset_upsert)["asset_uid"] == "asset-2"
+
+    asset_get = router.handle_commands(
+        [
+            _command(
+                "mission.registry.asset.get",
+                {"asset_uid": "asset-2"},
+                command_id="cmd-registry-asset-get",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(asset_get)["asset_uid"] == "asset-2"
 
     asset_list = router.handle_commands(
         [
@@ -887,6 +923,38 @@ def test_mission_registry_command_paths(tmp_path) -> None:
     )
     assert _result(assignment_list)["assignments"]
 
+    mission_get_expanded = router.handle_commands(
+        [
+            _command(
+                "mission.registry.mission.get",
+                {
+                    "mission_uid": "mission-1",
+                    "expand": [
+                        "teams",
+                        "team_members",
+                        "assets",
+                        "mission_changes",
+                        "log_entries",
+                        "assignments",
+                        "checklists",
+                        "mission_rde",
+                    ],
+                },
+                command_id="cmd-registry-mission-get-expanded",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    expanded_payload = _result(mission_get_expanded)
+    assert expanded_payload["teams"]
+    assert expanded_payload["team_members"]
+    assert expanded_payload["assets"]
+    assert expanded_payload["mission_changes"]
+    assert expanded_payload["log_entries"]
+    assert expanded_payload["assignments"]
+    assert expanded_payload["checklists"]
+    assert expanded_payload["mission_rde"]["role"] == "MISSION_OWNER"
+
     asset_set = router.handle_commands(
         [
             _command(
@@ -910,6 +978,42 @@ def test_mission_registry_command_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert _result(asset_link)["assets"] == ["asset-1"]
+
+    asset_delete = router.handle_commands(
+        [
+            _command(
+                "mission.registry.asset.delete",
+                {"asset_uid": "asset-2"},
+                command_id="cmd-registry-asset-delete",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(asset_delete)["asset_uid"] == "asset-2"
+
+    member_delete = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team_member.delete",
+                {"team_member_uid": "member-2"},
+                command_id="cmd-registry-member-delete",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(member_delete)["uid"] == "member-2"
+
+    team_delete = router.handle_commands(
+        [
+            _command(
+                "mission.registry.team.delete",
+                {"team_uid": "team-2"},
+                command_id="cmd-registry-team-delete",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(team_delete)["uid"] == "team-2"
 
     team_mission_unlink = router.handle_commands(
         [

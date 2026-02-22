@@ -86,6 +86,33 @@ ASSET_STATUS_LOST = AssetStatus.LOST.value
 ASSET_STATUS_MAINTENANCE = AssetStatus.MAINTENANCE.value
 ASSET_STATUS_RETIRED = AssetStatus.RETIRED.value
 ALLOWED_ASSET_STATUSES = enum_values(AssetStatus)
+MISSION_EXPAND_KEYS = {
+    "topic",
+    "teams",
+    "team_members",
+    "assets",
+    "mission_changes",
+    "log_entries",
+    "assignments",
+    "checklists",
+    "mission_rde",
+}
+MISSION_EXPAND_ALIASES = {
+    "team": "teams",
+    "members": "team_members",
+    "member": "team_members",
+    "team_members": "team_members",
+    "teammembers": "team_members",
+    "changes": "mission_changes",
+    "change": "mission_changes",
+    "logs": "log_entries",
+    "log": "log_entries",
+    "entries": "log_entries",
+    "assignment": "assignments",
+    "checklist": "checklists",
+    "rde": "mission_rde",
+    "all": "all",
+}
 
 
 def _utcnow() -> datetime:
@@ -500,13 +527,42 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             return None
         return row.role
 
+    @staticmethod
+    def _normalize_mission_expand(expand: Any) -> set[str]:
+        tokens: set[str] = set()
+        if expand is None:
+            return tokens
+
+        raw_values: list[Any]
+        if isinstance(expand, str):
+            raw_values = [item.strip() for item in expand.split(",")]
+        elif isinstance(expand, (list, tuple, set)):
+            raw_values = list(expand)
+        else:
+            raw_values = [expand]
+
+        for item in raw_values:
+            token = str(item or "").strip().lower()
+            if not token:
+                continue
+            mapped = MISSION_EXPAND_ALIASES.get(token, token)
+            if mapped == "all":
+                tokens.update(MISSION_EXPAND_KEYS)
+                continue
+            if mapped in MISSION_EXPAND_KEYS:
+                tokens.add(mapped)
+        return tokens
+
     def _serialize_mission(
         self,
         session: Session,
         row: R3aktMissionRecord,
         *,
         expand_topic: bool = False,
+        expand: set[str] | None = None,
     ) -> dict[str, Any]:
+        expand_values = self._normalize_mission_expand(expand)
+        include_topic = bool(expand_topic or "topic" in expand_values)
         payload = {
             "uid": row.uid,
             "mission_name": row.mission_name,
@@ -532,8 +588,101 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             "created_at": _dt(row.created_at),
             "updated_at": _dt(row.updated_at),
         }
-        if expand_topic:
+        if include_topic:
             payload["topic"] = self._topic_payload(session, row.topic_id)
+
+        team_uids: list[str] = []
+        if any(item in expand_values for item in {"teams", "team_members", "assets"}):
+            team_uids = self._mission_team_uids(session, row.uid)
+
+        member_rows: list[R3aktTeamMemberRecord] = []
+        if any(item in expand_values for item in {"team_members", "assets"}) and team_uids:
+            member_rows = (
+                session.query(R3aktTeamMemberRecord)
+                .filter(R3aktTeamMemberRecord.team_uid.in_(team_uids))
+                .order_by(R3aktTeamMemberRecord.display_name.asc())
+                .all()
+            )
+
+        if "teams" in expand_values:
+            if team_uids:
+                team_rows = (
+                    session.query(R3aktTeamRecord)
+                    .filter(R3aktTeamRecord.uid.in_(team_uids))
+                    .order_by(R3aktTeamRecord.team_name.asc())
+                    .all()
+                )
+                payload["teams"] = [self._serialize_team(session, item) for item in team_rows]
+            else:
+                payload["teams"] = []
+
+        if "team_members" in expand_values:
+            payload["team_members"] = [
+                self._serialize_team_member(session, item) for item in member_rows
+            ]
+
+        if "assets" in expand_values:
+            member_uids = [str(item.uid) for item in member_rows]
+            if member_uids:
+                asset_rows = (
+                    session.query(R3aktAssetRecord)
+                    .filter(R3aktAssetRecord.team_member_uid.in_(member_uids))
+                    .order_by(R3aktAssetRecord.name.asc())
+                    .all()
+                )
+                payload["assets"] = [self._serialize_asset(item) for item in asset_rows]
+            else:
+                payload["assets"] = []
+
+        if "mission_changes" in expand_values:
+            mission_change_rows = (
+                session.query(R3aktMissionChangeRecord)
+                .filter(R3aktMissionChangeRecord.mission_uid == row.uid)
+                .order_by(R3aktMissionChangeRecord.timestamp.desc())
+                .all()
+            )
+            payload["mission_changes"] = [
+                self._serialize_mission_change(item) for item in mission_change_rows
+            ]
+
+        if "log_entries" in expand_values:
+            log_rows = (
+                session.query(R3aktLogEntryRecord)
+                .filter(R3aktLogEntryRecord.mission_uid == row.uid)
+                .order_by(R3aktLogEntryRecord.server_time.desc())
+                .all()
+            )
+            payload["log_entries"] = [self._serialize_log_entry(item) for item in log_rows]
+
+        if "assignments" in expand_values:
+            assignment_rows = (
+                session.query(R3aktMissionTaskAssignmentRecord)
+                .filter(R3aktMissionTaskAssignmentRecord.mission_uid == row.uid)
+                .order_by(R3aktMissionTaskAssignmentRecord.assigned_at.desc())
+                .all()
+            )
+            payload["assignments"] = [
+                self._serialize_assignment(session, item) for item in assignment_rows
+            ]
+
+        if "checklists" in expand_values:
+            checklist_rows = (
+                session.query(R3aktChecklistRecord)
+                .filter(R3aktChecklistRecord.mission_uid == row.uid)
+                .order_by(R3aktChecklistRecord.created_at.desc())
+                .all()
+            )
+            payload["checklists"] = [
+                self._serialize_checklist(session, item) for item in checklist_rows
+            ]
+
+        if "mission_rde" in expand_values:
+            rde_row = session.get(R3aktMissionRdeRecord, row.uid)
+            payload["mission_rde"] = {
+                "mission_uid": row.uid,
+                "role": rde_row.role if rde_row is not None else None,
+                "updated_at": _dt(rde_row.updated_at) if rde_row is not None else None,
+            }
         return payload
 
     @staticmethod
@@ -735,23 +884,41 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             )
             return data
 
-    def list_missions(self, *, expand_topic: bool = False) -> list[dict[str, Any]]:
+    def list_missions(
+        self, *, expand_topic: bool = False, expand: set[str] | list[str] | str | None = None
+    ) -> list[dict[str, Any]]:
+        expand_values = self._normalize_mission_expand(expand)
         with self._session() as session:
             return [
-                self._serialize_mission(session, row, expand_topic=expand_topic)
+                self._serialize_mission(
+                    session,
+                    row,
+                    expand_topic=expand_topic,
+                    expand=expand_values,
+                )
                 for row in session.query(R3aktMissionRecord)
                 .order_by(R3aktMissionRecord.created_at.desc())
                 .all()
             ]
 
     def get_mission(
-        self, mission_uid: str, *, expand_topic: bool = False
+        self,
+        mission_uid: str,
+        *,
+        expand_topic: bool = False,
+        expand: set[str] | list[str] | str | None = None,
     ) -> dict[str, Any]:
+        expand_values = self._normalize_mission_expand(expand)
         with self._session() as session:
             row = session.get(R3aktMissionRecord, mission_uid)
             if row is None:
                 raise KeyError(f"Mission '{mission_uid}' not found")
-            return self._serialize_mission(session, row, expand_topic=expand_topic)
+            return self._serialize_mission(
+                session,
+                row,
+                expand_topic=expand_topic,
+                expand=expand_values,
+            )
 
     def set_mission_parent(
         self, mission_uid: str, *, parent_uid: str | None
@@ -1146,6 +1313,43 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 for row in query.order_by(R3aktTeamRecord.team_name.asc()).all()
             ]
 
+    def get_team(self, team_uid: str) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktTeamRecord, team_uid)
+            if row is None:
+                raise KeyError(f"Team '{team_uid}' not found")
+            return self._serialize_team(session, row)
+
+    def delete_team(self, team_uid: str) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktTeamRecord, team_uid)
+            if row is None:
+                raise KeyError(f"Team '{team_uid}' not found")
+            data = self._serialize_team(session, row)
+            (
+                session.query(R3aktTeamMemberRecord)
+                .filter(R3aktTeamMemberRecord.team_uid == team_uid)
+                .update(
+                    {R3aktTeamMemberRecord.team_uid: None},
+                    synchronize_session=False,
+                )
+            )
+            (
+                session.query(R3aktMissionTeamLinkRecord)
+                .filter(R3aktMissionTeamLinkRecord.team_uid == team_uid)
+                .delete(synchronize_session=False)
+            )
+            session.delete(row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="team",
+                aggregate_uid=team_uid,
+                event_type="team.deleted",
+                payload=data,
+            )
+            return data
+
     def list_team_missions(self, team_uid: str) -> list[str]:
         with self._session() as session:
             row = session.get(R3aktTeamRecord, team_uid)
@@ -1325,6 +1529,53 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 for row in query.order_by(R3aktTeamMemberRecord.display_name.asc()).all()
             ]
 
+    def get_team_member(self, team_member_uid: str) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktTeamMemberRecord, team_member_uid)
+            if row is None:
+                raise KeyError(f"Team member '{team_member_uid}' not found")
+            return self._serialize_team_member(session, row)
+
+    def delete_team_member(self, team_member_uid: str) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktTeamMemberRecord, team_member_uid)
+            if row is None:
+                raise KeyError(f"Team member '{team_member_uid}' not found")
+            data = self._serialize_team_member(session, row)
+            member_identity = str(row.rns_identity or "").strip()
+            (
+                session.query(R3aktAssetRecord)
+                .filter(R3aktAssetRecord.team_member_uid == team_member_uid)
+                .update(
+                    {R3aktAssetRecord.team_member_uid: None},
+                    synchronize_session=False,
+                )
+            )
+            (
+                session.query(R3aktTeamMemberClientLinkRecord)
+                .filter(R3aktTeamMemberClientLinkRecord.team_member_uid == team_member_uid)
+                .delete(synchronize_session=False)
+            )
+            if member_identity:
+                (
+                    session.query(R3aktTeamMemberSkillRecord)
+                    .filter(
+                        R3aktTeamMemberSkillRecord.team_member_rns_identity
+                        == member_identity
+                    )
+                    .delete(synchronize_session=False)
+                )
+            session.delete(row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="team_member",
+                aggregate_uid=team_member_uid,
+                event_type="team_member.deleted",
+                payload=data,
+            )
+            return data
+
     def link_team_member_client(self, team_member_uid: str, client_identity: str) -> dict[str, Any]:
         normalized_identity = self._normalize_identity(
             client_identity, field_name="client_identity"
@@ -1454,6 +1705,43 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if team_member_uid:
                 query = query.filter(R3aktAssetRecord.team_member_uid == team_member_uid)
             return [self._serialize_asset(row) for row in query.order_by(R3aktAssetRecord.name.asc()).all()]
+
+    def get_asset(self, asset_uid: str) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktAssetRecord, asset_uid)
+            if row is None:
+                raise KeyError(f"Asset '{asset_uid}' not found")
+            return self._serialize_asset(row)
+
+    def delete_asset(self, asset_uid: str) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktAssetRecord, asset_uid)
+            if row is None:
+                raise KeyError(f"Asset '{asset_uid}' not found")
+            data = self._serialize_asset(row)
+            (
+                session.query(R3aktAssignmentAssetLinkRecord)
+                .filter(R3aktAssignmentAssetLinkRecord.asset_uid == asset_uid)
+                .delete(synchronize_session=False)
+            )
+            assignments = session.query(R3aktMissionTaskAssignmentRecord).all()
+            for assignment in assignments:
+                existing_assets = [str(item) for item in list(assignment.assets_json or [])]
+                filtered_assets = [
+                    item for item in existing_assets if item != asset_uid
+                ]
+                if filtered_assets != existing_assets:
+                    assignment.assets_json = filtered_assets
+            session.delete(row)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="asset",
+                aggregate_uid=asset_uid,
+                event_type="asset.deleted",
+                payload=data,
+            )
+            return data
 
     @staticmethod
     def _serialize_skill(row: R3aktSkillRecord) -> dict[str, Any]:
@@ -1948,6 +2236,13 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             else:
                 query = query.order_by(R3aktChecklistTemplateRecord.template_name.asc())
             return [self._serialize_template(session, row) for row in query.all()]
+
+    def get_checklist_template(self, template_uid: str) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(R3aktChecklistTemplateRecord, template_uid)
+            if row is None:
+                raise KeyError(f"Checklist template '{template_uid}' not found")
+            return self._serialize_template(session, row)
 
     def create_checklist_template(self, template: dict[str, Any]) -> dict[str, Any]:
         uid = str(template.get("uid") or uuid.uuid4().hex)

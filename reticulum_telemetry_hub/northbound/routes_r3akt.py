@@ -25,6 +25,15 @@ def register_r3akt_routes(
 ) -> None:
     """Register R3AKT registry/capability routes."""
 
+    def _expand_tokens(value: str | None) -> set[str]:
+        if not value:
+            return set()
+        return {
+            item.strip().lower()
+            for item in value.split(",")
+            if item and item.strip()
+        }
+
     @app.get("/api/r3akt/capabilities/{identity}", dependencies=[Depends(require_protected)])
     def get_identity_capabilities(identity: str) -> dict:
         return {
@@ -88,8 +97,9 @@ def register_r3akt_routes(
 
     @app.get("/api/r3akt/missions", dependencies=[Depends(require_protected)])
     def list_missions(expand: str | None = Query(default=None)) -> list[dict]:
-        expand_topic = bool(expand and "topic" in {item.strip().lower() for item in expand.split(",")})
-        return domain.list_missions(expand_topic=expand_topic)
+        expand_values = _expand_tokens(expand)
+        expand_topic = "topic" in expand_values or "all" in expand_values
+        return domain.list_missions(expand_topic=expand_topic, expand=expand_values)
 
     @app.post("/api/r3akt/missions", dependencies=[Depends(require_protected)])
     def upsert_mission(payload: dict = Body(default_factory=dict)) -> dict:
@@ -106,9 +116,14 @@ def register_r3akt_routes(
         mission_uid: str,
         expand: str | None = Query(default=None),
     ) -> dict:
-        expand_topic = bool(expand and "topic" in {item.strip().lower() for item in expand.split(",")})
+        expand_values = _expand_tokens(expand)
+        expand_topic = "topic" in expand_values or "all" in expand_values
         try:
-            return domain.get_mission(mission_uid, expand_topic=expand_topic)
+            return domain.get_mission(
+                mission_uid,
+                expand_topic=expand_topic,
+                expand=expand_values,
+            )
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -224,6 +239,20 @@ def register_r3akt_routes(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    @app.get("/api/r3akt/teams/{team_uid}", dependencies=[Depends(require_protected)])
+    def get_team(team_uid: str) -> dict:
+        try:
+            return domain.get_team(team_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.delete("/api/r3akt/teams/{team_uid}", dependencies=[Depends(require_protected)])
+    def delete_team(team_uid: str) -> dict:
+        try:
+            return domain.delete_team(team_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
     @app.get("/api/r3akt/teams/{team_uid}/missions", dependencies=[Depends(require_protected)])
     def list_team_missions(team_uid: str) -> dict:
         try:
@@ -266,6 +295,20 @@ def register_r3akt_routes(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    @app.get("/api/r3akt/team-members/{team_member_uid}", dependencies=[Depends(require_protected)])
+    def get_team_member(team_member_uid: str) -> dict:
+        try:
+            return domain.get_team_member(team_member_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.delete("/api/r3akt/team-members/{team_member_uid}", dependencies=[Depends(require_protected)])
+    def delete_team_member(team_member_uid: str) -> dict:
+        try:
+            return domain.delete_team_member(team_member_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
     @app.get("/api/r3akt/team-members/{team_member_uid}/clients", dependencies=[Depends(require_protected)])
     def list_team_member_clients(team_member_uid: str) -> dict:
         try:
@@ -307,6 +350,20 @@ def register_r3akt_routes(
             return domain.upsert_asset(payload)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.get("/api/r3akt/assets/{asset_uid}", dependencies=[Depends(require_protected)])
+    def get_asset(asset_uid: str) -> dict:
+        try:
+            return domain.get_asset(asset_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.delete("/api/r3akt/assets/{asset_uid}", dependencies=[Depends(require_protected)])
+    def delete_asset(asset_uid: str) -> dict:
+        try:
+            return domain.delete_asset(asset_uid)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     @app.get("/api/r3akt/skills", dependencies=[Depends(require_protected)])
     def list_skills() -> list[dict]:

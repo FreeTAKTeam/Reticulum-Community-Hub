@@ -879,6 +879,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/R3aktChecklistTemplate'
   /checklists/templates/{template_id}:
+    get:
+      x-scope: protected
+      tags:
+       - Checklist
+      summary: Get checklist template details.
+      parameters:
+        - name: template_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Checklist template details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktChecklistTemplate'
     patch:
       x-scope: protected
       tags:
@@ -1320,6 +1338,12 @@ paths:
         - name: expand
           in: query
           required: false
+          description: >
+            Comma-separated related entities to include in each mission record.
+            Supported values: `topic`, `teams`, `team_members`, `assets`,
+            `mission_changes`, `log_entries`, `assignments`, `checklists`,
+            `mission_rde`, `all`.
+          example: topic,teams,team_members,assets,mission_changes,log_entries,assignments,checklists,mission_rde
           schema:
             type: string
       responses:
@@ -1364,6 +1388,12 @@ paths:
         - name: expand
           in: query
           required: false
+          description: >
+            Comma-separated related entities to include in the mission record.
+            Supported values: `topic`, `teams`, `team_members`, `assets`,
+            `mission_changes`, `log_entries`, `assignments`, `checklists`,
+            `mission_rde`, `all`.
+          example: topic,teams,team_members,assets,mission_changes,log_entries,assignments,checklists,mission_rde
           schema:
             type: string
       responses:
@@ -1671,6 +1701,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/R3aktTeam'
+  /api/r3akt/teams/{team_uid}:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Retrieve a team by uid.
+      parameters:
+        - name: team_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktTeam'
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Delete a team.
+      parameters:
+        - name: team_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted team record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktTeam'
   /api/r3akt/teams/{team_uid}/missions:
     get:
       x-scope: protected
@@ -1776,6 +1843,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/R3aktTeamMember'
+  /api/r3akt/team-members/{team_member_uid}:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Retrieve a team member by uid.
+      parameters:
+        - name: team_member_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team member record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktTeamMember'
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Delete a team member.
+      parameters:
+        - name: team_member_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted team member record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktTeamMember'
   /api/r3akt/team-members/{team_member_uid}/clients:
     get:
       x-scope: protected
@@ -1877,6 +1981,43 @@ paths:
       responses:
         '200':
           description: Asset record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktAsset'
+  /api/r3akt/assets/{asset_uid}:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Retrieve an asset by uid.
+      parameters:
+        - name: asset_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Asset record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R3aktAsset'
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Delete an asset.
+      parameters:
+        - name: asset_uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted asset record.
           content:
             application/json:
               schema:
@@ -3707,6 +3848,37 @@ components:
         mission_rde_role:
           type: string
           nullable: true
+        mission_rde:
+          $ref: '#/components/schemas/R3aktMissionRde'
+          nullable: true
+        teams:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktTeam'
+        team_members:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktTeamMember'
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktAsset'
+        mission_changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktMissionChange'
+        log_entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktLogEntry'
+        assignments:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktMissionTaskAssignment'
+        checklists:
+          type: array
+          items:
+            $ref: '#/components/schemas/R3aktChecklist'
         created_at:
           type: string
           format: date-time

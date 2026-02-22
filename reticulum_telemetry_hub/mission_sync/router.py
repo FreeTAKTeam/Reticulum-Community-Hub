@@ -386,14 +386,22 @@ class MissionSyncRouter:
                 mission_uid = self._value_as_str(args.get("mission_uid"))
                 if not mission_uid:
                     raise MissionCommandError("invalid_payload", "mission_uid is required")
+                expand_values = self._expand_values(args.get("expand"))
+                expand_topic = bool(args.get("expand_topic")) or "topic" in expand_values or "all" in expand_values
                 mission = domain.get_mission(
                     mission_uid,
-                    expand_topic=bool(args.get("expand_topic")),
+                    expand_topic=expand_topic,
+                    expand=expand_values,
                 )
                 return mission, "mission.registry.mission.retrieved", mission
             if command_type == "mission.registry.mission.list":
                 domain = self._require_domain_service()
-                missions = domain.list_missions(expand_topic=bool(args.get("expand_topic")))
+                expand_values = self._expand_values(args.get("expand"))
+                expand_topic = bool(args.get("expand_topic")) or "topic" in expand_values or "all" in expand_values
+                missions = domain.list_missions(
+                    expand_topic=expand_topic,
+                    expand=expand_values,
+                )
                 payload = {"missions": missions}
                 return payload, "mission.registry.mission.listed", payload
             if command_type == "mission.registry.mission.patch":
@@ -450,11 +458,25 @@ class MissionSyncRouter:
                 domain = self._require_domain_service()
                 updated = domain.upsert_team(args)
                 return updated, "mission.registry.team.upserted", updated
+            if command_type == "mission.registry.team.get":
+                domain = self._require_domain_service()
+                team_uid = self._value_as_str(args.get("team_uid"))
+                if not team_uid:
+                    raise MissionCommandError("invalid_payload", "team_uid is required")
+                team = domain.get_team(team_uid)
+                return team, "mission.registry.team.retrieved", team
             if command_type == "mission.registry.team.list":
                 domain = self._require_domain_service()
                 mission_uid = self._value_as_str(args.get("mission_uid"))
                 payload = {"teams": domain.list_teams(mission_uid=mission_uid)}
                 return payload, "mission.registry.team.listed", payload
+            if command_type == "mission.registry.team.delete":
+                domain = self._require_domain_service()
+                team_uid = self._value_as_str(args.get("team_uid"))
+                if not team_uid:
+                    raise MissionCommandError("invalid_payload", "team_uid is required")
+                deleted = domain.delete_team(team_uid)
+                return deleted, "mission.registry.team.deleted", deleted
             if command_type == "mission.registry.team.mission.link":
                 domain = self._require_domain_service()
                 team_uid = self._value_as_str(args.get("team_uid"))
@@ -509,11 +531,29 @@ class MissionSyncRouter:
                 domain = self._require_domain_service()
                 updated = domain.upsert_team_member(args)
                 return updated, "mission.registry.team_member.upserted", updated
+            if command_type == "mission.registry.team_member.get":
+                domain = self._require_domain_service()
+                team_member_uid = self._value_as_str(args.get("team_member_uid"))
+                if not team_member_uid:
+                    raise MissionCommandError(
+                        "invalid_payload", "team_member_uid is required"
+                    )
+                member = domain.get_team_member(team_member_uid)
+                return member, "mission.registry.team_member.retrieved", member
             if command_type == "mission.registry.team_member.list":
                 domain = self._require_domain_service()
                 team_uid = self._value_as_str(args.get("team_uid"))
                 payload = {"team_members": domain.list_team_members(team_uid=team_uid)}
                 return payload, "mission.registry.team_member.listed", payload
+            if command_type == "mission.registry.team_member.delete":
+                domain = self._require_domain_service()
+                team_member_uid = self._value_as_str(args.get("team_member_uid"))
+                if not team_member_uid:
+                    raise MissionCommandError(
+                        "invalid_payload", "team_member_uid is required"
+                    )
+                deleted = domain.delete_team_member(team_member_uid)
+                return deleted, "mission.registry.team_member.deleted", deleted
             if command_type == "mission.registry.team_member.client.link":
                 domain = self._require_domain_service()
                 team_member_uid = self._value_as_str(args.get("team_member_uid"))
@@ -540,11 +580,25 @@ class MissionSyncRouter:
                 domain = self._require_domain_service()
                 updated = domain.upsert_asset(args)
                 return updated, "mission.registry.asset.upserted", updated
+            if command_type == "mission.registry.asset.get":
+                domain = self._require_domain_service()
+                asset_uid = self._value_as_str(args.get("asset_uid"))
+                if not asset_uid:
+                    raise MissionCommandError("invalid_payload", "asset_uid is required")
+                asset = domain.get_asset(asset_uid)
+                return asset, "mission.registry.asset.retrieved", asset
             if command_type == "mission.registry.asset.list":
                 domain = self._require_domain_service()
                 team_member_uid = self._value_as_str(args.get("team_member_uid"))
                 payload = {"assets": domain.list_assets(team_member_uid=team_member_uid)}
                 return payload, "mission.registry.asset.listed", payload
+            if command_type == "mission.registry.asset.delete":
+                domain = self._require_domain_service()
+                asset_uid = self._value_as_str(args.get("asset_uid"))
+                if not asset_uid:
+                    raise MissionCommandError("invalid_payload", "asset_uid is required")
+                deleted = domain.delete_asset(asset_uid)
+                return deleted, "mission.registry.asset.deleted", deleted
             if command_type == "mission.registry.skill.upsert":
                 domain = self._require_domain_service()
                 updated = domain.upsert_skill(args)
@@ -697,6 +751,25 @@ class MissionSyncRouter:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _expand_values(value: Any) -> set[str]:
+        if value is None:
+            return set()
+        if isinstance(value, str):
+            return {
+                item.strip().lower()
+                for item in value.split(",")
+                if item and item.strip()
+            }
+        if isinstance(value, (list, tuple, set)):
+            return {
+                str(item).strip().lower()
+                for item in value
+                if str(item).strip()
+            }
+        text = str(value).strip().lower()
+        return {text} if text else set()
 
     @staticmethod
     def _required_float(value: Any, *, field_name: str) -> float:

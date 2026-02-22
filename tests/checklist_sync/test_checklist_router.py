@@ -168,6 +168,18 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
     )
     assert _result(template_list)["templates"]
 
+    template_get = router.handle_commands(
+        [
+            _command(
+                "checklist.template.get",
+                {"template_uid": template_uid},
+                command_id="cmd-template-get",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(template_get)["uid"] == template_uid
+
     template_update = router.handle_commands(
         [
             _command(
@@ -494,6 +506,30 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert missing_template_uid[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+
+    missing_template_get = router.handle_commands(
+        [
+            _command(
+                "checklist.template.get",
+                {},
+                command_id="cmd-template-get-missing",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert missing_template_get[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+
+    unknown_template_get = router.handle_commands(
+        [
+            _command(
+                "checklist.template.get",
+                {"template_uid": "missing-template"},
+                command_id="cmd-template-get-unknown",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert unknown_template_get[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     missing_clone_name = router.handle_commands(
         [

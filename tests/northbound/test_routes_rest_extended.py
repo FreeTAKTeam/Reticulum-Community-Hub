@@ -607,6 +607,10 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     )
     assert team.status_code == 200
     assert team.json()["mission_uids"] == [mission_uid]
+    team_get = client.get("/api/r3akt/teams/team-1", headers=headers)
+    assert team_get.status_code == 200
+    team_missing = client.get("/api/r3akt/teams/missing", headers=headers)
+    assert team_missing.status_code == 404
     team_missions = client.get("/api/r3akt/teams/team-1/missions", headers=headers)
     assert team_missions.status_code == 200
     assert team_missions.json()["mission_uids"] == [mission_uid]
@@ -638,6 +642,10 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         headers=headers,
     )
     assert member.status_code == 200
+    member_get = client.get("/api/r3akt/team-members/member-1", headers=headers)
+    assert member_get.status_code == 200
+    member_missing = client.get("/api/r3akt/team-members/missing", headers=headers)
+    assert member_missing.status_code == 404
 
     join_client = client.post("/RCH", params={"identity": "peer-a"})
     assert join_client.status_code == 200
@@ -689,6 +697,10 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         headers=headers,
     )
     assert asset.status_code == 200
+    asset_get = client.get("/api/r3akt/assets/asset-1", headers=headers)
+    assert asset_get.status_code == 200
+    asset_missing = client.get("/api/r3akt/assets/missing", headers=headers)
+    assert asset_missing.status_code == 404
 
     skill = client.post(
         "/api/r3akt/skills",
@@ -846,6 +858,65 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     )
     assert assignment_missing_task.status_code == 400
 
+    mission_expanded = client.get(
+        f"/api/r3akt/missions/{mission_uid}",
+        params={
+            "expand": "topic,teams,team_members,assets,mission_changes,log_entries,assignments,checklists,mission_rde"
+        },
+        headers=headers,
+    )
+    assert mission_expanded.status_code == 200
+    mission_expanded_payload = mission_expanded.json()
+    assert mission_expanded_payload["teams"]
+    assert mission_expanded_payload["team_members"]
+    assert mission_expanded_payload["assets"]
+    assert mission_expanded_payload["mission_changes"]
+    assert mission_expanded_payload["log_entries"]
+    assert mission_expanded_payload["assignments"]
+    assert mission_expanded_payload["checklists"]
+    assert mission_expanded_payload["mission_rde"]["role"] == "MISSION_OWNER"
+
+    team_delete = client.post(
+        "/api/r3akt/teams",
+        json={"uid": "team-delete", "team_name": "Delete Team", "mission_uid": mission_uid},
+        headers=headers,
+    )
+    assert team_delete.status_code == 200
+    member_delete_seed = client.post(
+        "/api/r3akt/team-members",
+        json={
+            "uid": "member-delete",
+            "team_uid": "team-delete",
+            "rns_identity": "peer-delete",
+            "display_name": "Peer Delete",
+        },
+        headers=headers,
+    )
+    assert member_delete_seed.status_code == 200
+    asset_delete_seed = client.post(
+        "/api/r3akt/assets",
+        json={
+            "asset_uid": "asset-delete",
+            "team_member_uid": "member-delete",
+            "name": "Delete Asset",
+            "asset_type": "COMM",
+        },
+        headers=headers,
+    )
+    assert asset_delete_seed.status_code == 200
+    assert client.get("/api/r3akt/teams/team-delete", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/team-members/member-delete", headers=headers).status_code == 200
+    assert client.get("/api/r3akt/assets/asset-delete", headers=headers).status_code == 200
+    asset_delete = client.delete("/api/r3akt/assets/asset-delete", headers=headers)
+    assert asset_delete.status_code == 200
+    assert client.get("/api/r3akt/assets/asset-delete", headers=headers).status_code == 404
+    member_delete = client.delete("/api/r3akt/team-members/member-delete", headers=headers)
+    assert member_delete.status_code == 200
+    assert client.get("/api/r3akt/team-members/member-delete", headers=headers).status_code == 404
+    team_delete_call = client.delete("/api/r3akt/teams/team-delete", headers=headers)
+    assert team_delete_call.status_code == 200
+    assert client.get("/api/r3akt/teams/team-delete", headers=headers).status_code == 404
+
     assert client.get("/api/r3akt/missions", headers=headers).status_code == 200
     assert client.get("/api/r3akt/mission-changes", headers=headers).status_code == 200
     assert client.get("/api/r3akt/log-entries", headers=headers).status_code == 200
@@ -923,6 +994,10 @@ def test_checklist_routes_matrix_and_errors(tmp_path: Path) -> None:
     )
     assert template.status_code == 200
     template_uid = template.json()["uid"]
+
+    template_get = client.get(f"/checklists/templates/{template_uid}", headers=headers)
+    assert template_get.status_code == 200
+    assert template_get.json()["uid"] == template_uid
 
     list_templates = client.get("/checklists/templates", headers=headers)
     assert list_templates.status_code == 200

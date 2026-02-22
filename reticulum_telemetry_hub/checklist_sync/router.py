@@ -218,6 +218,14 @@ class ChecklistSyncRouter:
                     )
                 }
                 return payload, "checklist.template.updated", payload
+            if ctype == "checklist.template.get":
+                template_uid = str(args.get("template_uid") or "").strip()
+                if not template_uid:
+                    raise ChecklistCommandError(
+                        "invalid_payload", "template_uid is required"
+                    )
+                payload = self._domain.get_checklist_template(template_uid)
+                return payload, "checklist.template.updated", payload
             if ctype == "checklist.template.create":
                 template = args.get("template")
                 if not isinstance(template, dict):

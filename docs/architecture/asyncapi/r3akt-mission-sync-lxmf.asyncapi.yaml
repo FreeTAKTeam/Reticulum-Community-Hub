@@ -69,18 +69,24 @@ channels:
           - $ref: "#/components/messages/LogEntryUpsertCommand"
           - $ref: "#/components/messages/LogEntryListCommand"
           - $ref: "#/components/messages/TeamUpsertCommand"
+          - $ref: "#/components/messages/TeamGetCommand"
           - $ref: "#/components/messages/TeamListCommand"
+          - $ref: "#/components/messages/TeamDeleteCommand"
           - $ref: "#/components/messages/TeamMissionLinkCommand"
           - $ref: "#/components/messages/TeamMissionUnlinkCommand"
           - $ref: "#/components/messages/MissionRegistryZoneLinkCommand"
           - $ref: "#/components/messages/MissionRegistryZoneUnlinkCommand"
           - $ref: "#/components/messages/MissionRegistryRdeSetCommand"
           - $ref: "#/components/messages/TeamMemberUpsertCommand"
+          - $ref: "#/components/messages/TeamMemberGetCommand"
           - $ref: "#/components/messages/TeamMemberListCommand"
+          - $ref: "#/components/messages/TeamMemberDeleteCommand"
           - $ref: "#/components/messages/TeamMemberClientLinkCommand"
           - $ref: "#/components/messages/TeamMemberClientUnlinkCommand"
           - $ref: "#/components/messages/AssetUpsertCommand"
+          - $ref: "#/components/messages/AssetGetCommand"
           - $ref: "#/components/messages/AssetListCommand"
+          - $ref: "#/components/messages/AssetDeleteCommand"
           - $ref: "#/components/messages/SkillUpsertCommand"
           - $ref: "#/components/messages/SkillListCommand"
           - $ref: "#/components/messages/TeamMemberSkillUpsertCommand"
@@ -388,6 +394,16 @@ components:
                 properties:
                   mission_uid: { type: string }
                   expand_topic: { type: boolean }
+                  expand:
+                    description: >
+                      Mission related entities to include. Can be an array of tokens
+                      or a comma-separated string. Supported values: topic, teams,
+                      team_members, assets, mission_changes, log_entries, assignments,
+                      checklists, mission_rde, all.
+                    oneOf:
+                      - type: array
+                        items: { type: string }
+                      - type: string
             required: [command_type, args]
     MissionRegistryListCommand:
       name: MissionRegistryListCommand
@@ -406,6 +422,16 @@ components:
                 additionalProperties: false
                 properties:
                   expand_topic: { type: boolean }
+                  expand:
+                    description: >
+                      Mission related entities to include. Can be an array of tokens
+                      or a comma-separated string. Supported values: topic, teams,
+                      team_members, assets, mission_changes, log_entries, assignments,
+                      checklists, mission_rde, all.
+                    oneOf:
+                      - type: array
+                        items: { type: string }
+                      - type: string
             required: [command_type, args]
     MissionRegistryPatchCommand:
       name: MissionRegistryPatchCommand
@@ -550,6 +576,25 @@ components:
                 type: object
                 additionalProperties: true
             required: [command_type, args]
+    TeamGetCommand:
+      name: TeamGetCommand
+      x-http-operation: "GET /api/r3akt/teams/{team_uid}"
+      x-capability-required:
+        - mission.registry.team.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team.get
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_uid]
+                properties:
+                  team_uid: { type: string }
+            required: [command_type, args]
     TeamListCommand:
       name: TeamListCommand
       x-http-operation: "GET /api/r3akt/teams"
@@ -567,6 +612,25 @@ components:
                 additionalProperties: false
                 properties:
                   mission_uid: { type: string }
+            required: [command_type, args]
+    TeamDeleteCommand:
+      name: TeamDeleteCommand
+      x-http-operation: "DELETE /api/r3akt/teams/{team_uid}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team.delete
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_uid]
+                properties:
+                  team_uid: { type: string }
             required: [command_type, args]
     TeamMissionLinkCommand:
       name: TeamMissionLinkCommand
@@ -684,6 +748,25 @@ components:
                 type: object
                 additionalProperties: true
             required: [command_type, args]
+    TeamMemberGetCommand:
+      name: TeamMemberGetCommand
+      x-http-operation: "GET /api/r3akt/team-members/{team_member_uid}"
+      x-capability-required:
+        - mission.registry.team.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.get
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_member_uid]
+                properties:
+                  team_member_uid: { type: string }
+            required: [command_type, args]
     TeamMemberListCommand:
       name: TeamMemberListCommand
       x-http-operation: "GET /api/r3akt/team-members"
@@ -701,6 +784,25 @@ components:
                 additionalProperties: false
                 properties:
                   team_uid: { type: string }
+            required: [command_type, args]
+    TeamMemberDeleteCommand:
+      name: TeamMemberDeleteCommand
+      x-http-operation: "DELETE /api/r3akt/team-members/{team_member_uid}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.delete
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_member_uid]
+                properties:
+                  team_member_uid: { type: string }
             required: [command_type, args]
     TeamMemberClientLinkCommand:
       name: TeamMemberClientLinkCommand
@@ -758,6 +860,25 @@ components:
                 type: object
                 additionalProperties: true
             required: [command_type, args]
+    AssetGetCommand:
+      name: AssetGetCommand
+      x-http-operation: "GET /api/r3akt/assets/{asset_uid}"
+      x-capability-required:
+        - mission.registry.asset.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.asset.get
+              args:
+                type: object
+                additionalProperties: false
+                required: [asset_uid]
+                properties:
+                  asset_uid: { type: string }
+            required: [command_type, args]
     AssetListCommand:
       name: AssetListCommand
       x-http-operation: "GET /api/r3akt/assets"
@@ -775,6 +896,25 @@ components:
                 additionalProperties: false
                 properties:
                   team_member_uid: { type: string }
+            required: [command_type, args]
+    AssetDeleteCommand:
+      name: AssetDeleteCommand
+      x-http-operation: "DELETE /api/r3akt/assets/{asset_uid}"
+      x-capability-required:
+        - mission.registry.asset.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.asset.delete
+              args:
+                type: object
+                additionalProperties: false
+                required: [asset_uid]
+                properties:
+                  asset_uid: { type: string }
             required: [command_type, args]
     SkillUpsertCommand:
       name: SkillUpsertCommand
@@ -1053,18 +1193,24 @@ components:
                   - mission.registry.log_entry.upserted
                   - mission.registry.log_entry.listed
                   - mission.registry.team.upserted
+                  - mission.registry.team.retrieved
                   - mission.registry.team.listed
+                  - mission.registry.team.deleted
                   - mission.registry.team.mission.linked
                   - mission.registry.team.mission.unlinked
                   - mission.registry.mission.zone.linked
                   - mission.registry.mission.zone.unlinked
                   - mission.registry.mission.rde.updated
                   - mission.registry.team_member.upserted
+                  - mission.registry.team_member.retrieved
                   - mission.registry.team_member.listed
+                  - mission.registry.team_member.deleted
                   - mission.registry.team_member.client.linked
                   - mission.registry.team_member.client.unlinked
                   - mission.registry.asset.upserted
+                  - mission.registry.asset.retrieved
                   - mission.registry.asset.listed
+                  - mission.registry.asset.deleted
                   - mission.registry.skill.upserted
                   - mission.registry.skill.listed
                   - mission.registry.team_member_skill.upserted

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 CHECKLIST_COMMAND_CAPABILITIES: dict[str, str] = {
     "checklist.template.list": "checklist.template.read",
+    "checklist.template.get": "checklist.template.read",
     "checklist.template.create": "checklist.template.write",
     "checklist.template.update": "checklist.template.write",
     "checklist.template.clone": "checklist.template.write",

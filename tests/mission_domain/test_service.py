@@ -74,7 +74,7 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     assert service.list_missions()[0]["uid"] == "mission-1"
     assert service.get_mission("mission-1", expand_topic=True)["topic"]["topic_id"] == "topic-alpha"
 
-    mission_two = service.upsert_mission({"uid": "mission-2", "mission_name": "Mission Two"})
+    service.upsert_mission({"uid": "mission-2", "mission_name": "Mission Two"})
     service.set_mission_parent("mission-2", parent_uid="mission-1")
     assert service.get_mission("mission-2")["parent_uid"] == "mission-1"
     with pytest.raises(ValueError):
@@ -469,8 +469,127 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     reset_assets = service.set_assignment_assets("assign-1", ["asset-1"])
     assert reset_assets["assets"] == ["asset-1"]
 
+    expanded_mission = service.get_mission(
+        "mission-1",
+        expand="topic,teams,team_members,assets,mission_changes,log_entries,assignments,checklists,mission_rde",
+    )
+    assert expanded_mission["topic"]["topic_id"] == "topic-alpha"
+    assert expanded_mission["teams"]
+    assert expanded_mission["team_members"]
+    assert expanded_mission["assets"]
+    assert expanded_mission["mission_changes"]
+    assert expanded_mission["log_entries"]
+    assert expanded_mission["assignments"]
+    assert expanded_mission["checklists"]
+    assert expanded_mission["mission_rde"]["role"] == "MISSION_OWNER"
+
+    expanded_list = service.list_missions(expand="all")
+    expanded_match = next(item for item in expanded_list if item["uid"] == "mission-1")
+    assert "teams" in expanded_match
+    assert "checklists" in expanded_match
+
     assert service.list_domain_events(limit=10)
     assert service.list_domain_snapshots(limit=10)
+
+
+def test_team_member_asset_get_and_delete_cleanup(tmp_path) -> None:
+    service = _service(tmp_path)
+
+    mission = service.upsert_mission({"uid": "mission-1", "mission_name": "Mission One"})
+    service.upsert_team(
+        {
+            "uid": "team-1",
+            "team_name": "Ops",
+            "mission_uid": mission["uid"],
+        }
+    )
+    service.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+        }
+    )
+    service.link_team_member_client("member-1", "client-a")
+    service.upsert_skill({"skill_uid": "skill-1", "name": "Navigation"})
+    service.upsert_team_member_skill(
+        {
+            "uid": "member-skill-1",
+            "team_member_rns_identity": "peer-a",
+            "skill_uid": "skill-1",
+            "level": 2,
+        }
+    )
+
+    template = service.create_checklist_template(
+        {
+            "uid": "template-1",
+            "template_name": "Task Template",
+            "description": "Template for assignment references",
+            "created_by_team_member_rns_identity": "peer-a",
+            "columns": _columns(),
+        }
+    )
+    checklist = service.create_checklist_online(
+        {
+            "template_uid": template["uid"],
+            "name": "Checklist Alpha",
+            "mission_uid": mission["uid"],
+            "source_identity": "peer-a",
+        }
+    )
+    task_uid = service.add_checklist_task_row(checklist["uid"], {"number": 1})["tasks"][0]["task_uid"]
+
+    service.upsert_asset(
+        {
+            "asset_uid": "asset-1",
+            "team_member_uid": "member-1",
+            "name": "Radio",
+            "asset_type": "COMM",
+        }
+    )
+    service.upsert_assignment(
+        {
+            "assignment_uid": "assignment-1",
+            "mission_uid": mission["uid"],
+            "task_uid": task_uid,
+            "team_member_rns_identity": "peer-a",
+            "assets": ["asset-1"],
+        }
+    )
+
+    assert service.get_team("team-1")["uid"] == "team-1"
+    assert service.get_team_member("member-1")["uid"] == "member-1"
+    assert service.get_asset("asset-1")["asset_uid"] == "asset-1"
+
+    deleted_asset = service.delete_asset("asset-1")
+    assert deleted_asset["asset_uid"] == "asset-1"
+    assert service.list_assignments(task_uid=task_uid)[0]["assets"] == []
+    with pytest.raises(KeyError):
+        service.get_asset("asset-1")
+
+    deleted_member = service.delete_team_member("member-1")
+    assert deleted_member["uid"] == "member-1"
+    assert service.list_team_member_skills(team_member_rns_identity="peer-a") == []
+    with pytest.raises(KeyError):
+        service.get_team_member("member-1")
+    with pytest.raises(KeyError):
+        service.list_team_member_clients("member-1")
+
+    service.upsert_team_member(
+        {
+            "uid": "member-2",
+            "team_uid": "team-1",
+            "rns_identity": "peer-b",
+            "display_name": "Peer B",
+        }
+    )
+    deleted_team = service.delete_team("team-1")
+    assert deleted_team["uid"] == "team-1"
+    assert service.get_team_member("member-2")["team_uid"] is None
+    with pytest.raises(KeyError):
+        service.get_team("team-1")
 
 
 def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
@@ -518,6 +637,8 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
             "columns": _columns(),
         }
     )
+    fetched_template = service.get_checklist_template(template["uid"])
+    assert fetched_template["uid"] == template["uid"]
 
     updated_template = service.update_checklist_template(
         template["uid"],
@@ -531,6 +652,9 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
 
     with pytest.raises(KeyError):
         service.update_checklist_template("missing-template", {"template_name": "x"})
+
+    with pytest.raises(KeyError):
+        service.get_checklist_template("missing-template")
 
     clone = service.clone_checklist_template(
         template["uid"],

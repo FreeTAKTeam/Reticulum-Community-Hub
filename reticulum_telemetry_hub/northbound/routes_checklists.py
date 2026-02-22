@@ -31,6 +31,13 @@ def register_checklist_routes(
             "templates": domain.list_checklist_templates(search=search, sort_by=sort_by)
         }
 
+    @app.get("/checklists/templates/{template_id}", dependencies=[Depends(require_protected)])
+    def get_template(template_id: str) -> dict:
+        try:
+            return domain.get_checklist_template(template_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
     @app.post("/checklists/templates", dependencies=[Depends(require_protected)])
     def create_template(payload: dict = Body(default_factory=dict)) -> dict:
         template = payload.get("template") if "template" in payload else payload
