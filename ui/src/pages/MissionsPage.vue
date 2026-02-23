@@ -83,7 +83,7 @@
               class="screen-tab"
               :class="{ active: secondaryScreen === screen.id }"
               type="button"
-              @click="secondaryScreen = screen.id"
+              @click="setSecondaryScreen(screen.id)"
             >
               {{ screen.label }}
             </button>
@@ -151,17 +151,30 @@
               </article>
             </div>
 
-            <div v-else-if="secondaryScreen === 'missionCreateEdit'" class="screen-grid two-col">
+            <div v-else-if="isMissionFormScreen" class="screen-grid two-col">
               <article class="stage-card">
-                <h4>Mission Create / Edit</h4>
+                <h4>{{ isMissionCreateScreen ? "Mission Create" : "Mission Edit" }}</h4>
                 <div class="field-grid">
+                  <label class="field-control">
+                    <span>Mission UID</span>
+                    <input :value="missionDraftUidLabel" type="text" readonly />
+                  </label>
                   <label class="field-control">
                     <span>Name</span>
                     <input v-model="missionDraftName" type="text" placeholder="Mission Name" />
                   </label>
                   <label class="field-control">
                     <span>Topic Scope</span>
-                    <input v-model="missionDraftTopic" type="text" placeholder="mission.region.operation" />
+                    <div class="field-inline-control">
+                      <select v-model="missionDraftTopic">
+                        <option v-for="option in missionTopicOptions" :key="`mission-topic-${option.value}`" :value="option.value">
+                          {{ option.label }}
+                        </option>
+                      </select>
+                      <BaseButton size="sm" variant="secondary" icon-left="plus" @click="openTopicCreatePage">
+                        New
+                      </BaseButton>
+                    </div>
                   </label>
                   <label class="field-control">
                     <span>Status</span>
@@ -170,6 +183,105 @@
                         {{ status }}
                       </option>
                     </select>
+                  </label>
+                  <label class="field-control">
+                    <span>Parent Mission</span>
+                    <select v-model="missionDraftParentUid">
+                      <option v-for="option in missionParentOptions" :key="`mission-parent-${option.value}`" :value="option.value">
+                        {{ option.label }}
+                      </option>
+                    </select>
+                  </label>
+                  <label class="field-control">
+                    <span>Reference Team</span>
+                    <select v-model="missionDraftTeamUid">
+                      <option v-for="option in missionReferenceTeamOptions" :key="`mission-team-${option.value}`" :value="option.value">
+                        {{ option.label }}
+                      </option>
+                    </select>
+                  </label>
+                  <label class="field-control">
+                    <span>Path</span>
+                    <input v-model="missionDraftPath" type="text" placeholder="ops.region.path" />
+                  </label>
+                  <label class="field-control">
+                    <span>Classification</span>
+                    <input v-model="missionDraftClassification" type="text" placeholder="UNCLASSIFIED" />
+                  </label>
+                  <label class="field-control">
+                    <span>Tool</span>
+                    <input v-model="missionDraftTool" type="text" placeholder="ATAK" />
+                  </label>
+                  <label class="field-control">
+                    <span>Keywords (comma separated)</span>
+                    <input v-model="missionDraftKeywords" type="text" placeholder="winter,storm,rescue" />
+                  </label>
+                  <label class="field-control">
+                    <span>Default Role</span>
+                    <input v-model="missionDraftDefaultRole" type="text" placeholder="TEAM_MEMBER" />
+                  </label>
+                  <label class="field-control">
+                    <span>Owner Role</span>
+                    <input v-model="missionDraftOwnerRole" type="text" placeholder="TEAM_LEAD" />
+                  </label>
+                  <label class="field-control">
+                    <span>Mission Priority</span>
+                    <input v-model="missionDraftPriority" type="number" min="0" step="1" placeholder="1" />
+                  </label>
+                  <label class="field-control">
+                    <span>Mission RDE Role</span>
+                    <input v-model="missionDraftMissionRdeRole" type="text" placeholder="observer" />
+                  </label>
+                  <label class="field-control">
+                    <span>Token</span>
+                    <input v-model="missionDraftToken" type="text" placeholder="optional token" />
+                  </label>
+                  <label class="field-control">
+                    <span>Feeds (comma separated)</span>
+                    <input v-model="missionDraftFeeds" type="text" placeholder="feed-alpha,feed-bravo" />
+                  </label>
+                  <label class="field-control">
+                    <span>Expiration</span>
+                    <input v-model="missionDraftExpiration" type="datetime-local" />
+                  </label>
+                  <label class="field-control">
+                    <span>Invite Only</span>
+                    <select v-model="missionDraftInviteOnly">
+                      <option :value="false">No</option>
+                      <option :value="true">Yes</option>
+                    </select>
+                  </label>
+                  <label class="field-control full">
+                    <span>Reference Zones</span>
+                    <select
+                      class="field-control-multi"
+                      multiple
+                      :value="missionDraftZoneUids"
+                      @change="onMissionDraftZoneSelectionChange"
+                    >
+                      <option v-for="option in missionReferenceZoneOptions" :key="`mission-zone-${option.value}`" :value="option.value">
+                        {{ option.label }}
+                      </option>
+                    </select>
+                    <small class="field-note">Use Ctrl/Cmd + click to select multiple zones.</small>
+                  </label>
+                  <label class="field-control full">
+                    <span>Reference Assets</span>
+                    <select
+                      class="field-control-multi"
+                      multiple
+                      :value="missionDraftAssetUids"
+                      @change="onMissionDraftAssetSelectionChange"
+                    >
+                      <option
+                        v-for="option in missionReferenceAssetOptions"
+                        :key="`mission-asset-${option.value}`"
+                        :value="option.value"
+                      >
+                        {{ option.label }}
+                      </option>
+                    </select>
+                    <small class="field-note">Preferred assets can be finalized in Assign Assets once tasks and members exist.</small>
                   </label>
                   <label class="field-control full">
                     <span>Description</span>
@@ -183,11 +295,17 @@
               </article>
 
               <article class="stage-card">
-                <h4>Draft Preview</h4>
+                <h4>{{ isMissionCreateScreen ? "Create Preview" : "Edit Preview" }}</h4>
                 <ul class="stack-list">
-                  <li><strong>Name</strong><span>{{ missionDraftName || "Mission Name" }}</span></li>
-                  <li><strong>Topic</strong><span>{{ missionDraftTopic || "mission.unassigned" }}</span></li>
+                  <li><strong>Name</strong><span>{{ missionDraftName || "-" }}</span></li>
+                  <li><strong>UID</strong><span>{{ missionDraftUidLabel }}</span></li>
+                  <li><strong>Topic</strong><span>{{ missionDraftTopic || "-" }}</span></li>
                   <li><strong>Status</strong><span>{{ missionDraftStatus }}</span></li>
+                  <li><strong>Parent Mission</strong><span>{{ missionDraftParentLabel }}</span></li>
+                  <li><strong>Reference Team</strong><span>{{ missionDraftTeamLabel }}</span></li>
+                  <li><strong>Reference Zones</strong><span>{{ missionDraftZoneLabel }}</span></li>
+                  <li><strong>Reference Assets</strong><span>{{ missionDraftAssetLabel }}</span></li>
+                  <li><strong>Invite Only</strong><span>{{ missionDraftInviteOnly ? "YES" : "NO" }}</span></li>
                   <li><strong>Description</strong><span>{{ missionDraftDescription || "-" }}</span></li>
                 </ul>
               </article>
@@ -222,20 +340,42 @@
               </section>
 
               <section class="overview-layout">
-                <article class="stage-card overview-panel">
-                  <div class="overview-panel-header">
-                    <h4>Mission Profile</h4>
-                    <span class="overview-panel-meta">{{ selectedMission?.topic || "No Topic Scope" }}</span>
+                <article class="stage-card overview-panel overview-panel-compact">
+                  <div class="overview-compact-header">
+                    <div>
+                      <h4>Mission Profile</h4>
+                      <div class="overview-compact-subtitle mono">
+                        {{ selectedMission?.uid || "No mission selected" }}
+                      </div>
+                    </div>
+                    <span class="overview-compact-tag">{{ selectedMission?.status || "UNSCOPED" }}</span>
                   </div>
-                  <ul class="stack-list">
-                    <li><strong>Mission ID</strong><span>{{ selectedMission?.uid || "Not Selected" }}</span></li>
-                    <li><strong>Name</strong><span>{{ selectedMission?.mission_name || "No mission selected" }}</span></li>
-                    <li><strong>Description</strong><span>{{ selectedMission?.description || "-" }}</span></li>
-                    <li><strong>Total Tasks</strong><span>{{ missionTotalTasks }}</span></li>
-                  </ul>
-                  <div class="overview-actions">
+                  <div class="overview-compact-meta">
+                    <div>
+                      <span>Topic</span>
+                      <span>{{ selectedMission?.topic || "-" }}</span>
+                    </div>
+                    <div>
+                      <span>Name</span>
+                      <span>{{ selectedMission?.mission_name || "-" }}</span>
+                    </div>
+                    <div>
+                      <span>Description</span>
+                      <span class="overview-compact-truncate" :title="selectedMission?.description || '-'">
+                        {{ selectedMission?.description || "-" }}
+                      </span>
+                    </div>
+                    <div>
+                      <span>Total Tasks</span>
+                      <span>{{ missionTotalTasks }}</span>
+                    </div>
+                  </div>
+                  <div class="overview-compact-actions">
+                    <BaseButton size="sm" variant="secondary" icon-left="edit" @click="openMissionEditScreen">
+                      Edit
+                    </BaseButton>
                     <BaseButton size="sm" variant="secondary" icon-left="users" @click="secondaryScreen = 'missionTeamMembers'">
-                      Team &amp; Members
+                      Team
                     </BaseButton>
                     <BaseButton size="sm" variant="secondary" icon-left="link" @click="secondaryScreen = 'assignAssets'">
                       Assets
@@ -246,17 +386,22 @@
                   </div>
                 </article>
 
-                <article class="stage-card overview-panel">
-                  <div class="overview-panel-header">
-                    <h4>Mission Excheck Snapshot</h4>
-                    <span class="overview-panel-meta">{{ missionTotalTasks }} tasks tracked</span>
+                <article class="stage-card overview-panel overview-panel-compact">
+                  <div class="overview-compact-header">
+                    <div>
+                      <h4>Mission Excheck Snapshot</h4>
+                      <div class="overview-compact-subtitle">Condensed lane status</div>
+                    </div>
+                    <span class="overview-compact-tag">{{ missionTotalTasks }} Tasks</span>
                   </div>
-                  <div class="overview-board">
+                  <div class="overview-board overview-board-compact">
                     <div class="overview-board-col overview-board-col-pending">
-                      <h5>Pending</h5>
-                      <span>{{ boardCounts.pending }}</span>
-                      <ul class="lane-list">
-                        <li v-for="task in boardLaneTasks.pending" :key="`overview-pending-${task.id}`">
+                      <div class="overview-board-col-head">
+                        <h5>Pending</h5>
+                        <span>{{ boardCounts.pending }}</span>
+                      </div>
+                      <ul class="lane-list lane-list-compact">
+                        <li v-for="task in boardLaneTasks.pending.slice(0, 3)" :key="`overview-pending-${task.id}`">
                           <strong>{{ task.name }}</strong>
                           <span>{{ task.meta }}</span>
                         </li>
@@ -264,10 +409,12 @@
                       </ul>
                     </div>
                     <div class="overview-board-col overview-board-col-late">
-                      <h5>Late</h5>
-                      <span>{{ boardCounts.late }}</span>
-                      <ul class="lane-list">
-                        <li v-for="task in boardLaneTasks.late" :key="`overview-late-${task.id}`">
+                      <div class="overview-board-col-head">
+                        <h5>Late</h5>
+                        <span>{{ boardCounts.late }}</span>
+                      </div>
+                      <ul class="lane-list lane-list-compact">
+                        <li v-for="task in boardLaneTasks.late.slice(0, 3)" :key="`overview-late-${task.id}`">
                           <strong>{{ task.name }}</strong>
                           <span>{{ task.meta }}</span>
                         </li>
@@ -275,10 +422,12 @@
                       </ul>
                     </div>
                     <div class="overview-board-col overview-board-col-complete">
-                      <h5>Complete</h5>
-                      <span>{{ boardCounts.complete }}</span>
-                      <ul class="lane-list">
-                        <li v-for="task in boardLaneTasks.complete" :key="`overview-complete-${task.id}`">
+                      <div class="overview-board-col-head">
+                        <h5>Complete</h5>
+                        <span>{{ boardCounts.complete }}</span>
+                      </div>
+                      <ul class="lane-list lane-list-compact">
+                        <li v-for="task in boardLaneTasks.complete.slice(0, 3)" :key="`overview-complete-${task.id}`">
                           <strong>{{ task.name }}</strong>
                           <span>{{ task.meta }}</span>
                         </li>
@@ -1313,7 +1462,8 @@ type PrimaryTab = "mission" | "checklists";
 
 type ScreenId =
   | "missionDirectory"
-  | "missionCreateEdit"
+  | "missionCreate"
+  | "missionEdit"
   | "missionOverview"
   | "missionTeamMembers"
   | "assignAssets"
@@ -1366,6 +1516,20 @@ interface Mission {
   topic: string;
   status: string;
   zone_ids: string[];
+  path: string;
+  classification: string;
+  tool: string;
+  keywords: string[];
+  parent_uid: string;
+  feeds: string[];
+  default_role: string;
+  mission_priority: number | null;
+  owner_role: string;
+  token: string;
+  invite_only: boolean;
+  expiration: string;
+  mission_rde_role: string;
+  asset_uids: string[];
 }
 
 interface Checklist {
@@ -1478,7 +1642,28 @@ interface MissionRaw {
   description?: string | null;
   topic_id?: string | null;
   mission_status?: string | null;
+  path?: string | null;
+  classification?: string | null;
+  tool?: string | null;
+  keywords?: string[] | null;
+  parent_uid?: string | null;
+  feeds?: string[] | null;
+  default_role?: string | null;
+  mission_priority?: number | null;
+  owner_role?: string | null;
+  token?: string | null;
+  invite_only?: boolean | null;
+  expiration?: string | null;
+  mission_rde_role?: string | null;
+  asset_uids?: string[] | null;
   zones?: string[] | null;
+}
+
+interface TopicRaw {
+  TopicID?: string | null;
+  TopicName?: string | null;
+  TopicPath?: string | null;
+  TopicDescription?: string | null;
 }
 
 interface ChecklistCellRaw {
@@ -1650,6 +1835,51 @@ const toStringList = (value: unknown): string[] => {
   return value
     .map((item) => String(item ?? "").trim())
     .filter((item) => item.length > 0);
+};
+
+const splitCommaSeparated = (value: string): string[] =>
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+const joinCommaSeparated = (value: string[] | undefined): string => (value && value.length ? value.join(", ") : "");
+
+const toOptionalInteger = (value: string): number | null => {
+  const text = value.trim();
+  if (!text) {
+    return null;
+  }
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.trunc(parsed);
+};
+
+const toDatetimeLocalValue = (value?: string | null): string => {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return "";
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const timezoneOffsetMs = parsed.getTimezoneOffset() * 60_000;
+  return new Date(parsed.getTime() - timezoneOffsetMs).toISOString().slice(0, 16);
+};
+
+const fromDatetimeLocalValue = (value: string): string | null => {
+  const text = value.trim();
+  if (!text) {
+    return null;
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString();
 };
 
 const toEpoch = (value?: string | null): number => {
@@ -2208,6 +2438,7 @@ const handleCsvUpload = async (event: Event) => {
 };
 
 const missions = ref<Mission[]>([]);
+const topicRecords = ref<TopicRaw[]>([]);
 const checklistRecords = ref<ChecklistRaw[]>([]);
 const teamRecords = ref<TeamRaw[]>([]);
 const memberRecords = ref<TeamMemberRaw[]>([]);
@@ -2549,7 +2780,8 @@ const primaryTabs = [
 const screensByTab: Record<PrimaryTab, Array<{ id: ScreenId; label: string }>> = {
   mission: [
     { id: "missionOverview", label: "Mission Overview" },
-    { id: "missionCreateEdit", label: "Mission Create/Edit" },
+    { id: "missionCreate", label: "Mission Create" },
+    { id: "missionEdit", label: "Mission Edit" },
     { id: "missionTeamMembers", label: "Mission Team & Members" },
     { id: "assignAssets", label: "Assign Assets to Mission" },
     { id: "assignZones", label: "Assign Zones to Mission" },
@@ -2560,7 +2792,16 @@ const screensByTab: Record<PrimaryTab, Array<{ id: ScreenId; label: string }>> =
 
 const screenMeta: Record<ScreenId, { title: string; subtitle: string; actions: string[] }> = {
   missionDirectory: { title: "Mission Directory", subtitle: "Mission list and operational status registry.", actions: ["Filter", "Export"] },
-  missionCreateEdit: { title: "Mission Create/Edit", subtitle: "Create and edit mission metadata and topic bindings.", actions: ["Save", "Reset"] },
+  missionCreate: {
+    title: "Mission Create",
+    subtitle: "Create a new mission with metadata and reference links.",
+    actions: ["Save", "Reset"]
+  },
+  missionEdit: {
+    title: "Mission Edit",
+    subtitle: "Edit selected mission metadata and reference links.",
+    actions: ["Save", "Reset"]
+  },
   missionOverview: {
     title: "Mission Overview",
     subtitle: "Unified dashboard for mission profile, Excheck, zones, and mission activity.",
@@ -2630,6 +2871,22 @@ const missionDraftName = ref("");
 const missionDraftTopic = ref("");
 const missionDraftStatus = ref("MISSION_ACTIVE");
 const missionDraftDescription = ref("");
+const missionDraftParentUid = ref("");
+const missionDraftTeamUid = ref("");
+const missionDraftPath = ref("");
+const missionDraftClassification = ref("");
+const missionDraftTool = ref("");
+const missionDraftKeywords = ref("");
+const missionDraftDefaultRole = ref("");
+const missionDraftOwnerRole = ref("");
+const missionDraftPriority = ref("");
+const missionDraftMissionRdeRole = ref("");
+const missionDraftToken = ref("");
+const missionDraftFeeds = ref("");
+const missionDraftExpiration = ref("");
+const missionDraftInviteOnly = ref(false);
+const missionDraftZoneUids = ref<string[]>([]);
+const missionDraftAssetUids = ref<string[]>([]);
 const checklistTemplateModalOpen = ref(false);
 const checklistTemplateSelectionUid = ref("");
 const checklistTemplateNameDraft = ref("");
@@ -2702,6 +2959,102 @@ const showScreenHeader = computed(
 );
 
 const selectedMission = computed(() => missions.value.find((entry) => entry.uid === selectedMissionUid.value));
+const isMissionCreateScreen = computed(() => secondaryScreen.value === "missionCreate");
+const isMissionEditScreen = computed(() => secondaryScreen.value === "missionEdit");
+const isMissionFormScreen = computed(() => isMissionCreateScreen.value || isMissionEditScreen.value);
+const missionDraftUidLabel = computed(() => (isMissionEditScreen.value ? selectedMission.value?.uid || "-" : "AUTO"));
+const missionTopicOptions = computed(() => {
+  const options = topicRecords.value
+    .map((entry) => {
+      const id = String(entry.TopicID ?? "").trim();
+      if (!id) {
+        return null;
+      }
+      const name = String(entry.TopicName ?? "").trim();
+      const path = String(entry.TopicPath ?? "").trim();
+      return {
+        value: id,
+        label: name && path ? `${name} (${path})` : name || path || id
+      };
+    })
+    .filter((entry): entry is { value: string; label: string } => entry !== null)
+    .sort((left, right) => left.label.localeCompare(right.label));
+
+  const selectedTopic = missionDraftTopic.value.trim();
+  if (selectedTopic.length > 0 && !options.some((entry) => entry.value === selectedTopic)) {
+    options.unshift({
+      value: selectedTopic,
+      label: `${selectedTopic} (current)`
+    });
+  }
+
+  return [{ value: "", label: "No topic scope" }, ...options];
+});
+const missionParentOptions = computed(() => [
+  { label: "No parent mission", value: "" },
+  ...missions.value
+    .filter((entry) => !isMissionEditScreen.value || entry.uid !== selectedMissionUid.value)
+    .map((entry) => ({ label: entry.mission_name, value: entry.uid }))
+]);
+const missionReferenceTeamOptions = computed(() => [
+  { label: "No linked team", value: "" },
+  ...teams.value
+    .slice()
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((entry) => ({ label: entry.name, value: entry.uid }))
+]);
+const missionReferenceZoneOptions = computed(() =>
+  zoneRecords.value
+    .map((entry) => {
+      const uid = String(entry.zone_id ?? "").trim();
+      if (!uid) {
+        return null;
+      }
+      return {
+        value: uid,
+        label: String(entry.name ?? uid)
+      };
+    })
+    .filter((entry): entry is { value: string; label: string } => entry !== null)
+    .sort((left, right) => left.label.localeCompare(right.label))
+);
+const missionReferenceAssetOptions = computed(() =>
+  assetRecords.value
+    .map((entry) => {
+      const uid = String(entry.asset_uid ?? "").trim();
+      if (!uid) {
+        return null;
+      }
+      const name = String(entry.name ?? uid).trim() || uid;
+      const type = String(entry.asset_type ?? "ASSET").trim() || "ASSET";
+      return {
+        value: uid,
+        label: `${name} (${type})`
+      };
+    })
+    .filter((entry): entry is { value: string; label: string } => entry !== null)
+    .sort((left, right) => left.label.localeCompare(right.label))
+);
+const missionDraftParentLabel = computed(
+  () => missionParentOptions.value.find((entry) => entry.value === missionDraftParentUid.value)?.label ?? "-"
+);
+const missionDraftTeamLabel = computed(
+  () => missionReferenceTeamOptions.value.find((entry) => entry.value === missionDraftTeamUid.value)?.label ?? "-"
+);
+const missionDraftZoneLabel = computed(() => {
+  if (!missionDraftZoneUids.value.length) {
+    return "-";
+  }
+  const names = new Map(missionReferenceZoneOptions.value.map((entry) => [entry.value, entry.label]));
+  return missionDraftZoneUids.value.map((uid) => names.get(uid) ?? uid).join(", ");
+});
+const missionDraftAssetLabel = computed(() => {
+  if (!missionDraftAssetUids.value.length) {
+    return "-";
+  }
+  const names = new Map(missionReferenceAssetOptions.value.map((entry) => [entry.value, entry.label]));
+  return missionDraftAssetUids.value.map((uid) => names.get(uid) ?? uid).join(", ");
+});
 const showMissionDirectoryPanel = computed(() => primaryTab.value !== "checklists");
 const workspacePanelTitle = computed(() => {
   if (primaryTab.value === "checklists") {
@@ -4295,10 +4648,31 @@ const setPrimaryTab = (tab: PrimaryTab, syncRoute = true) => {
   }
 };
 
+const setSecondaryScreen = (screen: ScreenId) => {
+  if (screen === "missionEdit" && !selectedMissionUid.value) {
+    toastStore.push("Select a mission before opening mission edit", "warning");
+    return;
+  }
+  if (screen === "missionCreate") {
+    resetMissionDraft("create");
+  } else if (screen === "missionEdit") {
+    resetMissionDraft("edit", selectedMission.value);
+  }
+  secondaryScreen.value = screen;
+};
+
+const openMissionEditScreen = () => {
+  setSecondaryScreen("missionEdit");
+};
+
+const openTopicCreatePage = async () => {
+  await router.push("/topics");
+};
+
 const selectMission = (missionUid: string) => {
   selectedMissionUid.value = missionUid;
   primaryTab.value = "mission";
-  secondaryScreen.value = "missionOverview";
+  setSecondaryScreen("missionOverview");
   if (route.path === "/checklists") {
     router.push("/missions").catch(() => undefined);
   }
@@ -4309,6 +4683,7 @@ const loadWorkspace = async () => {
   try {
     const [
       missionData,
+      topicData,
       checklistPayload,
       templatePayload,
       teamData,
@@ -4323,6 +4698,7 @@ const loadWorkspace = async () => {
       taskSkillRequirementData
     ] = await Promise.all([
       get<MissionRaw[]>(endpoints.r3aktMissions),
+      get<TopicRaw[]>(endpoints.topics),
       get<{ checklists?: ChecklistRaw[] }>(endpoints.checklists),
       get<{ templates?: TemplateRaw[] }>(endpoints.checklistTemplates),
       get<TeamRaw[]>(endpoints.r3aktTeams),
@@ -4349,11 +4725,29 @@ const loadWorkspace = async () => {
           description: String(entry.description ?? ""),
           topic: String(entry.topic_id ?? "unscoped"),
           status: normalizeMissionStatus(entry.mission_status),
-          zone_ids: toStringList(entry.zones)
+          zone_ids: toStringList(entry.zones),
+          path: String(entry.path ?? ""),
+          classification: String(entry.classification ?? ""),
+          tool: String(entry.tool ?? ""),
+          keywords: toStringList(entry.keywords),
+          parent_uid: String(entry.parent_uid ?? ""),
+          feeds: toStringList(entry.feeds),
+          default_role: String(entry.default_role ?? ""),
+          mission_priority: (() => {
+            const parsed = Number(entry.mission_priority);
+            return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+          })(),
+          owner_role: String(entry.owner_role ?? ""),
+          token: String(entry.token ?? ""),
+          invite_only: Boolean(entry.invite_only),
+          expiration: String(entry.expiration ?? ""),
+          mission_rde_role: String(entry.mission_rde_role ?? ""),
+          asset_uids: toStringList(entry.asset_uids)
         };
       })
       .filter((entry): entry is Mission => entry !== null);
 
+    topicRecords.value = toArray<TopicRaw>(topicData);
     checklistRecords.value = toArray<ChecklistRaw>(checklistPayload.checklists);
     templateRecords.value = toArray<TemplateRaw>(templatePayload.templates);
     teamRecords.value = toArray<TeamRaw>(teamData);
@@ -4647,60 +5041,159 @@ const ensureAssetForMission = async (): Promise<string> => {
   return missionAsset.uid;
 };
 
-const resetMissionDraft = (mission?: Mission) => {
-  if (mission) {
+const resetMissionDraft = (mode: "create" | "edit", mission?: Mission) => {
+  if (mode === "edit" && mission) {
     missionDraftName.value = mission.mission_name;
     missionDraftTopic.value = mission.topic;
     missionDraftStatus.value = toMissionStatusValue(mission.status);
     missionDraftDescription.value = mission.description;
+    missionDraftParentUid.value = mission.parent_uid;
+    missionDraftPath.value = mission.path;
+    missionDraftClassification.value = mission.classification;
+    missionDraftTool.value = mission.tool;
+    missionDraftKeywords.value = joinCommaSeparated(mission.keywords);
+    missionDraftDefaultRole.value = mission.default_role;
+    missionDraftOwnerRole.value = mission.owner_role;
+    missionDraftPriority.value = mission.mission_priority === null ? "" : String(mission.mission_priority);
+    missionDraftMissionRdeRole.value = mission.mission_rde_role;
+    missionDraftToken.value = mission.token;
+    missionDraftFeeds.value = joinCommaSeparated(mission.feeds);
+    missionDraftExpiration.value = toDatetimeLocalValue(mission.expiration);
+    missionDraftInviteOnly.value = mission.invite_only;
+    missionDraftTeamUid.value = missionTeams.value[0]?.uid ?? "";
+    missionDraftZoneUids.value = [...mission.zone_ids];
+    missionDraftAssetUids.value = mission.asset_uids.length
+      ? [...mission.asset_uids]
+      : missionAssets.value.map((entry) => entry.uid);
     return;
   }
-  const timestamp = buildTimestampTag();
-  missionDraftName.value = `Mission ${timestamp}`;
-  missionDraftTopic.value = `mission.${timestamp.toLowerCase()}`;
+
+  missionDraftName.value = "";
+  missionDraftTopic.value = "";
   missionDraftStatus.value = "MISSION_ACTIVE";
   missionDraftDescription.value = "";
+  missionDraftParentUid.value = "";
+  missionDraftTeamUid.value = "";
+  missionDraftPath.value = "";
+  missionDraftClassification.value = "";
+  missionDraftTool.value = "";
+  missionDraftKeywords.value = "";
+  missionDraftDefaultRole.value = "";
+  missionDraftOwnerRole.value = "";
+  missionDraftPriority.value = "";
+  missionDraftMissionRdeRole.value = "";
+  missionDraftToken.value = "";
+  missionDraftFeeds.value = "";
+  missionDraftExpiration.value = "";
+  missionDraftInviteOnly.value = false;
+  missionDraftZoneUids.value = [];
+  missionDraftAssetUids.value = [];
 };
 
-const createMissionAction = async () => {
-  const fallbackTag = buildTimestampTag();
-  const missionName = missionDraftName.value.trim() || `Mission ${fallbackTag}`;
-  const topic = missionDraftTopic.value.trim() || `mission.${fallbackTag.toLowerCase()}`;
-  const status = toMissionStatusValue(missionDraftStatus.value);
-  const description = missionDraftDescription.value.trim();
-  const selectedMissionId = selectedMissionUid.value;
+const readMultiSelectValues = (event: Event): string[] => {
+  const target = event.target as HTMLSelectElement | null;
+  if (!target) {
+    return [];
+  }
+  return Array.from(target.selectedOptions)
+    .map((entry) => entry.value.trim())
+    .filter((entry) => entry.length > 0);
+};
 
-  if (secondaryScreen.value === "missionCreateEdit" && selectedMissionId) {
-    try {
-      await patchRequest(`${endpoints.r3aktMissions}/${selectedMissionId}`, {
-        patch: {
-          mission_name: missionName,
-          mission_status: status,
-          topic_id: topic,
-          description
-        }
-      });
-      await loadWorkspace();
-      return;
-    } catch (error) {
-      const apiError = error as ApiError;
-      if (!apiError?.status || ![404, 405].includes(apiError.status)) {
-        throw error;
-      }
+const onMissionDraftZoneSelectionChange = (event: Event) => {
+  missionDraftZoneUids.value = readMultiSelectValues(event);
+};
+
+const onMissionDraftAssetSelectionChange = (event: Event) => {
+  missionDraftAssetUids.value = readMultiSelectValues(event);
+};
+
+const buildMissionDraftPayload = () => {
+  const missionName = missionDraftName.value.trim();
+  if (!missionName) {
+    throw new Error("Mission name is required");
+  }
+
+  return {
+    mission_name: missionName,
+    mission_status: toMissionStatusValue(missionDraftStatus.value),
+    topic_id: missionDraftTopic.value.trim() || null,
+    description: missionDraftDescription.value.trim(),
+    path: missionDraftPath.value.trim() || null,
+    classification: missionDraftClassification.value.trim() || null,
+    tool: missionDraftTool.value.trim() || null,
+    keywords: splitCommaSeparated(missionDraftKeywords.value),
+    parent_uid: missionDraftParentUid.value.trim() || null,
+    feeds: splitCommaSeparated(missionDraftFeeds.value),
+    default_role: missionDraftDefaultRole.value.trim() || null,
+    mission_priority: toOptionalInteger(missionDraftPriority.value),
+    owner_role: missionDraftOwnerRole.value.trim() || null,
+    token: missionDraftToken.value.trim() || null,
+    invite_only: missionDraftInviteOnly.value,
+    expiration: fromDatetimeLocalValue(missionDraftExpiration.value),
+    mission_rde_role: missionDraftMissionRdeRole.value.trim() || null,
+    zones: [...missionDraftZoneUids.value],
+    asset_uids: [...missionDraftAssetUids.value]
+  };
+};
+
+const syncMissionReferenceLinks = async (missionUid: string) => {
+  const selectedTeamUid = missionDraftTeamUid.value.trim();
+  const linkedTeamUids = teams.value.filter((entry) => entry.mission_uids.includes(missionUid)).map((entry) => entry.uid);
+  const teamLinkOperations: Promise<unknown>[] = [];
+
+  if (selectedTeamUid) {
+    if (!linkedTeamUids.includes(selectedTeamUid)) {
+      teamLinkOperations.push(
+        put(`${endpoints.r3aktTeams}/${encodeURIComponent(selectedTeamUid)}/missions/${encodeURIComponent(missionUid)}`)
+      );
     }
   }
 
-  const created = await post<MissionRaw>(endpoints.r3aktMissions, {
-    mission_name: missionName,
-    mission_status: status,
-    topic_id: topic,
-    description
-  });
-  await loadWorkspace();
+  linkedTeamUids
+    .filter((uid) => uid !== selectedTeamUid)
+    .forEach((uid) => {
+      teamLinkOperations.push(
+        deleteRequest(`${endpoints.r3aktTeams}/${encodeURIComponent(uid)}/missions/${encodeURIComponent(missionUid)}`)
+      );
+    });
+
+  const committedZones = new Set(committedZoneIdsByMission.value.get(missionUid) ?? []);
+  const selectedZones = new Set(missionDraftZoneUids.value);
+  const missionZonesBase = `${endpoints.r3aktMissions}/${encodeURIComponent(missionUid)}/zones`;
+  const zoneOperations: Promise<unknown>[] = [
+    ...[...selectedZones]
+      .filter((zoneUid) => !committedZones.has(zoneUid))
+      .map((zoneUid) => put(`${missionZonesBase}/${encodeURIComponent(zoneUid)}`)),
+    ...[...committedZones]
+      .filter((zoneUid) => !selectedZones.has(zoneUid))
+      .map((zoneUid) => deleteRequest(`${missionZonesBase}/${encodeURIComponent(zoneUid)}`))
+  ];
+
+  await Promise.all([...teamLinkOperations, ...zoneOperations]);
+};
+
+const createMissionAction = async () => {
+  const payload = buildMissionDraftPayload();
+  const created = await post<MissionRaw>(endpoints.r3aktMissions, payload);
   const createdUid = String(created.uid ?? "").trim();
+  if (createdUid) {
+    await syncMissionReferenceLinks(createdUid);
+  }
+  await loadWorkspace();
   if (createdUid) {
     selectedMissionUid.value = createdUid;
   }
+};
+
+const updateMissionAction = async () => {
+  const missionUid = ensureMissionSelected();
+  const payload = buildMissionDraftPayload();
+  await patchRequest(`${endpoints.r3aktMissions}/${encodeURIComponent(missionUid)}`, {
+    patch: payload
+  });
+  await syncMissionReferenceLinks(missionUid);
+  await loadWorkspace();
 };
 
 const broadcastMissionAction = async () => {
@@ -5437,8 +5930,12 @@ const previewAction = async (action: string) => {
     return;
   }
 
-  if (action === "Reset" && secondaryScreen.value === "missionCreateEdit") {
-    resetMissionDraft(selectedMission.value);
+  if (action === "Reset" && isMissionFormScreen.value) {
+    if (isMissionEditScreen.value) {
+      resetMissionDraft("edit", selectedMission.value);
+    } else {
+      resetMissionDraft("create");
+    }
     toastStore.push("Mission draft reset", "info");
     return;
   }
@@ -5477,13 +5974,13 @@ const previewAction = async (action: string) => {
     return;
   }
 
-  if ((action === "Save" && secondaryScreen.value === "missionCreateEdit") || action === "Save Mission") {
-    const savedMissionUid = selectedMissionUid.value;
-    await runAction(
-      createMissionAction,
-      savedMissionUid ? "Mission saved" : "Mission created",
-      "Unable to save mission"
-    );
+  if ((action === "Save" || action === "Save Mission") && isMissionCreateScreen.value) {
+    await runAction(createMissionAction, "Mission created", "Unable to create mission");
+    return;
+  }
+
+  if ((action === "Save" || action === "Save Mission") && isMissionEditScreen.value) {
+    await runAction(updateMissionAction, "Mission updated", "Unable to update mission");
     return;
   }
 
@@ -5692,7 +6189,23 @@ watch(
 watch(
   selectedMission,
   (mission) => {
-    resetMissionDraft(mission);
+    if (isMissionEditScreen.value) {
+      resetMissionDraft("edit", mission);
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  secondaryScreen,
+  (screen) => {
+    if (screen === "missionCreate") {
+      resetMissionDraft("create");
+      return;
+    }
+    if (screen === "missionEdit") {
+      resetMissionDraft("edit", selectedMission.value);
+    }
   },
   { immediate: true }
 );
@@ -5703,7 +6216,7 @@ watch(selectedMissionUid, (missionUid, previousMissionUid) => {
   }
   missionAuditExpandedRows.value = {};
   if (primaryTab.value === "mission") {
-    secondaryScreen.value = "missionOverview";
+    setSecondaryScreen("missionOverview");
   }
 });
 
@@ -6135,6 +6648,11 @@ onMounted(() => {
   gap: 10px;
 }
 
+.overview-panel-compact {
+  padding: 12px;
+  gap: 10px;
+}
+
 .overview-panel-wide {
   grid-column: 1 / -1;
 }
@@ -6163,10 +6681,77 @@ onMounted(() => {
   gap: 8px;
 }
 
+.overview-compact-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.overview-compact-header h4 {
+  margin: 0;
+}
+
+.overview-compact-subtitle {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(190, 246, 255, 0.72);
+  letter-spacing: 0.08em;
+}
+
+.overview-compact-tag {
+  border: 1px solid rgba(55, 242, 255, 0.45);
+  color: rgba(227, 252, 255, 0.85);
+  font-size: 10px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.overview-compact-meta {
+  display: grid;
+  gap: 8px;
+  font-family: "Rajdhani", "Barlow", sans-serif;
+  font-size: 12px;
+  color: rgba(220, 251, 255, 0.86);
+}
+
+.overview-compact-meta div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.overview-compact-meta div span:last-child {
+  color: rgba(233, 253, 255, 0.9);
+  text-align: right;
+  max-width: 65%;
+}
+
+.overview-compact-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-compact-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .overview-board {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.overview-board-compact {
+  gap: 6px;
 }
 
 .overview-board-col {
@@ -6175,7 +6760,7 @@ onMounted(() => {
   background: rgba(5, 16, 26, 0.76);
   padding: 8px;
   display: grid;
-  gap: 8px;
+  gap: 6px;
   align-content: start;
 }
 
@@ -6198,10 +6783,58 @@ onMounted(() => {
   text-transform: uppercase;
 }
 
-.overview-board-col > span {
-  font-size: 24px;
+.overview-board-col-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.overview-board-col-head span {
+  font-size: 18px;
   letter-spacing: 0.08em;
+  line-height: 1;
   color: #ffffff;
+}
+
+.lane-list-compact {
+  margin: 0;
+  max-height: 152px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.52) rgba(4, 18, 29, 0.68);
+}
+
+.lane-list-compact li {
+  padding: 6px;
+  gap: 2px;
+}
+
+.lane-list-compact li strong {
+  font-size: 10px;
+}
+
+.lane-list-compact li span {
+  font-size: 9px;
+}
+
+.lane-list-compact::-webkit-scrollbar {
+  width: 7px;
+}
+
+.lane-list-compact::-webkit-scrollbar-track {
+  background: rgba(4, 18, 29, 0.68);
+  border-radius: 999px;
+}
+
+.lane-list-compact::-webkit-scrollbar-thumb {
+  background: rgba(55, 242, 255, 0.5);
+  border-radius: 999px;
+}
+
+.lane-list-compact::-webkit-scrollbar-thumb:hover {
+  background: rgba(55, 242, 255, 0.72);
 }
 
 .lane-empty {
@@ -7135,6 +7768,27 @@ onMounted(() => {
 
 .field-control textarea {
   resize: vertical;
+}
+
+.field-inline-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-inline-control select {
+  flex: 1;
+}
+
+.field-control-multi {
+  min-height: 108px;
+}
+
+.field-note {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: rgba(191, 246, 255, 0.72);
 }
 
 .template-modal {
