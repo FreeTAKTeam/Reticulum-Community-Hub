@@ -1482,10 +1482,13 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if row is None:
                 row = R3aktTeamMemberRecord(uid=uid, team_uid=None, rns_identity=identity, display_name=identity)
                 session.add(row)
-            team_uid = payload.get("team_uid") or row.team_uid
+            if "team_uid" in payload:
+                team_uid = str(payload.get("team_uid") or "").strip()
+            else:
+                team_uid = str(row.team_uid or "").strip()
             if team_uid:
-                self._ensure_team_exists(session, str(team_uid))
-            row.team_uid = team_uid
+                self._ensure_team_exists(session, team_uid)
+            row.team_uid = team_uid or None
             row.rns_identity = identity
             row.display_name = str(payload.get("display_name") or payload.get("callsign") or row.display_name)
             row.icon = payload.get("icon") or row.icon

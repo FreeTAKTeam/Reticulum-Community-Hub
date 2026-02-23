@@ -219,6 +219,25 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
         }
     )
     assert service.list_team_members(team_uid="team-1")[0]["uid"] == member["uid"]
+    unassigned_member = service.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": None,
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+        }
+    )
+    assert unassigned_member["team_uid"] is None
+    assert service.list_team_members(team_uid="team-1") == []
+    reassigned_member = service.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+        }
+    )
+    assert reassigned_member["team_uid"] == "team-1"
 
     linked_member = service.link_team_member_client("member-1", "peer-a")
     assert linked_member["client_identities"] == ["peer-a"]

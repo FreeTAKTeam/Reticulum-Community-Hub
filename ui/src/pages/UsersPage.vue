@@ -37,6 +37,21 @@
               <span class="tree-label">Routing</span>
               <span class="tree-count">{{ routingDestinations.length }}</span>
             </button>
+            <button class="tree-item" :class="{ active: activeTab === 'teams' }" type="button" @click="activeTab = 'teams'">
+              <span class="tree-dot" aria-hidden="true"></span>
+              <span class="tree-label">Teams</span>
+              <span class="tree-count">{{ teamRecords.length }}</span>
+            </button>
+            <button
+              class="tree-item"
+              :class="{ active: activeTab === 'team-members' }"
+              type="button"
+              @click="activeTab = 'team-members'"
+            >
+              <span class="tree-dot" aria-hidden="true"></span>
+              <span class="tree-label">Team Members</span>
+              <span class="tree-count">{{ teamMemberRecords.length }}</span>
+            </button>
           </div>
 
           <div v-if="activeTab === 'clients'" class="tree-search">
@@ -44,6 +59,12 @@
           </div>
           <div v-else-if="activeTab === 'identities'" class="tree-search">
             <input v-model="identityFilter" type="text" placeholder="Filter identities by name/hash" />
+          </div>
+          <div v-else-if="activeTab === 'teams'" class="tree-search">
+            <input v-model="teamFilter" type="text" placeholder="Filter teams by name/mission" />
+          </div>
+          <div v-else-if="activeTab === 'team-members'" class="tree-search">
+            <input v-model="teamMemberFilter" type="text" placeholder="Filter members by name/identity" />
           </div>
           <div v-else class="tree-note">
             Routing snapshot loads automatically when this tab is opened.
@@ -66,10 +87,21 @@
               <button class="panel-tab" :class="{ active: activeTab === 'routing' }" type="button" @click="activeTab = 'routing'">
                 Routing
               </button>
+              <button class="panel-tab" :class="{ active: activeTab === 'teams' }" type="button" @click="activeTab = 'teams'">
+                Teams
+              </button>
+              <button
+                class="panel-tab"
+                :class="{ active: activeTab === 'team-members' }"
+                type="button"
+                @click="activeTab = 'team-members'"
+              >
+                Team Members
+              </button>
             </div>
           </div>
 
-          <LoadingSkeleton v-if="usersStore.loading && activeTab !== 'routing'" />
+          <LoadingSkeleton v-if="usersStore.loading && (activeTab === 'clients' || activeTab === 'identities')" />
           <div v-else>
             <div v-if="activeTab === 'clients'" class="card-grid">
               <div
@@ -149,7 +181,81 @@
               />
             </div>
 
-            <div v-else>
+            <div v-else-if="activeTab === 'teams'" class="card-grid">
+              <div v-if="teamsLoading" class="panel-empty">Loading teams...</div>
+              <template v-else>
+                <div v-for="team in pagedTeams" :key="team.uid" class="registry-card cui-panel">
+                  <div class="registry-card-header">
+                    <div>
+                      <div class="registry-card-title">{{ team.team_name || "Unnamed team" }}</div>
+                      <div class="registry-card-subtitle mono">{{ team.uid }}</div>
+                    </div>
+                    <div class="registry-card-tag">{{ team.color || "UNSPECIFIED" }}</div>
+                  </div>
+                  <div class="registry-card-meta">
+                    <div><span>Missions</span><span>{{ teamMissionLabels(team).join(", ") || "-" }}</span></div>
+                    <div><span>Description</span><span>{{ team.team_description || "-" }}</span></div>
+                    <div><span>Updated</span><span>{{ formatTimestamp(team.updated_at || team.created_at) }}</span></div>
+                  </div>
+                  <div class="registry-card-actions">
+                    <BaseButton variant="secondary" icon-left="users" @click="manageTeamMembers(team.uid)">
+                      Members
+                    </BaseButton>
+                    <BaseButton variant="secondary" icon-left="edit" @click="openTeamEditor(team)">Edit</BaseButton>
+                    <BaseButton variant="danger" icon-left="trash" @click="deleteTeam(team.uid)">Delete</BaseButton>
+                  </div>
+                </div>
+                <div v-if="pagedTeams.length === 0" class="panel-empty">No teams match the current filter.</div>
+                <BasePagination
+                  v-if="filteredTeams.length"
+                  v-model:page="teamsPage"
+                  class="panel-pagination"
+                  :page-size="teamsPageSize"
+                  :total="filteredTeams.length"
+                />
+              </template>
+            </div>
+
+            <div v-else-if="activeTab === 'team-members'" class="card-grid">
+              <div v-if="teamMembersLoading" class="panel-empty">Loading team members...</div>
+              <template v-else>
+                <div v-for="member in pagedTeamMembers" :key="member.uid" class="registry-card cui-panel">
+                  <div class="registry-card-header">
+                    <div>
+                      <div class="registry-card-title">{{ member.display_name || member.rns_identity || "Unknown member" }}</div>
+                      <div class="registry-card-subtitle mono">{{ member.rns_identity || "-" }}</div>
+                    </div>
+                    <div class="registry-card-tag">{{ member.role || "TEAM_MEMBER" }}</div>
+                  </div>
+                  <div class="registry-card-meta">
+                    <div><span>UID</span><span class="mono">{{ member.uid || "-" }}</span></div>
+                    <div><span>Team</span><span>{{ teamNameForMember(member.team_uid) }}</span></div>
+                    <div><span>Callsign</span><span>{{ member.callsign || "-" }}</span></div>
+                    <div><span>Availability</span><span>{{ member.availability || "-" }}</span></div>
+                  </div>
+                  <div class="registry-card-badges">
+                    <BaseBadge tone="neutral">Clients: {{ toStringList(member.client_identities).length }}</BaseBadge>
+                    <BaseBadge v-if="member.certifications?.length" tone="success">
+                      Certs: {{ member.certifications.length }}
+                    </BaseBadge>
+                  </div>
+                  <div class="registry-card-actions">
+                    <BaseButton variant="secondary" icon-left="edit" @click="openTeamMemberEditor(member)">Edit</BaseButton>
+                    <BaseButton variant="danger" icon-left="trash" @click="deleteTeamMember(member.uid)">Delete</BaseButton>
+                  </div>
+                </div>
+                <div v-if="pagedTeamMembers.length === 0" class="panel-empty">No team members match the current filter.</div>
+                <BasePagination
+                  v-if="filteredTeamMembers.length"
+                  v-model:page="teamMembersPage"
+                  class="panel-pagination"
+                  :page-size="teamMembersPageSize"
+                  :total="filteredTeamMembers.length"
+                />
+              </template>
+            </div>
+
+            <div v-else-if="activeTab === 'routing'">
               <div v-if="routingLoading" class="panel-empty">Loading routing snapshot...</div>
               <div v-else-if="routingRows.length === 0" class="panel-empty">
                 {{ routingError ?? "No routing destinations are currently connected." }}
@@ -184,30 +290,122 @@
           </div>
 
           <div class="panel-actions">
-            <BaseButton v-if="activeTab !== 'routing'" variant="secondary" icon-left="refresh" @click="usersStore.fetchUsers()">
+            <BaseButton
+              v-if="activeTab === 'clients' || activeTab === 'identities'"
+              variant="secondary"
+              icon-left="refresh"
+              @click="usersStore.fetchUsers()"
+            >
               Refresh
             </BaseButton>
             <BaseButton v-if="activeTab === 'routing'" variant="secondary" icon-left="refresh" @click="loadRouting">
               Reload
             </BaseButton>
+            <BaseButton v-if="activeTab === 'teams' || activeTab === 'team-members'" variant="secondary" icon-left="refresh" @click="loadTeamWorkspace">
+              Refresh
+            </BaseButton>
+            <BaseButton v-if="activeTab === 'teams'" icon-left="plus" @click="openTeamEditor()">
+              New Team
+            </BaseButton>
+            <BaseButton v-if="activeTab === 'team-members'" icon-left="plus" @click="openTeamMemberEditor()">
+              New Team Member
+            </BaseButton>
           </div>
         </section>
       </div>
     </div>
+
+    <BaseModal :open="teamEditorOpen" :title="teamEditorTitle" @close="closeTeamEditor">
+      <form class="editor-form" @submit.prevent="saveTeam">
+        <label class="field-control">
+          <span>Team Name</span>
+          <input v-model="teamEditor.team_name" type="text" maxlength="96" required />
+        </label>
+        <BaseSelect v-model="teamEditor.color" label="Color" :options="teamColorOptions" />
+        <label class="field-control full">
+          <span>Description</span>
+          <textarea v-model="teamEditor.team_description" rows="3" maxlength="512"></textarea>
+        </label>
+        <label class="field-control full">
+          <span>Mission UIDs (comma separated)</span>
+          <input v-model="teamEditor.mission_uids" type="text" placeholder="mission-alpha,mission-bravo" />
+        </label>
+        <div class="editor-actions">
+          <BaseButton type="button" variant="ghost" icon-left="undo" @click="closeTeamEditor">Cancel</BaseButton>
+          <BaseButton type="submit" icon-left="save" :disabled="teamSaving">
+            {{ teamEditor.uid ? "Save Team" : "Create Team" }}
+          </BaseButton>
+        </div>
+      </form>
+    </BaseModal>
+
+    <BaseModal :open="teamMemberEditorOpen" :title="teamMemberEditorTitle" @close="closeTeamMemberEditor">
+      <form class="editor-form" @submit.prevent="saveTeamMember">
+        <BaseSelect v-model="teamMemberEditor.team_uid" label="Team" :options="teamSelectOptions" />
+        <BaseSelect v-model="teamMemberEditor.user_identity" label="User" :options="teamMemberUserOptions" />
+        <label class="field-control">
+          <span>RNS Identity (Derived)</span>
+          <input :value="teamMemberDerivedIdentity" type="text" readonly />
+        </label>
+        <label class="field-control">
+          <span>Display Name (Derived)</span>
+          <input :value="teamMemberDerivedDisplayName" type="text" readonly />
+        </label>
+        <BaseSelect v-model="teamMemberEditor.role" label="Role" :options="teamRoleOptions" />
+        <label class="field-control">
+          <span>Callsign</span>
+          <input v-model="teamMemberEditor.callsign" type="text" maxlength="64" @input="onCallsignInput" />
+        </label>
+        <label class="field-control">
+          <span>Availability</span>
+          <input v-model="teamMemberEditor.availability" type="text" maxlength="64" />
+        </label>
+        <label class="field-control">
+          <span>Frequency</span>
+          <input v-model="teamMemberEditor.freq" type="number" step="any" min="0" />
+        </label>
+        <label class="field-control">
+          <span>Modulation</span>
+          <input v-model="teamMemberEditor.modulation" type="text" maxlength="64" />
+        </label>
+        <label class="field-control">
+          <span>Email</span>
+          <input v-model="teamMemberEditor.email" type="email" maxlength="120" />
+        </label>
+        <label class="field-control">
+          <span>Phone</span>
+          <input v-model="teamMemberEditor.phone" type="text" maxlength="64" />
+        </label>
+        <label class="field-control full">
+          <span>Certifications (comma separated)</span>
+          <input v-model="teamMemberEditor.certifications" type="text" placeholder="emt,hrst,jtac" />
+        </label>
+        <div class="editor-actions">
+          <BaseButton type="button" variant="ghost" icon-left="undo" @click="closeTeamMemberEditor">Cancel</BaseButton>
+          <BaseButton type="submit" icon-left="save" :disabled="teamMemberSaving">
+            {{ teamMemberEditor.uid ? "Save Member" : "Create Member" }}
+          </BaseButton>
+        </div>
+      </form>
+    </BaseModal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, watch } from "vue";
 import { ref } from "vue";
+import { useRoute } from "vue-router";
+import { useRouter } from "vue-router";
 import BaseBadge from "../components/BaseBadge.vue";
 import BaseButton from "../components/BaseButton.vue";
+import BaseModal from "../components/BaseModal.vue";
 import BasePagination from "../components/BasePagination.vue";
+import BaseSelect from "../components/BaseSelect.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
 import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import type { ApiError } from "../api/client";
 import { endpoints } from "../api/endpoints";
-import { get } from "../api/client";
+import { del as deleteRequest, get, post, put } from "../api/client";
 import { useConnectionStore } from "../stores/connection";
 import { useUsersStore } from "../stores/users";
 import { useToastStore } from "../stores/toasts";
@@ -215,30 +413,151 @@ import { formatTimestamp } from "../utils/format";
 import { clientPresenceTag } from "../utils/presence";
 import { resolveIdentityLabel } from "../utils/identity";
 
+interface MissionRecord {
+  uid?: string;
+  mission_name?: string | null;
+}
+
+interface TeamRecord {
+  uid?: string;
+  mission_uid?: string | null;
+  mission_uids?: string[];
+  color?: string | null;
+  team_name?: string | null;
+  team_description?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+interface TeamMemberRecord {
+  uid?: string;
+  team_uid?: string | null;
+  rns_identity?: string | null;
+  display_name?: string | null;
+  icon?: string | null;
+  role?: string | null;
+  callsign?: string | null;
+  freq?: number | null;
+  email?: string | null;
+  phone?: string | null;
+  modulation?: string | null;
+  availability?: string | null;
+  certifications?: string[];
+  client_identities?: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+type ActiveTab = "clients" | "identities" | "routing" | "teams" | "team-members";
+
+const toStringList = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.map((item) => String(item ?? "").trim()).filter((item) => item.length > 0)
+    : [];
+
+const toCsv = (value: unknown): string => toStringList(value).join(",");
+const splitCsv = (value: string): string[] =>
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+const parseOptionalNumber = (value: string): number | null => {
+  const text = value.trim();
+  if (!text) {
+    return null;
+  }
+  const numeric = Number(text);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const queryText = (value: unknown): string =>
+  Array.isArray(value) ? String(value[0] ?? "").trim() : String(value ?? "").trim();
+
+const queryFlag = (value: unknown): boolean => {
+  const normalized = queryText(value).toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+};
+
 const usersStore = useUsersStore();
 const connectionStore = useConnectionStore();
 const toastStore = useToastStore();
+const route = useRoute();
+const router = useRouter();
 const routing = ref<unknown>(null);
 const routingLoading = ref(false);
 const routingError = ref<string | null>(null);
-const activeTab = ref<"clients" | "identities" | "routing">("clients");
+const activeTab = ref<ActiveTab>("clients");
 const clientsPage = ref(1);
 const identitiesPage = ref(1);
+const teamsPage = ref(1);
+const teamMembersPage = ref(1);
 const clientsPageSize = 9;
 const identitiesPageSize = 9;
+const teamsPageSize = 9;
+const teamMembersPageSize = 9;
 const identityFilter = ref("");
 const clientFilter = ref("");
+const teamFilter = ref("");
+const teamMemberFilter = ref("");
+
+const teamsLoading = ref(false);
+const teamMembersLoading = ref(false);
+const teamSaving = ref(false);
+const teamMemberSaving = ref(false);
+
+const missionRecords = ref<MissionRecord[]>([]);
+const teamRecords = ref<TeamRecord[]>([]);
+const teamMemberRecords = ref<TeamMemberRecord[]>([]);
+
+const teamEditorOpen = ref(false);
+const teamMemberEditorOpen = ref(false);
+const isCallsignAuto = ref(true);
+
+const teamEditor = ref({
+  uid: "",
+  team_name: "",
+  color: "",
+  team_description: "",
+  mission_uids: ""
+});
+
+const teamMemberEditor = ref({
+  uid: "",
+  team_uid: "",
+  user_identity: "",
+  role: "TEAM_MEMBER",
+  callsign: "",
+  availability: "",
+  freq: "",
+  modulation: "",
+  email: "",
+  phone: "",
+  certifications: ""
+});
 
 const baseUrl = computed(() => connectionStore.baseUrlDisplay);
 const connectionLabel = computed(() => connectionStore.statusLabel);
 const wsLabel = computed(() => connectionStore.wsLabel);
-const totalRecords = computed(() => usersStore.clients.length + usersStore.identities.length);
+const totalRecords = computed(
+  () =>
+    usersStore.clients.length +
+    usersStore.identities.length +
+    teamRecords.value.length +
+    teamMemberRecords.value.length
+);
 const activeTabTitle = computed(() => {
   if (activeTab.value === "clients") {
     return "Users";
   }
   if (activeTab.value === "identities") {
     return "Identities";
+  }
+  if (activeTab.value === "teams") {
+    return "Teams";
+  }
+  if (activeTab.value === "team-members") {
+    return "Team Members";
   }
   return "Routing";
 });
@@ -322,6 +641,79 @@ const pagedIdentities = computed(() => {
   return sortedIdentities.value.slice(start, start + identitiesPageSize);
 });
 
+const missionNameByUid = computed(() => {
+  const map = new Map<string, string>();
+  missionRecords.value.forEach((mission) => {
+    const uid = String(mission.uid ?? "").trim();
+    if (uid) {
+      map.set(uid, String(mission.mission_name ?? uid));
+    }
+  });
+  return map;
+});
+
+const teamNameByUid = computed(() => {
+  const map = new Map<string, string>();
+  teamRecords.value.forEach((team) => {
+    const uid = String(team.uid ?? "").trim();
+    if (uid) {
+      map.set(uid, String(team.team_name ?? uid));
+    }
+  });
+  return map;
+});
+
+const filteredTeams = computed(() => {
+  const filter = teamFilter.value.trim().toLowerCase();
+  if (!filter) {
+    return teamRecords.value;
+  }
+  return teamRecords.value.filter((team) => {
+    const name = String(team.team_name ?? "").toLowerCase();
+    const uid = String(team.uid ?? "").toLowerCase();
+    const missionText = toStringList(team.mission_uids).join(" ").toLowerCase();
+    return name.includes(filter) || uid.includes(filter) || missionText.includes(filter);
+  });
+});
+
+const sortedTeams = computed(() =>
+  [...filteredTeams.value].sort((a, b) => String(a.team_name ?? "").localeCompare(String(b.team_name ?? "")))
+);
+
+const pagedTeams = computed(() => {
+  const start = (teamsPage.value - 1) * teamsPageSize;
+  return sortedTeams.value.slice(start, start + teamsPageSize);
+});
+
+const filteredTeamMembers = computed(() => {
+  const filter = teamMemberFilter.value.trim().toLowerCase();
+  if (!filter) {
+    return teamMemberRecords.value;
+  }
+  return teamMemberRecords.value.filter((member) => {
+    const identity = String(member.rns_identity ?? "").toLowerCase();
+    const displayName = String(member.display_name ?? "").toLowerCase();
+    const teamName = teamNameByUid.value.get(String(member.team_uid ?? "").trim())?.toLowerCase() ?? "";
+    return (
+      identity.includes(filter) ||
+      displayName.includes(filter) ||
+      teamName.includes(filter) ||
+      String(member.uid ?? "").toLowerCase().includes(filter)
+    );
+  });
+});
+
+const sortedTeamMembers = computed(() =>
+  [...filteredTeamMembers.value].sort((a, b) =>
+    String(a.display_name ?? a.rns_identity ?? "").localeCompare(String(b.display_name ?? b.rns_identity ?? ""))
+  )
+);
+
+const pagedTeamMembers = computed(() => {
+  const start = (teamMembersPage.value - 1) * teamMembersPageSize;
+  return sortedTeamMembers.value.slice(start, start + teamMembersPageSize);
+});
+
 const identityDisplayNameById = computed(() => {
   const map = new Map<string, string>();
   usersStore.identities.forEach((identity) => {
@@ -335,6 +727,10 @@ const identityDisplayNameById = computed(() => {
 
 const clientPageCount = computed(() => Math.max(1, Math.ceil(filteredClients.value.length / clientsPageSize)));
 const identityPageCount = computed(() => Math.max(1, Math.ceil(filteredIdentities.value.length / identitiesPageSize)));
+const teamsPageCount = computed(() => Math.max(1, Math.ceil(filteredTeams.value.length / teamsPageSize)));
+const teamMembersPageCount = computed(
+  () => Math.max(1, Math.ceil(filteredTeamMembers.value.length / teamMembersPageSize))
+);
 
 const clientIdentitySet = computed(() => {
   const set = new Set<string>();
@@ -503,6 +899,148 @@ const routingDestinations = computed(() =>
   routingRows.value.map((row) => row.destination)
 );
 
+const teamSelectOptions = computed(() => [
+  { label: "Unassigned", value: "" },
+  ...teamRecords.value.map((team) => ({
+    label: String(team.team_name ?? team.uid ?? "Team"),
+    value: String(team.uid ?? "")
+  }))
+]);
+
+const userDisplayNameByIdentity = computed(() => {
+  const map = new Map<string, string>();
+  usersStore.clients.forEach((client) => {
+    const identity = String(client.id ?? "").trim();
+    if (!identity) {
+      return;
+    }
+    const displayName =
+      resolveClientDisplayName(client) ??
+      identityDisplayNameById.value.get(identity.toLowerCase()) ??
+      identity;
+    map.set(identity.toLowerCase(), displayName);
+  });
+  return map;
+});
+
+const allUserOptions = computed(() => {
+  const seen = new Set<string>();
+  const options: Array<{ label: string; value: string }> = [];
+  usersStore.clients.forEach((client) => {
+    const identity = String(client.id ?? "").trim();
+    if (!identity) {
+      return;
+    }
+    const key = identity.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    const displayName = userDisplayNameByIdentity.value.get(key) ?? identity;
+    options.push({
+      label: `${displayName} (${identity})`,
+      value: identity
+    });
+  });
+  options.sort((a, b) => a.label.localeCompare(b.label));
+  return options;
+});
+
+const linkedUserIdentitiesByOtherMembers = computed(() => {
+  const currentUid = teamMemberEditor.value.uid.trim();
+  const set = new Set<string>();
+  teamMemberRecords.value.forEach((member) => {
+    const uid = String(member.uid ?? "").trim();
+    if (currentUid && uid && uid === currentUid) {
+      return;
+    }
+    const linkedIdentity =
+      toStringList(member.client_identities)[0] ??
+      String(member.rns_identity ?? "").trim();
+    if (linkedIdentity) {
+      set.add(linkedIdentity.toLowerCase());
+    }
+  });
+  return set;
+});
+
+const teamMemberDerivedIdentity = computed(() => teamMemberEditor.value.user_identity.trim());
+
+const teamMemberDerivedDisplayName = computed(() => {
+  const identity = teamMemberDerivedIdentity.value;
+  if (!identity) {
+    return "";
+  }
+  return userDisplayNameByIdentity.value.get(identity.toLowerCase()) ?? identity;
+});
+
+const teamMemberUserOptions = computed(() => {
+  const selectedIdentity = teamMemberEditor.value.user_identity.trim().toLowerCase();
+  const options = allUserOptions.value.filter((option) => {
+    const key = option.value.toLowerCase();
+    return key === selectedIdentity || !linkedUserIdentitiesByOtherMembers.value.has(key);
+  });
+  if (selectedIdentity && !options.some((option) => option.value.toLowerCase() === selectedIdentity)) {
+    const identity = teamMemberEditor.value.user_identity.trim();
+    const displayName = teamMemberDerivedDisplayName.value || identity;
+    options.unshift({
+      label: `${displayName} (${identity})`,
+      value: identity
+    });
+  }
+  return [{ label: "Select user", value: "" }, ...options];
+});
+
+const teamColorOptions = [
+  { label: "Unspecified", value: "" },
+  { label: "Yellow", value: "YELLOW" },
+  { label: "Red", value: "RED" },
+  { label: "Blue", value: "BLUE" },
+  { label: "Orange", value: "ORANGE" },
+  { label: "Magenta", value: "MAGENTA" },
+  { label: "Maroon", value: "MAROON" },
+  { label: "Purple", value: "PURPLE" },
+  { label: "Dark Blue", value: "DARK_BLUE" },
+  { label: "Cyan", value: "CYAN" },
+  { label: "Teal", value: "TEAL" },
+  { label: "Green", value: "GREEN" },
+  { label: "Dark Green", value: "DARK_GREEN" },
+  { label: "Brown", value: "BROWN" }
+];
+
+const teamRoleOptions = [
+  { label: "Team Member", value: "TEAM_MEMBER" },
+  { label: "Team Lead", value: "TEAM_LEAD" },
+  { label: "HQ", value: "HQ" },
+  { label: "Sniper", value: "SNIPER" },
+  { label: "Medic", value: "MEDIC" },
+  { label: "Forward Observer", value: "FORWARD_OBSERVER" },
+  { label: "RTO", value: "RTO" },
+  { label: "K9", value: "K9" }
+];
+
+const teamEditorTitle = computed(() => (teamEditor.value.uid ? "Edit Team" : "Create Team"));
+const teamMemberEditorTitle = computed(() =>
+  teamMemberEditor.value.uid ? "Edit Team Member" : "Create Team Member"
+);
+
+const teamNameForMember = (teamUid?: string | null): string => {
+  const uid = String(teamUid ?? "").trim();
+  if (!uid) {
+    return "Unassigned";
+  }
+  return teamNameByUid.value.get(uid) ?? uid;
+};
+
+const teamMissionLabels = (team: TeamRecord): string[] => {
+  const missionUids = toStringList(team.mission_uids);
+  const primaryMissionUid = String(team.mission_uid ?? "").trim();
+  if (!missionUids.length && primaryMissionUid) {
+    missionUids.push(primaryMissionUid);
+  }
+  return missionUids.map((uid) => missionNameByUid.value.get(uid) ?? uid);
+};
+
 const clientTag = (lastSeenAt?: string) => {
   return clientPresenceTag(lastSeenAt);
 };
@@ -567,6 +1105,245 @@ const loadRouting = async () => {
   }
 };
 
+const loadTeamWorkspace = async () => {
+  teamsLoading.value = true;
+  teamMembersLoading.value = true;
+  try {
+    const [, missions, teams, members] = await Promise.all([
+      usersStore.fetchUsers(),
+      get<MissionRecord[]>(endpoints.r3aktMissions),
+      get<TeamRecord[]>(endpoints.r3aktTeams),
+      get<TeamMemberRecord[]>(endpoints.r3aktTeamMembers)
+    ]);
+    missionRecords.value = Array.isArray(missions) ? missions : [];
+    teamRecords.value = Array.isArray(teams) ? teams : [];
+    teamMemberRecords.value = Array.isArray(members) ? members : [];
+  } catch (error) {
+    handleApiError(error, "Unable to load teams and team members");
+  } finally {
+    teamsLoading.value = false;
+    teamMembersLoading.value = false;
+  }
+};
+
+const openTeamEditor = (team?: TeamRecord) => {
+  if (!team) {
+    teamEditor.value = {
+      uid: "",
+      team_name: "",
+      color: "",
+      team_description: "",
+      mission_uids: ""
+    };
+    teamEditorOpen.value = true;
+    return;
+  }
+  teamEditor.value = {
+    uid: String(team.uid ?? ""),
+    team_name: String(team.team_name ?? ""),
+    color: String(team.color ?? ""),
+    team_description: String(team.team_description ?? ""),
+    mission_uids: toCsv(team.mission_uids)
+  };
+  teamEditorOpen.value = true;
+};
+
+const closeTeamEditor = () => {
+  teamEditorOpen.value = false;
+};
+
+const saveTeam = async () => {
+  const name = teamEditor.value.team_name.trim();
+  if (!name) {
+    toastStore.push("Team name is required", "warning");
+    return;
+  }
+  const payload: Record<string, unknown> = {
+    team_name: name,
+    team_description: teamEditor.value.team_description.trim(),
+    color: teamEditor.value.color.trim() || undefined,
+    mission_uids: splitCsv(teamEditor.value.mission_uids)
+  };
+  if (teamEditor.value.uid.trim()) {
+    payload.uid = teamEditor.value.uid.trim();
+  }
+  teamSaving.value = true;
+  try {
+    await post<TeamRecord>(endpoints.r3aktTeams, payload);
+    teamEditorOpen.value = false;
+    await loadTeamWorkspace();
+    toastStore.push("Team saved", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to save team");
+  } finally {
+    teamSaving.value = false;
+  }
+};
+
+const deleteTeam = async (teamUid?: string) => {
+  const uid = String(teamUid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  try {
+    await deleteRequest<TeamRecord>(`${endpoints.r3aktTeams}/${encodeURIComponent(uid)}`);
+    await loadTeamWorkspace();
+    toastStore.push("Team deleted", "warning");
+  } catch (error) {
+    handleApiError(error, "Unable to delete team");
+  }
+};
+
+const manageTeamMembers = (teamUid?: string) => {
+  const uid = String(teamUid ?? "").trim();
+  void router.push({
+    path: "/users/teams/members",
+    query: uid ? { team_uid: uid } : undefined
+  });
+};
+
+const openTeamMemberEditor = (member?: TeamMemberRecord) => {
+  if (!member) {
+    teamMemberEditor.value = {
+      uid: "",
+      team_uid: "",
+      user_identity: "",
+      role: "TEAM_MEMBER",
+      callsign: "",
+      availability: "",
+      freq: "",
+      modulation: "",
+      email: "",
+      phone: "",
+      certifications: ""
+    };
+    isCallsignAuto.value = true;
+    teamMemberEditorOpen.value = true;
+    return;
+  }
+  const linkedUserIdentity =
+    toStringList(member.client_identities)[0] ??
+    String(member.rns_identity ?? "");
+  const derivedDisplayName =
+    userDisplayNameByIdentity.value.get(linkedUserIdentity.toLowerCase()) ??
+    String(member.display_name ?? linkedUserIdentity);
+  teamMemberEditor.value = {
+    uid: String(member.uid ?? ""),
+    team_uid: String(member.team_uid ?? ""),
+    user_identity: linkedUserIdentity,
+    role: String(member.role ?? "TEAM_MEMBER"),
+    callsign: String(member.callsign ?? ""),
+    availability: String(member.availability ?? ""),
+    freq: member.freq !== null && member.freq !== undefined ? String(member.freq) : "",
+    modulation: String(member.modulation ?? ""),
+    email: String(member.email ?? ""),
+    phone: String(member.phone ?? ""),
+    certifications: toCsv(member.certifications)
+  };
+  isCallsignAuto.value =
+    !teamMemberEditor.value.callsign.trim() ||
+    teamMemberEditor.value.callsign.trim() === derivedDisplayName.trim();
+  if (isCallsignAuto.value) {
+    teamMemberEditor.value.callsign = derivedDisplayName;
+  }
+  teamMemberEditorOpen.value = true;
+};
+
+const closeTeamMemberEditor = () => {
+  teamMemberEditorOpen.value = false;
+};
+
+const onCallsignInput = () => {
+  const callsign = teamMemberEditor.value.callsign.trim();
+  const derived = teamMemberDerivedDisplayName.value.trim();
+  isCallsignAuto.value = callsign.length === 0 || callsign === derived;
+};
+
+const syncTeamMemberClients = async (teamMemberUid: string, targetClientIdentities: string[], currentClients: string[]) => {
+  const normalize = (value: string) => value.trim().toLowerCase();
+  const desired = new Set(targetClientIdentities.map(normalize).filter((item) => item.length > 0));
+  const current = new Set(currentClients.map(normalize).filter((item) => item.length > 0));
+
+  const toAdd = [...desired].filter((item) => !current.has(item));
+  const toRemove = [...current].filter((item) => !desired.has(item));
+
+  const linkPath = (clientIdentity: string) =>
+    `${endpoints.r3aktTeamMembers}/${encodeURIComponent(teamMemberUid)}/clients/${encodeURIComponent(clientIdentity)}`;
+
+  await Promise.all([
+    ...toAdd.map((clientIdentity) => put<TeamMemberRecord>(linkPath(clientIdentity))),
+    ...toRemove.map((clientIdentity) => deleteRequest<TeamMemberRecord>(linkPath(clientIdentity)))
+  ]);
+};
+
+const saveTeamMember = async () => {
+  const selectedUserIdentity = teamMemberEditor.value.user_identity.trim();
+  if (!selectedUserIdentity) {
+    toastStore.push("A linked user is required", "warning");
+    return;
+  }
+  const selectedUserKey = selectedUserIdentity.toLowerCase();
+  if (linkedUserIdentitiesByOtherMembers.value.has(selectedUserKey)) {
+    toastStore.push("Selected user is already linked to another team member", "warning");
+    return;
+  }
+  const derivedDisplayName =
+    userDisplayNameByIdentity.value.get(selectedUserKey) ??
+    selectedUserIdentity;
+
+  const payload: Record<string, unknown> = {
+    team_uid: teamMemberEditor.value.team_uid.trim() || null,
+    rns_identity: selectedUserIdentity,
+    display_name: derivedDisplayName,
+    role: teamMemberEditor.value.role.trim() || "TEAM_MEMBER",
+    callsign: teamMemberEditor.value.callsign.trim() || derivedDisplayName,
+    availability: teamMemberEditor.value.availability.trim() || null,
+    modulation: teamMemberEditor.value.modulation.trim() || null,
+    email: teamMemberEditor.value.email.trim() || null,
+    phone: teamMemberEditor.value.phone.trim() || null,
+    certifications: splitCsv(teamMemberEditor.value.certifications)
+  };
+  const freq = parseOptionalNumber(teamMemberEditor.value.freq);
+  if (freq !== null) {
+    payload.freq = freq;
+  }
+  if (teamMemberEditor.value.uid.trim()) {
+    payload.uid = teamMemberEditor.value.uid.trim();
+  }
+
+  const clientIdentities = [selectedUserIdentity];
+
+  teamMemberSaving.value = true;
+  try {
+    const saved = await post<TeamMemberRecord>(endpoints.r3aktTeamMembers, payload);
+    const teamMemberUid = String(saved.uid ?? payload.uid ?? "").trim();
+    if (teamMemberUid) {
+      await syncTeamMemberClients(teamMemberUid, clientIdentities, toStringList(saved.client_identities));
+    }
+    teamMemberEditorOpen.value = false;
+    await loadTeamWorkspace();
+    toastStore.push("Team member saved", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to save team member");
+  } finally {
+    teamMemberSaving.value = false;
+  }
+};
+
+const deleteTeamMember = async (teamMemberUid?: string) => {
+  const uid = String(teamMemberUid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  try {
+    await deleteRequest<TeamMemberRecord>(`${endpoints.r3aktTeamMembers}/${encodeURIComponent(uid)}`);
+    await loadTeamWorkspace();
+    toastStore.push("Team member deleted", "warning");
+  } catch (error) {
+    handleApiError(error, "Unable to delete team member");
+  }
+};
+
 const formatMetadata = (metadata?: Record<string, unknown>) => {
   if (!metadata) {
     return "-";
@@ -600,6 +1377,45 @@ const handleApiError = (error: unknown, fallback: string) => {
   toastStore.push(fallback, "danger");
 };
 
+const clearNavigationIntentQuery = () => {
+  const nextQuery = { ...route.query };
+  delete nextQuery.tab;
+  delete nextQuery.create_team_member;
+  delete nextQuery.team_uid;
+  void router.replace({ path: route.path, query: nextQuery });
+};
+
+const applyNavigationIntent = () => {
+  const tabQuery = queryText(route.query.tab).toLowerCase();
+  const createTeamMember = queryFlag(route.query.create_team_member);
+  const requestedTeamUid = queryText(route.query.team_uid);
+
+  const tabMap: Record<string, ActiveTab> = {
+    clients: "clients",
+    identities: "identities",
+    routing: "routing",
+    teams: "teams",
+    "team-members": "team-members",
+    teammembers: "team-members",
+    members: "team-members"
+  };
+  if (tabMap[tabQuery]) {
+    activeTab.value = tabMap[tabQuery];
+  }
+
+  if (createTeamMember) {
+    activeTab.value = "team-members";
+    openTeamMemberEditor();
+    if (requestedTeamUid && teamRecords.value.some((team) => String(team.uid ?? "") === requestedTeamUid)) {
+      teamMemberEditor.value.team_uid = requestedTeamUid;
+    }
+  }
+
+  if (tabQuery || createTeamMember || requestedTeamUid) {
+    clearNavigationIntentQuery();
+  }
+};
+
 watch(clientPageCount, (count) => {
   if (clientsPage.value > count) {
     clientsPage.value = count;
@@ -620,6 +1436,47 @@ watch(identityFilter, () => {
   identitiesPage.value = 1;
 });
 
+watch(teamsPageCount, (count) => {
+  if (teamsPage.value > count) {
+    teamsPage.value = count;
+  }
+});
+
+watch(teamFilter, () => {
+  teamsPage.value = 1;
+});
+
+watch(teamMembersPageCount, (count) => {
+  if (teamMembersPage.value > count) {
+    teamMembersPage.value = count;
+  }
+});
+
+watch(teamMemberFilter, () => {
+  teamMembersPage.value = 1;
+});
+
+watch(
+  () => teamMemberEditor.value.user_identity,
+  (identity) => {
+    if (!isCallsignAuto.value) {
+      return;
+    }
+    if (!identity.trim()) {
+      teamMemberEditor.value.callsign = "";
+      return;
+    }
+    teamMemberEditor.value.callsign = teamMemberDerivedDisplayName.value || identity.trim();
+  }
+);
+
+watch(
+  () => [route.query.tab, route.query.create_team_member, route.query.team_uid],
+  () => {
+    applyNavigationIntent();
+  }
+);
+
 watch(activeTab, (tab) => {
   if (tab === "clients") {
     clientsPage.value = 1;
@@ -630,10 +1487,26 @@ watch(activeTab, (tab) => {
   if (tab === "routing") {
     void loadRouting();
   }
+  if (tab === "teams") {
+    teamsPage.value = 1;
+    if (!teamRecords.value.length) {
+      void loadTeamWorkspace();
+    }
+  }
+  if (tab === "team-members") {
+    teamMembersPage.value = 1;
+    if (!teamMemberRecords.value.length) {
+      void loadTeamWorkspace();
+    }
+  }
 });
 
 onMounted(() => {
-  usersStore.fetchUsers();
+  loadTeamWorkspace()
+    .then(() => {
+      applyNavigationIntent();
+    })
+    .catch(() => undefined);
 });
 </script>
 
@@ -779,6 +1652,7 @@ onMounted(() => {
 
 .panel-tabs {
   display: inline-flex;
+  flex-wrap: wrap;
   background: rgba(7, 18, 26, 0.8);
   border: 1px solid rgba(55, 242, 255, 0.25);
   border-radius: 999px;
@@ -983,6 +1857,54 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.editor-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-control span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: rgba(209, 251, 255, 0.66);
+}
+
+.field-control.full {
+  grid-column: 1 / -1;
+}
+
+.field-control input,
+.field-control textarea {
+  width: 100%;
+  background: rgba(6, 16, 25, 0.9);
+  border: 1px solid rgba(55, 242, 255, 0.26);
+  color: #d8fbff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.field-control textarea {
+  resize: vertical;
+  min-height: 84px;
+}
+
+.editor-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
 .routing-table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -1102,6 +2024,22 @@ onMounted(() => {
   opacity: 0.45;
 }
 
+:deep(.users-registry .cui-modal) {
+  border: 1px solid rgba(55, 242, 255, 0.28);
+  box-shadow: 0 20px 60px rgba(1, 6, 12, 0.7), inset 0 0 0 1px rgba(55, 242, 255, 0.08);
+}
+
+:deep(.users-registry .cui-combobox) {
+  width: 100%;
+}
+
+:deep(.users-registry .cui-combobox__label) {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(209, 251, 255, 0.66);
+}
+
 @media (max-width: 1100px) {
   .registry-grid {
     grid-template-columns: 1fr;
@@ -1125,6 +2063,10 @@ onMounted(() => {
 
   .panel-tabs {
     align-self: flex-start;
+  }
+
+  .editor-form {
+    grid-template-columns: 1fr;
   }
 }
 </style>

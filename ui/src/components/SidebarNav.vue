@@ -137,18 +137,24 @@ const navIcons: Record<string, string[]> = {
   connect: ["M10 13a3 3 0 0 1 0-4l2-2a3 3 0 0 1 4 4l-1 1", "M14 11a3 3 0 0 1 0 4l-2 2a3 3 0 0 1-4-4l1-1"]
 };
 
+const isActivePath = (path: string) => {
+  if (path === "/") {
+    return route.path === "/";
+  }
+  return route.path === path || route.path.startsWith(`${path}/`);
+};
+
 const navItemClass = (path: string) => {
   const base = "flex items-center rounded py-2 transition-colors hover:bg-rth-border";
   const layout = isCollapsed.value ? "justify-center px-2" : "gap-3 px-3";
-  const state =
-    route.path === path
-      ? "bg-rth-panel-muted text-rth-text border-l-2 border-rth-accent"
-      : "text-rth-muted border-l-2 border-transparent";
+  const state = isActivePath(path)
+    ? "bg-rth-panel-muted text-rth-text border-l-2 border-rth-accent"
+    : "text-rth-muted border-l-2 border-transparent";
   return `${base} ${layout} ${state}`;
 };
 
 const navIconClass = (path: string) => {
-  return route.path === path ? "text-rth-accent" : "text-rth-muted";
+  return isActivePath(path) ? "text-rth-accent" : "text-rth-muted";
 };
 
 const buildInfo = computed(() => {

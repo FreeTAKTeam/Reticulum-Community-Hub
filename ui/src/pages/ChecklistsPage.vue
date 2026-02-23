@@ -2005,8 +2005,9 @@ onMounted(() => { loadWorkspace().catch((error) => { handleApiError(error, "Unab
 .checklist-detail-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; justify-self: start; }
 .checklist-detail-title h4 { margin: 0; font-size: 38px; letter-spacing: 0.06em; text-transform: none; }
 .checklist-detail-title p { margin: 0; font-size: 20px; color: rgba(182, 242, 255, 0.92); }
-.checklist-detail-progress { text-align: right; display: grid; justify-items: end; gap: 2px; }
-.checklist-detail-progress strong { font-size: 44px; line-height: 1; color: #2fe7ff; }
+.checklist-detail-progress { text-align: right; display: grid; justify-items: end; gap: 4px; position: relative; border: 1px solid rgba(55, 242, 255, 0.24); background: rgba(8, 22, 34, 0.78); border-radius: 12px; padding: 12px 16px; box-shadow: inset 0 0 20px rgba(4, 20, 28, 0.8); }
+.checklist-detail-progress::after { content: ""; position: absolute; top: 10px; right: 12px; width: 28px; height: 6px; background: linear-gradient(90deg, rgba(56, 244, 255, 0.8), transparent); opacity: 0.8; border-radius: 2px; }
+.checklist-detail-progress strong { font-size: 44px; line-height: 1; color: #ffffff; font-family: "Orbitron", "Rajdhani", sans-serif; letter-spacing: 0.08em; text-shadow: 0 0 5px rgba(56, 244, 255, 0.9), 0 0 10px rgba(56, 244, 255, 0.7), 0 0 20px rgba(56, 244, 255, 0.6), 0 0 40px rgba(56, 244, 255, 0.35); }
 .checklist-detail-progress span { text-transform: uppercase; letter-spacing: 0.12em; font-size: 11px; color: rgba(167, 242, 255, 0.88); }
 .checklist-detail-summary { display: flex; gap: 20px; flex-wrap: wrap; font-size: 18px; color: rgba(130, 239, 255, 0.96); }
 .checklist-task-toolbar { border: 1px solid rgba(55, 242, 255, 0.28); border-radius: 10px; padding: 12px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; background: rgba(7, 17, 27, 0.68); }
@@ -2057,6 +2058,7 @@ onMounted(() => { loadWorkspace().catch((error) => { handleApiError(error, "Unab
   .checklist-detail-title h4 { font-size: 24px; }
   .checklist-detail-title p { font-size: 14px; }
   .checklist-detail-progress strong { font-size: 30px; }
+  .checklist-detail-progress { padding: 10px 12px; }
   .checklist-template-head { align-items: flex-start; }
   .checklist-workspace { --checklist-scroll-max-height: clamp(190px, calc(100vh - 290px), 420px); }
   .checklist-template-column-actions { width: 100%; }

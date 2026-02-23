@@ -19,11 +19,13 @@ import HeaderBar from "./HeaderBar.vue";
 import SidebarNav from "./SidebarNav.vue";
 
 const route = useRoute();
+const isMissionRoute = computed(() => route.path === "/missions" || route.path.startsWith("/missions/"));
+const isUsersRoute = computed(() => route.path === "/users" || route.path.startsWith("/users/"));
 const showHeaderBar = computed(
   () =>
     route.path !== "/" &&
-    route.path !== "/users" &&
-    route.path !== "/missions" &&
+    !isUsersRoute.value &&
+    !isMissionRoute.value &&
     route.path !== "/checklists" &&
     route.path !== "/files"
 );

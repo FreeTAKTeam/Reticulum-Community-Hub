@@ -47,7 +47,7 @@
               class="tree-item"
               :class="{ active: selectedMissionUid === mission.uid }"
               type="button"
-              @click="selectedMissionUid = mission.uid"
+              @click="selectMission(mission.uid)"
             >
               <span class="tree-dot" aria-hidden="true"></span>
               <span class="tree-label">{{ mission.mission_name }}</span>
@@ -104,7 +104,7 @@
                   Template List
                 </BaseButton>
                 <BaseButton
-                  v-for="action in currentScreen.actions"
+                  v-for="action in screenActions"
                   :key="`${secondaryScreen}-${action}`"
                   variant="secondary"
                   size="sm"
@@ -191,6 +191,144 @@
                   <li><strong>Description</strong><span>{{ missionDraftDescription || "-" }}</span></li>
                 </ul>
               </article>
+            </div>
+
+            <div v-else-if="secondaryScreen === 'missionOverview'" class="mission-overview-hud">
+              <section class="overview-vitals">
+                <article class="overview-vital-card">
+                  <span class="overview-vital-label">Mission Status</span>
+                  <strong class="overview-vital-value">{{ selectedMission?.status || "UNSCOPED" }}</strong>
+                </article>
+                <article class="overview-vital-card">
+                  <span class="overview-vital-label">Checklist Runs</span>
+                  <strong class="overview-vital-value">{{ missionChecklists.length }}</strong>
+                </article>
+                <article class="overview-vital-card">
+                  <span class="overview-vital-label">Open Tasks</span>
+                  <strong class="overview-vital-value">{{ missionOpenTaskTotal }}</strong>
+                </article>
+                <article class="overview-vital-card">
+                  <span class="overview-vital-label">Team Members</span>
+                  <strong class="overview-vital-value">{{ missionMembers.length }}</strong>
+                </article>
+                <article class="overview-vital-card">
+                  <span class="overview-vital-label">Assigned Assets</span>
+                  <strong class="overview-vital-value">{{ missionAssets.length }}</strong>
+                </article>
+                <article class="overview-vital-card">
+                  <span class="overview-vital-label">Assigned Zones</span>
+                  <strong class="overview-vital-value">{{ assignedZones.length }}</strong>
+                </article>
+              </section>
+
+              <section class="overview-layout">
+                <article class="stage-card overview-panel">
+                  <div class="overview-panel-header">
+                    <h4>Mission Profile</h4>
+                    <span class="overview-panel-meta">{{ selectedMission?.topic || "No Topic Scope" }}</span>
+                  </div>
+                  <ul class="stack-list">
+                    <li><strong>Mission ID</strong><span>{{ selectedMission?.uid || "Not Selected" }}</span></li>
+                    <li><strong>Name</strong><span>{{ selectedMission?.mission_name || "No mission selected" }}</span></li>
+                    <li><strong>Description</strong><span>{{ selectedMission?.description || "-" }}</span></li>
+                    <li><strong>Total Tasks</strong><span>{{ missionTotalTasks }}</span></li>
+                  </ul>
+                  <div class="overview-actions">
+                    <BaseButton size="sm" variant="secondary" icon-left="users" @click="secondaryScreen = 'missionTeamMembers'">
+                      Team &amp; Members
+                    </BaseButton>
+                    <BaseButton size="sm" variant="secondary" icon-left="link" @click="secondaryScreen = 'assignAssets'">
+                      Assets
+                    </BaseButton>
+                    <BaseButton size="sm" variant="secondary" icon-left="tool" @click="secondaryScreen = 'assignZones'">
+                      Zones
+                    </BaseButton>
+                  </div>
+                </article>
+
+                <article class="stage-card overview-panel">
+                  <div class="overview-panel-header">
+                    <h4>Mission Excheck Snapshot</h4>
+                    <span class="overview-panel-meta">{{ missionTotalTasks }} tasks tracked</span>
+                  </div>
+                  <div class="overview-board">
+                    <div class="overview-board-col overview-board-col-pending">
+                      <h5>Pending</h5>
+                      <span>{{ boardCounts.pending }}</span>
+                      <ul class="lane-list">
+                        <li v-for="task in boardLaneTasks.pending" :key="`overview-pending-${task.id}`">
+                          <strong>{{ task.name }}</strong>
+                          <span>{{ task.meta }}</span>
+                        </li>
+                        <li v-if="!boardLaneTasks.pending.length" class="lane-empty">No pending tasks.</li>
+                      </ul>
+                    </div>
+                    <div class="overview-board-col overview-board-col-late">
+                      <h5>Late</h5>
+                      <span>{{ boardCounts.late }}</span>
+                      <ul class="lane-list">
+                        <li v-for="task in boardLaneTasks.late" :key="`overview-late-${task.id}`">
+                          <strong>{{ task.name }}</strong>
+                          <span>{{ task.meta }}</span>
+                        </li>
+                        <li v-if="!boardLaneTasks.late.length" class="lane-empty">No late tasks.</li>
+                      </ul>
+                    </div>
+                    <div class="overview-board-col overview-board-col-complete">
+                      <h5>Complete</h5>
+                      <span>{{ boardCounts.complete }}</span>
+                      <ul class="lane-list">
+                        <li v-for="task in boardLaneTasks.complete" :key="`overview-complete-${task.id}`">
+                          <strong>{{ task.name }}</strong>
+                          <span>{{ task.meta }}</span>
+                        </li>
+                        <li v-if="!boardLaneTasks.complete.length" class="lane-empty">No completed tasks.</li>
+                      </ul>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="stage-card overview-panel">
+                  <div class="overview-panel-header">
+                    <h4>Zones Assignment Status</h4>
+                    <span class="overview-panel-meta">{{ zoneCoveragePercent }}% coverage</span>
+                  </div>
+                  <div class="overview-zone-progress" role="presentation">
+                    <span class="overview-zone-progress-value" :style="{ width: `${zoneCoveragePercent}%` }"></span>
+                  </div>
+                  <div class="overview-zone-summary">
+                    <span>{{ assignedZones.length }} of {{ zones.length }} zones assigned</span>
+                    <span>Mission scope: {{ selectedMission?.topic || "-" }}</span>
+                  </div>
+                  <ul class="stack-list overview-zone-list">
+                    <li v-for="zone in assignedZones.slice(0, 6)" :key="`overview-zone-${zone.uid}`">
+                      <strong>{{ zone.name }}</strong>
+                      <span>Assigned to mission</span>
+                    </li>
+                    <li v-if="!assignedZones.length">
+                      <strong>No Zones Assigned</strong>
+                      <span>Use Assign Zones to define operational boundaries.</span>
+                    </li>
+                  </ul>
+                </article>
+
+                <article class="stage-card overview-panel overview-panel-wide">
+                  <div class="overview-panel-header">
+                    <h4>Mission Activity / Audit</h4>
+                    <span class="overview-panel-meta">Latest {{ missionAudit.length }} entries</span>
+                  </div>
+                  <ul class="stack-list timeline overview-audit-list">
+                    <li v-for="event in missionAudit.slice(0, 16)" :key="`overview-audit-${event.uid}`">
+                      <strong>{{ event.time }}</strong>
+                      <span>{{ event.message }}</span>
+                    </li>
+                    <li v-if="!missionAudit.length">
+                      <strong>No Audit Events</strong>
+                      <span>Mission activity will appear after mission and checklist updates.</span>
+                    </li>
+                  </ul>
+                </article>
+              </section>
             </div>
 
             <div v-else-if="secondaryScreen === 'missionAudit'" class="screen-grid two-col">
@@ -889,49 +1027,168 @@
               </article>
 
               <article class="stage-card">
-                <h4>Mission Activity / Audit</h4>
-                <ul class="stack-list timeline">
-                  <li v-for="event in missionAudit" :key="event.uid">
-                    <strong>{{ event.time }}</strong>
-                    <span>{{ event.message }}</span>
+                <h4>Zone Assignment Status</h4>
+                <ul class="stack-list">
+                  <li>
+                    <strong>Assigned Zones</strong>
+                    <span>{{ assignedZones.length }} / {{ zones.length }}</span>
+                  </li>
+                  <li>
+                    <strong>Coverage</strong>
+                    <span>{{ zoneCoveragePercent }}%</span>
+                  </li>
+                  <li>
+                    <strong>Mission Scope</strong>
+                    <span>{{ selectedMission?.topic || "-" }}</span>
+                  </li>
+                </ul>
+                <ul class="stack-list">
+                  <li v-for="zone in assignedZones" :key="`assign-zone-${zone.uid}`">
+                    <strong>{{ zone.name }}</strong>
+                    <span>Assigned</span>
+                  </li>
+                  <li v-if="!assignedZones.length">
+                    <strong>No Zones Assigned</strong>
+                    <span>Select one or more zones and commit the mission boundary.</span>
                   </li>
                 </ul>
               </article>
             </div>
 
-            <div v-else class="screen-grid two-col">
+            <div v-else class="screen-grid">
               <article class="stage-card">
-                <h4>Mission Overview</h4>
-                <ul class="stack-list">
-                  <li><strong>Mission ID</strong><span>{{ selectedMission?.uid }}</span></li>
-                  <li><strong>Status</strong><span>{{ selectedMission?.status }}</span></li>
-                  <li><strong>Checklist Runs</strong><span>{{ missionChecklists.length }}</span></li>
-                  <li><strong>Open Tasks</strong><span>{{ boardCounts.pending + boardCounts.late }}</span></li>
-                </ul>
-              </article>
-
-              <article class="stage-card">
-                <h4>Mission Excheck Board</h4>
-                <div class="board-preview">
-                  <div class="board-col">
-                    <h5>Pending</h5>
-                    <span>{{ boardCounts.pending }}</span>
-                  </div>
-                  <div class="board-col">
-                    <h5>Late</h5>
-                    <span>{{ boardCounts.late }}</span>
-                  </div>
-                  <div class="board-col">
-                    <h5>Complete</h5>
-                    <span>{{ boardCounts.complete }}</span>
-                  </div>
-                </div>
+                <h4>Mission Workspace</h4>
+                <p class="builder-preview">Select a workspace tab to continue.</p>
               </article>
             </div>
           </article>
         </section>
       </div>
     </div>
+
+    <BaseModal
+      :open="teamAllocationModalOpen"
+      title="Mission Team Allocation"
+      @close="closeTeamAllocationModal"
+    >
+      <div class="template-modal mission-allocation-modal">
+        <p class="template-modal-hint">
+          Link an existing team to this mission or create a new mission team.
+        </p>
+        <div class="allocation-grid">
+          <section class="allocation-card">
+            <h4>Assign Existing Team</h4>
+            <BaseSelect
+              v-model="teamAllocationExistingTeamUid"
+              label="Existing Team"
+              :options="teamAllocationExistingTeamOptions"
+            />
+            <p class="template-modal-empty" v-if="teamAllocationExistingTeamOptions.length <= 1">
+              No unassigned teams are currently available.
+            </p>
+            <div class="allocation-card-actions">
+              <BaseButton
+                icon-left="link"
+                :disabled="teamAllocationSubmitting || !canAssignExistingTeam"
+                @click="assignExistingTeamToMission"
+              >
+                {{ teamAllocationSubmitting ? "Assigning..." : "Assign Team" }}
+              </BaseButton>
+            </div>
+          </section>
+
+          <section class="allocation-card">
+            <h4>Create New Team</h4>
+            <label class="field-control full">
+              <span>Team Name</span>
+              <input v-model="teamAllocationNewTeamName" type="text" maxlength="96" placeholder="Mission Team" />
+            </label>
+            <label class="field-control full">
+              <span>Description</span>
+              <textarea
+                v-model="teamAllocationNewTeamDescription"
+                rows="3"
+                maxlength="512"
+                placeholder="Operational role and purpose"
+              ></textarea>
+            </label>
+            <div class="allocation-card-actions">
+              <BaseButton
+                icon-left="plus"
+                :disabled="teamAllocationSubmitting || !canCreateMissionTeam"
+                @click="createMissionTeamFromModal"
+              >
+                {{ teamAllocationSubmitting ? "Creating..." : "Create Team" }}
+              </BaseButton>
+            </div>
+          </section>
+        </div>
+
+        <div class="template-modal-actions">
+          <BaseButton
+            variant="ghost"
+            icon-left="undo"
+            :disabled="teamAllocationSubmitting"
+            @click="closeTeamAllocationModal"
+          >
+            Cancel
+          </BaseButton>
+        </div>
+      </div>
+    </BaseModal>
+
+    <BaseModal
+      :open="memberAllocationModalOpen"
+      title="Mission Team Member Allocation"
+      @close="closeMemberAllocationModal"
+    >
+      <div class="template-modal mission-allocation-modal">
+        <p class="template-modal-hint">
+          Assign an existing team member to a mission team.
+        </p>
+        <div class="allocation-grid single-column">
+          <section class="allocation-card">
+            <BaseSelect v-model="memberAllocationTeamUid" label="Team" :options="memberAllocationTeamOptions" />
+            <BaseSelect
+              v-model="memberAllocationMemberUid"
+              label="Existing Team Member"
+              :options="memberAllocationExistingMemberOptions"
+            />
+            <p class="template-modal-empty" v-if="memberAllocationExistingMemberOptions.length <= 1">
+              No assignable team members found for this team.
+            </p>
+            <div class="allocation-card-actions">
+              <BaseButton
+                icon-left="link"
+                :disabled="memberAllocationSubmitting || !canAssignExistingMember"
+                @click="assignExistingMemberToTeam"
+              >
+                {{ memberAllocationSubmitting ? "Assigning..." : "Assign Member" }}
+              </BaseButton>
+              <BaseButton
+                variant="secondary"
+                icon-left="plus"
+                :disabled="memberAllocationSubmitting"
+                @click="openTeamMemberCreateWorkspace"
+              >
+                Create New Member
+              </BaseButton>
+            </div>
+          </section>
+        </div>
+
+        <div class="template-modal-actions">
+          <BaseButton
+            variant="ghost"
+            icon-left="undo"
+            :disabled="memberAllocationSubmitting"
+            @click="closeMemberAllocationModal"
+          >
+            Cancel
+          </BaseButton>
+        </div>
+      </div>
+    </BaseModal>
 
     <BaseModal
       :open="checklistTemplateModalOpen"
@@ -1007,7 +1264,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { ApiError } from "../api/client";
-import { del as deleteRequest, get, patch as patchRequest, post } from "../api/client";
+import { del as deleteRequest, get, patch as patchRequest, post, put } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import BaseButton from "../components/BaseButton.vue";
 import BaseModal from "../components/BaseModal.vue";
@@ -1016,7 +1273,7 @@ import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
 
-type PrimaryTab = "mission" | "checklists" | "board";
+type PrimaryTab = "mission" | "checklists";
 
 type ScreenId =
   | "missionDirectory"
@@ -1073,6 +1330,7 @@ interface Mission {
   description: string;
   topic: string;
   status: string;
+  zone_ids: string[];
 }
 
 interface Checklist {
@@ -1106,6 +1364,7 @@ interface Checklist {
 interface Team {
   uid: string;
   mission_uid: string;
+  mission_uids: string[];
   name: string;
   description: string;
 }
@@ -1181,6 +1440,7 @@ interface MissionRaw {
   description?: string | null;
   topic_id?: string | null;
   mission_status?: string | null;
+  zones?: string[] | null;
 }
 
 interface ChecklistCellRaw {
@@ -1238,6 +1498,7 @@ interface ChecklistRaw {
 interface TeamRaw {
   uid?: string;
   mission_uid?: string | null;
+  mission_uids?: string[];
   team_name?: string | null;
   team_description?: string | null;
 }
@@ -1249,6 +1510,7 @@ interface TeamMemberRaw {
   display_name?: string | null;
   role?: string | null;
   callsign?: string | null;
+  client_identities?: string[];
 }
 
 interface AssetRaw {
@@ -2008,15 +2270,24 @@ const checklists = computed<Checklist[]>(() => {
 });
 
 const teams = computed<Team[]>(() => {
+  const collectTeamMissionUids = (entry: TeamRaw): string[] => {
+    const values = [...toStringList(entry.mission_uids), String(entry.mission_uid ?? "").trim()].filter(
+      (item) => item.length > 0
+    );
+    return [...new Set(values)];
+  };
+
   return teamRecords.value
     .map((entry) => {
       const uid = String(entry.uid ?? "").trim();
       if (!uid) {
         return null;
       }
+      const missionUids = collectTeamMissionUids(entry);
       return {
         uid,
-        mission_uid: String(entry.mission_uid ?? "").trim(),
+        mission_uid: missionUids[0] ?? "",
+        mission_uids: missionUids,
         name: String(entry.team_name ?? uid),
         description: String(entry.team_description ?? "")
       };
@@ -2126,10 +2397,20 @@ const skillNameByUid = computed(() => {
   return map;
 });
 
+const normalizeIdentity = (value: string): string => String(value ?? "").trim().toLowerCase();
+
+const resolveTeamMemberIdentity = (entry: TeamMemberRaw): string => {
+  const rnsIdentity = String(entry.rns_identity ?? "").trim();
+  if (rnsIdentity) {
+    return rnsIdentity;
+  }
+  return toStringList(entry.client_identities)[0] ?? "";
+};
+
 const memberCapabilitiesByIdentity = computed(() => {
   const map = new Map<string, string[]>();
   teamMemberSkillRecords.value.forEach((entry) => {
-    const identity = String(entry.team_member_rns_identity ?? "").trim();
+    const identity = normalizeIdentity(String(entry.team_member_rns_identity ?? ""));
     const skillUid = String(entry.skill_uid ?? "").trim();
     if (!identity || !skillUid) {
       return;
@@ -2176,12 +2457,12 @@ const memberByIdentity = computed(() => {
   const map = new Map<string, { callsign: string; uid: string }>();
   memberRecords.value.forEach((entry) => {
     const uid = String(entry.uid ?? "").trim();
-    const identity = String(entry.rns_identity ?? "").trim();
+    const identity = resolveTeamMemberIdentity(entry);
     if (!uid || !identity) {
       return;
     }
     const callsign = String(entry.callsign ?? entry.display_name ?? identity).trim() || identity;
-    map.set(identity, { callsign, uid });
+    map.set(normalizeIdentity(identity), { callsign, uid });
   });
   return map;
 });
@@ -2200,34 +2481,35 @@ const assetNameByUid = computed(() => {
 
 const primaryTabs = [
   { id: "mission", label: "Mission" },
-  { id: "checklists", label: "Checklists" },
-  { id: "board", label: "Excheck Board" }
+  { id: "checklists", label: "Checklists" }
 ] as const;
 
 const screensByTab: Record<PrimaryTab, Array<{ id: ScreenId; label: string }>> = {
   mission: [
-    { id: "missionDirectory", label: "Mission Directory" },
-    { id: "missionCreateEdit", label: "Mission Create/Edit" },
     { id: "missionOverview", label: "Mission Overview" },
+    { id: "missionCreateEdit", label: "Mission Create/Edit" },
     { id: "missionTeamMembers", label: "Mission Team & Members" },
     { id: "assignAssets", label: "Assign Assets to Mission" },
     { id: "assignZones", label: "Assign Zones to Mission" },
     { id: "missionAudit", label: "Mission Activity / Audit" },
     { id: "assetRegistry", label: "Asset Registry" }
   ],
-  checklists: [{ id: "checklistOverview", label: "Checklist Management" }],
-  board: [{ id: "missionExcheckBoard", label: "Mission Excheck Board" }]
+  checklists: [{ id: "checklistOverview", label: "Checklist Management" }]
 };
 
 const screenMeta: Record<ScreenId, { title: string; subtitle: string; actions: string[] }> = {
   missionDirectory: { title: "Mission Directory", subtitle: "Mission list and operational status registry.", actions: ["Filter", "Export"] },
   missionCreateEdit: { title: "Mission Create/Edit", subtitle: "Create and edit mission metadata and topic bindings.", actions: ["Save", "Reset"] },
-  missionOverview: { title: "Mission Overview", subtitle: "Live mission summary with checklists, teams, and assets.", actions: ["Refresh", "Broadcast"] },
+  missionOverview: {
+    title: "Mission Overview",
+    subtitle: "Unified dashboard for mission profile, Excheck, zones, and mission activity.",
+    actions: ["Refresh", "Broadcast"]
+  },
   missionTeamMembers: { title: "Mission Team & Members", subtitle: "Team composition, roles, and capabilities.", actions: ["Add Team", "Add Member"] },
   assignAssets: { title: "Assign Assets to Mission", subtitle: "Bind registered assets to mission tasks and operators.", actions: ["Assign", "Revoke"] },
   assignZones: { title: "Assign Zones to Mission", subtitle: "Zone selection and geographic mission boundaries.", actions: ["Commit", "New Zone"] },
-  missionAudit: { title: "Mission Activity / Audit", subtitle: "Mission timeline, status transitions, and forensic log.", actions: ["Export Log", "Snapshot"] },
-  assetRegistry: { title: "Asset Registry", subtitle: "Hardware inventory, status, and readiness.", actions: ["Deploy", "Filter"] },
+  missionAudit: { title: "Mission Activity / Audit", subtitle: "Mission timeline, status transitions, and forensic log.", actions: ["Export Log", "Snapshot", "Open Logs"] },
+  assetRegistry: { title: "Asset Registry", subtitle: "Hardware inventory, status, and readiness.", actions: ["Deploy", "Filter", "Open Assets"] },
   checklistOverview: { title: "Checklists", subtitle: "Manage checklist instances and templates.", actions: [] },
   checklistDetails: { title: "Checklist Details", subtitle: "Task grid, callsigns, due relative DTG, and status.", actions: ["Edit Cell", "Sync"] },
   checklistCreation: { title: "Checklist Creation Page", subtitle: "Create online/offline checklist runs from templates.", actions: ["Create", "Validate"] },
@@ -2271,6 +2553,8 @@ const actionIconMap: Record<string, ButtonIconName> = {
   "Export Log": "download",
   Snapshot: "image",
   Deploy: "send",
+  "Open Assets": "layers",
+  "Open Logs": "list",
   Clone: "layers",
   Archive: "file",
   "Add Column": "plus"
@@ -2281,7 +2565,7 @@ const iconForAction = (action: string): ButtonIconName => actionIconMap[action] 
 const selectedMissionUid = ref("");
 const selectedChecklistUid = ref("");
 const primaryTab = ref<PrimaryTab>("mission");
-const secondaryScreen = ref<ScreenId>("missionDirectory");
+const secondaryScreen = ref<ScreenId>("missionOverview");
 const missionDraftName = ref("");
 const missionDraftTopic = ref("");
 const missionDraftStatus = ref("MISSION_ACTIVE");
@@ -2310,6 +2594,15 @@ const checklistTemplateDraftTemplateUid = ref("");
 const checklistTemplateDraftName = ref("");
 const checklistTemplateDraftDescription = ref("");
 const checklistTemplateDraftColumns = ref<ChecklistTemplateDraftColumn[]>(createBlankChecklistTemplateDraftColumns());
+const teamAllocationModalOpen = ref(false);
+const teamAllocationSubmitting = ref(false);
+const teamAllocationExistingTeamUid = ref("");
+const teamAllocationNewTeamName = ref("");
+const teamAllocationNewTeamDescription = ref("");
+const memberAllocationModalOpen = ref(false);
+const memberAllocationSubmitting = ref(false);
+const memberAllocationTeamUid = ref("");
+const memberAllocationMemberUid = ref("");
 
 const missionStatusOptions = [
   "MISSION_ACTIVE",
@@ -2353,17 +2646,11 @@ const workspacePanelTitle = computed(() => {
   if (primaryTab.value === "checklists") {
     return "Checklists";
   }
-  if (primaryTab.value === "board") {
-    return selectedMission.value?.mission_name || "Mission Board";
-  }
   return selectedMission.value?.mission_name || "Mission Details";
 });
 const workspacePanelSubtitle = computed(() => {
   if (primaryTab.value === "checklists") {
     return "Manage checklist instances and templates.";
-  }
-  if (primaryTab.value === "board") {
-    return selectedMission.value?.topic || "Select a mission";
   }
   return selectedMission.value?.topic || "Select a mission";
 });
@@ -3155,8 +3442,112 @@ const missionOpenTaskCountByMission = computed(() => {
   return map;
 });
 
-const missionTeams = computed(() => teams.value.filter((entry) => entry.mission_uid === selectedMissionUid.value));
+const missionTeams = computed(() => {
+  const missionUid = selectedMissionUid.value;
+  if (!missionUid) {
+    return [] as Team[];
+  }
+  return teams.value.filter((entry) => entry.mission_uids.includes(missionUid));
+});
 const missionTeamUidSet = computed(() => new Set(missionTeams.value.map((entry) => entry.uid)));
+const missionHasAllocatedTeam = computed(() => missionTeams.value.length > 0);
+const screenActions = computed(() => {
+  const actions = [...currentScreen.value.actions];
+  if (secondaryScreen.value === "missionTeamMembers" && !missionHasAllocatedTeam.value) {
+    return actions.filter((action) => action !== "Add Member");
+  }
+  return actions;
+});
+
+const teamNameByUid = computed(() => {
+  const map = new Map<string, string>();
+  teams.value.forEach((team) => {
+    map.set(team.uid, team.name);
+  });
+  return map;
+});
+
+const teamAllocationExistingTeamOptions = computed(() => {
+  const options = teams.value
+    .filter((entry) => !missionTeamUidSet.value.has(entry.uid))
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((entry) => ({
+      label: entry.name,
+      value: entry.uid
+    }));
+  return [{ label: "Select team", value: "" }, ...options];
+});
+
+const canAssignExistingTeam = computed(
+  () => selectedMissionUid.value.trim().length > 0 && teamAllocationExistingTeamUid.value.trim().length > 0
+);
+const canCreateMissionTeam = computed(
+  () => selectedMissionUid.value.trim().length > 0 && teamAllocationNewTeamName.value.trim().length > 0
+);
+
+const memberAllocationTeamOptions = computed(() => [
+  { label: "Select team", value: "" },
+  ...missionTeams.value
+    .slice()
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((entry) => ({
+      label: entry.name,
+      value: entry.uid
+    }))
+]);
+
+const memberAllocationExistingMemberOptions = computed(() => {
+  const teamUid = memberAllocationTeamUid.value.trim();
+  if (!teamUid) {
+    return [{ label: "Select team first", value: "" }];
+  }
+
+  const selectedMemberUid = memberAllocationMemberUid.value.trim();
+  const options = memberRecords.value
+    .filter((entry) => {
+      const uid = String(entry.uid ?? "").trim();
+      if (!uid) {
+        return false;
+      }
+      const identity = resolveTeamMemberIdentity(entry);
+      if (!identity) {
+        return false;
+      }
+      if (uid === selectedMemberUid) {
+        return true;
+      }
+      return String(entry.team_uid ?? "").trim() !== teamUid;
+    })
+    .sort((left, right) =>
+      String(left.callsign ?? left.display_name ?? resolveTeamMemberIdentity(left) ?? "").localeCompare(
+        String(right.callsign ?? right.display_name ?? resolveTeamMemberIdentity(right) ?? "")
+      )
+    )
+    .map((entry) => {
+      const uid = String(entry.uid ?? "").trim();
+      const identity = resolveTeamMemberIdentity(entry);
+      const labelBase =
+        String(entry.callsign ?? entry.display_name ?? identity ?? uid).trim() || uid;
+      const assignedTeamUid = String(entry.team_uid ?? "").trim();
+      const teamSuffix =
+        assignedTeamUid && assignedTeamUid !== teamUid
+          ? ` - currently in ${teamNameByUid.value.get(assignedTeamUid) ?? assignedTeamUid}`
+          : "";
+      return {
+        label: `${labelBase} (${identity})${teamSuffix}`,
+        value: uid
+      };
+    });
+
+  return [{ label: "Select member", value: "" }, ...options];
+});
+
+const canAssignExistingMember = computed(
+  () =>
+    selectedMissionUid.value.trim().length > 0 &&
+    memberAllocationTeamUid.value.trim().length > 0 &&
+    memberAllocationMemberUid.value.trim().length > 0
+);
 
 const missionMembers = computed<Member[]>(() => {
   const teamUids = missionTeamUidSet.value;
@@ -3168,14 +3559,14 @@ const missionMembers = computed<Member[]>(() => {
     })
     .map((entry) => {
       const uid = String(entry.uid ?? "").trim();
-      const identity = String(entry.rns_identity ?? "").trim();
+      const identity = resolveTeamMemberIdentity(entry);
       const callsign = String(entry.callsign ?? entry.display_name ?? identity ?? uid).trim() || uid;
       return {
         uid,
         mission_uid: selectedMissionUid.value,
         callsign,
         role: String(entry.role ?? "UNASSIGNED"),
-        capabilities: memberCapabilitiesByIdentity.value.get(identity) ?? []
+        capabilities: memberCapabilitiesByIdentity.value.get(normalizeIdentity(identity)) ?? []
       };
     });
 });
@@ -3195,7 +3586,7 @@ const missionAssignments = computed<Assignment[]>(() => {
       if (requirementCount > 0 && taskLabel) {
         taskLabel = `${taskLabel} (${requirementCount} skill req)`;
       }
-      const memberLabel = memberByIdentity.value.get(memberIdentity)?.callsign ?? memberIdentity;
+      const memberLabel = memberByIdentity.value.get(normalizeIdentity(memberIdentity))?.callsign ?? memberIdentity;
       const assetsForTask = toStringList(entry.assets).map((assetUid) => assetNameByUid.value.get(assetUid) ?? assetUid);
       return {
         uid: assignmentUid || `${taskUid}-${memberIdentity}`,
@@ -3258,17 +3649,9 @@ const assets = computed<Asset[]>(() =>
 );
 
 const committedZoneIdsByMission = computed(() => {
-  const ordered = [...missionChanges.value].sort((left, right) => toEpoch(left.timestamp) - toEpoch(right.timestamp));
   const map = new Map<string, string[]>();
-  ordered.forEach((change) => {
-    if (String(change.change_type ?? "").trim().toLowerCase() !== "zone.assignment") {
-      return;
-    }
-    const missionUid = String(change.mission_uid ?? "").trim();
-    if (!missionUid) {
-      return;
-    }
-    map.set(missionUid, toStringList(change.hashes));
+  missions.value.forEach((mission) => {
+    map.set(mission.uid, [...mission.zone_ids]);
   });
   return map;
 });
@@ -3391,6 +3774,9 @@ const boardCounts = computed(() => {
   return { pending, late, complete };
 });
 
+const missionOpenTaskTotal = computed(() => boardCounts.value.pending + boardCounts.value.late);
+const missionTotalTasks = computed(() => missionOpenTaskTotal.value + boardCounts.value.complete);
+
 const boardLaneTasks = computed(() => {
   const pending: Array<{ id: string; name: string; meta: string }> = [];
   const late: Array<{ id: string; name: string; meta: string }> = [];
@@ -3421,6 +3807,15 @@ const boardLaneTasks = computed(() => {
     late: late.slice(0, 8),
     complete: complete.slice(0, 8)
   };
+});
+
+const assignedZones = computed(() => zones.value.filter((zone) => zone.assigned));
+const zoneCoveragePercent = computed(() => {
+  const total = zones.value.length;
+  if (!total) {
+    return 0;
+  }
+  return Math.round((assignedZones.value.length / total) * 100);
 });
 
 const showChecklistArea = computed(() => {
@@ -3806,6 +4201,15 @@ const setPrimaryTab = (tab: PrimaryTab, syncRoute = true) => {
   }
 };
 
+const selectMission = (missionUid: string) => {
+  selectedMissionUid.value = missionUid;
+  primaryTab.value = "mission";
+  secondaryScreen.value = "missionOverview";
+  if (route.path === "/checklists") {
+    router.push("/missions").catch(() => undefined);
+  }
+};
+
 const loadWorkspace = async () => {
   loadingWorkspace.value = true;
   try {
@@ -3850,7 +4254,8 @@ const loadWorkspace = async () => {
           mission_name: String(entry.mission_name ?? uid),
           description: String(entry.description ?? ""),
           topic: String(entry.topic_id ?? "unscoped"),
-          status: normalizeMissionStatus(entry.mission_status)
+          status: normalizeMissionStatus(entry.mission_status),
+          zone_ids: toStringList(entry.zones)
         };
       })
       .filter((entry): entry is Mission => entry !== null);
@@ -3910,48 +4315,159 @@ const ensureChecklistSelected = (): ChecklistRaw => {
   return checklist;
 };
 
-const addTeamAction = async () => {
+const resetTeamAllocationModalDraft = () => {
+  teamAllocationExistingTeamUid.value = teamAllocationExistingTeamOptions.value[1]?.value ?? "";
+  const missionName = String(selectedMission.value?.mission_name ?? "Mission").trim() || "Mission";
+  teamAllocationNewTeamName.value = `${missionName} Team ${missionTeams.value.length + 1}`;
+  teamAllocationNewTeamDescription.value = "";
+};
+
+const openTeamAllocationModal = () => {
+  ensureMissionSelected();
+  resetTeamAllocationModalDraft();
+  teamAllocationModalOpen.value = true;
+};
+
+const closeTeamAllocationModal = () => {
+  if (teamAllocationSubmitting.value) {
+    return;
+  }
+  teamAllocationModalOpen.value = false;
+};
+
+const assignExistingTeamToMission = async () => {
   const missionUid = ensureMissionSelected();
-  await post<TeamRaw>(endpoints.r3aktTeams, {
-    mission_uid: missionUid,
-    team_name: `Team ${missionTeams.value.length + 1}`,
-    team_description: "Created from Mission workspace"
+  const teamUid = teamAllocationExistingTeamUid.value.trim();
+  if (!teamUid) {
+    throw new Error("Select a team to assign");
+  }
+  if (missionTeamUidSet.value.has(teamUid)) {
+    throw new Error("Selected team is already linked to this mission");
+  }
+  teamAllocationSubmitting.value = true;
+  try {
+    await put(`${endpoints.r3aktTeams}/${encodeURIComponent(teamUid)}/missions/${encodeURIComponent(missionUid)}`);
+    await loadWorkspace();
+    teamAllocationModalOpen.value = false;
+    toastStore.push("Team linked to mission", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to link team to mission");
+  } finally {
+    teamAllocationSubmitting.value = false;
+  }
+};
+
+const createMissionTeamFromModal = async () => {
+  const missionUid = ensureMissionSelected();
+  const teamName = teamAllocationNewTeamName.value.trim();
+  if (!teamName) {
+    throw new Error("Team name is required");
+  }
+  teamAllocationSubmitting.value = true;
+  try {
+    await post<TeamRaw>(endpoints.r3aktTeams, {
+      mission_uid: missionUid,
+      mission_uids: [missionUid],
+      team_name: teamName,
+      team_description: teamAllocationNewTeamDescription.value.trim() || "Created from Mission workspace"
+    });
+    await loadWorkspace();
+    teamAllocationModalOpen.value = false;
+    toastStore.push("Mission team created", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to create mission team");
+  } finally {
+    teamAllocationSubmitting.value = false;
+  }
+};
+
+const resetMemberAllocationModalDraft = () => {
+  memberAllocationTeamUid.value = missionTeams.value[0]?.uid ?? "";
+  memberAllocationMemberUid.value = "";
+};
+
+const openMemberAllocationModal = () => {
+  ensureMissionSelected();
+  if (!missionTeams.value.length) {
+    throw new Error("Assign a team to this mission before adding members");
+  }
+  resetMemberAllocationModalDraft();
+  memberAllocationModalOpen.value = true;
+};
+
+const closeMemberAllocationModal = () => {
+  if (memberAllocationSubmitting.value) {
+    return;
+  }
+  memberAllocationModalOpen.value = false;
+};
+
+const assignExistingMemberToTeam = async () => {
+  const selectedMemberUid = memberAllocationMemberUid.value.trim();
+  const teamUid = memberAllocationTeamUid.value.trim();
+  if (!selectedMemberUid || !teamUid) {
+    throw new Error("Select both a team and a member");
+  }
+
+  const selectedMember = memberRecords.value.find((entry) => String(entry.uid ?? "").trim() === selectedMemberUid);
+  if (!selectedMember) {
+    throw new Error("Selected member could not be resolved");
+  }
+  const identity = resolveTeamMemberIdentity(selectedMember);
+  if (!identity) {
+    throw new Error("Selected member has no RNS identity");
+  }
+  if (String(selectedMember.team_uid ?? "").trim() === teamUid) {
+    throw new Error("Selected member is already assigned to this team");
+  }
+
+  memberAllocationSubmitting.value = true;
+  try {
+    await post<TeamMemberRaw>(endpoints.r3aktTeamMembers, {
+      uid: selectedMemberUid,
+      team_uid: teamUid,
+      rns_identity: identity,
+      display_name: String(selectedMember.display_name ?? selectedMember.callsign ?? identity).trim() || identity,
+      role: selectedMember.role ?? "TEAM_MEMBER",
+      callsign: selectedMember.callsign ?? null
+    });
+    await loadWorkspace();
+    memberAllocationModalOpen.value = false;
+    toastStore.push("Team member assigned", "success");
+  } catch (error) {
+    handleApiError(error, "Unable to assign team member");
+  } finally {
+    memberAllocationSubmitting.value = false;
+  }
+};
+
+const openTeamMemberCreateWorkspace = async () => {
+  const preferredTeamUid = memberAllocationTeamUid.value.trim() || missionTeams.value[0]?.uid || "";
+  await router.push({
+    path: "/users",
+    query: {
+      tab: "team-members",
+      create_team_member: "1",
+      team_uid: preferredTeamUid || undefined
+    }
   });
-  await loadWorkspace();
+};
+
+const addTeamAction = async () => {
+  openTeamAllocationModal();
 };
 
 const addMemberAction = async () => {
-  ensureMissionSelected();
-  let teamUid = missionTeams.value[0]?.uid;
-  if (!teamUid) {
-    await addTeamAction();
-    teamUid = missionTeams.value[0]?.uid;
-  }
-  if (!teamUid) {
-    throw new Error("Unable to resolve a mission team");
-  }
-  const suffix = `${buildTimestampTag().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
-  await post<TeamMemberRaw>(endpoints.r3aktTeamMembers, {
-    team_uid: teamUid,
-    rns_identity: `ui.member.${suffix}`,
-    display_name: `operator-${missionMembers.value.length + 1}`,
-    callsign: `op-${missionMembers.value.length + 1}`,
-    role: "SUBSCRIBER"
-  });
-  await loadWorkspace();
+  openMemberAllocationModal();
 };
 
 const ensureMemberIdentityForMission = async (): Promise<{ uid: string; identity: string }> => {
-  let member = missionMembers.value[0];
+  const member = missionMembers.value[0];
   if (!member) {
-    await addMemberAction();
-    member = missionMembers.value[0];
-  }
-  if (!member) {
-    throw new Error("No mission member is available");
+    throw new Error("No mission member is assigned. Use Add Member to assign existing team members.");
   }
   const raw = memberRecords.value.find((entry) => String(entry.uid ?? "").trim() === member.uid);
-  const identity = String(raw?.rns_identity ?? "").trim();
+  const identity = raw ? resolveTeamMemberIdentity(raw) : "";
   if (!identity) {
     throw new Error("Mission member identity is missing");
   }
@@ -3987,10 +4503,9 @@ const ensureChecklistTaskContext = async (): Promise<{ checklistUid: string; tas
 };
 
 const deployAssetAction = async () => {
-  let member = missionMembers.value[0];
+  const member = missionMembers.value[0];
   if (!member) {
-    await addMemberAction();
-    member = missionMembers.value[0];
+    throw new Error("No mission member is assigned. Use Add Member before deploying assets.");
   }
   await post<AssetRaw>(endpoints.r3aktAssets, {
     team_member_uid: member?.uid,
@@ -4074,7 +4589,7 @@ const broadcastMissionAction = async () => {
   await post<MissionChangeRaw>(endpoints.r3aktMissionChanges, {
     mission_uid: missionUid,
     name: "Mission broadcast",
-    change_type: "broadcast",
+    change_type: "ADD_CONTENT",
     notes: "Broadcast emitted from mission workspace",
     team_member_rns_identity: DEFAULT_SOURCE_IDENTITY,
     timestamp: new Date().toISOString()
@@ -4610,16 +5125,17 @@ const createZoneAction = async () => {
 
 const commitZonesAction = async () => {
   const missionUid = ensureMissionSelected();
-  const selected = [...selectedZoneIds.value];
-  await post<MissionChangeRaw>(endpoints.r3aktMissionChanges, {
-    mission_uid: missionUid,
-    name: "Zone assignment update",
-    change_type: "zone.assignment",
-    notes: `Assigned zones: ${selected.length}`,
-    team_member_rns_identity: DEFAULT_SOURCE_IDENTITY,
-    hashes: selected,
-    timestamp: new Date().toISOString()
-  });
+  const selected = new Set(selectedZoneIds.value);
+  const committed = new Set(committedZoneIdsByMission.value.get(missionUid) ?? []);
+  const missionZonesBase = `${endpoints.r3aktMissions}/${encodeURIComponent(missionUid)}/zones`;
+  const toLink = [...selected].filter((zoneId) => !committed.has(zoneId));
+  const toUnlink = [...committed].filter((zoneId) => !selected.has(zoneId));
+
+  await Promise.all([
+    ...toLink.map((zoneId) => put(`${missionZonesBase}/${encodeURIComponent(zoneId)}`)),
+    ...toUnlink.map((zoneId) => deleteRequest(`${missionZonesBase}/${encodeURIComponent(zoneId)}`))
+  ]);
+
   const nextDraft = { ...zoneDraftByMission.value };
   delete nextDraft[missionUid];
   zoneDraftByMission.value = nextDraft;
@@ -4655,7 +5171,7 @@ const assignTaskAction = async () => {
 
 const reassignTaskAction = async () => {
   if (missionMembers.value.length < 2) {
-    await addMemberAction();
+    throw new Error("At least two mission members are required. Use Add Member to assign another member.");
   }
   const assignment = missionAssignmentsRaw.value[0];
   if (!assignment) {
@@ -4665,7 +5181,7 @@ const reassignTaskAction = async () => {
   const identities = missionMembers.value
     .map((member) => {
       const raw = memberRecords.value.find((entry) => String(entry.uid ?? "").trim() === member.uid);
-      return String(raw?.rns_identity ?? "").trim();
+      return raw ? resolveTeamMemberIdentity(raw) : "";
     })
     .filter((entry) => entry.length > 0);
   if (identities.length === 0) {
@@ -4853,12 +5369,20 @@ const previewAction = async (action: string) => {
   }
 
   if (action === "Add Team") {
-    await runAction(addTeamAction, "Mission team created", "Unable to create mission team");
+    try {
+      await addTeamAction();
+    } catch (error) {
+      handleApiError(error, "Unable to open mission team allocation");
+    }
     return;
   }
 
   if (action === "Add Member") {
-    await runAction(addMemberAction, "Mission member added", "Unable to add mission member");
+    try {
+      await addMemberAction();
+    } catch (error) {
+      handleApiError(error, "Unable to open mission member allocation");
+    }
     return;
   }
 
@@ -4928,6 +5452,26 @@ const previewAction = async (action: string) => {
 
   if (action === "Export Log") {
     await runAction(exportAuditAction, "Mission audit exported", "Unable to export mission audit");
+    return;
+  }
+
+  if (action === "Open Assets") {
+    router
+      .push({
+        path: "/missions/assets",
+        query: selectedMissionUid.value ? { mission_uid: selectedMissionUid.value } : undefined
+      })
+      .catch(() => undefined);
+    return;
+  }
+
+  if (action === "Open Logs") {
+    router
+      .push({
+        path: "/missions/logs",
+        query: selectedMissionUid.value ? { mission_uid: selectedMissionUid.value } : undefined
+      })
+      .catch(() => undefined);
     return;
   }
 
@@ -5034,6 +5578,29 @@ watch(
   { immediate: true }
 );
 
+watch(selectedMissionUid, (missionUid, previousMissionUid) => {
+  if (!missionUid || missionUid === previousMissionUid) {
+    return;
+  }
+  if (primaryTab.value === "mission") {
+    secondaryScreen.value = "missionOverview";
+  }
+});
+
+watch(
+  missionTeams,
+  (entries) => {
+    const validTeamUids = new Set(entries.map((entry) => entry.uid));
+    if (!validTeamUids.has(memberAllocationTeamUid.value)) {
+      memberAllocationTeamUid.value = entries[0]?.uid ?? "";
+    }
+    if (!entries.length) {
+      memberAllocationModalOpen.value = false;
+    }
+  },
+  { immediate: true }
+);
+
 watch(
   checklists,
   (entries) => {
@@ -5134,12 +5701,26 @@ onMounted(() => {
 }
 
 .kpi-card {
+  position: relative;
   border: 1px solid rgba(55, 242, 255, 0.24);
   background: rgba(8, 22, 34, 0.78);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px;
   display: grid;
   gap: 4px;
+  box-shadow: inset 0 0 20px rgba(4, 20, 28, 0.8);
+}
+
+.kpi-card::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 28px;
+  height: 6px;
+  background: linear-gradient(90deg, rgba(56, 244, 255, 0.8), transparent);
+  opacity: 0.8;
+  border-radius: 2px;
 }
 
 .kpi-label {
@@ -5152,6 +5733,14 @@ onMounted(() => {
 .kpi-value {
   font-size: 28px;
   line-height: 1;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+  letter-spacing: 0.08em;
+  color: #ffffff;
+  text-shadow:
+    0 0 5px rgba(56, 244, 255, 0.9),
+    0 0 10px rgba(56, 244, 255, 0.7),
+    0 0 20px rgba(56, 244, 255, 0.6),
+    0 0 40px rgba(56, 244, 255, 0.35);
 }
 
 .registry-grid {
@@ -5193,6 +5782,12 @@ onMounted(() => {
   margin-bottom: 14px;
 }
 
+.registry-main > .panel-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
 .panel-title {
   font-size: 16px;
   text-transform: uppercase;
@@ -5221,8 +5816,41 @@ onMounted(() => {
 .panel-tabs,
 .screen-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
+}
+
+.panel-tabs::-webkit-scrollbar,
+.screen-tabs::-webkit-scrollbar,
+.checklist-overview-tabs::-webkit-scrollbar {
+  height: 8px;
+}
+
+.panel-tabs::-webkit-scrollbar-track,
+.screen-tabs::-webkit-scrollbar-track,
+.checklist-overview-tabs::-webkit-scrollbar-track {
+  background: rgba(4, 18, 29, 0.68);
+  border-radius: 999px;
+}
+
+.panel-tabs::-webkit-scrollbar-thumb,
+.screen-tabs::-webkit-scrollbar-thumb,
+.checklist-overview-tabs::-webkit-scrollbar-thumb {
+  background: rgba(55, 242, 255, 0.5);
+  border-radius: 999px;
+}
+
+.panel-tabs::-webkit-scrollbar-thumb:hover,
+.screen-tabs::-webkit-scrollbar-thumb:hover,
+.checklist-overview-tabs::-webkit-scrollbar-thumb:hover {
+  background: rgba(55, 242, 255, 0.72);
 }
 
 .panel-tab,
@@ -5235,6 +5863,8 @@ onMounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.16em;
   font-size: 10px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .panel-tab.active,
@@ -5325,6 +5955,206 @@ onMounted(() => {
 
 .screen-grid.two-col {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mission-overview-hud {
+  display: grid;
+  gap: 12px;
+}
+
+.overview-vitals {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.overview-vital-card {
+  position: relative;
+  border: 1px solid rgba(55, 242, 255, 0.28);
+  background: rgba(7, 20, 30, 0.82);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 5px;
+  box-shadow: inset 0 0 18px rgba(2, 14, 22, 0.9);
+}
+
+.overview-vital-card::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 28px;
+  height: 5px;
+  background: linear-gradient(90deg, rgba(255, 179, 92, 0.88), transparent);
+  border-radius: 2px;
+}
+
+.overview-vital-label {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(211, 248, 255, 0.72);
+}
+
+.overview-vital-value {
+  font-size: 22px;
+  line-height: 1.1;
+  letter-spacing: 0.08em;
+  color: #ffffff;
+  text-shadow: 0 0 8px rgba(55, 242, 255, 0.58);
+}
+
+.overview-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.overview-panel {
+  gap: 10px;
+}
+
+.overview-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.overview-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.overview-panel-header h4 {
+  margin: 0;
+}
+
+.overview-panel-meta {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(161, 240, 255, 0.82);
+}
+
+.overview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.overview-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.overview-board-col {
+  border: 1px solid rgba(55, 242, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(5, 16, 26, 0.76);
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.overview-board-col-pending {
+  border-color: rgba(55, 242, 255, 0.36);
+}
+
+.overview-board-col-late {
+  border-color: rgba(255, 179, 92, 0.46);
+}
+
+.overview-board-col-complete {
+  border-color: rgba(62, 242, 180, 0.46);
+}
+
+.overview-board-col h5 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.overview-board-col > span {
+  font-size: 24px;
+  letter-spacing: 0.08em;
+  color: #ffffff;
+}
+
+.lane-empty {
+  border: 1px dashed rgba(55, 242, 255, 0.24);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(190, 243, 255, 0.72);
+}
+
+.overview-zone-progress {
+  position: relative;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(0, 62, 82, 0.74);
+}
+
+.overview-zone-progress-value {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, rgba(56, 244, 255, 0.96), rgba(20, 180, 228, 0.76));
+}
+
+.overview-zone-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(177, 239, 255, 0.86);
+}
+
+.overview-zone-list {
+  max-height: 210px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
+}
+
+.overview-zone-list::-webkit-scrollbar,
+.overview-audit-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.overview-zone-list::-webkit-scrollbar-track,
+.overview-audit-list::-webkit-scrollbar-track {
+  background: rgba(4, 18, 29, 0.68);
+  border-radius: 999px;
+}
+
+.overview-zone-list::-webkit-scrollbar-thumb,
+.overview-audit-list::-webkit-scrollbar-thumb {
+  background: rgba(55, 242, 255, 0.5);
+  border-radius: 999px;
+}
+
+.overview-zone-list::-webkit-scrollbar-thumb:hover,
+.overview-audit-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(55, 242, 255, 0.72);
+}
+
+.overview-audit-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
 }
 
 .stage-card {
@@ -5445,7 +6275,12 @@ onMounted(() => {
   border-radius: 8px;
   padding: 2px;
   width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
   background: rgba(2, 10, 16, 0.85);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
 }
 
 .checklist-overview-tab {
@@ -6078,6 +6913,45 @@ onMounted(() => {
   width: 100%;
 }
 
+.mission-allocation-modal {
+  gap: 14px;
+}
+
+.allocation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.allocation-grid.single-column {
+  grid-template-columns: 1fr;
+}
+
+.allocation-card {
+  border: 1px solid rgba(55, 242, 255, 0.28);
+  border-radius: 12px;
+  padding: 12px;
+  background: linear-gradient(145deg, rgba(8, 24, 36, 0.86), rgba(4, 12, 20, 0.94));
+  box-shadow: inset 0 0 0 1px rgba(55, 242, 255, 0.12), 0 10px 22px rgba(1, 8, 14, 0.45);
+  display: grid;
+  gap: 10px;
+}
+
+.allocation-card h4 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(216, 251, 255, 0.92);
+}
+
+.allocation-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .field-control input[type="file"] {
   padding: 6px;
 }
@@ -6182,6 +7056,15 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 
+  .overview-vitals {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .overview-layout,
+  .overview-board {
+    grid-template-columns: 1fr;
+  }
+
   .checklist-manager-controls {
     grid-template-columns: 1fr;
   }
@@ -6227,8 +7110,13 @@ onMounted(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .overview-vitals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .field-grid,
-  .board-lanes {
+  .board-lanes,
+  .allocation-grid {
     grid-template-columns: 1fr;
   }
 

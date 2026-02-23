@@ -25,6 +25,7 @@ export const endpoints = {
   markerSymbols: "/api/markers/symbols",
   r3aktMissions: "/api/r3akt/missions",
   r3aktMissionChanges: "/api/r3akt/mission-changes",
+  r3aktLogEntries: "/api/r3akt/log-entries",
   r3aktTeams: "/api/r3akt/teams",
   r3aktTeamMembers: "/api/r3akt/team-members",
   r3aktAssets: "/api/r3akt/assets",
