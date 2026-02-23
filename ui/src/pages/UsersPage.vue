@@ -64,7 +64,7 @@
             <input v-model="teamFilter" type="text" placeholder="Filter teams by name/mission" />
           </div>
           <div v-else-if="activeTab === 'team-members'" class="tree-search">
-            <input v-model="teamMemberFilter" type="text" placeholder="Filter members by name/identity" />
+            <input v-model="teamMemberFilter" type="text" placeholder="Filter members by callsign/identity" />
           </div>
           <div v-else class="tree-note">
             Routing snapshot loads automatically when this tab is opened.
@@ -222,15 +222,18 @@
                 <div v-for="member in pagedTeamMembers" :key="member.uid" class="registry-card cui-panel">
                   <div class="registry-card-header">
                     <div>
-                      <div class="registry-card-title">{{ member.display_name || member.rns_identity || "Unknown member" }}</div>
+                      <div class="registry-card-title">{{ teamMemberPrimaryLabel(member) }}</div>
                       <div class="registry-card-subtitle mono">{{ member.rns_identity || "-" }}</div>
                     </div>
                     <div class="registry-card-tag">{{ member.role || "TEAM_MEMBER" }}</div>
                   </div>
                   <div class="registry-card-meta">
-                    <div><span>UID</span><span class="mono">{{ member.uid || "-" }}</span></div>
+                    <div>
+                      <span>UID</span>
+                      <span class="mono" :title="member.uid || '-'">{{ member.uid ? shortHash(member.uid, 4, 4) : "-" }}</span>
+                    </div>
                     <div><span>Team</span><span>{{ teamNameForMember(member.team_uid) }}</span></div>
-                    <div><span>Callsign</span><span>{{ member.callsign || "-" }}</span></div>
+                    <div><span>Display Name</span><span>{{ member.display_name || "-" }}</span></div>
                     <div><span>Availability</span><span>{{ member.availability || "-" }}</span></div>
                   </div>
                   <div class="registry-card-badges">
@@ -411,7 +414,8 @@ import { useUsersStore } from "../stores/users";
 import { useToastStore } from "../stores/toasts";
 import { formatTimestamp } from "../utils/format";
 import { clientPresenceTag } from "../utils/presence";
-import { resolveIdentityLabel } from "../utils/identity";
+import { resolveIdentityLabel, shortHash } from "../utils/identity";
+import { resolveTeamMemberPrimaryLabel } from "../utils/team-members";
 
 interface MissionRecord {
   uid?: string;
@@ -692,10 +696,12 @@ const filteredTeamMembers = computed(() => {
   }
   return teamMemberRecords.value.filter((member) => {
     const identity = String(member.rns_identity ?? "").toLowerCase();
+    const callsign = String(member.callsign ?? "").toLowerCase();
     const displayName = String(member.display_name ?? "").toLowerCase();
     const teamName = teamNameByUid.value.get(String(member.team_uid ?? "").trim())?.toLowerCase() ?? "";
     return (
       identity.includes(filter) ||
+      callsign.includes(filter) ||
       displayName.includes(filter) ||
       teamName.includes(filter) ||
       String(member.uid ?? "").toLowerCase().includes(filter)
@@ -703,9 +709,11 @@ const filteredTeamMembers = computed(() => {
   });
 });
 
+const teamMemberPrimaryLabel = (member: TeamMemberRecord): string => resolveTeamMemberPrimaryLabel(member);
+
 const sortedTeamMembers = computed(() =>
   [...filteredTeamMembers.value].sort((a, b) =>
-    String(a.display_name ?? a.rns_identity ?? "").localeCompare(String(b.display_name ?? b.rns_identity ?? ""))
+    teamMemberPrimaryLabel(a).localeCompare(teamMemberPrimaryLabel(b))
   )
 );
 

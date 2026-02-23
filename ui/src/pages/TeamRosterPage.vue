@@ -99,20 +99,20 @@
             <table class="mini-table">
               <thead>
                 <tr>
-                  <th>Display Name</th>
+                  <th>Callsign</th>
                   <th>RNS Identity</th>
                   <th>Role</th>
-                  <th>Callsign</th>
+                  <th>Display Name</th>
                   <th>Availability</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="member in membersForTeam" :key="member.uid">
-                  <td>{{ member.display_name || "-" }}</td>
+                  <td>{{ teamMemberPrimaryLabel(member) }}</td>
                   <td class="mono">{{ member.rns_identity || "-" }}</td>
                   <td>{{ member.role || "TEAM_MEMBER" }}</td>
-                  <td>{{ member.callsign || "-" }}</td>
+                  <td>{{ member.display_name || "-" }}</td>
                   <td>{{ member.availability || "-" }}</td>
                   <td>
                     <BaseButton
@@ -147,6 +147,7 @@ import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
 import { formatTimestamp } from "../utils/format";
+import { resolveTeamMemberPrimaryLabel } from "../utils/team-members";
 
 interface MissionRecord {
   uid?: string;
@@ -275,14 +276,6 @@ const selectedTeamMissionLabels = computed(() => {
   return missionUids.map((uid) => missionNameByUid.value.get(uid) ?? uid);
 });
 
-const membersForTeam = computed(() =>
-  teamMembers.value
-    .filter((member) => String(member.team_uid ?? "").trim() === selectedTeamUid.value)
-    .sort((a, b) =>
-      String(a.display_name ?? a.rns_identity ?? "").localeCompare(String(b.display_name ?? b.rns_identity ?? ""))
-    )
-);
-
 const resolveMemberIdentity = (member: TeamMemberRecord): string => {
   const identity = String(member.rns_identity ?? "").trim();
   if (identity) {
@@ -290,6 +283,20 @@ const resolveMemberIdentity = (member: TeamMemberRecord): string => {
   }
   return toStringList(member.client_identities)[0] ?? "";
 };
+
+const teamMemberPrimaryLabel = (member: TeamMemberRecord): string => {
+  const identity = resolveMemberIdentity(member);
+  return resolveTeamMemberPrimaryLabel(member, {
+    identity,
+    uid: String(member.uid ?? "").trim()
+  });
+};
+
+const membersForTeam = computed(() =>
+  teamMembers.value
+    .filter((member) => String(member.team_uid ?? "").trim() === selectedTeamUid.value)
+    .sort((a, b) => teamMemberPrimaryLabel(a).localeCompare(teamMemberPrimaryLabel(b)))
+);
 
 const availableMemberOptions = computed(() => {
   if (!selectedTeamUid.value) {
@@ -307,15 +314,11 @@ const availableMemberOptions = computed(() => {
       }
       return String(member.team_uid ?? "").trim() !== selectedTeamUid.value;
     })
-    .sort((a, b) =>
-      String(a.display_name ?? a.rns_identity ?? a.uid ?? "").localeCompare(
-        String(b.display_name ?? b.rns_identity ?? b.uid ?? "")
-      )
-    )
+    .sort((a, b) => teamMemberPrimaryLabel(a).localeCompare(teamMemberPrimaryLabel(b)))
     .map((member) => {
       const uid = String(member.uid ?? "").trim();
       const identity = resolveMemberIdentity(member);
-      const displayName = String(member.display_name ?? identity ?? uid).trim() || uid;
+      const displayName = teamMemberPrimaryLabel(member);
       const identitySuffix = identity ? ` (${identity})` : "";
       const assignedTeamUid = String(member.team_uid ?? "").trim();
       let assignmentSuffix = "";

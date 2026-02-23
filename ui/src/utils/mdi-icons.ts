@@ -19,29 +19,36 @@ import rectangleSvg from "@mdi/svg/svg/rectangle.svg?raw";
 import rhombusSvg from "@mdi/svg/svg/rhombus.svg?raw";
 import squareSvg from "@mdi/svg/svg/square.svg?raw";
 
+const defineMdiIconAllowlist = <const T extends readonly (readonly [string, string])[]>(entries: T) =>
+  Object.fromEntries(entries) as Record<T[number][0], string>;
+
 // Restrict bundled MDI icons to known mission marker symbols.
-const MDI_ICON_ALLOWLIST: Record<string, string> = {
-  account: accountSvg,
-  "account-group": accountGroupSvg,
-  alert: alertSvg,
-  antenna: antennaSvg,
-  camera: cameraSvg,
-  car: carSvg,
-  "clipboard-check": clipboardCheckSvg,
-  clover: cloverSvg,
-  drone: droneSvg,
-  fire: fireSvg,
-  "home-flood": homeFloodSvg,
-  hospital: hospitalSvg,
-  "map-marker": mapMarkerSvg,
-  "office-building": officeBuildingSvg,
-  paw: pawSvg,
-  radar: radarSvg,
-  radio: radioSvg,
-  rectangle: rectangleSvg,
-  rhombus: rhombusSvg,
-  square: squareSvg
-};
+const MDI_ICON_ALLOWLIST = defineMdiIconAllowlist([
+  ["account", accountSvg],
+  ["account-group", accountGroupSvg],
+  ["alert", alertSvg],
+  ["antenna", antennaSvg],
+  ["camera", cameraSvg],
+  ["car", carSvg],
+  ["clipboard-check", clipboardCheckSvg],
+  ["clover", cloverSvg],
+  ["drone", droneSvg],
+  ["fire", fireSvg],
+  ["home-flood", homeFloodSvg],
+  ["hospital", hospitalSvg],
+  ["map-marker", mapMarkerSvg],
+  ["office-building", officeBuildingSvg],
+  ["paw", pawSvg],
+  ["radar", radarSvg],
+  ["radio", radioSvg],
+  ["rectangle", rectangleSvg],
+  ["rhombus", rhombusSvg],
+  ["square", squareSvg]
+] as const);
+
+type AllowlistedMdiIcon = keyof typeof MDI_ICON_ALLOWLIST;
+
+const isAllowlistedMdiIcon = (name: string): name is AllowlistedMdiIcon => name in MDI_ICON_ALLOWLIST;
 
 const normalizeMdiName = (value: string) =>
   value
@@ -52,8 +59,8 @@ const normalizeMdiName = (value: string) =>
 
 export const loadMdiSvg = async (name: string) => {
   const normalized = normalizeMdiName(name);
-  if (!normalized) {
+  if (!normalized || !isAllowlistedMdiIcon(normalized)) {
     return null;
   }
-  return MDI_ICON_ALLOWLIST[normalized] ?? null;
+  return MDI_ICON_ALLOWLIST[normalized];
 };

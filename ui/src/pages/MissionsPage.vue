@@ -313,72 +313,82 @@
                 </article>
 
                 <article class="stage-card overview-panel overview-panel-wide">
-                  <div class="overview-panel-header">
-                    <h4>Mission Activity / Audit</h4>
+                  <div class="mission-audit-head">
+                    <div>
+                      <h4>Mission Activity / Audit</h4>
+                      <span class="mission-audit-subtitle">Unified mission activity stream (events + mission changes)</span>
+                    </div>
                     <span class="overview-panel-meta">Latest {{ missionAudit.length }} entries</span>
                   </div>
-                  <ul class="stack-list timeline overview-audit-list">
-                    <li v-for="event in missionAudit.slice(0, 16)" :key="`overview-audit-${event.uid}`">
-                      <strong>{{ event.time }}</strong>
-                      <span>{{ event.message }}</span>
-                    </li>
-                    <li v-if="!missionAudit.length">
-                      <strong>No Audit Events</strong>
-                      <span>Mission activity will appear after mission and checklist updates.</span>
-                    </li>
-                  </ul>
+                  <div class="mission-audit-actions">
+                    <BaseButton
+                      size="sm"
+                      variant="secondary"
+                      :icon-left="iconForAction('Export Log')"
+                      @click="previewAction('Export Log')"
+                    >
+                      Export Log
+                    </BaseButton>
+                    <BaseButton
+                      size="sm"
+                      variant="secondary"
+                      :icon-left="iconForAction('Snapshot')"
+                      @click="previewAction('Snapshot')"
+                    >
+                      Snapshot
+                    </BaseButton>
+                    <BaseButton
+                      size="sm"
+                      variant="secondary"
+                      :icon-left="iconForAction('Open Logs')"
+                      @click="previewAction('Open Logs')"
+                    >
+                      Open Logs
+                    </BaseButton>
+                  </div>
+                  <div v-if="!missionAudit.length" class="mission-audit-empty">No mission activity yet.</div>
+                  <div v-else class="mission-audit-table-shell">
+                    <table class="mission-audit-table">
+                      <thead>
+                        <tr>
+                          <th>Event</th>
+                          <th>Type</th>
+                          <th>Time</th>
+                          <th class="mission-audit-cell-action">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template v-for="event in missionAudit" :key="`mission-audit-${event.uid}`">
+                          <tr class="mission-audit-row">
+                            <td class="mission-audit-cell-message">{{ event.message }}</td>
+                            <td class="mission-audit-cell-type">
+                              <span class="mission-audit-type-chip">{{ event.type }}</span>
+                            </td>
+                            <td class="mission-audit-cell-time">{{ formatAuditDateTime(event.timestamp) }}</td>
+                            <td class="mission-audit-cell-action">
+                              <button
+                                type="button"
+                                class="mission-audit-toggle"
+                                :disabled="!hasMissionAuditDetails(event.details)"
+                                @click="toggleMissionAuditExpanded(event.uid)"
+                              >
+                                {{ isMissionAuditExpanded(event.uid) ? "Hide" : "Details" }}
+                              </button>
+                            </td>
+                          </tr>
+                          <tr v-if="isMissionAuditExpanded(event.uid)" class="mission-audit-details-row">
+                            <td colspan="4">
+                              <div class="mission-audit-details">
+                                <BaseFormattedOutput class="mission-audit-json" :value="event.details" />
+                              </div>
+                            </td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
                 </article>
               </section>
-            </div>
-
-            <div v-else-if="secondaryScreen === 'missionAudit'" class="screen-grid">
-              <article class="stage-card mission-audit-stage">
-                <div class="mission-audit-head">
-                  <h4>Mission Activity / Audit</h4>
-                  <span class="mission-audit-subtitle">Unified mission activity stream (events + mission changes)</span>
-                </div>
-                <div v-if="!missionAudit.length" class="mission-audit-empty">No mission activity yet.</div>
-                <div v-else class="mission-audit-table-shell">
-                  <table class="mission-audit-table">
-                    <thead>
-                      <tr>
-                        <th>Event</th>
-                        <th>Type</th>
-                        <th>Time</th>
-                        <th class="mission-audit-cell-action">Details</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <template v-for="event in missionAudit" :key="`mission-audit-${event.uid}`">
-                        <tr class="mission-audit-row">
-                          <td class="mission-audit-cell-message">{{ event.message }}</td>
-                          <td class="mission-audit-cell-type">
-                            <span class="mission-audit-type-chip">{{ event.type }}</span>
-                          </td>
-                          <td class="mission-audit-cell-time">{{ formatAuditDateTime(event.timestamp) }}</td>
-                          <td class="mission-audit-cell-action">
-                            <button
-                              type="button"
-                              class="mission-audit-toggle"
-                              :disabled="!hasMissionAuditDetails(event.details)"
-                              @click="toggleMissionAuditExpanded(event.uid)"
-                            >
-                              {{ isMissionAuditExpanded(event.uid) ? "Hide" : "Details" }}
-                            </button>
-                          </td>
-                        </tr>
-                        <tr v-if="isMissionAuditExpanded(event.uid)" class="mission-audit-details-row">
-                          <td colspan="4">
-                            <div class="mission-audit-details">
-                              <BaseFormattedOutput class="mission-audit-json" :value="event.details" />
-                            </div>
-                          </td>
-                        </tr>
-                      </template>
-                    </tbody>
-                  </table>
-                </div>
-              </article>
             </div>
 
             <div v-else-if="secondaryScreen === 'missionExcheckBoard'" class="screen-grid">
@@ -1006,6 +1016,9 @@
                       <td>{{ asset.type }}</td>
                       <td>{{ asset.status }}</td>
                     </tr>
+                    <tr v-if="!missionAssets.length">
+                      <td colspan="3">No mission assets available yet.</td>
+                    </tr>
                   </tbody>
                 </table>
               </article>
@@ -1025,6 +1038,9 @@
                       <td>{{ assignment.task }}</td>
                       <td>{{ assignment.member }}</td>
                       <td>{{ assignment.assets.join(", ") }}</td>
+                    </tr>
+                    <tr v-if="!missionAssignments.length">
+                      <td colspan="3">No task assignments available yet.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1291,6 +1307,7 @@ import BaseSelect from "../components/BaseSelect.vue";
 import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
+import { resolveTeamMemberPrimaryLabel } from "../utils/team-members";
 
 type PrimaryTab = "mission" | "checklists";
 
@@ -1301,7 +1318,6 @@ type ScreenId =
   | "missionTeamMembers"
   | "assignAssets"
   | "assignZones"
-  | "missionAudit"
   | "assetRegistry"
   | "checklistOverview"
   | "checklistDetails"
@@ -2447,6 +2463,12 @@ const resolveTeamMemberIdentity = (entry: TeamMemberRaw): string => {
   return toStringList(entry.client_identities)[0] ?? "";
 };
 
+const teamMemberPrimaryLabel = (entry: TeamMemberRaw): string => {
+  const identity = resolveTeamMemberIdentity(entry);
+  const uid = String(entry.uid ?? "").trim();
+  return resolveTeamMemberPrimaryLabel(entry, { identity, uid });
+};
+
 const memberCapabilitiesByIdentity = computed(() => {
   const map = new Map<string, string[]>();
   teamMemberSkillRecords.value.forEach((entry) => {
@@ -2501,7 +2523,7 @@ const memberByIdentity = computed(() => {
     if (!uid || !identity) {
       return;
     }
-    const callsign = String(entry.callsign ?? entry.display_name ?? identity).trim() || identity;
+    const callsign = teamMemberPrimaryLabel(entry);
     map.set(normalizeIdentity(identity), { callsign, uid });
   });
   return map;
@@ -2531,7 +2553,6 @@ const screensByTab: Record<PrimaryTab, Array<{ id: ScreenId; label: string }>> =
     { id: "missionTeamMembers", label: "Mission Team & Members" },
     { id: "assignAssets", label: "Assign Assets to Mission" },
     { id: "assignZones", label: "Assign Zones to Mission" },
-    { id: "missionAudit", label: "Mission Activity / Audit" },
     { id: "assetRegistry", label: "Asset Registry" }
   ],
   checklists: [{ id: "checklistOverview", label: "Checklist Management" }]
@@ -2548,7 +2569,6 @@ const screenMeta: Record<ScreenId, { title: string; subtitle: string; actions: s
   missionTeamMembers: { title: "Mission Team & Members", subtitle: "Team composition, roles, and capabilities.", actions: ["Add Team", "Add Member"] },
   assignAssets: { title: "Assign Assets to Mission", subtitle: "Bind registered assets to mission tasks and operators.", actions: ["Assign", "Revoke"] },
   assignZones: { title: "Assign Zones to Mission", subtitle: "Zone selection and geographic mission boundaries.", actions: ["Commit", "New Zone"] },
-  missionAudit: { title: "Mission Activity / Audit", subtitle: "Mission timeline, status transitions, and forensic log.", actions: ["Export Log", "Snapshot", "Open Logs"] },
   assetRegistry: { title: "Asset Registry", subtitle: "Hardware inventory, status, and readiness.", actions: ["Deploy", "Filter", "Open Assets"] },
   checklistOverview: { title: "Checklists", subtitle: "Manage checklist instances and templates.", actions: [] },
   checklistDetails: { title: "Checklist Details", subtitle: "Task grid, callsigns, due relative DTG, and status.", actions: ["Edit Cell", "Sync"] },
@@ -3559,16 +3579,11 @@ const memberAllocationExistingMemberOptions = computed(() => {
       }
       return String(entry.team_uid ?? "").trim() !== teamUid;
     })
-    .sort((left, right) =>
-      String(left.callsign ?? left.display_name ?? resolveTeamMemberIdentity(left) ?? "").localeCompare(
-        String(right.callsign ?? right.display_name ?? resolveTeamMemberIdentity(right) ?? "")
-      )
-    )
+    .sort((left, right) => teamMemberPrimaryLabel(left).localeCompare(teamMemberPrimaryLabel(right)))
     .map((entry) => {
       const uid = String(entry.uid ?? "").trim();
       const identity = resolveTeamMemberIdentity(entry);
-      const labelBase =
-        String(entry.callsign ?? entry.display_name ?? identity ?? uid).trim() || uid;
+      const labelBase = teamMemberPrimaryLabel(entry);
       const assignedTeamUid = String(entry.team_uid ?? "").trim();
       const teamSuffix =
         assignedTeamUid && assignedTeamUid !== teamUid
@@ -3601,7 +3616,7 @@ const missionMembers = computed<Member[]>(() => {
     .map((entry) => {
       const uid = String(entry.uid ?? "").trim();
       const identity = resolveTeamMemberIdentity(entry);
-      const callsign = String(entry.callsign ?? entry.display_name ?? identity ?? uid).trim() || uid;
+      const callsign = teamMemberPrimaryLabel(entry);
       return {
         uid,
         mission_uid: selectedMissionUid.value,
@@ -4394,6 +4409,27 @@ const ensureChecklistSelected = (): ChecklistRaw => {
   return checklist;
 };
 
+const resolveMissionChecklistRaw = (missionUid: string): ChecklistRaw | null => {
+  const selected = selectedChecklistRaw.value;
+  if (selected?.uid && String(selected.mission_id ?? "").trim() === missionUid) {
+    return selected;
+  }
+  const candidates = checklistRecords.value
+    .filter((entry) => {
+      const uid = String(entry.uid ?? "").trim();
+      const checklistMissionUid = String(entry.mission_id ?? "").trim();
+      return uid.length > 0 && checklistMissionUid === missionUid;
+    })
+    .sort((left, right) => {
+      const createdDiff = toEpoch(right.created_at) - toEpoch(left.created_at);
+      if (createdDiff !== 0) {
+        return createdDiff;
+      }
+      return String(left.uid ?? "").localeCompare(String(right.uid ?? ""));
+    });
+  return candidates[0] ?? null;
+};
+
 const resetTeamAllocationModalDraft = () => {
   teamAllocationExistingTeamUid.value = teamAllocationExistingTeamOptions.value[1]?.value ?? "";
   const missionName = String(selectedMission.value?.mission_name ?? "Mission").trim() || "Mission";
@@ -4554,15 +4590,17 @@ const ensureMemberIdentityForMission = async (): Promise<{ uid: string; identity
 };
 
 const ensureChecklistTaskContext = async (): Promise<{ checklistUid: string; taskUid: string }> => {
-  let checklist = selectedChecklistRaw.value;
+  const missionUid = ensureMissionSelected();
+  let checklist = resolveMissionChecklistRaw(missionUid);
   if (!checklist?.uid) {
     await createChecklistAction();
-    checklist = selectedChecklistRaw.value;
+    checklist = resolveMissionChecklistRaw(missionUid);
   }
   if (!checklist?.uid) {
     throw new Error("No checklist is available for this mission");
   }
   const checklistUid = String(checklist.uid).trim();
+  selectedChecklistUid.value = checklistUid;
   let taskUid = toArray<ChecklistTaskRaw>(checklist.tasks).find((task) => String(task.task_uid ?? "").trim().length > 0)
     ?.task_uid;
   if (!taskUid) {
@@ -4571,7 +4609,9 @@ const ensureChecklistTaskContext = async (): Promise<{ checklistUid: string; tas
       due_relative_minutes: 10
     });
     await loadWorkspace();
-    checklist = selectedChecklistRaw.value;
+    checklist =
+      checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === checklistUid) ??
+      resolveMissionChecklistRaw(missionUid);
     taskUid = toArray<ChecklistTaskRaw>(checklist?.tasks).find((task) => String(task.task_uid ?? "").trim().length > 0)
       ?.task_uid;
   }
@@ -6207,34 +6247,22 @@ onMounted(() => {
   scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
 }
 
-.overview-zone-list::-webkit-scrollbar,
-.overview-audit-list::-webkit-scrollbar {
+.overview-zone-list::-webkit-scrollbar {
   width: 8px;
 }
 
-.overview-zone-list::-webkit-scrollbar-track,
-.overview-audit-list::-webkit-scrollbar-track {
+.overview-zone-list::-webkit-scrollbar-track {
   background: rgba(4, 18, 29, 0.68);
   border-radius: 999px;
 }
 
-.overview-zone-list::-webkit-scrollbar-thumb,
-.overview-audit-list::-webkit-scrollbar-thumb {
+.overview-zone-list::-webkit-scrollbar-thumb {
   background: rgba(55, 242, 255, 0.5);
   border-radius: 999px;
 }
 
-.overview-zone-list::-webkit-scrollbar-thumb:hover,
-.overview-audit-list::-webkit-scrollbar-thumb:hover {
+.overview-zone-list::-webkit-scrollbar-thumb:hover {
   background: rgba(55, 242, 255, 0.72);
-}
-
-.overview-audit-list {
-  max-height: 260px;
-  overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
 }
 
 .stage-card {
@@ -6321,10 +6349,6 @@ onMounted(() => {
   border-bottom: 1px solid rgba(55, 242, 255, 0.14);
 }
 
-.mission-audit-stage {
-  gap: 10px;
-}
-
 .mission-audit-head {
   display: flex;
   justify-content: space-between;
@@ -6334,10 +6358,18 @@ onMounted(() => {
 }
 
 .mission-audit-subtitle {
+  display: block;
+  margin-top: 4px;
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(174, 239, 255, 0.78);
+}
+
+.mission-audit-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .mission-audit-empty {

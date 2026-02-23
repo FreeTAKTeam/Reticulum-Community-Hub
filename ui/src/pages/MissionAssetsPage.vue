@@ -192,6 +192,7 @@ import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
 import { formatNumber, formatTimestamp } from "../utils/format";
+import { resolveTeamMemberPrimaryLabel } from "../utils/team-members";
 
 interface MissionRaw {
   uid?: string;
@@ -208,6 +209,8 @@ interface TeamMemberRaw {
   uid?: string;
   team_uid?: string | null;
   display_name?: string | null;
+  callsign?: string | null;
+  rns_identity?: string | null;
 }
 
 interface AssetRaw {
@@ -295,12 +298,15 @@ const missionByUid = computed(() => {
   return map;
 });
 
+const teamMemberPrimaryLabel = (entry: TeamMemberRaw): string =>
+  resolveTeamMemberPrimaryLabel(entry, { uid: String(entry.uid ?? "").trim() });
+
 const memberByUid = computed(() => {
   const map = new Map<string, string>();
   teamMemberRecords.value.forEach((entry) => {
     const uid = String(entry.uid ?? "").trim();
     if (uid) {
-      map.set(uid, String(entry.display_name ?? uid));
+      map.set(uid, teamMemberPrimaryLabel(entry));
     }
   });
   return map;
@@ -356,7 +362,7 @@ const missionScopedMemberOptions = computed(() => {
       if (!uid) {
         return null;
       }
-      const name = String(entry.display_name ?? uid);
+      const name = teamMemberPrimaryLabel(entry);
       return { value: uid, label: name };
     })
     .filter((entry): entry is { value: string; label: string } => entry !== null)
@@ -419,7 +425,7 @@ const scopedMemberSummaries = computed(() => {
       const team = teamRecords.value.find((item) => String(item.uid ?? "").trim() === teamUid);
       return {
         uid,
-        name: String(entry.display_name ?? uid),
+        name: teamMemberPrimaryLabel(entry),
         team: String(team?.team_name ?? "No Team")
       };
     })
