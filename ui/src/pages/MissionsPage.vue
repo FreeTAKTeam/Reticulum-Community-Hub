@@ -331,35 +331,53 @@
               </section>
             </div>
 
-            <div v-else-if="secondaryScreen === 'missionAudit'" class="screen-grid two-col">
-              <article class="stage-card">
-                <h4>Mission Activity / Audit</h4>
-                <ul class="stack-list timeline">
-                  <li v-for="event in missionAudit" :key="event.uid">
-                    <strong>{{ event.time }}</strong>
-                    <span>{{ event.message }}</span>
-                  </li>
-                </ul>
-              </article>
-
-              <article class="stage-card">
-                <h4>Mission Change Feed</h4>
-                <table class="mini-table">
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Type</th>
-                      <th>Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="change in missionChangesForSelected" :key="`change-${change.uid}`">
-                      <td>{{ formatAuditTime(change.timestamp) }}</td>
-                      <td>{{ change.change_type || "change" }}</td>
-                      <td>{{ change.notes || change.name || "-" }}</td>
-                    </tr>
-                  </tbody>
-                </table>
+            <div v-else-if="secondaryScreen === 'missionAudit'" class="screen-grid">
+              <article class="stage-card mission-audit-stage">
+                <div class="mission-audit-head">
+                  <h4>Mission Activity / Audit</h4>
+                  <span class="mission-audit-subtitle">Unified mission activity stream (events + mission changes)</span>
+                </div>
+                <div v-if="!missionAudit.length" class="mission-audit-empty">No mission activity yet.</div>
+                <div v-else class="mission-audit-table-shell">
+                  <table class="mission-audit-table">
+                    <thead>
+                      <tr>
+                        <th>Event</th>
+                        <th>Type</th>
+                        <th>Time</th>
+                        <th class="mission-audit-cell-action">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template v-for="event in missionAudit" :key="`mission-audit-${event.uid}`">
+                        <tr class="mission-audit-row">
+                          <td class="mission-audit-cell-message">{{ event.message }}</td>
+                          <td class="mission-audit-cell-type">
+                            <span class="mission-audit-type-chip">{{ event.type }}</span>
+                          </td>
+                          <td class="mission-audit-cell-time">{{ formatAuditDateTime(event.timestamp) }}</td>
+                          <td class="mission-audit-cell-action">
+                            <button
+                              type="button"
+                              class="mission-audit-toggle"
+                              :disabled="!hasMissionAuditDetails(event.details)"
+                              @click="toggleMissionAuditExpanded(event.uid)"
+                            >
+                              {{ isMissionAuditExpanded(event.uid) ? "Hide" : "Details" }}
+                            </button>
+                          </td>
+                        </tr>
+                        <tr v-if="isMissionAuditExpanded(event.uid)" class="mission-audit-details-row">
+                          <td colspan="4">
+                            <div class="mission-audit-details">
+                              <BaseFormattedOutput class="mission-audit-json" :value="event.details" />
+                            </div>
+                          </td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
               </article>
             </div>
 
@@ -1267,6 +1285,7 @@ import type { ApiError } from "../api/client";
 import { del as deleteRequest, get, patch as patchRequest, post, put } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import BaseButton from "../components/BaseButton.vue";
+import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import BaseModal from "../components/BaseModal.vue";
 import BaseSelect from "../components/BaseSelect.vue";
 import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
@@ -1403,8 +1422,11 @@ interface Zone {
 interface AuditEvent {
   uid: string;
   mission_uid: string;
+  timestamp: string;
   time: string;
+  type: string;
   message: string;
+  details: Record<string, unknown> | null;
 }
 
 interface ChecklistTemplateOption {
@@ -1784,6 +1806,25 @@ const formatAuditTime = (value?: string | null): string => {
   return parsed.toLocaleTimeString([], { hour12: false });
 };
 
+const formatAuditDateTime = (value?: string | null): string => {
+  if (!value) {
+    return "--";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+};
+
+const toAuditTypeLabel = (value?: string | null): string => {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return "ACTIVITY";
+  }
+  return text.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase() || "ACTIVITY";
+};
+
 const formatChecklistDateTime = (value?: string | null): string => {
   if (!value) {
     return "--";
@@ -1809,25 +1850,24 @@ const formatDueRelativeMinutesLabel = (value?: number | null): string => {
 };
 
 const formatDomainEventMessage = (event: DomainEventRaw): string => {
-  const eventType = String(event.event_type ?? "domain.event").trim();
   const payload = asRecord(event.payload);
   const name = payload.name;
   if (typeof name === "string" && name.trim()) {
-    return `${eventType}: ${name.trim()}`;
+    return name.trim();
   }
   const notes = payload.notes;
   if (typeof notes === "string" && notes.trim()) {
-    return `${eventType}: ${notes.trim()}`;
+    return notes.trim();
   }
   const checklistUid = payload.checklist_uid;
   if (typeof checklistUid === "string" && checklistUid.trim()) {
-    return `${eventType}: checklist ${checklistUid.trim()}`;
+    return `Checklist ${checklistUid.trim()}`;
   }
   const missionUid = payload.mission_uid ?? payload.mission_id;
   if (typeof missionUid === "string" && missionUid.trim()) {
-    return `${eventType}: mission ${missionUid.trim()}`;
+    return `Mission ${missionUid.trim()}`;
   }
-  return eventType;
+  return String(event.event_type ?? "domain.event").trim() || "domain.event";
 };
 
 const buildTimestampTag = (): string => new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14);
@@ -2603,6 +2643,7 @@ const memberAllocationModalOpen = ref(false);
 const memberAllocationSubmitting = ref(false);
 const memberAllocationTeamUid = ref("");
 const memberAllocationMemberUid = ref("");
+const missionAuditExpandedRows = ref<Record<string, boolean>>({});
 
 const missionStatusOptions = [
   "MISSION_ACTIVE",
@@ -3711,12 +3752,25 @@ const missionAudit = computed<AuditEvent[]>(() => {
     })
     .map((entry) => {
       const createdAt = String(entry.created_at ?? "");
+      const eventType = String(entry.event_type ?? "domain.event").trim();
+      const payload = asRecord(entry.payload);
       return {
         uid: String(entry.event_uid ?? `${entry.event_type}-${createdAt}`),
         mission_uid: missionUid,
+        timestamp: createdAt,
         time: formatAuditTime(createdAt),
+        type: toAuditTypeLabel(eventType),
         message: formatDomainEventMessage(entry),
-        sortTs: toEpoch(createdAt)
+        details: {
+          source: "domain_event",
+          event_uid: String(entry.event_uid ?? "").trim() || null,
+          domain: String(entry.domain ?? "").trim() || null,
+          aggregate_type: String(entry.aggregate_type ?? "").trim() || null,
+          aggregate_uid: String(entry.aggregate_uid ?? "").trim() || null,
+          event_type: eventType || null,
+          payload
+        },
+        sortTs: toEpoch(createdAt),
       };
     });
 
@@ -3729,28 +3783,53 @@ const missionAudit = computed<AuditEvent[]>(() => {
       return {
         uid: String(entry.uid ?? `${name}-${timestamp}`),
         mission_uid: missionUid,
+        timestamp,
         time: formatAuditTime(timestamp),
+        type: toAuditTypeLabel(entry.change_type),
         message: notes ? `${name}: ${notes}` : name,
-        sortTs: toEpoch(timestamp)
+        details: {
+          source: "mission_change",
+          uid: String(entry.uid ?? "").trim() || null,
+          mission_uid: missionUid,
+          change_type: String(entry.change_type ?? "").trim() || null,
+          name: name || null,
+          notes: notes || null,
+          hashes: toStringList(entry.hashes),
+          timestamp
+        },
+        sortTs: toEpoch(timestamp),
       };
     });
 
   return [...events, ...changes]
     .sort((left, right) => right.sortTs - left.sortTs)
-    .slice(0, 20)
-    .map(({ uid, mission_uid, time, message }) => ({ uid, mission_uid, time, message }));
+    .map(({ uid, mission_uid, timestamp, time, type, message, details }) => ({
+      uid,
+      mission_uid,
+      timestamp,
+      time,
+      type,
+      message,
+      details
+    }));
 });
 
-const missionChangesForSelected = computed(() => {
-  const missionUid = selectedMissionUid.value;
-  if (!missionUid) {
-    return [] as MissionChangeRaw[];
+const hasMissionAuditDetails = (value: Record<string, unknown> | null): boolean => {
+  if (!value) {
+    return false;
   }
-  return missionChanges.value
-    .filter((entry) => String(entry.mission_uid ?? "").trim() === missionUid)
-    .sort((left, right) => toEpoch(right.timestamp) - toEpoch(left.timestamp))
-    .slice(0, 20);
-});
+  return Object.keys(value).length > 0;
+};
+
+const isMissionAuditExpanded = (uid: string): boolean => Boolean(missionAuditExpandedRows.value[uid]);
+
+const toggleMissionAuditExpanded = (uid: string): void => {
+  const current = missionAuditExpandedRows.value;
+  missionAuditExpandedRows.value = {
+    ...current,
+    [uid]: !current[uid]
+  };
+};
 
 const activeMissions = computed(() => missions.value.filter((entry) => entry.status.includes("ACTIVE")).length);
 
@@ -5582,6 +5661,7 @@ watch(selectedMissionUid, (missionUid, previousMissionUid) => {
   if (!missionUid || missionUid === previousMissionUid) {
     return;
   }
+  missionAuditExpandedRows.value = {};
   if (primaryTab.value === "mission") {
     secondaryScreen.value = "missionOverview";
   }
@@ -6239,6 +6319,152 @@ onMounted(() => {
 .mini-table td {
   padding: 6px;
   border-bottom: 1px solid rgba(55, 242, 255, 0.14);
+}
+
+.mission-audit-stage {
+  gap: 10px;
+}
+
+.mission-audit-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mission-audit-subtitle {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(174, 239, 255, 0.78);
+}
+
+.mission-audit-empty {
+  border: 1px dashed rgba(55, 242, 255, 0.28);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 12px;
+  color: rgba(202, 245, 255, 0.82);
+}
+
+.mission-audit-table-shell {
+  border: 1px solid rgba(55, 242, 255, 0.22);
+  border-radius: 10px;
+  background: rgba(5, 16, 26, 0.82);
+  overflow: auto;
+  max-height: clamp(280px, calc(100vh - 360px), 640px);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
+}
+
+.mission-audit-table-shell::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.mission-audit-table-shell::-webkit-scrollbar-track {
+  background: rgba(4, 18, 29, 0.68);
+  border-radius: 999px;
+}
+
+.mission-audit-table-shell::-webkit-scrollbar-thumb {
+  background: rgba(55, 242, 255, 0.5);
+  border-radius: 999px;
+  border: 2px solid rgba(4, 18, 29, 0.68);
+}
+
+.mission-audit-table-shell::-webkit-scrollbar-thumb:hover {
+  background: rgba(55, 242, 255, 0.72);
+}
+
+.mission-audit-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.mission-audit-table th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(173, 238, 255, 0.72);
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(55, 242, 255, 0.24);
+  white-space: nowrap;
+}
+
+.mission-audit-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(55, 242, 255, 0.16);
+  vertical-align: top;
+}
+
+.mission-audit-row:hover td {
+  background: rgba(10, 25, 36, 0.66);
+}
+
+.mission-audit-cell-message {
+  color: rgba(223, 252, 255, 0.94);
+}
+
+.mission-audit-cell-type {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.mission-audit-type-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(55, 242, 255, 0.42);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(171, 241, 255, 0.95);
+  background: rgba(3, 14, 24, 0.82);
+}
+
+.mission-audit-cell-time {
+  width: 1%;
+  white-space: nowrap;
+  color: rgba(198, 244, 255, 0.78);
+}
+
+.mission-audit-cell-action {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mission-audit-toggle {
+  border: 1px solid rgba(55, 242, 255, 0.42);
+  border-radius: 999px;
+  background: rgba(6, 18, 28, 0.82);
+  color: #39f2ff;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.mission-audit-toggle:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.mission-audit-details-row td {
+  padding: 0;
+  border-bottom: 1px solid rgba(55, 242, 255, 0.2);
+}
+
+.mission-audit-details {
+  padding: 10px;
+  background: rgba(2, 10, 18, 0.88);
 }
 
 .checklist-workspace {

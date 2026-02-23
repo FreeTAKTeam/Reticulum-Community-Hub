@@ -55,6 +55,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TEMPERATURE,
     SID_TIME,
 )
+from sqlalchemy import and_
 from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -99,8 +100,8 @@ class TelemetryController:
         SID_CUSTOM: "custom",
     }
 
-    _POOL_SIZE = 30
-    _POOL_OVERFLOW = 60
+    _POOL_SIZE = 8
+    _POOL_OVERFLOW = 16
     _CONNECT_TIMEOUT_SECONDS = 30
     _SESSION_RETRIES = 3
     _SESSION_BACKOFF = 0.1
@@ -226,6 +227,54 @@ class TelemetryController:
         ).all()
         return tels
 
+    def _load_latest_telemetry(
+        self,
+        session: Session,
+        *,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        peer_destinations: set[str] | None = None,
+    ) -> list[Telemeter]:
+        """Return the newest telemetry row per peer for the requested window."""
+
+        if peer_destinations is not None and not peer_destinations:
+            return []
+
+        latest_by_peer = session.query(
+            Telemeter.peer_dest.label("peer_dest"),
+            sa_max(Telemeter.time).label("max_time"),
+        )
+        if start_time is not None:
+            latest_by_peer = latest_by_peer.filter(Telemeter.time >= start_time)
+        if end_time is not None:
+            latest_by_peer = latest_by_peer.filter(Telemeter.time <= end_time)
+        if peer_destinations is not None:
+            latest_by_peer = latest_by_peer.filter(
+                Telemeter.peer_dest.in_(sorted(peer_destinations))
+            )
+        latest_by_peer = latest_by_peer.group_by(Telemeter.peer_dest).subquery()
+
+        telemeters = (
+            session.query(Telemeter)
+            .join(
+                latest_by_peer,
+                and_(
+                    Telemeter.peer_dest == latest_by_peer.c.peer_dest,
+                    Telemeter.time == latest_by_peer.c.max_time,
+                ),
+            )
+            .order_by(Telemeter.time.desc(), Telemeter.id.desc())
+            .options(
+                joinedload(Telemeter.sensors),
+                joinedload(Telemeter.sensors.of_type(LXMFPropagation)).joinedload(
+                    LXMFPropagation.peers
+                ),
+            )
+            .all()
+        )
+        # Keep one entry per peer and retain the existing location-only policy.
+        return self._latest_by_peer(telemeters)
+
     def get_telemetry(
         self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
     ) -> list[Telemeter]:
@@ -253,19 +302,19 @@ class TelemetryController:
         """
 
         timebase_dt = datetime.fromtimestamp(int(since))
+        allowed_destinations: set[str] | None = None
+        if topic_id:
+            if self._api is None:
+                raise ValueError("Topic filtering requires an API service")
+            subscribers = self._api.list_subscribers_for_topic(topic_id)
+            allowed_destinations = {sub.destination for sub in subscribers if sub.destination}
+
         with self._session_scope() as ses:
-            telemeters = self._load_telemetry(ses, start_time=timebase_dt)
-            telemeters = self._latest_by_peer(telemeters)
-            if topic_id:
-                if self._api is None:
-                    raise ValueError("Topic filtering requires an API service")
-                subscribers = self._api.list_subscribers_for_topic(topic_id)
-                allowed = {sub.destination for sub in subscribers}
-                telemeters = [
-                    telemeter
-                    for telemeter in telemeters
-                    if telemeter.peer_dest in allowed
-                ]
+            telemeters = self._load_latest_telemetry(
+                ses,
+                start_time=timebase_dt,
+                peer_destinations=allowed_destinations,
+            )
 
             entries: list[dict[str, object]] = []
             for telemeter in telemeters:
@@ -499,11 +548,10 @@ class TelemetryController:
             human_readable_entries: list[dict[str, object]] = []
             with self._session_scope() as ses:
                 timebase_dt = datetime.fromtimestamp(timebase)
-                teles = self._load_telemetry(ses, start_time=timebase_dt)
-                # Return one snapshot per peer using the most recent entry.
-                teles = self._latest_by_peer(teles)
-                teles = self._filter_by_topic(teles, topic_id, message)
-                if teles is None:
+                allowed_destinations, allowed_for_sender = (
+                    self._allowed_topic_destinations_for_sender(topic_id, message)
+                )
+                if not allowed_for_sender:
                     return self._reply(
                         message,
                         my_lxm_dest,
@@ -511,6 +559,11 @@ class TelemetryController:
                         topic_id=topic_id,
                         status="denied",
                     )
+                teles = self._load_latest_telemetry(
+                    ses,
+                    start_time=timebase_dt,
+                    peer_destinations=allowed_destinations,
+                )
                 packed_tels = []
                 incoming_fields = message.fields if isinstance(message.fields, dict) else {}
                 dest = RNS.Destination(
@@ -559,11 +612,10 @@ class TelemetryController:
                 },
             )
             message.fields = apply_icon_appearance(message.fields)
-            readable_json = json.dumps(
-                self._json_safe(human_readable_entries), default=str
+            RNS.log(
+                f"Sending telemetry snapshot for {len(human_readable_entries)} clients",
+                getattr(RNS, "LOG_INFO", 4),
             )
-            print(f"Sending telemetry of {len(human_readable_entries)} clients")
-            print("Telemetry response in human readeble format: " f"{readable_json}")
             self._record_event(
                 "telemetry_request",
                 f"Telemetry request served ({len(human_readable_entries)} entries)",
@@ -571,7 +623,6 @@ class TelemetryController:
                     "topic_id": topic_id,
                     "timebase": timebase,
                     "entry_count": len(human_readable_entries),
-                    "payload": human_readable_entries,
                 },
             )
             return message
@@ -884,27 +935,38 @@ class TelemetryController:
                 continue
         return None
 
-    def _filter_by_topic(
-        self,
-        telemeters: list[Telemeter],
-        topic_id: str | None,
-        message: LXMF.LXMessage,
-    ) -> list[Telemeter] | None:
-        """Filter telemetry entries to those subscribed to a topic."""
+    def _allowed_topic_destinations(
+        self, topic_id: str | None
+    ) -> tuple[set[str] | None, bool]:
+        """Return allowed peer destinations for ``topic_id``.
 
-        if topic_id is None:
-            return telemeters
-        if self._api is None:
-            return telemeters
+        Returns:
+            tuple[set[str] | None, bool]: Allowed destinations and whether the
+            topic exists.
+        """
+
+        if topic_id is None or self._api is None:
+            return None, True
         try:
             subscribers = self._api.list_subscribers_for_topic(topic_id)
         except KeyError:
-            return []
+            return set(), False
+        return {sub.destination for sub in subscribers if sub.destination}, True
+
+    def _allowed_topic_destinations_for_sender(
+        self, topic_id: str | None, message: LXMF.LXMessage
+    ) -> tuple[set[str] | None, bool]:
+        """Return topic destinations and whether the sender is authorized."""
+
+        allowed, topic_exists = self._allowed_topic_destinations(topic_id)
+        if topic_id is None or self._api is None or allowed is None:
+            return allowed, True
+        if not topic_exists:
+            return allowed, True
         destination = self._identity_hex(message.source.identity)
-        allowed = {sub.destination for sub in subscribers}
         if destination not in allowed:
-            return None
-        return [tel for tel in telemeters if tel.peer_dest in allowed]
+            return None, False
+        return allowed, True
 
     @staticmethod
     def _identity_hex(identity: RNS.Identity) -> str:

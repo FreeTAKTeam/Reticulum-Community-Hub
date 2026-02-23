@@ -1,7 +1,7 @@
 {
   "name": "rch-desktop",
   "private": true,
-  "version": "1.35.1",
+  "version": "1.35.2",
   "description": "Electron shell for Reticulum Community Hub.",
   "homepage": "https://github.com/FreeTAKTeam/Reticulum-Community-Hub",
   "main": "dist/main.js",

@@ -1,19 +1,20 @@
 import { createRouter } from "vue-router";
 import { createWebHistory } from "vue-router";
-import AboutPage from "../pages/AboutPage.vue";
-import ConfigurePage from "../pages/ConfigurePage.vue";
-import ConnectPage from "../pages/ConnectPage.vue";
-import DashboardPage from "../pages/DashboardPage.vue";
-import FilesPage from "../pages/FilesPage.vue";
-import ChatPage from "../pages/ChatPage.vue";
-import ChecklistsPage from "../pages/ChecklistsPage.vue";
-import MissionAssetsPage from "../pages/MissionAssetsPage.vue";
-import MissionLogsPage from "../pages/MissionLogsPage.vue";
-import MissionsPage from "../pages/MissionsPage.vue";
-import TeamRosterPage from "../pages/TeamRosterPage.vue";
-import TopicsPage from "../pages/TopicsPage.vue";
-import UsersPage from "../pages/UsersPage.vue";
-import WebMapPage from "../pages/WebMapPage.vue";
+
+const DashboardPage = () => import("../pages/DashboardPage.vue");
+const MissionsPage = () => import("../pages/MissionsPage.vue");
+const MissionAssetsPage = () => import("../pages/MissionAssetsPage.vue");
+const MissionLogsPage = () => import("../pages/MissionLogsPage.vue");
+const ChecklistsPage = () => import("../pages/ChecklistsPage.vue");
+const WebMapPage = () => import("../pages/WebMapPage.vue");
+const TopicsPage = () => import("../pages/TopicsPage.vue");
+const FilesPage = () => import("../pages/FilesPage.vue");
+const ChatPage = () => import("../pages/ChatPage.vue");
+const UsersPage = () => import("../pages/UsersPage.vue");
+const TeamRosterPage = () => import("../pages/TeamRosterPage.vue");
+const ConfigurePage = () => import("../pages/ConfigurePage.vue");
+const AboutPage = () => import("../pages/AboutPage.vue");
+const ConnectPage = () => import("../pages/ConnectPage.vue");
 
 const router = createRouter({
   history: createWebHistory(),
