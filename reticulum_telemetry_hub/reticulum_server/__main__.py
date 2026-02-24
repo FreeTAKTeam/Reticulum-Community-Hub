@@ -46,6 +46,7 @@ from typing import cast
 
 import LXMF
 import RNS
+import RNS.vendor.umsgpack as msgpack
 
 from reticulum_telemetry_hub.api.models import ChatMessage
 from reticulum_telemetry_hub.api.models import FileAttachment
@@ -68,6 +69,7 @@ from reticulum_telemetry_hub.reticulum_server.announce_capabilities import (
     CapabilityEncodingResult,
     append_capabilities_to_announce_app_data,
     build_capability_payload,
+    decode_inbound_capability_payload,
     encode_capability_payload,
     normalize_capability_list,
     select_capability_encoder,
@@ -129,6 +131,7 @@ DEFAULT_OUTBOUND_WORKERS = 2
 DEFAULT_OUTBOUND_SEND_TIMEOUT = 5.0
 DEFAULT_OUTBOUND_BACKOFF = 0.5
 DEFAULT_OUTBOUND_MAX_ATTEMPTS = 3
+IDENTITY_CAPABILITY_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
 def _resolve_interval(value: int | None, fallback: int) -> int:
@@ -206,10 +209,12 @@ class AnnounceHandler:
         api: ReticulumTelemetryHubAPI | None = None,
         *,
         persist_queue_size: int = _DEFAULT_PERSIST_QUEUE_SIZE,
+        capability_callback: Callable[[str, set[str]], None] | None = None,
     ):
         self.aspect_filter = APP_NAME
         self.identities = identities
         self._api = api
+        self._capability_callback = capability_callback
         self._persist_queue: queue.Queue[tuple[str, str | None, str | None]] = queue.Queue(
             maxsize=max(1, int(persist_queue_size))
         )
@@ -282,12 +287,18 @@ class AnnounceHandler:
         # RNS.log(f"\t| App data               : {app_data}")
         # RNS.log("\t+---------------------------------------------------------------")
         label = self._decode_app_data(app_data)
+        capabilities = self._decode_capabilities(app_data)
         destination_key = self._normalize_hash(destination_hash)
         identity_key = self._normalize_hash(announced_identity)
         hash_keys = [key for key in (destination_key, identity_key) if key]
         if label:
             for key in hash_keys:
                 self.identities[key] = label
+        if capabilities:
+            callback = self._capability_callback
+            if callback is not None:
+                for key in hash_keys:
+                    callback(key, set(capabilities))
         if destination_key:
             self._persist_announce_async(
                 destination_key,
@@ -332,6 +343,29 @@ class AnnounceHandler:
                 return display_name or None
 
         return None
+
+    @staticmethod
+    def _decode_capabilities(app_data) -> set[str]:
+        if not isinstance(app_data, (bytes, bytearray, memoryview)):
+            return set()
+        try:
+            decoded = msgpack.unpackb(bytes(app_data), raw=False)
+        except Exception:
+            return set()
+        if not isinstance(decoded, list) or len(decoded) < 3:
+            return set()
+        payload = decode_inbound_capability_payload(decoded[2])
+        if not isinstance(payload, dict):
+            return set()
+        raw_caps = payload.get("caps")
+        if not isinstance(raw_caps, list):
+            return set()
+        normalized: set[str] = set()
+        for item in raw_caps:
+            text = str(item or "").strip().lower()
+            if text:
+                normalized.add(text)
+        return normalized
 
     def _persist_announce_async(
         self,
@@ -554,10 +588,13 @@ class ReticulumTelemetryHub:
         self._announce_capabilities_enabled = True
         self._announce_capabilities_lock = threading.Lock()
         self._announce_capabilities_logged = False
+        self._identity_capability_cache: dict[str, tuple[set[str], float]] = {}
+        self._mission_change_fanout_cache: dict[str, float] = {}
         self.command_manager = None
         self.mission_sync_router = None
         self.checklist_sync_router = None
         self.mission_domain_service = None
+        self._remove_mission_change_listener: Callable[[], None] | None = None
         self._announce_handler: AnnounceHandler | None = None
 
         identity = self.load_or_generate_identity(self.identity_path)
@@ -640,7 +677,11 @@ class ReticulumTelemetryHub:
         self.api.set_reticulum_destination(self._origin_rch_hex())
         self._backfill_identity_announces()
         self._load_persisted_clients()
-        self._announce_handler = AnnounceHandler(self.identities, api=self.api)
+        self._announce_handler = AnnounceHandler(
+            self.identities,
+            api=self.api,
+            capability_callback=self._update_identity_capability_cache,
+        )
         RNS.Transport.register_announce_handler(self._announce_handler)
         self.tel_controller.set_api(self.api)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
@@ -699,6 +740,12 @@ class ReticulumTelemetryHub:
         self.topic_subscribers: dict[str, set[str]] = {}
         self._topic_registry_last_refresh: float = 0.0
         self._refresh_topic_registry()
+        if self.mission_domain_service is not None:
+            self._remove_mission_change_listener = (
+                self.mission_domain_service.register_mission_change_listener(
+                    self._fanout_mission_change_to_recipients
+                )
+            )
         self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
         init_elapsed = time.monotonic() - init_started
         RNS.log(
@@ -751,10 +798,6 @@ class ReticulumTelemetryHub:
                 mission_commands,
                 source_identity=source_identity,
                 group=group,
-            )
-            self._fanout_mission_team_events(
-                mission_replies,
-                source_fields=message_fields,
             )
             responses.extend(
                 [
@@ -916,6 +959,238 @@ class ReticulumTelemetryHub:
             )
         )
         return merged
+
+    def _update_identity_capability_cache(
+        self, identity: str, capabilities: set[str]
+    ) -> None:
+        normalized_identity = str(identity or "").strip().lower()
+        if not normalized_identity:
+            return
+        normalized_caps = {
+            str(value or "").strip().lower() for value in capabilities if value
+        }
+        if not normalized_caps:
+            return
+        expires_at = time.time() + IDENTITY_CAPABILITY_CACHE_TTL_SECONDS
+        self._identity_capability_cache[normalized_identity] = (
+            normalized_caps,
+            expires_at,
+        )
+
+    def _identity_capabilities(self, identity: str) -> set[str]:
+        normalized_identity = str(identity or "").strip().lower()
+        if not normalized_identity:
+            return set()
+
+        cached = self._identity_capability_cache.get(normalized_identity)
+        now = time.time()
+        if cached is not None:
+            values, expires_at = cached
+            if now < float(expires_at):
+                return set(values)
+
+        api = getattr(self, "api", None)
+        if api is None:
+            return set()
+        try:
+            grants = api.list_identity_capabilities(normalized_identity)
+        except Exception:
+            return set()
+        normalized = {
+            str(value or "").strip().lower() for value in grants if value
+        }
+        self._identity_capability_cache[normalized_identity] = (
+            normalized,
+            now + IDENTITY_CAPABILITY_CACHE_TTL_SECONDS,
+        )
+        return normalized
+
+    def _identity_supports_r3akt(self, identity: str) -> bool:
+        capabilities = self._identity_capabilities(identity)
+        return "r3akt" in capabilities
+
+    def _prune_mission_change_fanout_cache(self) -> None:
+        now = time.time()
+        stale = [
+            uid
+            for uid, expires_at in self._mission_change_fanout_cache.items()
+            if now >= float(expires_at)
+        ]
+        for uid in stale:
+            self._mission_change_fanout_cache.pop(uid, None)
+
+    def _mark_mission_change_fanned_out(self, mission_change_uid: str) -> None:
+        uid = str(mission_change_uid or "").strip()
+        if not uid:
+            return
+        self._prune_mission_change_fanout_cache()
+        self._mission_change_fanout_cache[uid] = time.time() + 24 * 60 * 60
+
+    def _has_mission_change_been_fanned_out(self, mission_change_uid: str) -> bool:
+        uid = str(mission_change_uid or "").strip()
+        if not uid:
+            return False
+        self._prune_mission_change_fanout_cache()
+        expires_at = self._mission_change_fanout_cache.get(uid)
+        if expires_at is None:
+            return False
+        return time.time() < float(expires_at)
+
+    @staticmethod
+    def _build_mission_change_event_field(
+        *,
+        mission_uid: str,
+        mission_change_uid: str,
+        change_type: str | None,
+    ) -> dict[str, object]:
+        return {
+            "event_type": "mission.registry.mission_change.upserted",
+            "payload": {
+                "mission_uid": mission_uid,
+                "mission_change_uid": mission_change_uid,
+                "change_type": change_type,
+            },
+        }
+
+    @staticmethod
+    def _build_r3akt_delta_custom_fields(
+        *,
+        mission_uid: str,
+        mission_change: dict[str, Any],
+        delta: dict[str, Any],
+    ) -> dict[int | str, object]:
+        return {
+            R3AKT_CUSTOM_TYPE_FIELD: R3AKT_CUSTOM_TYPE_IDENTIFIER,
+            R3AKT_CUSTOM_DATA_FIELD: {
+                "mission_uid": mission_uid,
+                "mission_change": mission_change,
+                "delta": delta,
+            },
+            R3AKT_CUSTOM_META_FIELD: {
+                "version": R3AKT_CUSTOM_META_VERSION,
+                "event_type": "mission.registry.mission_change.upserted",
+                "mission_uid": mission_uid,
+                "encoding": "json",
+                "source": "rch",
+            },
+        }
+
+    @staticmethod
+    def _format_generic_mission_delta_markdown(
+        *,
+        mission_uid: str,
+        mission_change: dict[str, Any],
+        delta: dict[str, Any],
+    ) -> str:
+        logs = list(delta.get("logs") or [])
+        assets = list(delta.get("assets") or [])
+        tasks = list(delta.get("tasks") or [])
+        change_uid = str(mission_change.get("uid") or "").strip()
+        change_type = str(mission_change.get("change_type") or "ADD_CONTENT").strip()
+        summary = [
+            "### Mission Update",
+            f"- Mission: `{mission_uid}`",
+            f"- Change: `{change_uid}` (`{change_type}`)",
+            f"- Logs: `{len(logs)}`",
+            f"- Assets: `{len(assets)}`",
+            f"- Tasks: `{len(tasks)}`",
+        ]
+        if tasks:
+            task_op = str(tasks[0].get("op") or "").strip()
+            if task_op:
+                summary.append(f"- Task operation: `{task_op}`")
+        if assets:
+            asset_op = str(assets[0].get("op") or "").strip()
+            if asset_op:
+                summary.append(f"- Asset operation: `{asset_op}`")
+        if logs:
+            log_op = str(logs[0].get("op") or "").strip()
+            if log_op:
+                summary.append(f"- Log operation: `{log_op}`")
+        return "\n".join(summary)
+
+    def _fanout_mission_change_to_recipients(
+        self, mission_change: dict[str, Any]
+    ) -> None:
+        if not isinstance(mission_change, dict):
+            return
+        mission_uid = str(
+            mission_change.get("mission_uid")
+            or mission_change.get("mission_id")
+            or ""
+        ).strip()
+        mission_change_uid = str(mission_change.get("uid") or "").strip()
+        if not mission_uid or not mission_change_uid:
+            return
+        if self._has_mission_change_been_fanned_out(mission_change_uid):
+            return
+
+        domain = getattr(self, "mission_domain_service", None)
+        if domain is None:
+            return
+        try:
+            destinations = domain.list_mission_team_member_identities(mission_uid)
+        except (KeyError, ValueError):
+            return
+        if not destinations:
+            return
+        deduped_destinations = [
+            value
+            for value in dict.fromkeys(
+                str(identity or "").strip().lower() for identity in destinations if identity
+            )
+            if value
+        ]
+        if not deduped_destinations:
+            return
+
+        delta = mission_change.get("delta")
+        delta_payload = dict(delta) if isinstance(delta, dict) else {}
+        base_event_fields = {
+            LXMF.FIELD_EVENT: self._build_mission_change_event_field(
+                mission_uid=mission_uid,
+                mission_change_uid=mission_change_uid,
+                change_type=mission_change.get("change_type"),
+            )
+        }
+
+        markdown_body = self._format_generic_mission_delta_markdown(
+            mission_uid=mission_uid,
+            mission_change=mission_change,
+            delta=delta_payload,
+        )
+        concise_body = (
+            f"r3akt mission delta {mission_uid} {mission_change_uid}".strip()
+        )
+        for destination in deduped_destinations:
+            if self._identity_supports_r3akt(destination):
+                custom_fields = self._build_r3akt_delta_custom_fields(
+                    mission_uid=mission_uid,
+                    mission_change=mission_change,
+                    delta=delta_payload,
+                )
+                merged_fields = self._merge_standard_fields(
+                    source_fields=None,
+                    extra_fields={**base_event_fields, **custom_fields},
+                )
+                self.send_message(
+                    concise_body,
+                    destination=destination,
+                    fields=merged_fields,
+                )
+                continue
+
+            merged_fields = self._merge_standard_fields(
+                source_fields=None,
+                extra_fields=base_event_fields,
+            )
+            self.send_message(
+                markdown_body,
+                destination=destination,
+                fields=merged_fields,
+            )
+
+        self._mark_mission_change_fanned_out(mission_change_uid)
 
     def _fanout_mission_team_events(
         self,
@@ -3412,6 +3687,11 @@ class ReticulumTelemetryHub:
             return
         self._shutdown = True
         self.stop_daemon_workers()
+        if self._remove_mission_change_listener is not None:
+            try:
+                self._remove_mission_change_listener()
+            finally:
+                self._remove_mission_change_listener = None
         if self._announce_handler is not None:
             self._announce_handler.close()
             self._announce_handler = None

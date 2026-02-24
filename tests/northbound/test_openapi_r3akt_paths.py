@@ -147,3 +147,13 @@ def test_openapi_r3akt_endpoints_reference_domain_schemas() -> None:
         paths["/checklists/templates"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
         == "#/components/schemas/R3aktChecklistTemplateListResponse"
     )
+
+
+def test_openapi_r3akt_mission_change_schema_includes_delta() -> None:
+    schemas = _spec()["components"]["schemas"]
+    mission_change = schemas["R3aktMissionChange"]
+    mission_change_request = schemas["R3aktMissionChangeUpsertRequest"]
+
+    assert "delta" in mission_change["properties"]
+    assert mission_change["properties"]["delta"]["type"] == "object"
+    assert "delta" in mission_change_request["properties"]

@@ -43,6 +43,7 @@ class MissionChange:
     change_type: str | None = None
     notes: str | None = None
     team_member_rns_identity: str | None = None
+    delta: dict[str, Any] | None = None
 
 
 @dataclass

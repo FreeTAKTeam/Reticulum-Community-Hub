@@ -511,6 +511,173 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     assert service.list_domain_snapshots(limit=10)
 
 
+def test_mission_delta_auto_emission_for_logs_assets_and_tasks(tmp_path) -> None:
+    service = _service(tmp_path)
+    captured_changes: list[dict[str, object]] = []
+    remove_listener = service.register_mission_change_listener(
+        lambda change: captured_changes.append(dict(change))
+    )
+
+    mission = service.upsert_mission({"uid": "mission-1", "mission_name": "Mission"})
+    service.upsert_team(
+        {"uid": "team-1", "mission_uid": mission["uid"], "team_name": "Ops"}
+    )
+    service.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+        }
+    )
+
+    service.upsert_log_entry(
+        {
+            "entry_uid": "log-1",
+            "mission_uid": mission["uid"],
+            "content": "Initial log",
+            "keywords": ["ops"],
+        }
+    )
+    service.upsert_asset(
+        {
+            "asset_uid": "asset-1",
+            "team_member_uid": "member-1",
+            "name": "Radio 1",
+            "asset_type": "COMM",
+        }
+    )
+    service.upsert_asset(
+        {
+            "asset_uid": "asset-2",
+            "team_member_uid": "member-1",
+            "name": "Radio 2",
+            "asset_type": "COMM",
+        }
+    )
+
+    template = service.create_checklist_template(
+        {
+            "uid": "tpl-1",
+            "template_name": "Template",
+            "created_by_team_member_rns_identity": "peer-a",
+            "columns": _columns(),
+        }
+    )
+    checklist = service.create_checklist_online(
+        {
+            "template_uid": template["uid"],
+            "name": "Checklist",
+            "mission_uid": mission["uid"],
+            "source_identity": "peer-a",
+        }
+    )
+    checklist = service.add_checklist_task_row(checklist["uid"], {"number": 1})
+    task_uid = checklist["tasks"][0]["task_uid"]
+    text_column_uid = next(
+        column["column_uid"]
+        for column in checklist["columns"]
+        if column["column_type"] == "SHORT_STRING"
+    )
+    checklist = service.set_checklist_task_row_style(
+        checklist["uid"],
+        task_uid,
+        {"row_background_color": "#123456", "line_break_enabled": True},
+    )
+    checklist = service.set_checklist_task_cell(
+        checklist["uid"],
+        task_uid,
+        text_column_uid,
+        {"value": "Inspect path", "updated_by_team_member_rns_identity": "peer-a"},
+    )
+    checklist = service.set_checklist_task_status(
+        checklist["uid"],
+        task_uid,
+        {"user_status": "COMPLETE", "changed_by_team_member_rns_identity": "peer-a"},
+    )
+    assignment = service.upsert_assignment(
+        {
+            "assignment_uid": "assignment-1",
+            "mission_uid": mission["uid"],
+            "task_uid": task_uid,
+            "team_member_rns_identity": "peer-a",
+            "assets": ["asset-1"],
+        }
+    )
+    service.set_assignment_assets(assignment["assignment_uid"], ["asset-1"])
+    service.link_assignment_asset(assignment["assignment_uid"], "asset-2")
+    service.unlink_assignment_asset(assignment["assignment_uid"], "asset-2")
+    service.delete_checklist_task_row(checklist["uid"], task_uid)
+    service.delete_asset("asset-1")
+    remove_listener()
+
+    mission_changes = service.list_mission_changes(mission_uid=mission["uid"])
+    assert mission_changes
+    assert captured_changes
+    assert len({item["uid"] for item in captured_changes}) == len(captured_changes)
+    assert all(item.get("mission_id") == mission["uid"] for item in mission_changes)
+
+    log_ops: set[str] = set()
+    asset_ops: set[str] = set()
+    task_ops: set[str] = set()
+    for change in mission_changes:
+        delta = change.get("delta") or {}
+        if not isinstance(delta, dict):
+            continue
+        if delta.get("contract_version"):
+            assert delta["contract_version"] == "r3akt.mission.change.v1"
+        for item in list(delta.get("logs") or []):
+            if isinstance(item, dict):
+                log_ops.add(str(item.get("op")))
+        for item in list(delta.get("assets") or []):
+            if isinstance(item, dict):
+                asset_ops.add(str(item.get("op")))
+        for item in list(delta.get("tasks") or []):
+            if isinstance(item, dict):
+                task_ops.add(str(item.get("op")))
+
+    assert {"upsert"} <= log_ops
+    assert {"upsert", "delete"} <= asset_ops
+    assert {
+        "row_added",
+        "row_deleted",
+        "row_style_set",
+        "cell_set",
+        "status_set",
+        "assignment_upsert",
+        "assignment_assets_set",
+        "assignment_asset_linked",
+        "assignment_asset_unlinked",
+    } <= task_ops
+
+
+def test_checklist_task_mutations_without_mission_skip_mission_change(tmp_path) -> None:
+    service = _service(tmp_path)
+    checklist = service.create_checklist_offline({"name": "Offline"})
+    checklist = service.add_checklist_task_row(checklist["uid"], {"number": 1})
+    task_uid = checklist["tasks"][0]["task_uid"]
+    text_column_uid = next(
+        column["column_uid"]
+        for column in checklist["columns"]
+        if column["column_type"] == "SHORT_STRING"
+    )
+    service.set_checklist_task_row_style(
+        checklist["uid"], task_uid, {"line_break_enabled": True}
+    )
+    service.set_checklist_task_cell(
+        checklist["uid"],
+        task_uid,
+        text_column_uid,
+        {"value": "offline"},
+    )
+    service.set_checklist_task_status(
+        checklist["uid"], task_uid, {"user_status": "COMPLETE"}
+    )
+    service.delete_checklist_task_row(checklist["uid"], task_uid)
+
+    assert service.list_mission_changes() == []
+
+
 def test_team_member_asset_get_and_delete_cleanup(tmp_path) -> None:
     service = _service(tmp_path)
 

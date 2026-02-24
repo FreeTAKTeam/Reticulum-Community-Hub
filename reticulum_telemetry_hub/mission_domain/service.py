@@ -11,6 +11,7 @@ import csv
 from io import StringIO
 from pathlib import Path
 from typing import Any
+from typing import Callable
 import uuid
 
 from sqlalchemy import create_engine
@@ -86,6 +87,8 @@ ASSET_STATUS_LOST = AssetStatus.LOST.value
 ASSET_STATUS_MAINTENANCE = AssetStatus.MAINTENANCE.value
 ASSET_STATUS_RETIRED = AssetStatus.RETIRED.value
 ALLOWED_ASSET_STATUSES = enum_values(AssetStatus)
+MISSION_DELTA_CONTRACT_VERSION = "r3akt.mission.change.v1"
+MISSION_CHANGE_LISTENER_KEY = "mission_change_notifications"
 MISSION_EXPAND_KEYS = {
     "topic",
     "teams",
@@ -150,6 +153,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
     def __init__(self, db_path: Path, *, event_retention_days: int = 90) -> None:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._mission_change_listeners: list[Callable[[dict[str, Any]], None]] = []
         self._engine = create_engine(
             f"sqlite:///{self._db_path}",
             connect_args={"check_same_thread": False, "timeout": 30},
@@ -160,6 +164,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         )
         self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
+        self._run_additive_migrations()
         self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
         self._event_retention_days = max(1, int(event_retention_days))
 
@@ -178,11 +183,70 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         try:
             yield session
             session.commit()
+            pending_notifications = list(
+                session.info.pop(MISSION_CHANGE_LISTENER_KEY, [])
+            )
+            if pending_notifications:
+                self._notify_mission_change_listeners(pending_notifications)
         except Exception:
             session.rollback()
             raise
         finally:
             session.close()
+
+    def _run_additive_migrations(self) -> None:
+        """Apply additive schema updates that SQLAlchemy ``create_all`` cannot handle."""
+
+        self._ensure_mission_change_delta_column()
+
+    def _ensure_mission_change_delta_column(self) -> None:
+        """Ensure the mission-change ``delta`` JSON column exists for legacy databases."""
+
+        with self._engine.connect().execution_options(
+            isolation_level="AUTOCOMMIT"
+        ) as conn:
+            rows = conn.exec_driver_sql(
+                "PRAGMA table_info(r3akt_mission_changes);"
+            ).fetchall()
+            column_names = {str(row[1]) for row in rows if len(row) > 1}
+            if "delta" in column_names:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE r3akt_mission_changes ADD COLUMN delta JSON;"
+            )
+
+    def register_mission_change_listener(
+        self, listener: Callable[[dict[str, Any]], None]
+    ) -> Callable[[], None]:
+        """Register a callback fired after mission changes commit."""
+
+        self._mission_change_listeners.append(listener)
+
+        def _remove_listener() -> None:
+            if listener in self._mission_change_listeners:
+                self._mission_change_listeners.remove(listener)
+
+        return _remove_listener
+
+    def _queue_mission_change_listener_notification(
+        self, session: Session, mission_change: dict[str, Any]
+    ) -> None:
+        queue = session.info.setdefault(MISSION_CHANGE_LISTENER_KEY, [])
+        if isinstance(queue, list):
+            queue.append(dict(mission_change))
+
+    def _notify_mission_change_listeners(
+        self, mission_changes: list[dict[str, Any]]
+    ) -> None:
+        listeners = list(self._mission_change_listeners)
+        if not listeners:
+            return
+        for mission_change in mission_changes:
+            for listener in listeners:
+                try:
+                    listener(dict(mission_change))
+                except Exception:
+                    continue
 
     def _prune_domain_history(self, session: Session) -> None:
         cutoff = _utcnow() - timedelta(days=self._event_retention_days)
@@ -501,6 +565,21 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         )
         team_uids.extend(str(row[0]) for row in legacy_rows)
         return MissionDomainService._dedupe_non_empty(team_uids)
+
+    @staticmethod
+    def _team_member_mission_uids(session: Session, team_member_uid: str) -> list[str]:
+        team_member = session.get(R3aktTeamMemberRecord, team_member_uid)
+        if team_member is None or not team_member.team_uid:
+            return []
+        return MissionDomainService._team_mission_ids(session, str(team_member.team_uid))
+
+    @staticmethod
+    def _checklist_mission_uid(session: Session, checklist_uid: str) -> str | None:
+        checklist = session.get(R3aktChecklistRecord, checklist_uid)
+        if checklist is None:
+            return None
+        mission_uid = str(checklist.mission_uid or "").strip()
+        return mission_uid or None
 
     @staticmethod
     def _set_team_mission_links(
@@ -1075,6 +1154,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         return {
             "uid": row.uid,
             "mission_uid": row.mission_uid,
+            "mission_id": row.mission_uid,
             "name": row.name,
             "team_member_rns_identity": row.team_member_rns_identity,
             "timestamp": _dt(row.timestamp),
@@ -1082,40 +1162,67 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             "change_type": row.change_type,
             "is_federated_change": bool(row.is_federated_change),
             "hashes": list(row.hashes_json or []),
+            "delta": dict(row.delta_json or {}),
         }
 
-    def upsert_mission_change(self, payload: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _normalize_mission_change_delta(payload: Any) -> dict[str, Any]:
+        if payload is None:
+            return {}
+        if not isinstance(payload, dict):
+            raise ValueError("delta must be an object")
+        return dict(payload)
+
+    def _upsert_mission_change_in_session(
+        self,
+        session: Session,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
         uid = str(payload.get("uid") or uuid.uuid4().hex)
-        mission_uid = str(payload.get("mission_uid") or payload.get("mission_id") or "").strip()
+        mission_uid = str(
+            payload.get("mission_uid") or payload.get("mission_id") or ""
+        ).strip()
         if not mission_uid:
             raise ValueError("mission_uid is required")
+        self._ensure_mission_exists(session, mission_uid)
+        row = session.get(R3aktMissionChangeRecord, uid)
+        if row is None:
+            row = R3aktMissionChangeRecord(uid=uid, mission_uid=mission_uid)
+            session.add(row)
+        row.mission_uid = mission_uid
+        row.name = payload.get("name")
+        row.team_member_rns_identity = payload.get("team_member_rns_identity")
+        row.timestamp = _as_datetime(payload.get("timestamp"), default=_utcnow()) or _utcnow()
+        row.notes = payload.get("notes")
+        row.change_type = normalize_enum_value(
+            payload.get("change_type"),
+            field_name="change_type",
+            allowed_values=enum_values(MissionChangeType),
+            default=row.change_type or MissionChangeType.ADD_CONTENT.value,
+        )
+        if payload.get("is_federated_change") is not None:
+            row.is_federated_change = bool(payload.get("is_federated_change"))
+        hashes = self._normalize_string_list(payload.get("hashes"), field_name="hashes")
+        for marker_ref in hashes:
+            self._ensure_marker_exists(session, marker_ref)
+        row.hashes_json = hashes
+        row.delta_json = self._normalize_mission_change_delta(payload.get("delta"))
+        session.flush()
+        data = self._serialize_mission_change(row)
+        self._record_event(
+            session,
+            domain="mission",
+            aggregate_type="mission_change",
+            aggregate_uid=uid,
+            event_type="mission.change.upserted",
+            payload=data,
+        )
+        self._queue_mission_change_listener_notification(session, data)
+        return data
+
+    def upsert_mission_change(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self._session() as session:
-            self._ensure_mission_exists(session, mission_uid)
-            row = session.get(R3aktMissionChangeRecord, uid)
-            if row is None:
-                row = R3aktMissionChangeRecord(uid=uid, mission_uid=mission_uid)
-                session.add(row)
-            row.mission_uid = mission_uid
-            row.name = payload.get("name")
-            row.team_member_rns_identity = payload.get("team_member_rns_identity")
-            row.timestamp = _as_datetime(payload.get("timestamp"), default=_utcnow()) or _utcnow()
-            row.notes = payload.get("notes")
-            row.change_type = normalize_enum_value(
-                payload.get("change_type"),
-                field_name="change_type",
-                allowed_values=enum_values(MissionChangeType),
-                default=row.change_type or MissionChangeType.ADD_CONTENT.value,
-            )
-            if payload.get("is_federated_change") is not None:
-                row.is_federated_change = bool(payload.get("is_federated_change"))
-            hashes = self._normalize_string_list(payload.get("hashes"), field_name="hashes")
-            for marker_ref in hashes:
-                self._ensure_marker_exists(session, marker_ref)
-            row.hashes_json = hashes
-            session.flush()
-            data = self._serialize_mission_change(row)
-            self._record_event(session, domain="mission", aggregate_type="mission_change", aggregate_uid=uid, event_type="mission.change.upserted", payload=data)
-            return data
+            return self._upsert_mission_change_in_session(session, payload)
 
     def list_mission_changes(self, mission_uid: str | None = None) -> list[dict[str, Any]]:
         with self._session() as session:
@@ -1123,6 +1230,52 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if mission_uid:
                 query = query.filter(R3aktMissionChangeRecord.mission_uid == mission_uid)
             return [self._serialize_mission_change(row) for row in query.order_by(R3aktMissionChangeRecord.timestamp.desc()).all()]
+
+    @staticmethod
+    def _build_delta_envelope(
+        *,
+        source_event_type: str,
+        logs: list[dict[str, Any]] | None = None,
+        assets: list[dict[str, Any]] | None = None,
+        tasks: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "contract_version": MISSION_DELTA_CONTRACT_VERSION,
+            "source_event_type": source_event_type,
+            "emitted_at": _dt(_utcnow()),
+            "logs": list(logs or []),
+            "assets": list(assets or []),
+            "tasks": list(tasks or []),
+        }
+
+    def _emit_auto_mission_change(
+        self,
+        session: Session,
+        *,
+        mission_uid: str | None,
+        source_event_type: str,
+        change_type: str,
+        delta: dict[str, Any],
+        notes: str | None = None,
+        team_member_rns_identity: str | None = None,
+        hashes: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_mission_uid = str(mission_uid or "").strip()
+        if not normalized_mission_uid:
+            return None
+        payload: dict[str, Any] = {
+            "uid": uuid.uuid4().hex,
+            "mission_uid": normalized_mission_uid,
+            "timestamp": _dt(_utcnow()),
+            "change_type": change_type,
+            "notes": notes,
+            "team_member_rns_identity": team_member_rns_identity,
+            "hashes": list(hashes or []),
+            "delta": delta,
+            "name": source_event_type,
+        }
+        return self._upsert_mission_change_in_session(session, payload)
 
     @staticmethod
     def _serialize_log_entry(row: R3aktLogEntryRecord) -> dict[str, Any]:
@@ -1215,6 +1368,27 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 aggregate_uid=uid,
                 event_type="mission.log_entry.upserted",
                 payload=data,
+            )
+            log_delta = {
+                "op": "upsert",
+                "entry_uid": data["entry_uid"],
+                "mission_uid": data["mission_uid"],
+                "content": data["content"],
+                "server_time": data["server_time"],
+                "client_time": data["client_time"],
+                "keywords": list(data.get("keywords") or []),
+                "content_hashes": list(data.get("content_hashes") or []),
+            }
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=mission_uid,
+                source_event_type="mission.log_entry.upserted",
+                change_type=MissionChangeType.ADD_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.log_entry.upserted",
+                    logs=[log_delta],
+                ),
+                hashes=list(data.get("content_hashes") or []),
             )
             return data
 
@@ -1684,6 +1858,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                     status=ASSET_STATUS_AVAILABLE,
                 )
                 session.add(row)
+            previous_team_member_uid = str(row.team_member_uid or "").strip() or None
             team_member_uid = payload.get("team_member_uid") or row.team_member_uid
             if team_member_uid:
                 self._ensure_team_member_uid_exists(session, str(team_member_uid))
@@ -1700,6 +1875,37 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             session.flush()
             data = self._serialize_asset(row)
             self._record_event(session, domain="mission", aggregate_type="asset", aggregate_uid=uid, event_type="asset.upserted", payload=data)
+            mission_uids = self._dedupe_non_empty(
+                self._team_member_mission_uids(
+                    session,
+                    str(row.team_member_uid or "").strip(),
+                )
+                + self._team_member_mission_uids(
+                    session,
+                    str(previous_team_member_uid or "").strip(),
+                )
+            )
+            asset_delta = {
+                "op": "upsert",
+                "asset_uid": data["asset_uid"],
+                "team_member_uid": data["team_member_uid"],
+                "name": data["name"],
+                "asset_type": data["asset_type"],
+                "status": data["status"],
+                "location": data["location"],
+                "notes": data["notes"],
+            }
+            for mission_uid in mission_uids:
+                self._emit_auto_mission_change(
+                    session,
+                    mission_uid=mission_uid,
+                    source_event_type="mission.asset.upserted",
+                    change_type=MissionChangeType.ADD_CONTENT.value,
+                    delta=self._build_delta_envelope(
+                        source_event_type="mission.asset.upserted",
+                        assets=[asset_delta],
+                    ),
+                )
             return data
 
     def list_assets(self, team_member_uid: str | None = None) -> list[dict[str, Any]]:
@@ -1722,6 +1928,22 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if row is None:
                 raise KeyError(f"Asset '{asset_uid}' not found")
             data = self._serialize_asset(row)
+            mission_uids = self._team_member_mission_uids(
+                session,
+                str(row.team_member_uid or "").strip(),
+            )
+            linked_assignments = (
+                session.query(R3aktMissionTaskAssignmentRecord.mission_uid)
+                .join(
+                    R3aktAssignmentAssetLinkRecord,
+                    R3aktAssignmentAssetLinkRecord.assignment_uid
+                    == R3aktMissionTaskAssignmentRecord.assignment_uid,
+                )
+                .filter(R3aktAssignmentAssetLinkRecord.asset_uid == asset_uid)
+                .all()
+            )
+            mission_uids.extend(str(item[0]) for item in linked_assignments)
+            mission_uids = self._dedupe_non_empty(mission_uids)
             (
                 session.query(R3aktAssignmentAssetLinkRecord)
                 .filter(R3aktAssignmentAssetLinkRecord.asset_uid == asset_uid)
@@ -1744,6 +1966,27 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 event_type="asset.deleted",
                 payload=data,
             )
+            asset_delta = {
+                "op": "delete",
+                "asset_uid": data["asset_uid"],
+                "team_member_uid": data["team_member_uid"],
+                "name": data["name"],
+                "asset_type": data["asset_type"],
+                "status": data["status"],
+                "location": data["location"],
+                "notes": data["notes"],
+            }
+            for mission_uid in mission_uids:
+                self._emit_auto_mission_change(
+                    session,
+                    mission_uid=mission_uid,
+                    source_event_type="mission.asset.deleted",
+                    change_type=MissionChangeType.REMOVE_CONTENT.value,
+                    delta=self._build_delta_envelope(
+                        source_event_type="mission.asset.deleted",
+                        assets=[asset_delta],
+                    ),
+                )
             return data
 
     @staticmethod
@@ -1983,6 +2226,28 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             session.flush()
             data = self._serialize_assignment(session, row)
             self._record_event(session, domain="mission", aggregate_type="assignment", aggregate_uid=uid, event_type="assignment.upserted", payload=data)
+            task_delta = {
+                "op": "assignment_upsert",
+                "mission_uid": data["mission_uid"],
+                "task_uid": data["task_uid"],
+                "assignment_uid": data["assignment_uid"],
+                "team_member_rns_identity": data["team_member_rns_identity"],
+                "status": data["status"],
+                "due_dtg": data["due_dtg"],
+                "notes": data["notes"],
+                "assets": list(data.get("assets") or []),
+            }
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=mission_uid,
+                source_event_type="mission.assignment.upserted",
+                change_type=MissionChangeType.ADD_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.assignment.upserted",
+                    tasks=[task_delta],
+                ),
+                team_member_rns_identity=member,
+            )
             return data
 
     def list_assignments(self, *, mission_uid: str | None = None, task_uid: str | None = None) -> list[dict[str, Any]]:
@@ -2029,6 +2294,24 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 event_type="assignment.assets.updated",
                 payload=data,
             )
+            task_delta = {
+                "op": "assignment_assets_set",
+                "mission_uid": data["mission_uid"],
+                "task_uid": data["task_uid"],
+                "assignment_uid": data["assignment_uid"],
+                "assets": list(data.get("assets") or []),
+            }
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=data["mission_uid"],
+                source_event_type="mission.assignment.assets.updated",
+                change_type=MissionChangeType.ADD_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.assignment.assets.updated",
+                    tasks=[task_delta],
+                ),
+                team_member_rns_identity=data.get("team_member_rns_identity"),
+            )
             return data
 
     def link_assignment_asset(self, assignment_uid: str, asset_uid: str) -> dict[str, Any]:
@@ -2073,6 +2356,25 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 event_type="assignment.asset.linked",
                 payload={"assignment_uid": assignment_uid, "asset_uid": asset_value},
             )
+            task_delta = {
+                "op": "assignment_asset_linked",
+                "mission_uid": data["mission_uid"],
+                "task_uid": data["task_uid"],
+                "assignment_uid": data["assignment_uid"],
+                "asset_uid": asset_value,
+                "assets": list(data.get("assets") or []),
+            }
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=data["mission_uid"],
+                source_event_type="mission.assignment.asset.linked",
+                change_type=MissionChangeType.ADD_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.assignment.asset.linked",
+                    tasks=[task_delta],
+                ),
+                team_member_rns_identity=data.get("team_member_rns_identity"),
+            )
             return data
 
     def unlink_assignment_asset(self, assignment_uid: str, asset_uid: str) -> dict[str, Any]:
@@ -2110,6 +2412,25 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 aggregate_uid=assignment_uid,
                 event_type="assignment.asset.unlinked",
                 payload={"assignment_uid": assignment_uid, "asset_uid": asset_value},
+            )
+            task_delta = {
+                "op": "assignment_asset_unlinked",
+                "mission_uid": data["mission_uid"],
+                "task_uid": data["task_uid"],
+                "assignment_uid": data["assignment_uid"],
+                "asset_uid": asset_value,
+                "assets": list(data.get("assets") or []),
+            }
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=data["mission_uid"],
+                source_event_type="mission.assignment.asset.unlinked",
+                change_type=MissionChangeType.REMOVE_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.assignment.asset.unlinked",
+                    tasks=[task_delta],
+                ),
+                team_member_rns_identity=data.get("team_member_rns_identity"),
             )
             return data
     def _default_columns(self) -> list[dict[str, Any]]:
@@ -3037,6 +3358,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             checklist = session.get(R3aktChecklistRecord, checklist_uid)
             if checklist is None:
                 raise KeyError(f"Checklist '{checklist_uid}' not found")
+            mission_uid = str(checklist.mission_uid or "").strip() or None
             due_relative = args.get("due_relative_minutes")
             due_dtg = _as_datetime(args.get("due_dtg"))
             if due_dtg is None and due_relative is not None:
@@ -3083,6 +3405,27 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             self._recompute_checklist_status(session, checklist)
             data = self._serialize_checklist(session, checklist)
             self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.progress.changed", payload=data)
+            task_delta = {
+                "op": "row_added",
+                "mission_uid": mission_uid,
+                "checklist_uid": checklist_uid,
+                "task_uid": task_uid,
+                "number": int(task.number or 0),
+                "status": task.task_status,
+                "user_status": task.user_status,
+                "due_dtg": _dt(task.due_dtg),
+                "due_relative_minutes": task.due_relative_minutes,
+            }
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=mission_uid,
+                source_event_type="mission.checklist.task.row.added",
+                change_type=MissionChangeType.ADD_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.checklist.task.row.added",
+                    tasks=[task_delta],
+                ),
+            )
             return data
 
     def delete_checklist_task_row(self, checklist_uid: str, task_uid: str) -> dict[str, Any]:
@@ -3090,15 +3433,35 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             checklist = session.get(R3aktChecklistRecord, checklist_uid)
             if checklist is None:
                 raise KeyError(f"Checklist '{checklist_uid}' not found")
+            mission_uid = str(checklist.mission_uid or "").strip() or None
             task = session.get(R3aktChecklistTaskRecord, task_uid)
             if task is None or task.checklist_uid != checklist_uid:
                 raise KeyError(f"Checklist task '{task_uid}' not found")
+            deleted_task_payload = {
+                "op": "row_deleted",
+                "mission_uid": mission_uid,
+                "checklist_uid": checklist_uid,
+                "task_uid": task_uid,
+                "number": int(task.number or 0),
+                "status": task.task_status,
+                "user_status": task.user_status,
+            }
             session.query(R3aktChecklistCellRecord).filter(R3aktChecklistCellRecord.task_uid == task_uid).delete(synchronize_session=False)
             session.delete(task)
             session.flush()
             self._recompute_checklist_status(session, checklist)
             data = self._serialize_checklist(session, checklist)
             self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.progress.changed", payload=data)
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=mission_uid,
+                source_event_type="mission.checklist.task.row.deleted",
+                change_type=MissionChangeType.REMOVE_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.checklist.task.row.deleted",
+                    tasks=[deleted_task_payload],
+                ),
+            )
             return data
 
     def set_checklist_task_row_style(self, checklist_uid: str, task_uid: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -3106,6 +3469,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             checklist = session.get(R3aktChecklistRecord, checklist_uid)
             if checklist is None:
                 raise KeyError(f"Checklist '{checklist_uid}' not found")
+            mission_uid = str(checklist.mission_uid or "").strip() or None
             task = session.get(R3aktChecklistTaskRecord, task_uid)
             if task is None or task.checklist_uid != checklist_uid:
                 raise KeyError(f"Checklist task '{task_uid}' not found")
@@ -3117,6 +3481,24 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             session.flush()
             data = self._serialize_checklist(session, checklist)
             self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.progress.changed", payload=data)
+            task_delta = {
+                "op": "row_style_set",
+                "mission_uid": mission_uid,
+                "checklist_uid": checklist_uid,
+                "task_uid": task_uid,
+                "row_background_color": task.row_background_color,
+                "line_break_enabled": bool(task.line_break_enabled),
+            }
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=mission_uid,
+                source_event_type="mission.checklist.task.row.style_set",
+                change_type=MissionChangeType.ADD_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.checklist.task.row.style_set",
+                    tasks=[task_delta],
+                ),
+            )
             return data
 
     def set_checklist_task_cell(self, checklist_uid: str, task_uid: str, column_uid: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -3124,6 +3506,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             checklist = session.get(R3aktChecklistRecord, checklist_uid)
             if checklist is None:
                 raise KeyError(f"Checklist '{checklist_uid}' not found")
+            mission_uid = str(checklist.mission_uid or "").strip() or None
             task = session.get(R3aktChecklistTaskRecord, task_uid)
             if task is None or task.checklist_uid != checklist_uid:
                 raise KeyError(f"Checklist task '{task_uid}' not found")
@@ -3145,6 +3528,27 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             session.flush()
             data = self._serialize_checklist(session, checklist)
             self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.progress.changed", payload=data)
+            task_delta = {
+                "op": "cell_set",
+                "mission_uid": mission_uid,
+                "checklist_uid": checklist_uid,
+                "task_uid": task_uid,
+                "column_uid": column_uid,
+                "value": cell.value,
+                "updated_by_team_member_rns_identity": cell.updated_by_team_member_rns_identity,
+                "updated_at": _dt(cell.updated_at),
+            }
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=mission_uid,
+                source_event_type="mission.checklist.task.cell_set",
+                change_type=MissionChangeType.ADD_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.checklist.task.cell_set",
+                    tasks=[task_delta],
+                ),
+                team_member_rns_identity=cell.updated_by_team_member_rns_identity,
+            )
             return data
 
     def set_checklist_task_status(self, checklist_uid: str, task_uid: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -3156,6 +3560,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             checklist = session.get(R3aktChecklistRecord, checklist_uid)
             if checklist is None:
                 raise KeyError(f"Checklist '{checklist_uid}' not found")
+            mission_uid = str(checklist.mission_uid or "").strip() or None
             task = session.get(R3aktChecklistTaskRecord, task_uid)
             if task is None or task.checklist_uid != checklist_uid:
                 raise KeyError(f"Checklist task '{task_uid}' not found")
@@ -3187,4 +3592,30 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.task.marked.late", payload=delta)
             self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.progress.changed", payload=data)
             self._record_snapshot(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, state=data)
+            task_delta = {
+                "op": "status_set",
+                "mission_uid": mission_uid,
+                "checklist_uid": checklist_uid,
+                "task_uid": task_uid,
+                "previous_status": prev,
+                "current_status": task.task_status,
+                "user_status": task.user_status,
+                "changed_by_team_member_rns_identity": changed_by,
+                "changed_at": _dt(now),
+                "completed_at": _dt(task.completed_at),
+                "due_dtg": _dt(task.due_dtg),
+            }
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=mission_uid,
+                source_event_type="mission.checklist.task.status_set",
+                change_type=MissionChangeType.ADD_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.checklist.task.status_set",
+                    tasks=[task_delta],
+                ),
+                team_member_rns_identity=(
+                    str(changed_by).strip() if changed_by is not None else None
+                ),
+            )
             return data

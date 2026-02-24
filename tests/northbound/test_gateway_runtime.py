@@ -38,6 +38,7 @@ class DummyHub:
         self.event_log = event_log
         self.command_manager = None
         self.marker_service = None
+        self.mission_domain_service = object()
         self.identities = {}
         self.connections = {}
 
@@ -160,6 +161,26 @@ def test_build_gateway_app_sets_state(tmp_path) -> None:
 
     assert isinstance(app, FastAPI)
     assert app.state.hub is hub
+
+
+def test_build_gateway_app_passes_hub_domain_service(monkeypatch, tmp_path) -> None:
+    """Pass the hub mission-domain service instance into create_app."""
+
+    captured: dict[str, object] = {}
+    config_manager = HubConfigurationManager(storage_path=tmp_path)
+    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
+    hub = DummyHub(api, telemetry, EventLog())
+
+    def _fake_create_app(**kwargs):
+        captured.update(kwargs)
+        return FastAPI()
+
+    monkeypatch.setattr(gateway, "create_app", _fake_create_app)
+    app = gateway.build_gateway_app(hub, started_at=datetime.now(timezone.utc))
+
+    assert isinstance(app, FastAPI)
+    assert captured.get("mission_domain_service") is hub.mission_domain_service
 
 
 def test_build_gateway_app_routes_include_destination_identity_and_name(tmp_path) -> None:

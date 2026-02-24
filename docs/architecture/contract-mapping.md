@@ -14,7 +14,7 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 - `FIELD_RESULTS (0x0A)`: standard `{status: accepted|rejected|result}` payloads.
 - `FIELD_EVENT (0x0D)`: mission/checklist event envelopes with `event_type` and `payload`.
 - `FIELD_CUSTOM_TYPE (0xFB)`: set to `r3akt.mission.change.v1` for mission-team fanout.
-- `FIELD_CUSTOM_DATA (0xFC)`: mission event payload object (`mission_uid` + event envelope).
+- `FIELD_CUSTOM_DATA (0xFC)`: mission delta payload object (`mission_uid`, `mission_change`, `delta`).
 - `FIELD_CUSTOM_META (0xFD)`: metadata (`version`, `event_type`, `mission_uid`, `encoding`, `source`).
 - `FIELD_GROUP (0x0B)`: preserved from ingress to egress for scoped fan-out compatibility.
 
@@ -23,8 +23,12 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 - `mission.*`, `topic.*` are routed by `reticulum_telemetry_hub/mission_sync/router.py`.
 - Capability ACL is enforced via persisted grants in `identity_capability_grants`.
 - Envelope source identity must match transport-derived sender identity.
-- Mission events carrying a `mission_uid` are fanned out to all identities
-  associated with team members of mission-assigned teams.
+- Mission changes are fanned out from mission-change persistence (post-commit),
+  not from command reply inspection.
+- Recipient set is all identities associated with team members of
+  mission-assigned teams (member identities + linked client identities).
+- R3AKT-capable recipients receive mission delta in custom fields.
+- Non-R3AKT recipients receive a markdown mission-update summary body.
 - Registry command coverage includes mission, mission-change, log-entry, team,
   team-member, asset, skill, team-member-skill, task-skill-requirement,
   assignment, and mission/team-member/assignment association operations.

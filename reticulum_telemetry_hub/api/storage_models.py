@@ -221,6 +221,7 @@ class R3aktMissionChangeRecord(Base):  # pylint: disable=too-few-public-methods
     change_type = Column(String, nullable=True)
     is_federated_change = Column(Boolean, nullable=False, default=False)
     hashes_json = Column("hashes", JSON, nullable=True)
+    delta_json = Column("delta", JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 

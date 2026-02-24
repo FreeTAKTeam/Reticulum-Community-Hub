@@ -54,6 +54,16 @@
               <span class="tree-count">{{ mission.status }}</span>
             </button>
           </div>
+          <div class="mission-directory-actions">
+            <button
+              class="panel-tab mission-directory-create-button"
+              :class="{ active: secondaryScreen === 'missionCreate' }"
+              type="button"
+              @click="setSecondaryScreen('missionCreate')"
+            >
+              Mission Create
+            </button>
+          </div>
         </aside>
 
         <section class="panel registry-main">
@@ -200,57 +210,67 @@
                       </option>
                     </select>
                   </label>
-                  <label class="field-control">
-                    <span>Path</span>
-                    <input v-model="missionDraftPath" type="text" placeholder="ops.region.path" />
-                  </label>
-                  <label class="field-control">
-                    <span>Classification</span>
-                    <input v-model="missionDraftClassification" type="text" placeholder="UNCLASSIFIED" />
-                  </label>
-                  <label class="field-control">
-                    <span>Tool</span>
-                    <input v-model="missionDraftTool" type="text" placeholder="ATAK" />
-                  </label>
-                  <label class="field-control">
-                    <span>Keywords (comma separated)</span>
-                    <input v-model="missionDraftKeywords" type="text" placeholder="winter,storm,rescue" />
-                  </label>
-                  <label class="field-control">
-                    <span>Default Role</span>
-                    <input v-model="missionDraftDefaultRole" type="text" placeholder="TEAM_MEMBER" />
-                  </label>
-                  <label class="field-control">
-                    <span>Owner Role</span>
-                    <input v-model="missionDraftOwnerRole" type="text" placeholder="TEAM_LEAD" />
-                  </label>
-                  <label class="field-control">
-                    <span>Mission Priority</span>
-                    <input v-model="missionDraftPriority" type="number" min="0" step="1" placeholder="1" />
-                  </label>
-                  <label class="field-control">
-                    <span>Mission RDE Role</span>
-                    <input v-model="missionDraftMissionRdeRole" type="text" placeholder="observer" />
-                  </label>
-                  <label class="field-control">
-                    <span>Token</span>
-                    <input v-model="missionDraftToken" type="text" placeholder="optional token" />
-                  </label>
-                  <label class="field-control">
-                    <span>Feeds (comma separated)</span>
-                    <input v-model="missionDraftFeeds" type="text" placeholder="feed-alpha,feed-bravo" />
-                  </label>
-                  <label class="field-control">
-                    <span>Expiration</span>
-                    <input v-model="missionDraftExpiration" type="datetime-local" />
-                  </label>
-                  <label class="field-control">
-                    <span>Invite Only</span>
-                    <select v-model="missionDraftInviteOnly">
-                      <option :value="false">No</option>
-                      <option :value="true">Yes</option>
-                    </select>
-                  </label>
+                  <details class="mission-advanced-properties full" :open="missionAdvancedPropertiesOpen" @toggle="onMissionAdvancedPropertiesToggle">
+                    <summary class="mission-advanced-properties__summary">
+                      <span class="mission-advanced-properties__title">Advanced Properties</span>
+                      <span class="mission-advanced-properties__meta">
+                        {{ missionAdvancedPropertiesOpen ? "Expanded" : "Folded" }}
+                      </span>
+                    </summary>
+                    <div class="field-grid mission-advanced-properties__grid">
+                      <label class="field-control">
+                        <span>Path</span>
+                        <input v-model="missionDraftPath" type="text" placeholder="ops.region.path" />
+                      </label>
+                      <label class="field-control">
+                        <span>Classification</span>
+                        <input v-model="missionDraftClassification" type="text" placeholder="UNCLASSIFIED" />
+                      </label>
+                      <label class="field-control">
+                        <span>Tool</span>
+                        <input v-model="missionDraftTool" type="text" placeholder="ATAK" />
+                      </label>
+                      <label class="field-control">
+                        <span>Keywords (comma separated)</span>
+                        <input v-model="missionDraftKeywords" type="text" placeholder="winter,storm,rescue" />
+                      </label>
+                      <label class="field-control">
+                        <span>Default Role</span>
+                        <input v-model="missionDraftDefaultRole" type="text" placeholder="TEAM_MEMBER" />
+                      </label>
+                      <label class="field-control">
+                        <span>Owner Role</span>
+                        <input v-model="missionDraftOwnerRole" type="text" placeholder="TEAM_LEAD" />
+                      </label>
+                      <label class="field-control">
+                        <span>Mission Priority</span>
+                        <input v-model="missionDraftPriority" type="number" min="0" step="1" placeholder="1" />
+                      </label>
+                      <label class="field-control">
+                        <span>Mission RDE Role</span>
+                        <input v-model="missionDraftMissionRdeRole" type="text" placeholder="observer" />
+                      </label>
+                      <label class="field-control">
+                        <span>Token</span>
+                        <input v-model="missionDraftToken" type="text" placeholder="optional token" />
+                      </label>
+                      <label class="field-control">
+                        <span>Feeds (comma separated)</span>
+                        <input v-model="missionDraftFeeds" type="text" placeholder="feed-alpha,feed-bravo" />
+                      </label>
+                      <label class="field-control">
+                        <span>Expiration</span>
+                        <input v-model="missionDraftExpiration" type="datetime-local" />
+                      </label>
+                      <label class="field-control">
+                        <span>Invite Only</span>
+                        <select v-model="missionDraftInviteOnly">
+                          <option :value="false">No</option>
+                          <option :value="true">Yes</option>
+                        </select>
+                      </label>
+                    </div>
+                  </details>
                   <label class="field-control full">
                     <span>Reference Zones</span>
                     <select
@@ -374,6 +394,9 @@
                     <BaseButton size="sm" variant="secondary" icon-left="edit" @click="openMissionEditScreen">
                       Edit
                     </BaseButton>
+                    <BaseButton size="sm" variant="secondary" icon-left="list" @click="openMissionLogsPage">
+                      Logs
+                    </BaseButton>
                     <BaseButton size="sm" variant="secondary" icon-left="users" @click="secondaryScreen = 'missionTeamMembers'">
                       Team
                     </BaseButton>
@@ -465,7 +488,9 @@
                   <div class="mission-audit-head">
                     <div>
                       <h4>Mission Activity / Audit</h4>
-                      <span class="mission-audit-subtitle">Unified mission activity stream (events + mission changes)</span>
+                      <span class="mission-audit-subtitle">
+                        Unified mission activity stream (events + mission changes + log entries)
+                      </span>
                     </div>
                     <span class="overview-panel-meta">Latest {{ missionAudit.length }} entries</span>
                   </div>
@@ -1774,6 +1799,18 @@ interface MissionChangeRaw {
   hashes?: unknown;
 }
 
+interface LogEntryRaw {
+  entry_uid?: string;
+  mission_uid?: string | null;
+  content?: string | null;
+  server_time?: string | null;
+  client_time?: string | null;
+  content_hashes?: string[] | null;
+  keywords?: string[] | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 interface ZoneRaw {
   zone_id?: string;
   name?: string;
@@ -2446,6 +2483,7 @@ const assetRecords = ref<AssetRaw[]>([]);
 const assignmentRecords = ref<AssignmentRaw[]>([]);
 const eventRecords = ref<DomainEventRaw[]>([]);
 const missionChanges = ref<MissionChangeRaw[]>([]);
+const logEntryRecords = ref<LogEntryRaw[]>([]);
 const zoneRecords = ref<ZoneRaw[]>([]);
 const templateRecords = ref<TemplateRaw[]>([]);
 const skillRecords = ref<SkillRaw[]>([]);
@@ -2780,8 +2818,6 @@ const primaryTabs = [
 const screensByTab: Record<PrimaryTab, Array<{ id: ScreenId; label: string }>> = {
   mission: [
     { id: "missionOverview", label: "Mission Overview" },
-    { id: "missionCreate", label: "Mission Create" },
-    { id: "missionEdit", label: "Mission Edit" },
     { id: "missionTeamMembers", label: "Mission Team & Members" },
     { id: "assignAssets", label: "Assign Assets to Mission" },
     { id: "assignZones", label: "Assign Zones to Mission" },
@@ -2885,6 +2921,7 @@ const missionDraftToken = ref("");
 const missionDraftFeeds = ref("");
 const missionDraftExpiration = ref("");
 const missionDraftInviteOnly = ref(false);
+const missionAdvancedPropertiesOpen = ref(false);
 const missionDraftZoneUids = ref<string[]>([]);
 const missionDraftAssetUids = ref<string[]>([]);
 const checklistTemplateModalOpen = ref(false);
@@ -2962,6 +2999,9 @@ const selectedMission = computed(() => missions.value.find((entry) => entry.uid 
 const isMissionCreateScreen = computed(() => secondaryScreen.value === "missionCreate");
 const isMissionEditScreen = computed(() => secondaryScreen.value === "missionEdit");
 const isMissionFormScreen = computed(() => isMissionCreateScreen.value || isMissionEditScreen.value);
+const onMissionAdvancedPropertiesToggle = (event: Event): void => {
+  missionAdvancedPropertiesOpen.value = (event.currentTarget as HTMLDetailsElement).open;
+};
 const missionDraftUidLabel = computed(() => (isMissionEditScreen.value ? selectedMission.value?.uid || "-" : "AUTO"));
 const missionTopicOptions = computed(() => {
   const options = topicRecords.value
@@ -4169,7 +4209,39 @@ const missionAudit = computed<AuditEvent[]>(() => {
       };
     });
 
-  return [...events, ...changes]
+  const logs = logEntryRecords.value
+    .filter((entry) => String(entry.mission_uid ?? "").trim() === missionUid)
+    .map((entry) => {
+      const serverTime = String(entry.server_time ?? "").trim();
+      const clientTime = String(entry.client_time ?? "").trim();
+      const createdAt = String(entry.created_at ?? "").trim();
+      const timestamp = serverTime || clientTime || createdAt;
+      const content = String(entry.content ?? "").trim();
+      const entryUid = String(entry.entry_uid ?? "").trim();
+      return {
+        uid: entryUid || `log-entry-${timestamp || createdAt}`,
+        mission_uid: missionUid,
+        timestamp,
+        time: formatAuditTime(timestamp),
+        type: "MISSION_LOG_ENTRY",
+        message: content || "Mission log entry",
+        details: {
+          source: "log_entry",
+          entry_uid: entryUid || null,
+          mission_uid: missionUid,
+          content: content || null,
+          server_time: serverTime || null,
+          client_time: clientTime || null,
+          content_hashes: toStringList(entry.content_hashes),
+          keywords: toStringList(entry.keywords),
+          created_at: createdAt || null,
+          updated_at: String(entry.updated_at ?? "").trim() || null
+        },
+        sortTs: toEpoch(timestamp || createdAt),
+      };
+    });
+
+  return [...events, ...changes, ...logs]
     .sort((left, right) => right.sortTs - left.sortTs)
     .map(({ uid, mission_uid, timestamp, time, type, message, details }) => ({
       uid,
@@ -4665,6 +4737,15 @@ const openMissionEditScreen = () => {
   setSecondaryScreen("missionEdit");
 };
 
+const openMissionLogsPage = () => {
+  router
+    .push({
+      path: "/missions/logs",
+      query: selectedMissionUid.value ? { mission_uid: selectedMissionUid.value } : undefined
+    })
+    .catch(() => undefined);
+};
+
 const openTopicCreatePage = async () => {
   await router.push("/topics");
 };
@@ -4692,6 +4773,7 @@ const loadWorkspace = async () => {
       assignmentData,
       eventData,
       missionChangeData,
+      logEntryData,
       zoneData,
       skillData,
       teamMemberSkillData,
@@ -4707,6 +4789,7 @@ const loadWorkspace = async () => {
       get<AssignmentRaw[]>(endpoints.r3aktAssignments),
       get<DomainEventRaw[]>(endpoints.r3aktEvents),
       get<MissionChangeRaw[]>(endpoints.r3aktMissionChanges),
+      get<LogEntryRaw[]>(endpoints.r3aktLogEntries),
       get<ZoneRaw[]>(endpoints.zones),
       get<SkillRaw[]>(endpoints.r3aktSkills),
       get<TeamMemberSkillRaw[]>(endpoints.r3aktTeamMemberSkills),
@@ -4756,6 +4839,7 @@ const loadWorkspace = async () => {
     assignmentRecords.value = toArray<AssignmentRaw>(assignmentData);
     eventRecords.value = toArray<DomainEventRaw>(eventData);
     missionChanges.value = toArray<MissionChangeRaw>(missionChangeData);
+    logEntryRecords.value = toArray<LogEntryRaw>(logEntryData);
     zoneRecords.value = toArray<ZoneRaw>(zoneData);
     skillRecords.value = toArray<SkillRaw>(skillData);
     teamMemberSkillRecords.value = toArray<TeamMemberSkillRaw>(teamMemberSkillData);
@@ -6082,12 +6166,7 @@ const previewAction = async (action: string) => {
   }
 
   if (action === "Open Logs") {
-    router
-      .push({
-        path: "/missions/logs",
-        query: selectedMissionUid.value ? { mission_uid: selectedMissionUid.value } : undefined
-      })
-      .catch(() => undefined);
+    openMissionLogsPage();
     return;
   }
 
@@ -6200,10 +6279,12 @@ watch(
   secondaryScreen,
   (screen) => {
     if (screen === "missionCreate") {
+      missionAdvancedPropertiesOpen.value = false;
       resetMissionDraft("create");
       return;
     }
     if (screen === "missionEdit") {
+      missionAdvancedPropertiesOpen.value = true;
       resetMissionDraft("edit", selectedMission.value);
     }
   },
@@ -6512,6 +6593,14 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.mission-directory-actions {
+  margin-top: 12px;
+}
+
+.mission-directory-create-button {
+  width: 100%;
 }
 
 .tree-item {
@@ -7745,6 +7834,61 @@ onMounted(() => {
 
 .field-control.full {
   grid-column: 1 / -1;
+}
+
+.mission-advanced-properties {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(55, 242, 255, 0.34);
+  border-radius: 10px;
+  background: rgba(5, 14, 22, 0.62);
+  overflow: hidden;
+}
+
+.mission-advanced-properties__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+  border-bottom: 1px solid rgba(55, 242, 255, 0.2);
+  background: linear-gradient(180deg, rgba(9, 24, 36, 0.92), rgba(7, 17, 27, 0.95));
+}
+
+.mission-advanced-properties__summary::-webkit-details-marker {
+  display: none;
+}
+
+.mission-advanced-properties__title {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(211, 250, 255, 0.9);
+}
+
+.mission-advanced-properties__meta {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(191, 246, 255, 0.72);
+}
+
+.mission-advanced-properties__summary::after {
+  content: "v";
+  font-size: 12px;
+  line-height: 1;
+  color: rgba(191, 246, 255, 0.82);
+  transform: rotate(-90deg);
+  transition: transform 150ms ease;
+}
+
+.mission-advanced-properties[open] .mission-advanced-properties__summary::after {
+  transform: rotate(0deg);
+}
+
+.mission-advanced-properties__grid {
+  padding: 12px;
 }
 
 .field-control span {

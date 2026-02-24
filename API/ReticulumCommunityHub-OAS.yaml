@@ -3941,6 +3941,10 @@ components:
           type: string
         mission_uid:
           type: string
+        mission_id:
+          type: string
+          nullable: true
+          description: Deprecated alias for mission_uid.
         timestamp:
           type: string
           format: date-time
@@ -3959,12 +3963,28 @@ components:
           type: array
           items:
             type: string
+        delta:
+          type: object
+          additionalProperties: true
+          description: Structured mission delta envelope for logs/assets/tasks fanout.
       required:
         - uid
         - mission_uid
         - timestamp
     R3aktMissionChangeUpsertRequest:
       type: object
+      description: Create or update a mission change entry. Supports optional `delta`.
+      properties:
+        mission_uid:
+          type: string
+        mission_id:
+          type: string
+          description: Deprecated alias for mission_uid.
+        change_type:
+          type: string
+        delta:
+          type: object
+          additionalProperties: true
       additionalProperties: true
     R3aktLogEntry:
       type: object

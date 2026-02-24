@@ -206,3 +206,49 @@ def test_assignment_assets_dual_read_backfills_legacy_json(tmp_path) -> None:
     if isinstance(assets_json_value, str):
         assets_json_value = json.loads(assets_json_value)
     assert assets_json_value == ["asset-2"]
+
+
+def test_mission_change_delta_column_is_added_for_legacy_table(tmp_path) -> None:
+    db_path = tmp_path / "legacy_mission_change.sqlite"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE r3akt_mission_changes (
+                uid TEXT PRIMARY KEY,
+                mission_uid TEXT NOT NULL,
+                name TEXT,
+                team_member_rns_identity TEXT,
+                timestamp TEXT,
+                notes TEXT,
+                change_type TEXT,
+                is_federated_change INTEGER NOT NULL DEFAULT 0,
+                hashes TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO r3akt_mission_changes (
+                uid, mission_uid, name, change_type, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            ("legacy-change-1", "mission-legacy", "Legacy", "ADD_CONTENT", "2026-02-24T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    MissionDomainService(db_path)
+
+    with sqlite3.connect(str(db_path)) as conn:
+        columns = [
+            row[1]
+            for row in conn.execute("PRAGMA table_info(r3akt_mission_changes);").fetchall()
+        ]
+        row = conn.execute(
+            "SELECT uid FROM r3akt_mission_changes WHERE uid = ?",
+            ("legacy-change-1",),
+        ).fetchone()
+
+    assert "delta" in columns
+    assert row is not None
+    assert row[0] == "legacy-change-1"

@@ -365,3 +365,56 @@ def _decode_announce_list(
             return list(decoded)
         return [bytes(app_data), None]
     return [None, None]
+
+
+def decode_inbound_capability_payload(
+    payload: object,
+) -> Mapping[str, object] | None:
+    """Decode an inbound announce capability payload.
+
+    Args:
+        payload (object): Raw payload in announce app-data slot index ``2``.
+
+    Returns:
+        Mapping[str, object] | None: Normalized capability payload when valid.
+    """
+
+    raw: bytes | None = None
+    if isinstance(payload, memoryview):
+        raw = payload.tobytes()
+    elif isinstance(payload, (bytes, bytearray)):
+        raw = bytes(payload)
+    if not raw:
+        return None
+
+    decoders: list[Callable[[bytes], object]] = []
+    try:  # pragma: no cover - optional dependency
+        import cbor2  # type: ignore
+    except ImportError:
+        cbor2 = None
+
+    if cbor2 is not None:  # pragma: no branch
+        decoders.append(lambda value: cbor2.loads(value))
+    decoders.append(lambda value: msgpack.unpackb(value, raw=False))
+
+    for decode in decoders:
+        try:
+            decoded = decode(raw)
+        except Exception:
+            continue
+        if not isinstance(decoded, Mapping):
+            continue
+        candidate = dict(decoded)
+        raw_caps = candidate.get("caps")
+        if isinstance(raw_caps, list):
+            candidate["caps"] = [
+                str(item).strip().lower()
+                for item in raw_caps
+                if str(item).strip()
+            ]
+        try:
+            normalized = AnnounceCapabilitiesPayload.model_validate(candidate)
+        except Exception:
+            continue
+        return normalized.model_dump(exclude_none=True, by_alias=True)
+    return None

@@ -30,6 +30,15 @@ servers:
           FIELD_RESULTS: "0x0A"
           FIELD_GROUP: "0x0B"
           FIELD_EVENT: "0x0D"
+          FIELD_CUSTOM_TYPE: "0xFB"
+          FIELD_CUSTOM_DATA: "0xFC"
+          FIELD_CUSTOM_META: "0xFD"
+        x-r3akt-client-contract:
+          canonical_mission_key: mission_uid
+          mission_id_alias: mission_id
+          idempotency_key: mission_change.uid
+          delivery_semantics: at-least-once
+          dedupe_required: true
 channels:
   r3akt.mission.commands:
     description: Mission-sync commands (`FIELD_COMMANDS` / `0x09`).
@@ -119,11 +128,24 @@ channels:
         - FIELD_EVENT
       optional:
         - FIELD_GROUP
+        - FIELD_CUSTOM_TYPE
+        - FIELD_CUSTOM_DATA
+        - FIELD_CUSTOM_META
+    x-lxmf-custom-profile:
+      r3akt:
+        required:
+          - FIELD_CUSTOM_TYPE
+          - FIELD_CUSTOM_DATA
+          - FIELD_CUSTOM_META
+        custom_type: r3akt.mission.change.v1
+      generic_lxmf:
+        description: Clients without explicit R3AKT capability consume markdown body updates.
     subscribe:
       operationId: subscribeMissionEvents
       message:
         oneOf:
           - $ref: "#/components/messages/MissionEvent"
+          - $ref: "#/components/messages/MissionDeltaEvent"
           - $ref: "#/components/messages/MissionSnapshot"
 components:
   messages:
@@ -1227,10 +1249,35 @@ components:
                   - $ref: "#/components/schemas/Mission"
                   - $ref: "#/components/schemas/Topic"
                   - $ref: "#/components/schemas/MissionChange"
+                  - $ref: "#/components/schemas/MissionDelta"
                   - $ref: "#/components/schemas/MarkerRef"
                   - $ref: "#/components/schemas/ZoneRef"
                   - type: object
                     additionalProperties: true
+    MissionDeltaEvent:
+      name: MissionDeltaEvent
+      x-lxmf-field: FIELD_CUSTOM_DATA
+      x-lxmf-custom-type: r3akt.mission.change.v1
+      payload:
+        type: object
+        required: [mission_uid, mission_change, delta, contract_version]
+        properties:
+          mission_uid: { type: string }
+          mission_id:
+            type: string
+            deprecated: true
+            description: Legacy alias for mission_uid.
+          mission_change: { $ref: "#/components/schemas/MissionChange" }
+          delta: { $ref: "#/components/schemas/MissionDelta" }
+          contract_version:
+            type: string
+            const: r3akt.mission.change.v1
+          profile:
+            type: string
+            enum: [r3akt]
+      x-client-behavior:
+        idempotency_key: mission_change.uid
+        dedupe_required: true
     MissionSnapshot:
       name: MissionSnapshot
       x-lxmf-field: FIELD_EVENT
@@ -1248,9 +1295,13 @@ components:
       enum: [MISSION_OWNER, MISSION_SUBSCRIBER, MISSION_READONLY_SUBSCRIBER]
     Mission:
       type: object
-      required: [mission_id, topic]
+      required: [mission_uid, topic]
       properties:
-        mission_id: { type: string }
+        mission_uid: { type: string }
+        mission_id:
+          type: string
+          deprecated: true
+          description: Legacy alias for mission_uid.
         name: { type: string }
         description: { type: string }
         topic: { $ref: "#/components/schemas/Topic" }
@@ -1267,13 +1318,105 @@ components:
         topic_description: { type: string }
     MissionChange:
       type: object
-      required: [uid, mission_id, timestamp]
+      required: [uid, mission_uid, timestamp]
       properties:
         uid: { type: string }
-        mission_id: { type: string }
+        mission_uid: { type: string }
+        mission_id:
+          type: string
+          deprecated: true
+          description: Legacy alias for mission_uid.
         timestamp: { type: string, format: date-time }
+        change_type: { type: string }
         notes: { type: string }
         team_member_rns_identity: { type: string }
+        delta: { $ref: "#/components/schemas/MissionDelta" }
+    MissionDelta:
+      type: object
+      required: [version, source_event_type, emitted_at]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          default: 1
+        contract_version:
+          type: string
+          const: r3akt.mission.change.v1
+        source_event_type: { type: string }
+        emitted_at: { type: string, format: date-time }
+        logs:
+          type: array
+          items: { $ref: "#/components/schemas/MissionLogDelta" }
+        assets:
+          type: array
+          items: { $ref: "#/components/schemas/MissionAssetDelta" }
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/MissionTaskDelta" }
+      additionalProperties: true
+    MissionLogDelta:
+      type: object
+      required: [op, entry_uid, mission_uid]
+      properties:
+        op:
+          type: string
+          enum: [upsert]
+        entry_uid: { type: string }
+        mission_uid: { type: string }
+        content: { type: string }
+        server_time: { type: string, format: date-time }
+        client_time: { type: string, format: date-time }
+        keywords:
+          type: array
+          items: { type: string }
+        content_hashes:
+          type: array
+          items: { type: string }
+      additionalProperties: true
+    MissionAssetDelta:
+      type: object
+      required: [op, asset_uid]
+      properties:
+        op:
+          type: string
+          enum: [upsert, delete]
+        asset_uid: { type: string }
+        team_member_uid: { type: string }
+        name: { type: string }
+        asset_type: { type: string }
+        status: { type: string }
+        location: { type: string }
+        notes: { type: string }
+      additionalProperties: true
+    MissionTaskDelta:
+      type: object
+      required: [op]
+      properties:
+        op:
+          type: string
+          enum:
+            - status_set
+            - row_added
+            - row_deleted
+            - row_style_set
+            - cell_set
+            - assignment_upsert
+            - assignment_assets_set
+            - assignment_asset_linked
+            - assignment_asset_unlinked
+        mission_uid: { type: string }
+        checklist_uid: { type: string }
+        task_uid: { type: string }
+        assignment_uid: { type: string }
+        previous_status: { type: string }
+        current_status: { type: string }
+        changed_by_team_member_rns_identity: { type: string }
+        changed_at: { type: string, format: date-time }
+        team_member_rns_identity: { type: string }
+        asset_uids:
+          type: array
+          items: { type: string }
+      additionalProperties: true
     MarkerRef:
       type: object
       required: [marker_id]

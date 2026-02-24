@@ -9,6 +9,7 @@ from reticulum_telemetry_hub.reticulum_server.announce_capabilities import (
     CAPABILITY_PRIORITY,
     append_capabilities_to_announce_app_data,
     build_capability_payload,
+    decode_inbound_capability_payload,
     encode_capability_payload,
     normalize_capability_list,
     select_capability_encoder,
@@ -127,6 +128,18 @@ def test_append_capabilities_handles_legacy_app_data():
     assert decoded[0] == b"LegacyName"
     assert decoded[1] is None
     assert decoded[2] == result.encoded
+
+
+def test_decode_inbound_capability_payload_normalizes_caps() -> None:
+    payload = msgpack.packb(
+        {"app": "rch", "schema": 1, "caps": ["R3AKT", "Telemetry_Relay"]},
+        use_bin_type=True,
+    )
+
+    decoded = decode_inbound_capability_payload(payload)
+
+    assert isinstance(decoded, dict)
+    assert decoded["caps"] == ["r3akt", "telemetry_relay"]
 
 
 def test_send_announce_includes_capabilities(tmp_path):
