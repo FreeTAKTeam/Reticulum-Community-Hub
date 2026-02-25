@@ -42,6 +42,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { onMounted } from "vue";
+import { watch } from "vue";
 import { useRoute } from "vue-router";
 import { useRouter } from "vue-router";
 import BaseButton from "../../../components/BaseButton.vue";
@@ -67,6 +68,14 @@ const router = useRouter();
 const workspace = useMissionWorkspaceStore();
 
 const missionUid = computed(() => toMissionUidFromRouteParam(route.params.mission_uid));
+
+watch(
+  () => route.params.mission_uid,
+  (value) => {
+    workspace.setSelectedMissionUid(toMissionUidFromRouteParam(value));
+  },
+  { immediate: true }
+);
 
 const recordsByKey = computed(() => {
   switch (props.collectionKey) {
@@ -205,7 +214,6 @@ const openLegacyWorkspace = () => {
 };
 
 onMounted(() => {
-  workspace.setSelectedMissionUid(missionUid.value);
   if (!workspace.missions.length && !workspace.loading) {
     workspace.loadWorkspace().catch(() => undefined);
   }

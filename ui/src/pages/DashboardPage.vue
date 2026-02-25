@@ -67,18 +67,18 @@
           </div>
           <div class="hud-vital-card">
             <div class="hud-vital-header">
-              <span>Subscribers</span>
+              <span>Active Missions</span>
               <span class="hud-cosmic-deco" aria-hidden="true">
                 <span></span>
                 <span></span>
                 <span></span>
               </span>
             </div>
-            <div class="hud-vital-value">{{ formatNumber(dashboard.status?.subscribers) }}</div>
+            <div class="hud-vital-value">{{ formatNumber(dashboard.activeMissions) }}</div>
             <div class="hud-sparkline">
               <span
-                v-for="(bar, index) in subscribersSparkline"
-                :key="`subscribers-${index}`"
+                v-for="(bar, index) in missionsSparkline"
+                :key="`missions-${index}`"
                 class="hud-spark-bar"
                 :style="{ height: `${bar}%` }"
               />
@@ -619,12 +619,12 @@ const mutateSparkline = (values: number[]) => {
 
 const clientsSparkline = ref<number[]>(createSparklineSeed());
 const topicsSparkline = ref<number[]>(createSparklineSeed());
-const subscribersSparkline = ref<number[]>(createSparklineSeed());
+const missionsSparkline = ref<number[]>(createSparklineSeed());
 
 const refreshSparklines = () => {
   clientsSparkline.value = mutateSparkline(clientsSparkline.value);
   topicsSparkline.value = mutateSparkline(topicsSparkline.value);
-  subscribersSparkline.value = mutateSparkline(subscribersSparkline.value);
+  missionsSparkline.value = mutateSparkline(missionsSparkline.value);
 };
 
 interface BrandTraceState {

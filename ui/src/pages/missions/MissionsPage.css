@@ -155,12 +155,13 @@
 
 .registry-main > .panel-header.panel-header-mission {
   display: flex;
-  justify-content: flex-start;
+  justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
 }
 
 .panel-header-mission-main {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -296,6 +297,54 @@
   border: 1px solid rgba(55, 242, 255, 0.45);
   border-radius: 999px;
   padding: 2px 8px;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mission-status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(var(--CosmicUI-Secondary-rgb) / 45%);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--cui-mission-status-chip-background);
+  color: rgb(var(--CosmicUI-Secondary-rgb) / 92%);
+  white-space: nowrap;
+}
+
+.mission-status-chip--active {
+  border-color: var(--cui-mission-status-active);
+  color: var(--cui-mission-status-active-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-active-glow);
+}
+
+.mission-status-chip--pending {
+  border-color: var(--cui-mission-status-pending);
+  color: var(--cui-mission-status-pending-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-pending-glow);
+}
+
+.mission-status-chip--success {
+  border-color: var(--cui-mission-status-success);
+  color: var(--cui-mission-status-success-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-success-glow);
+}
+
+.mission-status-chip--failed {
+  border-color: var(--cui-mission-status-failed);
+  color: var(--cui-mission-status-failed-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-failed-glow);
+}
+
+.mission-status-chip--deleted {
+  border-color: var(--cui-mission-status-deleted);
+  color: var(--cui-mission-status-deleted-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-deleted-glow);
 }
 
 .tree-label {
@@ -462,7 +511,7 @@
 
 .mission-end-timer {
   position: relative;
-  min-width: 220px;
+  min-width: 280px;
   border: 1px solid rgba(55, 242, 255, 0.4);
   border-radius: 12px;
   background: linear-gradient(150deg, rgba(2, 24, 38, 0.96), rgba(1, 10, 20, 0.95));
@@ -526,9 +575,9 @@
 
 .mission-end-timer__display {
   margin-top: 8px;
-  font-size: 33px;
+  font-size: 28px;
   line-height: 1;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.1em;
   color: #37f2ff;
   text-shadow: 0 0 12px rgba(55, 242, 255, 0.7);
 }
@@ -536,7 +585,7 @@
 .mission-end-timer__units {
   margin-top: 9px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1844,6 +1893,7 @@
     width: 100%;
     min-width: 0;
     max-width: 340px;
+    margin-left: 0;
   }
 
   .checklist-manager-controls {
@@ -1945,6 +1995,6 @@
   }
 
   .mission-end-timer__display {
-    font-size: 28px;
+    font-size: 24px;
   }
 }

@@ -1072,6 +1072,7 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
     assert first_task_cells[task_column_uid] == "Task 1"
     assert first_task_cells[description_column_uid] == "Inspect ridge"
     assert imported["tasks"][0]["legacy_value"] == "Task 1"
+    assert [task["due_relative_minutes"] for task in imported["tasks"]] == [30, 60, 90]
 
 
 def test_domain_history_retention_prunes_old_rows(tmp_path) -> None:

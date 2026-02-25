@@ -46,6 +46,31 @@
   text-shadow: 0 0 8px rgba(55, 242, 255, 0.58);
 }
 
+.overview-vital-value--active {
+  color: var(--cui-mission-status-active-text);
+  text-shadow: 0 0 10px var(--cui-mission-status-active-glow);
+}
+
+.overview-vital-value--pending {
+  color: var(--cui-mission-status-pending-text);
+  text-shadow: 0 0 10px var(--cui-mission-status-pending-glow);
+}
+
+.overview-vital-value--success {
+  color: var(--cui-mission-status-success-text);
+  text-shadow: 0 0 10px var(--cui-mission-status-success-glow);
+}
+
+.overview-vital-value--failed {
+  color: var(--cui-mission-status-failed-text);
+  text-shadow: 0 0 10px var(--cui-mission-status-failed-glow);
+}
+
+.overview-vital-value--deleted {
+  color: var(--cui-mission-status-deleted-text);
+  text-shadow: 0 0 10px var(--cui-mission-status-deleted-glow);
+}
+
 .overview-layout {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -103,6 +128,36 @@
   text-transform: uppercase;
   color: rgba(212, 250, 255, 0.92);
   background: rgba(9, 26, 38, 0.72);
+}
+
+.mission-status-chip--active {
+  border-color: var(--cui-mission-status-active);
+  color: var(--cui-mission-status-active-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-active-glow);
+}
+
+.mission-status-chip--pending {
+  border-color: var(--cui-mission-status-pending);
+  color: var(--cui-mission-status-pending-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-pending-glow);
+}
+
+.mission-status-chip--success {
+  border-color: var(--cui-mission-status-success);
+  color: var(--cui-mission-status-success-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-success-glow);
+}
+
+.mission-status-chip--failed {
+  border-color: var(--cui-mission-status-failed);
+  color: var(--cui-mission-status-failed-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-failed-glow);
+}
+
+.mission-status-chip--deleted {
+  border-color: var(--cui-mission-status-deleted);
+  color: var(--cui-mission-status-deleted-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-deleted-glow);
 }
 
 .overview-compact-meta {

@@ -113,7 +113,7 @@
 
           <div class="checklist-task-toolbar">
             <label class="checklist-task-input">
-              <input :value="checklistTaskDueDraft" type="number" step="1" min="-1440" @input="updateChecklistTaskDueDraft" />
+              <input :value="checklistTaskDueDraft" type="number" step="1" min="-1440" placeholder="auto" @input="updateChecklistTaskDueDraft" />
               <span>Due minutes</span>
             </label>
             <BaseButton size="sm" icon-left="plus" @click="addChecklistTaskFromDetail">Add</BaseButton>

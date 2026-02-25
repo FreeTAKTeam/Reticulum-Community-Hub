@@ -116,7 +116,7 @@
 
                 <div class="checklist-task-toolbar">
                   <label class="checklist-task-input">
-                    <input v-model="checklistTaskDueDraft" type="number" step="1" min="-1440" />
+                    <input v-model="checklistTaskDueDraft" type="number" step="1" min="-1440" placeholder="auto" />
                     <span>Due minutes</span>
                   </label>
                   <BaseButton size="sm" icon-left="plus" @click="addChecklistTaskFromDetail">Add</BaseButton>
@@ -604,6 +604,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import type { ApiError } from "../api/client";
 import { del as deleteRequest, get, patch as patchRequest, post } from "../api/client";
 import { endpoints } from "../api/endpoints";
@@ -754,6 +755,12 @@ const checklistTemplateColumnTypeSet = new Set<ChecklistTemplateColumnType>(chec
 
 // Utilities
 const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const queryText = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return String(value[0] ?? "").trim();
+  }
+  return String(value ?? "").trim();
+};
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -962,6 +969,7 @@ const createBlankChecklistTemplateDraftColumns = (): ChecklistTemplateDraftColum
 
 // Stores
 const toastStore = useToastStore();
+const route = useRoute();
 
 // State
 const missions = ref<Mission[]>([]);
@@ -971,7 +979,7 @@ const checklistSearchQuery = ref("");
 const checklistWorkspaceView = ref<"active" | "templates">("active");
 const checklistCsvImportView = ref(false);
 const checklistDetailUid = ref("");
-const checklistTaskDueDraft = ref("10");
+const checklistTaskDueDraft = ref("");
 const checklistTaskStatusBusyByTaskUid = ref<Record<string, boolean>>({});
 const checklistDeleteBusy = ref(false);
 const checklistLinkMissionModalOpen = ref(false);
@@ -1080,8 +1088,18 @@ const checklists = computed<Checklist[]>(() => {
     .filter((entry): entry is Checklist => entry !== null);
 });
 
+const scopedChecklistMissionUid = computed(() => queryText(route.query.mission_uid));
+
+const missionScopedChecklists = computed(() => {
+  const missionUid = scopedChecklistMissionUid.value;
+  if (!missionUid) {
+    return checklists.value;
+  }
+  return checklists.value.filter((entry) => String(entry.mission_uid ?? "").trim() === missionUid);
+});
+
 const allChecklistsSorted = computed(() => {
-  return [...checklists.value].sort((left, right) => {
+  return [...missionScopedChecklists.value].sort((left, right) => {
     const diff = toEpoch(right.created_at) - toEpoch(left.created_at);
     return diff !== 0 ? diff : left.name.localeCompare(right.name);
   });
@@ -1114,7 +1132,7 @@ const checklistMissionLabel = (missionUid: string): string => {
 const checklistDetailRecord = computed(() => {
   const detailUid = checklistDetailUid.value;
   if (!detailUid) return null;
-  return checklists.value.find((entry) => entry.uid === detailUid) ?? null;
+  return missionScopedChecklists.value.find((entry) => entry.uid === detailUid) ?? null;
 });
 
 const checklistDetailRaw = computed(() => {
@@ -1782,8 +1800,11 @@ const addChecklistTaskFromDetail = async () => {
   try {
     const nextNumber = checklistDetailRows.value.reduce((max, row) => Math.max(max, row.number), 0) + 1;
     const payload: Record<string, unknown> = { number: nextNumber };
-    const parsedDue = Number(checklistTaskDueDraft.value);
-    if (Number.isFinite(parsedDue)) payload.due_relative_minutes = Math.trunc(parsedDue);
+    const dueDraft = checklistTaskDueDraft.value.trim();
+    if (dueDraft.length > 0) {
+      const parsedDue = Number(dueDraft);
+      if (Number.isFinite(parsedDue)) payload.due_relative_minutes = Math.trunc(parsedDue);
+    }
     await post(`${endpoints.checklists}/${checklist.uid}/tasks`, payload);
     await loadWorkspace();
     toastStore.push("Checklist task added", "success");
@@ -1918,7 +1939,7 @@ watch(checklistTemplateOptions, (entries) => {
   const first = entries[0]; selectChecklistTemplateForEditor(first.uid, first.source_type);
 }, { immediate: true });
 watch(checklistWorkspaceView, (view) => { if (view !== "templates") return; if (checklistTemplateOptions.value.length) syncChecklistTemplateEditorSelection(); else startNewChecklistTemplateDraft(); }, { immediate: true });
-watch(checklists, (entries) => { if (checklistDetailUid.value && !entries.some((entry) => entry.uid === checklistDetailUid.value)) checklistDetailUid.value = ""; }, { immediate: true });
+watch(missionScopedChecklists, (entries) => { if (checklistDetailUid.value && !entries.some((entry) => entry.uid === checklistDetailUid.value)) checklistDetailUid.value = ""; }, { immediate: true });
 
 onMounted(() => { loadWorkspace().catch((error) => { handleApiError(error, "Unable to load checklist workspace"); }); });
 </script>

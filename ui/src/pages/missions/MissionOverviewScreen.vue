@@ -3,7 +3,7 @@
     <section class="overview-vitals">
       <article class="overview-vital-card">
         <span class="overview-vital-label">Mission Status</span>
-        <strong class="overview-vital-value">{{ missionStatus || "UNSCOPED" }}</strong>
+        <strong class="overview-vital-value" :class="missionStatusValueClass">{{ missionStatusLabel }}</strong>
       </article>
       <article class="overview-vital-card">
         <span class="overview-vital-label">Checklist Runs</span>
@@ -36,7 +36,9 @@
               {{ missionUid || "No mission selected" }}
             </div>
           </div>
-          <span class="overview-compact-tag">{{ missionStatus || "UNSCOPED" }}</span>
+          <span class="overview-compact-tag mission-status-chip" :class="missionStatusChipClass">
+            {{ missionStatusLabel }}
+          </span>
         </div>
         <div class="overview-compact-meta">
           <div>
@@ -171,9 +173,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed } from "vue";
+import { ref } from "vue";
+import { watch } from "vue";
 import BaseButton from "../../components/BaseButton.vue";
 import BaseFormattedOutput from "../../components/BaseFormattedOutput.vue";
+import { getMissionStatusLabel } from "./mission-status";
+import { getMissionStatusTone } from "./mission-status";
 
 interface OverviewBoardTask {
   id: string;
@@ -218,6 +224,26 @@ const emit = defineEmits<{
 }>();
 
 const missionAuditExpandedRows = ref<Record<string, boolean>>({});
+
+const missionStatusLabel = computed(() => {
+  const raw = String(props.missionStatus ?? "").trim();
+  if (!raw || raw === "-" || raw.toUpperCase() === "UNSCOPED") {
+    return "Unscoped";
+  }
+  return getMissionStatusLabel(raw);
+});
+
+const missionStatusTone = computed(() => {
+  const raw = String(props.missionStatus ?? "").trim();
+  if (!raw || raw === "-" || raw.toUpperCase() === "UNSCOPED") {
+    return "deleted";
+  }
+  return getMissionStatusTone(raw);
+});
+
+const missionStatusChipClass = computed(() => `mission-status-chip--${missionStatusTone.value}`);
+
+const missionStatusValueClass = computed(() => `overview-vital-value--${missionStatusTone.value}`);
 
 watch(
   () => props.missionUid,

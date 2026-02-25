@@ -17,6 +17,38 @@
   --cui-color-tone-info: #4db6ff;
   --cui-color-tone-neutral: #8aa3ba;
 
+  /* Cosmic UI semantic palette */
+  --CosmicUI-Primary: #37f2ff;
+  --CosmicUI-Accent: #ff7a40;
+  --CosmicUI-Secondary: #8aa3ba;
+  --CosmicUI-Destructive: #ff3b7a;
+  --CosmicUI-Success: #00d0b0;
+  --CosmicUI-Background: #00172b;
+  --CosmicUI-Primary-rgb: 55 242 255;
+  --CosmicUI-Accent-rgb: 255 122 64;
+  --CosmicUI-Secondary-rgb: 138 163 186;
+  --CosmicUI-Destructive-rgb: 255 59 122;
+  --CosmicUI-Success-rgb: 0 208 176;
+  --CosmicUI-Background-rgb: 0 23 43;
+
+  /* Mission status semantic tokens */
+  --cui-mission-status-chip-background: rgb(var(--CosmicUI-Background-rgb) / 72%);
+  --cui-mission-status-active: var(--CosmicUI-Primary);
+  --cui-mission-status-pending: var(--CosmicUI-Accent);
+  --cui-mission-status-success: var(--CosmicUI-Success);
+  --cui-mission-status-failed: var(--CosmicUI-Destructive);
+  --cui-mission-status-deleted: var(--CosmicUI-Secondary);
+  --cui-mission-status-active-text: rgb(var(--CosmicUI-Primary-rgb) / 98%);
+  --cui-mission-status-pending-text: rgb(var(--CosmicUI-Accent-rgb) / 96%);
+  --cui-mission-status-success-text: rgb(var(--CosmicUI-Success-rgb) / 96%);
+  --cui-mission-status-failed-text: rgb(var(--CosmicUI-Destructive-rgb) / 96%);
+  --cui-mission-status-deleted-text: rgb(var(--CosmicUI-Secondary-rgb) / 95%);
+  --cui-mission-status-active-glow: rgb(var(--CosmicUI-Primary-rgb) / 28%);
+  --cui-mission-status-pending-glow: rgb(var(--CosmicUI-Accent-rgb) / 24%);
+  --cui-mission-status-success-glow: rgb(var(--CosmicUI-Success-rgb) / 24%);
+  --cui-mission-status-failed-glow: rgb(var(--CosmicUI-Destructive-rgb) / 24%);
+  --cui-mission-status-deleted-glow: rgb(var(--CosmicUI-Secondary-rgb) / 22%);
+
   /* Typography */
   --cui-font-display: "Orbitron", "Rajdhani", "Barlow", sans-serif;
   --cui-font-body: "Barlow", "IBM Plex Sans", "Source Sans 3", "Segoe UI", sans-serif;

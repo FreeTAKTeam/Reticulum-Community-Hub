@@ -1229,6 +1229,7 @@ def test_checklist_routes_matrix_and_errors(tmp_path: Path) -> None:
     assert len(import_payload["tasks"]) == 2
     assert any(column["column_name"] == "Task" for column in import_payload["columns"])
     assert import_payload["tasks"][0]["legacy_value"] == "Task 1"
+    assert [task["due_relative_minutes"] for task in import_payload["tasks"]] == [30, 60]
 
     delete_checklist = client.delete(f"/checklists/{offline_uid}", headers=headers)
     assert delete_checklist.status_code == 200

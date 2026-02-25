@@ -64,7 +64,7 @@
           role="menu"
           @mousedown.stop
           @click.stop
-          @contextmenu.prevent
+          @contextmenu.prevent="dismissRadialMenus"
         >
           <button
             v-for="(item, index) in markerRadialMenuItems"
@@ -99,6 +99,51 @@
               />
             </svg>
             <span>{{ markerRadialMenuCenterLabel }}</span>
+          </button>
+        </div>
+        <div
+          v-if="zoneRadialMenuStyle && zoneRadialMenuZoneId"
+          ref="zoneRadialMenuRef"
+          class="webmap-marker-radial-menu webmap-zone-radial-menu"
+          :style="zoneRadialMenuStyle"
+          role="menu"
+          @mousedown.stop
+          @click.stop
+          @contextmenu.prevent="dismissRadialMenus"
+        >
+          <button
+            v-for="(item, index) in zoneRadialMenuItems"
+            :key="item.id"
+            type="button"
+            class="webmap-marker-radial-item"
+            :class="{ 'webmap-marker-radial-item--danger': item.action === 'delete' }"
+            :style="markerRadialMenuItemStyle(index, zoneRadialMenuItems.length)"
+            :title="item.label"
+            @click.stop="handleZoneRadialMenuItem(item)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                v-for="(segment, segmentIndex) in markerRadialIconPaths(item.icon)"
+                :key="`${item.id}-${segmentIndex}`"
+                :d="segment"
+              />
+            </svg>
+            <span>{{ item.label }}</span>
+          </button>
+          <button
+            type="button"
+            class="webmap-marker-radial-center"
+            title="Close"
+            @click.stop="closeZoneRadialMenu"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                v-for="(segment, segmentIndex) in markerRadialIconPaths('close')"
+                :key="`zone-center-${segmentIndex}`"
+                :d="segment"
+              />
+            </svg>
+            <span>Close</span>
           </button>
         </div>
 
@@ -203,6 +248,7 @@
 
         <div
           v-if="zonePromptOpen"
+          ref="zonePromptRef"
           class="webmap-rename-popover"
           :style="zonePromptStyle"
           @click.stop
@@ -222,6 +268,35 @@
             <button type="button" class="webmap-rename-btn" @click="closeZonePrompt">Cancel</button>
             <button type="button" class="webmap-rename-btn webmap-rename-btn--primary" @click="submitZonePrompt">
               {{ zonePromptBusy ? "Saving..." : "Save" }}
+            </button>
+          </div>
+        </div>
+        <div
+          v-if="zoneAssignOpen"
+          ref="zoneAssignPopoverRef"
+          class="webmap-rename-popover webmap-zone-assign-popover"
+          :style="zoneAssignStyle"
+          @click.stop
+          @contextmenu.prevent
+        >
+          <div class="webmap-rename-title">Assign Zone to Mission</div>
+          <select v-model="zoneAssignMissionUid" class="webmap-rename-input" :disabled="zoneAssignBusy || zoneAssignMissionsLoading">
+            <option value="" disabled>
+              {{ zoneAssignMissionsLoading ? "Loading missions..." : "Select mission" }}
+            </option>
+            <option v-for="mission in zoneAssignMissions" :key="mission.uid" :value="mission.uid">
+              {{ mission.name }}
+            </option>
+          </select>
+          <div class="webmap-rename-actions">
+            <button type="button" class="webmap-rename-btn" @click="closeZoneAssign">Cancel</button>
+            <button
+              type="button"
+              class="webmap-rename-btn webmap-rename-btn--primary"
+              :disabled="zoneAssignBusy || !zoneAssignMissionUid"
+              @click="submitZoneAssign"
+            >
+              {{ zoneAssignBusy ? "Assigning..." : "Assign" }}
             </button>
           </div>
         </div>
@@ -483,6 +558,8 @@ import { ref } from "vue";
 import { storeToRefs } from "pinia";
 import maplibregl from "maplibre-gl";
 import type { DataDrivenPropertyValueSpecification, ExpressionSpecification } from "@maplibre/maplibre-gl-style-spec";
+import { get, put } from "../api/client";
+import { endpoints } from "../api/endpoints";
 import BaseButton from "../components/BaseButton.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import BaseInput from "../components/BaseInput.vue";
@@ -510,10 +587,11 @@ import { loadMdiSvg } from "../utils/mdi-icons";
 import { buildTelemetryIconId } from "../utils/telemetry-icons";
 import { resolveTelemetryIconValue } from "../utils/telemetry-icons";
 import type { TelemetryMarker } from "../utils/telemetry";
+import type { MissionRaw } from "../types/missions/raw";
 
 type ScreenPoint = { x: number; y: number };
-type MarkerRadialIcon = "edit" | "move" | "compass" | "delete" | "back" | "close";
-type MarkerRadialAction = "rename" | "move" | "compass" | "delete";
+type MarkerRadialIcon = "edit" | "move" | "compass" | "assign" | "delete" | "inspect" | "back" | "close";
+type MarkerRadialAction = "rename" | "move" | "compass" | "delete" | "inspect";
 type MarkerRadialMenuNode = {
   id: string;
   label: string;
@@ -521,7 +599,18 @@ type MarkerRadialMenuNode = {
   action?: MarkerRadialAction;
   children?: MarkerRadialMenuNode[];
 };
-type MarkerRadialMenuProfile = "regular";
+type MarkerRadialMenuProfile = "regular" | "telemetry";
+type ZoneRadialAction = "rename" | "move" | "delete" | "assign";
+type ZoneRadialMenuNode = {
+  id: string;
+  label: string;
+  icon: MarkerRadialIcon;
+  action: ZoneRadialAction;
+};
+type ZoneMissionOption = {
+  uid: string;
+  name: string;
+};
 
 const markerRadialMenus: Record<MarkerRadialMenuProfile, MarkerRadialMenuNode[]> = {
   regular: [
@@ -529,8 +618,15 @@ const markerRadialMenus: Record<MarkerRadialMenuProfile, MarkerRadialMenuNode[]>
     { id: "move", label: "Move", icon: "move", action: "move" },
     { id: "compass", label: "Compass", icon: "compass", action: "compass" },
     { id: "delete", label: "Delete", icon: "delete", action: "delete" },
-  ]
+  ],
+  telemetry: [{ id: "inspect", label: "Inspect", icon: "inspect", action: "inspect" }],
 };
+const zoneRadialMenuItems: ZoneRadialMenuNode[] = [
+  { id: "rename", label: "Edit", icon: "edit", action: "rename" },
+  { id: "move", label: "Move", icon: "move", action: "move" },
+  { id: "assign", label: "Assign", icon: "assign", action: "assign" },
+  { id: "delete", label: "Delete", icon: "delete", action: "delete" },
+];
 
 const markerRadialIconMap: Record<MarkerRadialIcon, string[]> = {
   edit: [
@@ -549,12 +645,21 @@ const markerRadialIconMap: Record<MarkerRadialIcon, string[]> = {
     "M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18Z",
     "M15.6 8.4l-2.2 5-5 2.2 2.2-5 5-2.2Z",
   ],
+  assign: [
+    "M8.5 15.5a3 3 0 0 1 0-4.2l2.8-2.8a3 3 0 0 1 4.2 0",
+    "M15.5 8.5a3 3 0 0 1 0 4.2l-2.8 2.8a3 3 0 0 1-4.2 0",
+    "M9 15l6-6",
+  ],
   delete: [
     "M4 7h16",
     "M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2",
     "M7 7l1 13h8l1-13",
     "M10 11v6",
     "M14 11v6",
+  ],
+  inspect: [
+    "M1.5 12s4.5-7 10.5-7 10.5 7 10.5 7-4.5 7-10.5 7S1.5 12 1.5 12Z",
+    "M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6Z",
   ],
   back: ["M15 18l-6-6 6-6"],
   close: [
@@ -613,6 +718,7 @@ const markerRenameValue = ref("");
 const markerRenamePosition = ref({ left: 12, top: 12 });
 const markerRenameBusy = ref(false);
 const markerRadialMenuRef = ref<HTMLDivElement | null>(null);
+const zoneRadialMenuRef = ref<HTMLDivElement | null>(null);
 const hoveredOperatorMarkerId = ref<string | null>(null);
 const hoveredOperatorMarkerPoint = ref<ScreenPoint | null>(null);
 const markerRadialMenuMarkerId = ref<string | null>(null);
@@ -638,6 +744,17 @@ const zonePromptZoneId = ref("");
 const zonePromptValue = ref("");
 const zonePromptPosition = ref({ left: 12, top: 12 });
 const zonePromptBusy = ref(false);
+const zonePromptRef = ref<HTMLDivElement | null>(null);
+const zoneRadialMenuZoneId = ref<string | null>(null);
+const zoneRadialMenuPoint = ref<ScreenPoint | null>(null);
+const zoneAssignOpen = ref(false);
+const zoneAssignZoneId = ref("");
+const zoneAssignMissionUid = ref("");
+const zoneAssignPosition = ref({ left: 12, top: 12 });
+const zoneAssignBusy = ref(false);
+const zoneAssignMissions = ref<ZoneMissionOption[]>([]);
+const zoneAssignMissionsLoading = ref(false);
+const zoneAssignPopoverRef = ref<HTMLDivElement | null>(null);
 const toolbarHoverHint = ref("");
 type MarkerTab = "operator" | "telemetry" | "zones";
 const activeMarkerTab = ref<MarkerTab>("operator");
@@ -662,6 +779,19 @@ const toTimestamp = (value?: string) => {
   }
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+const toZoneMissionOptions = (missions: MissionRaw[]): ZoneMissionOption[] => {
+  return missions
+    .map((entry) => {
+      const uid = String(entry.uid ?? "").trim();
+      if (!uid) {
+        return null;
+      }
+      const name = String(entry.mission_name ?? "").trim() || uid;
+      return { uid, name };
+    })
+    .filter((entry): entry is ZoneMissionOption => entry !== null)
+    .sort((left, right) => left.name.localeCompare(right.name));
 };
 const ensureMarkerSelection = () => {
   if (!markerSymbols.value.length) {
@@ -712,6 +842,10 @@ const zonePromptStyle = computed(() => ({
   left: `${zonePromptPosition.value.left}px`,
   top: `${zonePromptPosition.value.top}px`
 }));
+const zoneAssignStyle = computed(() => ({
+  left: `${zoneAssignPosition.value.left}px`,
+  top: `${zoneAssignPosition.value.top}px`
+}));
 const MARKER_RADIAL_MENU_EDGE_PADDING = 162;
 const MARKER_COMPASS_EDGE_PADDING = 176;
 const markerRadialIconPaths = (icon: MarkerRadialIcon) => markerRadialIconMap[icon] ?? [];
@@ -731,15 +865,43 @@ const clampPointToContainer = (point: ScreenPoint, padding = 0): ScreenPoint => 
 };
 const resolveMarkerScreenPoint = (markerId: string, fallback?: ScreenPoint): ScreenPoint | null => {
   const map = mapInstance.value;
-  const marker = markersStore.markerIndex.get(markerId);
-  if (!map || !marker) {
+  if (!map) {
     return fallback ?? null;
   }
-  const override = dragPositions.value.get(markerId);
-  const lat = override?.lat ?? marker.lat;
-  const lon = override?.lon ?? marker.lon;
-  const projected = map.project([lon, lat]);
-  return { x: projected.x, y: projected.y };
+  const marker = markersStore.markerIndex.get(markerId);
+  if (marker) {
+    const override = dragPositions.value.get(markerId);
+    const lat = override?.lat ?? marker.lat;
+    const lon = override?.lon ?? marker.lon;
+    const projected = map.project([lon, lat]);
+    return { x: projected.x, y: projected.y };
+  }
+  const telemetryMarker = markerIndex.value.get(markerId);
+  if (telemetryMarker) {
+    const projected = map.project([telemetryMarker.lon, telemetryMarker.lat]);
+    return { x: projected.x, y: projected.y };
+  }
+  return fallback ?? null;
+};
+const resolveMarkerType = (markerId: string): MarkerRadialMenuProfile | null => {
+  if (markersStore.markerIndex.has(markerId)) {
+    return "regular";
+  }
+  if (markerIndex.value.has(markerId)) {
+    return "telemetry";
+  }
+  return null;
+};
+const resolveMarkerLabel = (markerId: string): string => {
+  const operatorMarker = markersStore.markerIndex.get(markerId);
+  if (operatorMarker) {
+    return operatorMarker.name;
+  }
+  const telemetryMarker = markerIndex.value.get(markerId);
+  if (telemetryMarker) {
+    return telemetryMarker.name;
+  }
+  return "Marker";
 };
 const clearHoveredOperatorMarker = () => {
   hoveredOperatorMarkerId.value = null;
@@ -754,7 +916,53 @@ const closeMarkerRadialMenu = () => {
   markerRadialMenuPoint.value = null;
   markerRadialMenuPath.value = [];
 };
-const resolveMarkerRadialMenuProfile = (_markerId: string): MarkerRadialMenuProfile => "regular";
+const closeZoneRadialMenu = () => {
+  zoneRadialMenuZoneId.value = null;
+  zoneRadialMenuPoint.value = null;
+};
+const closeZoneAssign = () => {
+  zoneAssignOpen.value = false;
+  zoneAssignZoneId.value = "";
+  zoneAssignMissionUid.value = "";
+  zoneAssignBusy.value = false;
+};
+const dismissRadialMenus = () => {
+  markerToolbarOpen.value = false;
+  closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
+  markerMoveArmId.value = null;
+  closeMarkerCompass();
+  clearHoveredOperatorMarker();
+  if (markerRenameOpen.value) {
+    closeMarkerRename();
+  }
+  if (zonePromptOpen.value) {
+    closeZonePrompt();
+  }
+};
+const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
+  const anchored = resolveMarkerScreenPoint(markerId, point);
+  if (!anchored) {
+    return;
+  }
+  if (markerRadialMenuMarkerId.value === markerId) {
+    markerRadialMenuPoint.value = anchored;
+    hoveredOperatorMarkerId.value = markerId;
+    hoveredOperatorMarkerPoint.value = anchored;
+    return;
+  }
+  openMarkerRadialMenu(markerId, anchored);
+};
+const openHoverZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
+  if (zoneRadialMenuZoneId.value === zoneId) {
+    zoneRadialMenuPoint.value = point;
+    return;
+  }
+  openZoneRadialMenu(zoneId, point);
+};
+const resolveMarkerRadialMenuProfile = (markerId: string): MarkerRadialMenuProfile =>
+  resolveMarkerType(markerId) ?? "regular";
 const resolveMarkerRadialMenuLevel = (
   profile: MarkerRadialMenuProfile,
   path: string[]
@@ -793,6 +1001,16 @@ const markerRadialMenuStyle = computed(() => {
     top: `${clamped.y}px`
   };
 });
+const zoneRadialMenuStyle = computed(() => {
+  if (!zoneRadialMenuZoneId.value || !zoneRadialMenuPoint.value) {
+    return null;
+  }
+  const clamped = clampPointToContainer(zoneRadialMenuPoint.value, MARKER_RADIAL_MENU_EDGE_PADDING);
+  return {
+    left: `${clamped.x}px`,
+    top: `${clamped.y}px`
+  };
+});
 const markerReticleMarkerId = computed(() =>
   markerRadialMenuMarkerId.value ?? hoveredOperatorMarkerId.value ?? markerCompassMarkerId.value
 );
@@ -804,22 +1022,29 @@ const markerReticleLabel = computed(() => {
   if (!markerId) {
     return "";
   }
-  return markersStore.markerIndex.get(markerId)?.name ?? "Marker";
+  return resolveMarkerLabel(markerId);
 });
 const markerReticleSubLabel = computed(() => {
-  if (!markerReticleMarkerId.value) {
+  const markerId = markerReticleMarkerId.value;
+  if (!markerId) {
     return "";
   }
-  if (markerMoveArmId.value && markerMoveArmId.value === markerReticleMarkerId.value) {
+  if (markerMoveArmId.value && markerMoveArmId.value === markerId) {
     return "Move Armed";
   }
-  if (markerRadialMenuMarkerId.value && markerRadialMenuMarkerId.value === markerReticleMarkerId.value) {
+  if (markerRadialMenuMarkerId.value && markerRadialMenuMarkerId.value === markerId) {
     return "Command Menu";
   }
-  if (markerCompassMarkerId.value && markerCompassMarkerId.value === markerReticleMarkerId.value) {
+  if (markerCompassMarkerId.value && markerCompassMarkerId.value === markerId) {
     return "Compass Active";
   }
-  return "Operator Marker";
+  if (markersStore.markerIndex.has(markerId)) {
+    return "Operator Marker";
+  }
+  if (markerIndex.value.has(markerId)) {
+    return "User";
+  }
+  return "Marker";
 });
 const markerReticleStyle = computed(() => {
   const point = markerReticlePoint.value;
@@ -909,6 +1134,8 @@ const openMarkerRadialMenu = (markerId: string, point?: ScreenPoint) => {
   if (!anchored) {
     return;
   }
+  closeZoneRadialMenu();
+  closeZoneAssign();
   closeMarkerCompass();
   markerRadialMenuProfile.value = resolveMarkerRadialMenuProfile(markerId);
   markerRadialMenuPath.value = [];
@@ -917,6 +1144,23 @@ const openMarkerRadialMenu = (markerId: string, point?: ScreenPoint) => {
   hoveredOperatorMarkerId.value = markerId;
   hoveredOperatorMarkerPoint.value = anchored;
   markerMoveArmId.value = null;
+};
+const openZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
+  closeMarkerRadialMenu();
+  closeMarkerCompass();
+  markerMoveArmId.value = null;
+  closeZoneAssign();
+  closeZonePrompt();
+  if (markerRenameOpen.value) {
+    closeMarkerRename();
+  }
+  markerToolbarOpen.value = false;
+  clearHoveredOperatorMarker();
+  selectedZoneId.value = zoneId;
+  activeMarkerTab.value = "zones";
+  zoneRadialMenuZoneId.value = zoneId;
+  zoneRadialMenuPoint.value = point;
+  renderZones();
 };
 const handleMarkerRadialMenuCenter = () => {
   if (!markerRadialMenuMarkerId.value) {
@@ -935,6 +1179,14 @@ const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
   }
   if (item.children?.length) {
     markerRadialMenuPath.value = [...markerRadialMenuPath.value, item.id];
+    return;
+  }
+  if (item.action === "inspect") {
+    const telemetryMarker = markerIndex.value.get(markerId);
+    closeMarkerRadialMenu();
+    if (telemetryMarker) {
+      openInspector(telemetryMarker, true);
+    }
     return;
   }
   if (item.action === "rename") {
@@ -1158,6 +1410,8 @@ const applyFilters = async () => {
 const toggleZoneMode = () => {
   markerToolbarOpen.value = false;
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
   closeMarkerCompass();
   markerMoveArmId.value = null;
   clearHoveredOperatorMarker();
@@ -1175,11 +1429,15 @@ const toggleZoneMode = () => {
 
 const toggleMarkerToolbar = () => {
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
   markerToolbarOpen.value = !markerToolbarOpen.value;
 };
 
 const selectMarkerSymbol = (symbolId: string) => {
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
   closeMarkerCompass();
   markerMoveArmId.value = null;
   markerCategory.value = symbolId;
@@ -1209,6 +1467,7 @@ const openZonePrompt = (
   mode: "create" | "rename",
   options: { zoneId?: string; value?: string; point?: { x: number; y: number } } = {}
 ) => {
+  closeZoneAssign();
   const { zoneId = "", value = "", point = { x: 12, y: 12 } } = options;
   const container = mapContainer.value;
   if (!container) {
@@ -1223,6 +1482,102 @@ const openZonePrompt = (
   zonePromptValue.value = value;
   zonePromptPosition.value = { left, top };
   zonePromptOpen.value = true;
+};
+
+const loadZoneAssignMissions = async (): Promise<void> => {
+  zoneAssignMissionsLoading.value = true;
+  try {
+    const missions = await get<MissionRaw[]>(endpoints.r3aktMissions);
+    zoneAssignMissions.value = toZoneMissionOptions(missions);
+  } catch (error) {
+    zoneAssignMissions.value = [];
+    toastStore.push("Unable to load missions.", "danger");
+  } finally {
+    zoneAssignMissionsLoading.value = false;
+  }
+};
+
+const openZoneAssignPopover = async (zoneId: string, point: ScreenPoint) => {
+  const container = mapContainer.value;
+  if (!container) {
+    return;
+  }
+  closeZoneRadialMenu();
+  closeZonePrompt();
+  if (markerRenameOpen.value) {
+    closeMarkerRename();
+  }
+  const width = 280;
+  const height = 148;
+  const left = Math.min(Math.max(point.x + 12, 12), Math.max(12, container.clientWidth - width - 12));
+  const top = Math.min(Math.max(point.y + 12, 12), Math.max(12, container.clientHeight - height - 12));
+  zoneAssignZoneId.value = zoneId;
+  zoneAssignMissionUid.value = "";
+  zoneAssignPosition.value = { left, top };
+  zoneAssignOpen.value = true;
+  await loadZoneAssignMissions();
+  if (!zoneAssignMissions.value.length) {
+    toastStore.push("No missions available for assignment.", "warning");
+    closeZoneAssign();
+    return;
+  }
+  zoneAssignMissionUid.value = zoneAssignMissions.value[0].uid;
+};
+
+const submitZoneAssign = async () => {
+  const zoneId = zoneAssignZoneId.value.trim();
+  const missionUid = zoneAssignMissionUid.value.trim();
+  if (!zoneId || !missionUid || zoneAssignBusy.value) {
+    return;
+  }
+  zoneAssignBusy.value = true;
+  try {
+    await put(`${endpoints.r3aktMissions}/${encodeURIComponent(missionUid)}/zones/${encodeURIComponent(zoneId)}`);
+    toastStore.push("Zone assigned to mission.", "success");
+    closeZoneAssign();
+  } catch (error) {
+    toastStore.push("Unable to assign zone to mission.", "danger");
+  } finally {
+    zoneAssignBusy.value = false;
+  }
+};
+
+const handleZoneRadialMenuItem = (item: ZoneRadialMenuNode) => {
+  const zoneId = zoneRadialMenuZoneId.value;
+  if (!zoneId) {
+    return;
+  }
+  if (item.action === "rename") {
+    closeZoneRadialMenu();
+    openZoneRename(zoneId);
+    return;
+  }
+  if (item.action === "move") {
+    closeZoneRadialMenu();
+    startZoneEdit(zoneId);
+    toastStore.push("Zone edit mode active. Drag vertices to reposition geometry.", "info");
+    return;
+  }
+  if (item.action === "delete") {
+    closeZoneRadialMenu();
+    void deleteZone(zoneId);
+    return;
+  }
+  if (item.action === "assign") {
+    let anchor = zoneRadialMenuPoint.value;
+    if (!anchor && mapInstance.value) {
+      const zone = zonesStore.zoneIndex.get(zoneId);
+      const centroid = zone ? (polygonCentroid(zone.points) ?? zone.points[0]) : null;
+      if (centroid) {
+        const projected = mapInstance.value.project([centroid.lon, centroid.lat]);
+        anchor = { x: projected.x, y: projected.y };
+      }
+    }
+    if (!anchor) {
+      return;
+    }
+    void openZoneAssignPopover(zoneId, anchor);
+  }
 };
 
 const completeZoneDraft = () => {
@@ -1278,6 +1633,8 @@ const startZoneEdit = (zoneId: string) => {
   if (!zone) {
     return;
   }
+  closeZoneRadialMenu();
+  closeZoneAssign();
   closeMarkerRadialMenu();
   closeMarkerCompass();
   markerMoveArmId.value = null;
@@ -1357,6 +1714,12 @@ const openZoneRename = (zoneId: string) => {
 
 const deleteZone = async (zoneId: string) => {
   try {
+    if (zoneRadialMenuZoneId.value === zoneId) {
+      closeZoneRadialMenu();
+    }
+    if (zoneAssignZoneId.value === zoneId) {
+      closeZoneAssign();
+    }
     await zonesStore.deleteZone(zoneId);
     if (selectedZoneId.value === zoneId) {
       selectedZoneId.value = "";
@@ -1476,10 +1839,14 @@ const pointHitsRenderedLayer = (
 
 const handleDocumentPointerDown = (event: MouseEvent) => {
   const target = event.target as Node | null;
-  if (zonePromptOpen.value) {
-    const prompt = document.querySelector(".webmap-rename-popover");
-    if (!target || !prompt || !prompt.contains(target)) {
+  if (zonePromptOpen.value && zonePromptRef.value) {
+    if (!target || !zonePromptRef.value.contains(target)) {
       closeZonePrompt();
+    }
+  }
+  if (zoneAssignOpen.value && zoneAssignPopoverRef.value) {
+    if (!target || !zoneAssignPopoverRef.value.contains(target)) {
+      closeZoneAssign();
     }
   }
   if (markerToolbarOpen.value && markerToolbarRef.value) {
@@ -1491,6 +1858,11 @@ const handleDocumentPointerDown = (event: MouseEvent) => {
     if (!target || !markerRadialMenuRef.value.contains(target)) {
       closeMarkerRadialMenu();
       markerMoveArmId.value = null;
+    }
+  }
+  if (zoneRadialMenuZoneId.value && zoneRadialMenuRef.value) {
+    if (!target || !zoneRadialMenuRef.value.contains(target)) {
+      closeZoneRadialMenu();
     }
   }
 };
@@ -1517,6 +1889,8 @@ const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
     return;
   }
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
   closeMarkerCompass();
   markerMoveArmId.value = null;
   clearHoveredOperatorMarker();
@@ -1524,17 +1898,7 @@ const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
 };
 
 const handleMapClick = (event: maplibregl.MapMouseEvent) => {
-  markerToolbarOpen.value = false;
-  closeMarkerRadialMenu();
-  markerMoveArmId.value = null;
-  closeMarkerCompass();
-  clearHoveredOperatorMarker();
-  if (markerRenameOpen.value) {
-    closeMarkerRename();
-  }
-  if (zonePromptOpen.value) {
-    closeZonePrompt();
-  }
+  dismissRadialMenus();
   if (zoneMode.value) {
     const clickDetail = (event.originalEvent as MouseEvent | undefined)?.detail ?? 1;
     if (clickDetail > 1) {
@@ -1550,6 +1914,7 @@ const handleMapClick = (event: maplibregl.MapMouseEvent) => {
         "telemetry-cluster-count",
         "zone-fill",
         "zone-outline",
+        "zone-handle-hit",
         "zone-handle-vertices",
         "zone-handle-midpoints",
       ])
@@ -1576,6 +1941,12 @@ const handleMapClick = (event: maplibregl.MapMouseEvent) => {
     return;
   }
   void createMarkerAt(event.lngLat);
+};
+
+const handleMapContextMenu = (event: maplibregl.MapMouseEvent) => {
+  event.preventDefault();
+  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  dismissRadialMenus();
 };
 
 const handleMapDoubleClick = (event: maplibregl.MapMouseEvent) => {
@@ -1611,22 +1982,33 @@ const stopZoneVertexDrag = () => {
 };
 
 const startZoneVertexDrag = (event: maplibregl.MapLayerMouseEvent) => {
-  if (!zoneEditingId.value || !mapInstance.value) {
+  const map = mapInstance.value;
+  if (!zoneEditingId.value || !map) {
     return;
   }
-  const feature = event.features?.[0];
+  const pointerEvent = event.originalEvent as MouseEvent | undefined;
+  if (pointerEvent && pointerEvent.button !== 0) {
+    return;
+  }
+  const feature =
+    event.features?.[0] ??
+    map.queryRenderedFeatures([event.point.x, event.point.y], {
+      layers: ["zone-handle-hit", "zone-handle-vertices"],
+    })[0];
   const rawIndex = feature?.properties?.index;
   const index = typeof rawIndex === "string" ? Number(rawIndex) : Number(rawIndex);
   if (!Number.isInteger(index) || index < 0 || index >= zoneEditingPoints.value.length) {
     return;
   }
   event.preventDefault();
-  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  pointerEvent?.preventDefault?.();
+  pointerEvent?.stopPropagation?.();
   zoneDraggingVertexIndex.value = index;
-  mapInstance.value.dragPan.disable();
-  mapInstance.value.getCanvas().style.cursor = "move";
-  mapInstance.value.on("mousemove", handleZoneVertexDrag);
-  mapInstance.value.once("mouseup", stopZoneVertexDrag);
+  map.dragPan.disable();
+  map.getCanvas().style.cursor = "move";
+  map.on("mousemove", handleZoneVertexDrag);
+  map.once("mouseup", stopZoneVertexDrag);
+  map.once("mouseleave", stopZoneVertexDrag);
 };
 
 const handleZoneMidpointClick = (event: maplibregl.MapLayerMouseEvent) => {
@@ -1666,6 +2048,12 @@ const handleZoneVertexContextMenu = (event: maplibregl.MapLayerMouseEvent) => {
   next.splice(index, 1);
   zoneEditingPoints.value = next;
   renderZones();
+};
+
+const handleZoneContextMenu = (event: maplibregl.MapLayerMouseEvent) => {
+  event.preventDefault();
+  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  dismissRadialMenus();
 };
 
 const selectMarker = (marker: TelemetryMarker) => {
@@ -2306,6 +2694,19 @@ const renderZones = () => {
       },
     });
   }
+  if (!map.getLayer("zone-handle-hit")) {
+    map.addLayer({
+      id: "zone-handle-hit",
+      type: "circle",
+      source: zoneHandleSourceId,
+      paint: {
+        "circle-radius": 12,
+        "circle-color": "#000000",
+        "circle-opacity": 0,
+        "circle-stroke-opacity": 0,
+      },
+    });
+  }
   if (!map.getLayer("zone-handle-vertices")) {
     map.addLayer({
       id: "zone-handle-vertices",
@@ -2353,13 +2754,53 @@ const renderZones = () => {
       activeMarkerTab.value = "zones";
       renderZones();
     });
+    map.on("contextmenu", "zone-fill", handleZoneContextMenu);
+    map.on("contextmenu", "zone-outline", handleZoneContextMenu);
+    map.on("mousemove", "zone-fill", (event) => {
+      if (zoneMode.value || zoneEditingId.value) {
+        return;
+      }
+      const zoneId = String(event.features?.[0]?.properties?.id ?? "").trim();
+      if (!zoneId) {
+        return;
+      }
+      openHoverZoneRadialMenu(zoneId, toScreenPoint(event.point));
+    });
+    map.on("mousemove", "zone-outline", (event) => {
+      if (zoneMode.value || zoneEditingId.value) {
+        return;
+      }
+      const zoneId = String(event.features?.[0]?.properties?.id ?? "").trim();
+      if (!zoneId) {
+        return;
+      }
+      openHoverZoneRadialMenu(zoneId, toScreenPoint(event.point));
+    });
+    map.on("mousedown", "zone-handle-hit", startZoneVertexDrag);
     map.on("mousedown", "zone-handle-vertices", startZoneVertexDrag);
     map.on("click", "zone-handle-midpoints", handleZoneMidpointClick);
+    map.on("contextmenu", "zone-handle-hit", handleZoneVertexContextMenu);
     map.on("contextmenu", "zone-handle-vertices", handleZoneVertexContextMenu);
     map.on("mouseenter", "zone-fill", () => {
       map.getCanvas().style.cursor = "pointer";
     });
     map.on("mouseleave", "zone-fill", () => {
+      if (zoneDraggingVertexIndex.value === null) {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+    map.on("mouseenter", "zone-outline", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "zone-outline", () => {
+      if (zoneDraggingVertexIndex.value === null) {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+    map.on("mouseenter", "zone-handle-hit", () => {
+      map.getCanvas().style.cursor = "move";
+    });
+    map.on("mouseleave", "zone-handle-hit", () => {
       if (zoneDraggingVertexIndex.value === null) {
         map.getCanvas().style.cursor = "";
       }
@@ -2392,13 +2833,25 @@ const handleOperatorMarkerHoverMove = (event: maplibregl.MapLayerMouseEvent) => 
   }
   const markerId = String(markerIdRaw);
   const anchored = resolveMarkerScreenPoint(markerId, toScreenPoint(event.point)) ?? toScreenPoint(event.point);
-  hoveredOperatorMarkerId.value = markerId;
-  hoveredOperatorMarkerPoint.value = anchored;
   if (!draggingMarkerId.value) {
+    openHoverMarkerRadialMenu(markerId, anchored);
     const cursor = markerMoveArmId.value && markerMoveArmId.value === markerId ? "move" : "pointer";
     if (mapInstance.value) {
       mapInstance.value.getCanvas().style.cursor = cursor;
     }
+  }
+};
+
+const handleTelemetryMarkerHoverMove = (event: maplibregl.MapLayerMouseEvent) => {
+  const feature = event.features?.[0];
+  const markerIdRaw = feature?.properties?.id;
+  if (!markerIdRaw) {
+    return;
+  }
+  const markerId = String(markerIdRaw);
+  openHoverMarkerRadialMenu(markerId, toScreenPoint(event.point));
+  if (!draggingMarkerId.value && mapInstance.value) {
+    mapInstance.value.getCanvas().style.cursor = "pointer";
   }
 };
 
@@ -2495,21 +2948,9 @@ const stopMarkerDrag = () => {
 };
 
 const handleOperatorMarkerContextMenu = (event: maplibregl.MapLayerMouseEvent) => {
-  const feature = event.features?.[0];
-  const markerId = feature?.properties?.id;
-  if (!markerId) {
-    return;
-  }
   event.preventDefault();
   (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
-  markerToolbarOpen.value = false;
-  if (zonePromptOpen.value) {
-    closeZonePrompt();
-  }
-  if (markerRenameOpen.value) {
-    closeMarkerRename();
-  }
-  openMarkerRadialMenu(String(markerId), toScreenPoint(event.point));
+  dismissRadialMenus();
 };
 
 const renderTelemetryMarkers = () => {
@@ -2722,6 +3163,7 @@ const renderTelemetryMarkers = () => {
     map.on("mouseenter", layerId, () => {
       map.getCanvas().style.cursor = "pointer";
     });
+    map.on("mousemove", layerId, handleTelemetryMarkerHoverMove);
     map.on("mouseleave", layerId, () => {
       map.getCanvas().style.cursor = "";
     });
@@ -2960,6 +3402,7 @@ const handleMapLoaded = async (symbolsPromise: Promise<void>) => {
   await loadMarkerImages();
   renderMarkers();
   mapInstance.value?.on("click", handleMapClick);
+  mapInstance.value?.on("contextmenu", handleMapContextMenu);
   mapInstance.value?.on("dblclick", handleMapDoubleClick);
   mapInstance.value?.on("mousemove", handleMapPointerMove);
   mapInstance.value?.on("mouseleave", handleMapPointerLeave);
@@ -3029,6 +3472,7 @@ onUnmounted(() => {
     mapInstance.value.off("zoom", handleMarkerZoom);
     mapInstance.value.off("moveend", persistMapView);
     mapInstance.value.off("click", handleMapClick);
+    mapInstance.value.off("contextmenu", handleMapContextMenu);
     mapInstance.value.off("dblclick", handleMapDoubleClick);
     mapInstance.value.off("mousemove", handleMapPointerMove);
     mapInstance.value.off("mouseleave", handleMapPointerLeave);
@@ -3039,6 +3483,8 @@ onUnmounted(() => {
   window.removeEventListener("scroll", handleInspectorViewportChange);
   window.removeEventListener("mousedown", handleDocumentPointerDown);
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
   closeMarkerCompass();
   clearHoveredOperatorMarker();
   stopDrag();

@@ -635,6 +635,19 @@
   color: #ffdcb8;
 }
 
+.webmap-zone-assign-popover {
+  width: 280px;
+}
+
+.webmap-zone-assign-popover .webmap-rename-input {
+  margin-bottom: 2px;
+}
+
+.webmap-rename-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .webmap-sidebar {
   min-width: 0;
   display: flex;

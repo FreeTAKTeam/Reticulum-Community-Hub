@@ -80,6 +80,7 @@ CHECKLIST_MODE_OFFLINE = ChecklistMode.OFFLINE.value
 CHECKLIST_SYNC_LOCAL_ONLY = ChecklistSyncState.LOCAL_ONLY.value
 CHECKLIST_SYNC_UPLOAD_PENDING = ChecklistSyncState.UPLOAD_PENDING.value
 CHECKLIST_SYNC_SYNCED = ChecklistSyncState.SYNCED.value
+CHECKLIST_DEFAULT_DUE_STEP_MINUTES = 30
 SYSTEM_COLUMN_KEY_DUE_RELATIVE_DTG = ChecklistSystemColumnKey.DUE_RELATIVE_DTG.value
 ASSET_STATUS_AVAILABLE = AssetStatus.AVAILABLE.value
 ASSET_STATUS_IN_USE = AssetStatus.IN_USE.value
@@ -3359,10 +3360,20 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if checklist is None:
                 raise KeyError(f"Checklist '{checklist_uid}' not found")
             mission_uid = str(checklist.mission_uid or "").strip() or None
-            due_relative = args.get("due_relative_minutes")
+            task_number = int(args.get("number") or 1)
             due_dtg = _as_datetime(args.get("due_dtg"))
-            if due_dtg is None and due_relative is not None:
-                due_dtg = checklist.start_time + timedelta(minutes=int(due_relative))
+            due_relative_minutes: int | None
+            raw_due_relative = args.get("due_relative_minutes")
+            if raw_due_relative is None:
+                due_relative_minutes = (
+                    task_number * CHECKLIST_DEFAULT_DUE_STEP_MINUTES
+                    if due_dtg is None
+                    else None
+                )
+            else:
+                due_relative_minutes = int(raw_due_relative)
+            if due_dtg is None and due_relative_minutes is not None:
+                due_dtg = checklist.start_time + timedelta(minutes=due_relative_minutes)
             legacy_value_raw = args.get("legacy_value")
             legacy_value = None
             if legacy_value_raw is not None:
@@ -3373,12 +3384,12 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             task = R3aktChecklistTaskRecord(
                 task_uid=task_uid,
                 checklist_uid=checklist_uid,
-                number=int(args.get("number") or 1),
+                number=task_number,
                 user_status=CHECKLIST_USER_PENDING,
                 task_status=status,
                 is_late=is_late,
                 custom_status=None,
-                due_relative_minutes=int(due_relative) if due_relative is not None else None,
+                due_relative_minutes=due_relative_minutes,
                 due_dtg=due_dtg,
                 notes=None,
                 row_background_color=None,

@@ -43,7 +43,9 @@
             >
               <span class="tree-dot" aria-hidden="true"></span>
               <span class="tree-label">{{ mission.mission_name }}</span>
-              <span class="tree-count">{{ mission.status }}</span>
+              <span class="tree-count mission-status-chip" :class="missionStatusChipClass(mission.status)">
+                {{ missionStatusLabel(mission.status) }}
+              </span>
             </button>
           </div>
           <div class="mission-directory-actions">
@@ -74,6 +76,7 @@
                 <span>Days</span>
                 <span>Hrs</span>
                 <span>Min</span>
+                <span>Sec</span>
               </div>
             </div>
           </div>
@@ -120,7 +123,11 @@
                   <tbody>
                     <tr v-for="mission in missions" :key="`registry-${mission.uid}`">
                       <td>{{ mission.mission_name }}</td>
-                      <td>{{ mission.status }}</td>
+                      <td>
+                        <span class="mission-status-chip" :class="missionStatusChipClass(mission.status)">
+                          {{ missionStatusLabel(mission.status) }}
+                        </span>
+                      </td>
                       <td>{{ missionChecklistCountByMission.get(mission.uid) ?? 0 }}</td>
                       <td>{{ missionOpenTaskCountByMission.get(mission.uid) ?? 0 }}</td>
                     </tr>
@@ -133,7 +140,15 @@
                 <ul class="stack-list">
                   <li><strong>Mission ID</strong><span>{{ selectedMission?.uid || "Not Selected" }}</span></li>
                   <li><strong>Topic Scope</strong><span>{{ selectedMission?.topic || "-" }}</span></li>
-                  <li><strong>Status</strong><span>{{ selectedMission?.status || "-" }}</span></li>
+                  <li>
+                    <strong>Status</strong>
+                    <span
+                      class="mission-status-chip"
+                      :class="selectedMission ? missionStatusChipClass(selectedMission.status) : ''"
+                    >
+                      {{ selectedMission ? missionStatusLabel(selectedMission.status) : "-" }}
+                    </span>
+                  </li>
                   <li><strong>Team Members</strong><span>{{ missionMembers.length }}</span></li>
                   <li><strong>Assigned Assets</strong><span>{{ missionAssets.length }}</span></li>
                 </ul>
@@ -508,6 +523,11 @@ import MissionMemberAllocationModal from "./MissionMemberAllocationModal.vue";
 import MissionOperationsScreen from "./MissionOperationsScreen.vue";
 import MissionOverviewScreen from "./MissionOverviewScreen.vue";
 import MissionTeamAllocationModal from "./MissionTeamAllocationModal.vue";
+import { getMissionStatusLabel } from "./mission-status";
+import { getMissionStatusTone } from "./mission-status";
+import { MISSION_STATUS_ENUM } from "./mission-status";
+import { normalizeMissionStatus } from "./mission-status";
+import { toMissionStatusValue } from "./mission-status";
 import { useChecklistTemplateDraft } from "../../composables/useChecklistTemplateDraft";
 import { useChecklistTemplateCrud } from "../../composables/useChecklistTemplateCrud";
 import { useToastStore } from "../../stores/toasts";
@@ -957,66 +977,6 @@ const toEpoch = (value?: string | null): number => {
 const formatCountdownSegment = (value: number): string => {
   const normalized = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
   return String(normalized).padStart(2, "0");
-};
-
-const MISSION_STATUS_ENUM = [
-  "MISSION_ACTIVE",
-  "MISSION_PLANNED",
-  "MISSION_STANDBY",
-  "MISSION_COMPLETE",
-  "MISSION_ARCHIVED"
-] as const;
-
-type MissionStatusEnum = (typeof MISSION_STATUS_ENUM)[number];
-
-const MISSION_STATUS_ALIAS_MAP: Record<string, MissionStatusEnum> = {
-  ACTIVE: "MISSION_ACTIVE",
-  MISSION_ACTIVE: "MISSION_ACTIVE",
-  PLANNED: "MISSION_PLANNED",
-  MISSION_PLANNED: "MISSION_PLANNED",
-  STANDBY: "MISSION_STANDBY",
-  MISSION_STANDBY: "MISSION_STANDBY",
-  COMPLETE: "MISSION_COMPLETE",
-  COMPLETED: "MISSION_COMPLETE",
-  IN_COMPLETE: "MISSION_COMPLETE",
-  INCOMPLETE: "MISSION_COMPLETE",
-  MISSION_COMPLETE: "MISSION_COMPLETE",
-  MISSION_COMPLETED: "MISSION_COMPLETE",
-  MISSION_IN_COMPLETE: "MISSION_COMPLETE",
-  ARCHIVE: "MISSION_ARCHIVED",
-  ARCHIVED: "MISSION_ARCHIVED",
-  MISSION_ARCHIVE: "MISSION_ARCHIVED",
-  MISSION_ARCHIVED: "MISSION_ARCHIVED"
-};
-
-const toMissionStatusEnum = (value?: string | null): MissionStatusEnum => {
-  const token = String(value ?? "")
-    .trim()
-    .toUpperCase()
-    .replace(/[\s-]+/g, "_");
-  if (!token) {
-    return "MISSION_ACTIVE";
-  }
-
-  const mapped = MISSION_STATUS_ALIAS_MAP[token];
-  if (mapped) {
-    return mapped;
-  }
-
-  if (token.startsWith("MISSION_")) {
-    return MISSION_STATUS_ENUM.includes(token as MissionStatusEnum) ? (token as MissionStatusEnum) : "MISSION_ACTIVE";
-  }
-
-  const prefixed = `MISSION_${token}` as MissionStatusEnum;
-  return MISSION_STATUS_ENUM.includes(prefixed) ? prefixed : "MISSION_ACTIVE";
-};
-
-const normalizeMissionStatus = (value?: string | null): string => {
-  return toMissionStatusEnum(value).slice("MISSION_".length);
-};
-
-const toMissionStatusValue = (value?: string | null): string => {
-  return toMissionStatusEnum(value);
 };
 
 const normalizeTaskStatus = (value?: string | null): string => {
@@ -1841,7 +1801,7 @@ const checklistTemplateSelectionUid = ref("");
 const checklistTemplateNameDraft = ref("");
 const checklistTemplateSubmitting = ref(false);
 const checklistDetailUid = ref("");
-const checklistTaskDueDraft = ref("10");
+const checklistTaskDueDraft = ref("");
 const checklistTaskStatusBusyByTaskUid = ref<Record<string, boolean>>({});
 const checklistDeleteBusy = ref(false);
 const checklistLinkMissionModalOpen = ref(false);
@@ -1885,6 +1845,10 @@ const missionCountdownNow = ref(Date.now());
 let missionCountdownTimerId: number | undefined;
 
 const missionStatusOptions: string[] = [...MISSION_STATUS_ENUM];
+const missionStatusLabel = (value?: string | null): string => getMissionStatusLabel(value);
+const missionStatusChipClass = (value?: string | null): string => {
+  return `mission-status-chip--${getMissionStatusTone(value)}`;
+};
 
 const currentScreen = computed(() => screenMeta[secondaryScreen.value]);
 const isChecklistPrimaryTab = computed(() => primaryTab.value === "checklists");
@@ -1913,7 +1877,7 @@ const selectedMissionTopicName = computed(() => {
   return topicNameById.value.get(topicId) ?? topicId;
 });
 const missionEndCountdown = computed(() => {
-  const fallback = { hasEnd: false, display: "00.00.00" };
+  const fallback = { hasEnd: false, display: "00.00.00.00" };
   const expiration = String(selectedMission.value?.expiration ?? "").trim();
   if (!expiration) {
     return fallback;
@@ -1925,13 +1889,14 @@ const missionEndCountdown = computed(() => {
   }
 
   const remainingMs = Math.max(0, target - missionCountdownNow.value);
-  const totalMinutes = Math.floor(remainingMs / 60_000);
-  const days = Math.floor(totalMinutes / (24 * 60));
-  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
-  const minutes = totalMinutes % 60;
+  const totalSeconds = Math.floor(remainingMs / 1000);
+  const days = Math.floor(totalSeconds / (24 * 60 * 60));
+  const hours = Math.floor((totalSeconds % (24 * 60 * 60)) / (60 * 60));
+  const minutes = Math.floor((totalSeconds % (60 * 60)) / 60);
+  const seconds = totalSeconds % 60;
   return {
     hasEnd: true,
-    display: `${formatCountdownSegment(days)}.${formatCountdownSegment(hours)}.${formatCountdownSegment(minutes)}`
+    display: `${formatCountdownSegment(days)}.${formatCountdownSegment(hours)}.${formatCountdownSegment(minutes)}.${formatCountdownSegment(seconds)}`
   };
 });
 const isMissionCreateScreen = computed(() => secondaryScreen.value === "missionCreate");
@@ -3116,9 +3081,12 @@ const addChecklistTaskFromDetail = async () => {
   try {
     const nextNumber = checklistDetailRows.value.reduce((max, row) => Math.max(max, row.number), 0) + 1;
     const payload: Record<string, unknown> = { number: nextNumber };
-    const parsedDue = Number(checklistTaskDueDraft.value);
-    if (Number.isFinite(parsedDue)) {
-      payload.due_relative_minutes = Math.trunc(parsedDue);
+    const dueDraft = checklistTaskDueDraft.value.trim();
+    if (dueDraft.length > 0) {
+      const parsedDue = Number(dueDraft);
+      if (Number.isFinite(parsedDue)) {
+        payload.due_relative_minutes = Math.trunc(parsedDue);
+      }
     }
     await post(`${endpoints.checklists}/${checklist.uid}/tasks`, payload);
     await loadWorkspace();
@@ -3595,8 +3563,7 @@ const ensureChecklistTaskContext = async (): Promise<{ checklistUid: string; tas
     ?.task_uid;
   if (!taskUid) {
     await post(`${endpoints.checklists}/${checklistUid}/tasks`, {
-      number: 1,
-      due_relative_minutes: 10
+      number: 1
     });
     await loadWorkspace();
     checklist =
@@ -4273,8 +4240,7 @@ const setChecklistTaskStatusAction = async () => {
   const firstTask = tasks.find((task) => String(task.task_uid ?? "").trim().length > 0);
   if (!firstTask?.task_uid) {
     await post(`${endpoints.checklists}/${checklistUid}/tasks`, {
-      number: 1,
-      due_relative_minutes: 10
+      number: 1
     });
     await loadWorkspace();
     return;
@@ -4560,7 +4526,13 @@ const previewAction = async (action: string) => {
   }
 
   if (action === "Checklists") {
-    setPrimaryTab("checklists");
+    const missionUid = selectedMissionUid.value.trim();
+    router
+      .push({
+        path: "/checklists",
+        query: missionUid ? { mission_uid: missionUid } : undefined
+      })
+      .catch(() => undefined);
     return;
   }
 

@@ -43,7 +43,9 @@
             >
               <span class="tree-dot" aria-hidden="true"></span>
               <span class="tree-label">{{ mission.mission_name || mission.uid }}</span>
-              <span class="tree-count">{{ mission.mission_status || "UNKNOWN" }}</span>
+              <span class="tree-count mission-status-chip" :class="missionStatusChipClass(mission.mission_status)">
+                {{ missionStatusLabel(mission.mission_status) }}
+              </span>
             </button>
           </div>
 
@@ -94,6 +96,8 @@ import { useRouter } from "vue-router";
 import BaseButton from "../../components/BaseButton.vue";
 import CosmicTopStatus from "../../components/cosmic/CosmicTopStatus.vue";
 import { useMissionScope } from "../../composables/missions/useMissionScope";
+import { getMissionStatusLabel } from "./mission-status";
+import { getMissionStatusTone } from "./mission-status";
 import { useMissionWorkspaceStore } from "../../stores/missionWorkspace";
 import { MISSION_DOMAIN_ROUTE_NAMES } from "../../types/missions/routes";
 import { toMissionUidFromRouteParam } from "../../types/missions/routes";
@@ -102,6 +106,8 @@ const route = useRoute();
 const router = useRouter();
 const workspace = useMissionWorkspaceStore();
 const { selectedMissionUid } = useMissionScope();
+const missionStatusLabel = (value?: string | null): string => getMissionStatusLabel(value);
+const missionStatusChipClass = (value?: string | null): string => `mission-status-chip--${getMissionStatusTone(value)}`;
 
 const domainNav = [
   { name: MISSION_DOMAIN_ROUTE_NAMES.overview, label: "Overview" },

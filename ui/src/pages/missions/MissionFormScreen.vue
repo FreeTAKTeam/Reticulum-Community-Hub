@@ -20,6 +20,23 @@
           @input="emit('update:mission-draft-name', readInputValue($event))"
         />
       </label>
+      <label v-if="!isCreate" class="field-control">
+        <span>Expiration</span>
+        <input
+          :value="missionDraftExpiration"
+          type="datetime-local"
+          @input="emit('update:mission-draft-expiration', readInputValue($event))"
+        />
+      </label>
+      <label v-if="!isCreate" class="field-control full">
+        <span>Description</span>
+        <textarea
+          :value="missionDraftDescription"
+          rows="4"
+          placeholder="Mission objective and constraints..."
+          @input="emit('update:mission-draft-description', readInputValue($event))"
+        ></textarea>
+      </label>
       <label class="field-control">
         <span>Topic Scope</span>
         <div class="field-inline-control">
@@ -35,7 +52,7 @@
         <span>Status</span>
         <select :value="missionDraftStatus" @change="emit('update:mission-draft-status', readSelectValue($event))">
           <option v-for="status in missionStatusOptions" :key="status" :value="status">
-            {{ status }}
+            {{ missionStatusLabel(status) }}
           </option>
         </select>
       </label>
@@ -159,7 +176,7 @@
               @input="emit('update:mission-draft-feeds', readInputValue($event))"
             />
           </label>
-          <label class="field-control">
+          <label v-if="isCreate" class="field-control">
             <span>Expiration</span>
             <input
               :value="missionDraftExpiration"
@@ -194,7 +211,7 @@
         </select>
         <small class="field-note">Preferred assets can be finalized in Assign Assets once tasks and members exist.</small>
       </label>
-      <label class="field-control full">
+      <label v-if="isCreate" class="field-control full">
         <span>Description</span>
         <textarea
           :value="missionDraftDescription"
@@ -212,7 +229,12 @@
       <li><strong>Name</strong><span>{{ missionDraftName || "-" }}</span></li>
       <li><strong>UID</strong><span>{{ missionDraftUidLabel }}</span></li>
       <li><strong>Topic</strong><span>{{ missionDraftTopic || "-" }}</span></li>
-      <li><strong>Status</strong><span>{{ missionDraftStatus }}</span></li>
+      <li>
+        <strong>Status</strong>
+        <span class="mission-status-chip" :class="missionStatusChipClass(missionDraftStatus)">
+          {{ missionStatusLabel(missionDraftStatus) }}
+        </span>
+      </li>
       <li><strong>Parent Mission</strong><span>{{ missionDraftParentLabel }}</span></li>
       <li><strong>Reference Team</strong><span>{{ missionDraftTeamLabel }}</span></li>
       <li><strong>Reference Zones</strong><span>{{ missionDraftZoneLabel }}</span></li>
@@ -225,6 +247,8 @@
 
 <script setup lang="ts">
 import BaseButton from "../../components/BaseButton.vue";
+import { getMissionStatusLabel } from "./mission-status";
+import { getMissionStatusTone } from "./mission-status";
 
 interface SelectOption {
   value: string;
@@ -326,6 +350,12 @@ const onZoneSelectionChange = (event: Event) => {
 const onAssetSelectionChange = (event: Event) => {
   emit("update:mission-draft-asset-uids", readMultiSelectValues(event));
 };
+
+const missionStatusLabel = (value?: string | null): string => getMissionStatusLabel(value);
+
+const missionStatusChipClass = (value?: string | null): string => {
+  return `mission-status-chip--${getMissionStatusTone(value)}`;
+};
 </script>
 
 <style scoped>
@@ -355,6 +385,49 @@ const onAssetSelectionChange = (event: Event) => {
 .stack-list li span {
   font-size: 11px;
   color: rgba(204, 248, 255, 0.8);
+}
+
+.mission-status-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgb(var(--CosmicUI-Secondary-rgb) / 45%);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--cui-mission-status-chip-background);
+  color: rgb(var(--CosmicUI-Secondary-rgb) / 92%);
+}
+
+.mission-status-chip--active {
+  border-color: var(--cui-mission-status-active);
+  color: var(--cui-mission-status-active-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-active-glow);
+}
+
+.mission-status-chip--pending {
+  border-color: var(--cui-mission-status-pending);
+  color: var(--cui-mission-status-pending-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-pending-glow);
+}
+
+.mission-status-chip--success {
+  border-color: var(--cui-mission-status-success);
+  color: var(--cui-mission-status-success-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-success-glow);
+}
+
+.mission-status-chip--failed {
+  border-color: var(--cui-mission-status-failed);
+  color: var(--cui-mission-status-failed-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-failed-glow);
+}
+
+.mission-status-chip--deleted {
+  border-color: var(--cui-mission-status-deleted);
+  color: var(--cui-mission-status-deleted-text);
+  box-shadow: 0 0 12px var(--cui-mission-status-deleted-glow);
 }
 
 .field-grid {
