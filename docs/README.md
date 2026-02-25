@@ -33,6 +33,15 @@
 ## UI
 
 - `../ui/README.md` (UI dev/build steps)
+- `CosmicUi.md` (Cosmic UI design system: tokens, widgets, forms, migration rules)
+- `CosmicUiManualQa.md` (manual QA checklist for Cosmic UI migration/release waves)
+- `CosmicUiManualQa.MissionsWave1.md` (Wave 1 execution report for Missions page split)
+- `CosmicUiManualQa.MissionsWave2.md` (Wave 2 execution report for Missions page split)
+- `CosmicUiManualQa.MissionsWave3.md` (Wave 3 execution report for Missions page split)
+- `CosmicUiManualQa.MissionsWave4.md` (Wave 4 execution report for Missions page split)
+- `CosmicUiManualQa.MissionsWave5.md` (Wave 5 execution report for Missions page split)
+- `CosmicUiManualQa.MissionsWave6.md` (Wave 6 execution report for Missions page split)
+- `CosmicUiManualQa.MissionsWave7.md` (Wave 7 execution report for Missions page split)
 - `ui-architecture.md` (UI architecture)
 - `ui-design.md` (UI design)
 - `ui-wireframe.md` (UI wireframes)

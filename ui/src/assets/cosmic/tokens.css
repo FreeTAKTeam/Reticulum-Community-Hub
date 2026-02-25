@@ -1,0 +1,99 @@
+:root {
+  /* Color */
+  --cui-color-bg-0: #07131f;
+  --cui-color-bg-1: #0f1320;
+  --cui-color-panel-0: #0a2234;
+  --cui-color-panel-1: #071a2a;
+  --cui-color-panel-2: #0a1e30;
+  --cui-color-border-soft: rgba(0, 180, 255, 0.22);
+  --cui-color-border: rgba(0, 180, 255, 0.45);
+  --cui-color-text: #e8f3ff;
+  --cui-color-text-muted: #9fb6cc;
+  --cui-color-tone-primary: #00b4ff;
+  --cui-color-tone-secondary: #56708a;
+  --cui-color-tone-success: #00d0b0;
+  --cui-color-tone-warning: #f59e0b;
+  --cui-color-tone-danger: #ff3b7a;
+  --cui-color-tone-info: #4db6ff;
+  --cui-color-tone-neutral: #8aa3ba;
+
+  /* Typography */
+  --cui-font-display: "Orbitron", "Rajdhani", "Barlow", sans-serif;
+  --cui-font-body: "Barlow", "IBM Plex Sans", "Source Sans 3", "Segoe UI", sans-serif;
+  --cui-font-mono: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+  --cui-text-xs: 0.7rem;
+  --cui-text-sm: 0.8rem;
+  --cui-text-md: 0.9rem;
+  --cui-text-lg: 1rem;
+  --cui-track-tight: 0.04em;
+  --cui-track-wide: 0.16em;
+  --cui-track-ultra: 0.22em;
+
+  /* Spacing */
+  --cui-space-1: 0.125rem;
+  --cui-space-2: 0.25rem;
+  --cui-space-3: 0.5rem;
+  --cui-space-4: 0.75rem;
+  --cui-space-5: 1rem;
+  --cui-space-6: 1.25rem;
+  --cui-space-7: 1.5rem;
+  --cui-space-8: 2rem;
+  --cui-space-9: 2.5rem;
+  --cui-space-10: 3rem;
+
+  /* Radius / geometry */
+  --cui-radius-sm: 6px;
+  --cui-radius-md: 10px;
+  --cui-radius-lg: 14px;
+  --cui-radius-xl: 18px;
+  --cui-cut-sm: 8px;
+  --cui-cut-md: 12px;
+  --cui-cut-lg: 18px;
+
+  /* Elevation / glow */
+  --cui-shadow-panel: 0 12px 30px rgba(1, 6, 12, 0.6);
+  --cui-shadow-modal: 0 0 18px rgba(0, 180, 255, 0.2);
+  --cui-shadow-soft-glow: 0 0 14px rgba(0, 180, 255, 0.18);
+  --cui-glow-primary: 0 0 16px rgba(0, 180, 255, 0.35);
+
+  /* Motion */
+  --cui-motion-fast: 120ms;
+  --cui-motion-base: 200ms;
+  --cui-motion-slow: 320ms;
+  --cui-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --cui-ease-decel: cubic-bezier(0, 0, 0.2, 1);
+  --cui-ease-accel: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Z-index */
+  --cui-z-base: 1;
+  --cui-z-header: 10;
+  --cui-z-overlay: 40;
+  --cui-z-modal: 50;
+  --cui-z-toast: 60;
+
+  /* Compatibility aliases (legacy) */
+  --cui-cut: var(--cui-cut-sm);
+  --cui-stroke: 1px;
+  --cui-glow: var(--cui-glow-primary);
+  --cui-bg: var(--cui-color-bg-0);
+  --cui-panel: var(--cui-color-panel-0);
+  --cui-panel-2: var(--cui-color-panel-1);
+  --cui-text: var(--cui-color-text);
+  --cui-muted: var(--cui-color-text-muted);
+  --cui-primary: var(--cui-color-tone-primary);
+  --cui-accent-warm: #c15a3a;
+  --cui-success: var(--cui-color-tone-success);
+  --cui-danger: var(--cui-color-tone-danger);
+  --cui-secondary: var(--cui-color-tone-secondary);
+  --cui-border: var(--cui-color-border);
+
+  --rth-bg: #0f1320;
+  --rth-panel: #1b2033;
+  --rth-panel-muted: #141828;
+  --rth-border: #252a3d;
+  --rth-accent: #4db6ff;
+  --rth-text: #e7ecf5;
+  --rth-muted: #a7b0c4;
+  --rth-warning: #f59e0b;
+  --rth-danger: #ef4444;
+}

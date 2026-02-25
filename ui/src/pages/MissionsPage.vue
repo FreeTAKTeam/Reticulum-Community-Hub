@@ -1,15 +1,7 @@
 <template>
   <div class="missions-workspace">
     <div class="registry-shell">
-      <header class="registry-top">
-        <div class="registry-title">{{ isChecklistPrimaryTab ? "Checklist" : "Mission Workspace" }}</div>
-        <div class="registry-status">
-          <OnlineHelpLauncher />
-          <span class="cui-status-pill" :class="connectionClass">{{ connectionLabel }}</span>
-          <span class="cui-status-pill" :class="wsClass">{{ wsLabel }}</span>
-          <span class="status-url">{{ baseUrl }}</span>
-        </div>
-      </header>
+      <CosmicTopStatus :title="isChecklistPrimaryTab ? 'Checklist' : 'Mission Workspace'" />
 
       <section v-if="!isChecklistPrimaryTab" class="mission-kpis">
         <article class="kpi-card">
@@ -67,36 +59,23 @@
         </aside>
 
         <section class="panel registry-main">
-          <div v-if="!isChecklistPrimaryTab" class="panel-header">
-            <div>
+          <div v-if="!isChecklistPrimaryTab" class="panel-header panel-header-mission">
+            <div class="panel-header-mission-main">
               <div class="panel-title">{{ workspacePanelTitle }}</div>
               <div class="panel-subtitle">{{ workspacePanelSubtitle }}</div>
             </div>
-            <div class="panel-tabs">
-              <button
-                v-for="tab in primaryTabs"
-                :key="tab.id"
-                class="panel-tab"
-                :class="{ active: primaryTab === tab.id }"
-                type="button"
-                @click="setPrimaryTab(tab.id)"
-              >
-                {{ tab.label }}
-              </button>
+            <div class="mission-end-timer mission-end-timer--header" :class="{ 'mission-end-timer--inactive': !missionEndCountdown.hasEnd }">
+              <div class="mission-end-timer__label">
+                <span class="mission-end-timer__dot" aria-hidden="true"></span>
+                Mission End
+              </div>
+              <div class="mission-end-timer__display mono">{{ missionEndCountdown.display }}</div>
+              <div class="mission-end-timer__units">
+                <span>Days</span>
+                <span>Hrs</span>
+                <span>Min</span>
+              </div>
             </div>
-          </div>
-
-          <div v-if="activeScreens.length > 1" class="screen-tabs">
-            <button
-              v-for="screen in activeScreens"
-              :key="screen.id"
-              class="screen-tab"
-              :class="{ active: secondaryScreen === screen.id }"
-              type="button"
-              @click="setSecondaryScreen(screen.id)"
-            >
-              {{ screen.label }}
-            </button>
           </div>
 
           <article class="screen-shell">
@@ -162,408 +141,82 @@
             </div>
 
             <div v-else-if="isMissionFormScreen" class="screen-grid two-col">
-              <article class="stage-card">
-                <h4>{{ isMissionCreateScreen ? "Mission Create" : "Mission Edit" }}</h4>
-                <div class="field-grid">
-                  <label class="field-control">
-                    <span>Mission UID</span>
-                    <input :value="missionDraftUidLabel" type="text" readonly />
-                  </label>
-                  <label class="field-control">
-                    <span>Name</span>
-                    <input v-model="missionDraftName" type="text" placeholder="Mission Name" />
-                  </label>
-                  <label class="field-control">
-                    <span>Topic Scope</span>
-                    <div class="field-inline-control">
-                      <select v-model="missionDraftTopic">
-                        <option v-for="option in missionTopicOptions" :key="`mission-topic-${option.value}`" :value="option.value">
-                          {{ option.label }}
-                        </option>
-                      </select>
-                      <BaseButton size="sm" variant="secondary" icon-left="plus" @click="openTopicCreatePage">
-                        New
-                      </BaseButton>
-                    </div>
-                  </label>
-                  <label class="field-control">
-                    <span>Status</span>
-                    <select v-model="missionDraftStatus">
-                      <option v-for="status in missionStatusOptions" :key="status" :value="status">
-                        {{ status }}
-                      </option>
-                    </select>
-                  </label>
-                  <label class="field-control">
-                    <span>Parent Mission</span>
-                    <select v-model="missionDraftParentUid">
-                      <option v-for="option in missionParentOptions" :key="`mission-parent-${option.value}`" :value="option.value">
-                        {{ option.label }}
-                      </option>
-                    </select>
-                  </label>
-                  <label class="field-control">
-                    <span>Reference Team</span>
-                    <select v-model="missionDraftTeamUid">
-                      <option v-for="option in missionReferenceTeamOptions" :key="`mission-team-${option.value}`" :value="option.value">
-                        {{ option.label }}
-                      </option>
-                    </select>
-                  </label>
-                  <details class="mission-advanced-properties full" :open="missionAdvancedPropertiesOpen" @toggle="onMissionAdvancedPropertiesToggle">
-                    <summary class="mission-advanced-properties__summary">
-                      <span class="mission-advanced-properties__title">Advanced Properties</span>
-                      <span class="mission-advanced-properties__meta">
-                        {{ missionAdvancedPropertiesOpen ? "Expanded" : "Folded" }}
-                      </span>
-                    </summary>
-                    <div class="field-grid mission-advanced-properties__grid">
-                      <label class="field-control">
-                        <span>Path</span>
-                        <input v-model="missionDraftPath" type="text" placeholder="ops.region.path" />
-                      </label>
-                      <label class="field-control">
-                        <span>Classification</span>
-                        <input v-model="missionDraftClassification" type="text" placeholder="UNCLASSIFIED" />
-                      </label>
-                      <label class="field-control">
-                        <span>Tool</span>
-                        <input v-model="missionDraftTool" type="text" placeholder="ATAK" />
-                      </label>
-                      <label class="field-control">
-                        <span>Keywords (comma separated)</span>
-                        <input v-model="missionDraftKeywords" type="text" placeholder="winter,storm,rescue" />
-                      </label>
-                      <label class="field-control">
-                        <span>Default Role</span>
-                        <input v-model="missionDraftDefaultRole" type="text" placeholder="TEAM_MEMBER" />
-                      </label>
-                      <label class="field-control">
-                        <span>Owner Role</span>
-                        <input v-model="missionDraftOwnerRole" type="text" placeholder="TEAM_LEAD" />
-                      </label>
-                      <label class="field-control">
-                        <span>Mission Priority</span>
-                        <input v-model="missionDraftPriority" type="number" min="0" step="1" placeholder="1" />
-                      </label>
-                      <label class="field-control">
-                        <span>Mission RDE Role</span>
-                        <input v-model="missionDraftMissionRdeRole" type="text" placeholder="observer" />
-                      </label>
-                      <label class="field-control">
-                        <span>Token</span>
-                        <input v-model="missionDraftToken" type="text" placeholder="optional token" />
-                      </label>
-                      <label class="field-control">
-                        <span>Feeds (comma separated)</span>
-                        <input v-model="missionDraftFeeds" type="text" placeholder="feed-alpha,feed-bravo" />
-                      </label>
-                      <label class="field-control">
-                        <span>Expiration</span>
-                        <input v-model="missionDraftExpiration" type="datetime-local" />
-                      </label>
-                      <label class="field-control">
-                        <span>Invite Only</span>
-                        <select v-model="missionDraftInviteOnly">
-                          <option :value="false">No</option>
-                          <option :value="true">Yes</option>
-                        </select>
-                      </label>
-                    </div>
-                  </details>
-                  <label class="field-control full">
-                    <span>Reference Zones</span>
-                    <select
-                      class="field-control-multi"
-                      multiple
-                      :value="missionDraftZoneUids"
-                      @change="onMissionDraftZoneSelectionChange"
-                    >
-                      <option v-for="option in missionReferenceZoneOptions" :key="`mission-zone-${option.value}`" :value="option.value">
-                        {{ option.label }}
-                      </option>
-                    </select>
-                    <small class="field-note">Use Ctrl/Cmd + click to select multiple zones.</small>
-                  </label>
-                  <label class="field-control full">
-                    <span>Reference Assets</span>
-                    <select
-                      class="field-control-multi"
-                      multiple
-                      :value="missionDraftAssetUids"
-                      @change="onMissionDraftAssetSelectionChange"
-                    >
-                      <option
-                        v-for="option in missionReferenceAssetOptions"
-                        :key="`mission-asset-${option.value}`"
-                        :value="option.value"
-                      >
-                        {{ option.label }}
-                      </option>
-                    </select>
-                    <small class="field-note">Preferred assets can be finalized in Assign Assets once tasks and members exist.</small>
-                  </label>
-                  <label class="field-control full">
-                    <span>Description</span>
-                    <textarea
-                      v-model="missionDraftDescription"
-                      rows="4"
-                      placeholder="Mission objective and constraints..."
-                    ></textarea>
-                  </label>
-                </div>
-              </article>
-
-              <article class="stage-card">
-                <h4>{{ isMissionCreateScreen ? "Create Preview" : "Edit Preview" }}</h4>
-                <ul class="stack-list">
-                  <li><strong>Name</strong><span>{{ missionDraftName || "-" }}</span></li>
-                  <li><strong>UID</strong><span>{{ missionDraftUidLabel }}</span></li>
-                  <li><strong>Topic</strong><span>{{ missionDraftTopic || "-" }}</span></li>
-                  <li><strong>Status</strong><span>{{ missionDraftStatus }}</span></li>
-                  <li><strong>Parent Mission</strong><span>{{ missionDraftParentLabel }}</span></li>
-                  <li><strong>Reference Team</strong><span>{{ missionDraftTeamLabel }}</span></li>
-                  <li><strong>Reference Zones</strong><span>{{ missionDraftZoneLabel }}</span></li>
-                  <li><strong>Reference Assets</strong><span>{{ missionDraftAssetLabel }}</span></li>
-                  <li><strong>Invite Only</strong><span>{{ missionDraftInviteOnly ? "YES" : "NO" }}</span></li>
-                  <li><strong>Description</strong><span>{{ missionDraftDescription || "-" }}</span></li>
-                </ul>
-              </article>
+              <MissionFormScreen
+                :is-create="isMissionCreateScreen"
+                :mission-draft-uid-label="missionDraftUidLabel"
+                :mission-draft-name="missionDraftName"
+                :mission-draft-topic="missionDraftTopic"
+                :mission-draft-status="missionDraftStatus"
+                :mission-draft-description="missionDraftDescription"
+                :mission-draft-parent-uid="missionDraftParentUid"
+                :mission-draft-team-uid="missionDraftTeamUid"
+                :mission-draft-path="missionDraftPath"
+                :mission-draft-classification="missionDraftClassification"
+                :mission-draft-tool="missionDraftTool"
+                :mission-draft-keywords="missionDraftKeywords"
+                :mission-draft-default-role="missionDraftDefaultRole"
+                :mission-draft-owner-role="missionDraftOwnerRole"
+                :mission-draft-priority="missionDraftPriority"
+                :mission-draft-mission-rde-role="missionDraftMissionRdeRole"
+                :mission-draft-token="missionDraftToken"
+                :mission-draft-feeds="missionDraftFeeds"
+                :mission-draft-expiration="missionDraftExpiration"
+                :mission-draft-invite-only="missionDraftInviteOnly"
+                :mission-draft-zone-uids="missionDraftZoneUids"
+                :mission-draft-asset-uids="missionDraftAssetUids"
+                :mission-status-options="missionStatusOptions"
+                :mission-topic-options="missionTopicOptions"
+                :mission-parent-options="missionParentOptions"
+                :mission-reference-team-options="missionReferenceTeamOptions"
+                :mission-reference-zone-options="missionReferenceZoneOptions"
+                :mission-reference-asset-options="missionReferenceAssetOptions"
+                :mission-draft-parent-label="missionDraftParentLabel"
+                :mission-draft-team-label="missionDraftTeamLabel"
+                :mission-draft-zone-label="missionDraftZoneLabel"
+                :mission-draft-asset-label="missionDraftAssetLabel"
+                :mission-advanced-properties-open="missionAdvancedPropertiesOpen"
+                @open-topic-create="openTopicCreatePage"
+                @toggle-mission-advanced-properties="missionAdvancedPropertiesOpen = $event"
+                @update:mission-draft-name="missionDraftName = $event"
+                @update:mission-draft-topic="missionDraftTopic = $event"
+                @update:mission-draft-status="missionDraftStatus = $event"
+                @update:mission-draft-description="missionDraftDescription = $event"
+                @update:mission-draft-parent-uid="missionDraftParentUid = $event"
+                @update:mission-draft-team-uid="missionDraftTeamUid = $event"
+                @update:mission-draft-path="missionDraftPath = $event"
+                @update:mission-draft-classification="missionDraftClassification = $event"
+                @update:mission-draft-tool="missionDraftTool = $event"
+                @update:mission-draft-keywords="missionDraftKeywords = $event"
+                @update:mission-draft-default-role="missionDraftDefaultRole = $event"
+                @update:mission-draft-owner-role="missionDraftOwnerRole = $event"
+                @update:mission-draft-priority="missionDraftPriority = $event"
+                @update:mission-draft-mission-rde-role="missionDraftMissionRdeRole = $event"
+                @update:mission-draft-token="missionDraftToken = $event"
+                @update:mission-draft-feeds="missionDraftFeeds = $event"
+                @update:mission-draft-expiration="missionDraftExpiration = $event"
+                @update:mission-draft-invite-only="missionDraftInviteOnly = $event"
+                @update:mission-draft-zone-uids="missionDraftZoneUids = $event"
+                @update:mission-draft-asset-uids="missionDraftAssetUids = $event"
+              />
             </div>
 
-            <div v-else-if="secondaryScreen === 'missionOverview'" class="mission-overview-hud">
-              <section class="overview-vitals">
-                <article class="overview-vital-card">
-                  <span class="overview-vital-label">Mission Status</span>
-                  <strong class="overview-vital-value">{{ selectedMission?.status || "UNSCOPED" }}</strong>
-                </article>
-                <article class="overview-vital-card">
-                  <span class="overview-vital-label">Checklist Runs</span>
-                  <strong class="overview-vital-value">{{ missionChecklists.length }}</strong>
-                </article>
-                <article class="overview-vital-card">
-                  <span class="overview-vital-label">Open Tasks</span>
-                  <strong class="overview-vital-value">{{ missionOpenTaskTotal }}</strong>
-                </article>
-                <article class="overview-vital-card">
-                  <span class="overview-vital-label">Team Members</span>
-                  <strong class="overview-vital-value">{{ missionMembers.length }}</strong>
-                </article>
-                <article class="overview-vital-card">
-                  <span class="overview-vital-label">Assigned Assets</span>
-                  <strong class="overview-vital-value">{{ missionAssets.length }}</strong>
-                </article>
-                <article class="overview-vital-card">
-                  <span class="overview-vital-label">Assigned Zones</span>
-                  <strong class="overview-vital-value">{{ assignedZones.length }}</strong>
-                </article>
-              </section>
-
-              <section class="overview-layout">
-                <article class="stage-card overview-panel overview-panel-compact">
-                  <div class="overview-compact-header">
-                    <div>
-                      <h4>Mission Profile</h4>
-                      <div class="overview-compact-subtitle mono">
-                        {{ selectedMission?.uid || "No mission selected" }}
-                      </div>
-                    </div>
-                    <span class="overview-compact-tag">{{ selectedMission?.status || "UNSCOPED" }}</span>
-                  </div>
-                  <div class="overview-compact-meta">
-                    <div>
-                      <span>Topic</span>
-                      <span>{{ selectedMission?.topic || "-" }}</span>
-                    </div>
-                    <div>
-                      <span>Name</span>
-                      <span>{{ selectedMission?.mission_name || "-" }}</span>
-                    </div>
-                    <div>
-                      <span>Description</span>
-                      <span class="overview-compact-truncate" :title="selectedMission?.description || '-'">
-                        {{ selectedMission?.description || "-" }}
-                      </span>
-                    </div>
-                    <div>
-                      <span>Total Tasks</span>
-                      <span>{{ missionTotalTasks }}</span>
-                    </div>
-                  </div>
-                  <div class="overview-compact-actions">
-                    <BaseButton size="sm" variant="secondary" icon-left="edit" @click="openMissionEditScreen">
-                      Edit
-                    </BaseButton>
-                    <BaseButton size="sm" variant="secondary" icon-left="list" @click="openMissionLogsPage">
-                      Logs
-                    </BaseButton>
-                    <BaseButton size="sm" variant="secondary" icon-left="users" @click="secondaryScreen = 'missionTeamMembers'">
-                      Team
-                    </BaseButton>
-                    <BaseButton size="sm" variant="secondary" icon-left="link" @click="secondaryScreen = 'assignAssets'">
-                      Assets
-                    </BaseButton>
-                    <BaseButton size="sm" variant="secondary" icon-left="tool" @click="secondaryScreen = 'assignZones'">
-                      Zones
-                    </BaseButton>
-                  </div>
-                </article>
-
-                <article class="stage-card overview-panel overview-panel-compact">
-                  <div class="overview-compact-header">
-                    <div>
-                      <h4>Mission Excheck Snapshot</h4>
-                      <div class="overview-compact-subtitle">Condensed lane status</div>
-                    </div>
-                    <span class="overview-compact-tag">{{ missionTotalTasks }} Tasks</span>
-                  </div>
-                  <div class="overview-board overview-board-compact">
-                    <div class="overview-board-col overview-board-col-pending">
-                      <div class="overview-board-col-head">
-                        <h5>Pending</h5>
-                        <span>{{ boardCounts.pending }}</span>
-                      </div>
-                      <ul class="lane-list lane-list-compact">
-                        <li v-for="task in boardLaneTasks.pending.slice(0, 3)" :key="`overview-pending-${task.id}`">
-                          <strong>{{ task.name }}</strong>
-                          <span>{{ task.meta }}</span>
-                        </li>
-                        <li v-if="!boardLaneTasks.pending.length" class="lane-empty">No pending tasks.</li>
-                      </ul>
-                    </div>
-                    <div class="overview-board-col overview-board-col-late">
-                      <div class="overview-board-col-head">
-                        <h5>Late</h5>
-                        <span>{{ boardCounts.late }}</span>
-                      </div>
-                      <ul class="lane-list lane-list-compact">
-                        <li v-for="task in boardLaneTasks.late.slice(0, 3)" :key="`overview-late-${task.id}`">
-                          <strong>{{ task.name }}</strong>
-                          <span>{{ task.meta }}</span>
-                        </li>
-                        <li v-if="!boardLaneTasks.late.length" class="lane-empty">No late tasks.</li>
-                      </ul>
-                    </div>
-                    <div class="overview-board-col overview-board-col-complete">
-                      <div class="overview-board-col-head">
-                        <h5>Complete</h5>
-                        <span>{{ boardCounts.complete }}</span>
-                      </div>
-                      <ul class="lane-list lane-list-compact">
-                        <li v-for="task in boardLaneTasks.complete.slice(0, 3)" :key="`overview-complete-${task.id}`">
-                          <strong>{{ task.name }}</strong>
-                          <span>{{ task.meta }}</span>
-                        </li>
-                        <li v-if="!boardLaneTasks.complete.length" class="lane-empty">No completed tasks.</li>
-                      </ul>
-                    </div>
-                  </div>
-                </article>
-
-                <article class="stage-card overview-panel">
-                  <div class="overview-panel-header">
-                    <h4>Zones Assignment Status</h4>
-                    <span class="overview-panel-meta">{{ zoneCoveragePercent }}% coverage</span>
-                  </div>
-                  <div class="overview-zone-progress" role="presentation">
-                    <span class="overview-zone-progress-value" :style="{ width: `${zoneCoveragePercent}%` }"></span>
-                  </div>
-                  <div class="overview-zone-summary">
-                    <span>{{ assignedZones.length }} of {{ zones.length }} zones assigned</span>
-                    <span>Mission scope: {{ selectedMission?.topic || "-" }}</span>
-                  </div>
-                  <ul class="stack-list overview-zone-list">
-                    <li v-for="zone in assignedZones.slice(0, 6)" :key="`overview-zone-${zone.uid}`">
-                      <strong>{{ zone.name }}</strong>
-                      <span>Assigned to mission</span>
-                    </li>
-                    <li v-if="!assignedZones.length">
-                      <strong>No Zones Assigned</strong>
-                      <span>Use Assign Zones to define operational boundaries.</span>
-                    </li>
-                  </ul>
-                </article>
-
-                <article class="stage-card overview-panel overview-panel-wide">
-                  <div class="mission-audit-head">
-                    <div>
-                      <h4>Mission Activity / Audit</h4>
-                      <span class="mission-audit-subtitle">
-                        Unified mission activity stream (events + mission changes + log entries)
-                      </span>
-                    </div>
-                    <span class="overview-panel-meta">Latest {{ missionAudit.length }} entries</span>
-                  </div>
-                  <div class="mission-audit-actions">
-                    <BaseButton
-                      size="sm"
-                      variant="secondary"
-                      :icon-left="iconForAction('Export Log')"
-                      @click="previewAction('Export Log')"
-                    >
-                      Export Log
-                    </BaseButton>
-                    <BaseButton
-                      size="sm"
-                      variant="secondary"
-                      :icon-left="iconForAction('Snapshot')"
-                      @click="previewAction('Snapshot')"
-                    >
-                      Snapshot
-                    </BaseButton>
-                    <BaseButton
-                      size="sm"
-                      variant="secondary"
-                      :icon-left="iconForAction('Open Logs')"
-                      @click="previewAction('Open Logs')"
-                    >
-                      Open Logs
-                    </BaseButton>
-                  </div>
-                  <div v-if="!missionAudit.length" class="mission-audit-empty">No mission activity yet.</div>
-                  <div v-else class="mission-audit-table-shell">
-                    <table class="mission-audit-table">
-                      <thead>
-                        <tr>
-                          <th>Event</th>
-                          <th>Type</th>
-                          <th>Time</th>
-                          <th class="mission-audit-cell-action">Details</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <template v-for="event in missionAudit" :key="`mission-audit-${event.uid}`">
-                          <tr class="mission-audit-row">
-                            <td class="mission-audit-cell-message">{{ event.message }}</td>
-                            <td class="mission-audit-cell-type">
-                              <span class="mission-audit-type-chip">{{ event.type }}</span>
-                            </td>
-                            <td class="mission-audit-cell-time">{{ formatAuditDateTime(event.timestamp) }}</td>
-                            <td class="mission-audit-cell-action">
-                              <button
-                                type="button"
-                                class="mission-audit-toggle"
-                                :disabled="!hasMissionAuditDetails(event.details)"
-                                @click="toggleMissionAuditExpanded(event.uid)"
-                              >
-                                {{ isMissionAuditExpanded(event.uid) ? "Hide" : "Details" }}
-                              </button>
-                            </td>
-                          </tr>
-                          <tr v-if="isMissionAuditExpanded(event.uid)" class="mission-audit-details-row">
-                            <td colspan="4">
-                              <div class="mission-audit-details">
-                                <BaseFormattedOutput class="mission-audit-json" :value="event.details" />
-                              </div>
-                            </td>
-                          </tr>
-                        </template>
-                      </tbody>
-                    </table>
-                  </div>
-                </article>
-              </section>
-            </div>
+            <MissionOverviewScreen
+              v-else-if="secondaryScreen === 'missionOverview'"
+              :mission-status="selectedMission?.status || 'UNSCOPED'"
+              :checklist-runs="missionChecklists.length"
+              :open-tasks="missionOpenTaskTotal"
+              :team-members="missionMembers.length"
+              :assigned-assets="missionAssets.length"
+              :assigned-zones="assignedZones.length"
+              :mission-uid="selectedMission?.uid || ''"
+              :mission-topic-name="selectedMissionTopicName"
+              :mission-description="selectedMission?.description || ''"
+              :mission-total-tasks="missionTotalTasks"
+              :board-counts="boardCounts"
+              :board-lane-tasks="boardLaneTasks"
+              :mission-audit="missionAudit"
+              @request-action="previewAction"
+            />
 
             <div v-else-if="secondaryScreen === 'missionExcheckBoard'" class="screen-grid">
               <article class="stage-card">
@@ -678,809 +331,187 @@
                 </div>
               </article>
             </div>
+            <MissionChecklistWorkspaceScreen
+              v-else-if="showChecklistArea"
+              :checklist-search-query="checklistSearchQuery"
+              :checklist-workspace-view="checklistWorkspaceView"
+              :checklist-active-count="checklistActiveCount"
+              :checklist-template-count="checklistTemplateCount"
+              :checklist-detail-record="checklistDetailRecord"
+              :can-create-from-detail-template="canCreateFromDetailTemplate"
+              :checklist-link-mission-submitting="checklistLinkMissionSubmitting"
+              :checklist-delete-busy="checklistDeleteBusy"
+              :checklist-task-due-draft="checklistTaskDueDraft"
+              :checklist-detail-columns="checklistDetailColumns"
+              :checklist-detail-rows="checklistDetailRows"
+              :checklist-task-status-busy-by-task-uid="checklistTaskStatusBusyByTaskUid"
+              :filtered-checklist-cards="filteredChecklistCards"
+              :filtered-checklist-templates="filteredChecklistTemplates"
+              :checklist-template-editor-selection-uid="checklistTemplateEditorSelectionUid"
+              :checklist-template-editor-selection-source-type="checklistTemplateEditorSelectionSourceType"
+              :checklist-template-editor-title="checklistTemplateEditorTitle"
+              :checklist-template-editor-subtitle="checklistTemplateEditorSubtitle"
+              :can-add-checklist-template-column="canAddChecklistTemplateColumn"
+              :can-save-checklist-template-draft="canSaveChecklistTemplateDraft"
+              :can-save-checklist-template-draft-as-new="canSaveChecklistTemplateDraftAsNew"
+              :can-clone-checklist-template-draft="canCloneChecklistTemplateDraft"
+              :can-archive-checklist-template-draft="canArchiveChecklistTemplateDraft"
+              :can-convert-checklist-template-draft="canConvertChecklistTemplateDraft"
+              :can-delete-checklist-template-draft="canDeleteChecklistTemplateDraft"
+              :checklist-template-draft-name="checklistTemplateDraftName"
+              :checklist-template-draft-description="checklistTemplateDraftDescription"
+              :is-checklist-template-draft-readonly="isChecklistTemplateDraftReadonly"
+              :checklist-template-draft-columns="checklistTemplateDraftColumns"
+              :checklist-template-column-type-options="checklistTemplateColumnTypeOptions"
+              :checklist-template-editor-status-label="checklistTemplateEditorStatusLabel"
+              :set-checklist-workspace-view="setChecklistWorkspaceView"
+              :open-checklist-creation-modal="openChecklistCreationModal"
+              :show-checklist-filter-notice="showChecklistFilterNotice"
+              :open-template-builder-from-checklist="openTemplateBuilderFromChecklist"
+              :open-checklist-import-from-checklist="openChecklistImportFromChecklist"
+              :close-checklist-detail-view="closeChecklistDetailView"
+              :checklist-description-label="checklistDescriptionLabel"
+              :mode-chip-class="modeChipClass"
+              :sync-chip-class="syncChipClass"
+              :status-chip-class="statusChipClass"
+              :checklist-origin-label="checklistOriginLabel"
+              :checklist-mission-label="checklistMissionLabel"
+              :create-checklist-from-detail-template="createChecklistFromDetailTemplate"
+              :open-checklist-mission-link-modal="openChecklistMissionLinkModal"
+              :delete-checklist-from-detail="deleteChecklistFromDetail"
+              :progress-width="progressWidth"
+              :add-checklist-task-from-detail="addChecklistTaskFromDetail"
+              :toggle-checklist-task-done="toggleChecklistTaskDone"
+              :open-checklist-detail-view="openChecklistDetailView"
+              :format-checklist-date-time="formatChecklistDateTime"
+              :select-checklist-template-for-editor="selectChecklistTemplateForEditor"
+              :start-new-checklist-template-draft="startNewChecklistTemplateDraft"
+              :add-checklist-template-column="addChecklistTemplateColumn"
+              :save-checklist-template-draft="saveChecklistTemplateDraft"
+              :save-checklist-template-draft-as-new="saveChecklistTemplateDraftAsNew"
+              :clone-checklist-template-draft="cloneChecklistTemplateDraft"
+              :archive-checklist-template-draft="archiveChecklistTemplateDraft"
+              :convert-checklist-template-draft-to-server-template="convertChecklistTemplateDraftToServerTemplate"
+              :delete-checklist-template-draft="deleteChecklistTemplateDraft"
+              :is-checklist-template-due-column="isChecklistTemplateDueColumn"
+              :set-checklist-template-column-name="setChecklistTemplateColumnName"
+              :set-checklist-template-column-type="setChecklistTemplateColumnType"
+              :set-checklist-template-column-editable="setChecklistTemplateColumnEditable"
+              :checklist-template-column-color-value="checklistTemplateColumnColorValue"
+              :set-checklist-template-column-background-color="setChecklistTemplateColumnBackgroundColor"
+              :set-checklist-template-column-text-color="setChecklistTemplateColumnTextColor"
+              :can-move-checklist-template-column-up="canMoveChecklistTemplateColumnUp"
+              :move-checklist-template-column-up="moveChecklistTemplateColumnUp"
+              :can-move-checklist-template-column-down="canMoveChecklistTemplateColumnDown"
+              :move-checklist-template-column-down="moveChecklistTemplateColumnDown"
+              :can-delete-checklist-template-column="canDeleteChecklistTemplateColumn"
+              :delete-checklist-template-column="deleteChecklistTemplateColumn"
+              @update:checklist-search-query="setChecklistSearchQuery"
+              @update:checklist-task-due-draft="setChecklistTaskDueDraft"
+              @update:checklist-template-draft-name="setChecklistTemplateDraftName"
+              @update:checklist-template-draft-description="setChecklistTemplateDraftDescription"
+            />
 
-            <div v-else-if="showChecklistArea" class="screen-grid">
-              <article class="stage-card checklist-workspace">
-                <div class="checklist-manager-controls">
-                  <label class="field-control full checklist-manager-search">
-                    <input
-                      v-model="checklistSearchQuery"
-                      type="search"
-                      placeholder="Search checklists and templates..."
-                    />
-                  </label>
-                  <div class="checklist-manager-actions">
-                    <BaseButton size="sm" icon-left="plus" @click="openChecklistCreationModal">New</BaseButton>
-                    <BaseButton size="sm" variant="secondary" icon-left="filter" @click="showChecklistFilterNotice">Filter</BaseButton>
-                    <BaseButton size="sm" variant="secondary" icon-left="edit" @click="openTemplateBuilderFromChecklist">
-                      Template Builder
-                    </BaseButton>
-                    <BaseButton size="sm" variant="secondary" icon-left="upload" @click="openChecklistImportFromChecklist">
-                      Import from CSV
-                    </BaseButton>
-                  </div>
-                </div>
-
-                <div class="checklist-overview-tabs">
-                  <button
-                    type="button"
-                    class="checklist-overview-tab"
-                    :class="{ active: checklistWorkspaceView === 'active' }"
-                    @click="setChecklistWorkspaceView('active')"
-                  >
-                    Active Checklists ({{ checklistActiveCount }})
-                  </button>
-                  <button
-                    type="button"
-                    class="checklist-overview-tab"
-                    :class="{ active: checklistWorkspaceView === 'templates' }"
-                    @click="setChecklistWorkspaceView('templates')"
-                  >
-                    Templates ({{ checklistTemplateCount }})
-                  </button>
-                </div>
-
-                <div v-if="checklistWorkspaceView === 'active'">
-                  <div v-if="checklistDetailRecord" class="checklist-detail-view">
-                    <div class="checklist-detail-header">
-                      <BaseButton variant="ghost" size="sm" icon-left="chevron-left" @click="closeChecklistDetailView">Back</BaseButton>
-                      <div class="checklist-detail-title">
-                        <h4>{{ checklistDetailRecord.name }}</h4>
-                        <p>{{ checklistDescriptionLabel(checklistDetailRecord.description) }}</p>
-                        <div class="checklist-chip-row">
-                          <span class="checklist-chip" :class="modeChipClass(checklistDetailRecord.mode)">
-                            {{ checklistDetailRecord.mode }}
-                          </span>
-                          <span class="checklist-chip" :class="syncChipClass(checklistDetailRecord.sync_state)">
-                            {{ checklistDetailRecord.sync_state }}
-                          </span>
-                          <span class="checklist-chip" :class="statusChipClass(checklistDetailRecord.checklist_status)">
-                            {{ checklistDetailRecord.checklist_status }}
-                          </span>
-                          <span class="checklist-chip checklist-chip-muted">
-                            {{ checklistOriginLabel(checklistDetailRecord.origin_type) }}
-                          </span>
-                          <span class="checklist-chip checklist-chip-muted">
-                            {{ checklistMissionLabel(checklistDetailRecord.mission_uid) }}
-                          </span>
-                        </div>
-                        <div class="checklist-detail-actions">
-                          <BaseButton
-                            v-if="canCreateFromDetailTemplate"
-                            size="sm"
-                            variant="secondary"
-                            icon-left="plus"
-                            @click="createChecklistFromDetailTemplate"
-                          >
-                            Create from Template
-                          </BaseButton>
-                          <BaseButton
-                            size="sm"
-                            variant="secondary"
-                            icon-left="link"
-                            :disabled="checklistLinkMissionSubmitting"
-                            @click="openChecklistMissionLinkModal"
-                          >
-                            Link Mission
-                          </BaseButton>
-                          <BaseButton
-                            size="sm"
-                            variant="danger"
-                            icon-left="trash"
-                            :disabled="checklistDeleteBusy"
-                            @click="deleteChecklistFromDetail"
-                          >
-                            Delete
-                          </BaseButton>
-                        </div>
-                      </div>
-                      <div class="checklist-detail-progress">
-                        <strong>{{ Math.round(checklistDetailRecord.progress) }}%</strong>
-                        <span>Complete</span>
-                      </div>
-                    </div>
-
-                    <div class="checklist-progress-track">
-                      <span class="checklist-progress-value" :style="{ width: progressWidth(checklistDetailRecord.progress) }"></span>
-                    </div>
-
-                    <div class="checklist-detail-summary">
-                      <span>{{ checklistDetailRecord.complete_count }} Complete</span>
-                      <span>{{ checklistDetailRecord.pending_count }} Pending</span>
-                      <span>{{ checklistDetailRecord.late_count }} Late</span>
-                    </div>
-
-                    <div class="checklist-task-toolbar">
-                      <label class="checklist-task-input">
-                        <input v-model="checklistTaskDueDraft" type="number" step="1" min="-1440" />
-                        <span>Due minutes</span>
-                      </label>
-                      <BaseButton size="sm" icon-left="plus" @click="addChecklistTaskFromDetail">Add</BaseButton>
-                    </div>
-
-                    <table class="mini-table checklist-detail-table">
-                      <thead>
-                        <tr>
-                          <th>#</th>
-                          <th>Done</th>
-                          <th v-for="column in checklistDetailColumns" :key="`detail-header-${column.uid}`">
-                            {{ column.name }}
-                          </th>
-                          <th>Due Relative DTG</th>
-                          <th>Status</th>
-                          <th>Complete DTG</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr
-                          v-for="row in checklistDetailRows"
-                          :key="row.id"
-                          :class="{ 'checklist-row-complete': row.done }"
-                        >
-                          <td>{{ row.number }}</td>
-                          <td>
-                            <button
-                              type="button"
-                              class="checklist-done-button"
-                              :disabled="!row.task_uid || checklistTaskStatusBusyByTaskUid[row.task_uid]"
-                              @click="toggleChecklistTaskDone(row)"
-                            >
-                              <span class="checklist-done-indicator" :class="{ done: row.done }">{{ row.done ? "X" : "" }}</span>
-                            </button>
-                          </td>
-                          <td v-for="column in checklistDetailColumns" :key="`detail-cell-${row.id}-${column.uid}`">
-                            {{ row.column_values[column.uid] || "-" }}
-                          </td>
-                          <td>{{ row.due }}</td>
-                          <td>
-                            <span class="checklist-chip" :class="statusChipClass(row.status)">{{ row.status }}</span>
-                          </td>
-                          <td>{{ row.completeDtg }}</td>
-                        </tr>
-                        <tr v-if="!checklistDetailRows.length">
-                          <td :colspan="checklistDetailColumns.length + 5">No tasks yet.</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div v-else class="checklist-overview-list">
-                    <button
-                      v-for="checklist in filteredChecklistCards"
-                      :key="checklist.uid"
-                      class="checklist-overview-card"
-                      type="button"
-                      @click="openChecklistDetailView(checklist.uid)"
-                    >
-                      <div class="checklist-overview-content">
-                        <div class="checklist-overview-head">
-                          <h4>{{ checklist.name }}</h4>
-                          <div class="checklist-chip-row">
-                            <span class="checklist-chip" :class="modeChipClass(checklist.mode)">{{ checklist.mode }}</span>
-                            <span class="checklist-chip" :class="syncChipClass(checklist.sync_state)">{{ checklist.sync_state }}</span>
-                            <span class="checklist-chip" :class="statusChipClass(checklist.checklist_status)">
-                              {{ checklist.checklist_status }}
-                            </span>
-                            <span class="checklist-chip checklist-chip-muted">
-                              {{ checklistOriginLabel(checklist.origin_type) }}
-                            </span>
-                            <span class="checklist-chip checklist-chip-muted">
-                              {{ checklistMissionLabel(checklist.mission_uid) }}
-                            </span>
-                          </div>
-                        </div>
-                        <p>{{ checklistDescriptionLabel(checklist.description) }}</p>
-                        <div class="checklist-overview-meta">
-                          <span>{{ formatChecklistDateTime(checklist.created_at) }}</span>
-                          <span>Tasks: {{ checklist.tasks.length }}</span>
-                          <span>Progress: {{ Math.round(checklist.progress) }}%</span>
-                        </div>
-                      </div>
-                      <div class="checklist-overview-stats">
-                        <div class="checklist-overview-counts">
-                          <span>{{ checklist.complete_count }} Complete</span>
-                          <span>{{ checklist.pending_count }} Pending</span>
-                          <span>{{ checklist.late_count }} Late</span>
-                        </div>
-                        <div class="checklist-progress-track compact">
-                          <span class="checklist-progress-value" :style="{ width: progressWidth(checklist.progress) }"></span>
-                        </div>
-                        <span class="checklist-overview-arrow" aria-hidden="true">></span>
-                      </div>
-                    </button>
-                    <p v-if="!filteredChecklistCards.length" class="template-modal-empty">
-                      No active checklist instances match your search.
-                    </p>
-                  </div>
-                </div>
-
-                <div v-else class="checklist-template-list">
-                  <div class="checklist-template-workspace">
-                    <article class="checklist-template-library-pane">
-                      <div class="checklist-template-library-head">
-                        <h4>Template Library</h4>
-                        <p>Select a template or CSV import entry to edit.</p>
-                      </div>
-                      <div class="checklist-template-library-list">
-                        <button
-                          v-for="template in filteredChecklistTemplates"
-                          :key="`checklist-template-${template.uid}`"
-                          type="button"
-                          class="checklist-template-library-item"
-                          :class="{
-                            active:
-                              checklistTemplateEditorSelectionUid === template.uid &&
-                              checklistTemplateEditorSelectionSourceType === template.source_type
-                          }"
-                          @click="selectChecklistTemplateForEditor(template.uid, template.source_type)"
-                        >
-                          <div class="checklist-template-head">
-                            <h4>{{ template.name }}</h4>
-                            <div class="checklist-chip-row">
-                              <span class="checklist-chip checklist-chip-info">{{ template.columns }} Columns</span>
-                              <span v-if="template.source_type === 'csv_import'" class="checklist-chip checklist-chip-muted">
-                                CSV Import
-                              </span>
-                            </div>
-                          </div>
-                          <p>{{ template.description || "Template catalog entry for checklist creation." }}</p>
-                          <div class="checklist-template-meta">
-                            <span v-if="template.created_at">Created: {{ formatChecklistDateTime(template.created_at) }}</span>
-                            <span v-if="template.owner">By: {{ template.owner }}</span>
-                            <span v-if="template.task_rows > 0">Tasks: {{ template.task_rows }}</span>
-                          </div>
-                        </button>
-                        <p v-if="!filteredChecklistTemplates.length" class="template-modal-empty">
-                          No templates match your search.
-                        </p>
-                      </div>
-                    </article>
-
-                    <article class="checklist-template-editor-pane">
-                      <div class="checklist-template-editor-header">
-                        <div>
-                          <h4>{{ checklistTemplateEditorTitle }}</h4>
-                          <p>{{ checklistTemplateEditorSubtitle }}</p>
-                        </div>
-                        <div class="checklist-template-editor-actions">
-                          <BaseButton size="sm" icon-left="plus" @click="startNewChecklistTemplateDraft">New</BaseButton>
-                          <BaseButton
-                            size="sm"
-                            variant="secondary"
-                            icon-left="plus"
-                            :disabled="!canAddChecklistTemplateColumn"
-                            @click="addChecklistTemplateColumn"
-                          >
-                            Add Column
-                          </BaseButton>
-                          <BaseButton
-                            size="sm"
-                            variant="secondary"
-                            icon-left="save"
-                            :disabled="!canSaveChecklistTemplateDraft"
-                            @click="saveChecklistTemplateDraft"
-                          >
-                            Save
-                          </BaseButton>
-                          <BaseButton
-                            size="sm"
-                            variant="secondary"
-                            icon-left="save"
-                            :disabled="!canSaveChecklistTemplateDraftAsNew"
-                            @click="saveChecklistTemplateDraftAsNew"
-                          >
-                            Save As New
-                          </BaseButton>
-                          <BaseButton
-                            size="sm"
-                            variant="secondary"
-                            icon-left="layers"
-                            :disabled="!canCloneChecklistTemplateDraft"
-                            @click="cloneChecklistTemplateDraft"
-                          >
-                            Clone
-                          </BaseButton>
-                          <BaseButton
-                            size="sm"
-                            variant="secondary"
-                            icon-left="file"
-                            :disabled="!canArchiveChecklistTemplateDraft"
-                            @click="archiveChecklistTemplateDraft"
-                          >
-                            Archive
-                          </BaseButton>
-                          <BaseButton
-                            size="sm"
-                            variant="secondary"
-                            icon-left="upload"
-                            :disabled="!canConvertChecklistTemplateDraft"
-                            @click="convertChecklistTemplateDraftToServerTemplate"
-                          >
-                            Convert to Template
-                          </BaseButton>
-                          <BaseButton
-                            size="sm"
-                            variant="danger"
-                            icon-left="trash"
-                            :disabled="!canDeleteChecklistTemplateDraft"
-                            @click="deleteChecklistTemplateDraft"
-                          >
-                            Delete
-                          </BaseButton>
-                        </div>
-                      </div>
-
-                      <div class="checklist-template-editor-form">
-                        <div class="field-grid">
-                          <label class="field-control">
-                            <span>Template Name</span>
-                            <input
-                              v-model="checklistTemplateDraftName"
-                              type="text"
-                              :disabled="isChecklistTemplateDraftReadonly"
-                            />
-                          </label>
-                          <label class="field-control full">
-                            <span>Description</span>
-                            <textarea
-                              v-model="checklistTemplateDraftDescription"
-                              rows="3"
-                              :disabled="isChecklistTemplateDraftReadonly"
-                            ></textarea>
-                          </label>
-                        </div>
-
-                        <p class="checklist-template-editor-note">
-                          System column <strong>DUE_RELATIVE_DTG</strong> is pinned first and enforced as
-                          <strong>RELATIVE_TIME</strong>.
-                        </p>
-
-                        <div class="checklist-template-column-scroll">
-                          <table class="mini-table checklist-template-column-table">
-                            <thead>
-                              <tr>
-                                <th>#</th>
-                                <th>Name</th>
-                                <th>Type</th>
-                                <th>Editable</th>
-                                <th>BG</th>
-                                <th>Text</th>
-                                <th>Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr
-                                v-for="(column, columnIndex) in checklistTemplateDraftColumns"
-                                :key="`checklist-template-column-${column.column_uid || columnIndex}`"
-                              >
-                                <td>{{ columnIndex + 1 }}</td>
-                                <td>
-                                  <input
-                                    class="checklist-template-column-input"
-                                    :value="column.column_name"
-                                    type="text"
-                                    :disabled="isChecklistTemplateDraftReadonly || isChecklistTemplateDueColumn(column)"
-                                    @input="setChecklistTemplateColumnName(columnIndex, $event)"
-                                  />
-                                </td>
-                                <td>
-                                  <select
-                                    class="checklist-template-column-input"
-                                    :value="column.column_type"
-                                    :disabled="isChecklistTemplateDraftReadonly || isChecklistTemplateDueColumn(column)"
-                                    @change="setChecklistTemplateColumnType(columnIndex, $event)"
-                                  >
-                                    <option v-for="columnType in checklistTemplateColumnTypeOptions" :key="columnType" :value="columnType">
-                                      {{ columnType }}
-                                    </option>
-                                  </select>
-                                </td>
-                                <td class="checklist-template-column-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    :checked="Boolean(column.column_editable)"
-                                    :disabled="isChecklistTemplateDraftReadonly || isChecklistTemplateDueColumn(column)"
-                                    @change="setChecklistTemplateColumnEditable(columnIndex, $event)"
-                                  />
-                                </td>
-                                <td>
-                                  <input
-                                    class="checklist-template-color-input"
-                                    type="color"
-                                    :value="checklistTemplateColumnColorValue(column.background_color)"
-                                    :disabled="isChecklistTemplateDraftReadonly"
-                                    @input="setChecklistTemplateColumnBackgroundColor(columnIndex, $event)"
-                                  />
-                                </td>
-                                <td>
-                                  <input
-                                    class="checklist-template-color-input"
-                                    type="color"
-                                    :value="checklistTemplateColumnColorValue(column.text_color)"
-                                    :disabled="isChecklistTemplateDraftReadonly"
-                                    @input="setChecklistTemplateColumnTextColor(columnIndex, $event)"
-                                  />
-                                </td>
-                                <td>
-                                  <div class="checklist-template-column-actions">
-                                    <BaseButton
-                                      size="sm"
-                                      variant="secondary"
-                                      icon-left="chevron-left"
-                                      :disabled="!canMoveChecklistTemplateColumnUp(columnIndex)"
-                                      @click="moveChecklistTemplateColumnUp(columnIndex)"
-                                    >
-                                      Up
-                                    </BaseButton>
-                                    <BaseButton
-                                      size="sm"
-                                      variant="secondary"
-                                      icon-left="chevron-right"
-                                      :disabled="!canMoveChecklistTemplateColumnDown(columnIndex)"
-                                      @click="moveChecklistTemplateColumnDown(columnIndex)"
-                                    >
-                                      Down
-                                    </BaseButton>
-                                    <BaseButton
-                                      size="sm"
-                                      variant="danger"
-                                      icon-left="trash"
-                                      :disabled="!canDeleteChecklistTemplateColumn(columnIndex)"
-                                      @click="deleteChecklistTemplateColumn(columnIndex)"
-                                    >
-                                      Delete
-                                    </BaseButton>
-                                  </div>
-                                </td>
-                              </tr>
-                              <tr v-if="!checklistTemplateDraftColumns.length">
-                                <td colspan="7">No columns configured.</td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-
-                        <p class="template-modal-hint">{{ checklistTemplateEditorStatusLabel }}</p>
-                      </div>
-                    </article>
-                  </div>
-                </div>
-              </article>
-            </div>
-
-            <div v-else-if="secondaryScreen === 'missionTeamMembers'" class="screen-grid two-col">
-              <article class="stage-card">
-                <h4>Teams</h4>
-                <ul class="stack-list">
-                  <li v-for="team in missionTeams" :key="team.uid">
-                    <strong>{{ team.name }}</strong>
-                    <span>{{ team.description }}</span>
-                  </li>
-                </ul>
-              </article>
-
-              <article class="stage-card">
-                <h4>Members &amp; Capabilities</h4>
-                <ul class="stack-list">
-                  <li v-for="member in missionMembers" :key="member.uid">
-                    <strong>{{ member.callsign }}</strong>
-                    <span>{{ member.role }}</span>
-                    <div class="cap-list">
-                      <span v-for="cap in member.capabilities" :key="`${member.uid}-${cap}`" class="cap-chip">{{ cap }}</span>
-                    </div>
-                  </li>
-                </ul>
-              </article>
-            </div>
-
-            <div v-else-if="showAssetArea" class="screen-grid two-col">
-              <article class="stage-card">
-                <h4>Asset Registry</h4>
-                <table class="mini-table">
-                  <thead>
-                    <tr>
-                      <th>Asset</th>
-                      <th>Type</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="asset in missionAssets" :key="asset.uid">
-                      <td>{{ asset.name }}</td>
-                      <td>{{ asset.type }}</td>
-                      <td>{{ asset.status }}</td>
-                    </tr>
-                    <tr v-if="!missionAssets.length">
-                      <td colspan="3">No mission assets available yet.</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </article>
-
-              <article class="stage-card">
-                <h4>Task Assignment Workspace</h4>
-                <table class="mini-table">
-                  <thead>
-                    <tr>
-                      <th>Task</th>
-                      <th>Member</th>
-                      <th>Assets</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="assignment in missionAssignments" :key="assignment.uid">
-                      <td>{{ assignment.task }}</td>
-                      <td>{{ assignment.member }}</td>
-                      <td>{{ assignment.assets.join(", ") }}</td>
-                    </tr>
-                    <tr v-if="!missionAssignments.length">
-                      <td colspan="3">No task assignments available yet.</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </article>
-            </div>
-
-            <div v-else-if="secondaryScreen === 'assignZones'" class="screen-grid two-col">
-              <article class="stage-card">
-                <h4>Assign Zones to Mission</h4>
-                <ul class="stack-list">
-                  <li v-for="zone in zones" :key="zone.uid">
-                    <label class="zone-toggle">
-                      <input type="checkbox" :checked="zone.assigned" @change="toggleZone(zone.uid)" />
-                      <span>{{ zone.name }}</span>
-                    </label>
-                  </li>
-                </ul>
-              </article>
-
-              <article class="stage-card">
-                <h4>Zone Assignment Status</h4>
-                <ul class="stack-list">
-                  <li>
-                    <strong>Assigned Zones</strong>
-                    <span>{{ assignedZones.length }} / {{ zones.length }}</span>
-                  </li>
-                  <li>
-                    <strong>Coverage</strong>
-                    <span>{{ zoneCoveragePercent }}%</span>
-                  </li>
-                  <li>
-                    <strong>Mission Scope</strong>
-                    <span>{{ selectedMission?.topic || "-" }}</span>
-                  </li>
-                </ul>
-                <ul class="stack-list">
-                  <li v-for="zone in assignedZones" :key="`assign-zone-${zone.uid}`">
-                    <strong>{{ zone.name }}</strong>
-                    <span>Assigned</span>
-                  </li>
-                  <li v-if="!assignedZones.length">
-                    <strong>No Zones Assigned</strong>
-                    <span>Select one or more zones and commit the mission boundary.</span>
-                  </li>
-                </ul>
-              </article>
-            </div>
-
-            <div v-else class="screen-grid">
-              <article class="stage-card">
-                <h4>Mission Workspace</h4>
-                <p class="builder-preview">Select a workspace tab to continue.</p>
-              </article>
-            </div>
+            <MissionOperationsScreen
+              v-else
+              :secondary-screen="secondaryScreen"
+              :show-asset-area="showAssetArea"
+              :mission-teams="missionTeams"
+              :mission-members="missionMembers"
+              :mission-assets="missionAssets"
+              :mission-assignments="missionAssignments"
+              :zones="zones"
+              :assigned-zones="assignedZones"
+              :zone-coverage-percent="zoneCoveragePercent"
+              :selected-mission-topic="selectedMission?.topic || ''"
+              :preview-action="previewAction"
+              :toggle-zone="toggleZone"
+            />
           </article>
         </section>
       </div>
     </div>
 
-    <BaseModal
+    <MissionTeamAllocationModal
       :open="teamAllocationModalOpen"
-      title="Mission Team Allocation"
+      :submitting="teamAllocationSubmitting"
+      :existing-team-uid="teamAllocationExistingTeamUid"
+      :existing-team-options="teamAllocationExistingTeamOptions"
+      :can-assign-existing-team="canAssignExistingTeam"
+      :new-team-name="teamAllocationNewTeamName"
+      :new-team-description="teamAllocationNewTeamDescription"
+      :can-create-mission-team="canCreateMissionTeam"
       @close="closeTeamAllocationModal"
-    >
-      <div class="template-modal mission-allocation-modal">
-        <p class="template-modal-hint">
-          Link an existing team to this mission or create a new mission team.
-        </p>
-        <div class="allocation-grid">
-          <section class="allocation-card">
-            <h4>Assign Existing Team</h4>
-            <BaseSelect
-              v-model="teamAllocationExistingTeamUid"
-              label="Existing Team"
-              :options="teamAllocationExistingTeamOptions"
-            />
-            <p class="template-modal-empty" v-if="teamAllocationExistingTeamOptions.length <= 1">
-              No unassigned teams are currently available.
-            </p>
-            <div class="allocation-card-actions">
-              <BaseButton
-                icon-left="link"
-                :disabled="teamAllocationSubmitting || !canAssignExistingTeam"
-                @click="assignExistingTeamToMission"
-              >
-                {{ teamAllocationSubmitting ? "Assigning..." : "Assign Team" }}
-              </BaseButton>
-            </div>
-          </section>
+      @update:existing-team-uid="teamAllocationExistingTeamUid = $event"
+      @update:new-team-name="teamAllocationNewTeamName = $event"
+      @update:new-team-description="teamAllocationNewTeamDescription = $event"
+      @assign-existing-team="assignExistingTeamToMission"
+      @create-team="createMissionTeamFromModal"
+    />
 
-          <section class="allocation-card">
-            <h4>Create New Team</h4>
-            <label class="field-control full">
-              <span>Team Name</span>
-              <input v-model="teamAllocationNewTeamName" type="text" maxlength="96" placeholder="Mission Team" />
-            </label>
-            <label class="field-control full">
-              <span>Description</span>
-              <textarea
-                v-model="teamAllocationNewTeamDescription"
-                rows="3"
-                maxlength="512"
-                placeholder="Operational role and purpose"
-              ></textarea>
-            </label>
-            <div class="allocation-card-actions">
-              <BaseButton
-                icon-left="plus"
-                :disabled="teamAllocationSubmitting || !canCreateMissionTeam"
-                @click="createMissionTeamFromModal"
-              >
-                {{ teamAllocationSubmitting ? "Creating..." : "Create Team" }}
-              </BaseButton>
-            </div>
-          </section>
-        </div>
-
-        <div class="template-modal-actions">
-          <BaseButton
-            variant="ghost"
-            icon-left="undo"
-            :disabled="teamAllocationSubmitting"
-            @click="closeTeamAllocationModal"
-          >
-            Cancel
-          </BaseButton>
-        </div>
-      </div>
-    </BaseModal>
-
-    <BaseModal
+    <MissionMemberAllocationModal
       :open="memberAllocationModalOpen"
-      title="Mission Team Member Allocation"
+      :submitting="memberAllocationSubmitting"
+      :team-uid="memberAllocationTeamUid"
+      :team-options="memberAllocationTeamOptions"
+      :member-uid="memberAllocationMemberUid"
+      :existing-member-options="memberAllocationExistingMemberOptions"
+      :can-assign-existing-member="canAssignExistingMember"
       @close="closeMemberAllocationModal"
-    >
-      <div class="template-modal mission-allocation-modal">
-        <p class="template-modal-hint">
-          Assign an existing team member to a mission team.
-        </p>
-        <div class="allocation-grid single-column">
-          <section class="allocation-card">
-            <BaseSelect v-model="memberAllocationTeamUid" label="Team" :options="memberAllocationTeamOptions" />
-            <BaseSelect
-              v-model="memberAllocationMemberUid"
-              label="Existing Team Member"
-              :options="memberAllocationExistingMemberOptions"
-            />
-            <p class="template-modal-empty" v-if="memberAllocationExistingMemberOptions.length <= 1">
-              No assignable team members found for this team.
-            </p>
-            <div class="allocation-card-actions">
-              <BaseButton
-                icon-left="link"
-                :disabled="memberAllocationSubmitting || !canAssignExistingMember"
-                @click="assignExistingMemberToTeam"
-              >
-                {{ memberAllocationSubmitting ? "Assigning..." : "Assign Member" }}
-              </BaseButton>
-              <BaseButton
-                variant="secondary"
-                icon-left="plus"
-                :disabled="memberAllocationSubmitting"
-                @click="openTeamMemberCreateWorkspace"
-              >
-                Create New Member
-              </BaseButton>
-            </div>
-          </section>
-        </div>
+      @update:team-uid="memberAllocationTeamUid = $event"
+      @update:member-uid="memberAllocationMemberUid = $event"
+      @assign-existing-member="assignExistingMemberToTeam"
+      @open-member-create-workspace="openTeamMemberCreateWorkspace"
+    />
 
-        <div class="template-modal-actions">
-          <BaseButton
-            variant="ghost"
-            icon-left="undo"
-            :disabled="memberAllocationSubmitting"
-            @click="closeMemberAllocationModal"
-          >
-            Cancel
-          </BaseButton>
-        </div>
-      </div>
-    </BaseModal>
-
-    <BaseModal
+    <MissionChecklistTemplateModal
       :open="checklistTemplateModalOpen"
-      title="Create Checklist from Template"
+      :checklist-name-draft="checklistTemplateNameDraft"
+      :selection-uid="checklistTemplateSelectionUid"
+      :submitting="checklistTemplateSubmitting"
+      :template-options="checklistTemplateOptions"
+      :select-options="checklistTemplateSelectOptions"
+      :selected-template-option="selectedChecklistTemplateOption"
       @close="closeChecklistTemplateModal"
-    >
-      <div class="template-modal">
-        <label class="field-control full">
-          <span>Checklist Name</span>
-          <input v-model="checklistTemplateNameDraft" type="text" placeholder="Mission Checklist" />
-        </label>
+      @update:checklist-name-draft="checklistTemplateNameDraft = $event"
+      @update:selection-uid="checklistTemplateSelectionUid = $event"
+      @submit="submitChecklistTemplateSelection"
+    />
 
-        <div v-if="checklistTemplateOptions.length" class="template-modal-list">
-          <BaseSelect
-            v-model="checklistTemplateSelectionUid"
-            label="Template"
-            :options="checklistTemplateSelectOptions"
-          />
-          <p v-if="selectedChecklistTemplateOption" class="template-modal-hint">
-            {{ selectedChecklistTemplateOption.columns }} columns
-            <span v-if="selectedChecklistTemplateOption.task_rows > 0">
-              | {{ selectedChecklistTemplateOption.task_rows }} tasks
-            </span>
-            <span v-if="selectedChecklistTemplateOption.source_type === 'csv_import'"> | sourced from CSV import</span>
-          </p>
-        </div>
-        <p v-else class="template-modal-empty">No checklist templates available.</p>
-
-        <div class="template-modal-actions">
-          <BaseButton variant="ghost" icon-left="undo" @click="closeChecklistTemplateModal">Cancel</BaseButton>
-          <BaseButton
-            icon-left="plus"
-            :disabled="checklistTemplateSubmitting || !checklistTemplateSelectionUid"
-            @click="submitChecklistTemplateSelection"
-          >
-            {{ checklistTemplateSubmitting ? "Creating..." : "Create" }}
-          </BaseButton>
-        </div>
-      </div>
-    </BaseModal>
-
-    <BaseModal
+    <MissionChecklistMissionLinkModal
       :open="checklistLinkMissionModalOpen"
-      title="Link Checklist to Mission"
+      :selection-uid="checklistLinkMissionSelectionUid"
+      :select-options="checklistMissionLinkSelectOptions"
+      :submitting="checklistLinkMissionSubmitting"
+      :can-submit="canSubmitChecklistMissionLink"
+      :action-label="checklistLinkMissionActionLabel"
       @close="closeChecklistMissionLinkModal"
-    >
-      <div class="template-modal">
-        <p class="template-modal-hint">Associate this checklist with a mission or leave it unscoped.</p>
-        <BaseSelect v-model="checklistLinkMissionSelectionUid" label="Mission" :options="checklistMissionLinkSelectOptions" />
-        <div class="template-modal-actions">
-          <BaseButton
-            variant="ghost"
-            icon-left="undo"
-            :disabled="checklistLinkMissionSubmitting"
-            @click="closeChecklistMissionLinkModal"
-          >
-            Cancel
-          </BaseButton>
-          <BaseButton
-            icon-left="link"
-            :disabled="checklistLinkMissionSubmitting || !canSubmitChecklistMissionLink"
-            @click="submitChecklistMissionLink"
-          >
-            {{ checklistLinkMissionSubmitting ? "Saving..." : checklistLinkMissionActionLabel }}
-          </BaseButton>
-        </div>
-      </div>
-    </BaseModal>
+      @update:selection-uid="checklistLinkMissionSelectionUid = $event"
+      @submit="submitChecklistMissionLink"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { ApiError } from "../api/client";
 import { del as deleteRequest, get, patch as patchRequest, post, put } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import BaseButton from "../components/BaseButton.vue";
-import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
-import BaseModal from "../components/BaseModal.vue";
-import BaseSelect from "../components/BaseSelect.vue";
-import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
-import { useConnectionStore } from "../stores/connection";
+import CosmicTopStatus from "../components/cosmic/CosmicTopStatus.vue";
+import MissionFormScreen from "./missions/MissionFormScreen.vue";
+import MissionChecklistWorkspaceScreen from "./missions/MissionChecklistWorkspaceScreen.vue";
+import MissionChecklistMissionLinkModal from "./missions/MissionChecklistMissionLinkModal.vue";
+import MissionChecklistTemplateModal from "./missions/MissionChecklistTemplateModal.vue";
+import MissionMemberAllocationModal from "./missions/MissionMemberAllocationModal.vue";
+import MissionOperationsScreen from "./missions/MissionOperationsScreen.vue";
+import MissionOverviewScreen from "./missions/MissionOverviewScreen.vue";
+import MissionTeamAllocationModal from "./missions/MissionTeamAllocationModal.vue";
+import { useChecklistTemplateDraft } from "../composables/useChecklistTemplateDraft";
+import { useChecklistTemplateCrud } from "../composables/useChecklistTemplateCrud";
 import { useToastStore } from "../stores/toasts";
+import { loadJson, saveJson } from "../utils/storage";
 import { resolveTeamMemberPrimaryLabel } from "../utils/team-members";
 
 type PrimaryTab = "mission" | "checklists";
@@ -1656,9 +687,9 @@ interface ChecklistTemplateDraftColumn {
   column_type: ChecklistTemplateColumnType;
   column_editable: boolean;
   is_removable: boolean;
-  system_key?: string | null;
-  background_color?: string | null;
-  text_color?: string | null;
+  system_key: string | null;
+  background_color: string | null;
+  text_color: string | null;
 }
 
 interface MissionRaw {
@@ -1840,23 +871,16 @@ interface TaskSkillRequirementRaw {
   task_uid?: string | null;
 }
 
-const connectionStore = useConnectionStore();
 const toastStore = useToastStore();
 const route = useRoute();
 const router = useRouter();
 
 const DEFAULT_SOURCE_IDENTITY = "ui.operator";
-const SYSTEM_DUE_COLUMN_KEY = "DUE_RELATIVE_DTG";
-const checklistTemplateColumnTypeOptions: ChecklistTemplateColumnType[] = [
-  "SHORT_STRING",
-  "LONG_STRING",
-  "INTEGER",
-  "ACTUAL_TIME",
-  "RELATIVE_TIME"
-];
-const checklistTemplateColumnTypeSet = new Set<ChecklistTemplateColumnType>(checklistTemplateColumnTypeOptions);
+const MISSION_SELECTION_STORAGE_KEY = "rth-ui-missions-selected-mission-uid";
 
 const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const queryText = (value: unknown): string =>
+  Array.isArray(value) ? String(value[0] ?? "").trim() : String(value ?? "").trim();
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -1930,26 +954,69 @@ const toEpoch = (value?: string | null): number => {
   return parsed;
 };
 
+const formatCountdownSegment = (value: number): string => {
+  const normalized = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+  return String(normalized).padStart(2, "0");
+};
+
+const MISSION_STATUS_ENUM = [
+  "MISSION_ACTIVE",
+  "MISSION_PLANNED",
+  "MISSION_STANDBY",
+  "MISSION_COMPLETE",
+  "MISSION_ARCHIVED"
+] as const;
+
+type MissionStatusEnum = (typeof MISSION_STATUS_ENUM)[number];
+
+const MISSION_STATUS_ALIAS_MAP: Record<string, MissionStatusEnum> = {
+  ACTIVE: "MISSION_ACTIVE",
+  MISSION_ACTIVE: "MISSION_ACTIVE",
+  PLANNED: "MISSION_PLANNED",
+  MISSION_PLANNED: "MISSION_PLANNED",
+  STANDBY: "MISSION_STANDBY",
+  MISSION_STANDBY: "MISSION_STANDBY",
+  COMPLETE: "MISSION_COMPLETE",
+  COMPLETED: "MISSION_COMPLETE",
+  IN_COMPLETE: "MISSION_COMPLETE",
+  INCOMPLETE: "MISSION_COMPLETE",
+  MISSION_COMPLETE: "MISSION_COMPLETE",
+  MISSION_COMPLETED: "MISSION_COMPLETE",
+  MISSION_IN_COMPLETE: "MISSION_COMPLETE",
+  ARCHIVE: "MISSION_ARCHIVED",
+  ARCHIVED: "MISSION_ARCHIVED",
+  MISSION_ARCHIVE: "MISSION_ARCHIVED",
+  MISSION_ARCHIVED: "MISSION_ARCHIVED"
+};
+
+const toMissionStatusEnum = (value?: string | null): MissionStatusEnum => {
+  const token = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+  if (!token) {
+    return "MISSION_ACTIVE";
+  }
+
+  const mapped = MISSION_STATUS_ALIAS_MAP[token];
+  if (mapped) {
+    return mapped;
+  }
+
+  if (token.startsWith("MISSION_")) {
+    return MISSION_STATUS_ENUM.includes(token as MissionStatusEnum) ? (token as MissionStatusEnum) : "MISSION_ACTIVE";
+  }
+
+  const prefixed = `MISSION_${token}` as MissionStatusEnum;
+  return MISSION_STATUS_ENUM.includes(prefixed) ? prefixed : "MISSION_ACTIVE";
+};
+
 const normalizeMissionStatus = (value?: string | null): string => {
-  const text = String(value ?? "").trim().toUpperCase();
-  if (!text) {
-    return "UNKNOWN";
-  }
-  if (text.startsWith("MISSION_")) {
-    return text.slice("MISSION_".length);
-  }
-  return text;
+  return toMissionStatusEnum(value).slice("MISSION_".length);
 };
 
 const toMissionStatusValue = (value?: string | null): string => {
-  const text = String(value ?? "").trim().toUpperCase();
-  if (!text) {
-    return "MISSION_ACTIVE";
-  }
-  if (text.startsWith("MISSION_")) {
-    return text;
-  }
-  return `MISSION_${text}`;
+  return toMissionStatusEnum(value);
 };
 
 const normalizeTaskStatus = (value?: string | null): string => {
@@ -2087,17 +1154,6 @@ const formatAuditTime = (value?: string | null): string => {
     return value;
   }
   return parsed.toLocaleTimeString([], { hour12: false });
-};
-
-const formatAuditDateTime = (value?: string | null): string => {
-  if (!value) {
-    return "--";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString();
 };
 
 const toAuditTypeLabel = (value?: string | null): string => {
@@ -2254,156 +1310,6 @@ const escapeCsvCell = (value: string): string => {
   }
   return value;
 };
-
-const normalizeChecklistTemplateColumnType = (value?: string | null): ChecklistTemplateColumnType => {
-  const normalized = String(value ?? "").trim().toUpperCase() as ChecklistTemplateColumnType;
-  if (checklistTemplateColumnTypeSet.has(normalized)) {
-    return normalized;
-  }
-  return "SHORT_STRING";
-};
-
-const isChecklistTemplateDueColumn = (column?: { system_key?: string | null }): boolean =>
-  String(column?.system_key ?? "")
-    .trim()
-    .toUpperCase() === SYSTEM_DUE_COLUMN_KEY;
-
-const buildChecklistTemplateColumnUid = (): string =>
-  `tmpl-col-${buildTimestampTag().slice(-10)}-${Math.floor(Math.random() * 1_000_000)
-    .toString(16)
-    .padStart(5, "0")}`;
-
-const createDueChecklistTemplateDraftColumn = (): ChecklistTemplateDraftColumn => ({
-  column_uid: buildChecklistTemplateColumnUid(),
-  column_name: "Due",
-  display_order: 1,
-  column_type: "RELATIVE_TIME",
-  column_editable: false,
-  is_removable: false,
-  system_key: SYSTEM_DUE_COLUMN_KEY,
-  background_color: null,
-  text_color: null
-});
-
-const createTaskChecklistTemplateDraftColumn = (): ChecklistTemplateDraftColumn => ({
-  column_uid: buildChecklistTemplateColumnUid(),
-  column_name: "Task",
-  display_order: 2,
-  column_type: "SHORT_STRING",
-  column_editable: true,
-  is_removable: true,
-  system_key: null,
-  background_color: null,
-  text_color: null
-});
-
-const normalizeChecklistTemplateColor = (value?: string | null): string | null => {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) {
-    return null;
-  }
-  if (/^#[0-9a-fA-F]{6}$/.test(normalized)) {
-    return normalized.toUpperCase();
-  }
-  return null;
-};
-
-const checklistTemplateColumnColorValue = (value?: string | null): string =>
-  normalizeChecklistTemplateColor(value) ?? "#001F2B";
-
-const normalizeChecklistTemplateDraftColumns = (
-  columns: Array<ChecklistColumnRaw | ChecklistTemplateDraftColumn>,
-  options?: { ensureTaskColumn?: boolean }
-): ChecklistTemplateDraftColumn[] => {
-  const normalizedRows = columns.map((column, index) => ({
-    column_uid: String(column.column_uid ?? "").trim() || buildChecklistTemplateColumnUid(),
-    column_name: String(column.column_name ?? `Column ${index + 1}`).trim() || `Column ${index + 1}`,
-    display_order: Number(column.display_order ?? index + 1),
-    column_type: normalizeChecklistTemplateColumnType(column.column_type),
-    column_editable: Boolean(column.column_editable ?? true),
-    is_removable: Boolean(column.is_removable ?? true),
-    system_key: String(column.system_key ?? "").trim() || null,
-    background_color: normalizeChecklistTemplateColor(column.background_color),
-    text_color: normalizeChecklistTemplateColor(column.text_color)
-  }));
-
-  const sorted = [...normalizedRows].sort((left, right) => left.display_order - right.display_order);
-  const dueColumn = sorted.find((column) => isChecklistTemplateDueColumn(column)) ?? createDueChecklistTemplateDraftColumn();
-  const normalizedDueColumn: ChecklistTemplateDraftColumn = {
-    ...dueColumn,
-    column_name: String(dueColumn.column_name || "Due"),
-    column_type: "RELATIVE_TIME",
-    column_editable: false,
-    is_removable: false,
-    system_key: SYSTEM_DUE_COLUMN_KEY
-  };
-
-  const customColumns = sorted
-    .filter((column) => !isChecklistTemplateDueColumn(column))
-    .map((column) => ({
-      ...column,
-      system_key: null,
-      column_type: normalizeChecklistTemplateColumnType(column.column_type)
-    }));
-
-  if (options?.ensureTaskColumn && !customColumns.length) {
-    customColumns.push(createTaskChecklistTemplateDraftColumn());
-  }
-
-  return [normalizedDueColumn, ...customColumns].map((column, index) => ({
-    ...column,
-    display_order: index + 1
-  }));
-};
-
-const toChecklistTemplateColumnPayload = (columns: ChecklistTemplateDraftColumn[]) =>
-  normalizeChecklistTemplateDraftColumns(columns).map((column, index) => ({
-    column_uid: column.column_uid || buildChecklistTemplateColumnUid(),
-    column_name: String(column.column_name ?? "").trim() || `Column ${index + 1}`,
-    display_order: index + 1,
-    column_type: normalizeChecklistTemplateColumnType(column.column_type),
-    column_editable: isChecklistTemplateDueColumn(column) ? false : Boolean(column.column_editable),
-    is_removable: isChecklistTemplateDueColumn(column) ? false : Boolean(column.is_removable),
-    system_key: isChecklistTemplateDueColumn(column) ? SYSTEM_DUE_COLUMN_KEY : undefined,
-    background_color: normalizeChecklistTemplateColor(column.background_color) ?? undefined,
-    text_color: normalizeChecklistTemplateColor(column.text_color) ?? undefined
-  }));
-
-const validateChecklistTemplateDraftPayload = (
-  templateName: string,
-  columns: ChecklistTemplateDraftColumn[]
-): string | null => {
-  if (!templateName.trim()) {
-    return "Template name is required";
-  }
-  const normalizedColumns = normalizeChecklistTemplateDraftColumns(columns);
-  if (!normalizedColumns.length) {
-    return "Template must include at least one column";
-  }
-  if (!isChecklistTemplateDueColumn(normalizedColumns[0])) {
-    return "Due Relative DTG system column must be first";
-  }
-  const dueColumns = normalizedColumns.filter((column) => isChecklistTemplateDueColumn(column));
-  if (dueColumns.length !== 1) {
-    return "Exactly one Due Relative DTG system column is required";
-  }
-  if (dueColumns[0].column_type !== "RELATIVE_TIME") {
-    return "Due Relative DTG system column must be RELATIVE_TIME";
-  }
-  if (dueColumns[0].is_removable) {
-    return "Due Relative DTG system column cannot be removable";
-  }
-  const invalidType = normalizedColumns.find((column) => !checklistTemplateColumnTypeSet.has(column.column_type));
-  if (invalidType) {
-    return `Unsupported column type: ${invalidType.column_type}`;
-  }
-  return null;
-};
-
-const createBlankChecklistTemplateDraftColumns = (): ChecklistTemplateDraftColumn[] =>
-  normalizeChecklistTemplateDraftColumns([createDueChecklistTemplateDraftColumn(), createTaskChecklistTemplateDraftColumn()], {
-    ensureTaskColumn: true
-  });
 
 const csvImportFilename = ref("");
 const csvImportBase64 = ref("");
@@ -2636,50 +1542,45 @@ const isRenderableCsvImportTemplate = (checklist: ChecklistRaw): boolean => {
 };
 
 const collectChecklistTemplateOptions = (): ChecklistTemplateOption[] => {
-  const serverTemplates = templateRecords.value
-    .map((entry) => {
-      const uid = String(entry.uid ?? "").trim();
-      if (!uid) {
-        return null;
-      }
-      return {
-        uid,
-        name: String(entry.template_name ?? uid),
-        columns: toArray<ChecklistColumnRaw>(entry.columns).length,
-        source_type: "template" as const,
-        task_rows: 0,
-        description: String(entry.description ?? "").trim(),
-        created_at: String(entry.created_at ?? ""),
-        owner: String(entry.created_by_team_member_rns_identity ?? "").trim()
-      };
-    })
-    .filter((entry): entry is ChecklistTemplateOption => entry !== null);
+  const serverTemplates: ChecklistTemplateOption[] = [];
+  templateRecords.value.forEach((entry) => {
+    const uid = String(entry.uid ?? "").trim();
+    if (!uid) {
+      return;
+    }
+    serverTemplates.push({
+      uid,
+      name: String(entry.template_name ?? uid),
+      columns: toArray<ChecklistColumnRaw>(entry.columns).length,
+      source_type: "template",
+      task_rows: 0,
+      description: String(entry.description ?? "").trim(),
+      created_at: String(entry.created_at ?? ""),
+      owner: String(entry.created_by_team_member_rns_identity ?? "").trim()
+    });
+  });
 
-  const csvImportedTemplates = checklistRecords.value
-    .map((entry) => {
-      const uid = String(entry.uid ?? "").trim();
-      if (!uid) {
-        return null;
-      }
-      const originType = String(entry.origin_type ?? "").trim().toUpperCase();
-      if (originType !== "CSV_IMPORT") {
-        return null;
-      }
-      if (!isRenderableCsvImportTemplate(entry)) {
-        return null;
-      }
-      return {
-        uid,
-        name: String(entry.name ?? uid),
-        columns: toArray<ChecklistColumnRaw>(entry.columns).length,
-        source_type: "csv_import" as const,
-        task_rows: toArray<ChecklistTaskRaw>(entry.tasks).length,
-        description: String(entry.description ?? "").trim(),
-        created_at: String(entry.created_at ?? ""),
-        owner: String(entry.created_by_team_member_rns_identity ?? "").trim()
-      };
-    })
-    .filter((entry): entry is ChecklistTemplateOption => entry !== null);
+  const csvImportedTemplates: ChecklistTemplateOption[] = [];
+  checklistRecords.value.forEach((entry) => {
+    const uid = String(entry.uid ?? "").trim();
+    if (!uid) {
+      return;
+    }
+    const originType = String(entry.origin_type ?? "").trim().toUpperCase();
+    if (originType !== "CSV_IMPORT" || !isRenderableCsvImportTemplate(entry)) {
+      return;
+    }
+    csvImportedTemplates.push({
+      uid,
+      name: String(entry.name ?? uid),
+      columns: toArray<ChecklistColumnRaw>(entry.columns).length,
+      source_type: "csv_import",
+      task_rows: toArray<ChecklistTaskRaw>(entry.tasks).length,
+      description: String(entry.description ?? "").trim(),
+      created_at: String(entry.created_at ?? ""),
+      owner: String(entry.created_by_team_member_rns_identity ?? "").trim()
+    });
+  });
 
   const seen = new Set<string>();
   return [...serverTemplates, ...csvImportedTemplates].filter((entry) => {
@@ -2810,17 +1711,9 @@ const assetNameByUid = computed(() => {
   return map;
 });
 
-const primaryTabs = [
-  { id: "mission", label: "Mission" },
-  { id: "checklists", label: "Checklists" }
-] as const;
-
 const screensByTab: Record<PrimaryTab, Array<{ id: ScreenId; label: string }>> = {
   mission: [
     { id: "missionOverview", label: "Mission Overview" },
-    { id: "missionTeamMembers", label: "Mission Team & Members" },
-    { id: "assignAssets", label: "Assign Assets to Mission" },
-    { id: "assignZones", label: "Assign Zones to Mission" },
     { id: "assetRegistry", label: "Asset Registry" }
   ],
   checklists: [{ id: "checklistOverview", label: "Checklist Management" }]
@@ -2841,12 +1734,12 @@ const screenMeta: Record<ScreenId, { title: string; subtitle: string; actions: s
   missionOverview: {
     title: "Mission Overview",
     subtitle: "Unified dashboard for mission profile, Excheck, zones, and mission activity.",
-    actions: ["Refresh", "Broadcast"]
+    actions: ["Refresh", "Broadcast", "Edit", "Checklists", "Logs", "Team", "Assets", "Zones"]
   },
   missionTeamMembers: { title: "Mission Team & Members", subtitle: "Team composition, roles, and capabilities.", actions: ["Add Team", "Add Member"] },
   assignAssets: { title: "Assign Assets to Mission", subtitle: "Bind registered assets to mission tasks and operators.", actions: ["Assign", "Revoke"] },
   assignZones: { title: "Assign Zones to Mission", subtitle: "Zone selection and geographic mission boundaries.", actions: ["Commit", "New Zone"] },
-  assetRegistry: { title: "Asset Registry", subtitle: "Hardware inventory, status, and readiness.", actions: ["Deploy", "Filter", "Open Assets"] },
+  assetRegistry: { title: "Asset Registry", subtitle: "Hardware inventory, status, and readiness.", actions: [] },
   checklistOverview: { title: "Checklists", subtitle: "Manage checklist instances and templates.", actions: [] },
   checklistDetails: { title: "Checklist Details", subtitle: "Task grid, callsigns, due relative DTG, and status.", actions: ["Edit Cell", "Sync"] },
   checklistCreation: { title: "Checklist Creation Page", subtitle: "Create online/offline checklist runs from templates.", actions: ["Create", "Validate"] },
@@ -2870,6 +1763,12 @@ const actionIconMap: Record<string, ButtonIconName> = {
   Sync: "refresh",
   "Sync Board": "refresh",
   Broadcast: "send",
+  Edit: "edit",
+  Checklists: "list",
+  Logs: "list",
+  Team: "users",
+  Assets: "link",
+  Zones: "tool",
   "Add Team": "users",
   "Add Member": "plus",
   Assign: "link",
@@ -2899,7 +1798,12 @@ const actionIconMap: Record<string, ButtonIconName> = {
 
 const iconForAction = (action: string): ButtonIconName => actionIconMap[action] ?? "tool";
 
-const selectedMissionUid = ref("");
+const readPersistedMissionUid = (): string => {
+  const stored = loadJson<string>(MISSION_SELECTION_STORAGE_KEY, "");
+  return typeof stored === "string" ? stored.trim() : "";
+};
+
+const selectedMissionUid = ref(queryText(route.query.mission_uid) || readPersistedMissionUid());
 const selectedChecklistUid = ref("");
 const primaryTab = ref<PrimaryTab>("mission");
 const secondaryScreen = ref<ScreenId>("missionOverview");
@@ -2947,7 +1851,19 @@ const checklistTemplateEditorHydrating = ref(false);
 const checklistTemplateDraftTemplateUid = ref("");
 const checklistTemplateDraftName = ref("");
 const checklistTemplateDraftDescription = ref("");
-const checklistTemplateDraftColumns = ref<ChecklistTemplateDraftColumn[]>(createBlankChecklistTemplateDraftColumns());
+const checklistTemplateDraftColumns = ref<ChecklistTemplateDraftColumn[]>([]);
+const setChecklistSearchQuery = (value: string): void => {
+  checklistSearchQuery.value = value;
+};
+const setChecklistTaskDueDraft = (value: string): void => {
+  checklistTaskDueDraft.value = value;
+};
+const setChecklistTemplateDraftName = (value: string): void => {
+  checklistTemplateDraftName.value = value;
+};
+const setChecklistTemplateDraftDescription = (value: string): void => {
+  checklistTemplateDraftDescription.value = value;
+};
 const teamAllocationModalOpen = ref(false);
 const teamAllocationSubmitting = ref(false);
 const teamAllocationExistingTeamUid = ref("");
@@ -2957,38 +1873,11 @@ const memberAllocationModalOpen = ref(false);
 const memberAllocationSubmitting = ref(false);
 const memberAllocationTeamUid = ref("");
 const memberAllocationMemberUid = ref("");
-const missionAuditExpandedRows = ref<Record<string, boolean>>({});
+const missionCountdownNow = ref(Date.now());
+let missionCountdownTimerId: number | undefined;
 
-const missionStatusOptions = [
-  "MISSION_ACTIVE",
-  "MISSION_PLANNED",
-  "MISSION_STANDBY",
-  "MISSION_COMPLETE",
-  "MISSION_ARCHIVED"
-] as const;
+const missionStatusOptions: string[] = [...MISSION_STATUS_ENUM];
 
-const baseUrl = computed(() => connectionStore.baseUrlDisplay);
-const connectionLabel = computed(() => connectionStore.statusLabel);
-const wsLabel = computed(() => connectionStore.wsLabel);
-
-const connectionClass = computed(() => {
-  if (connectionStore.status === "online") {
-    return "cui-status-success";
-  }
-  if (connectionStore.status === "offline") {
-    return "cui-status-danger";
-  }
-  return "cui-status-accent";
-});
-
-const wsClass = computed(() => {
-  if (connectionStore.wsLabel.toLowerCase() === "live") {
-    return "cui-status-success";
-  }
-  return "cui-status-accent";
-});
-
-const activeScreens = computed(() => screensByTab[primaryTab.value]);
 const currentScreen = computed(() => screenMeta[secondaryScreen.value]);
 const isChecklistPrimaryTab = computed(() => primaryTab.value === "checklists");
 const showScreenHeader = computed(
@@ -2996,12 +1885,50 @@ const showScreenHeader = computed(
 );
 
 const selectedMission = computed(() => missions.value.find((entry) => entry.uid === selectedMissionUid.value));
+const topicNameById = computed(() => {
+  const map = new Map<string, string>();
+  topicRecords.value.forEach((entry) => {
+    const id = String(entry.TopicID ?? "").trim();
+    if (!id) {
+      return;
+    }
+    const name = String(entry.TopicName ?? "").trim();
+    map.set(id, name || id);
+  });
+  return map;
+});
+const selectedMissionTopicName = computed(() => {
+  const topicId = String(selectedMission.value?.topic ?? "").trim();
+  if (!topicId) {
+    return "-";
+  }
+  return topicNameById.value.get(topicId) ?? topicId;
+});
+const missionEndCountdown = computed(() => {
+  const fallback = { hasEnd: false, display: "00.00.00" };
+  const expiration = String(selectedMission.value?.expiration ?? "").trim();
+  if (!expiration) {
+    return fallback;
+  }
+
+  const target = Date.parse(expiration);
+  if (Number.isNaN(target)) {
+    return fallback;
+  }
+
+  const remainingMs = Math.max(0, target - missionCountdownNow.value);
+  const totalMinutes = Math.floor(remainingMs / 60_000);
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+  return {
+    hasEnd: true,
+    display: `${formatCountdownSegment(days)}.${formatCountdownSegment(hours)}.${formatCountdownSegment(minutes)}`
+  };
+});
 const isMissionCreateScreen = computed(() => secondaryScreen.value === "missionCreate");
 const isMissionEditScreen = computed(() => secondaryScreen.value === "missionEdit");
 const isMissionFormScreen = computed(() => isMissionCreateScreen.value || isMissionEditScreen.value);
-const onMissionAdvancedPropertiesToggle = (event: Event): void => {
-  missionAdvancedPropertiesOpen.value = (event.currentTarget as HTMLDetailsElement).open;
-};
 const missionDraftUidLabel = computed(() => (isMissionEditScreen.value ? selectedMission.value?.uid || "-" : "AUTO"));
 const missionTopicOptions = computed(() => {
   const options = topicRecords.value
@@ -3270,7 +2197,7 @@ const missionNameByUid = computed(() => {
   return map;
 });
 
-const checklistMissionLabel = (missionUid: string): string => {
+const checklistMissionLabel = (missionUid?: string | null): string => {
   const uid = String(missionUid ?? "").trim();
   if (!uid) {
     return "Unscoped";
@@ -3404,6 +2331,40 @@ const checklistTemplateEditorStatusLabel = computed(() => {
 
 const isChecklistTemplateDraftReadonly = computed(() => checklistTemplateEditorMode.value === "csv_readonly");
 
+const {
+  checklistTemplateColumnTypeOptions,
+  checklistTemplateColumnColorValue,
+  isChecklistTemplateDueColumn,
+  normalizeChecklistTemplateDraftColumns,
+  toChecklistTemplateColumnPayload,
+  validateChecklistTemplateDraftPayload,
+  createBlankChecklistTemplateDraftColumns,
+  setChecklistTemplateColumnName,
+  setChecklistTemplateColumnType,
+  setChecklistTemplateColumnEditable,
+  setChecklistTemplateColumnBackgroundColor,
+  setChecklistTemplateColumnTextColor,
+  addChecklistTemplateColumn,
+  canMoveChecklistTemplateColumnUp,
+  canMoveChecklistTemplateColumnDown,
+  moveChecklistTemplateColumnUp,
+  moveChecklistTemplateColumnDown,
+  canDeleteChecklistTemplateColumn,
+  deleteChecklistTemplateColumn
+} = useChecklistTemplateDraft({
+  buildTimestampTag,
+  getDraftColumns: () => checklistTemplateDraftColumns.value,
+  setDraftColumns: (columns) => {
+    checklistTemplateDraftColumns.value = columns as ChecklistTemplateDraftColumn[];
+  },
+  isReadonly: () => isChecklistTemplateDraftReadonly.value,
+  isSaving: () => checklistTemplateEditorSaving.value
+});
+
+if (!checklistTemplateDraftColumns.value.length) {
+  checklistTemplateDraftColumns.value = createBlankChecklistTemplateDraftColumns() as ChecklistTemplateDraftColumn[];
+}
+
 const canAddChecklistTemplateColumn = computed(
   () => !isChecklistTemplateDraftReadonly.value && !checklistTemplateEditorSaving.value
 );
@@ -3452,423 +2413,6 @@ const canDeleteChecklistTemplateDraft = computed(() => {
   }
   return !checklistTemplateDeleteBusyByUid.value[selected.uid];
 });
-
-const buildChecklistTemplateDraftName = (): string => `Template ${buildTimestampTag().slice(-6)}`;
-
-const applyChecklistTemplateEditorDraft = (payload: {
-  selectionUid: string;
-  selectionSourceType: ChecklistTemplateSourceType | "";
-  mode: ChecklistTemplateEditorMode;
-  templateUid: string;
-  templateName: string;
-  description: string;
-  columns: Array<ChecklistColumnRaw | ChecklistTemplateDraftColumn>;
-  ensureTaskColumn?: boolean;
-}) => {
-  checklistTemplateEditorHydrating.value = true;
-  checklistTemplateEditorSelectionUid.value = payload.selectionUid;
-  checklistTemplateEditorSelectionSourceType.value = payload.selectionSourceType;
-  checklistTemplateEditorMode.value = payload.mode;
-  checklistTemplateDraftTemplateUid.value = payload.templateUid;
-  checklistTemplateDraftName.value = payload.templateName.trim() || buildChecklistTemplateDraftName();
-  checklistTemplateDraftDescription.value = payload.description;
-  checklistTemplateDraftColumns.value = normalizeChecklistTemplateDraftColumns(payload.columns, {
-    ensureTaskColumn: payload.ensureTaskColumn ?? payload.mode !== "csv_readonly"
-  });
-  checklistTemplateEditorDirty.value = false;
-  checklistTemplateEditorHydrating.value = false;
-};
-
-const startNewChecklistTemplateDraft = () => {
-  applyChecklistTemplateEditorDraft({
-    selectionUid: "",
-    selectionSourceType: "",
-    mode: "create",
-    templateUid: "",
-    templateName: buildChecklistTemplateDraftName(),
-    description: "",
-    columns: createBlankChecklistTemplateDraftColumns(),
-    ensureTaskColumn: true
-  });
-};
-
-const selectChecklistTemplateForEditor = (templateUid: string, sourceType: ChecklistTemplateSourceType) => {
-  const uid = String(templateUid ?? "").trim();
-  if (!uid) {
-    return;
-  }
-  const option =
-    checklistTemplateOptions.value.find((entry) => entry.uid === uid && entry.source_type === sourceType) ?? null;
-  if (!option) {
-    return;
-  }
-  checklistTemplateSelectionUid.value = option.uid;
-  if (option.source_type === "template") {
-    const templateRecord =
-      templateRecords.value.find((entry) => String(entry.uid ?? "").trim() === option.uid) ?? null;
-    if (!templateRecord) {
-      toastStore.push("Selected template is unavailable", "warning");
-      return;
-    }
-    applyChecklistTemplateEditorDraft({
-      selectionUid: option.uid,
-      selectionSourceType: option.source_type,
-      mode: "edit",
-      templateUid: option.uid,
-      templateName: String(templateRecord.template_name ?? option.name),
-      description: String(templateRecord.description ?? ""),
-      columns: toArray<ChecklistColumnRaw>(templateRecord.columns),
-      ensureTaskColumn: true
-    });
-    return;
-  }
-  const checklistRecord =
-    checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === option.uid) ?? null;
-  if (!checklistRecord) {
-    toastStore.push("Selected CSV entry is unavailable", "warning");
-    return;
-  }
-  applyChecklistTemplateEditorDraft({
-    selectionUid: option.uid,
-    selectionSourceType: option.source_type,
-    mode: "csv_readonly",
-    templateUid: "",
-    templateName: String(checklistRecord.name ?? option.name),
-    description: String(checklistRecord.description ?? ""),
-    columns: toArray<ChecklistColumnRaw>(checklistRecord.columns),
-    ensureTaskColumn: false
-  });
-};
-
-const syncChecklistTemplateEditorSelection = (preferredUid = "", preferredType: ChecklistTemplateSourceType | "" = "") => {
-  const options = checklistTemplateOptions.value;
-  if (!options.length) {
-    startNewChecklistTemplateDraft();
-    return;
-  }
-  const preferred =
-    (preferredUid && preferredType
-      ? options.find((entry) => entry.uid === preferredUid && entry.source_type === preferredType)
-      : null) ?? null;
-  if (preferred) {
-    selectChecklistTemplateForEditor(preferred.uid, preferred.source_type);
-    return;
-  }
-  const selected = selectedChecklistTemplateEditorOption.value;
-  if (selected) {
-    if (checklistTemplateEditorMode.value !== "create") {
-      selectChecklistTemplateForEditor(selected.uid, selected.source_type);
-    }
-    return;
-  }
-  selectChecklistTemplateForEditor(options[0].uid, options[0].source_type);
-};
-
-const mutateChecklistTemplateDraftColumns = (
-  mutate: (columns: ChecklistTemplateDraftColumn[]) => ChecklistTemplateDraftColumn[]
-) => {
-  if (isChecklistTemplateDraftReadonly.value || checklistTemplateEditorSaving.value) {
-    return;
-  }
-  const cloned = checklistTemplateDraftColumns.value.map((column) => ({ ...column }));
-  const mutated = mutate(cloned);
-  checklistTemplateDraftColumns.value = normalizeChecklistTemplateDraftColumns(mutated, { ensureTaskColumn: true });
-};
-
-const setChecklistTemplateColumnName = (columnIndex: number, event: Event) => {
-  const value = String((event.target as HTMLInputElement | null)?.value ?? "");
-  mutateChecklistTemplateDraftColumns((columns) =>
-    columns.map((column, index) =>
-      index === columnIndex && !isChecklistTemplateDueColumn(column)
-        ? { ...column, column_name: value.trim() || column.column_name }
-        : column
-    )
-  );
-};
-
-const setChecklistTemplateColumnType = (columnIndex: number, event: Event) => {
-  const value = String((event.target as HTMLSelectElement | null)?.value ?? "");
-  mutateChecklistTemplateDraftColumns((columns) =>
-    columns.map((column, index) =>
-      index === columnIndex && !isChecklistTemplateDueColumn(column)
-        ? { ...column, column_type: normalizeChecklistTemplateColumnType(value) }
-        : column
-    )
-  );
-};
-
-const setChecklistTemplateColumnEditable = (columnIndex: number, event: Event) => {
-  const checked = Boolean((event.target as HTMLInputElement | null)?.checked);
-  mutateChecklistTemplateDraftColumns((columns) =>
-    columns.map((column, index) =>
-      index === columnIndex && !isChecklistTemplateDueColumn(column)
-        ? { ...column, column_editable: checked }
-        : column
-    )
-  );
-};
-
-const setChecklistTemplateColumnBackgroundColor = (columnIndex: number, event: Event) => {
-  const value = String((event.target as HTMLInputElement | null)?.value ?? "");
-  mutateChecklistTemplateDraftColumns((columns) =>
-    columns.map((column, index) =>
-      index === columnIndex
-        ? { ...column, background_color: normalizeChecklistTemplateColor(value) }
-        : column
-    )
-  );
-};
-
-const setChecklistTemplateColumnTextColor = (columnIndex: number, event: Event) => {
-  const value = String((event.target as HTMLInputElement | null)?.value ?? "");
-  mutateChecklistTemplateDraftColumns((columns) =>
-    columns.map((column, index) =>
-      index === columnIndex
-        ? { ...column, text_color: normalizeChecklistTemplateColor(value) }
-        : column
-    )
-  );
-};
-
-const addChecklistTemplateColumn = () => {
-  mutateChecklistTemplateDraftColumns((columns) => {
-    const customCount = columns.filter((column) => !isChecklistTemplateDueColumn(column)).length;
-    return [
-      ...columns,
-      {
-        column_uid: buildChecklistTemplateColumnUid(),
-        column_name: `Field ${customCount + 1}`,
-        display_order: columns.length + 1,
-        column_type: "SHORT_STRING",
-        column_editable: true,
-        is_removable: true,
-        system_key: null,
-        background_color: null,
-        text_color: null
-      }
-    ];
-  });
-};
-
-const canMoveChecklistTemplateColumnUp = (columnIndex: number): boolean => {
-  if (isChecklistTemplateDraftReadonly.value || checklistTemplateEditorSaving.value) {
-    return false;
-  }
-  const column = checklistTemplateDraftColumns.value[columnIndex];
-  if (!column || isChecklistTemplateDueColumn(column)) {
-    return false;
-  }
-  if (columnIndex <= 1) {
-    return false;
-  }
-  return true;
-};
-
-const canMoveChecklistTemplateColumnDown = (columnIndex: number): boolean => {
-  if (isChecklistTemplateDraftReadonly.value || checklistTemplateEditorSaving.value) {
-    return false;
-  }
-  const columns = checklistTemplateDraftColumns.value;
-  const column = columns[columnIndex];
-  if (!column || isChecklistTemplateDueColumn(column)) {
-    return false;
-  }
-  return columnIndex >= 1 && columnIndex < columns.length - 1;
-};
-
-const moveChecklistTemplateColumnUp = (columnIndex: number) => {
-  if (!canMoveChecklistTemplateColumnUp(columnIndex)) {
-    return;
-  }
-  mutateChecklistTemplateDraftColumns((columns) => {
-    const next = [...columns];
-    const previousIndex = columnIndex - 1;
-    [next[previousIndex], next[columnIndex]] = [next[columnIndex], next[previousIndex]];
-    return next;
-  });
-};
-
-const moveChecklistTemplateColumnDown = (columnIndex: number) => {
-  if (!canMoveChecklistTemplateColumnDown(columnIndex)) {
-    return;
-  }
-  mutateChecklistTemplateDraftColumns((columns) => {
-    const next = [...columns];
-    const nextIndex = columnIndex + 1;
-    [next[nextIndex], next[columnIndex]] = [next[columnIndex], next[nextIndex]];
-    return next;
-  });
-};
-
-const canDeleteChecklistTemplateColumn = (columnIndex: number): boolean => {
-  if (isChecklistTemplateDraftReadonly.value || checklistTemplateEditorSaving.value) {
-    return false;
-  }
-  const column = checklistTemplateDraftColumns.value[columnIndex];
-  if (!column || isChecklistTemplateDueColumn(column)) {
-    return false;
-  }
-  return Boolean(column.is_removable);
-};
-
-const deleteChecklistTemplateColumn = (columnIndex: number) => {
-  if (!canDeleteChecklistTemplateColumn(columnIndex)) {
-    return;
-  }
-  mutateChecklistTemplateDraftColumns((columns) => columns.filter((_, index) => index !== columnIndex));
-};
-
-const buildChecklistTemplateDraftPayload = () => {
-  const templateName = checklistTemplateDraftName.value.trim();
-  const validationError = validateChecklistTemplateDraftPayload(templateName, checklistTemplateDraftColumns.value);
-  if (validationError) {
-    throw new Error(validationError);
-  }
-  return {
-    template_name: templateName,
-    description: checklistTemplateDraftDescription.value.trim(),
-    columns: toChecklistTemplateColumnPayload(checklistTemplateDraftColumns.value)
-  };
-};
-
-const saveChecklistTemplateDraft = async () => {
-  if (!canSaveChecklistTemplateDraft.value) {
-    return;
-  }
-  const templateUid = checklistTemplateDraftTemplateUid.value.trim();
-  if (!templateUid) {
-    return;
-  }
-  checklistTemplateEditorSaving.value = true;
-  try {
-    const payload = buildChecklistTemplateDraftPayload();
-    await patchRequest(`${endpoints.checklistTemplates}/${templateUid}`, { patch: payload });
-    await loadWorkspace();
-    syncChecklistTemplateEditorSelection(templateUid, "template");
-    toastStore.push("Template saved", "success");
-  } catch (error) {
-    handleApiError(error, "Unable to save template");
-  } finally {
-    checklistTemplateEditorSaving.value = false;
-  }
-};
-
-const saveChecklistTemplateDraftAsNew = async () => {
-  if (!canSaveChecklistTemplateDraftAsNew.value) {
-    return;
-  }
-  checklistTemplateEditorSaving.value = true;
-  try {
-    const payload = buildChecklistTemplateDraftPayload();
-    const created = await post<TemplateRaw>(endpoints.checklistTemplates, {
-      template: {
-        ...payload,
-        created_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
-      }
-    });
-    await loadWorkspace();
-    const createdUid = String(created.uid ?? "").trim();
-    if (createdUid) {
-      syncChecklistTemplateEditorSelection(createdUid, "template");
-    } else {
-      syncChecklistTemplateEditorSelection();
-    }
-    toastStore.push("Template created", "success");
-  } catch (error) {
-    handleApiError(error, "Unable to create template");
-  } finally {
-    checklistTemplateEditorSaving.value = false;
-  }
-};
-
-const cloneChecklistTemplateDraft = async () => {
-  if (!canCloneChecklistTemplateDraft.value) {
-    return;
-  }
-  const templateUid = checklistTemplateDraftTemplateUid.value.trim();
-  if (!templateUid) {
-    return;
-  }
-  checklistTemplateEditorSaving.value = true;
-  try {
-    const baseName = checklistTemplateDraftName.value.trim() || "Template";
-    const cloned = await post<TemplateRaw>(`${endpoints.checklistTemplates}/${templateUid}/clone`, {
-      template_name: `${baseName} Copy ${buildTimestampTag().slice(-4)}`,
-      description: checklistTemplateDraftDescription.value.trim(),
-      created_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
-    });
-    await loadWorkspace();
-    const clonedUid = String(cloned.uid ?? "").trim();
-    if (clonedUid) {
-      syncChecklistTemplateEditorSelection(clonedUid, "template");
-    } else {
-      syncChecklistTemplateEditorSelection();
-    }
-    toastStore.push("Template cloned", "success");
-  } catch (error) {
-    handleApiError(error, "Unable to clone template");
-  } finally {
-    checklistTemplateEditorSaving.value = false;
-  }
-};
-
-const archiveChecklistTemplateDraft = async () => {
-  if (!canArchiveChecklistTemplateDraft.value) {
-    return;
-  }
-  const templateUid = checklistTemplateDraftTemplateUid.value.trim();
-  if (!templateUid) {
-    return;
-  }
-  const templateName = checklistTemplateDraftName.value.trim() || "Template";
-  if (/\[ARCHIVED\]/i.test(templateName)) {
-    toastStore.push("Template already archived", "info");
-    return;
-  }
-  checklistTemplateEditorSaving.value = true;
-  try {
-    await patchRequest(`${endpoints.checklistTemplates}/${templateUid}`, {
-      patch: {
-        template_name: `${templateName} [ARCHIVED]`
-      }
-    });
-    await loadWorkspace();
-    syncChecklistTemplateEditorSelection(templateUid, "template");
-    toastStore.push("Template archived", "success");
-  } catch (error) {
-    handleApiError(error, "Unable to archive template");
-  } finally {
-    checklistTemplateEditorSaving.value = false;
-  }
-};
-
-const convertChecklistTemplateDraftToServerTemplate = async () => {
-  if (!canConvertChecklistTemplateDraft.value) {
-    return;
-  }
-  checklistTemplateEditorSaving.value = true;
-  try {
-    const payload = buildChecklistTemplateDraftPayload();
-    const created = await post<TemplateRaw>(endpoints.checklistTemplates, {
-      template: {
-        ...payload,
-        created_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
-      }
-    });
-    await loadWorkspace();
-    const createdUid = String(created.uid ?? "").trim();
-    if (createdUid) {
-      syncChecklistTemplateEditorSelection(createdUid, "template");
-    } else {
-      syncChecklistTemplateEditorSelection();
-    }
-    toastStore.push("CSV template converted", "success");
-  } catch (error) {
-    handleApiError(error, "Unable to convert CSV template");
-  } finally {
-    checklistTemplateEditorSaving.value = false;
-  }
-};
 
 const missionChecklistCountByMission = computed(() => {
   const map = new Map<string, number>();
@@ -4254,23 +2798,6 @@ const missionAudit = computed<AuditEvent[]>(() => {
     }));
 });
 
-const hasMissionAuditDetails = (value: Record<string, unknown> | null): boolean => {
-  if (!value) {
-    return false;
-  }
-  return Object.keys(value).length > 0;
-};
-
-const isMissionAuditExpanded = (uid: string): boolean => Boolean(missionAuditExpandedRows.value[uid]);
-
-const toggleMissionAuditExpanded = (uid: string): void => {
-  const current = missionAuditExpandedRows.value;
-  missionAuditExpandedRows.value = {
-    ...current,
-    [uid]: !current[uid]
-  };
-};
-
 const activeMissions = computed(() => missions.value.filter((entry) => entry.status.includes("ACTIVE")).length);
 
 const boardCounts = computed(() => {
@@ -4385,7 +2912,7 @@ const modeChipClass = (mode: string): string => {
   return "checklist-chip-muted";
 };
 
-const checklistOriginLabel = (originType: string): string => {
+const checklistOriginLabel = (originType?: string | null): string => {
   const normalized = String(originType ?? "").trim().toUpperCase();
   if (normalized === "CSV_IMPORT") {
     return "CSV IMPORT";
@@ -4501,78 +3028,6 @@ const navigateToChecklistTemplateList = () => {
   setPrimaryTab("checklists");
   secondaryScreen.value = "checklistOverview";
   setChecklistWorkspaceView("templates");
-};
-
-const isChecklistTemplateDeleteBusy = (templateUid: string): boolean => {
-  const uid = String(templateUid ?? "").trim();
-  if (!uid) {
-    return false;
-  }
-  return Boolean(checklistTemplateDeleteBusyByUid.value[uid]);
-};
-
-const deleteChecklistTemplateFromCard = async (
-  templateUid: string,
-  sourceType: ChecklistTemplateOption["source_type"],
-  templateName: string
-): Promise<boolean> => {
-  const uid = String(templateUid ?? "").trim();
-  if (!uid || isChecklistTemplateDeleteBusy(uid)) {
-    return false;
-  }
-  const name = String(templateName ?? uid).trim() || uid;
-  const targetLabel = sourceType === "template" ? "template" : "CSV import template";
-  if (!window.confirm(`Delete ${targetLabel} "${name}"?`)) {
-    return false;
-  }
-  checklistTemplateDeleteBusyByUid.value = {
-    ...checklistTemplateDeleteBusyByUid.value,
-    [uid]: true
-  };
-  try {
-    if (sourceType === "template") {
-      await deleteRequest(`${endpoints.checklistTemplates}/${uid}`);
-    } else {
-      await deleteRequest(`${endpoints.checklists}/${uid}`);
-      if (selectedChecklistUid.value === uid) {
-        selectedChecklistUid.value = "";
-      }
-      if (checklistDetailUid.value === uid) {
-        checklistDetailUid.value = "";
-      }
-    }
-    if (checklistTemplateSelectionUid.value === uid) {
-      checklistTemplateSelectionUid.value = "";
-    }
-    await loadWorkspace();
-    toastStore.push(sourceType === "template" ? "Template deleted" : "CSV import template deleted", "success");
-    return true;
-  } catch (error) {
-    handleApiError(
-      error,
-      sourceType === "template" ? "Unable to delete template" : "Unable to delete CSV import template"
-    );
-    return false;
-  } finally {
-    const next = { ...checklistTemplateDeleteBusyByUid.value };
-    delete next[uid];
-    checklistTemplateDeleteBusyByUid.value = next;
-  }
-};
-
-const deleteChecklistTemplateDraft = async () => {
-  if (!canDeleteChecklistTemplateDraft.value) {
-    return;
-  }
-  const selected = selectedChecklistTemplateEditorOption.value;
-  if (!selected) {
-    return;
-  }
-  const removed = await deleteChecklistTemplateFromCard(selected.uid, selected.source_type, selected.name);
-  if (!removed) {
-    return;
-  }
-  syncChecklistTemplateEditorSelection();
 };
 
 const deleteChecklistFromDetail = async () => {
@@ -4709,14 +3164,16 @@ const setPrimaryTab = (tab: PrimaryTab, syncRoute = true) => {
   if (!syncRoute) {
     return;
   }
+  const missionUid = selectedMissionUid.value.trim();
+  const missionQuery = missionUid ? { mission_uid: missionUid } : undefined;
   if (tab === "checklists") {
-    if (route.path !== "/checklists") {
-      router.push("/checklists").catch(() => undefined);
+    if (route.path !== "/checklists" || queryText(route.query.mission_uid) !== missionUid) {
+      router.push({ path: "/checklists", query: missionQuery }).catch(() => undefined);
     }
     return;
   }
   if (route.path === "/checklists") {
-    router.push("/missions").catch(() => undefined);
+    router.push({ path: "/missions", query: missionQuery }).catch(() => undefined);
   }
 };
 
@@ -4755,7 +3212,7 @@ const selectMission = (missionUid: string) => {
   primaryTab.value = "mission";
   setSecondaryScreen("missionOverview");
   if (route.path === "/checklists") {
-    router.push("/missions").catch(() => undefined);
+    router.push({ path: "/missions", query: { mission_uid: missionUid } }).catch(() => undefined);
   }
 };
 
@@ -4857,6 +3314,53 @@ const loadWorkspace = async () => {
     loadingWorkspace.value = false;
   }
 };
+
+const {
+  startNewChecklistTemplateDraft,
+  selectChecklistTemplateForEditor,
+  syncChecklistTemplateEditorSelection,
+  saveChecklistTemplateDraft,
+  saveChecklistTemplateDraftAsNew,
+  cloneChecklistTemplateDraft,
+  archiveChecklistTemplateDraft,
+  convertChecklistTemplateDraftToServerTemplate,
+  deleteChecklistTemplateDraft
+} = useChecklistTemplateCrud({
+  buildTimestampTag,
+  loadWorkspace,
+  pushToast: (message, tone) => toastStore.push(message, tone),
+  handleApiError,
+  confirmDelete: (message) => window.confirm(message),
+  defaultSourceIdentity: DEFAULT_SOURCE_IDENTITY,
+  checklistTemplateOptions,
+  selectedChecklistTemplateEditorOption,
+  checklistTemplateEditorMode,
+  checklistTemplateEditorHydrating,
+  checklistTemplateEditorSelectionUid,
+  checklistTemplateEditorSelectionSourceType,
+  checklistTemplateDraftTemplateUid,
+  checklistTemplateDraftName,
+  checklistTemplateDraftDescription,
+  checklistTemplateDraftColumns,
+  checklistTemplateEditorDirty,
+  checklistTemplateEditorSaving,
+  checklistTemplateSelectionUid,
+  checklistTemplateDeleteBusyByUid,
+  templateRecords,
+  checklistRecords,
+  selectedChecklistUid,
+  checklistDetailUid,
+  canSaveChecklistTemplateDraft,
+  canSaveChecklistTemplateDraftAsNew,
+  canCloneChecklistTemplateDraft,
+  canArchiveChecklistTemplateDraft,
+  canConvertChecklistTemplateDraft,
+  canDeleteChecklistTemplateDraft,
+  normalizeChecklistTemplateDraftColumns,
+  createBlankChecklistTemplateDraftColumns,
+  validateChecklistTemplateDraftPayload,
+  toChecklistTemplateColumnPayload
+});
 
 const runAction = async (
   operation: () => Promise<void>,
@@ -5101,15 +3605,15 @@ const ensureChecklistTaskContext = async (): Promise<{ checklistUid: string; tas
 
 const deployAssetAction = async () => {
   const member = missionMembers.value[0];
-  if (!member) {
-    throw new Error("No mission member is assigned. Use Add Member before deploying assets.");
-  }
-  await post<AssetRaw>(endpoints.r3aktAssets, {
-    team_member_uid: member?.uid,
+  const payload: Record<string, unknown> = {
     name: `ASSET-${buildTimestampTag().slice(-6)}`,
     asset_type: "FIELD_UNIT",
-    status: "ACTIVE"
-  });
+    status: "AVAILABLE"
+  };
+  if (member?.uid) {
+    payload.team_member_uid = member.uid;
+  }
+  await post<AssetRaw>(endpoints.r3aktAssets, payload);
   await loadWorkspace();
 };
 
@@ -5172,24 +3676,6 @@ const resetMissionDraft = (mode: "create" | "edit", mission?: Mission) => {
   missionDraftInviteOnly.value = false;
   missionDraftZoneUids.value = [];
   missionDraftAssetUids.value = [];
-};
-
-const readMultiSelectValues = (event: Event): string[] => {
-  const target = event.target as HTMLSelectElement | null;
-  if (!target) {
-    return [];
-  }
-  return Array.from(target.selectedOptions)
-    .map((entry) => entry.value.trim())
-    .filter((entry) => entry.length > 0);
-};
-
-const onMissionDraftZoneSelectionChange = (event: Event) => {
-  missionDraftZoneUids.value = readMultiSelectValues(event);
-};
-
-const onMissionDraftAssetSelectionChange = (event: Event) => {
-  missionDraftAssetUids.value = readMultiSelectValues(event);
 };
 
 const buildMissionDraftPayload = () => {
@@ -5648,10 +4134,12 @@ const buildChecklistDraftName = (): string => {
 };
 
 const openChecklistTemplateModal = () => {
-  if (!checklistTemplateOptions.value.length) {
-    throw new Error("No checklist templates available. Create a template first");
-  }
   checklistTemplateNameDraft.value = buildChecklistDraftName();
+  if (!checklistTemplateOptions.value.length) {
+    checklistTemplateSelectionUid.value = "";
+    checklistTemplateModalOpen.value = true;
+    return;
+  }
   if (!checklistTemplateOptions.value.some((entry) => entry.uid === checklistTemplateSelectionUid.value)) {
     checklistTemplateSelectionUid.value = checklistTemplateOptions.value[0].uid;
   }
@@ -5986,7 +4474,7 @@ const snapshotAction = async () => {
   const snapshots = await get<
     Array<{ aggregate_uid?: string; aggregate_type?: string; state?: unknown; created_at?: string }>
   >(endpoints.r3aktSnapshots);
-  const filtered = toArray(snapshots).filter((entry) => String(entry.aggregate_uid ?? "") === missionUid);
+  const filtered = snapshots.filter((entry) => String(entry.aggregate_uid ?? "") === missionUid);
   downloadJson(`mission-snapshots-${missionUid}.json`, filtered);
 };
 
@@ -6055,6 +4543,36 @@ const previewAction = async (action: string) => {
 
   if (action === "Broadcast") {
     await runAction(broadcastMissionAction, "Mission broadcast logged", "Unable to broadcast mission update");
+    return;
+  }
+
+  if (action === "Edit") {
+    openMissionEditScreen();
+    return;
+  }
+
+  if (action === "Checklists") {
+    setPrimaryTab("checklists");
+    return;
+  }
+
+  if (action === "Logs") {
+    openMissionLogsPage();
+    return;
+  }
+
+  if (action === "Team") {
+    setSecondaryScreen("missionTeamMembers");
+    return;
+  }
+
+  if (action === "Assets") {
+    setSecondaryScreen("assetRegistry");
+    return;
+  }
+
+  if (action === "Zones") {
+    setSecondaryScreen("assignZones");
     return;
   }
 
@@ -6256,6 +4774,46 @@ watch(
 );
 
 watch(
+  () => route.query.mission_uid,
+  (value) => {
+    const next = queryText(value);
+    if (next) {
+      if (next !== selectedMissionUid.value) {
+        selectedMissionUid.value = next;
+      }
+      return;
+    }
+    if (!selectedMissionUid.value) {
+      const persistedMissionUid = readPersistedMissionUid();
+      if (persistedMissionUid) {
+        selectedMissionUid.value = persistedMissionUid;
+      }
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  selectedMissionUid,
+  (missionUid) => {
+    const normalizedMissionUid = missionUid.trim();
+    saveJson(MISSION_SELECTION_STORAGE_KEY, normalizedMissionUid);
+    const current = queryText(route.query.mission_uid);
+    if (current === normalizedMissionUid) {
+      return;
+    }
+    const nextQuery = { ...route.query };
+    if (normalizedMissionUid) {
+      nextQuery.mission_uid = normalizedMissionUid;
+    } else {
+      delete nextQuery.mission_uid;
+    }
+    router.replace({ path: route.path, query: nextQuery }).catch(() => undefined);
+  },
+  { immediate: true }
+);
+
+watch(
   missions,
   (entries) => {
     if (!entries.some((entry) => entry.uid === selectedMissionUid.value)) {
@@ -6295,7 +4853,6 @@ watch(selectedMissionUid, (missionUid, previousMissionUid) => {
   if (!missionUid || missionUid === previousMissionUid) {
     return;
   }
-  missionAuditExpandedRows.value = {};
   if (primaryTab.value === "mission") {
     setSecondaryScreen("missionOverview");
   }
@@ -6340,1885 +4897,28 @@ watch(
 );
 
 onMounted(() => {
+  missionCountdownNow.value = Date.now();
+  missionCountdownTimerId = window.setInterval(() => {
+    missionCountdownNow.value = Date.now();
+  }, 1000);
   loadWorkspace().catch((error) => {
     handleApiError(error, "Unable to load mission workspace");
   });
 });
+
+onBeforeUnmount(() => {
+  if (missionCountdownTimerId !== undefined) {
+    window.clearInterval(missionCountdownTimerId);
+    missionCountdownTimerId = undefined;
+  }
+});
 </script>
 
-<style scoped>
-.missions-workspace {
-  --neon: #37f2ff;
-  --panel-dark: rgba(4, 12, 22, 0.96);
-  --panel-light: rgba(10, 30, 45, 0.94);
-  --amber: #ffb35c;
-  color: #dffcff;
-  font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
-}
+<style scoped src="./missions/MissionsPage.css"></style>
 
-.registry-shell {
-  position: relative;
-  padding: 20px 22px 26px;
-  border-radius: 18px;
-  border: 1px solid rgba(55, 242, 255, 0.25);
-  background: radial-gradient(circle at top, rgba(42, 210, 255, 0.12), transparent 55%),
-    linear-gradient(145deg, rgba(5, 16, 28, 0.96), rgba(2, 6, 12, 0.98));
-  box-shadow: 0 18px 55px rgba(1, 6, 12, 0.65), inset 0 0 0 1px rgba(55, 242, 255, 0.08);
-  overflow: hidden;
-}
 
-.registry-shell::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 1px 1px, rgba(55, 242, 255, 0.08) 1px, transparent 0) 0 0 / 18px 18px;
-  opacity: 0.6;
-  pointer-events: none;
-}
 
-.registry-top {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 16px;
-  z-index: 1;
-}
 
-.registry-title {
-  justify-self: center;
-  font-size: 20px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #d4fbff;
-  text-shadow: 0 0 12px rgba(55, 242, 255, 0.5);
-}
 
-.registry-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-self: end;
-}
 
-.status-url {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: rgba(215, 243, 255, 0.8);
-}
-
-.mission-kpis {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.kpi-card {
-  position: relative;
-  border: 1px solid rgba(55, 242, 255, 0.24);
-  background: rgba(8, 22, 34, 0.78);
-  border-radius: 12px;
-  padding: 10px;
-  display: grid;
-  gap: 4px;
-  box-shadow: inset 0 0 20px rgba(4, 20, 28, 0.8);
-}
-
-.kpi-card::after {
-  content: "";
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  width: 28px;
-  height: 6px;
-  background: linear-gradient(90deg, rgba(56, 244, 255, 0.8), transparent);
-  opacity: 0.8;
-  border-radius: 2px;
-}
-
-.kpi-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: rgba(209, 251, 255, 0.66);
-}
-
-.kpi-value {
-  font-size: 28px;
-  line-height: 1;
-  font-family: "Orbitron", "Rajdhani", sans-serif;
-  letter-spacing: 0.08em;
-  color: #ffffff;
-  text-shadow:
-    0 0 5px rgba(56, 244, 255, 0.9),
-    0 0 10px rgba(56, 244, 255, 0.7),
-    0 0 20px rgba(56, 244, 255, 0.6),
-    0 0 40px rgba(56, 244, 255, 0.35);
-}
-
-.registry-grid {
-  display: grid;
-  grid-template-columns: minmax(260px, 300px) 1fr;
-  gap: 18px;
-  z-index: 1;
-  position: relative;
-  margin-top: 14px;
-}
-
-.registry-grid-full {
-  grid-template-columns: 1fr;
-}
-
-.panel {
-  position: relative;
-  padding: 16px;
-  background: linear-gradient(145deg, var(--panel-light), var(--panel-dark));
-  border: 1px solid rgba(55, 242, 255, 0.25);
-  box-shadow: inset 0 0 0 1px rgba(55, 242, 255, 0.08), 0 12px 30px rgba(1, 6, 12, 0.6);
-  clip-path: polygon(0 0, calc(100% - 24px) 0, 100% 24px, 100% 100%, 24px 100%, 0 calc(100% - 24px));
-}
-
-.panel::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgba(55, 242, 255, 0.2);
-  clip-path: polygon(1px 1px, calc(100% - 25px) 1px, calc(100% - 1px) 25px, calc(100% - 1px) calc(100% - 1px), 25px calc(100% - 1px), 1px calc(100% - 25px));
-  pointer-events: none;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.registry-main > .panel-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-}
-
-.panel-title {
-  font-size: 16px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: #d1fbff;
-}
-
-.panel-subtitle {
-  font-size: 12px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: rgba(209, 251, 255, 0.65);
-  margin-top: 4px;
-}
-
-.panel-chip {
-  border: 1px solid var(--amber);
-  color: var(--amber);
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.panel-tabs,
-.screen-tabs {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
-  width: 100%;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
-}
-
-.panel-tabs::-webkit-scrollbar,
-.screen-tabs::-webkit-scrollbar,
-.checklist-overview-tabs::-webkit-scrollbar {
-  height: 8px;
-}
-
-.panel-tabs::-webkit-scrollbar-track,
-.screen-tabs::-webkit-scrollbar-track,
-.checklist-overview-tabs::-webkit-scrollbar-track {
-  background: rgba(4, 18, 29, 0.68);
-  border-radius: 999px;
-}
-
-.panel-tabs::-webkit-scrollbar-thumb,
-.screen-tabs::-webkit-scrollbar-thumb,
-.checklist-overview-tabs::-webkit-scrollbar-thumb {
-  background: rgba(55, 242, 255, 0.5);
-  border-radius: 999px;
-}
-
-.panel-tabs::-webkit-scrollbar-thumb:hover,
-.screen-tabs::-webkit-scrollbar-thumb:hover,
-.checklist-overview-tabs::-webkit-scrollbar-thumb:hover {
-  background: rgba(55, 242, 255, 0.72);
-}
-
-.panel-tab,
-.screen-tab {
-  border: 1px solid rgba(55, 242, 255, 0.26);
-  background: rgba(7, 18, 26, 0.8);
-  color: rgba(209, 251, 255, 0.66);
-  padding: 6px 10px;
-  border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 10px;
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.panel-tab.active,
-.screen-tab.active {
-  border-color: rgba(55, 242, 255, 0.65);
-  color: #e0feff;
-  background: rgba(55, 242, 255, 0.14);
-}
-
-.tree-list {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.mission-directory-actions {
-  margin-top: 12px;
-}
-
-.mission-directory-create-button {
-  width: 100%;
-}
-
-.tree-item {
-  display: grid;
-  grid-template-columns: 10px 1fr auto;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid transparent;
-  background: rgba(7, 18, 28, 0.6);
-  color: rgba(213, 251, 255, 0.9);
-  padding: 8px 10px;
-  border-radius: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: 10px;
-}
-
-.tree-item.active {
-  border-color: rgba(55, 242, 255, 0.65);
-  background: rgba(55, 242, 255, 0.12);
-}
-
-.tree-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--neon);
-}
-
-.tree-count {
-  border: 1px solid rgba(55, 242, 255, 0.45);
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-
-.tree-label {
-  text-align: left;
-}
-
-.screen-shell {
-  margin-top: 10px;
-  border: 1px solid rgba(55, 242, 255, 0.2);
-  border-radius: 10px;
-  background: rgba(6, 14, 24, 0.75);
-  padding: 12px;
-  display: grid;
-  gap: 10px;
-}
-
-.screen-header h3 {
-  margin: 0;
-  font-size: 14px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.screen-header p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: rgba(209, 251, 255, 0.72);
-}
-
-.screen-actions {
-  margin-top: 8px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.screen-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.screen-grid.two-col {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.mission-overview-hud {
-  display: grid;
-  gap: 12px;
-}
-
-.overview-vitals {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.overview-vital-card {
-  position: relative;
-  border: 1px solid rgba(55, 242, 255, 0.28);
-  background: rgba(7, 20, 30, 0.82);
-  border-radius: 12px;
-  padding: 10px;
-  display: grid;
-  gap: 5px;
-  box-shadow: inset 0 0 18px rgba(2, 14, 22, 0.9);
-}
-
-.overview-vital-card::after {
-  content: "";
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  width: 28px;
-  height: 5px;
-  background: linear-gradient(90deg, rgba(255, 179, 92, 0.88), transparent);
-  border-radius: 2px;
-}
-
-.overview-vital-label {
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: rgba(211, 248, 255, 0.72);
-}
-
-.overview-vital-value {
-  font-size: 22px;
-  line-height: 1.1;
-  letter-spacing: 0.08em;
-  color: #ffffff;
-  text-shadow: 0 0 8px rgba(55, 242, 255, 0.58);
-}
-
-.overview-layout {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.overview-panel {
-  gap: 10px;
-}
-
-.overview-panel-compact {
-  padding: 12px;
-  gap: 10px;
-}
-
-.overview-panel-wide {
-  grid-column: 1 / -1;
-}
-
-.overview-panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.overview-panel-header h4 {
-  margin: 0;
-}
-
-.overview-panel-meta {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(161, 240, 255, 0.82);
-}
-
-.overview-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.overview-compact-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.overview-compact-header h4 {
-  margin: 0;
-}
-
-.overview-compact-subtitle {
-  margin-top: 4px;
-  font-size: 11px;
-  color: rgba(190, 246, 255, 0.72);
-  letter-spacing: 0.08em;
-}
-
-.overview-compact-tag {
-  border: 1px solid rgba(55, 242, 255, 0.45);
-  color: rgba(227, 252, 255, 0.85);
-  font-size: 10px;
-  border-radius: 999px;
-  padding: 4px 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-}
-
-.overview-compact-meta {
-  display: grid;
-  gap: 8px;
-  font-family: "Rajdhani", "Barlow", sans-serif;
-  font-size: 12px;
-  color: rgba(220, 251, 255, 0.86);
-}
-
-.overview-compact-meta div {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
-.overview-compact-meta div span:last-child {
-  color: rgba(233, 253, 255, 0.9);
-  text-align: right;
-  max-width: 65%;
-}
-
-.overview-compact-truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.overview-compact-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.overview-board {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.overview-board-compact {
-  gap: 6px;
-}
-
-.overview-board-col {
-  border: 1px solid rgba(55, 242, 255, 0.25);
-  border-radius: 10px;
-  background: rgba(5, 16, 26, 0.76);
-  padding: 8px;
-  display: grid;
-  gap: 6px;
-  align-content: start;
-}
-
-.overview-board-col-pending {
-  border-color: rgba(55, 242, 255, 0.36);
-}
-
-.overview-board-col-late {
-  border-color: rgba(255, 179, 92, 0.46);
-}
-
-.overview-board-col-complete {
-  border-color: rgba(62, 242, 180, 0.46);
-}
-
-.overview-board-col h5 {
-  margin: 0;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.overview-board-col-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.overview-board-col-head span {
-  font-size: 18px;
-  letter-spacing: 0.08em;
-  line-height: 1;
-  color: #ffffff;
-}
-
-.lane-list-compact {
-  margin: 0;
-  max-height: 152px;
-  overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(55, 242, 255, 0.52) rgba(4, 18, 29, 0.68);
-}
-
-.lane-list-compact li {
-  padding: 6px;
-  gap: 2px;
-}
-
-.lane-list-compact li strong {
-  font-size: 10px;
-}
-
-.lane-list-compact li span {
-  font-size: 9px;
-}
-
-.lane-list-compact::-webkit-scrollbar {
-  width: 7px;
-}
-
-.lane-list-compact::-webkit-scrollbar-track {
-  background: rgba(4, 18, 29, 0.68);
-  border-radius: 999px;
-}
-
-.lane-list-compact::-webkit-scrollbar-thumb {
-  background: rgba(55, 242, 255, 0.5);
-  border-radius: 999px;
-}
-
-.lane-list-compact::-webkit-scrollbar-thumb:hover {
-  background: rgba(55, 242, 255, 0.72);
-}
-
-.lane-empty {
-  border: 1px dashed rgba(55, 242, 255, 0.24);
-  border-radius: 8px;
-  padding: 8px;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(190, 243, 255, 0.72);
-}
-
-.overview-zone-progress {
-  position: relative;
-  width: 100%;
-  height: 8px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(0, 62, 82, 0.74);
-}
-
-.overview-zone-progress-value {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: linear-gradient(90deg, rgba(56, 244, 255, 0.96), rgba(20, 180, 228, 0.76));
-}
-
-.overview-zone-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(177, 239, 255, 0.86);
-}
-
-.overview-zone-list {
-  max-height: 210px;
-  overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
-}
-
-.overview-zone-list::-webkit-scrollbar {
-  width: 8px;
-}
-
-.overview-zone-list::-webkit-scrollbar-track {
-  background: rgba(4, 18, 29, 0.68);
-  border-radius: 999px;
-}
-
-.overview-zone-list::-webkit-scrollbar-thumb {
-  background: rgba(55, 242, 255, 0.5);
-  border-radius: 999px;
-}
-
-.overview-zone-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(55, 242, 255, 0.72);
-}
-
-.stage-card {
-  border: 1px solid rgba(55, 242, 255, 0.24);
-  border-radius: 10px;
-  background: rgba(8, 18, 28, 0.74);
-  padding: 10px;
-  display: grid;
-  gap: 8px;
-}
-
-.stage-card h4 {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.stack-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 8px;
-}
-
-.stack-list li {
-  border: 1px solid rgba(55, 242, 255, 0.2);
-  border-radius: 8px;
-  background: rgba(7, 18, 28, 0.72);
-  padding: 8px;
-  display: grid;
-  gap: 4px;
-}
-
-.stack-list li strong {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
-.stack-list li span {
-  font-size: 11px;
-  color: rgba(204, 248, 255, 0.8);
-}
-
-.timeline li strong {
-  color: #37f2ff;
-}
-
-.cap-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.cap-chip {
-  border: 1px solid rgba(55, 242, 255, 0.45);
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.mini-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.mini-table th {
-  text-align: left;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: rgba(209, 251, 255, 0.7);
-  padding: 6px;
-  border-bottom: 1px solid rgba(55, 242, 255, 0.3);
-}
-
-.mini-table td {
-  padding: 6px;
-  border-bottom: 1px solid rgba(55, 242, 255, 0.14);
-}
-
-.mission-audit-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.mission-audit-subtitle {
-  display: block;
-  margin-top: 4px;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(174, 239, 255, 0.78);
-}
-
-.mission-audit-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.mission-audit-empty {
-  border: 1px dashed rgba(55, 242, 255, 0.28);
-  border-radius: 10px;
-  padding: 12px;
-  font-size: 12px;
-  color: rgba(202, 245, 255, 0.82);
-}
-
-.mission-audit-table-shell {
-  border: 1px solid rgba(55, 242, 255, 0.22);
-  border-radius: 10px;
-  background: rgba(5, 16, 26, 0.82);
-  overflow: auto;
-  max-height: clamp(280px, calc(100vh - 360px), 640px);
-  scrollbar-width: thin;
-  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
-}
-
-.mission-audit-table-shell::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-.mission-audit-table-shell::-webkit-scrollbar-track {
-  background: rgba(4, 18, 29, 0.68);
-  border-radius: 999px;
-}
-
-.mission-audit-table-shell::-webkit-scrollbar-thumb {
-  background: rgba(55, 242, 255, 0.5);
-  border-radius: 999px;
-  border: 2px solid rgba(4, 18, 29, 0.68);
-}
-
-.mission-audit-table-shell::-webkit-scrollbar-thumb:hover {
-  background: rgba(55, 242, 255, 0.72);
-}
-
-.mission-audit-table {
-  width: 100%;
-  min-width: 760px;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.mission-audit-table th {
-  text-align: left;
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: rgba(173, 238, 255, 0.72);
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(55, 242, 255, 0.24);
-  white-space: nowrap;
-}
-
-.mission-audit-table td {
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(55, 242, 255, 0.16);
-  vertical-align: top;
-}
-
-.mission-audit-row:hover td {
-  background: rgba(10, 25, 36, 0.66);
-}
-
-.mission-audit-cell-message {
-  color: rgba(223, 252, 255, 0.94);
-}
-
-.mission-audit-cell-type {
-  width: 1%;
-  white-space: nowrap;
-}
-
-.mission-audit-type-chip {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid rgba(55, 242, 255, 0.42);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(171, 241, 255, 0.95);
-  background: rgba(3, 14, 24, 0.82);
-}
-
-.mission-audit-cell-time {
-  width: 1%;
-  white-space: nowrap;
-  color: rgba(198, 244, 255, 0.78);
-}
-
-.mission-audit-cell-action {
-  width: 1%;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.mission-audit-toggle {
-  border: 1px solid rgba(55, 242, 255, 0.42);
-  border-radius: 999px;
-  background: rgba(6, 18, 28, 0.82);
-  color: #39f2ff;
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-
-.mission-audit-toggle:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.mission-audit-details-row td {
-  padding: 0;
-  border-bottom: 1px solid rgba(55, 242, 255, 0.2);
-}
-
-.mission-audit-details {
-  padding: 10px;
-  background: rgba(2, 10, 18, 0.88);
-}
-
-.checklist-workspace {
-  gap: 12px;
-  --checklist-scroll-max-height: clamp(260px, calc(100vh - 340px), 640px);
-}
-
-.checklist-manager-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: end;
-}
-
-.checklist-manager-search {
-  margin: 0;
-}
-
-.checklist-manager-search input {
-  min-height: 42px;
-}
-
-.checklist-manager-actions {
-  display: inline-flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.checklist-overview-tabs {
-  display: inline-flex;
-  gap: 2px;
-  border: 1px solid rgba(55, 242, 255, 0.34);
-  border-radius: 8px;
-  padding: 2px;
-  width: fit-content;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  background: rgba(2, 10, 16, 0.85);
-  scrollbar-width: thin;
-  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
-}
-
-.checklist-overview-tab {
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: rgba(207, 249, 255, 0.86);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  font-size: 10px;
-  padding: 7px 12px;
-  cursor: pointer;
-}
-
-.checklist-overview-tab.active {
-  background: rgba(23, 164, 225, 0.35);
-  color: #7ef4ff;
-}
-
-.checklist-overview-list {
-  display: grid;
-  gap: 10px;
-  max-height: var(--checklist-scroll-max-height);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  align-content: start;
-  padding-right: 6px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
-}
-
-.checklist-template-list {
-  min-height: var(--checklist-scroll-max-height);
-}
-
-.checklist-template-workspace {
-  display: grid;
-  grid-template-columns: minmax(280px, 0.92fr) minmax(0, 1.48fr);
-  gap: 10px;
-  min-height: var(--checklist-scroll-max-height);
-  max-height: var(--checklist-scroll-max-height);
-}
-
-.checklist-template-library-pane,
-.checklist-template-editor-pane {
-  border: 1px solid rgba(55, 242, 255, 0.32);
-  border-radius: 10px;
-  background: rgba(6, 18, 28, 0.76);
-  padding: 10px;
-  display: grid;
-  gap: 10px;
-  min-height: 0;
-}
-
-.checklist-template-library-head {
-  display: grid;
-  gap: 4px;
-}
-
-.checklist-template-library-head h4 {
-  margin: 0;
-  font-size: 18px;
-  letter-spacing: 0.05em;
-  text-transform: none;
-}
-
-.checklist-template-library-head p {
-  margin: 0;
-  font-size: 12px;
-  color: rgba(190, 243, 255, 0.78);
-}
-
-.checklist-template-library-list {
-  display: grid;
-  gap: 8px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  align-content: start;
-  min-height: 0;
-  padding-right: 6px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
-}
-
-.checklist-overview-list::-webkit-scrollbar,
-.checklist-template-library-list::-webkit-scrollbar,
-.checklist-template-column-scroll::-webkit-scrollbar {
-  width: 10px;
-}
-
-.checklist-overview-list::-webkit-scrollbar-track,
-.checklist-template-library-list::-webkit-scrollbar-track,
-.checklist-template-column-scroll::-webkit-scrollbar-track {
-  background: rgba(4, 18, 29, 0.68);
-  border-radius: 999px;
-}
-
-.checklist-overview-list::-webkit-scrollbar-thumb,
-.checklist-template-library-list::-webkit-scrollbar-thumb,
-.checklist-template-column-scroll::-webkit-scrollbar-thumb {
-  background: rgba(55, 242, 255, 0.5);
-  border-radius: 999px;
-  border: 2px solid rgba(4, 18, 29, 0.68);
-}
-
-.checklist-overview-list::-webkit-scrollbar-thumb:hover,
-.checklist-template-library-list::-webkit-scrollbar-thumb:hover,
-.checklist-template-column-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(55, 242, 255, 0.72);
-}
-
-.checklist-template-library-item {
-  border: 1px solid rgba(55, 242, 255, 0.32);
-  border-radius: 10px;
-  background: rgba(6, 18, 28, 0.72);
-  padding: 12px;
-  display: grid;
-  gap: 8px;
-  text-align: left;
-  color: #dffcff;
-  width: 100%;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.checklist-template-library-item:hover {
-  border-color: rgba(55, 242, 255, 0.7);
-  background: rgba(10, 28, 41, 0.86);
-}
-
-.checklist-template-library-item.active {
-  border-color: rgba(55, 242, 255, 0.9);
-  box-shadow: inset 0 0 0 1px rgba(55, 242, 255, 0.28);
-}
-
-.checklist-template-head {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
-
-.checklist-template-head h4 {
-  margin: 0;
-  font-size: 16px;
-  letter-spacing: 0.05em;
-  text-transform: none;
-}
-
-.checklist-template-library-item p {
-  margin: 0;
-  font-size: 12px;
-  color: rgba(190, 243, 255, 0.88);
-}
-
-.checklist-template-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: rgba(155, 237, 255, 0.88);
-}
-
-.checklist-template-editor-pane {
-  grid-template-rows: auto 1fr;
-}
-
-.checklist-template-editor-header {
-  display: grid;
-  gap: 8px;
-}
-
-.checklist-template-editor-header h4 {
-  margin: 0;
-  font-size: 18px;
-  letter-spacing: 0.06em;
-  text-transform: none;
-}
-
-.checklist-template-editor-header p {
-  margin: 0;
-  font-size: 12px;
-  color: rgba(190, 243, 255, 0.82);
-}
-
-.checklist-template-editor-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.checklist-template-editor-form {
-  display: grid;
-  gap: 10px;
-  min-height: 0;
-}
-
-.checklist-template-editor-note {
-  margin: 0;
-  font-size: 11px;
-  color: rgba(186, 240, 255, 0.86);
-  letter-spacing: 0.06em;
-}
-
-.checklist-template-column-scroll {
-  border: 1px solid rgba(55, 242, 255, 0.24);
-  border-radius: 8px;
-  background: rgba(3, 12, 20, 0.68);
-  padding: 8px;
-  overflow: auto;
-  max-height: calc(var(--checklist-scroll-max-height) - 250px);
-  min-height: 180px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
-}
-
-.checklist-template-column-table {
-  table-layout: fixed;
-}
-
-.checklist-template-column-input {
-  width: 100%;
-  border: 1px solid rgba(55, 242, 255, 0.32);
-  border-radius: 6px;
-  background: rgba(5, 16, 26, 0.9);
-  color: #dffcff;
-  font-family: inherit;
-  font-size: 11px;
-  padding: 6px 8px;
-}
-
-.checklist-template-column-checkbox {
-  text-align: center;
-}
-
-.checklist-template-color-input {
-  width: 44px;
-  height: 28px;
-  border: 1px solid rgba(55, 242, 255, 0.35);
-  border-radius: 6px;
-  background: transparent;
-  padding: 0;
-}
-
-.checklist-template-column-actions {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.checklist-overview-card {
-  width: 100%;
-  border: 1px solid rgba(55, 242, 255, 0.35);
-  background: rgba(4, 16, 24, 0.78);
-  border-radius: 10px;
-  color: #dffcff;
-  padding: 14px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: center;
-  text-align: left;
-}
-
-.checklist-overview-card:hover {
-  border-color: rgba(55, 242, 255, 0.75);
-  background: rgba(9, 24, 35, 0.88);
-}
-
-.checklist-overview-content {
-  display: grid;
-  gap: 10px;
-}
-
-.checklist-overview-head {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.checklist-overview-head h4 {
-  margin: 0;
-  font-size: 16px;
-  letter-spacing: 0.06em;
-  text-transform: none;
-}
-
-.checklist-overview-content p {
-  margin: 0;
-  font-size: 13px;
-  color: rgba(202, 245, 255, 0.9);
-}
-
-.checklist-overview-meta {
-  display: flex;
-  gap: 18px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: rgba(159, 238, 255, 0.9);
-}
-
-.checklist-overview-stats {
-  display: grid;
-  gap: 8px;
-  justify-items: end;
-  min-width: 250px;
-}
-
-.checklist-overview-counts {
-  display: flex;
-  gap: 16px;
-  font-size: 12px;
-  color: rgba(133, 241, 255, 0.92);
-}
-
-.checklist-overview-arrow {
-  font-size: 26px;
-  color: #2be8ff;
-  line-height: 1;
-}
-
-.checklist-chip-row {
-  display: inline-flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.checklist-chip {
-  border: 1px solid rgba(55, 242, 255, 0.35);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.checklist-chip-info {
-  border-color: rgba(47, 214, 255, 0.65);
-  color: #53efff;
-  background: rgba(47, 214, 255, 0.12);
-}
-
-.checklist-chip-success {
-  border-color: rgba(58, 244, 179, 0.62);
-  color: #42f2b2;
-  background: rgba(43, 199, 141, 0.16);
-}
-
-.checklist-chip-warning {
-  border-color: rgba(255, 178, 92, 0.72);
-  color: #ffb35c;
-  background: rgba(255, 179, 92, 0.16);
-}
-
-.checklist-chip-muted {
-  border-color: rgba(139, 176, 198, 0.42);
-  color: rgba(200, 221, 233, 0.92);
-  background: rgba(92, 118, 133, 0.18);
-}
-
-.checklist-progress-track {
-  position: relative;
-  width: 100%;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(0, 64, 84, 0.72);
-  overflow: hidden;
-}
-
-.checklist-progress-track.compact {
-  max-width: 240px;
-}
-
-.checklist-progress-value {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: linear-gradient(90deg, rgba(33, 223, 255, 0.95), rgba(17, 178, 226, 0.8));
-}
-
-.checklist-detail-view {
-  display: grid;
-  gap: 12px;
-}
-
-.checklist-detail-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
-}
-
-.checklist-detail-title {
-  display: grid;
-  gap: 7px;
-}
-
-.checklist-detail-actions {
-  display: inline-flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-self: start;
-}
-
-.checklist-detail-title h4 {
-  margin: 0;
-  font-size: 38px;
-  letter-spacing: 0.06em;
-  text-transform: none;
-}
-
-.checklist-detail-title p {
-  margin: 0;
-  font-size: 20px;
-  color: rgba(182, 242, 255, 0.92);
-}
-
-.checklist-detail-progress {
-  text-align: right;
-  display: grid;
-  justify-items: end;
-  gap: 2px;
-}
-
-.checklist-detail-progress strong {
-  font-size: 44px;
-  line-height: 1;
-  color: #2fe7ff;
-}
-
-.checklist-detail-progress span {
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 11px;
-  color: rgba(167, 242, 255, 0.88);
-}
-
-.checklist-detail-summary {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-  font-size: 18px;
-  color: rgba(130, 239, 255, 0.96);
-}
-
-.checklist-task-toolbar {
-  border: 1px solid rgba(55, 242, 255, 0.28);
-  border-radius: 10px;
-  padding: 12px;
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
-  background: rgba(7, 17, 27, 0.68);
-}
-
-.checklist-task-input {
-  display: grid;
-  gap: 4px;
-}
-
-.checklist-task-input input {
-  width: 120px;
-  border: 1px solid rgba(55, 242, 255, 0.32);
-  border-radius: 7px;
-  background: rgba(4, 13, 22, 0.85);
-  color: #ddfbff;
-  padding: 8px 10px;
-  font-size: 13px;
-}
-
-.checklist-task-input span {
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(204, 248, 255, 0.72);
-}
-
-.checklist-detail-table td {
-  vertical-align: top;
-}
-
-.checklist-row-complete td {
-  background: rgba(125, 192, 84, 0.78);
-  color: #072312;
-}
-
-.checklist-done-button {
-  border: 0;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-}
-
-.checklist-done-button:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
-.checklist-done-indicator {
-  width: 20px;
-  height: 20px;
-  border: 1px solid rgba(190, 214, 225, 0.42);
-  border-radius: 3px;
-  display: inline-grid;
-  place-items: center;
-  color: transparent;
-}
-
-.checklist-done-indicator.done {
-  border-color: rgba(58, 244, 179, 0.62);
-  background: rgba(58, 244, 179, 0.2);
-  color: #42f2b2;
-}
-
-.board-preview {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.board-col {
-  border: 1px solid rgba(55, 242, 255, 0.26);
-  border-radius: 8px;
-  padding: 8px;
-  text-align: center;
-}
-
-.board-col h5 {
-  margin: 0;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.board-col span {
-  display: block;
-  margin-top: 6px;
-  font-size: 22px;
-}
-
-.zone-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.builder-preview {
-  font-size: 12px;
-  color: rgba(214, 251, 255, 0.85);
-}
-
-.field-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.field-grid.single-col {
-  grid-template-columns: 1fr;
-}
-
-.field-control {
-  display: grid;
-  gap: 6px;
-}
-
-.field-control.full {
-  grid-column: 1 / -1;
-}
-
-.mission-advanced-properties {
-  grid-column: 1 / -1;
-  border: 1px solid rgba(55, 242, 255, 0.34);
-  border-radius: 10px;
-  background: rgba(5, 14, 22, 0.62);
-  overflow: hidden;
-}
-
-.mission-advanced-properties__summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  cursor: pointer;
-  list-style: none;
-  border-bottom: 1px solid rgba(55, 242, 255, 0.2);
-  background: linear-gradient(180deg, rgba(9, 24, 36, 0.92), rgba(7, 17, 27, 0.95));
-}
-
-.mission-advanced-properties__summary::-webkit-details-marker {
-  display: none;
-}
-
-.mission-advanced-properties__title {
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: rgba(211, 250, 255, 0.9);
-}
-
-.mission-advanced-properties__meta {
-  margin-left: auto;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(191, 246, 255, 0.72);
-}
-
-.mission-advanced-properties__summary::after {
-  content: "v";
-  font-size: 12px;
-  line-height: 1;
-  color: rgba(191, 246, 255, 0.82);
-  transform: rotate(-90deg);
-  transition: transform 150ms ease;
-}
-
-.mission-advanced-properties[open] .mission-advanced-properties__summary::after {
-  transform: rotate(0deg);
-}
-
-.mission-advanced-properties__grid {
-  padding: 12px;
-}
-
-.field-control span {
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: rgba(205, 248, 255, 0.74);
-}
-
-.field-control input,
-.field-control select,
-.field-control textarea {
-  border: 1px solid rgba(55, 242, 255, 0.34);
-  border-radius: 8px;
-  background: rgba(5, 14, 22, 0.84);
-  color: #dffcff;
-  padding: 8px 10px;
-  font-family: inherit;
-  font-size: 12px;
-}
-
-.field-control textarea {
-  resize: vertical;
-}
-
-.field-inline-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.field-inline-control select {
-  flex: 1;
-}
-
-.field-control-multi {
-  min-height: 108px;
-}
-
-.field-note {
-  margin: 0;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: rgba(191, 246, 255, 0.72);
-}
-
-.template-modal {
-  display: grid;
-  gap: 12px;
-}
-
-.template-modal-list {
-  display: grid;
-  gap: 8px;
-}
-
-.template-modal-hint {
-  margin: 0;
-  font-size: 11px;
-  color: rgba(204, 248, 255, 0.76);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.template-modal-empty {
-  margin: 0;
-  font-size: 12px;
-  color: rgba(204, 248, 255, 0.75);
-}
-
-.template-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.template-modal :deep(.cui-combobox) {
-  width: 100%;
-}
-
-.mission-allocation-modal {
-  gap: 14px;
-}
-
-.allocation-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.allocation-grid.single-column {
-  grid-template-columns: 1fr;
-}
-
-.allocation-card {
-  border: 1px solid rgba(55, 242, 255, 0.28);
-  border-radius: 12px;
-  padding: 12px;
-  background: linear-gradient(145deg, rgba(8, 24, 36, 0.86), rgba(4, 12, 20, 0.94));
-  box-shadow: inset 0 0 0 1px rgba(55, 242, 255, 0.12), 0 10px 22px rgba(1, 8, 14, 0.45);
-  display: grid;
-  gap: 10px;
-}
-
-.allocation-card h4 {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: rgba(216, 251, 255, 0.92);
-}
-
-.allocation-card-actions {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.field-control input[type="file"] {
-  padding: 6px;
-}
-
-.csv-upload-native {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.csv-upload-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.csv-upload-filename {
-  font-size: 12px;
-  color: rgba(201, 248, 255, 0.9);
-}
-
-.csv-meta {
-  margin-top: 10px;
-}
-
-.csv-preview {
-  display: grid;
-  gap: 8px;
-}
-
-.csv-preview-note {
-  margin: 0;
-  font-size: 10px;
-  color: rgba(205, 248, 255, 0.7);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.board-lanes {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.board-lane {
-  text-align: left;
-}
-
-.board-lane-pending {
-  border-color: rgba(55, 242, 255, 0.38);
-}
-
-.board-lane-late {
-  border-color: rgba(255, 95, 141, 0.5);
-}
-
-.board-lane-complete {
-  border-color: rgba(58, 244, 179, 0.45);
-}
-
-.lane-list {
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 8px;
-}
-
-.lane-list li {
-  border: 1px solid rgba(55, 242, 255, 0.2);
-  border-radius: 8px;
-  padding: 8px;
-  background: rgba(8, 18, 30, 0.8);
-  display: grid;
-  gap: 3px;
-}
-
-.lane-list li strong {
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.lane-list li span {
-  font-size: 10px;
-  color: rgba(203, 246, 255, 0.72);
-  letter-spacing: 0.08em;
-}
-
-:deep(.missions-workspace .cui-btn) {
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 10px;
-}
-
-@media (max-width: 1200px) {
-  .registry-grid,
-  .screen-grid.two-col {
-    grid-template-columns: 1fr;
-  }
-
-  .overview-vitals {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .overview-layout,
-  .overview-board {
-    grid-template-columns: 1fr;
-  }
-
-  .checklist-manager-controls {
-    grid-template-columns: 1fr;
-  }
-
-  .checklist-manager-actions {
-    justify-content: flex-start;
-  }
-
-  .checklist-workspace {
-    --checklist-scroll-max-height: clamp(220px, calc(100vh - 320px), 520px);
-  }
-
-  .checklist-template-workspace {
-    grid-template-columns: 1fr;
-    max-height: none;
-  }
-
-  .checklist-template-library-pane {
-    max-height: 220px;
-  }
-
-  .checklist-overview-card {
-    grid-template-columns: 1fr;
-  }
-
-  .checklist-overview-stats {
-    justify-items: start;
-    min-width: 0;
-  }
-
-  .checklist-detail-header {
-    grid-template-columns: 1fr;
-  }
-
-  .checklist-detail-progress {
-    justify-items: start;
-    text-align: left;
-  }
-}
-
-@media (max-width: 800px) {
-  .mission-kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .overview-vitals {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .field-grid,
-  .board-lanes,
-  .allocation-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .registry-top {
-    grid-template-columns: 1fr;
-  }
-
-  .registry-status {
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  .checklist-overview-meta,
-  .checklist-overview-counts,
-  .checklist-detail-summary {
-    gap: 10px;
-    font-size: 12px;
-  }
-
-  .checklist-detail-title h4 {
-    font-size: 24px;
-  }
-
-  .checklist-detail-title p {
-    font-size: 14px;
-  }
-
-  .checklist-detail-progress strong {
-    font-size: 30px;
-  }
-
-  .checklist-template-head {
-    align-items: flex-start;
-  }
-
-  .checklist-workspace {
-    --checklist-scroll-max-height: clamp(190px, calc(100vh - 290px), 420px);
-  }
-
-  .checklist-template-column-actions {
-    width: 100%;
-  }
-
-  .checklist-template-column-scroll {
-    max-height: 260px;
-  }
-}
-</style>
 

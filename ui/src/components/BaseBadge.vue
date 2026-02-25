@@ -1,5 +1,5 @@
 <template>
-  <span class="rounded border border-rth-border px-2 py-1 text-xs font-semibold" :class="badgeClass">
+  <span class="cui-badge" :class="badgeClass">
     <slot />
   </span>
 </template>
@@ -7,20 +7,25 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-const props = withDefaults(defineProps<{ tone?: "neutral" | "success" | "warning" | "danger" }>(), {
+import type { CosmicTone } from "../types/cosmic-ui";
+
+const props = withDefaults(defineProps<{ tone?: CosmicTone }>(), {
   tone: "neutral"
 });
 
 const badgeClass = computed(() => {
   if (props.tone === "success") {
-    return "bg-[#4db6ff]/15 text-[#8fd4ff]";
+    return "cui-badge--success";
   }
   if (props.tone === "warning") {
-    return "bg-[#f59e0b]/15 text-[#fcd34d]";
+    return "cui-badge--warning";
   }
   if (props.tone === "danger") {
-    return "bg-[#ef4444]/15 text-[#fecaca]";
+    return "cui-badge--danger";
   }
-  return "bg-rth-panel-muted text-rth-muted";
+  if (props.tone === "info" || props.tone === "primary" || props.tone === "secondary") {
+    return "cui-badge--info";
+  }
+  return "cui-badge--neutral";
 });
 </script>

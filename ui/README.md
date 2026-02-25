@@ -39,3 +39,11 @@ npm run preview
 
 - **Embedded UI**: Serve the `dist/` folder from the hub service (same-origin).
 - **External UI**: Host the `dist/` folder behind a reverse proxy and use the Connect screen to set base URL and credentials.
+
+## UI References
+
+- `../docs/CosmicUi.md`: Cosmic UI design system (tokens, widgets, forms, migration patterns).
+- `../docs/CosmicUiManualQa.md`: manual QA checklist for Cosmic UI migration and release validation.
+- `../docs/architecture/ui-architecture.md`: page and data-flow architecture.
+- `../docs/architecture/ui-design.md`: product-level UI design and behavior contract.
+- `../docs/architecture/ui-wireframe.md`: structural wireframes.

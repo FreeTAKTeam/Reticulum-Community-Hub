@@ -1,0 +1,167 @@
+{
+  "generatedAt": "2026-02-24T22:44:10.797Z",
+  "baseUrl": "http://127.0.0.1:4173",
+  "checks": [
+    {
+      "id": "seed-rerun",
+      "status": "PASS",
+      "check": "Mission data seed for workspace checks",
+      "notes": "before=2, after=2, createdUid=none",
+      "evidence": ""
+    },
+    {
+      "id": "3.1-rerun",
+      "status": "PASS",
+      "check": "Top status area rendered with shared cosmic primitives",
+      "notes": "registry-top detected",
+      "evidence": ""
+    },
+    {
+      "id": "3.2-rerun",
+      "status": "PASS",
+      "check": "Tokenized controls present",
+      "notes": "buttons=14, chips=3",
+      "evidence": ""
+    },
+    {
+      "id": "3.3-rerun",
+      "status": "PASS",
+      "check": "Keyboard focus indicator visible after tab navigation",
+      "notes": "{\"tag\":\"BUTTON\",\"className\":\"cui-btn cui-btn--ghost cui-btn--icon-only\",\"outlineWidth\":\"2px\",\"outlineStyle\":\"solid\",\"boxShadow\":\"none\"}",
+      "evidence": ""
+    },
+    {
+      "id": "3.4-rerun",
+      "status": "PASS",
+      "check": "Reduced-motion mode disables non-essential animation",
+      "notes": "{\"reducedMatch\":true,\"animationName\":\"none\",\"transitionDuration\":\"0s\"}",
+      "evidence": ""
+    },
+    {
+      "id": "4.1-rerun",
+      "status": "PASS",
+      "check": "Form anatomy visible in Mission Create screen",
+      "notes": "cardFound=true, labels=21, controls=21",
+      "evidence": ""
+    },
+    {
+      "id": "4.3-rerun",
+      "status": "PASS",
+      "check": "Readonly control semantics present (Mission UID)",
+      "notes": "readonly=true",
+      "evidence": ""
+    },
+    {
+      "id": "4.4-rerun",
+      "status": "PASS",
+      "check": "Required indicators appear consistently where required",
+      "notes": "{\"requiredMarker\":true,\"requiredAttr\":true,\"ariaRequired\":true}",
+      "evidence": ""
+    },
+    {
+      "id": "4.5-rerun",
+      "status": "PASS",
+      "check": "Advanced/collapsible section expands and collapses",
+      "notes": "{\"found\":true,\"before\":false,\"afterOpen\":true,\"afterClose\":false}",
+      "evidence": ""
+    },
+    {
+      "id": "5.2-prep-rerun",
+      "status": "PASS",
+      "check": "Prepare mission audit sample data",
+      "notes": "Broadcast action executed",
+      "evidence": ""
+    },
+    {
+      "id": "5.2-rerun",
+      "status": "PASS",
+      "check": "Mission audit table variant renders with scroll container",
+      "notes": "{\"found\":true,\"overflowY\":\"auto\"}",
+      "evidence": ""
+    },
+    {
+      "id": "5.4-rerun",
+      "status": "PASS",
+      "check": "Audit row action is keyboard/click accessible and reveals details",
+      "notes": "enabled detail buttons: 11, detailsVisible=true",
+      "evidence": ""
+    },
+    {
+      "id": "5.3-rerun",
+      "status": "PASS",
+      "check": "Asset registry list is scrollable and actions are below list",
+      "notes": "{\"found\":true,\"overflowY\":\"auto\",\"actionRowBelow\":true}",
+      "evidence": ""
+    },
+    {
+      "id": "6.3-rerun",
+      "status": "PASS",
+      "check": "Checklist tabs update selected state and content",
+      "notes": "templatesActive=true",
+      "evidence": ""
+    },
+    {
+      "id": "6.1-focus-trap-rerun",
+      "status": "PASS",
+      "check": "Modal focus trap wraps from last to first focusable element",
+      "notes": "{\"found\":true,\"focusableCount\":3,\"forwardLooped\":true,\"backwardLooped\":true}",
+      "evidence": ""
+    },
+    {
+      "id": "6.1-escape-rerun",
+      "status": "PASS",
+      "check": "Modal closes on Escape",
+      "notes": "modalStillOpen=false",
+      "evidence": ""
+    },
+    {
+      "id": "6.4-rerun",
+      "status": "PASS",
+      "check": "Tree selection updates and remains stable during in-page navigation",
+      "notes": "expected='QA WAVE2 2026-02-24T21-55-38-158Z', actual='QA Wave2 2026-02-24T21-55-38-158Z'",
+      "evidence": ""
+    },
+    {
+      "id": "7.1-rerun",
+      "status": "PASS",
+      "check": "Responsive stability check at 1440x900",
+      "notes": "overflowPx=0, missionCreateVisible=true, screenActionVisible=true",
+      "evidence": "missions-desktop-1440-rerun.png"
+    },
+    {
+      "id": "7.2-rerun",
+      "status": "PASS",
+      "check": "Responsive stability check at 1280x800",
+      "notes": "overflowPx=0, missionCreateVisible=true, screenActionVisible=true",
+      "evidence": "missions-laptop-1280-rerun.png"
+    },
+    {
+      "id": "7.3-rerun",
+      "status": "PASS",
+      "check": "Responsive stability check at 900x1280",
+      "notes": "overflowPx=0, missionCreateVisible=true, screenActionVisible=true",
+      "evidence": "missions-tablet-900-rerun.png"
+    },
+    {
+      "id": "7.4-rerun",
+      "status": "PASS",
+      "check": "Responsive stability check at 390x844",
+      "notes": "overflowPx=0, missionCreateVisible=true, screenActionVisible=true",
+      "evidence": "missions-mobile-390-rerun.png"
+    },
+    {
+      "id": "7.5-rerun",
+      "status": "PASS",
+      "check": "Responsive stability check at 360x800",
+      "notes": "overflowPx=0, missionCreateVisible=true, screenActionVisible=true",
+      "evidence": "missions-mobile-360-rerun.png"
+    },
+    {
+      "id": "3.5-rerun",
+      "status": "PASS",
+      "check": "No console errors or page errors during interactions",
+      "notes": "No console/page errors detected",
+      "evidence": ""
+    }
+  ]
+}

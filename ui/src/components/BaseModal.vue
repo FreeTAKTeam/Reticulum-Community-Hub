@@ -2,39 +2,75 @@
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 flex items-center justify-center bg-black/60"
-      style="z-index: 3200;"
+      class="fixed inset-0 z-[3200] flex items-center justify-center bg-black/60"
       @click.self="emit('close')"
     >
       <div
         ref="panelRef"
-        class="cui-modal w-full max-w-xl p-6"
+        class="cui-modal w-full p-6"
+        :class="sizeClass"
         role="dialog"
         aria-modal="true"
         :aria-labelledby="titleId"
         tabindex="-1"
       >
-        <div class="flex items-start justify-between">
-          <h3 :id="titleId" class="text-lg font-semibold">{{ title }}</h3>
-          <button class="cui-modal-close" aria-label="Close" @click="emit('close')">X</button>
-        </div>
+        <header class="flex items-start justify-between gap-3">
+          <slot name="header">
+            <h3 :id="titleId" class="text-lg font-semibold">{{ title }}</h3>
+          </slot>
+          <button v-if="!hideClose" class="cui-modal-close" aria-label="Close" @click="emit('close')">X</button>
+        </header>
+
         <div class="mt-4">
           <slot />
         </div>
+
+        <footer v-if="$slots.footer" class="mt-4">
+          <slot name="footer" />
+        </footer>
       </div>
     </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 
-const props = defineProps<{ open: boolean; title: string }>();
+import type { CosmicSize } from "../types/cosmic-ui";
+
+const props = withDefaults(
+  defineProps<{
+    open: boolean;
+    title?: string;
+    size?: CosmicSize;
+    hideClose?: boolean;
+  }>(),
+  {
+    title: "",
+    size: "md",
+    hideClose: false
+  }
+);
+
 const emit = defineEmits<{ (event: "close"): void }>();
 
 const panelRef = ref<HTMLElement | null>(null);
 const titleId = `modal-title-${Math.random().toString(36).slice(2, 8)}`;
 const previousFocus = ref<HTMLElement | null>(null);
+
+const sizeClass = computed(() => {
+  if (props.size === "xs") {
+    return "max-w-md";
+  }
+  if (props.size === "sm") {
+    return "max-w-lg";
+  }
+  if (props.size === "lg") {
+    return "max-w-3xl";
+  }
+  return "max-w-xl";
+});
 
 const focusableSelectors =
   "a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex='-1'])";

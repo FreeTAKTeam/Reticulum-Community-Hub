@@ -1,0 +1,109 @@
+.template-modal {
+  display: grid;
+  gap: 12px;
+}
+
+.template-modal-list {
+  display: grid;
+  gap: 8px;
+}
+
+.template-modal-hint {
+  margin: 0;
+  font-size: 11px;
+  color: rgba(204, 248, 255, 0.76);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.template-modal-empty {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(204, 248, 255, 0.75);
+}
+
+.template-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.template-modal :deep(.cui-combobox) {
+  width: 100%;
+}
+
+.mission-allocation-modal {
+  gap: 14px;
+}
+
+.allocation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.allocation-grid.single-column {
+  grid-template-columns: 1fr;
+}
+
+.allocation-card {
+  border: 1px solid rgba(55, 242, 255, 0.28);
+  border-radius: 12px;
+  padding: 12px;
+  background: linear-gradient(145deg, rgba(8, 24, 36, 0.86), rgba(4, 12, 20, 0.94));
+  box-shadow: inset 0 0 0 1px rgba(55, 242, 255, 0.12), 0 10px 22px rgba(1, 8, 14, 0.45);
+  display: grid;
+  gap: 10px;
+}
+
+.allocation-card h4 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(216, 251, 255, 0.92);
+}
+
+.allocation-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.field-control {
+  display: grid;
+  gap: 6px;
+}
+
+.field-control.full {
+  grid-column: 1 / -1;
+}
+
+.field-control span {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(205, 248, 255, 0.74);
+}
+
+.field-control input,
+.field-control textarea {
+  border: 1px solid rgba(55, 242, 255, 0.34);
+  border-radius: 8px;
+  background: rgba(5, 14, 22, 0.84);
+  color: #dffcff;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.field-control textarea {
+  resize: vertical;
+}
+
+@media (max-width: 800px) {
+  .allocation-grid {
+    grid-template-columns: 1fr;
+  }
+}

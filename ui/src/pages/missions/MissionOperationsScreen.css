@@ -1,0 +1,140 @@
+.screen-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.screen-grid.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stage-card {
+  border: 1px solid rgba(55, 242, 255, 0.24);
+  border-radius: 10px;
+  background: rgba(8, 18, 28, 0.74);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.stage-card h4 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.stack-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.stack-list li {
+  border: 1px solid rgba(55, 242, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(7, 18, 28, 0.72);
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.stack-list li strong {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.stack-list li span {
+  font-size: 11px;
+  color: rgba(204, 248, 255, 0.8);
+}
+
+.cap-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cap-chip {
+  border: 1px solid rgba(55, 242, 255, 0.45);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.mini-table th {
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: rgba(209, 251, 255, 0.7);
+  padding: 6px;
+  border-bottom: 1px solid rgba(55, 242, 255, 0.3);
+}
+
+.mini-table td {
+  padding: 6px;
+  border-bottom: 1px solid rgba(55, 242, 255, 0.14);
+}
+
+.mission-asset-list-shell {
+  border: 1px solid rgba(55, 242, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(4, 14, 22, 0.7);
+  max-height: 280px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.55) rgba(4, 18, 29, 0.68);
+}
+
+.mission-asset-list-shell::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.mission-asset-list-shell::-webkit-scrollbar-track {
+  background: rgba(4, 18, 29, 0.68);
+  border-radius: 999px;
+}
+
+.mission-asset-list-shell::-webkit-scrollbar-thumb {
+  background: rgba(55, 242, 255, 0.5);
+  border-radius: 999px;
+}
+
+.mission-asset-list-shell::-webkit-scrollbar-thumb:hover {
+  background: rgba(55, 242, 255, 0.72);
+}
+
+.mission-asset-registry-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.zone-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.builder-preview {
+  font-size: 12px;
+  color: rgba(214, 251, 255, 0.85);
+}
+
+@media (max-width: 1200px) {
+  .screen-grid.two-col {
+    grid-template-columns: 1fr;
+  }
+}

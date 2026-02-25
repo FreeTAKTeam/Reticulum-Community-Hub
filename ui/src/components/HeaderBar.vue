@@ -16,10 +16,9 @@
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import OnlineHelpLauncher from "./OnlineHelpLauncher.vue";
-import { useConnectionStore } from "../stores/connection";
+import { useConnectionPills } from "../composables/useConnectionPills";
 
 const route = useRoute();
-const connectionStore = useConnectionStore();
 
 const title = computed(() => {
   const mapping: Record<string, string> = {
@@ -39,24 +38,5 @@ const title = computed(() => {
 
 const showHeader = computed(() => route.path !== "/topics");
 
-const baseUrl = computed(() => connectionStore.baseUrlDisplay);
-const connectionLabel = computed(() => connectionStore.statusLabel);
-const wsLabel = computed(() => connectionStore.wsLabel);
-
-const connectionClass = computed(() => {
-  if (connectionStore.status === "online") {
-    return "cui-status-success";
-  }
-  if (connectionStore.status === "offline") {
-    return "cui-status-danger";
-  }
-  return "cui-status-accent";
-});
-
-const wsClass = computed(() => {
-  if (connectionStore.wsLabel.toLowerCase() === "live") {
-    return "cui-status-success";
-  }
-  return "cui-status-accent";
-});
+const { baseUrl, connectionLabel, wsLabel, connectionClass, wsClass } = useConnectionPills();
 </script>

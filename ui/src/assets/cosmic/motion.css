@@ -1,0 +1,55 @@
+@keyframes cui-orbit {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes cui-title-drift {
+  0% {
+    transform: translateX(-12px);
+  }
+  50% {
+    transform: translateX(12px);
+  }
+  100% {
+    transform: translateX(-12px);
+  }
+}
+
+@keyframes cui-title-scan {
+  0%,
+  80% {
+    background-position: -120% 0;
+  }
+  90% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: 120% 0;
+  }
+}
+
+@keyframes cui-help-cursor-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cui-logo-spin,
+  .cui-title-text,
+  .cui-title-text::after,
+  .cui-help-trigger,
+  .cui-help-modal__cursor {
+    animation: none !important;
+    transition: none !important;
+  }
+}
