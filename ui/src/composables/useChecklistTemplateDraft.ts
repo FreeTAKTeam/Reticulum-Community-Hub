@@ -140,7 +140,7 @@ export const useChecklistTemplateDraft = (options: UseChecklistTemplateDraftOpti
       system_key: SYSTEM_DUE_COLUMN_KEY
     };
 
-    const customColumns = sorted
+    const customColumns: ChecklistTemplateDraftColumn[] = sorted
       .filter((column) => !isChecklistTemplateDueColumn(column))
       .map((column) => ({
         ...column,

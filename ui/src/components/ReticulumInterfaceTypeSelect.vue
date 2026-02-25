@@ -19,6 +19,7 @@
 import { computed } from "vue";
 import type { ReticulumInterfaceCapabilities } from "../api/types";
 import { getCreatableInterfaceTypeGroups } from "../utils/reticulum-interface-schema";
+import type { ReticulumInterfaceType } from "../utils/reticulum-interface-schema";
 
 type OptionGroup = {
   label: string;
@@ -42,15 +43,17 @@ const props = withDefaults(
 const emit = defineEmits<{ (event: "update:modelValue", value: string): void }>();
 
 const groups = computed<OptionGroup[]>(() => {
-  const runtimeGroups = getCreatableInterfaceTypeGroups(props.capabilities).map((group) => ({
+  const runtimeGroups: OptionGroup[] = getCreatableInterfaceTypeGroups(props.capabilities).map((group) => ({
     label: group.label,
-    options: group.options.map((option) => ({ label: option.label, value: option.value })),
+    options: group.options.map((option) => ({ label: option.label, value: String(option.value) })),
   }));
-  const knownTypes = new Set(runtimeGroups.flatMap((group) => group.options.map((option) => option.value)));
+  const knownTypes = new Set<ReticulumInterfaceType>(
+    runtimeGroups.flatMap((group) => group.options.map((option) => option.value as ReticulumInterfaceType))
+  );
   if (
     props.allowUnknownCurrentValue &&
     props.modelValue &&
-    !knownTypes.has(props.modelValue)
+    !knownTypes.has(props.modelValue as ReticulumInterfaceType)
   ) {
     runtimeGroups.push({
       label: "Existing / Unsupported",

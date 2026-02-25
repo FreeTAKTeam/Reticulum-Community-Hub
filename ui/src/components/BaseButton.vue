@@ -50,7 +50,9 @@ type ButtonIconName =
   | "image"
   | "fingerprint"
   | "settings"
-  | "tool";
+  | "tool"
+  | "play"
+  | "stop";
 
 const props = withDefaults(
   defineProps<{
@@ -188,7 +190,11 @@ const iconMap: Record<ButtonIconName, string> = {
   settings:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 0 1-4 0v-.08a1.7 1.7 0 0 0-1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1H3a2 2 0 0 1 0-4h.08a1.7 1.7 0 0 0 1.56-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 0 1 7.07 4.2l.06.06A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3.04V3a2 2 0 0 1 4 0v.08a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.1.38.14.78.14 1.2s-.04.82-.14 1.2z"/></svg>',
   tool:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 7a5 5 0 0 0-6.83 6.83l-4.2 4.2a2 2 0 0 0 2.83 2.83l4.2-4.2A5 5 0 0 0 17 10l-3 3-2-2 3-3z"/></svg>'
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 7a5 5 0 0 0-6.83 6.83l-4.2 4.2a2 2 0 0 0 2.83 2.83l4.2-4.2A5 5 0 0 0 17 10l-3 3-2-2 3-3z"/></svg>',
+  play:
+    '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>',
+  stop:
+    '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>'
 };
 
 const iconLeftSvg = computed(() => (props.iconLeft ? iconMap[props.iconLeft] : undefined));

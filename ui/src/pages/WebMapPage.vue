@@ -478,10 +478,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from "vue";
 import { ref } from "vue";
 import { storeToRefs } from "pinia";
 import maplibregl from "maplibre-gl";
+import type { DataDrivenPropertyValueSpecification, ExpressionSpecification } from "@maplibre/maplibre-gl-style-spec";
 import BaseButton from "../components/BaseButton.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import BaseInput from "../components/BaseInput.vue";
@@ -571,7 +572,7 @@ const navStore = useNavStore();
 const { isCollapsed: isNavCollapsed } = storeToRefs(navStore);
 const { mapView, showMarkerLabels } = storeToRefs(mapSettingsStore);
 const mapContainer = ref<HTMLDivElement | null>(null);
-const mapInstance = ref<maplibregl.Map | null>(null);
+const mapInstance = shallowRef<maplibregl.Map | null>(null);
 const mapReady = ref(false);
 const mapCoordinates = ref<{ lat: number; lon: number } | null>(null);
 const search = ref("");
@@ -1470,7 +1471,7 @@ const pointHitsRenderedLayer = (
   if (!existingLayers.length) {
     return false;
   }
-  return map.queryRenderedFeatures(point, { layers: existingLayers }).length > 0;
+  return map.queryRenderedFeatures([point.x, point.y], { layers: existingLayers }).length > 0;
 };
 
 const handleDocumentPointerDown = (event: MouseEvent) => {
@@ -1609,7 +1610,7 @@ const stopZoneVertexDrag = () => {
   zoneDraggingVertexIndex.value = null;
 };
 
-const startZoneVertexDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const startZoneVertexDrag = (event: maplibregl.MapLayerMouseEvent) => {
   if (!zoneEditingId.value || !mapInstance.value) {
     return;
   }
@@ -1628,7 +1629,7 @@ const startZoneVertexDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventD
   mapInstance.value.once("mouseup", stopZoneVertexDrag);
 };
 
-const handleZoneMidpointClick = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const handleZoneMidpointClick = (event: maplibregl.MapLayerMouseEvent) => {
   if (!zoneEditingId.value) {
     return;
   }
@@ -1645,7 +1646,7 @@ const handleZoneMidpointClick = (event: maplibregl.MapMouseEvent & maplibregl.Ev
   renderZones();
 };
 
-const handleZoneVertexContextMenu = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const handleZoneVertexContextMenu = (event: maplibregl.MapLayerMouseEvent) => {
   if (!zoneEditingId.value) {
     return;
   }
@@ -1779,9 +1780,17 @@ const ZONE_MIDPOINT_COLOR = "#6bb3ff";
 const ZONE_LABEL_TEXT_COLOR = "#f3fbff";
 const ZONE_LABEL_HALO_COLOR = "#06121E";
 
-const resolveMarkerLabelField = () => (showMarkerLabels.value ? ["get", "name"] : "");
+const resolveMarkerLabelField = (): DataDrivenPropertyValueSpecification<string> =>
+  showMarkerLabels.value ? (["get", "name"] as ExpressionSpecification) : "";
 
-const buildMarkerLabelLayout = () => ({
+const buildMarkerLabelLayout = (): {
+  "text-field": DataDrivenPropertyValueSpecification<string>;
+  "text-size": number;
+  "text-offset": [number, number];
+  "text-anchor": "top";
+  "text-allow-overlap": true;
+  "text-ignore-placement": true;
+} => ({
   "text-field": resolveMarkerLabelField(),
   "text-size": MARKER_LABEL_SIZE,
   "text-offset": MARKER_LABEL_OFFSET,
@@ -1796,16 +1805,18 @@ const markerLabelPaint = {
   "text-halo-width": MARKER_LABEL_HALO_WIDTH
 };
 
-const buildIconSizeExpression = (zoom: number) => {
-  return [
+const buildIconSizeExpression = (zoom: number): DataDrivenPropertyValueSpecification<number> => {
+  const expression: ExpressionSpecification = [
     "*",
     ["coalesce", ["get", "iconScale"], TELEMETRY_ICON_SCALE],
     resolveZoomScale(zoom)
   ];
+  return expression;
 };
 
-const buildTelemetryIconSizeExpression = (zoom: number) => {
-  return ["*", TELEMETRY_ICON_SCALE, resolveZoomScale(zoom)];
+const buildTelemetryIconSizeExpression = (zoom: number): DataDrivenPropertyValueSpecification<number> => {
+  const expression: ExpressionSpecification = ["*", TELEMETRY_ICON_SCALE, resolveZoomScale(zoom)];
+  return expression;
 };
 
 const applyMarkerLabelVisibility = () => {
@@ -2041,28 +2052,30 @@ const toZoneCoordinates = (points: GeoPoint[]) => {
 };
 
 const buildZoneFeatureCollection = () => {
+  const features = zonesStore.zones
+    .map((zone) => {
+      const points = zone.id === zoneEditingId.value ? zoneEditingPoints.value : zone.points;
+      if (points.length < 3) {
+        return null;
+      }
+      return {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: toZoneCoordinates(points),
+        },
+        properties: {
+          id: zone.id,
+          name: zone.name,
+          selected: selectedZoneId.value === zone.id ? 1 : 0,
+        },
+      } as GeoJSON.Feature<GeoJSON.Polygon>;
+    })
+    .filter((feature): feature is GeoJSON.Feature<GeoJSON.Polygon> => feature !== null);
+
   return {
     type: "FeatureCollection",
-    features: zonesStore.zones
-      .map((zone) => {
-        const points = zone.id === zoneEditingId.value ? zoneEditingPoints.value : zone.points;
-        if (points.length < 3) {
-          return null;
-        }
-        return {
-          type: "Feature",
-          geometry: {
-            type: "Polygon",
-            coordinates: toZoneCoordinates(points),
-          },
-          properties: {
-            id: zone.id,
-            name: zone.name,
-            selected: selectedZoneId.value === zone.id ? 1 : 0,
-          },
-        };
-      })
-      .filter((feature): feature is GeoJSON.Feature<GeoJSON.Polygon> => feature !== null),
+    features,
   } as GeoJSON.FeatureCollection;
 };
 
@@ -2181,7 +2194,7 @@ const buildZoneAreaLabelFeatureCollection = () => {
   } as GeoJSON.FeatureCollection;
 };
 
-const addLayerWithBefore = (map: maplibregl.Map, layer: maplibregl.AnyLayer, beforeId?: string) => {
+const addLayerWithBefore = (map: maplibregl.Map, layer: maplibregl.AddLayerObject, beforeId?: string) => {
   if (beforeId && map.getLayer(beforeId)) {
     map.addLayer(layer, beforeId);
     return;
@@ -2371,7 +2384,7 @@ const renderZones = () => {
   }
 };
 
-const handleOperatorMarkerHoverMove = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const handleOperatorMarkerHoverMove = (event: maplibregl.MapLayerMouseEvent) => {
   const feature = event.features?.[0];
   const markerIdRaw = feature?.properties?.id;
   if (!markerIdRaw) {
@@ -2396,7 +2409,7 @@ const handleOperatorMarkerHoverLeave = () => {
   }
 };
 
-const startMarkerDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const startMarkerDrag = (event: maplibregl.MapLayerMouseEvent) => {
   if (!mapInstance.value) {
     return;
   }
@@ -2430,7 +2443,7 @@ const startMarkerDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData)
   mapInstance.value.once("mouseleave", finishMarkerDrag);
 };
 
-const handleMarkerDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const handleMarkerDrag = (event: maplibregl.MapMouseEvent) => {
   if (!draggingMarkerId.value) {
     return;
   }
@@ -2481,7 +2494,7 @@ const stopMarkerDrag = () => {
   markerMoveArmId.value = null;
 };
 
-const handleOperatorMarkerContextMenu = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const handleOperatorMarkerContextMenu = (event: maplibregl.MapLayerMouseEvent) => {
   const feature = event.features?.[0];
   const markerId = feature?.properties?.id;
   if (!markerId) {
@@ -2667,17 +2680,17 @@ const renderTelemetryMarkers = () => {
       if (!source) {
         return;
       }
-      source.getClusterExpansionZoom(Number(clusterId), (error, zoom) => {
-        if (error) {
-          return;
-        }
-        const geometry = feature?.geometry as GeoJSON.Point | undefined;
-        const coordinates = geometry?.coordinates as [number, number] | undefined;
-        if (!coordinates) {
-          return;
-        }
-        map.easeTo({ center: coordinates, zoom });
-      });
+      const geometry = feature?.geometry as GeoJSON.Point | undefined;
+      const coordinates = geometry?.coordinates as [number, number] | undefined;
+      if (!coordinates) {
+        return;
+      }
+      void source
+        .getClusterExpansionZoom(Number(clusterId))
+        .then((zoom) => {
+          map.easeTo({ center: coordinates, zoom });
+        })
+        .catch(() => undefined);
     });
     map.on("mouseenter", clusterLayerId, () => {
       map.getCanvas().style.cursor = "pointer";
@@ -2895,17 +2908,17 @@ const renderOperatorMarkers = () => {
       if (!source) {
         return;
       }
-      source.getClusterExpansionZoom(Number(clusterId), (error, zoom) => {
-        if (error) {
-          return;
-        }
-        const geometry = feature?.geometry as GeoJSON.Point | undefined;
-        const coordinates = geometry?.coordinates as [number, number] | undefined;
-        if (!coordinates) {
-          return;
-        }
-        map.easeTo({ center: coordinates, zoom });
-      });
+      const geometry = feature?.geometry as GeoJSON.Point | undefined;
+      const coordinates = geometry?.coordinates as [number, number] | undefined;
+      if (!coordinates) {
+        return;
+      }
+      void source
+        .getClusterExpansionZoom(Number(clusterId))
+        .then((zoom) => {
+          map.easeTo({ center: coordinates, zoom });
+        })
+        .catch(() => undefined);
     });
     map.on("mouseenter", clusterLayerId, () => {
       clearHoveredOperatorMarker();
@@ -2941,6 +2954,19 @@ const loadMarkerSymbols = async () => {
   }
 };
 
+const handleMapLoaded = async (symbolsPromise: Promise<void>) => {
+  mapReady.value = true;
+  await symbolsPromise;
+  await loadMarkerImages();
+  renderMarkers();
+  mapInstance.value?.on("click", handleMapClick);
+  mapInstance.value?.on("dblclick", handleMapDoubleClick);
+  mapInstance.value?.on("mousemove", handleMapPointerMove);
+  mapInstance.value?.on("mouseleave", handleMapPointerLeave);
+  mapInstance.value?.on("zoomend", handleClusterZoom);
+  mapInstance.value?.on("moveend", persistMapView);
+};
+
 onMounted(async () => {
   const symbolsPromise = loadMarkerSymbols();
   if (mapContainer.value) {
@@ -2952,17 +2978,8 @@ onMounted(async () => {
       center: [initialView.lon, initialView.lat],
       zoom: initialView.zoom
     });
-    mapInstance.value.on("load", async () => {
-      mapReady.value = true;
-      await symbolsPromise;
-      await loadMarkerImages();
-      renderMarkers();
-      mapInstance.value?.on("click", handleMapClick);
-      mapInstance.value?.on("dblclick", handleMapDoubleClick);
-      mapInstance.value?.on("mousemove", handleMapPointerMove);
-      mapInstance.value?.on("mouseleave", handleMapPointerLeave);
-      mapInstance.value?.on("zoomend", handleClusterZoom);
-      mapInstance.value?.on("moveend", persistMapView);
+    mapInstance.value.on("load", () => {
+      void handleMapLoaded(symbolsPromise);
     });
   }
   await telemetry.fetchTelemetry(sinceSeconds());

@@ -735,9 +735,9 @@ interface ChecklistTemplateDraftColumn {
   column_type: ChecklistTemplateColumnType;
   column_editable: boolean;
   is_removable: boolean;
-  system_key?: string | null;
-  background_color?: string | null;
-  text_color?: string | null;
+  system_key: string | null;
+  background_color: string | null;
+  text_color: string | null;
 }
 
 // Constants
@@ -924,7 +924,7 @@ const normalizeChecklistTemplateDraftColumns = (columns: Array<ChecklistColumnRa
     is_removable: false,
     system_key: SYSTEM_DUE_COLUMN_KEY
   };
-  const customColumns = sorted
+  const customColumns: ChecklistTemplateDraftColumn[] = sorted
     .filter((column) => !isChecklistTemplateDueColumn(column))
     .map((column) => ({ ...column, system_key: null, column_type: normalizeChecklistTemplateColumnType(column.column_type) }));
   if (options?.ensureTaskColumn && !customColumns.length) {
@@ -1228,23 +1228,41 @@ const isRenderableCsvImportTemplate = (checklist: ChecklistRaw): boolean => {
 };
 
 const collectChecklistTemplateOptions = (): ChecklistTemplateOption[] => {
-  const serverTemplates = templateRecords.value
-    .map((entry) => {
-      const uid = String(entry.uid ?? "").trim();
-      if (!uid) return null;
-      return { uid, name: String(entry.template_name ?? uid), columns: toArray<ChecklistColumnRaw>(entry.columns).length, source_type: "template" as const, task_rows: 0, description: String(entry.description ?? "").trim(), created_at: String(entry.created_at ?? ""), owner: String(entry.created_by_team_member_rns_identity ?? "").trim() };
-    })
-    .filter((entry): entry is ChecklistTemplateOption => entry !== null);
-  const csvImportedTemplates = checklistRecords.value
-    .map((entry) => {
-      const uid = String(entry.uid ?? "").trim();
-      if (!uid) return null;
-      const originType = String(entry.origin_type ?? "").trim().toUpperCase();
-      if (originType !== "CSV_IMPORT") return null;
-      if (!isRenderableCsvImportTemplate(entry)) return null;
-      return { uid, name: String(entry.name ?? uid), columns: toArray<ChecklistColumnRaw>(entry.columns).length, source_type: "csv_import" as const, task_rows: toArray<ChecklistTaskRaw>(entry.tasks).length, description: String(entry.description ?? "").trim(), created_at: String(entry.created_at ?? ""), owner: String(entry.created_by_team_member_rns_identity ?? "").trim() };
-    })
-    .filter((entry): entry is ChecklistTemplateOption => entry !== null);
+  const serverTemplates: ChecklistTemplateOption[] = [];
+  templateRecords.value.forEach((entry) => {
+    const uid = String(entry.uid ?? "").trim();
+    if (!uid) return;
+    serverTemplates.push({
+      uid,
+      name: String(entry.template_name ?? uid),
+      columns: toArray<ChecklistColumnRaw>(entry.columns).length,
+      source_type: "template",
+      task_rows: 0,
+      description: String(entry.description ?? "").trim(),
+      created_at: String(entry.created_at ?? ""),
+      owner: String(entry.created_by_team_member_rns_identity ?? "").trim()
+    });
+  });
+
+  const csvImportedTemplates: ChecklistTemplateOption[] = [];
+  checklistRecords.value.forEach((entry) => {
+    const uid = String(entry.uid ?? "").trim();
+    if (!uid) return;
+    const originType = String(entry.origin_type ?? "").trim().toUpperCase();
+    if (originType !== "CSV_IMPORT") return;
+    if (!isRenderableCsvImportTemplate(entry)) return;
+    csvImportedTemplates.push({
+      uid,
+      name: String(entry.name ?? uid),
+      columns: toArray<ChecklistColumnRaw>(entry.columns).length,
+      source_type: "csv_import",
+      task_rows: toArray<ChecklistTaskRaw>(entry.tasks).length,
+      description: String(entry.description ?? "").trim(),
+      created_at: String(entry.created_at ?? ""),
+      owner: String(entry.created_by_team_member_rns_identity ?? "").trim()
+    });
+  });
+
   const seen = new Set<string>();
   return [...serverTemplates, ...csvImportedTemplates].filter((entry) => {
     if (seen.has(entry.uid)) return false;
@@ -1830,7 +1848,13 @@ const createChecklistFromCsvImportAction = async (sourceChecklistUid: string, ch
   if (!sourceChecklist) throw new Error("Selected CSV template could not be found");
   const sourceColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(sourceChecklist.columns));
   if (!sourceColumns.length) throw new Error("Selected CSV template has no columns");
-  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, { mission_uid: missionUid, name: checklistName, origin_type: "RCH_TEMPLATE", source_identity: DEFAULT_SOURCE_IDENTITY, columns: toChecklistTemplateColumnPayload(sourceColumns) });
+  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, {
+    mission_uid: missionUid,
+    name: checklistName,
+    origin_type: "RCH_TEMPLATE",
+    source_identity: DEFAULT_SOURCE_IDENTITY,
+    columns: toChecklistTemplateColumnPayload(normalizeChecklistTemplateDraftColumns(sourceColumns))
+  });
   const createdChecklistUid = String(created.uid ?? "").trim();
   if (!createdChecklistUid) throw new Error("Checklist creation failed");
   const createdColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(created.columns));

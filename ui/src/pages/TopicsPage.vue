@@ -146,7 +146,7 @@
       <div class="space-y-3">
         <BaseSelect v-model="subscriberDraft.topic_id" label="Topic ID" :options="topicOptions" />
         <BaseSelect v-model="subscriberDraft.destination" label="Destination" :options="destinationOptions" />
-        <BaseInput v-model="subscriberDraft.reject_tests" label="Reject Tests (true/false)" />
+        <BaseSelect v-model="subscriberRejectTestsDraft" label="Reject Tests" :options="rejectTestsOptions" />
         <BaseButton icon-left="check" variant="success" @click="saveSubscriber">Save Subscriber</BaseButton>
       </div>
     </BaseModal>
@@ -188,6 +188,7 @@ const topicModalOpen = ref(false);
 const subscriberModalOpen = ref(false);
 const topicDraft = ref<Topic>({ name: "", path: "", description: "" });
 const subscriberDraft = ref<Subscriber>({ topic_id: "", destination: "", reject_tests: false });
+const subscriberRejectTestsDraft = ref("false");
 const activeTab = ref<"topics" | "subscribers">("topics");
 const topicsPage = ref(1);
 const subscribersPage = ref(1);
@@ -436,6 +437,11 @@ const destinationOptions = computed(() => {
   return [{ value: "", label: "Select destination" }, ...options];
 });
 
+const rejectTestsOptions = [
+  { value: "false", label: "False" },
+  { value: "true", label: "True" }
+];
+
 watch(treeEntries, (entries) => {
   if (!entries.length) {
     selectedBranch.value = "";
@@ -472,6 +478,7 @@ const openSubscriberModal = (subscriber: Subscriber | null) => {
   subscriberDraft.value = subscriber
     ? { ...subscriber }
     : { topic_id: "", destination: "", reject_tests: false };
+  subscriberRejectTestsDraft.value = subscriberDraft.value.reject_tests ? "true" : "false";
   subscriberModalOpen.value = true;
 };
 
@@ -491,7 +498,7 @@ const saveTopic = async () => {
 };
 
 const saveSubscriber = async () => {
-  const rejectTests = String(subscriberDraft.value.reject_tests).toLowerCase() === "true";
+  const rejectTests = subscriberRejectTestsDraft.value === "true";
   subscriberDraft.value.reject_tests = rejectTests;
   try {
     if (subscriberDraft.value.id) {

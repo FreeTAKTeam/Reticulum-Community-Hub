@@ -185,3 +185,9 @@ telemetry.db-shm
 docs/architecture/108241603-de648380-7100-11eb-9b26-40fe98b5d148.gif
 .gitignore
 docs/architecture/68747470733a2f2f692e67697068792e636f6d2f336f365a7436684e484f64336b56783461592e676966.gif
+RCH_Store/rth_api.sqlite
+RCH_Store/rth_api.sqlite
+RCH_Store/lxmf/outbound_stamp_costs
+RCH_Store/lxmf/outbound_stamp_costs
+RCH_Store/rth_api.sqlite
+RCH_Store/rth_api.sqlite-wal
