@@ -278,3 +278,44 @@ Best-practice implementation rules:
 - Promote reusable modules to `ui/src/components/cosmic/` or `ui/src/composables/` once used across 2+ pages.
 - Keep props/events explicit and typed; avoid implicit cross-component coupling.
 
+## 11. Mission Domain-Object Architecture
+Mission decomposition uses canonical routes under `/missions/:mission_uid/*` with a shared mission workspace shell and store.
+
+### 11.1 Canonical Mission Routes
+- `/missions/:mission_uid/overview`
+- `/missions/:mission_uid/mission`
+- `/missions/:mission_uid/topic`
+- `/missions/:mission_uid/checklists`
+- `/missions/:mission_uid/checklist-tasks`
+- `/missions/:mission_uid/checklist-templates`
+- `/missions/:mission_uid/teams`
+- `/missions/:mission_uid/team-members`
+- `/missions/:mission_uid/skills`
+- `/missions/:mission_uid/team-member-skills`
+- `/missions/:mission_uid/task-skill-requirements`
+- `/missions/:mission_uid/assets`
+- `/missions/:mission_uid/assignments`
+- `/missions/:mission_uid/zones`
+- `/missions/:mission_uid/domain-events`
+- `/missions/:mission_uid/mission-changes`
+- `/missions/:mission_uid/log-entries`
+- `/missions/:mission_uid/snapshots`
+- `/missions/:mission_uid/audit-events`
+
+### 11.2 Compatibility Rules
+- Keep `/missions` available as the primary missions entry point; it resolves mission scope and redirects to canonical mission-domain routes.
+- Keep `/missions/assets` and `/missions/logs` as compatibility routes that forward to canonical mission-domain pages.
+- Keep `/missions/legacy` available for explicit fallback to the monolithic workspace during progressive migration waves.
+- Preserve `mission_uid` query synchronization and local storage key `rth-ui-missions-selected-mission-uid`.
+
+### 11.3 Mission Ownership Modules
+- Shared state and data loading: `ui/src/stores/missionWorkspace.ts`
+- Mission scope/query sync: `ui/src/composables/missions/useMissionScope.ts`
+- Domain action modules:
+  - `ui/src/composables/missions/useMissionActions.ts`
+  - `ui/src/composables/missions/useChecklistActions.ts`
+  - `ui/src/composables/missions/useTeamMemberActions.ts`
+  - `ui/src/composables/missions/useAssetAssignmentActions.ts`
+  - `ui/src/composables/missions/useZoneActions.ts`
+  - `ui/src/composables/missions/useAuditExportActions.ts`
+

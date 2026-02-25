@@ -37,7 +37,31 @@ export const HELP_SCREENS: HelpScreen[] = Object.entries(HELP_BY_PATH).map(([pat
   fileName: profile.fileName
 }));
 
-export const getHelpProfileForPath = (path: string): HelpProfile => HELP_BY_PATH[path] ?? FALLBACK_HELP;
+export const getHelpProfileForPath = (path: string): HelpProfile => {
+  const direct = HELP_BY_PATH[path];
+  if (direct) {
+    return direct;
+  }
+
+  if (path.startsWith("/missions/")) {
+    if (path.endsWith("/assets")) {
+      return HELP_BY_PATH["/missions/assets"];
+    }
+    if (path.endsWith("/logs") || path.endsWith("/log-entries")) {
+      return HELP_BY_PATH["/missions/logs"];
+    }
+    if (path.endsWith("/checklists")) {
+      return HELP_BY_PATH["/checklists"];
+    }
+    return HELP_BY_PATH["/missions"];
+  }
+
+  if (path.startsWith("/users/")) {
+    return HELP_BY_PATH["/users/teams/members"] ?? HELP_BY_PATH["/users"];
+  }
+
+  return FALLBACK_HELP;
+};
 
 export const resolveHelpUrl = (fileName: string): string => {
   const base = import.meta.env.BASE_URL ?? "/";

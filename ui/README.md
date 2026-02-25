@@ -47,3 +47,32 @@ npm run preview
 - `../docs/architecture/ui-architecture.md`: page and data-flow architecture.
 - `../docs/architecture/ui-design.md`: product-level UI design and behavior contract.
 - `../docs/architecture/ui-wireframe.md`: structural wireframes.
+
+## Mission Domain Routes
+
+Canonical mission-domain routes:
+- `/missions/:mission_uid/overview`
+- `/missions/:mission_uid/mission`
+- `/missions/:mission_uid/topic`
+- `/missions/:mission_uid/checklists`
+- `/missions/:mission_uid/checklist-tasks`
+- `/missions/:mission_uid/checklist-templates`
+- `/missions/:mission_uid/teams`
+- `/missions/:mission_uid/team-members`
+- `/missions/:mission_uid/skills`
+- `/missions/:mission_uid/team-member-skills`
+- `/missions/:mission_uid/task-skill-requirements`
+- `/missions/:mission_uid/assets`
+- `/missions/:mission_uid/assignments`
+- `/missions/:mission_uid/zones`
+- `/missions/:mission_uid/domain-events`
+- `/missions/:mission_uid/mission-changes`
+- `/missions/:mission_uid/log-entries`
+- `/missions/:mission_uid/snapshots`
+- `/missions/:mission_uid/audit-events`
+
+Compatibility routes (preserved):
+- `/missions` (primary mission entry; redirects to canonical mission-domain route)
+- `/missions/assets` (redirect wrapper)
+- `/missions/logs` (redirect wrapper)
+- `/missions/legacy` (explicit legacy workspace route for staged migration)

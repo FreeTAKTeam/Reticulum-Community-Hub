@@ -21,9 +21,18 @@ import { useConnectionPills } from "../composables/useConnectionPills";
 const route = useRoute();
 
 const title = computed(() => {
+  if (route.path.startsWith("/missions/")) {
+    return "Mission Workspace";
+  }
+  if (route.path.startsWith("/users/")) {
+    return "Users";
+  }
   const mapping: Record<string, string> = {
     "/": "Dashboard",
     "/missions": "Missions",
+    "/missions/assets": "Mission Assets",
+    "/missions/logs": "Mission Logs",
+    "/checklists": "Checklists",
     "/webmap": "WebMap",
     "/topics": "Topics",
     "/files": "Files",
