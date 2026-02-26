@@ -217,4 +217,3 @@ Replace the current count-only fallback body with operation-specific Markdown su
 - When names are missing, IDs may be used internally for lookup only; output remains human-readable with generic wording if lookup fails.
 - R3AKT custom-field contract and semantics remain backward compatible; regular LXMF fallback body format is allowed to change.
 - Existing delivery semantics, capability checks, and fanout recipient selection remain unchanged.
-
