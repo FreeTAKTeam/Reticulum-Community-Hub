@@ -1,0 +1,876 @@
+﻿.webmap-cosmos {
+  --wm-neon: #3bf4ff;
+  --wm-neon-soft: rgba(59, 244, 255, 0.24);
+  --wm-panel: rgba(4, 14, 24, 0.92);
+  --wm-panel-alt: rgba(7, 22, 36, 0.9);
+  --wm-amber: #ffb35c;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 14px;
+  min-height: 0;
+  color: #e2fcff;
+  font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
+}
+
+.webmap-cosmos--sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.webmap-main {
+  min-width: 0;
+}
+
+.webmap-stage {
+  position: relative;
+  height: clamp(520px, 74vh, 860px);
+  border-radius: 18px;
+  border: 1px solid rgba(59, 244, 255, 0.26);
+  background: linear-gradient(160deg, rgba(5, 16, 28, 0.96), rgba(2, 8, 14, 0.98));
+  box-shadow:
+    0 22px 54px rgba(1, 5, 12, 0.56),
+    inset 0 0 0 1px rgba(59, 244, 255, 0.08);
+  overflow: hidden;
+}
+
+.webmap-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(59, 244, 255, 0.07) 1px, transparent 0) 0 0 / 18px 18px,
+    linear-gradient(180deg, rgba(44, 188, 242, 0.12), transparent 42%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.webmap-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.webmap-loader {
+  position: absolute;
+  inset: 24px;
+  z-index: 5;
+}
+
+.webmap-marker-overlay-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.webmap-marker-reticle {
+  position: absolute;
+  width: min(66vw, 252px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.webmap-marker-reticle::before {
+  content: "";
+  position: absolute;
+  inset: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.18);
+  background:
+    linear-gradient(90deg, transparent 0, rgba(59, 244, 255, 0.08) 50%, transparent 100%),
+    linear-gradient(0deg, transparent 0, rgba(59, 244, 255, 0.08) 50%, transparent 100%);
+}
+
+.webmap-marker-reticle::after {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 14px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(59, 244, 255, 0.92), transparent);
+  box-shadow: 0 0 12px rgba(59, 244, 255, 0.46);
+}
+
+.webmap-marker-reticle-corner {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-color: rgba(59, 244, 255, 0.8);
+  border-style: solid;
+  filter: drop-shadow(0 0 6px rgba(59, 244, 255, 0.42));
+}
+
+.webmap-marker-reticle-corner--tl {
+  top: 6px;
+  left: 6px;
+  border-width: 2px 0 0 2px;
+}
+
+.webmap-marker-reticle-corner--tr {
+  top: 6px;
+  right: 6px;
+  border-width: 2px 2px 0 0;
+}
+
+.webmap-marker-reticle-corner--bl {
+  bottom: 6px;
+  left: 6px;
+  border-width: 0 0 2px 2px;
+}
+
+.webmap-marker-reticle-corner--br {
+  bottom: 6px;
+  right: 6px;
+  border-width: 0 2px 2px 0;
+}
+
+.webmap-marker-reticle-ring {
+  position: absolute;
+  border-radius: 999px;
+}
+
+.webmap-marker-reticle-ring--outer {
+  inset: 16px;
+  border: 2px solid rgba(59, 244, 255, 0.52);
+  box-shadow:
+    0 0 22px rgba(59, 244, 255, 0.15),
+    inset 0 0 20px rgba(59, 244, 255, 0.08);
+}
+
+.webmap-marker-reticle-ring--inner {
+  inset: 54px;
+  border: 1px solid rgba(59, 244, 255, 0.2);
+}
+
+.webmap-marker-reticle-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 96px;
+  height: 96px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.94);
+  background: radial-gradient(circle at 40% 28%, rgba(59, 244, 255, 0.22), rgba(2, 7, 14, 0.92) 64%);
+  box-shadow:
+    0 0 22px rgba(59, 244, 255, 0.45),
+    inset 0 0 24px rgba(59, 244, 255, 0.2);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 4px;
+  padding: 12px;
+  text-align: center;
+}
+
+.webmap-marker-reticle-name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #9af9ff;
+  line-height: 1.1;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px rgba(59, 244, 255, 0.6);
+}
+
+.webmap-marker-reticle-sub {
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(186, 247, 255, 0.78);
+}
+
+.webmap-marker-radial-menu {
+  position: absolute;
+  width: 292px;
+  height: 292px;
+  transform: translate(-50%, -50%);
+  z-index: 8;
+  pointer-events: none;
+}
+
+.webmap-marker-radial-menu::before {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.7);
+  background:
+    radial-gradient(circle at center, rgba(59, 244, 255, 0.06), transparent 58%),
+    conic-gradient(
+      from 0deg,
+      rgba(59, 244, 255, 0.08),
+      rgba(59, 244, 255, 0.01),
+      rgba(59, 244, 255, 0.08),
+      rgba(59, 244, 255, 0.01),
+      rgba(59, 244, 255, 0.08)
+    );
+  box-shadow:
+    0 0 36px rgba(59, 244, 255, 0.16),
+    inset 0 0 24px rgba(59, 244, 255, 0.14);
+}
+
+.webmap-marker-radial-menu::after {
+  content: "";
+  position: absolute;
+  inset: 56px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.2);
+}
+
+.webmap-marker-radial-item {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.56);
+  background: radial-gradient(circle at 35% 30%, rgba(59, 244, 255, 0.22), rgba(5, 18, 29, 0.95));
+  color: #a2f9ff;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  pointer-events: auto;
+  box-shadow:
+    0 0 14px rgba(59, 244, 255, 0.26),
+    inset 0 0 16px rgba(59, 244, 255, 0.14);
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.webmap-marker-radial-item svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.webmap-marker-radial-item span {
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(183, 248, 255, 0.92);
+}
+
+.webmap-marker-radial-item:hover {
+  border-color: rgba(59, 244, 255, 0.95);
+  box-shadow:
+    0 0 20px rgba(59, 244, 255, 0.4),
+    inset 0 0 18px rgba(59, 244, 255, 0.24);
+}
+
+.webmap-marker-radial-item--danger {
+  border-color: rgba(255, 120, 120, 0.72);
+  color: #ffd0d0;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 120, 120, 0.25), rgba(34, 9, 12, 0.96));
+  box-shadow:
+    0 0 14px rgba(255, 120, 120, 0.3),
+    inset 0 0 16px rgba(255, 120, 120, 0.16);
+}
+
+.webmap-marker-radial-item--danger:hover {
+  border-color: rgba(255, 138, 138, 0.98);
+  box-shadow:
+    0 0 20px rgba(255, 120, 120, 0.48),
+    inset 0 0 18px rgba(255, 120, 120, 0.25);
+}
+
+.webmap-marker-radial-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 84px;
+  height: 84px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.84);
+  background: radial-gradient(circle at 35% 30%, rgba(59, 244, 255, 0.28), rgba(2, 11, 20, 0.96));
+  color: #98f8ff;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 2px;
+  pointer-events: auto;
+  box-shadow:
+    0 0 18px rgba(59, 244, 255, 0.38),
+    inset 0 0 18px rgba(59, 244, 255, 0.18);
+}
+
+.webmap-marker-radial-center svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.webmap-marker-radial-center span {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.webmap-marker-compass {
+  position: absolute;
+  width: 344px;
+  height: 344px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 7;
+  filter: drop-shadow(0 0 18px rgba(59, 244, 255, 0.28));
+}
+
+.webmap-marker-compass svg {
+  width: 100%;
+  height: 100%;
+}
+
+.webmap-marker-compass-orbit {
+  fill: none;
+  stroke: rgba(191, 243, 255, 0.96);
+  stroke-width: 2;
+}
+
+.webmap-marker-compass-inner-orbit {
+  fill: none;
+  stroke: rgba(59, 244, 255, 0.28);
+  stroke-width: 1.3;
+}
+
+.webmap-marker-compass-tick {
+  stroke: rgba(207, 249, 255, 0.86);
+  stroke-width: 1;
+  opacity: 0.86;
+}
+
+.webmap-marker-compass-tick--major {
+  stroke-width: 1.8;
+  opacity: 1;
+}
+
+.webmap-marker-compass-label {
+  fill: rgba(220, 251, 255, 0.82);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-anchor: middle;
+}
+
+.webmap-marker-compass-needle {
+  stroke: rgba(224, 249, 255, 0.92);
+  stroke-width: 1.2;
+}
+
+.webmap-marker-compass-needle--north {
+  stroke: #82fdff;
+  stroke-width: 2;
+}
+
+.webmap-marker-compass-axis {
+  stroke: rgba(59, 244, 255, 0.34);
+  stroke-width: 1;
+}
+
+.webmap-marker-compass-hub {
+  fill: rgba(5, 20, 31, 0.95);
+  stroke: rgba(59, 244, 255, 0.9);
+  stroke-width: 1.4;
+}
+
+.webmap-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 6;
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.webmap-toolbar > * {
+  pointer-events: auto;
+}
+
+.webmap-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.webmap-marker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.35);
+  background: linear-gradient(180deg, rgba(8, 24, 38, 0.96), rgba(6, 16, 26, 0.94));
+  color: #dcfdff;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  box-shadow: 0 0 14px rgba(59, 244, 255, 0.12);
+}
+
+.webmap-marker-trigger-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.55);
+  background: radial-gradient(circle at 30% 30%, rgba(59, 244, 255, 0.2), rgba(7, 20, 31, 0.88));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.webmap-marker-trigger-icon img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 8px rgba(59, 244, 255, 0.55));
+}
+
+.webmap-marker-trigger-label {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webmap-marker-trigger-arrow {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 160ms ease;
+}
+
+.webmap-marker-trigger-arrow svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.webmap-marker-trigger-arrow.open {
+  transform: rotate(180deg);
+}
+
+.webmap-place-btn {
+  min-height: 46px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(59, 244, 255, 0.3);
+  background: linear-gradient(180deg, rgba(9, 24, 37, 0.96), rgba(6, 15, 25, 0.95));
+  color: #d8fbff;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+}
+
+.webmap-place-btn-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.webmap-place-btn.active {
+  border-color: rgba(255, 179, 92, 0.62);
+  box-shadow:
+    0 0 16px rgba(255, 179, 92, 0.2),
+    inset 0 0 12px rgba(255, 179, 92, 0.2);
+  color: #ffe0bf;
+}
+
+.webmap-toolbar-hover-hint {
+  width: fit-content;
+  max-width: min(580px, 100%);
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px dashed rgba(59, 244, 255, 0.28);
+  background: rgba(7, 18, 30, 0.88);
+  color: rgba(219, 252, 255, 0.9);
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.webmap-marker-menu {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px;
+  width: min(420px, 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(59, 244, 255, 0.28);
+  background: linear-gradient(180deg, rgba(6, 18, 30, 0.98), rgba(4, 12, 22, 0.98));
+  box-shadow: 0 20px 34px rgba(0, 0, 0, 0.42);
+}
+
+.webmap-marker-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(59, 244, 255, 0.18);
+  background: rgba(7, 18, 30, 0.66);
+  color: #dcfdff;
+  padding: 8px 10px;
+}
+
+.webmap-marker-option-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.webmap-marker-option-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.55);
+  background: radial-gradient(circle at 30% 30%, rgba(59, 244, 255, 0.2), rgba(7, 20, 31, 0.88));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.webmap-marker-option-icon img {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 7px rgba(59, 244, 255, 0.55));
+}
+
+.webmap-marker-option + .webmap-marker-option {
+  margin-top: 6px;
+}
+
+.webmap-marker-option.active {
+  border-color: rgba(59, 244, 255, 0.56);
+  background: rgba(59, 244, 255, 0.13);
+}
+
+.webmap-marker-option-name {
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  font-size: 11px;
+}
+
+.webmap-rename-popover {
+  position: absolute;
+  z-index: 7;
+  width: 260px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(59, 244, 255, 0.35);
+  background: linear-gradient(180deg, rgba(9, 26, 39, 0.98), rgba(7, 18, 30, 0.98));
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+}
+
+.webmap-rename-title {
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 10px;
+  color: rgba(220, 251, 255, 0.7);
+}
+
+.webmap-rename-input {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(59, 244, 255, 0.3);
+  background: rgba(6, 15, 25, 0.9);
+  color: #e6feff;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  padding: 8px 10px;
+}
+
+.webmap-rename-input:focus {
+  outline: none;
+  border-color: rgba(59, 244, 255, 0.64);
+  box-shadow: 0 0 12px rgba(59, 244, 255, 0.22);
+}
+
+.webmap-rename-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.webmap-rename-btn {
+  border-radius: 8px;
+  border: 1px solid rgba(59, 244, 255, 0.28);
+  background: rgba(7, 18, 30, 0.9);
+  color: rgba(218, 251, 255, 0.9);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  padding: 6px 10px;
+}
+
+.webmap-rename-btn--primary {
+  border-color: rgba(255, 179, 92, 0.52);
+  color: #ffdcb8;
+}
+
+.webmap-zone-assign-popover {
+  width: 280px;
+}
+
+.webmap-zone-assign-popover .webmap-rename-input {
+  margin-bottom: 2px;
+}
+
+.webmap-rename-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.webmap-sidebar {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(59, 244, 255, 0.24);
+  background: linear-gradient(180deg, var(--wm-panel), var(--wm-panel-alt));
+  box-shadow: inset 0 0 18px rgba(5, 14, 24, 0.9);
+}
+
+.webmap-sidebar--collapsed {
+  width: 58px;
+  padding: 8px;
+}
+
+.webmap-cosmos--sidebar-collapsed .webmap-sidebar--collapsed {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+}
+
+.webmap-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.webmap-sidebar-title {
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.webmap-sidebar-collapsed {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-size: 10px;
+  color: rgba(214, 251, 255, 0.62);
+}
+
+.webmap-sidebar-body {
+  margin-top: 10px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 0;
+}
+
+.webmap-filters {
+  display: grid;
+  gap: 8px;
+}
+
+.webmap-tabs {
+  width: fit-content;
+}
+
+.webmap-list-wrap {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.webmap-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.webmap-list-item {
+  border-radius: 10px;
+  border: 1px solid rgba(59, 244, 255, 0.18);
+  background: rgba(7, 18, 29, 0.75);
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.webmap-list-item:hover {
+  border-color: rgba(59, 244, 255, 0.46);
+}
+
+.webmap-list-item--expired {
+  opacity: 0.56;
+  text-decoration: line-through;
+}
+
+.webmap-list-item--selected {
+  border-color: rgba(255, 179, 92, 0.58);
+  box-shadow: inset 0 0 0 1px rgba(255, 179, 92, 0.22);
+}
+
+.webmap-zone-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.webmap-zone-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.webmap-zone-action {
+  border-radius: 999px;
+  border: 1px solid rgba(59, 244, 255, 0.32);
+  background: rgba(7, 18, 29, 0.82);
+  color: rgba(215, 251, 255, 0.9);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 3px 8px;
+}
+
+.webmap-zone-action:hover {
+  border-color: rgba(59, 244, 255, 0.62);
+}
+
+.webmap-zone-action--danger {
+  border-color: rgba(255, 120, 120, 0.5);
+  color: rgba(255, 200, 200, 0.92);
+}
+
+.webmap-zone-action--danger:hover {
+  border-color: rgba(255, 120, 120, 0.72);
+}
+
+.webmap-list-name {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.webmap-list-meta {
+  margin-top: 4px;
+  font-size: 10px;
+  color: rgba(206, 248, 255, 0.62);
+}
+
+.webmap-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10px;
+  color: rgba(214, 251, 255, 0.64);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.webmap-pagination-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+:deep(.webmap-canvas .maplibregl-canvas) {
+  outline: none;
+}
+
+@media (max-width: 1280px) {
+  .webmap-cosmos {
+    grid-template-columns: 1fr;
+  }
+
+  .webmap-sidebar--collapsed {
+    width: 100%;
+    min-height: 54px;
+  }
+
+  .webmap-sidebar-collapsed {
+    writing-mode: horizontal-tb;
+    text-orientation: mixed;
+  }
+}
+
+@media (max-width: 860px) {
+  .webmap-marker-reticle {
+    width: min(74vw, 220px);
+  }
+
+  .webmap-marker-radial-menu {
+    width: 254px;
+    height: 254px;
+  }
+
+  .webmap-marker-radial-item {
+    width: 56px;
+    height: 56px;
+  }
+
+  .webmap-marker-radial-center {
+    width: 74px;
+    height: 74px;
+  }
+
+  .webmap-marker-compass {
+    width: 286px;
+    height: 286px;
+  }
+
+  .webmap-toolbar-row {
+    align-items: stretch;
+  }
+
+  .webmap-toolbar-hover-hint {
+    width: 100%;
+  }
+
+  .webmap-marker-trigger {
+    flex: 1;
+    min-width: 0;
+  }
+}

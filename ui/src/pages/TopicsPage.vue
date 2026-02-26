@@ -1,15 +1,7 @@
-<template>
+﻿<template>
   <div class="topics-registry">
     <div class="registry-shell">
-      <header class="registry-top">
-        <div class="registry-title">Topic Registry</div>
-        <div class="registry-status">
-          <OnlineHelpLauncher />
-          <span class="cui-status-pill" :class="connectionClass">{{ connectionLabel }}</span>
-          <span class="cui-status-pill" :class="wsClass">{{ wsLabel }}</span>
-          <span class="status-url">{{ baseUrl }}</span>
-        </div>
-      </header>
+      <CosmicTopStatus title="Topic Registry" />
 
       <div class="registry-grid">
         <aside class="panel registry-tree">
@@ -154,7 +146,7 @@
       <div class="space-y-3">
         <BaseSelect v-model="subscriberDraft.topic_id" label="Topic ID" :options="topicOptions" />
         <BaseSelect v-model="subscriberDraft.destination" label="Destination" :options="destinationOptions" />
-        <BaseInput v-model="subscriberDraft.reject_tests" label="Reject Tests (true/false)" />
+        <BaseSelect v-model="subscriberRejectTestsDraft" label="Reject Tests" :options="rejectTestsOptions" />
         <BaseButton icon-left="check" variant="success" @click="saveSubscriber">Save Subscriber</BaseButton>
       </div>
     </BaseModal>
@@ -165,16 +157,15 @@
 import { computed, onMounted, watch } from "vue";
 import { ref } from "vue";
 import BaseButton from "../components/BaseButton.vue";
+import CosmicTopStatus from "../components/cosmic/CosmicTopStatus.vue";
 import BaseInput from "../components/BaseInput.vue";
 import BaseModal from "../components/BaseModal.vue";
 import BaseSelect from "../components/BaseSelect.vue";
 import BasePagination from "../components/BasePagination.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
-import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import type { ApiError } from "../api/client";
 import type { Subscriber } from "../api/types";
 import type { Topic } from "../api/types";
-import { useConnectionStore } from "../stores/connection";
 import { useSubscribersStore } from "../stores/subscribers";
 import { useTopicsStore } from "../stores/topics";
 import { useToastStore } from "../stores/toasts";
@@ -190,7 +181,6 @@ type TreeEntry = {
 
 const topicsStore = useTopicsStore();
 const subscribersStore = useSubscribersStore();
-const connectionStore = useConnectionStore();
 const usersStore = useUsersStore();
 const toastStore = useToastStore();
 
@@ -198,6 +188,7 @@ const topicModalOpen = ref(false);
 const subscriberModalOpen = ref(false);
 const topicDraft = ref<Topic>({ name: "", path: "", description: "" });
 const subscriberDraft = ref<Subscriber>({ topic_id: "", destination: "", reject_tests: false });
+const subscriberRejectTestsDraft = ref("false");
 const activeTab = ref<"topics" | "subscribers">("topics");
 const topicsPage = ref(1);
 const subscribersPage = ref(1);
@@ -360,27 +351,6 @@ const resolveTopicLabel = (topicId?: string) => {
   return topicLabelById.value.get(topicId) ?? "Unknown topic";
 };
 
-const baseUrl = computed(() => connectionStore.baseUrlDisplay);
-const connectionLabel = computed(() => connectionStore.statusLabel);
-const wsLabel = computed(() => connectionStore.wsLabel);
-
-const connectionClass = computed(() => {
-  if (connectionStore.status === "online") {
-    return "cui-status-success";
-  }
-  if (connectionStore.status === "offline") {
-    return "cui-status-danger";
-  }
-  return "cui-status-accent";
-});
-
-const wsClass = computed(() => {
-  if (connectionStore.wsLabel.toLowerCase() === "live") {
-    return "cui-status-success";
-  }
-  return "cui-status-accent";
-});
-
 const sourceNameById = computed(() => {
   const map = new Map<string, string>();
   usersStore.clients.forEach((client) => {
@@ -467,6 +437,11 @@ const destinationOptions = computed(() => {
   return [{ value: "", label: "Select destination" }, ...options];
 });
 
+const rejectTestsOptions = [
+  { value: "false", label: "False" },
+  { value: "true", label: "True" }
+];
+
 watch(treeEntries, (entries) => {
   if (!entries.length) {
     selectedBranch.value = "";
@@ -503,6 +478,7 @@ const openSubscriberModal = (subscriber: Subscriber | null) => {
   subscriberDraft.value = subscriber
     ? { ...subscriber }
     : { topic_id: "", destination: "", reject_tests: false };
+  subscriberRejectTestsDraft.value = subscriberDraft.value.reject_tests ? "true" : "false";
   subscriberModalOpen.value = true;
 };
 
@@ -522,7 +498,7 @@ const saveTopic = async () => {
 };
 
 const saveSubscriber = async () => {
-  const rejectTests = String(subscriberDraft.value.reject_tests).toLowerCase() === "true";
+  const rejectTests = subscriberRejectTestsDraft.value === "true";
   subscriberDraft.value.reject_tests = rejectTests;
   try {
     if (subscriberDraft.value.id) {
@@ -582,389 +558,8 @@ onMounted(() => {
 });
 </script>
 
-<style scoped>
-.topics-registry {
-  --neon: #37f2ff;
-  --neon-soft: rgba(55, 242, 255, 0.35);
-  --neon-dark: rgba(9, 40, 52, 0.95);
-  --panel-dark: rgba(4, 12, 22, 0.96);
-  --panel-light: rgba(10, 30, 45, 0.94);
-  --amber: #ffb35c;
-  --amber-soft: rgba(255, 179, 92, 0.25);
-  --danger: rgba(255, 104, 104, 0.8);
-  color: #dffcff;
-  font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
-}
-
-.registry-shell {
-  position: relative;
-  padding: 20px 22px 26px;
-  border-radius: 18px;
-  border: 1px solid rgba(55, 242, 255, 0.25);
-  background: radial-gradient(circle at top, rgba(42, 210, 255, 0.12), transparent 55%),
-    linear-gradient(145deg, rgba(5, 16, 28, 0.96), rgba(2, 6, 12, 0.98));
-  box-shadow: 0 18px 55px rgba(1, 6, 12, 0.65), inset 0 0 0 1px rgba(55, 242, 255, 0.08);
-  overflow: hidden;
-}
-
-.registry-shell::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 1px 1px, rgba(55, 242, 255, 0.08) 1px, transparent 0) 0 0 / 18px 18px;
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-.registry-shell::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, transparent 65%, rgba(55, 242, 255, 0.12), transparent 85%);
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-.registry-top {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 16px;
-  z-index: 1;
-}
-
-.registry-title {
-  text-align: center;
-  justify-self: center;
-  font-size: 20px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #d4fbff;
-  text-shadow: 0 0 12px rgba(55, 242, 255, 0.5);
-}
-
-.registry-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-self: end;
-}
-
-.status-url {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: rgba(215, 243, 255, 0.8);
-}
-
-.registry-grid {
-  display: grid;
-  grid-template-columns: minmax(240px, 320px) 1fr;
-  gap: 18px;
-  z-index: 1;
-  position: relative;
-}
-
-.panel {
-  position: relative;
-  padding: 16px;
-  background: linear-gradient(145deg, var(--panel-light), var(--panel-dark));
-  border: 1px solid rgba(55, 242, 255, 0.25);
-  box-shadow: inset 0 0 0 1px rgba(55, 242, 255, 0.08), 0 12px 30px rgba(1, 6, 12, 0.6);
-  clip-path: polygon(0 0, calc(100% - 24px) 0, 100% 24px, 100% 100%, 24px 100%, 0 calc(100% - 24px));
-}
-
-.panel::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgba(55, 242, 255, 0.2);
-  clip-path: polygon(1px 1px, calc(100% - 25px) 1px, calc(100% - 1px) 25px, calc(100% - 1px) calc(100% - 1px), 25px calc(100% - 1px), 1px calc(100% - 25px));
-  pointer-events: none;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.panel-title {
-  font-size: 16px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: #d1fbff;
-}
-
-.panel-subtitle {
-  font-family: "Rajdhani", "Barlow", sans-serif;
-  font-size: 12px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: rgba(209, 251, 255, 0.65);
-  margin-top: 4px;
-}
-
-.panel-chip {
-  border: 1px solid var(--amber);
-  color: var(--amber);
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  background: rgba(18, 24, 30, 0.6);
-}
-
-.panel-tabs {
-  display: inline-flex;
-  background: rgba(7, 18, 26, 0.8);
-  border: 1px solid rgba(55, 242, 255, 0.25);
-  border-radius: 999px;
-  padding: 4px;
-  gap: 4px;
-}
-
-.panel-tab {
-  border: 1px solid transparent;
-  background: transparent;
-  color: rgba(209, 251, 255, 0.6);
-  padding: 6px 14px;
-  border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  font-size: 11px;
-  transition: all 0.2s ease;
-}
-
-.panel-tab.active {
-  background: rgba(55, 242, 255, 0.12);
-  border-color: rgba(55, 242, 255, 0.6);
-  color: #e0feff;
-  box-shadow: 0 0 14px rgba(55, 242, 255, 0.25);
-}
-
-.tree-search input {
-  width: 100%;
-  background: rgba(6, 16, 25, 0.85);
-  border: 1px solid rgba(55, 242, 255, 0.3);
-  color: #d8fbff;
-  border-radius: 10px;
-  padding: 8px 12px;
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.tree-search input::placeholder {
-  color: rgba(209, 251, 255, 0.4);
-}
-
-.tree-list {
-  margin-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 520px;
-  overflow: auto;
-  padding-right: 6px;
-}
-
-.tree-item {
-  position: relative;
-  display: grid;
-  grid-template-columns: 12px 1fr auto;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid transparent;
-  background: rgba(7, 18, 28, 0.6);
-  color: rgba(213, 251, 255, 0.9);
-  padding: 8px 10px;
-  padding-left: calc(10px + (var(--depth) * 12px));
-  border-radius: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 11px;
-  transition: all 0.2s ease;
-}
-
-.tree-item:hover {
-  border-color: rgba(55, 242, 255, 0.35);
-}
-
-.tree-item.active {
-  border-color: rgba(55, 242, 255, 0.65);
-  background: rgba(55, 242, 255, 0.12);
-  box-shadow: 0 0 16px rgba(55, 242, 255, 0.25);
-}
-
-.tree-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--neon);
-  box-shadow: 0 0 10px var(--neon);
-}
-
-.tree-count {
-  border: 1px solid var(--amber);
-  color: var(--amber);
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  background: rgba(10, 20, 30, 0.6);
-}
-
-.tree-empty {
-  padding: 14px;
-  border: 1px dashed rgba(55, 242, 255, 0.3);
-  border-radius: 10px;
-  text-align: center;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.2em;
-  color: rgba(209, 251, 255, 0.6);
-}
-
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 14px;
-}
-
-.registry-card {
-  position: relative;
-  padding: 16px 16px 12px;
-  min-height: 190px;
-}
-
-.registry-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.registry-card-title {
-  font-size: 16px;
-  color: #e6feff;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.registry-card-subtitle {
-  font-size: 11px;
-  color: rgba(190, 246, 255, 0.7);
-  margin-top: 4px;
-}
+<style scoped src="./styles/TopicsPage.css"></style>
 
 
-.registry-card-meta {
-  margin-top: 12px;
-  display: grid;
-  gap: 8px;
-  font-family: "Rajdhani", "Barlow", sans-serif;
-  font-size: 12px;
-  color: rgba(220, 251, 255, 0.85);
-}
 
-.registry-card-meta div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
 
-.registry-card-desc {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  text-transform: none;
-  letter-spacing: 0.02em;
-  color: rgba(220, 251, 255, 0.7);
-}
-
-.registry-card-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
-  flex-wrap: wrap;
-}
-
-.panel-actions {
-  margin-top: 18px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.panel-empty {
-  grid-column: 1 / -1;
-  padding: 18px;
-  border: 1px dashed rgba(55, 242, 255, 0.25);
-  text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 0.2em;
-  font-size: 12px;
-  color: rgba(210, 251, 255, 0.65);
-}
-
-.mono {
-  font-family: "JetBrains Mono", "Cascadia Mono", monospace;
-}
-
-:deep(.topics-registry .cui-btn) {
-  background: linear-gradient(135deg, rgba(35, 130, 160, 0.45), rgba(6, 18, 28, 0.92));
-  border: 1px solid rgba(55, 242, 255, 0.45);
-  color: #e5feff;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  font-size: 10px;
-  padding: 6px 12px;
-  box-shadow: 0 0 12px rgba(55, 242, 255, 0.15);
-}
-
-:deep(.topics-registry .cui-btn--secondary) {
-  background: linear-gradient(135deg, rgba(14, 44, 60, 0.85), rgba(6, 14, 22, 0.92));
-}
-
-:deep(.topics-registry .cui-btn--danger) {
-  border-color: var(--danger);
-  color: #ffd3d3;
-}
-
-:deep(.topics-registry .cui-btn:disabled) {
-  opacity: 0.45;
-}
-
-@media (max-width: 1100px) {
-  .registry-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  .registry-top {
-    grid-template-columns: 1fr;
-    text-align: center;
-  }
-
-  .registry-status {
-    justify-content: center;
-  }
-
-  .panel-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .panel-tabs {
-    align-self: flex-start;
-  }
-}
-</style>

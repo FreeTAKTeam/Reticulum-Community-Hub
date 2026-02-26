@@ -1,88 +1,83 @@
 <template>
-  <button :type="type" class="cui-btn inline-flex items-center justify-center gap-2 font-semibold tracking-[0.02em]" :class="buttonClass" :aria-label="computedAriaLabel">
-    <span v-if="iconLeftSvg" class="cui-btn__icon" aria-hidden="true" v-html="iconLeftSvg"></span>
+  <button
+    :type="type"
+    class="cui-btn inline-flex items-center justify-center gap-2 font-semibold tracking-[0.02em]"
+    :class="buttonClass"
+    :disabled="isDisabled"
+    :aria-label="computedAriaLabel"
+    :aria-busy="loading ? 'true' : undefined"
+  >
+    <span v-if="loading" class="cui-btn__icon" aria-hidden="true" v-html="spinnerSvg"></span>
+    <span v-else-if="iconLeftSvg" class="cui-btn__icon" aria-hidden="true" v-html="iconLeftSvg"></span>
     <span v-if="!iconOnly" class="cui-btn__label"><slot /></span>
-    <span v-if="iconRightSvg" class="cui-btn__icon" aria-hidden="true" v-html="iconRightSvg"></span>
+    <span v-if="!loading && iconRightSvg" class="cui-btn__icon" aria-hidden="true" v-html="iconRightSvg"></span>
   </button>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
 
+import type { CosmicSize } from "../types/cosmic-ui";
+import type { CosmicTone } from "../types/cosmic-ui";
+
+type ButtonVariant = "primary" | "secondary" | "ghost" | "success" | "danger" | "tab";
+
+type ButtonIconName =
+  | "refresh"
+  | "plus"
+  | "edit"
+  | "trash"
+  | "check"
+  | "download"
+  | "ban"
+  | "unban"
+  | "blackhole"
+  | "filter"
+  | "eye"
+  | "save"
+  | "link"
+  | "upload"
+  | "undo"
+  | "send"
+  | "route"
+  | "users"
+  | "help"
+  | "list"
+  | "chevron-left"
+  | "chevron-right"
+  | "layers"
+  | "file"
+  | "image"
+  | "fingerprint"
+  | "settings"
+  | "tool"
+  | "play"
+  | "stop";
+
 const props = withDefaults(
   defineProps<{
-    variant?: "primary" | "secondary" | "ghost" | "success" | "danger" | "tab";
+    variant?: ButtonVariant;
+    tone?: CosmicTone;
     type?: "button" | "submit" | "reset";
-    size?: "sm" | "md" | "lg";
-    iconLeft?:
-      | "refresh"
-      | "plus"
-      | "edit"
-      | "trash"
-      | "check"
-      | "download"
-      | "ban"
-      | "unban"
-      | "blackhole"
-      | "filter"
-      | "eye"
-      | "save"
-      | "link"
-      | "upload"
-      | "undo"
-      | "send"
-      | "route"
-      | "users"
-      | "help"
-      | "list"
-      | "chevron-left"
-      | "chevron-right"
-      | "layers"
-      | "file"
-      | "image"
-      | "fingerprint"
-      | "settings"
-      | "tool";
-    iconRight?:
-      | "refresh"
-      | "plus"
-      | "edit"
-      | "trash"
-      | "check"
-      | "download"
-      | "ban"
-      | "unban"
-      | "blackhole"
-      | "filter"
-      | "eye"
-      | "save"
-      | "link"
-      | "upload"
-      | "undo"
-      | "send"
-      | "route"
-      | "users"
-      | "help"
-      | "list"
-      | "chevron-left"
-      | "chevron-right"
-      | "layers"
-      | "file"
-      | "image"
-      | "fingerprint"
-      | "settings"
-      | "tool";
+    size?: CosmicSize;
+    iconLeft?: ButtonIconName;
+    iconRight?: ButtonIconName;
     iconOnly?: boolean;
     ariaLabel?: string;
+    loading?: boolean;
+    disabled?: boolean;
   }>(),
   {
     variant: "primary",
+    tone: "primary",
     type: "button",
     size: "md",
     iconLeft: undefined,
     iconRight: undefined,
     iconOnly: false,
-    ariaLabel: undefined
+    ariaLabel: undefined,
+    loading: false,
+    disabled: false
   }
 );
 
@@ -106,6 +101,9 @@ const variantClass = computed(() => {
 });
 
 const sizeClass = computed(() => {
+  if (props.size === "xs") {
+    return "cui-btn--xs";
+  }
   if (props.size === "sm") {
     return "cui-btn--sm";
   }
@@ -115,14 +113,28 @@ const sizeClass = computed(() => {
   return "cui-btn--md";
 });
 
+const toneClass = computed(() => {
+  if (!props.tone) {
+    return "";
+  }
+  return `cui-tone-${props.tone}`;
+});
+
+const isDisabled = computed(() => props.disabled || props.loading);
+
 const buttonClass = computed(() => [
   variantClass.value,
   sizeClass.value,
+  toneClass.value,
   props.variant === "tab" ? "" : "cui-btn--action",
-  props.iconOnly ? "cui-btn--icon-only" : ""
+  props.iconOnly ? "cui-btn--icon-only" : "",
+  props.loading ? "is-loading" : ""
 ]);
 
-const iconMap: Record<string, string> = {
+const spinnerSvg =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity="0.28"></circle><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
+
+const iconMap: Record<ButtonIconName, string> = {
   refresh:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>',
   plus:
@@ -140,8 +152,7 @@ const iconMap: Record<string, string> = {
   unban:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8 12 2 2 5-5"/></svg>',
   blackhole:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>'
-  ,
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>',
   filter:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18l-7 8v6l-4 2v-8Z"/></svg>',
   eye:
@@ -175,12 +186,15 @@ const iconMap: Record<string, string> = {
   image:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
   fingerprint:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11a2 2 0 0 1 2 2c0 2.5 0 4 2 5"/><path d="M8 11a4 4 0 0 1 8 0c0 3 0 6 3 8"/><path d="M6 11a6 6 0 0 1 12 0c0 4-1 7 2 10"/><path d="M10 11a2 2 0 0 0-2 2c0 2 0 3-1 4"/><path d="M4 11a8 8 0 0 1 16 0"/></svg>'
-  ,
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11a2 2 0 0 1 2 2c0 2.5 0 4 2 5"/><path d="M8 11a4 4 0 0 1 8 0c0 3 0 6 3 8"/><path d="M6 11a6 6 0 0 1 12 0c0 4-1 7 2 10"/><path d="M10 11a2 2 0 0 0-2 2c0 2 0 3-1 4"/><path d="M4 11a8 8 0 0 1 16 0"/></svg>',
   settings:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 0 1-4 0v-.08a1.7 1.7 0 0 0-1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1H3a2 2 0 0 1 0-4h.08a1.7 1.7 0 0 0 1.56-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 0 1 7.07 4.2l.06.06A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3.04V3a2 2 0 0 1 4 0v.08a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.1.38.14.78.14 1.2s-.04.82-.14 1.2z"/></svg>',
   tool:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 7a5 5 0 0 0-6.83 6.83l-4.2 4.2a2 2 0 0 0 2.83 2.83l4.2-4.2A5 5 0 0 0 17 10l-3 3-2-2 3-3z"/></svg>'
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 7a5 5 0 0 0-6.83 6.83l-4.2 4.2a2 2 0 0 0 2.83 2.83l4.2-4.2A5 5 0 0 0 17 10l-3 3-2-2 3-3z"/></svg>',
+  play:
+    '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>',
+  stop:
+    '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>'
 };
 
 const iconLeftSvg = computed(() => (props.iconLeft ? iconMap[props.iconLeft] : undefined));

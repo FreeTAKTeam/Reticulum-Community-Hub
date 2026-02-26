@@ -46,6 +46,7 @@ from typing import cast
 
 import LXMF
 import RNS
+import RNS.vendor.umsgpack as msgpack
 
 from reticulum_telemetry_hub.api.models import ChatMessage
 from reticulum_telemetry_hub.api.models import FileAttachment
@@ -53,6 +54,9 @@ from reticulum_telemetry_hub.api.models import Marker
 from reticulum_telemetry_hub.api.marker_identity import derive_marker_identity_key
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
+from reticulum_telemetry_hub.api.zone_service import ZoneService
+from reticulum_telemetry_hub.api.zone_storage import ZoneStorage
+from reticulum_telemetry_hub.checklist_sync import ChecklistSyncRouter
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.config.manager import _expand_user_path
@@ -65,6 +69,7 @@ from reticulum_telemetry_hub.reticulum_server.announce_capabilities import (
     CapabilityEncodingResult,
     append_capabilities_to_announce_app_data,
     build_capability_payload,
+    decode_inbound_capability_payload,
     encode_capability_payload,
     normalize_capability_list,
     select_capability_encoder,
@@ -88,6 +93,12 @@ from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import ReticulumInternalAdapter
 from reticulum_telemetry_hub.reticulum_server.marker_objects import MarkerObjectManager
+from reticulum_telemetry_hub.reticulum_server.mission_delta_markdown import (
+    MissionDeltaNameResolver,
+    render_mission_delta_markdown,
+)
+from reticulum_telemetry_hub.mission_domain import MissionDomainService
+from reticulum_telemetry_hub.mission_sync import MissionSyncRouter
 from .command_manager import CommandManager
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
@@ -113,12 +124,20 @@ LOG_LEVELS = {
     "debug": getattr(RNS, "LOG_DEBUG", DEFAULT_LOG_LEVEL),
 }
 TOPIC_REGISTRY_TTL_SECONDS = 5
+R3AKT_CUSTOM_TYPE_IDENTIFIER = "r3akt.mission.change.v1"
+R3AKT_CUSTOM_META_VERSION = "1.0"
+R3AKT_CUSTOM_TYPE_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_TYPE", 0xFB))
+R3AKT_CUSTOM_DATA_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_DATA", 0xFC))
+R3AKT_CUSTOM_META_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_META", 0xFD))
+MARKDOWN_RENDERER_FIELD = int(getattr(LXMF, "FIELD_RENDERER", 0x0F))
+MARKDOWN_RENDERER_VALUE = int(getattr(LXMF, "RENDERER_MARKDOWN", 0x02))
 ESCAPED_COMMAND_PREFIX = "\\\\\\"
 DEFAULT_OUTBOUND_QUEUE_SIZE = 64
 DEFAULT_OUTBOUND_WORKERS = 2
 DEFAULT_OUTBOUND_SEND_TIMEOUT = 5.0
 DEFAULT_OUTBOUND_BACKOFF = 0.5
 DEFAULT_OUTBOUND_MAX_ATTEMPTS = 3
+IDENTITY_CAPABILITY_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
 def _resolve_interval(value: int | None, fallback: int) -> int:
@@ -196,10 +215,12 @@ class AnnounceHandler:
         api: ReticulumTelemetryHubAPI | None = None,
         *,
         persist_queue_size: int = _DEFAULT_PERSIST_QUEUE_SIZE,
+        capability_callback: Callable[[str, set[str]], None] | None = None,
     ):
         self.aspect_filter = APP_NAME
         self.identities = identities
         self._api = api
+        self._capability_callback = capability_callback
         self._persist_queue: queue.Queue[tuple[str, str | None, str | None]] = queue.Queue(
             maxsize=max(1, int(persist_queue_size))
         )
@@ -272,12 +293,18 @@ class AnnounceHandler:
         # RNS.log(f"\t| App data               : {app_data}")
         # RNS.log("\t+---------------------------------------------------------------")
         label = self._decode_app_data(app_data)
+        capabilities = self._decode_capabilities(app_data)
         destination_key = self._normalize_hash(destination_hash)
         identity_key = self._normalize_hash(announced_identity)
         hash_keys = [key for key in (destination_key, identity_key) if key]
         if label:
             for key in hash_keys:
                 self.identities[key] = label
+        if capabilities:
+            callback = self._capability_callback
+            if callback is not None:
+                for key in hash_keys:
+                    callback(key, set(capabilities))
         if destination_key:
             self._persist_announce_async(
                 destination_key,
@@ -322,6 +349,29 @@ class AnnounceHandler:
                 return display_name or None
 
         return None
+
+    @staticmethod
+    def _decode_capabilities(app_data) -> set[str]:
+        if not isinstance(app_data, (bytes, bytearray, memoryview)):
+            return set()
+        try:
+            decoded = msgpack.unpackb(bytes(app_data), raw=False)
+        except Exception:
+            return set()
+        if not isinstance(decoded, list) or len(decoded) < 3:
+            return set()
+        payload = decode_inbound_capability_payload(decoded[2])
+        if not isinstance(payload, dict):
+            return set()
+        raw_caps = payload.get("caps")
+        if not isinstance(raw_caps, list):
+            return set()
+        normalized: set[str] = set()
+        for item in raw_caps:
+            text = str(item or "").strip().lower()
+            if text:
+                normalized.add(text)
+        return normalized
 
     def _persist_announce_async(
         self,
@@ -383,8 +433,12 @@ class ReticulumTelemetryHub:
     telemeter_manager: TelemeterManager | None
     tak_connector: TakConnector | None
     marker_service: MarkerService | None
+    zone_service: ZoneService | None
     marker_manager: MarkerObjectManager | None
     command_manager: CommandManager | None
+    mission_sync_router: MissionSyncRouter | None
+    checklist_sync_router: ChecklistSyncRouter | None
+    mission_domain_service: MissionDomainService | None
     _active_services: dict[str, HubService]
 
     TELEMETRY_PLACEHOLDERS = {"telemetry data", "telemetry update"}
@@ -540,7 +594,13 @@ class ReticulumTelemetryHub:
         self._announce_capabilities_enabled = True
         self._announce_capabilities_lock = threading.Lock()
         self._announce_capabilities_logged = False
+        self._identity_capability_cache: dict[str, tuple[set[str], float]] = {}
+        self._mission_change_fanout_cache: dict[str, float] = {}
         self.command_manager = None
+        self.mission_sync_router = None
+        self.checklist_sync_router = None
+        self.mission_domain_service = None
+        self._remove_mission_change_listener: Callable[[], None] | None = None
         self._announce_handler: AnnounceHandler | None = None
 
         identity = self.load_or_generate_identity(self.identity_path)
@@ -575,6 +635,7 @@ class ReticulumTelemetryHub:
             MarkerStorage(hub_db_path),
             identity_key_provider=lambda: marker_identity_key,
         )
+        self.zone_service = ZoneService(ZoneStorage(hub_db_path))
         runtime_config = self.config_manager.runtime_config
         marker_interval_minutes = getattr(
             runtime_config, "marker_announce_interval_minutes", 15
@@ -614,10 +675,19 @@ class ReticulumTelemetryHub:
             config_manager=self.config_manager,
             on_config_reload=self._handle_config_reload,
         )
+        event_retention_days = getattr(runtime_config, "event_retention_days", 90)
+        self.mission_domain_service = MissionDomainService(
+            hub_db_path,
+            event_retention_days=event_retention_days,
+        )
         self.api.set_reticulum_destination(self._origin_rch_hex())
         self._backfill_identity_announces()
         self._load_persisted_clients()
-        self._announce_handler = AnnounceHandler(self.identities, api=self.api)
+        self._announce_handler = AnnounceHandler(
+            self.identities,
+            api=self.api,
+            capability_callback=self._update_identity_capability_cache,
+        )
         RNS.Transport.register_announce_handler(self._announce_handler)
         self.tel_controller.set_api(self.api)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
@@ -647,10 +717,41 @@ class ReticulumTelemetryHub:
             config_manager=self.config_manager,
             event_log=self.event_log,
         )
+        self.mission_sync_router = MissionSyncRouter(
+            api=self.api,
+            send_message=lambda content, topic_id, destination: self.send_message(
+                content,
+                topic=topic_id,
+                destination=destination,
+            ),
+            marker_service=self.marker_service,
+            zone_service=self.zone_service,
+            domain_service=self.mission_domain_service,
+            event_log=self.event_log,
+            hub_identity_resolver=self._origin_rch_hex,
+            field_results=LXMF.FIELD_RESULTS,
+            field_event=LXMF.FIELD_EVENT,
+            field_group=LXMF.FIELD_GROUP,
+        )
+        self.checklist_sync_router = ChecklistSyncRouter(
+            api=self.api,
+            domain_service=self.mission_domain_service,
+            event_log=self.event_log,
+            hub_identity_resolver=self._origin_rch_hex,
+            field_results=LXMF.FIELD_RESULTS,
+            field_event=LXMF.FIELD_EVENT,
+            field_group=LXMF.FIELD_GROUP,
+        )
         self.internal_adapter = ReticulumInternalAdapter(send_message=self.send_message)
         self.topic_subscribers: dict[str, set[str]] = {}
         self._topic_registry_last_refresh: float = 0.0
         self._refresh_topic_registry()
+        if self.mission_domain_service is not None:
+            self._remove_mission_change_listener = (
+                self.mission_domain_service.register_mission_change_listener(
+                    self._fanout_mission_change_to_recipients
+                )
+            )
         self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
         init_elapsed = time.monotonic() - init_started
         RNS.log(
@@ -675,10 +776,440 @@ class ReticulumTelemetryHub:
                 getattr(RNS, "LOG_WARNING", 2),
             )
             return []
-        responses = manager.handle_commands(commands, message)
-        if self._commands_affect_subscribers(commands):
+
+        mission_commands: list[dict[str, Any]] = []
+        checklist_commands: list[dict[str, Any]] = []
+        legacy_commands: list[Any] = []
+        for command in commands:
+            if not isinstance(command, dict):
+                legacy_commands.append(command)
+                continue
+            command_type = command.get("command_type")
+            if isinstance(command_type, str) and command_type.strip():
+                if command_type.startswith("checklist."):
+                    checklist_commands.append(command)
+                else:
+                    mission_commands.append(command)
+            else:
+                legacy_commands.append(command)
+
+        responses: list[LXMF.LXMessage] = []
+        source_identity = self._message_source_hex(message)
+        message_fields = message.fields if isinstance(message.fields, dict) else {}
+        group = message_fields.get(LXMF.FIELD_GROUP)
+
+        mission_router = getattr(self, "mission_sync_router", None)
+        if mission_commands and mission_router is not None:
+            mission_replies = mission_router.handle_commands(
+                mission_commands,
+                source_identity=source_identity,
+                group=group,
+            )
+            responses.extend(
+                [
+                    response
+                    for response in (
+                        self._mission_sync_response_to_lxmf(message, entry)
+                        for entry in mission_replies
+                    )
+                    if response is not None
+                ]
+            )
+
+        checklist_router = getattr(self, "checklist_sync_router", None)
+        if checklist_commands and checklist_router is not None:
+            checklist_replies = checklist_router.handle_commands(
+                checklist_commands,
+                source_identity=source_identity,
+                group=group,
+            )
+            responses.extend(
+                [
+                    response
+                    for response in (
+                        self._mission_sync_response_to_lxmf(message, entry)
+                        for entry in checklist_replies
+                    )
+                    if response is not None
+                ]
+            )
+
+        if legacy_commands:
+            responses.extend(manager.handle_commands(legacy_commands, message))
+
+        if self._commands_affect_subscribers(legacy_commands) or self._mission_commands_affect_subscribers(
+            mission_commands
+        ):
             self._refresh_topic_registry()
         return responses
+
+    def _mission_sync_response_to_lxmf(
+        self, message: LXMF.LXMessage, response
+    ) -> LXMF.LXMessage | None:
+        """Convert a mission/checklist sync response to a reply LXMF message."""
+
+        if self.my_lxmf_dest is None:
+            return None
+        destination = None
+        command_manager = getattr(self, "command_manager", None)
+        try:
+            if command_manager is not None and hasattr(command_manager, "_create_dest"):
+                destination = command_manager._create_dest(  # pylint: disable=protected-access
+                    message.source.identity
+                )
+        except Exception:
+            destination = None
+        if destination is None:
+            try:
+                destination = RNS.Destination(
+                    message.source.identity,
+                    RNS.Destination.OUT,
+                    RNS.Destination.SINGLE,
+                    "lxmf",
+                    "delivery",
+                )
+            except Exception:
+                return None
+        response_fields = response.fields if isinstance(response.fields, dict) else {}
+        outbound_fields = self._augment_r3akt_custom_fields(response_fields)
+        merged_fields = self._merge_standard_fields(
+            source_fields=message.fields,
+            extra_fields=outbound_fields,
+        )
+        return LXMF.LXMessage(
+            destination,
+            self.my_lxmf_dest,
+            str(response.content or ""),
+            fields=apply_icon_appearance(merged_fields or {}),
+            desired_method=LXMF.LXMessage.DIRECT,
+        )
+
+    @staticmethod
+    def _extract_mission_uid_from_response_fields(
+        fields: dict[int | str, object] | None,
+    ) -> str | None:
+        if not isinstance(fields, dict):
+            return None
+        event_field = fields.get(LXMF.FIELD_EVENT)
+        if not isinstance(event_field, dict):
+            return None
+        event_type = str(event_field.get("event_type") or "").strip()
+        payload = event_field.get("payload")
+        if not isinstance(payload, dict):
+            return None
+
+        mission_uid = str(
+            payload.get("mission_uid") or payload.get("mission_id") or ""
+        ).strip()
+        if mission_uid:
+            return mission_uid
+
+        if event_type.startswith("mission.registry.mission."):
+            fallback_uid = str(payload.get("uid") or "").strip()
+            if fallback_uid:
+                return fallback_uid
+
+        result_field = fields.get(LXMF.FIELD_RESULTS)
+        if isinstance(result_field, dict):
+            result_payload = result_field.get("result")
+            if isinstance(result_payload, dict):
+                mission_uid = str(
+                    result_payload.get("mission_uid")
+                    or result_payload.get("mission_id")
+                    or ""
+                ).strip()
+                if mission_uid:
+                    return mission_uid
+                if event_type.startswith("mission.registry.mission."):
+                    fallback_uid = str(result_payload.get("uid") or "").strip()
+                    if fallback_uid:
+                        return fallback_uid
+
+        return None
+
+    @staticmethod
+    def _build_r3akt_custom_fields(
+        *,
+        mission_uid: str,
+        event_envelope: dict[str, object],
+    ) -> dict[int | str, object]:
+        event_type = str(event_envelope.get("event_type") or "").strip()
+        return {
+            R3AKT_CUSTOM_TYPE_FIELD: R3AKT_CUSTOM_TYPE_IDENTIFIER,
+            R3AKT_CUSTOM_DATA_FIELD: {
+                "mission_uid": mission_uid,
+                "event": event_envelope,
+            },
+            R3AKT_CUSTOM_META_FIELD: {
+                "version": R3AKT_CUSTOM_META_VERSION,
+                "event_type": event_type,
+                "mission_uid": mission_uid,
+                "encoding": "json",
+                "source": "rch",
+            },
+        }
+
+    def _augment_r3akt_custom_fields(
+        self,
+        fields: dict[int | str, object],
+    ) -> dict[int | str, object]:
+        merged = dict(fields or {})
+        mission_uid = self._extract_mission_uid_from_response_fields(merged)
+        event_field = merged.get(LXMF.FIELD_EVENT)
+        if not mission_uid or not isinstance(event_field, dict):
+            return merged
+        merged.update(
+            self._build_r3akt_custom_fields(
+                mission_uid=mission_uid,
+                event_envelope=event_field,
+            )
+        )
+        return merged
+
+    def _update_identity_capability_cache(
+        self, identity: str, capabilities: set[str]
+    ) -> None:
+        normalized_identity = str(identity or "").strip().lower()
+        if not normalized_identity:
+            return
+        normalized_caps = {
+            str(value or "").strip().lower() for value in capabilities if value
+        }
+        if not normalized_caps:
+            return
+        expires_at = time.time() + IDENTITY_CAPABILITY_CACHE_TTL_SECONDS
+        self._identity_capability_cache[normalized_identity] = (
+            normalized_caps,
+            expires_at,
+        )
+
+    def _identity_capabilities(self, identity: str) -> set[str]:
+        normalized_identity = str(identity or "").strip().lower()
+        if not normalized_identity:
+            return set()
+
+        cached = self._identity_capability_cache.get(normalized_identity)
+        now = time.time()
+        if cached is not None:
+            values, expires_at = cached
+            if now < float(expires_at):
+                return set(values)
+
+        api = getattr(self, "api", None)
+        if api is None:
+            return set()
+        try:
+            grants = api.list_identity_capabilities(normalized_identity)
+        except Exception:
+            return set()
+        normalized = {
+            str(value or "").strip().lower() for value in grants if value
+        }
+        self._identity_capability_cache[normalized_identity] = (
+            normalized,
+            now + IDENTITY_CAPABILITY_CACHE_TTL_SECONDS,
+        )
+        return normalized
+
+    def _identity_supports_r3akt(self, identity: str) -> bool:
+        capabilities = self._identity_capabilities(identity)
+        return "r3akt" in capabilities
+
+    def _prune_mission_change_fanout_cache(self) -> None:
+        now = time.time()
+        stale = [
+            uid
+            for uid, expires_at in self._mission_change_fanout_cache.items()
+            if now >= float(expires_at)
+        ]
+        for uid in stale:
+            self._mission_change_fanout_cache.pop(uid, None)
+
+    def _mark_mission_change_fanned_out(self, mission_change_uid: str) -> None:
+        uid = str(mission_change_uid or "").strip()
+        if not uid:
+            return
+        self._prune_mission_change_fanout_cache()
+        self._mission_change_fanout_cache[uid] = time.time() + 24 * 60 * 60
+
+    def _has_mission_change_been_fanned_out(self, mission_change_uid: str) -> bool:
+        uid = str(mission_change_uid or "").strip()
+        if not uid:
+            return False
+        self._prune_mission_change_fanout_cache()
+        expires_at = self._mission_change_fanout_cache.get(uid)
+        if expires_at is None:
+            return False
+        return time.time() < float(expires_at)
+
+    @staticmethod
+    def _build_mission_change_event_field(
+        *,
+        mission_uid: str,
+        mission_change_uid: str,
+        change_type: str | None,
+    ) -> dict[str, object]:
+        return {
+            "event_type": "mission.registry.mission_change.upserted",
+            "payload": {
+                "mission_uid": mission_uid,
+                "mission_change_uid": mission_change_uid,
+                "change_type": change_type,
+            },
+        }
+
+    @staticmethod
+    def _build_r3akt_delta_custom_fields(
+        *,
+        mission_uid: str,
+        mission_change: dict[str, Any],
+        delta: dict[str, Any],
+    ) -> dict[int | str, object]:
+        return {
+            R3AKT_CUSTOM_TYPE_FIELD: R3AKT_CUSTOM_TYPE_IDENTIFIER,
+            R3AKT_CUSTOM_DATA_FIELD: {
+                "mission_uid": mission_uid,
+                "mission_change": mission_change,
+                "delta": delta,
+            },
+            R3AKT_CUSTOM_META_FIELD: {
+                "version": R3AKT_CUSTOM_META_VERSION,
+                "event_type": "mission.registry.mission_change.upserted",
+                "mission_uid": mission_uid,
+                "encoding": "json",
+                "source": "rch",
+            },
+        }
+
+    def _fanout_mission_change_to_recipients(
+        self, mission_change: dict[str, Any]
+    ) -> None:
+        if not isinstance(mission_change, dict):
+            return
+        mission_uid = str(
+            mission_change.get("mission_uid")
+            or mission_change.get("mission_id")
+            or ""
+        ).strip()
+        mission_change_uid = str(mission_change.get("uid") or "").strip()
+        if not mission_uid or not mission_change_uid:
+            return
+        if self._has_mission_change_been_fanned_out(mission_change_uid):
+            return
+
+        domain = getattr(self, "mission_domain_service", None)
+        if domain is None:
+            return
+        try:
+            destinations = domain.list_mission_team_member_identities(mission_uid)
+        except (KeyError, ValueError):
+            return
+        if not destinations:
+            return
+        deduped_destinations = [
+            value
+            for value in dict.fromkeys(
+                str(identity or "").strip().lower() for identity in destinations if identity
+            )
+            if value
+        ]
+        if not deduped_destinations:
+            return
+
+        delta = mission_change.get("delta")
+        delta_payload = dict(delta) if isinstance(delta, dict) else {}
+        resolver = MissionDeltaNameResolver(domain)
+        base_event_fields = {
+            LXMF.FIELD_EVENT: self._build_mission_change_event_field(
+                mission_uid=mission_uid,
+                mission_change_uid=mission_change_uid,
+                change_type=mission_change.get("change_type"),
+            )
+        }
+
+        markdown_body = render_mission_delta_markdown(
+            mission_uid=mission_uid,
+            mission_change=mission_change,
+            delta=delta_payload,
+            resolver=resolver,
+        )
+        concise_body = (
+            f"r3akt mission delta {mission_uid} {mission_change_uid}".strip()
+        )
+        for destination in deduped_destinations:
+            if self._identity_supports_r3akt(destination):
+                custom_fields = self._build_r3akt_delta_custom_fields(
+                    mission_uid=mission_uid,
+                    mission_change=mission_change,
+                    delta=delta_payload,
+                )
+                merged_fields = self._merge_standard_fields(
+                    source_fields=None,
+                    extra_fields={**base_event_fields, **custom_fields},
+                )
+                self.send_message(
+                    concise_body,
+                    destination=destination,
+                    fields=merged_fields,
+                )
+                continue
+
+            merged_fields = self._merge_standard_fields(
+                source_fields=None,
+                extra_fields={
+                    **base_event_fields,
+                    MARKDOWN_RENDERER_FIELD: MARKDOWN_RENDERER_VALUE,
+                },
+            )
+            self.send_message(
+                markdown_body,
+                destination=destination,
+                fields=merged_fields,
+            )
+
+        self._mark_mission_change_fanned_out(mission_change_uid)
+
+    def _fanout_mission_team_events(
+        self,
+        mission_replies: list[Any],
+        *,
+        source_fields: dict | None,
+    ) -> None:
+        if not mission_replies:
+            return
+        domain = getattr(self, "mission_domain_service", None)
+        if domain is None:
+            return
+        for reply in mission_replies:
+            fields = getattr(reply, "fields", None)
+            if not isinstance(fields, dict):
+                continue
+            event_field = fields.get(LXMF.FIELD_EVENT)
+            if not isinstance(event_field, dict):
+                continue
+            mission_uid = self._extract_mission_uid_from_response_fields(fields)
+            if not mission_uid:
+                continue
+            try:
+                destinations = domain.list_mission_team_member_identities(mission_uid)
+            except (KeyError, ValueError):
+                continue
+            if not destinations:
+                continue
+            extra_fields = self._augment_r3akt_custom_fields(fields)
+            outbound_fields = self._merge_standard_fields(
+                source_fields=source_fields,
+                extra_fields=extra_fields,
+            )
+            payload_text = f"r3akt mission event {event_field.get('event_type') or ''}".strip()
+            for destination in destinations:
+                if not destination:
+                    continue
+                self.send_message(
+                    payload_text,
+                    destination=destination,
+                    fields=outbound_fields,
+                )
 
     def register_message_listener(
         self, listener: Callable[[dict[str, object]], None]
@@ -2056,6 +2587,20 @@ class ReticulumTelemetryHub:
         return False
 
     @staticmethod
+    def _mission_commands_affect_subscribers(commands: list[dict] | None) -> bool:
+        """Return True when mission-sync commands modify subscriber mappings."""
+
+        if not commands:
+            return False
+        for command in commands:
+            if not isinstance(command, dict):
+                continue
+            command_type = command.get("command_type")
+            if command_type == "topic.subscribe":
+                return True
+        return False
+
+    @staticmethod
     def _connection_hex(connection: RNS.Destination) -> str | None:
         identity = getattr(connection, "identity", None)
         hash_bytes = getattr(identity, "hash", None)
@@ -3119,6 +3664,11 @@ class ReticulumTelemetryHub:
             return
         self._shutdown = True
         self.stop_daemon_workers()
+        if self._remove_mission_change_listener is not None:
+            try:
+                self._remove_mission_change_listener()
+            finally:
+                self._remove_mission_change_listener = None
         if self._announce_handler is not None:
             self._announce_handler.close()
             self._announce_handler = None

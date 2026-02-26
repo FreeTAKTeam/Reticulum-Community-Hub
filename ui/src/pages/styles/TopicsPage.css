@@ -1,0 +1,212 @@
+﻿.topics-registry {
+  --neon: #37f2ff;
+  --neon-soft: rgba(55, 242, 255, 0.35);
+  --neon-dark: rgba(9, 40, 52, 0.95);
+  --panel-dark: rgba(4, 12, 22, 0.96);
+  --panel-light: rgba(10, 30, 45, 0.94);
+  --amber: #ffb35c;
+  --amber-soft: rgba(255, 179, 92, 0.25);
+  --danger: rgba(255, 104, 104, 0.8);
+  color: #dffcff;
+  font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
+}
+
+
+.tree-search input {
+  width: 100%;
+  background: rgba(6, 16, 25, 0.85);
+  border: 1px solid rgba(55, 242, 255, 0.3);
+  color: #d8fbff;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tree-search input::placeholder {
+  color: rgba(209, 251, 255, 0.4);
+}
+
+.tree-list {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.tree-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  background: rgba(7, 18, 28, 0.6);
+  color: rgba(213, 251, 255, 0.9);
+  padding: 8px 10px;
+  padding-left: calc(10px + (var(--depth) * 12px));
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 11px;
+  transition: all 0.2s ease;
+}
+
+.tree-item:hover {
+  border-color: rgba(55, 242, 255, 0.35);
+}
+
+.tree-item.active {
+  border-color: rgba(55, 242, 255, 0.65);
+  background: rgba(55, 242, 255, 0.12);
+  box-shadow: 0 0 16px rgba(55, 242, 255, 0.25);
+}
+
+.tree-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--neon);
+  box-shadow: 0 0 10px var(--neon);
+}
+
+.tree-count {
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  background: rgba(10, 20, 30, 0.6);
+}
+
+.tree-empty {
+  padding: 14px;
+  border: 1px dashed rgba(55, 242, 255, 0.3);
+  border-radius: 10px;
+  text-align: center;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: rgba(209, 251, 255, 0.6);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.registry-card {
+  position: relative;
+  padding: 16px 16px 12px;
+  min-height: 190px;
+}
+
+.registry-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.registry-card-title {
+  font-size: 16px;
+  color: #e6feff;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.registry-card-subtitle {
+  font-size: 11px;
+  color: rgba(190, 246, 255, 0.7);
+  margin-top: 4px;
+}
+
+
+.registry-card-meta {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+  font-family: "Rajdhani", "Barlow", sans-serif;
+  font-size: 12px;
+  color: rgba(220, 251, 255, 0.85);
+}
+
+.registry-card-meta div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.registry-card-desc {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  color: rgba(220, 251, 255, 0.7);
+}
+
+.registry-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.panel-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.panel-empty {
+  grid-column: 1 / -1;
+  padding: 18px;
+  border: 1px dashed rgba(55, 242, 255, 0.25);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-size: 12px;
+  color: rgba(210, 251, 255, 0.65);
+}
+
+.mono {
+  font-family: "JetBrains Mono", "Cascadia Mono", monospace;
+}
+
+
+@media (max-width: 1100px) {
+  .registry-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .registry-top {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+
+  .registry-status {
+    justify-content: center;
+  }
+
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .panel-tabs {
+    align-self: flex-start;
+  }
+}

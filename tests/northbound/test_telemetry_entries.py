@@ -54,6 +54,36 @@ def test_list_telemetry_entries_returns_latest(tmp_path) -> None:
     assert entries[0]["peer_destination"] == "peer-1"
 
 
+def test_list_telemetry_entries_collapses_history_per_peer(tmp_path) -> None:
+    """Ensure only the most recent telemetry entry per peer is returned."""
+
+    api = _build_api(tmp_path)
+    controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
+    now = datetime.now(timezone.utc)
+
+    older = int(now.timestamp()) - 30
+    newer = int(now.timestamp())
+    payload_old = {
+        SID_TIME: older,
+        SID_LOCATION: build_location_payload(older),
+    }
+    payload_new = {
+        SID_TIME: newer,
+        SID_LOCATION: build_location_payload(newer),
+    }
+
+    controller.save_telemetry(payload_old, "peer-1", timestamp=datetime.fromtimestamp(older, tz=timezone.utc))
+    controller.save_telemetry(payload_new, "peer-1", timestamp=now)
+    controller.save_telemetry(payload_new, "peer-2", timestamp=now)
+
+    entries = controller.list_telemetry_entries(since=older - 10)
+    by_peer = {entry["peer_destination"]: entry for entry in entries}
+
+    assert len(entries) == 2
+    assert by_peer["peer-1"]["timestamp"] == newer
+    assert by_peer["peer-2"]["timestamp"] == newer
+
+
 def test_list_telemetry_entries_filters_by_topic(tmp_path) -> None:
     """Ensure telemetry entries respect topic filtering."""
 

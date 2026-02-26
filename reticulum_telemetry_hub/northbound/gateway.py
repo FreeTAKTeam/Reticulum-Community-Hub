@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import threading
 import time
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ class GatewayHub(Protocol):
     event_log: object
     command_manager: Optional[object]
     marker_service: Optional[object]
+    mission_domain_service: Optional[object]
 
     def dispatch_northbound_message(
         self,
@@ -99,6 +101,22 @@ def _build_log_levels() -> dict[str, int]:
         "info": getattr(RNS, "LOG_INFO", 3),
         "debug": getattr(RNS, "LOG_DEBUG", default_level),
     }
+
+
+def _is_api_port_available(host: str, port: int) -> bool:
+    """Return whether the API host/port can be bound by this process."""
+
+    normalized_host = str(host or DEFAULT_API_HOST).strip() or DEFAULT_API_HOST
+    normalized_port = int(port)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((normalized_host, normalized_port))
+        except OSError:
+            return False
+
+    return True
 
 
 def _parse_args() -> argparse.Namespace:
@@ -331,6 +349,7 @@ def build_gateway_app(
         message_dispatcher=hub.dispatch_northbound_message,
         marker_dispatcher=hub.dispatch_marker_event,
         marker_service=getattr(hub, "marker_service", None),
+        mission_domain_service=getattr(hub, "mission_domain_service", None),
         origin_rch=getattr(hub, "_origin_rch_hex", lambda: "")(),
         message_listener=hub.register_message_listener,
         started_at=started_at or datetime.now(timezone.utc),
@@ -527,6 +546,16 @@ def main() -> None:
         f"Gateway configuration loaded in {config_elapsed:.2f}s",
         getattr(RNS, "LOG_NOTICE", 3),
     )
+    if not _is_api_port_available(config.api_host, config.api_port):
+        RNS.log(
+            (
+                "Gateway startup aborted: "
+                f"{config.api_host}:{config.api_port} is already in use."
+            ),
+            getattr(RNS, "LOG_ERROR", 1),
+        )
+        raise SystemExit(1)
+
     config_manager = HubConfigurationManager(
         storage_path=config.storage_path,
         config_path=config.config_path,

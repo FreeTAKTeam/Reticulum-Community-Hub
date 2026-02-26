@@ -24,11 +24,18 @@ transport-agnostic integrations.
 
 - **LXMF commands**: inbound LXMF messages are normalized by the command manager,
   validated, applied via the API service, and replied to over LXMF.
+- **Mission/checklist sync envelopes**: inbound `FIELD_COMMANDS` payloads with
+  `command_type` are routed through `mission_sync` and `checklist_sync` with
+  persisted capability ACL checks and standardized accepted/rejected/result
+  envelopes in `FIELD_RESULTS`.
 - **Telemetry**: telemetry fields are decoded and stored in `telemetry.db`.
   Telemetry requests return a `FIELD_TELEMETRY_STREAM` payload, optionally
   filtered by topic.
 - **Northbound API**: REST endpoints map to the same command and storage paths,
   while WebSocket streams read from the event log and telemetry broadcaster.
+  Canonical join/leave routes are exposed at `/RCH` with `/RTH` retained as a
+  compatibility alias. Checklist lifecycle routes are exposed under
+  `/checklists/*` and R3AKT registry routes under `/api/r3akt/*`.
 - **Operational zones**: zone create/list/update/delete requests are validated
   by `ZoneService` and persisted to the `zones` store for WebMap polygon
   overlays and mission-area awareness.
@@ -105,6 +112,15 @@ RCH supports operator-managed polygon zones used by the WebMap UI.
   maximum of 200 points, and non-self-intersecting polygons.
 - Northbound REST exposes CRUD endpoints under `/api/zones` for UI and
   automation clients.
+
+## R3AKT Domain Persistence
+
+RCH persists R3AKT mission/checklist domain aggregates in `r3akt_*` tables
+within `rth_api.sqlite`, including:
+
+- Mission/team/member/asset/skill/assignment registries.
+- Checklist templates, columns, tasks, cells, and feed publications.
+- Immutable domain events and snapshots with time-based retention.
 
 ## Reference documents
 

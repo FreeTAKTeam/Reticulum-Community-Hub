@@ -39,6 +39,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import T
 from reticulum_telemetry_hub.reticulum_server.appearance import (
     build_telemetry_icon_appearance_value,
 )
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from tests.factories import (
     build_complex_telemeter_payload,
     create_connection_map_sensor,
@@ -281,6 +282,67 @@ def test_telemetry_request_denies_unsubscribed_sender(tmp_path, telemetry_db_eng
 
     reply = controller.handle_command(cmd, command_msg, dst)
     assert reply.content_as_string().startswith("Telemetry request denied")
+
+
+def test_telemetry_request_unknown_topic_returns_empty_snapshot(
+    tmp_path, telemetry_db_engine
+):
+    api = ReticulumTelemetryHubAPI(config_manager=_make_config_manager(tmp_path))
+    controller = TelemetryController(engine=telemetry_db_engine, api=api)
+
+    peer_identity = RNS.Identity()
+    peer_dest = peer_identity.hash.hex()
+    payload = build_complex_telemeter_payload(timestamp=int(time.time()))
+    controller.save_telemetry(payload, peer_dest)
+
+    src = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    command_msg = LXMF.LXMessage(dst, src)
+    cmd = {
+        TelemetryController.TELEMETRY_REQUEST: int(time.time()) - 5,
+        "TopicID": "missing-topic",
+    }
+
+    reply = controller.handle_command(cmd, command_msg, dst)
+    assert reply is not None
+    unpacked = _decode_stream_entries(reply.fields[LXMF.FIELD_TELEMETRY_STREAM])
+    assert unpacked == []
+
+
+def test_telemetry_request_event_metadata_excludes_payload(tmp_path) -> None:
+    event_log = EventLog()
+    controller = TelemetryController(
+        db_path=tmp_path / "telemetry.db",
+        event_log=event_log,
+    )
+
+    payload = build_complex_telemeter_payload(timestamp=int(time.time()))
+    peer_dest = "cc" * 16
+    controller.save_telemetry(payload, peer_dest)
+
+    src = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    command_msg = LXMF.LXMessage(dst, src)
+    cmd = {TelemetryController.TELEMETRY_REQUEST: int(time.time()) - 5}
+
+    reply = controller.handle_command(cmd, command_msg, dst)
+    assert reply is not None
+
+    telemetry_events = [
+        event for event in event_log.list_events() if event.get("type") == "telemetry_request"
+    ]
+    assert telemetry_events
+    metadata = telemetry_events[0].get("metadata", {})
+    assert metadata.get("entry_count") == 1
+    assert "payload" not in metadata
 
 
 def test_humanize_returns_time_and_location_values(telemetry_controller):

@@ -1,0 +1,1522 @@
+﻿asyncapi: "2.6.0"
+id: "urn:r3akt:asyncapi:mission-sync-lxmf"
+info:
+  title: "R3AKT Mission Sync LXMF Contract"
+  version: "0.1.0"
+  description: >
+    Data Sync contract mapped to current RCH/R3AKT terms and supported operations:
+    Feed -> Mission, Chatroom -> Topic.
+    Only endpoints currently present in ReticulumCommunityHub-OAS are included.
+defaultContentType: application/json
+tags:
+  - name: mission
+    description: Mission lifecycle and synchronization.
+  - name: topic
+    description: Topic (chatroom) lifecycle.
+  - name: content
+    description: Mission content operations.
+servers:
+  reticulum_lxmf:
+    protocol: lxmf
+    description: Reticulum LXMF transport for mission-sync commands and events.
+    bindings:
+      x-lxmf:
+        delivery: at-least-once
+        propagation_nodes: supported
+        encryption: reticulum-e2e
+        signature: required
+        field_constants:
+          FIELD_COMMANDS: "0x09"
+          FIELD_RESULTS: "0x0A"
+          FIELD_GROUP: "0x0B"
+          FIELD_EVENT: "0x0D"
+          FIELD_RENDERER: "0x0F"
+          FIELD_CUSTOM_TYPE: "0xFB"
+          FIELD_CUSTOM_DATA: "0xFC"
+          FIELD_CUSTOM_META: "0xFD"
+        x-r3akt-client-contract:
+          canonical_mission_key: mission_uid
+          mission_id_alias: mission_id
+          idempotency_key: mission_change.uid
+          delivery_semantics: at-least-once
+          dedupe_required: true
+channels:
+  r3akt.mission.commands:
+    description: Mission-sync commands (`FIELD_COMMANDS` / `0x09`).
+    x-lxmf-fields:
+      required:
+        - FIELD_COMMANDS
+      optional:
+        - FIELD_GROUP
+    publish:
+      operationId: publishMissionCommand
+      message:
+        oneOf:
+          - $ref: "#/components/messages/MissionJoinCommand"
+          - $ref: "#/components/messages/MissionLeaveCommand"
+          - $ref: "#/components/messages/MissionEventsListCommand"
+          - $ref: "#/components/messages/MissionMessageSendCommand"
+          - $ref: "#/components/messages/TopicListCommand"
+          - $ref: "#/components/messages/TopicCreateCommand"
+          - $ref: "#/components/messages/TopicPatchCommand"
+          - $ref: "#/components/messages/TopicDeleteCommand"
+          - $ref: "#/components/messages/TopicSubscribeCommand"
+          - $ref: "#/components/messages/MarkerListCommand"
+          - $ref: "#/components/messages/MarkerCreateCommand"
+          - $ref: "#/components/messages/MarkerPositionUpdateCommand"
+          - $ref: "#/components/messages/ZoneListCommand"
+          - $ref: "#/components/messages/ZoneCreateCommand"
+          - $ref: "#/components/messages/ZonePatchCommand"
+          - $ref: "#/components/messages/ZoneDeleteCommand"
+          - $ref: "#/components/messages/MissionRegistryUpsertCommand"
+          - $ref: "#/components/messages/MissionRegistryGetCommand"
+          - $ref: "#/components/messages/MissionRegistryListCommand"
+          - $ref: "#/components/messages/MissionRegistryPatchCommand"
+          - $ref: "#/components/messages/MissionRegistryDeleteCommand"
+          - $ref: "#/components/messages/MissionRegistryParentSetCommand"
+          - $ref: "#/components/messages/MissionChangeUpsertCommand"
+          - $ref: "#/components/messages/MissionChangeListCommand"
+          - $ref: "#/components/messages/LogEntryUpsertCommand"
+          - $ref: "#/components/messages/LogEntryListCommand"
+          - $ref: "#/components/messages/TeamUpsertCommand"
+          - $ref: "#/components/messages/TeamGetCommand"
+          - $ref: "#/components/messages/TeamListCommand"
+          - $ref: "#/components/messages/TeamDeleteCommand"
+          - $ref: "#/components/messages/TeamMissionLinkCommand"
+          - $ref: "#/components/messages/TeamMissionUnlinkCommand"
+          - $ref: "#/components/messages/MissionRegistryZoneLinkCommand"
+          - $ref: "#/components/messages/MissionRegistryZoneUnlinkCommand"
+          - $ref: "#/components/messages/MissionRegistryRdeSetCommand"
+          - $ref: "#/components/messages/TeamMemberUpsertCommand"
+          - $ref: "#/components/messages/TeamMemberGetCommand"
+          - $ref: "#/components/messages/TeamMemberListCommand"
+          - $ref: "#/components/messages/TeamMemberDeleteCommand"
+          - $ref: "#/components/messages/TeamMemberClientLinkCommand"
+          - $ref: "#/components/messages/TeamMemberClientUnlinkCommand"
+          - $ref: "#/components/messages/AssetUpsertCommand"
+          - $ref: "#/components/messages/AssetGetCommand"
+          - $ref: "#/components/messages/AssetListCommand"
+          - $ref: "#/components/messages/AssetDeleteCommand"
+          - $ref: "#/components/messages/SkillUpsertCommand"
+          - $ref: "#/components/messages/SkillListCommand"
+          - $ref: "#/components/messages/TeamMemberSkillUpsertCommand"
+          - $ref: "#/components/messages/TeamMemberSkillListCommand"
+          - $ref: "#/components/messages/TaskSkillRequirementUpsertCommand"
+          - $ref: "#/components/messages/TaskSkillRequirementListCommand"
+          - $ref: "#/components/messages/AssignmentUpsertCommand"
+          - $ref: "#/components/messages/AssignmentListCommand"
+          - $ref: "#/components/messages/AssignmentAssetSetCommand"
+          - $ref: "#/components/messages/AssignmentAssetLinkCommand"
+          - $ref: "#/components/messages/AssignmentAssetUnlinkCommand"
+  r3akt.mission.replies:
+    description: Mission-sync command outcomes (`FIELD_RESULTS` / `0x0A`).
+    x-lxmf-fields:
+      required:
+        - FIELD_RESULTS
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeMissionReplies
+      message:
+        oneOf:
+          - $ref: "#/components/messages/CommandAccepted"
+          - $ref: "#/components/messages/CommandRejected"
+          - $ref: "#/components/messages/CommandResult"
+  r3akt.mission.events:
+    description: Mission domain events and snapshots (`FIELD_EVENT` / `0x0D`).
+    x-lxmf-fields:
+      required:
+        - FIELD_EVENT
+      optional:
+        - FIELD_GROUP
+        - FIELD_RENDERER
+        - FIELD_CUSTOM_TYPE
+        - FIELD_CUSTOM_DATA
+        - FIELD_CUSTOM_META
+    x-lxmf-custom-profile:
+      r3akt:
+        required:
+          - FIELD_CUSTOM_TYPE
+          - FIELD_CUSTOM_DATA
+          - FIELD_CUSTOM_META
+        custom_type: r3akt.mission.change.v1
+      generic_lxmf:
+        description: Clients without explicit R3AKT capability consume markdown body updates.
+        required:
+          - FIELD_EVENT
+          - FIELD_RENDERER
+        renderer: RENDERER_MARKDOWN
+        markdown_profile:
+          heading: "### Mission {mission_name}"
+          max_body_bytes: 700
+          no_raw_uids_in_body: true
+    subscribe:
+      operationId: subscribeMissionEvents
+      message:
+        oneOf:
+          - $ref: "#/components/messages/MissionEvent"
+          - $ref: "#/components/messages/MissionDeltaEvent"
+          - $ref: "#/components/messages/MissionSnapshot"
+components:
+  messages:
+    MissionJoinCommand:
+      name: MissionJoinCommand
+      x-http-operation: "POST /RCH"
+      x-capability-required:
+        - mission.join
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.join
+              args: { $ref: "#/components/schemas/IdentityArgs" }
+            required: [command_type, args]
+    MissionLeaveCommand:
+      name: MissionLeaveCommand
+      x-http-operation: "PUT /RCH"
+      x-capability-required:
+        - mission.leave
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.leave
+              args: { $ref: "#/components/schemas/IdentityArgs" }
+            required: [command_type, args]
+    MissionEventsListCommand:
+      name: MissionEventsListCommand
+      x-http-operation: "GET /Events"
+      x-capability-required:
+        - mission.audit.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.events.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    MissionMessageSendCommand:
+      name: MissionMessageSendCommand
+      x-http-operation: "POST /Message"
+      x-capability-required:
+        - mission.message.send
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.message.send
+              args: { $ref: "#/components/schemas/MessageSendArgs" }
+            required: [command_type, args]
+    TopicListCommand:
+      name: TopicListCommand
+      x-http-operation: "GET /Topic"
+      x-capability-required:
+        - topic.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: topic.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    TopicCreateCommand:
+      name: TopicCreateCommand
+      x-http-operation: "POST /Topic"
+      x-capability-required:
+        - topic.create
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: topic.create
+              args: { $ref: "#/components/schemas/TopicWriteArgs" }
+            required: [command_type, args]
+    TopicPatchCommand:
+      name: TopicPatchCommand
+      x-http-operation: "PATCH /Topic"
+      x-capability-required:
+        - topic.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: topic.patch
+              args: { $ref: "#/components/schemas/TopicWriteArgs" }
+            required: [command_type, args]
+    TopicDeleteCommand:
+      name: TopicDeleteCommand
+      x-http-operation: "DELETE /Topic"
+      x-capability-required:
+        - topic.delete
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: topic.delete
+              args: { $ref: "#/components/schemas/TopicIdArgs" }
+            required: [command_type, args]
+    TopicSubscribeCommand:
+      name: TopicSubscribeCommand
+      x-http-operation: "POST /Topic/Subscribe"
+      x-capability-required:
+        - topic.subscribe
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: topic.subscribe
+              args: { $ref: "#/components/schemas/TopicSubscribeArgs" }
+            required: [command_type, args]
+    MarkerListCommand:
+      name: MarkerListCommand
+      x-http-operation: "GET /api/markers"
+      x-capability-required:
+        - mission.content.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.marker.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    MarkerCreateCommand:
+      name: MarkerCreateCommand
+      x-http-operation: "POST /api/markers"
+      x-capability-required:
+        - mission.content.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.marker.create
+              args: { $ref: "#/components/schemas/MarkerCreateArgs" }
+            required: [command_type, args]
+    MarkerPositionUpdateCommand:
+      name: MarkerPositionUpdateCommand
+      x-http-operation: "PATCH /api/markers/{object_destination_hash}/position"
+      x-capability-required:
+        - mission.content.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.marker.position.patch
+              args: { $ref: "#/components/schemas/MarkerPositionArgs" }
+            required: [command_type, args]
+    ZoneListCommand:
+      name: ZoneListCommand
+      x-http-operation: "GET /api/zones"
+      x-capability-required:
+        - mission.zone.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.zone.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    ZoneCreateCommand:
+      name: ZoneCreateCommand
+      x-http-operation: "POST /api/zones"
+      x-capability-required:
+        - mission.zone.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.zone.create
+              args: { $ref: "#/components/schemas/ZoneWriteArgs" }
+            required: [command_type, args]
+    ZonePatchCommand:
+      name: ZonePatchCommand
+      x-http-operation: "PATCH /api/zones/{zone_id}"
+      x-capability-required:
+        - mission.zone.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.zone.patch
+              args: { $ref: "#/components/schemas/ZoneWriteArgs" }
+            required: [command_type, args]
+    ZoneDeleteCommand:
+      name: ZoneDeleteCommand
+      x-http-operation: "DELETE /api/zones/{zone_id}"
+      x-capability-required:
+        - mission.zone.delete
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.zone.delete
+              args: { $ref: "#/components/schemas/ZoneIdArgs" }
+            required: [command_type, args]
+    MissionRegistryUpsertCommand:
+      name: MissionRegistryUpsertCommand
+      x-http-operation: "POST /api/r3akt/missions"
+      x-capability-required:
+        - mission.registry.mission.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    MissionRegistryGetCommand:
+      name: MissionRegistryGetCommand
+      x-http-operation: "GET /api/r3akt/missions/{mission_uid}"
+      x-capability-required:
+        - mission.registry.mission.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.get
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid]
+                properties:
+                  mission_uid: { type: string }
+                  expand_topic: { type: boolean }
+                  expand:
+                    description: >
+                      Mission related entities to include. Can be an array of tokens
+                      or a comma-separated string. Supported values: topic, teams,
+                      team_members, assets, mission_changes, log_entries, assignments,
+                      checklists, mission_rde, all.
+                    oneOf:
+                      - type: array
+                        items: { type: string }
+                      - type: string
+            required: [command_type, args]
+    MissionRegistryListCommand:
+      name: MissionRegistryListCommand
+      x-http-operation: "GET /api/r3akt/missions"
+      x-capability-required:
+        - mission.registry.mission.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  expand_topic: { type: boolean }
+                  expand:
+                    description: >
+                      Mission related entities to include. Can be an array of tokens
+                      or a comma-separated string. Supported values: topic, teams,
+                      team_members, assets, mission_changes, log_entries, assignments,
+                      checklists, mission_rde, all.
+                    oneOf:
+                      - type: array
+                        items: { type: string }
+                      - type: string
+            required: [command_type, args]
+    MissionRegistryPatchCommand:
+      name: MissionRegistryPatchCommand
+      x-http-operation: "PATCH /api/r3akt/missions/{mission_uid}"
+      x-capability-required:
+        - mission.registry.mission.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.patch
+              args:
+                type: object
+                additionalProperties: true
+                required: [mission_uid]
+                properties:
+                  mission_uid: { type: string }
+            required: [command_type, args]
+    MissionRegistryDeleteCommand:
+      name: MissionRegistryDeleteCommand
+      x-http-operation: "DELETE /api/r3akt/missions/{mission_uid}"
+      x-capability-required:
+        - mission.registry.mission.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.delete
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid]
+                properties:
+                  mission_uid: { type: string }
+            required: [command_type, args]
+    MissionRegistryParentSetCommand:
+      name: MissionRegistryParentSetCommand
+      x-http-operation: "PUT /api/r3akt/missions/{mission_uid}/parent"
+      x-capability-required:
+        - mission.registry.mission.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.parent.set
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid]
+                properties:
+                  mission_uid: { type: string }
+                  parent_uid: { type: string }
+            required: [command_type, args]
+    MissionChangeUpsertCommand:
+      name: MissionChangeUpsertCommand
+      x-http-operation: "POST /api/r3akt/mission-changes"
+      x-capability-required:
+        - mission.registry.log.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission_change.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    MissionChangeListCommand:
+      name: MissionChangeListCommand
+      x-http-operation: "GET /api/r3akt/mission-changes"
+      x-capability-required:
+        - mission.registry.log.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission_change.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  mission_uid: { type: string }
+            required: [command_type, args]
+    LogEntryUpsertCommand:
+      name: LogEntryUpsertCommand
+      x-http-operation: "POST /api/r3akt/log-entries"
+      x-capability-required:
+        - mission.registry.log.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.log_entry.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    LogEntryListCommand:
+      name: LogEntryListCommand
+      x-http-operation: "GET /api/r3akt/log-entries"
+      x-capability-required:
+        - mission.registry.log.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.log_entry.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  mission_uid: { type: string }
+                  marker_ref: { type: string }
+            required: [command_type, args]
+    TeamUpsertCommand:
+      name: TeamUpsertCommand
+      x-http-operation: "POST /api/r3akt/teams"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    TeamGetCommand:
+      name: TeamGetCommand
+      x-http-operation: "GET /api/r3akt/teams/{team_uid}"
+      x-capability-required:
+        - mission.registry.team.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team.get
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_uid]
+                properties:
+                  team_uid: { type: string }
+            required: [command_type, args]
+    TeamListCommand:
+      name: TeamListCommand
+      x-http-operation: "GET /api/r3akt/teams"
+      x-capability-required:
+        - mission.registry.team.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  mission_uid: { type: string }
+            required: [command_type, args]
+    TeamDeleteCommand:
+      name: TeamDeleteCommand
+      x-http-operation: "DELETE /api/r3akt/teams/{team_uid}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team.delete
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_uid]
+                properties:
+                  team_uid: { type: string }
+            required: [command_type, args]
+    TeamMissionLinkCommand:
+      name: TeamMissionLinkCommand
+      x-http-operation: "PUT /api/r3akt/teams/{team_uid}/missions/{mission_uid}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team.mission.link
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_uid, mission_uid]
+                properties:
+                  team_uid: { type: string }
+                  mission_uid: { type: string }
+            required: [command_type, args]
+    TeamMissionUnlinkCommand:
+      name: TeamMissionUnlinkCommand
+      x-http-operation: "DELETE /api/r3akt/teams/{team_uid}/missions/{mission_uid}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team.mission.unlink
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_uid, mission_uid]
+                properties:
+                  team_uid: { type: string }
+                  mission_uid: { type: string }
+            required: [command_type, args]
+    MissionRegistryZoneLinkCommand:
+      name: MissionRegistryZoneLinkCommand
+      x-http-operation: "PUT /api/r3akt/missions/{mission_uid}/zones/{zone_id}"
+      x-capability-required:
+        - mission.zone.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.zone.link
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid, zone_id]
+                properties:
+                  mission_uid: { type: string }
+                  zone_id: { type: string }
+            required: [command_type, args]
+    MissionRegistryZoneUnlinkCommand:
+      name: MissionRegistryZoneUnlinkCommand
+      x-http-operation: "DELETE /api/r3akt/missions/{mission_uid}/zones/{zone_id}"
+      x-capability-required:
+        - mission.zone.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.zone.unlink
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid, zone_id]
+                properties:
+                  mission_uid: { type: string }
+                  zone_id: { type: string }
+            required: [command_type, args]
+    MissionRegistryRdeSetCommand:
+      name: MissionRegistryRdeSetCommand
+      x-http-operation: "PUT /api/r3akt/missions/{mission_uid}/rde"
+      x-capability-required:
+        - mission.registry.mission.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.rde.set
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid, role]
+                properties:
+                  mission_uid: { type: string }
+                  role: { type: string }
+            required: [command_type, args]
+    TeamMemberUpsertCommand:
+      name: TeamMemberUpsertCommand
+      x-http-operation: "POST /api/r3akt/team-members"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    TeamMemberGetCommand:
+      name: TeamMemberGetCommand
+      x-http-operation: "GET /api/r3akt/team-members/{team_member_uid}"
+      x-capability-required:
+        - mission.registry.team.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.get
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_member_uid]
+                properties:
+                  team_member_uid: { type: string }
+            required: [command_type, args]
+    TeamMemberListCommand:
+      name: TeamMemberListCommand
+      x-http-operation: "GET /api/r3akt/team-members"
+      x-capability-required:
+        - mission.registry.team.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  team_uid: { type: string }
+            required: [command_type, args]
+    TeamMemberDeleteCommand:
+      name: TeamMemberDeleteCommand
+      x-http-operation: "DELETE /api/r3akt/team-members/{team_member_uid}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.delete
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_member_uid]
+                properties:
+                  team_member_uid: { type: string }
+            required: [command_type, args]
+    TeamMemberClientLinkCommand:
+      name: TeamMemberClientLinkCommand
+      x-http-operation: "PUT /api/r3akt/team-members/{team_member_uid}/clients/{client_identity}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.client.link
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_member_uid, client_identity]
+                properties:
+                  team_member_uid: { type: string }
+                  client_identity: { type: string }
+            required: [command_type, args]
+    TeamMemberClientUnlinkCommand:
+      name: TeamMemberClientUnlinkCommand
+      x-http-operation: "DELETE /api/r3akt/team-members/{team_member_uid}/clients/{client_identity}"
+      x-capability-required:
+        - mission.registry.team.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member.client.unlink
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_member_uid, client_identity]
+                properties:
+                  team_member_uid: { type: string }
+                  client_identity: { type: string }
+            required: [command_type, args]
+    AssetUpsertCommand:
+      name: AssetUpsertCommand
+      x-http-operation: "POST /api/r3akt/assets"
+      x-capability-required:
+        - mission.registry.asset.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.asset.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    AssetGetCommand:
+      name: AssetGetCommand
+      x-http-operation: "GET /api/r3akt/assets/{asset_uid}"
+      x-capability-required:
+        - mission.registry.asset.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.asset.get
+              args:
+                type: object
+                additionalProperties: false
+                required: [asset_uid]
+                properties:
+                  asset_uid: { type: string }
+            required: [command_type, args]
+    AssetListCommand:
+      name: AssetListCommand
+      x-http-operation: "GET /api/r3akt/assets"
+      x-capability-required:
+        - mission.registry.asset.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.asset.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  team_member_uid: { type: string }
+            required: [command_type, args]
+    AssetDeleteCommand:
+      name: AssetDeleteCommand
+      x-http-operation: "DELETE /api/r3akt/assets/{asset_uid}"
+      x-capability-required:
+        - mission.registry.asset.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.asset.delete
+              args:
+                type: object
+                additionalProperties: false
+                required: [asset_uid]
+                properties:
+                  asset_uid: { type: string }
+            required: [command_type, args]
+    SkillUpsertCommand:
+      name: SkillUpsertCommand
+      x-http-operation: "POST /api/r3akt/skills"
+      x-capability-required:
+        - mission.registry.skill.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.skill.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    SkillListCommand:
+      name: SkillListCommand
+      x-http-operation: "GET /api/r3akt/skills"
+      x-capability-required:
+        - mission.registry.skill.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.skill.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    TeamMemberSkillUpsertCommand:
+      name: TeamMemberSkillUpsertCommand
+      x-http-operation: "POST /api/r3akt/team-member-skills"
+      x-capability-required:
+        - mission.registry.skill.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member_skill.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    TeamMemberSkillListCommand:
+      name: TeamMemberSkillListCommand
+      x-http-operation: "GET /api/r3akt/team-member-skills"
+      x-capability-required:
+        - mission.registry.skill.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.team_member_skill.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  team_member_rns_identity: { type: string }
+            required: [command_type, args]
+    TaskSkillRequirementUpsertCommand:
+      name: TaskSkillRequirementUpsertCommand
+      x-http-operation: "POST /api/r3akt/task-skill-requirements"
+      x-capability-required:
+        - mission.registry.skill.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.task_skill_requirement.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    TaskSkillRequirementListCommand:
+      name: TaskSkillRequirementListCommand
+      x-http-operation: "GET /api/r3akt/task-skill-requirements"
+      x-capability-required:
+        - mission.registry.skill.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.task_skill_requirement.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  task_uid: { type: string }
+            required: [command_type, args]
+    AssignmentUpsertCommand:
+      name: AssignmentUpsertCommand
+      x-http-operation: "POST /api/r3akt/assignments"
+      x-capability-required:
+        - mission.registry.assignment.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.assignment.upsert
+              args:
+                type: object
+                additionalProperties: true
+            required: [command_type, args]
+    AssignmentListCommand:
+      name: AssignmentListCommand
+      x-http-operation: "GET /api/r3akt/assignments"
+      x-capability-required:
+        - mission.registry.assignment.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.assignment.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  mission_uid: { type: string }
+                  task_uid: { type: string }
+            required: [command_type, args]
+    AssignmentAssetSetCommand:
+      name: AssignmentAssetSetCommand
+      x-http-operation: "PUT /api/r3akt/assignments/{assignment_uid}/assets"
+      x-capability-required:
+        - mission.registry.assignment.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.assignment.asset.set
+              args:
+                type: object
+                additionalProperties: false
+                required: [assignment_uid, assets]
+                properties:
+                  assignment_uid: { type: string }
+                  assets:
+                    type: array
+                    items: { type: string }
+            required: [command_type, args]
+    AssignmentAssetLinkCommand:
+      name: AssignmentAssetLinkCommand
+      x-http-operation: "PUT /api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}"
+      x-capability-required:
+        - mission.registry.assignment.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.assignment.asset.link
+              args:
+                type: object
+                additionalProperties: false
+                required: [assignment_uid, asset_uid]
+                properties:
+                  assignment_uid: { type: string }
+                  asset_uid: { type: string }
+            required: [command_type, args]
+    AssignmentAssetUnlinkCommand:
+      name: AssignmentAssetUnlinkCommand
+      x-http-operation: "DELETE /api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}"
+      x-capability-required:
+        - mission.registry.assignment.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.assignment.asset.unlink
+              args:
+                type: object
+                additionalProperties: false
+                required: [assignment_uid, asset_uid]
+                properties:
+                  assignment_uid: { type: string }
+                  asset_uid: { type: string }
+            required: [command_type, args]
+    CommandAccepted:
+      name: CommandAccepted
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, accepted_at]
+        properties:
+          command_id: { type: string }
+          correlation_id: { type: string }
+          status: { type: string, const: accepted }
+          accepted_at: { type: string, format: date-time }
+          by_identity: { type: string }
+    CommandRejected:
+      name: CommandRejected
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, reason_code]
+        properties:
+          command_id: { type: string }
+          correlation_id: { type: string }
+          status: { type: string, const: rejected }
+          reason_code:
+            type: string
+            enum: [unauthorized, invalid_payload, unknown_command, unsupported_operation, internal_error]
+          reason: { type: string }
+          required_capabilities:
+            type: array
+            items: { type: string }
+    CommandResult:
+      name: CommandResult
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, result]
+        properties:
+          command_id: { type: string }
+          correlation_id: { type: string }
+          status: { type: string, const: result }
+          result:
+            type: object
+            additionalProperties: true
+    MissionEvent:
+      name: MissionEvent
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        allOf:
+          - $ref: "../schemas/event.json"
+          - type: object
+            properties:
+              event_type:
+                type: string
+                enum:
+                  - mission.joined
+                  - mission.left
+                  - mission.events.listed
+                  - mission.message.sent
+                  - mission.topic.listed
+                  - mission.topic.created
+                  - mission.topic.updated
+                  - mission.topic.deleted
+                  - mission.topic.subscribed
+                  - mission.marker.listed
+                  - mission.marker.created
+                  - mission.marker.position.updated
+                  - mission.zone.listed
+                  - mission.zone.created
+                  - mission.zone.updated
+                  - mission.zone.deleted
+                  - mission.registry.mission.upserted
+                  - mission.registry.mission.retrieved
+                  - mission.registry.mission.listed
+                  - mission.registry.mission.updated
+                  - mission.registry.mission.deleted
+                  - mission.registry.mission.parent.updated
+                  - mission.registry.mission_change.upserted
+                  - mission.registry.mission_change.listed
+                  - mission.registry.log_entry.upserted
+                  - mission.registry.log_entry.listed
+                  - mission.registry.team.upserted
+                  - mission.registry.team.retrieved
+                  - mission.registry.team.listed
+                  - mission.registry.team.deleted
+                  - mission.registry.team.mission.linked
+                  - mission.registry.team.mission.unlinked
+                  - mission.registry.mission.zone.linked
+                  - mission.registry.mission.zone.unlinked
+                  - mission.registry.mission.rde.updated
+                  - mission.registry.team_member.upserted
+                  - mission.registry.team_member.retrieved
+                  - mission.registry.team_member.listed
+                  - mission.registry.team_member.deleted
+                  - mission.registry.team_member.client.linked
+                  - mission.registry.team_member.client.unlinked
+                  - mission.registry.asset.upserted
+                  - mission.registry.asset.retrieved
+                  - mission.registry.asset.listed
+                  - mission.registry.asset.deleted
+                  - mission.registry.skill.upserted
+                  - mission.registry.skill.listed
+                  - mission.registry.team_member_skill.upserted
+                  - mission.registry.team_member_skill.listed
+                  - mission.registry.task_skill_requirement.upserted
+                  - mission.registry.task_skill_requirement.listed
+                  - mission.registry.assignment.upserted
+                  - mission.registry.assignment.listed
+                  - mission.registry.assignment.asset.set
+                  - mission.registry.assignment.asset.linked
+                  - mission.registry.assignment.asset.unlinked
+              payload:
+                oneOf:
+                  - $ref: "#/components/schemas/Mission"
+                  - $ref: "#/components/schemas/Topic"
+                  - $ref: "#/components/schemas/MissionChange"
+                  - $ref: "#/components/schemas/MissionDelta"
+                  - $ref: "#/components/schemas/MarkerRef"
+                  - $ref: "#/components/schemas/ZoneRef"
+                  - type: object
+                    additionalProperties: true
+    MissionDeltaEvent:
+      name: MissionDeltaEvent
+      x-lxmf-field: FIELD_CUSTOM_DATA
+      x-lxmf-custom-type: r3akt.mission.change.v1
+      payload:
+        type: object
+        required: [mission_uid, mission_change, delta, contract_version]
+        properties:
+          mission_uid: { type: string }
+          mission_id:
+            type: string
+            deprecated: true
+            description: Legacy alias for mission_uid.
+          mission_change: { $ref: "#/components/schemas/MissionChange" }
+          delta: { $ref: "#/components/schemas/MissionDelta" }
+          contract_version:
+            type: string
+            const: r3akt.mission.change.v1
+          profile:
+            type: string
+            enum: [r3akt]
+      x-client-behavior:
+        idempotency_key: mission_change.uid
+        dedupe_required: true
+    MissionSnapshot:
+      name: MissionSnapshot
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        allOf:
+          - $ref: "../schemas/object.json"
+          - type: object
+            properties:
+              object_type: { const: mission.snapshot }
+              state: { $ref: "#/components/schemas/Mission" }
+            required: [object_type, state]
+  schemas:
+    MissionRole:
+      type: string
+      enum: [MISSION_OWNER, MISSION_SUBSCRIBER, MISSION_READONLY_SUBSCRIBER]
+    Mission:
+      type: object
+      required: [mission_uid, topic]
+      properties:
+        mission_uid: { type: string }
+        mission_id:
+          type: string
+          deprecated: true
+          description: Legacy alias for mission_uid.
+        name: { type: string }
+        description: { type: string }
+        topic: { $ref: "#/components/schemas/Topic" }
+        default_role: { $ref: "#/components/schemas/MissionRole" }
+        owner_role: { $ref: "#/components/schemas/MissionRole" }
+        invite_only: { type: boolean }
+    Topic:
+      type: object
+      required: [topic_id]
+      properties:
+        topic_id: { type: string }
+        topic_name: { type: string }
+        topic_path: { type: string }
+        topic_description: { type: string }
+    MissionChange:
+      type: object
+      required: [uid, mission_uid, timestamp]
+      properties:
+        uid: { type: string }
+        mission_uid: { type: string }
+        mission_id:
+          type: string
+          deprecated: true
+          description: Legacy alias for mission_uid.
+        timestamp: { type: string, format: date-time }
+        change_type: { type: string }
+        notes: { type: string }
+        team_member_rns_identity: { type: string }
+        delta: { $ref: "#/components/schemas/MissionDelta" }
+    MissionDelta:
+      type: object
+      required: [version, source_event_type, emitted_at]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          default: 1
+        contract_version:
+          type: string
+          const: r3akt.mission.change.v1
+        source_event_type: { type: string }
+        emitted_at: { type: string, format: date-time }
+        logs:
+          type: array
+          items: { $ref: "#/components/schemas/MissionLogDelta" }
+        assets:
+          type: array
+          items: { $ref: "#/components/schemas/MissionAssetDelta" }
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/MissionTaskDelta" }
+      additionalProperties: true
+    MissionLogDelta:
+      type: object
+      required: [op, entry_uid, mission_uid]
+      properties:
+        op:
+          type: string
+          enum: [upsert]
+        entry_uid: { type: string }
+        mission_uid: { type: string }
+        content: { type: string }
+        server_time: { type: string, format: date-time }
+        client_time: { type: string, format: date-time }
+        keywords:
+          type: array
+          items: { type: string }
+        content_hashes:
+          type: array
+          items: { type: string }
+      additionalProperties: true
+    MissionAssetDelta:
+      type: object
+      required: [op, asset_uid]
+      properties:
+        op:
+          type: string
+          enum: [upsert, delete]
+        asset_uid: { type: string }
+        team_member_uid: { type: string }
+        name: { type: string }
+        asset_type: { type: string }
+        status: { type: string }
+        location: { type: string }
+        notes: { type: string }
+      additionalProperties: true
+    MissionTaskDelta:
+      type: object
+      required: [op]
+      properties:
+        op:
+          type: string
+          enum:
+            - status_set
+            - row_added
+            - row_deleted
+            - row_style_set
+            - cell_set
+            - assignment_upsert
+            - assignment_assets_set
+            - assignment_asset_linked
+            - assignment_asset_unlinked
+        mission_uid: { type: string }
+        checklist_uid: { type: string }
+        task_uid: { type: string }
+        assignment_uid: { type: string }
+        previous_status: { type: string }
+        current_status: { type: string }
+        changed_by_team_member_rns_identity: { type: string }
+        changed_at: { type: string, format: date-time }
+        team_member_rns_identity: { type: string }
+        asset_uids:
+          type: array
+          items: { type: string }
+      additionalProperties: true
+    MarkerRef:
+      type: object
+      required: [marker_id]
+      properties:
+        marker_id: { type: string }
+        name: { type: string }
+        lat: { type: number }
+        lon: { type: number }
+    ZoneRef:
+      type: object
+      required: [zone_id]
+      properties:
+        zone_id: { type: string }
+        name: { type: string }
+    IdentityArgs:
+      type: object
+      additionalProperties: false
+      required: [identity]
+      properties:
+        identity: { type: string }
+    MessageSendArgs:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content: { type: string }
+        topic_id: { type: string }
+        destination: { type: string }
+    TopicIdArgs:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: { type: string }
+    TopicWriteArgs:
+      type: object
+      additionalProperties: false
+      required: [topic_id]
+      properties:
+        topic_id: { type: string }
+        topic_name: { type: string }
+        topic_path: { type: string }
+        topic_description: { type: string }
+    TopicSubscribeArgs:
+      type: object
+      additionalProperties: false
+      required: [topic_id]
+      properties:
+        topic_id: { type: string }
+        destination: { type: string }
+        reject_tests: { type: integer }
+        metadata:
+          type: object
+          additionalProperties: true
+    MarkerCreateArgs:
+      type: object
+      additionalProperties: true
+      properties:
+        name: { type: string }
+        symbol: { type: string }
+        marker_type: { type: string }
+        lat: { type: number }
+        lon: { type: number }
+    MarkerPositionArgs:
+      type: object
+      additionalProperties: false
+      required: [object_destination_hash, lat, lon]
+      properties:
+        object_destination_hash: { type: string }
+        lat: { type: number }
+        lon: { type: number }
+    ZoneWriteArgs:
+      type: object
+      additionalProperties: false
+      required: [zone_id]
+      properties:
+        zone_id: { type: string }
+        name: { type: string }
+        points:
+          type: array
+          minItems: 3
+          items:
+            type: object
+            required: [lat, lon]
+            properties:
+              lat: { type: number }
+              lon: { type: number }
+    ZoneIdArgs:
+      type: object
+      additionalProperties: false
+      required: [zone_id]
+      properties:
+        zone_id: { type: string }

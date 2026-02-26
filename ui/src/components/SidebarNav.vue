@@ -100,6 +100,8 @@ const { isCollapsed, isPinned } = storeToRefs(navStore);
 
 const navItems = [
   { label: "Home", to: "/", icon: "home" },
+  { label: "Missions", to: "/missions", icon: "missions" },
+  { label: "Checklists", to: "/checklists", icon: "checklists" },
   { label: "WebMap", to: "/webmap", icon: "map" },
   { label: "Topics", to: "/topics", icon: "topics" },
   { label: "Files", to: "/files", icon: "files" },
@@ -111,6 +113,20 @@ const navItems = [
 ];
 const navIcons: Record<string, string[]> = {
   home: ["M4 10.5L12 4l8 6.5", "M6 20v-6h12v6"],
+  missions: [
+    "M8 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
+    "M9 8h8",
+    "M9 12h8",
+    "M9 16h5",
+    "M4 7h2M4 12h2M4 17h2"
+  ],
+  checklists: [
+    "M8 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
+    "M9 9l1.5 1.5L13 8",
+    "M9 14l1.5 1.5L13 13",
+    "M15 9h3",
+    "M15 14h3"
+  ],
   map: ["M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2z", "M9 4v14", "M15 6v14"],
   topics: ["M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M5 12a7 7 0 0 1 14 0", "M8 12a4 4 0 0 1 8 0"],
   files: ["M7 4h7l5 5v11a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z", "M14 4v5h5"],
@@ -121,18 +137,24 @@ const navIcons: Record<string, string[]> = {
   connect: ["M10 13a3 3 0 0 1 0-4l2-2a3 3 0 0 1 4 4l-1 1", "M14 11a3 3 0 0 1 0 4l-2 2a3 3 0 0 1-4-4l1-1"]
 };
 
+const isActivePath = (path: string) => {
+  if (path === "/") {
+    return route.path === "/";
+  }
+  return route.path === path || route.path.startsWith(`${path}/`);
+};
+
 const navItemClass = (path: string) => {
   const base = "flex items-center rounded py-2 transition-colors hover:bg-rth-border";
   const layout = isCollapsed.value ? "justify-center px-2" : "gap-3 px-3";
-  const state =
-    route.path === path
-      ? "bg-rth-panel-muted text-rth-text border-l-2 border-rth-accent"
-      : "text-rth-muted border-l-2 border-transparent";
+  const state = isActivePath(path)
+    ? "bg-rth-panel-muted text-rth-text border-l-2 border-rth-accent"
+    : "text-rth-muted border-l-2 border-transparent";
   return `${base} ${layout} ${state}`;
 };
 
 const navIconClass = (path: string) => {
-  return route.path === path ? "text-rth-accent" : "text-rth-muted";
+  return isActivePath(path) ? "text-rth-accent" : "text-rth-muted";
 };
 
 const buildInfo = computed(() => {

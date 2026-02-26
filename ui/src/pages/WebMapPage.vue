@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="webmap-cosmos" :class="{ 'webmap-cosmos--sidebar-collapsed': markersPanelCollapsed }">
     <section class="webmap-main">
       <div class="webmap-stage">
@@ -64,7 +64,7 @@
           role="menu"
           @mousedown.stop
           @click.stop
-          @contextmenu.prevent
+          @contextmenu.prevent="dismissRadialMenus"
         >
           <button
             v-for="(item, index) in markerRadialMenuItems"
@@ -99,6 +99,51 @@
               />
             </svg>
             <span>{{ markerRadialMenuCenterLabel }}</span>
+          </button>
+        </div>
+        <div
+          v-if="zoneRadialMenuStyle && zoneRadialMenuZoneId"
+          ref="zoneRadialMenuRef"
+          class="webmap-marker-radial-menu webmap-zone-radial-menu"
+          :style="zoneRadialMenuStyle"
+          role="menu"
+          @mousedown.stop
+          @click.stop
+          @contextmenu.prevent="dismissRadialMenus"
+        >
+          <button
+            v-for="(item, index) in zoneRadialMenuItems"
+            :key="item.id"
+            type="button"
+            class="webmap-marker-radial-item"
+            :class="{ 'webmap-marker-radial-item--danger': item.action === 'delete' }"
+            :style="markerRadialMenuItemStyle(index, zoneRadialMenuItems.length)"
+            :title="item.label"
+            @click.stop="handleZoneRadialMenuItem(item)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                v-for="(segment, segmentIndex) in markerRadialIconPaths(item.icon)"
+                :key="`${item.id}-${segmentIndex}`"
+                :d="segment"
+              />
+            </svg>
+            <span>{{ item.label }}</span>
+          </button>
+          <button
+            type="button"
+            class="webmap-marker-radial-center"
+            title="Close"
+            @click.stop="closeZoneRadialMenu"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                v-for="(segment, segmentIndex) in markerRadialIconPaths('close')"
+                :key="`zone-center-${segmentIndex}`"
+                :d="segment"
+              />
+            </svg>
+            <span>Close</span>
           </button>
         </div>
 
@@ -203,6 +248,7 @@
 
         <div
           v-if="zonePromptOpen"
+          ref="zonePromptRef"
           class="webmap-rename-popover"
           :style="zonePromptStyle"
           @click.stop
@@ -222,6 +268,68 @@
             <button type="button" class="webmap-rename-btn" @click="closeZonePrompt">Cancel</button>
             <button type="button" class="webmap-rename-btn webmap-rename-btn--primary" @click="submitZonePrompt">
               {{ zonePromptBusy ? "Saving..." : "Save" }}
+            </button>
+          </div>
+        </div>
+        <div
+          v-if="zoneAssignOpen"
+          ref="zoneAssignPopoverRef"
+          class="webmap-rename-popover webmap-zone-assign-popover"
+          :style="zoneAssignStyle"
+          @click.stop
+          @contextmenu.prevent
+        >
+          <div class="webmap-rename-title">Assign Zone to Mission</div>
+          <select v-model="zoneAssignMissionUid" class="webmap-rename-input" :disabled="zoneAssignBusy || zoneAssignMissionsLoading">
+            <option value="" disabled>
+              {{ zoneAssignMissionsLoading ? "Loading missions..." : "Select mission" }}
+            </option>
+            <option v-for="mission in zoneAssignMissions" :key="mission.uid" :value="mission.uid">
+              {{ mission.name }}
+            </option>
+          </select>
+          <div class="webmap-rename-actions">
+            <button type="button" class="webmap-rename-btn" @click="closeZoneAssign">Cancel</button>
+            <button
+              type="button"
+              class="webmap-rename-btn webmap-rename-btn--primary"
+              :disabled="zoneAssignBusy || !zoneAssignMissionUid"
+              @click="submitZoneAssign"
+            >
+              {{ zoneAssignBusy ? "Assigning..." : "Assign" }}
+            </button>
+          </div>
+        </div>
+        <div
+          v-if="markerAssignOpen"
+          ref="markerAssignPopoverRef"
+          class="webmap-rename-popover webmap-zone-assign-popover"
+          :style="markerAssignStyle"
+          @click.stop
+          @contextmenu.prevent
+        >
+          <div class="webmap-rename-title">Assign Marker to Mission</div>
+          <select
+            v-model="markerAssignMissionUid"
+            class="webmap-rename-input"
+            :disabled="markerAssignBusy || markerAssignMissionsLoading"
+          >
+            <option value="" disabled>
+              {{ markerAssignMissionsLoading ? "Loading missions..." : "Select mission" }}
+            </option>
+            <option v-for="mission in markerAssignMissions" :key="mission.uid" :value="mission.uid">
+              {{ mission.name }}
+            </option>
+          </select>
+          <div class="webmap-rename-actions">
+            <button type="button" class="webmap-rename-btn" @click="closeMarkerAssign">Cancel</button>
+            <button
+              type="button"
+              class="webmap-rename-btn webmap-rename-btn--primary"
+              :disabled="markerAssignBusy || !markerAssignMissionUid"
+              @click="submitMarkerAssign"
+            >
+              {{ markerAssignBusy ? "Assigning..." : "Assign" }}
             </button>
           </div>
         </div>
@@ -330,7 +438,7 @@
             >
               <div class="webmap-list-name">{{ marker.name }}</div>
               <div class="webmap-list-meta">
-                {{ marker.category }} · {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}
+                {{ marker.category }} Â· {{ marker.lat.toFixed(4) }}, {{ marker.lon.toFixed(4) }}
               </div>
             </li>
           </ul>
@@ -371,7 +479,7 @@
                   </button>
                 </div>
               </div>
-              <div class="webmap-list-meta">{{ zone.points.length }} pts · {{ zoneAreaSummary(zone.points) }}</div>
+              <div class="webmap-list-meta">{{ zone.points.length }} pts Â· {{ zoneAreaSummary(zone.points) }}</div>
             </li>
           </ul>
         </div>
@@ -478,10 +586,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from "vue";
 import { ref } from "vue";
 import { storeToRefs } from "pinia";
 import maplibregl from "maplibre-gl";
+import type { DataDrivenPropertyValueSpecification, ExpressionSpecification } from "@maplibre/maplibre-gl-style-spec";
+import { get, put } from "../api/client";
+import { endpoints } from "../api/endpoints";
 import BaseButton from "../components/BaseButton.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import BaseInput from "../components/BaseInput.vue";
@@ -509,10 +620,11 @@ import { loadMdiSvg } from "../utils/mdi-icons";
 import { buildTelemetryIconId } from "../utils/telemetry-icons";
 import { resolveTelemetryIconValue } from "../utils/telemetry-icons";
 import type { TelemetryMarker } from "../utils/telemetry";
+import type { MissionRaw } from "../types/missions/raw";
 
 type ScreenPoint = { x: number; y: number };
-type MarkerRadialIcon = "edit" | "move" | "compass" | "delete" | "back" | "close";
-type MarkerRadialAction = "rename" | "move" | "compass" | "delete";
+type MarkerRadialIcon = "edit" | "move" | "compass" | "assign" | "delete" | "inspect" | "back" | "close";
+type MarkerRadialAction = "rename" | "move" | "compass" | "assign" | "delete" | "inspect";
 type MarkerRadialMenuNode = {
   id: string;
   label: string;
@@ -520,16 +632,35 @@ type MarkerRadialMenuNode = {
   action?: MarkerRadialAction;
   children?: MarkerRadialMenuNode[];
 };
-type MarkerRadialMenuProfile = "regular";
+type MarkerRadialMenuProfile = "regular" | "telemetry";
+type ZoneRadialAction = "rename" | "move" | "delete" | "assign";
+type ZoneRadialMenuNode = {
+  id: string;
+  label: string;
+  icon: MarkerRadialIcon;
+  action: ZoneRadialAction;
+};
+type ZoneMissionOption = {
+  uid: string;
+  name: string;
+};
 
 const markerRadialMenus: Record<MarkerRadialMenuProfile, MarkerRadialMenuNode[]> = {
   regular: [
     { id: "rename", label: "Edit", icon: "edit", action: "rename" },
     { id: "move", label: "Move", icon: "move", action: "move" },
     { id: "compass", label: "Compass", icon: "compass", action: "compass" },
+    { id: "assign", label: "Assign", icon: "assign", action: "assign" },
     { id: "delete", label: "Delete", icon: "delete", action: "delete" },
-  ]
+  ],
+  telemetry: [{ id: "inspect", label: "Inspect", icon: "inspect", action: "inspect" }],
 };
+const zoneRadialMenuItems: ZoneRadialMenuNode[] = [
+  { id: "rename", label: "Edit", icon: "edit", action: "rename" },
+  { id: "move", label: "Move", icon: "move", action: "move" },
+  { id: "assign", label: "Assign", icon: "assign", action: "assign" },
+  { id: "delete", label: "Delete", icon: "delete", action: "delete" },
+];
 
 const markerRadialIconMap: Record<MarkerRadialIcon, string[]> = {
   edit: [
@@ -548,12 +679,21 @@ const markerRadialIconMap: Record<MarkerRadialIcon, string[]> = {
     "M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18Z",
     "M15.6 8.4l-2.2 5-5 2.2 2.2-5 5-2.2Z",
   ],
+  assign: [
+    "M8.5 15.5a3 3 0 0 1 0-4.2l2.8-2.8a3 3 0 0 1 4.2 0",
+    "M15.5 8.5a3 3 0 0 1 0 4.2l-2.8 2.8a3 3 0 0 1-4.2 0",
+    "M9 15l6-6",
+  ],
   delete: [
     "M4 7h16",
     "M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2",
     "M7 7l1 13h8l1-13",
     "M10 11v6",
     "M14 11v6",
+  ],
+  inspect: [
+    "M1.5 12s4.5-7 10.5-7 10.5 7 10.5 7-4.5 7-10.5 7S1.5 12 1.5 12Z",
+    "M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6Z",
   ],
   back: ["M15 18l-6-6 6-6"],
   close: [
@@ -571,7 +711,7 @@ const navStore = useNavStore();
 const { isCollapsed: isNavCollapsed } = storeToRefs(navStore);
 const { mapView, showMarkerLabels } = storeToRefs(mapSettingsStore);
 const mapContainer = ref<HTMLDivElement | null>(null);
-const mapInstance = ref<maplibregl.Map | null>(null);
+const mapInstance = shallowRef<maplibregl.Map | null>(null);
 const mapReady = ref(false);
 const mapCoordinates = ref<{ lat: number; lon: number } | null>(null);
 const search = ref("");
@@ -612,6 +752,7 @@ const markerRenameValue = ref("");
 const markerRenamePosition = ref({ left: 12, top: 12 });
 const markerRenameBusy = ref(false);
 const markerRadialMenuRef = ref<HTMLDivElement | null>(null);
+const zoneRadialMenuRef = ref<HTMLDivElement | null>(null);
 const hoveredOperatorMarkerId = ref<string | null>(null);
 const hoveredOperatorMarkerPoint = ref<ScreenPoint | null>(null);
 const markerRadialMenuMarkerId = ref<string | null>(null);
@@ -637,6 +778,25 @@ const zonePromptZoneId = ref("");
 const zonePromptValue = ref("");
 const zonePromptPosition = ref({ left: 12, top: 12 });
 const zonePromptBusy = ref(false);
+const zonePromptRef = ref<HTMLDivElement | null>(null);
+const zoneRadialMenuZoneId = ref<string | null>(null);
+const zoneRadialMenuPoint = ref<ScreenPoint | null>(null);
+const zoneAssignOpen = ref(false);
+const zoneAssignZoneId = ref("");
+const zoneAssignMissionUid = ref("");
+const zoneAssignPosition = ref({ left: 12, top: 12 });
+const zoneAssignBusy = ref(false);
+const zoneAssignMissions = ref<ZoneMissionOption[]>([]);
+const zoneAssignMissionsLoading = ref(false);
+const zoneAssignPopoverRef = ref<HTMLDivElement | null>(null);
+const markerAssignOpen = ref(false);
+const markerAssignMarkerId = ref("");
+const markerAssignMissionUid = ref("");
+const markerAssignPosition = ref({ left: 12, top: 12 });
+const markerAssignBusy = ref(false);
+const markerAssignMissions = ref<ZoneMissionOption[]>([]);
+const markerAssignMissionsLoading = ref(false);
+const markerAssignPopoverRef = ref<HTMLDivElement | null>(null);
 const toolbarHoverHint = ref("");
 type MarkerTab = "operator" | "telemetry" | "zones";
 const activeMarkerTab = ref<MarkerTab>("operator");
@@ -661,6 +821,19 @@ const toTimestamp = (value?: string) => {
   }
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+const toZoneMissionOptions = (missions: MissionRaw[]): ZoneMissionOption[] => {
+  return missions
+    .map((entry) => {
+      const uid = String(entry.uid ?? "").trim();
+      if (!uid) {
+        return null;
+      }
+      const name = String(entry.mission_name ?? "").trim() || uid;
+      return { uid, name };
+    })
+    .filter((entry): entry is ZoneMissionOption => entry !== null)
+    .sort((left, right) => left.name.localeCompare(right.name));
 };
 const ensureMarkerSelection = () => {
   if (!markerSymbols.value.length) {
@@ -711,6 +884,14 @@ const zonePromptStyle = computed(() => ({
   left: `${zonePromptPosition.value.left}px`,
   top: `${zonePromptPosition.value.top}px`
 }));
+const zoneAssignStyle = computed(() => ({
+  left: `${zoneAssignPosition.value.left}px`,
+  top: `${zoneAssignPosition.value.top}px`
+}));
+const markerAssignStyle = computed(() => ({
+  left: `${markerAssignPosition.value.left}px`,
+  top: `${markerAssignPosition.value.top}px`
+}));
 const MARKER_RADIAL_MENU_EDGE_PADDING = 162;
 const MARKER_COMPASS_EDGE_PADDING = 176;
 const markerRadialIconPaths = (icon: MarkerRadialIcon) => markerRadialIconMap[icon] ?? [];
@@ -730,15 +911,43 @@ const clampPointToContainer = (point: ScreenPoint, padding = 0): ScreenPoint => 
 };
 const resolveMarkerScreenPoint = (markerId: string, fallback?: ScreenPoint): ScreenPoint | null => {
   const map = mapInstance.value;
-  const marker = markersStore.markerIndex.get(markerId);
-  if (!map || !marker) {
+  if (!map) {
     return fallback ?? null;
   }
-  const override = dragPositions.value.get(markerId);
-  const lat = override?.lat ?? marker.lat;
-  const lon = override?.lon ?? marker.lon;
-  const projected = map.project([lon, lat]);
-  return { x: projected.x, y: projected.y };
+  const marker = markersStore.markerIndex.get(markerId);
+  if (marker) {
+    const override = dragPositions.value.get(markerId);
+    const lat = override?.lat ?? marker.lat;
+    const lon = override?.lon ?? marker.lon;
+    const projected = map.project([lon, lat]);
+    return { x: projected.x, y: projected.y };
+  }
+  const telemetryMarker = markerIndex.value.get(markerId);
+  if (telemetryMarker) {
+    const projected = map.project([telemetryMarker.lon, telemetryMarker.lat]);
+    return { x: projected.x, y: projected.y };
+  }
+  return fallback ?? null;
+};
+const resolveMarkerType = (markerId: string): MarkerRadialMenuProfile | null => {
+  if (markersStore.markerIndex.has(markerId)) {
+    return "regular";
+  }
+  if (markerIndex.value.has(markerId)) {
+    return "telemetry";
+  }
+  return null;
+};
+const resolveMarkerLabel = (markerId: string): string => {
+  const operatorMarker = markersStore.markerIndex.get(markerId);
+  if (operatorMarker) {
+    return operatorMarker.name;
+  }
+  const telemetryMarker = markerIndex.value.get(markerId);
+  if (telemetryMarker) {
+    return telemetryMarker.name;
+  }
+  return "Marker";
 };
 const clearHoveredOperatorMarker = () => {
   hoveredOperatorMarkerId.value = null;
@@ -753,7 +962,60 @@ const closeMarkerRadialMenu = () => {
   markerRadialMenuPoint.value = null;
   markerRadialMenuPath.value = [];
 };
-const resolveMarkerRadialMenuProfile = (_markerId: string): MarkerRadialMenuProfile => "regular";
+const closeZoneRadialMenu = () => {
+  zoneRadialMenuZoneId.value = null;
+  zoneRadialMenuPoint.value = null;
+};
+const closeZoneAssign = () => {
+  zoneAssignOpen.value = false;
+  zoneAssignZoneId.value = "";
+  zoneAssignMissionUid.value = "";
+  zoneAssignBusy.value = false;
+};
+const closeMarkerAssign = () => {
+  markerAssignOpen.value = false;
+  markerAssignMarkerId.value = "";
+  markerAssignMissionUid.value = "";
+  markerAssignBusy.value = false;
+};
+const dismissRadialMenus = () => {
+  markerToolbarOpen.value = false;
+  closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
+  closeMarkerAssign();
+  markerMoveArmId.value = null;
+  closeMarkerCompass();
+  clearHoveredOperatorMarker();
+  if (markerRenameOpen.value) {
+    closeMarkerRename();
+  }
+  if (zonePromptOpen.value) {
+    closeZonePrompt();
+  }
+};
+const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
+  const anchored = resolveMarkerScreenPoint(markerId, point);
+  if (!anchored) {
+    return;
+  }
+  if (markerRadialMenuMarkerId.value === markerId) {
+    markerRadialMenuPoint.value = anchored;
+    hoveredOperatorMarkerId.value = markerId;
+    hoveredOperatorMarkerPoint.value = anchored;
+    return;
+  }
+  openMarkerRadialMenu(markerId, anchored);
+};
+const openHoverZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
+  if (zoneRadialMenuZoneId.value === zoneId) {
+    zoneRadialMenuPoint.value = point;
+    return;
+  }
+  openZoneRadialMenu(zoneId, point);
+};
+const resolveMarkerRadialMenuProfile = (markerId: string): MarkerRadialMenuProfile =>
+  resolveMarkerType(markerId) ?? "regular";
 const resolveMarkerRadialMenuLevel = (
   profile: MarkerRadialMenuProfile,
   path: string[]
@@ -792,6 +1054,16 @@ const markerRadialMenuStyle = computed(() => {
     top: `${clamped.y}px`
   };
 });
+const zoneRadialMenuStyle = computed(() => {
+  if (!zoneRadialMenuZoneId.value || !zoneRadialMenuPoint.value) {
+    return null;
+  }
+  const clamped = clampPointToContainer(zoneRadialMenuPoint.value, MARKER_RADIAL_MENU_EDGE_PADDING);
+  return {
+    left: `${clamped.x}px`,
+    top: `${clamped.y}px`
+  };
+});
 const markerReticleMarkerId = computed(() =>
   markerRadialMenuMarkerId.value ?? hoveredOperatorMarkerId.value ?? markerCompassMarkerId.value
 );
@@ -803,22 +1075,29 @@ const markerReticleLabel = computed(() => {
   if (!markerId) {
     return "";
   }
-  return markersStore.markerIndex.get(markerId)?.name ?? "Marker";
+  return resolveMarkerLabel(markerId);
 });
 const markerReticleSubLabel = computed(() => {
-  if (!markerReticleMarkerId.value) {
+  const markerId = markerReticleMarkerId.value;
+  if (!markerId) {
     return "";
   }
-  if (markerMoveArmId.value && markerMoveArmId.value === markerReticleMarkerId.value) {
+  if (markerMoveArmId.value && markerMoveArmId.value === markerId) {
     return "Move Armed";
   }
-  if (markerRadialMenuMarkerId.value && markerRadialMenuMarkerId.value === markerReticleMarkerId.value) {
+  if (markerRadialMenuMarkerId.value && markerRadialMenuMarkerId.value === markerId) {
     return "Command Menu";
   }
-  if (markerCompassMarkerId.value && markerCompassMarkerId.value === markerReticleMarkerId.value) {
+  if (markerCompassMarkerId.value && markerCompassMarkerId.value === markerId) {
     return "Compass Active";
   }
-  return "Operator Marker";
+  if (markersStore.markerIndex.has(markerId)) {
+    return "Operator Marker";
+  }
+  if (markerIndex.value.has(markerId)) {
+    return "User";
+  }
+  return "Marker";
 });
 const markerReticleStyle = computed(() => {
   const point = markerReticlePoint.value;
@@ -908,6 +1187,9 @@ const openMarkerRadialMenu = (markerId: string, point?: ScreenPoint) => {
   if (!anchored) {
     return;
   }
+  closeZoneRadialMenu();
+  closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   markerRadialMenuProfile.value = resolveMarkerRadialMenuProfile(markerId);
   markerRadialMenuPath.value = [];
@@ -916,6 +1198,24 @@ const openMarkerRadialMenu = (markerId: string, point?: ScreenPoint) => {
   hoveredOperatorMarkerId.value = markerId;
   hoveredOperatorMarkerPoint.value = anchored;
   markerMoveArmId.value = null;
+};
+const openZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
+  closeMarkerRadialMenu();
+  closeMarkerCompass();
+  markerMoveArmId.value = null;
+  closeZoneAssign();
+  closeMarkerAssign();
+  closeZonePrompt();
+  if (markerRenameOpen.value) {
+    closeMarkerRename();
+  }
+  markerToolbarOpen.value = false;
+  clearHoveredOperatorMarker();
+  selectedZoneId.value = zoneId;
+  activeMarkerTab.value = "zones";
+  zoneRadialMenuZoneId.value = zoneId;
+  zoneRadialMenuPoint.value = point;
+  renderZones();
 };
 const handleMarkerRadialMenuCenter = () => {
   if (!markerRadialMenuMarkerId.value) {
@@ -936,6 +1236,14 @@ const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
     markerRadialMenuPath.value = [...markerRadialMenuPath.value, item.id];
     return;
   }
+  if (item.action === "inspect") {
+    const telemetryMarker = markerIndex.value.get(markerId);
+    closeMarkerRadialMenu();
+    if (telemetryMarker) {
+      openInspector(telemetryMarker, true);
+    }
+    return;
+  }
   if (item.action === "rename") {
     const anchor = markerRadialMenuPoint.value ?? resolveMarkerScreenPoint(markerId);
     closeMarkerRadialMenu();
@@ -948,6 +1256,14 @@ const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
     markerMoveArmId.value = markerId;
     closeMarkerRadialMenu();
     toastStore.push("Press and hold this marker to move it.", "info");
+    return;
+  }
+  if (item.action === "assign") {
+    const anchor = markerRadialMenuPoint.value ?? resolveMarkerScreenPoint(markerId);
+    closeMarkerRadialMenu();
+    if (anchor) {
+      void openMarkerAssignPopover(markerId, anchor);
+    }
     return;
   }
   if (item.action === "delete") {
@@ -1157,6 +1473,9 @@ const applyFilters = async () => {
 const toggleZoneMode = () => {
   markerToolbarOpen.value = false;
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   markerMoveArmId.value = null;
   clearHoveredOperatorMarker();
@@ -1174,11 +1493,17 @@ const toggleZoneMode = () => {
 
 const toggleMarkerToolbar = () => {
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
+  closeMarkerAssign();
   markerToolbarOpen.value = !markerToolbarOpen.value;
 };
 
 const selectMarkerSymbol = (symbolId: string) => {
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   markerMoveArmId.value = null;
   markerCategory.value = symbolId;
@@ -1193,7 +1518,7 @@ const selectMarkerSymbol = (symbolId: string) => {
 const zoneAreaSummary = (points: GeoPoint[]) => {
   const area = polygonAreaSquareMeters(points);
   const km2 = area / 1_000_000;
-  return `${km2.toFixed(2)} km²`;
+  return `${km2.toFixed(2)} kmÂ²`;
 };
 
 const closeZonePrompt = () => {
@@ -1208,6 +1533,8 @@ const openZonePrompt = (
   mode: "create" | "rename",
   options: { zoneId?: string; value?: string; point?: { x: number; y: number } } = {}
 ) => {
+  closeZoneAssign();
+  closeMarkerAssign();
   const { zoneId = "", value = "", point = { x: 12, y: 12 } } = options;
   const container = mapContainer.value;
   if (!container) {
@@ -1222,6 +1549,163 @@ const openZonePrompt = (
   zonePromptValue.value = value;
   zonePromptPosition.value = { left, top };
   zonePromptOpen.value = true;
+};
+
+const loadZoneAssignMissions = async (): Promise<void> => {
+  zoneAssignMissionsLoading.value = true;
+  try {
+    const missions = await get<MissionRaw[]>(endpoints.r3aktMissions);
+    zoneAssignMissions.value = toZoneMissionOptions(missions);
+  } catch (error) {
+    zoneAssignMissions.value = [];
+    toastStore.push("Unable to load missions.", "danger");
+  } finally {
+    zoneAssignMissionsLoading.value = false;
+  }
+};
+
+const loadMarkerAssignMissions = async (): Promise<void> => {
+  markerAssignMissionsLoading.value = true;
+  try {
+    const missions = await get<MissionRaw[]>(endpoints.r3aktMissions);
+    markerAssignMissions.value = toZoneMissionOptions(missions);
+  } catch (error) {
+    markerAssignMissions.value = [];
+    toastStore.push("Unable to load missions.", "danger");
+  } finally {
+    markerAssignMissionsLoading.value = false;
+  }
+};
+
+const openMarkerAssignPopover = async (markerId: string, point: ScreenPoint) => {
+  const container = mapContainer.value;
+  if (!container) {
+    return;
+  }
+  closeZoneAssign();
+  closeMarkerAssign();
+  closeZoneRadialMenu();
+  closeZonePrompt();
+  if (markerRenameOpen.value) {
+    closeMarkerRename();
+  }
+  const width = 280;
+  const height = 148;
+  const left = Math.min(Math.max(point.x + 12, 12), Math.max(12, container.clientWidth - width - 12));
+  const top = Math.min(Math.max(point.y + 12, 12), Math.max(12, container.clientHeight - height - 12));
+  markerAssignMarkerId.value = markerId;
+  markerAssignMissionUid.value = "";
+  markerAssignPosition.value = { left, top };
+  markerAssignOpen.value = true;
+  await loadMarkerAssignMissions();
+  if (!markerAssignMissions.value.length) {
+    toastStore.push("No missions available for assignment.", "warning");
+    closeMarkerAssign();
+    return;
+  }
+  markerAssignMissionUid.value = markerAssignMissions.value[0].uid;
+};
+
+const submitMarkerAssign = async () => {
+  const markerId = markerAssignMarkerId.value.trim();
+  const missionUid = markerAssignMissionUid.value.trim();
+  if (!markerId || !missionUid || markerAssignBusy.value) {
+    return;
+  }
+  markerAssignBusy.value = true;
+  try {
+    await put(`${endpoints.r3aktMissions}/${encodeURIComponent(missionUid)}/markers/${encodeURIComponent(markerId)}`);
+    toastStore.push("Marker assigned to mission.", "success");
+    closeMarkerAssign();
+  } catch (error) {
+    toastStore.push("Unable to assign marker to mission.", "danger");
+  } finally {
+    markerAssignBusy.value = false;
+  }
+};
+
+const openZoneAssignPopover = async (zoneId: string, point: ScreenPoint) => {
+  const container = mapContainer.value;
+  if (!container) {
+    return;
+  }
+  closeZoneRadialMenu();
+  closeMarkerAssign();
+  closeZonePrompt();
+  if (markerRenameOpen.value) {
+    closeMarkerRename();
+  }
+  const width = 280;
+  const height = 148;
+  const left = Math.min(Math.max(point.x + 12, 12), Math.max(12, container.clientWidth - width - 12));
+  const top = Math.min(Math.max(point.y + 12, 12), Math.max(12, container.clientHeight - height - 12));
+  zoneAssignZoneId.value = zoneId;
+  zoneAssignMissionUid.value = "";
+  zoneAssignPosition.value = { left, top };
+  zoneAssignOpen.value = true;
+  await loadZoneAssignMissions();
+  if (!zoneAssignMissions.value.length) {
+    toastStore.push("No missions available for assignment.", "warning");
+    closeZoneAssign();
+    return;
+  }
+  zoneAssignMissionUid.value = zoneAssignMissions.value[0].uid;
+};
+
+const submitZoneAssign = async () => {
+  const zoneId = zoneAssignZoneId.value.trim();
+  const missionUid = zoneAssignMissionUid.value.trim();
+  if (!zoneId || !missionUid || zoneAssignBusy.value) {
+    return;
+  }
+  zoneAssignBusy.value = true;
+  try {
+    await put(`${endpoints.r3aktMissions}/${encodeURIComponent(missionUid)}/zones/${encodeURIComponent(zoneId)}`);
+    toastStore.push("Zone assigned to mission.", "success");
+    closeZoneAssign();
+  } catch (error) {
+    toastStore.push("Unable to assign zone to mission.", "danger");
+  } finally {
+    zoneAssignBusy.value = false;
+  }
+};
+
+const handleZoneRadialMenuItem = (item: ZoneRadialMenuNode) => {
+  const zoneId = zoneRadialMenuZoneId.value;
+  if (!zoneId) {
+    return;
+  }
+  if (item.action === "rename") {
+    closeZoneRadialMenu();
+    openZoneRename(zoneId);
+    return;
+  }
+  if (item.action === "move") {
+    closeZoneRadialMenu();
+    startZoneEdit(zoneId);
+    toastStore.push("Zone edit mode active. Drag vertices to reposition geometry.", "info");
+    return;
+  }
+  if (item.action === "delete") {
+    closeZoneRadialMenu();
+    void deleteZone(zoneId);
+    return;
+  }
+  if (item.action === "assign") {
+    let anchor = zoneRadialMenuPoint.value;
+    if (!anchor && mapInstance.value) {
+      const zone = zonesStore.zoneIndex.get(zoneId);
+      const centroid = zone ? (polygonCentroid(zone.points) ?? zone.points[0]) : null;
+      if (centroid) {
+        const projected = mapInstance.value.project([centroid.lon, centroid.lat]);
+        anchor = { x: projected.x, y: projected.y };
+      }
+    }
+    if (!anchor) {
+      return;
+    }
+    void openZoneAssignPopover(zoneId, anchor);
+  }
 };
 
 const completeZoneDraft = () => {
@@ -1277,6 +1761,9 @@ const startZoneEdit = (zoneId: string) => {
   if (!zone) {
     return;
   }
+  closeZoneRadialMenu();
+  closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerRadialMenu();
   closeMarkerCompass();
   markerMoveArmId.value = null;
@@ -1356,6 +1843,12 @@ const openZoneRename = (zoneId: string) => {
 
 const deleteZone = async (zoneId: string) => {
   try {
+    if (zoneRadialMenuZoneId.value === zoneId) {
+      closeZoneRadialMenu();
+    }
+    if (zoneAssignZoneId.value === zoneId) {
+      closeZoneAssign();
+    }
     await zonesStore.deleteZone(zoneId);
     if (selectedZoneId.value === zoneId) {
       selectedZoneId.value = "";
@@ -1386,6 +1879,7 @@ const openMarkerRename = (markerId: string, point: { x: number; y: number }) => 
   }
   closeMarkerRadialMenu();
   closeMarkerCompass();
+  closeMarkerAssign();
   markerMoveArmId.value = null;
   const width = 260;
   const height = 140;
@@ -1470,15 +1964,24 @@ const pointHitsRenderedLayer = (
   if (!existingLayers.length) {
     return false;
   }
-  return map.queryRenderedFeatures(point, { layers: existingLayers }).length > 0;
+  return map.queryRenderedFeatures([point.x, point.y], { layers: existingLayers }).length > 0;
 };
 
 const handleDocumentPointerDown = (event: MouseEvent) => {
   const target = event.target as Node | null;
-  if (zonePromptOpen.value) {
-    const prompt = document.querySelector(".webmap-rename-popover");
-    if (!target || !prompt || !prompt.contains(target)) {
+  if (zonePromptOpen.value && zonePromptRef.value) {
+    if (!target || !zonePromptRef.value.contains(target)) {
       closeZonePrompt();
+    }
+  }
+  if (zoneAssignOpen.value && zoneAssignPopoverRef.value) {
+    if (!target || !zoneAssignPopoverRef.value.contains(target)) {
+      closeZoneAssign();
+    }
+  }
+  if (markerAssignOpen.value && markerAssignPopoverRef.value) {
+    if (!target || !markerAssignPopoverRef.value.contains(target)) {
+      closeMarkerAssign();
     }
   }
   if (markerToolbarOpen.value && markerToolbarRef.value) {
@@ -1490,6 +1993,11 @@ const handleDocumentPointerDown = (event: MouseEvent) => {
     if (!target || !markerRadialMenuRef.value.contains(target)) {
       closeMarkerRadialMenu();
       markerMoveArmId.value = null;
+    }
+  }
+  if (zoneRadialMenuZoneId.value && zoneRadialMenuRef.value) {
+    if (!target || !zoneRadialMenuRef.value.contains(target)) {
+      closeZoneRadialMenu();
     }
   }
 };
@@ -1516,6 +2024,9 @@ const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
     return;
   }
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   markerMoveArmId.value = null;
   clearHoveredOperatorMarker();
@@ -1523,17 +2034,7 @@ const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
 };
 
 const handleMapClick = (event: maplibregl.MapMouseEvent) => {
-  markerToolbarOpen.value = false;
-  closeMarkerRadialMenu();
-  markerMoveArmId.value = null;
-  closeMarkerCompass();
-  clearHoveredOperatorMarker();
-  if (markerRenameOpen.value) {
-    closeMarkerRename();
-  }
-  if (zonePromptOpen.value) {
-    closeZonePrompt();
-  }
+  dismissRadialMenus();
   if (zoneMode.value) {
     const clickDetail = (event.originalEvent as MouseEvent | undefined)?.detail ?? 1;
     if (clickDetail > 1) {
@@ -1549,6 +2050,7 @@ const handleMapClick = (event: maplibregl.MapMouseEvent) => {
         "telemetry-cluster-count",
         "zone-fill",
         "zone-outline",
+        "zone-handle-hit",
         "zone-handle-vertices",
         "zone-handle-midpoints",
       ])
@@ -1575,6 +2077,12 @@ const handleMapClick = (event: maplibregl.MapMouseEvent) => {
     return;
   }
   void createMarkerAt(event.lngLat);
+};
+
+const handleMapContextMenu = (event: maplibregl.MapMouseEvent) => {
+  event.preventDefault();
+  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  dismissRadialMenus();
 };
 
 const handleMapDoubleClick = (event: maplibregl.MapMouseEvent) => {
@@ -1609,26 +2117,37 @@ const stopZoneVertexDrag = () => {
   zoneDraggingVertexIndex.value = null;
 };
 
-const startZoneVertexDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
-  if (!zoneEditingId.value || !mapInstance.value) {
+const startZoneVertexDrag = (event: maplibregl.MapLayerMouseEvent) => {
+  const map = mapInstance.value;
+  if (!zoneEditingId.value || !map) {
     return;
   }
-  const feature = event.features?.[0];
+  const pointerEvent = event.originalEvent as MouseEvent | undefined;
+  if (pointerEvent && pointerEvent.button !== 0) {
+    return;
+  }
+  const feature =
+    event.features?.[0] ??
+    map.queryRenderedFeatures([event.point.x, event.point.y], {
+      layers: ["zone-handle-hit", "zone-handle-vertices"],
+    })[0];
   const rawIndex = feature?.properties?.index;
   const index = typeof rawIndex === "string" ? Number(rawIndex) : Number(rawIndex);
   if (!Number.isInteger(index) || index < 0 || index >= zoneEditingPoints.value.length) {
     return;
   }
   event.preventDefault();
-  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  pointerEvent?.preventDefault?.();
+  pointerEvent?.stopPropagation?.();
   zoneDraggingVertexIndex.value = index;
-  mapInstance.value.dragPan.disable();
-  mapInstance.value.getCanvas().style.cursor = "move";
-  mapInstance.value.on("mousemove", handleZoneVertexDrag);
-  mapInstance.value.once("mouseup", stopZoneVertexDrag);
+  map.dragPan.disable();
+  map.getCanvas().style.cursor = "move";
+  map.on("mousemove", handleZoneVertexDrag);
+  map.once("mouseup", stopZoneVertexDrag);
+  map.once("mouseleave", stopZoneVertexDrag);
 };
 
-const handleZoneMidpointClick = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const handleZoneMidpointClick = (event: maplibregl.MapLayerMouseEvent) => {
   if (!zoneEditingId.value) {
     return;
   }
@@ -1645,7 +2164,7 @@ const handleZoneMidpointClick = (event: maplibregl.MapMouseEvent & maplibregl.Ev
   renderZones();
 };
 
-const handleZoneVertexContextMenu = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const handleZoneVertexContextMenu = (event: maplibregl.MapLayerMouseEvent) => {
   if (!zoneEditingId.value) {
     return;
   }
@@ -1665,6 +2184,12 @@ const handleZoneVertexContextMenu = (event: maplibregl.MapMouseEvent & maplibreg
   next.splice(index, 1);
   zoneEditingPoints.value = next;
   renderZones();
+};
+
+const handleZoneContextMenu = (event: maplibregl.MapLayerMouseEvent) => {
+  event.preventDefault();
+  (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  dismissRadialMenus();
 };
 
 const selectMarker = (marker: TelemetryMarker) => {
@@ -1779,9 +2304,17 @@ const ZONE_MIDPOINT_COLOR = "#6bb3ff";
 const ZONE_LABEL_TEXT_COLOR = "#f3fbff";
 const ZONE_LABEL_HALO_COLOR = "#06121E";
 
-const resolveMarkerLabelField = () => (showMarkerLabels.value ? ["get", "name"] : "");
+const resolveMarkerLabelField = (): DataDrivenPropertyValueSpecification<string> =>
+  showMarkerLabels.value ? (["get", "name"] as ExpressionSpecification) : "";
 
-const buildMarkerLabelLayout = () => ({
+const buildMarkerLabelLayout = (): {
+  "text-field": DataDrivenPropertyValueSpecification<string>;
+  "text-size": number;
+  "text-offset": [number, number];
+  "text-anchor": "top";
+  "text-allow-overlap": true;
+  "text-ignore-placement": true;
+} => ({
   "text-field": resolveMarkerLabelField(),
   "text-size": MARKER_LABEL_SIZE,
   "text-offset": MARKER_LABEL_OFFSET,
@@ -1796,16 +2329,18 @@ const markerLabelPaint = {
   "text-halo-width": MARKER_LABEL_HALO_WIDTH
 };
 
-const buildIconSizeExpression = (zoom: number) => {
-  return [
+const buildIconSizeExpression = (zoom: number): DataDrivenPropertyValueSpecification<number> => {
+  const expression: ExpressionSpecification = [
     "*",
     ["coalesce", ["get", "iconScale"], TELEMETRY_ICON_SCALE],
     resolveZoomScale(zoom)
   ];
+  return expression;
 };
 
-const buildTelemetryIconSizeExpression = (zoom: number) => {
-  return ["*", TELEMETRY_ICON_SCALE, resolveZoomScale(zoom)];
+const buildTelemetryIconSizeExpression = (zoom: number): DataDrivenPropertyValueSpecification<number> => {
+  const expression: ExpressionSpecification = ["*", TELEMETRY_ICON_SCALE, resolveZoomScale(zoom)];
+  return expression;
 };
 
 const applyMarkerLabelVisibility = () => {
@@ -2041,28 +2576,30 @@ const toZoneCoordinates = (points: GeoPoint[]) => {
 };
 
 const buildZoneFeatureCollection = () => {
+  const features = zonesStore.zones
+    .map((zone) => {
+      const points = zone.id === zoneEditingId.value ? zoneEditingPoints.value : zone.points;
+      if (points.length < 3) {
+        return null;
+      }
+      return {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: toZoneCoordinates(points),
+        },
+        properties: {
+          id: zone.id,
+          name: zone.name,
+          selected: selectedZoneId.value === zone.id ? 1 : 0,
+        },
+      } as GeoJSON.Feature<GeoJSON.Polygon>;
+    })
+    .filter((feature): feature is GeoJSON.Feature<GeoJSON.Polygon> => feature !== null);
+
   return {
     type: "FeatureCollection",
-    features: zonesStore.zones
-      .map((zone) => {
-        const points = zone.id === zoneEditingId.value ? zoneEditingPoints.value : zone.points;
-        if (points.length < 3) {
-          return null;
-        }
-        return {
-          type: "Feature",
-          geometry: {
-            type: "Polygon",
-            coordinates: toZoneCoordinates(points),
-          },
-          properties: {
-            id: zone.id,
-            name: zone.name,
-            selected: selectedZoneId.value === zone.id ? 1 : 0,
-          },
-        };
-      })
-      .filter((feature): feature is GeoJSON.Feature<GeoJSON.Polygon> => feature !== null),
+    features,
   } as GeoJSON.FeatureCollection;
 };
 
@@ -2181,7 +2718,7 @@ const buildZoneAreaLabelFeatureCollection = () => {
   } as GeoJSON.FeatureCollection;
 };
 
-const addLayerWithBefore = (map: maplibregl.Map, layer: maplibregl.AnyLayer, beforeId?: string) => {
+const addLayerWithBefore = (map: maplibregl.Map, layer: maplibregl.AddLayerObject, beforeId?: string) => {
   if (beforeId && map.getLayer(beforeId)) {
     map.addLayer(layer, beforeId);
     return;
@@ -2293,6 +2830,19 @@ const renderZones = () => {
       },
     });
   }
+  if (!map.getLayer("zone-handle-hit")) {
+    map.addLayer({
+      id: "zone-handle-hit",
+      type: "circle",
+      source: zoneHandleSourceId,
+      paint: {
+        "circle-radius": 12,
+        "circle-color": "#000000",
+        "circle-opacity": 0,
+        "circle-stroke-opacity": 0,
+      },
+    });
+  }
   if (!map.getLayer("zone-handle-vertices")) {
     map.addLayer({
       id: "zone-handle-vertices",
@@ -2340,13 +2890,53 @@ const renderZones = () => {
       activeMarkerTab.value = "zones";
       renderZones();
     });
+    map.on("contextmenu", "zone-fill", handleZoneContextMenu);
+    map.on("contextmenu", "zone-outline", handleZoneContextMenu);
+    map.on("mousemove", "zone-fill", (event) => {
+      if (zoneMode.value || zoneEditingId.value) {
+        return;
+      }
+      const zoneId = String(event.features?.[0]?.properties?.id ?? "").trim();
+      if (!zoneId) {
+        return;
+      }
+      openHoverZoneRadialMenu(zoneId, toScreenPoint(event.point));
+    });
+    map.on("mousemove", "zone-outline", (event) => {
+      if (zoneMode.value || zoneEditingId.value) {
+        return;
+      }
+      const zoneId = String(event.features?.[0]?.properties?.id ?? "").trim();
+      if (!zoneId) {
+        return;
+      }
+      openHoverZoneRadialMenu(zoneId, toScreenPoint(event.point));
+    });
+    map.on("mousedown", "zone-handle-hit", startZoneVertexDrag);
     map.on("mousedown", "zone-handle-vertices", startZoneVertexDrag);
     map.on("click", "zone-handle-midpoints", handleZoneMidpointClick);
+    map.on("contextmenu", "zone-handle-hit", handleZoneVertexContextMenu);
     map.on("contextmenu", "zone-handle-vertices", handleZoneVertexContextMenu);
     map.on("mouseenter", "zone-fill", () => {
       map.getCanvas().style.cursor = "pointer";
     });
     map.on("mouseleave", "zone-fill", () => {
+      if (zoneDraggingVertexIndex.value === null) {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+    map.on("mouseenter", "zone-outline", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "zone-outline", () => {
+      if (zoneDraggingVertexIndex.value === null) {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+    map.on("mouseenter", "zone-handle-hit", () => {
+      map.getCanvas().style.cursor = "move";
+    });
+    map.on("mouseleave", "zone-handle-hit", () => {
       if (zoneDraggingVertexIndex.value === null) {
         map.getCanvas().style.cursor = "";
       }
@@ -2371,7 +2961,7 @@ const renderZones = () => {
   }
 };
 
-const handleOperatorMarkerHoverMove = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const handleOperatorMarkerHoverMove = (event: maplibregl.MapLayerMouseEvent) => {
   const feature = event.features?.[0];
   const markerIdRaw = feature?.properties?.id;
   if (!markerIdRaw) {
@@ -2379,13 +2969,25 @@ const handleOperatorMarkerHoverMove = (event: maplibregl.MapMouseEvent & maplibr
   }
   const markerId = String(markerIdRaw);
   const anchored = resolveMarkerScreenPoint(markerId, toScreenPoint(event.point)) ?? toScreenPoint(event.point);
-  hoveredOperatorMarkerId.value = markerId;
-  hoveredOperatorMarkerPoint.value = anchored;
   if (!draggingMarkerId.value) {
+    openHoverMarkerRadialMenu(markerId, anchored);
     const cursor = markerMoveArmId.value && markerMoveArmId.value === markerId ? "move" : "pointer";
     if (mapInstance.value) {
       mapInstance.value.getCanvas().style.cursor = cursor;
     }
+  }
+};
+
+const handleTelemetryMarkerHoverMove = (event: maplibregl.MapLayerMouseEvent) => {
+  const feature = event.features?.[0];
+  const markerIdRaw = feature?.properties?.id;
+  if (!markerIdRaw) {
+    return;
+  }
+  const markerId = String(markerIdRaw);
+  openHoverMarkerRadialMenu(markerId, toScreenPoint(event.point));
+  if (!draggingMarkerId.value && mapInstance.value) {
+    mapInstance.value.getCanvas().style.cursor = "pointer";
   }
 };
 
@@ -2396,7 +2998,7 @@ const handleOperatorMarkerHoverLeave = () => {
   }
 };
 
-const startMarkerDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const startMarkerDrag = (event: maplibregl.MapLayerMouseEvent) => {
   if (!mapInstance.value) {
     return;
   }
@@ -2430,7 +3032,7 @@ const startMarkerDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData)
   mapInstance.value.once("mouseleave", finishMarkerDrag);
 };
 
-const handleMarkerDrag = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+const handleMarkerDrag = (event: maplibregl.MapMouseEvent) => {
   if (!draggingMarkerId.value) {
     return;
   }
@@ -2481,22 +3083,10 @@ const stopMarkerDrag = () => {
   markerMoveArmId.value = null;
 };
 
-const handleOperatorMarkerContextMenu = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
-  const feature = event.features?.[0];
-  const markerId = feature?.properties?.id;
-  if (!markerId) {
-    return;
-  }
+const handleOperatorMarkerContextMenu = (event: maplibregl.MapLayerMouseEvent) => {
   event.preventDefault();
   (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
-  markerToolbarOpen.value = false;
-  if (zonePromptOpen.value) {
-    closeZonePrompt();
-  }
-  if (markerRenameOpen.value) {
-    closeMarkerRename();
-  }
-  openMarkerRadialMenu(String(markerId), toScreenPoint(event.point));
+  dismissRadialMenus();
 };
 
 const renderTelemetryMarkers = () => {
@@ -2667,17 +3257,17 @@ const renderTelemetryMarkers = () => {
       if (!source) {
         return;
       }
-      source.getClusterExpansionZoom(Number(clusterId), (error, zoom) => {
-        if (error) {
-          return;
-        }
-        const geometry = feature?.geometry as GeoJSON.Point | undefined;
-        const coordinates = geometry?.coordinates as [number, number] | undefined;
-        if (!coordinates) {
-          return;
-        }
-        map.easeTo({ center: coordinates, zoom });
-      });
+      const geometry = feature?.geometry as GeoJSON.Point | undefined;
+      const coordinates = geometry?.coordinates as [number, number] | undefined;
+      if (!coordinates) {
+        return;
+      }
+      void source
+        .getClusterExpansionZoom(Number(clusterId))
+        .then((zoom) => {
+          map.easeTo({ center: coordinates, zoom });
+        })
+        .catch(() => undefined);
     });
     map.on("mouseenter", clusterLayerId, () => {
       map.getCanvas().style.cursor = "pointer";
@@ -2709,6 +3299,7 @@ const renderTelemetryMarkers = () => {
     map.on("mouseenter", layerId, () => {
       map.getCanvas().style.cursor = "pointer";
     });
+    map.on("mousemove", layerId, handleTelemetryMarkerHoverMove);
     map.on("mouseleave", layerId, () => {
       map.getCanvas().style.cursor = "";
     });
@@ -2895,17 +3486,17 @@ const renderOperatorMarkers = () => {
       if (!source) {
         return;
       }
-      source.getClusterExpansionZoom(Number(clusterId), (error, zoom) => {
-        if (error) {
-          return;
-        }
-        const geometry = feature?.geometry as GeoJSON.Point | undefined;
-        const coordinates = geometry?.coordinates as [number, number] | undefined;
-        if (!coordinates) {
-          return;
-        }
-        map.easeTo({ center: coordinates, zoom });
-      });
+      const geometry = feature?.geometry as GeoJSON.Point | undefined;
+      const coordinates = geometry?.coordinates as [number, number] | undefined;
+      if (!coordinates) {
+        return;
+      }
+      void source
+        .getClusterExpansionZoom(Number(clusterId))
+        .then((zoom) => {
+          map.easeTo({ center: coordinates, zoom });
+        })
+        .catch(() => undefined);
     });
     map.on("mouseenter", clusterLayerId, () => {
       clearHoveredOperatorMarker();
@@ -2941,6 +3532,20 @@ const loadMarkerSymbols = async () => {
   }
 };
 
+const handleMapLoaded = async (symbolsPromise: Promise<void>) => {
+  mapReady.value = true;
+  await symbolsPromise;
+  await loadMarkerImages();
+  renderMarkers();
+  mapInstance.value?.on("click", handleMapClick);
+  mapInstance.value?.on("contextmenu", handleMapContextMenu);
+  mapInstance.value?.on("dblclick", handleMapDoubleClick);
+  mapInstance.value?.on("mousemove", handleMapPointerMove);
+  mapInstance.value?.on("mouseleave", handleMapPointerLeave);
+  mapInstance.value?.on("zoomend", handleClusterZoom);
+  mapInstance.value?.on("moveend", persistMapView);
+};
+
 onMounted(async () => {
   const symbolsPromise = loadMarkerSymbols();
   if (mapContainer.value) {
@@ -2952,17 +3557,8 @@ onMounted(async () => {
       center: [initialView.lon, initialView.lat],
       zoom: initialView.zoom
     });
-    mapInstance.value.on("load", async () => {
-      mapReady.value = true;
-      await symbolsPromise;
-      await loadMarkerImages();
-      renderMarkers();
-      mapInstance.value?.on("click", handleMapClick);
-      mapInstance.value?.on("dblclick", handleMapDoubleClick);
-      mapInstance.value?.on("mousemove", handleMapPointerMove);
-      mapInstance.value?.on("mouseleave", handleMapPointerLeave);
-      mapInstance.value?.on("zoomend", handleClusterZoom);
-      mapInstance.value?.on("moveend", persistMapView);
+    mapInstance.value.on("load", () => {
+      void handleMapLoaded(symbolsPromise);
     });
   }
   await telemetry.fetchTelemetry(sinceSeconds());
@@ -3012,6 +3608,7 @@ onUnmounted(() => {
     mapInstance.value.off("zoom", handleMarkerZoom);
     mapInstance.value.off("moveend", persistMapView);
     mapInstance.value.off("click", handleMapClick);
+    mapInstance.value.off("contextmenu", handleMapContextMenu);
     mapInstance.value.off("dblclick", handleMapDoubleClick);
     mapInstance.value.off("mousemove", handleMapPointerMove);
     mapInstance.value.off("mouseleave", handleMapPointerLeave);
@@ -3022,875 +3619,16 @@ onUnmounted(() => {
   window.removeEventListener("scroll", handleInspectorViewportChange);
   window.removeEventListener("mousedown", handleDocumentPointerDown);
   closeMarkerRadialMenu();
+  closeZoneRadialMenu();
+  closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   clearHoveredOperatorMarker();
   stopDrag();
   stopMarkerDrag();
 });
 </script>
-<style scoped>
-.webmap-cosmos {
-  --wm-neon: #3bf4ff;
-  --wm-neon-soft: rgba(59, 244, 255, 0.24);
-  --wm-panel: rgba(4, 14, 24, 0.92);
-  --wm-panel-alt: rgba(7, 22, 36, 0.9);
-  --wm-amber: #ffb35c;
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
-  gap: 14px;
-  min-height: 0;
-  color: #e2fcff;
-  font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
-}
+<style scoped src="./styles/WebMapPage.css"></style>
 
-.webmap-cosmos--sidebar-collapsed {
-  grid-template-columns: minmax(0, 1fr);
-}
 
-.webmap-main {
-  min-width: 0;
-}
-
-.webmap-stage {
-  position: relative;
-  height: clamp(520px, 74vh, 860px);
-  border-radius: 18px;
-  border: 1px solid rgba(59, 244, 255, 0.26);
-  background: linear-gradient(160deg, rgba(5, 16, 28, 0.96), rgba(2, 8, 14, 0.98));
-  box-shadow:
-    0 22px 54px rgba(1, 5, 12, 0.56),
-    inset 0 0 0 1px rgba(59, 244, 255, 0.08);
-  overflow: hidden;
-}
-
-.webmap-stage::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 1px 1px, rgba(59, 244, 255, 0.07) 1px, transparent 0) 0 0 / 18px 18px,
-    linear-gradient(180deg, rgba(44, 188, 242, 0.12), transparent 42%);
-  pointer-events: none;
-  z-index: 1;
-}
-
-.webmap-canvas {
-  width: 100%;
-  height: 100%;
-}
-
-.webmap-loader {
-  position: absolute;
-  inset: 24px;
-  z-index: 5;
-}
-
-.webmap-marker-overlay-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  pointer-events: none;
-}
-
-.webmap-marker-reticle {
-  position: absolute;
-  width: min(66vw, 252px);
-  aspect-ratio: 1;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
-.webmap-marker-reticle::before {
-  content: "";
-  position: absolute;
-  inset: 26px;
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.18);
-  background:
-    linear-gradient(90deg, transparent 0, rgba(59, 244, 255, 0.08) 50%, transparent 100%),
-    linear-gradient(0deg, transparent 0, rgba(59, 244, 255, 0.08) 50%, transparent 100%);
-}
-
-.webmap-marker-reticle::after {
-  content: "";
-  position: absolute;
-  left: 18%;
-  right: 18%;
-  bottom: 14px;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, transparent, rgba(59, 244, 255, 0.92), transparent);
-  box-shadow: 0 0 12px rgba(59, 244, 255, 0.46);
-}
-
-.webmap-marker-reticle-corner {
-  position: absolute;
-  width: 24px;
-  height: 24px;
-  border-color: rgba(59, 244, 255, 0.8);
-  border-style: solid;
-  filter: drop-shadow(0 0 6px rgba(59, 244, 255, 0.42));
-}
-
-.webmap-marker-reticle-corner--tl {
-  top: 6px;
-  left: 6px;
-  border-width: 2px 0 0 2px;
-}
-
-.webmap-marker-reticle-corner--tr {
-  top: 6px;
-  right: 6px;
-  border-width: 2px 2px 0 0;
-}
-
-.webmap-marker-reticle-corner--bl {
-  bottom: 6px;
-  left: 6px;
-  border-width: 0 0 2px 2px;
-}
-
-.webmap-marker-reticle-corner--br {
-  bottom: 6px;
-  right: 6px;
-  border-width: 0 2px 2px 0;
-}
-
-.webmap-marker-reticle-ring {
-  position: absolute;
-  border-radius: 999px;
-}
-
-.webmap-marker-reticle-ring--outer {
-  inset: 16px;
-  border: 2px solid rgba(59, 244, 255, 0.52);
-  box-shadow:
-    0 0 22px rgba(59, 244, 255, 0.15),
-    inset 0 0 20px rgba(59, 244, 255, 0.08);
-}
-
-.webmap-marker-reticle-ring--inner {
-  inset: 54px;
-  border: 1px solid rgba(59, 244, 255, 0.2);
-}
-
-.webmap-marker-reticle-core {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 96px;
-  height: 96px;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.94);
-  background: radial-gradient(circle at 40% 28%, rgba(59, 244, 255, 0.22), rgba(2, 7, 14, 0.92) 64%);
-  box-shadow:
-    0 0 22px rgba(59, 244, 255, 0.45),
-    inset 0 0 24px rgba(59, 244, 255, 0.2);
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 4px;
-  padding: 12px;
-  text-align: center;
-}
-
-.webmap-marker-reticle-name {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: #9af9ff;
-  line-height: 1.1;
-  text-transform: uppercase;
-  text-shadow: 0 0 10px rgba(59, 244, 255, 0.6);
-}
-
-.webmap-marker-reticle-sub {
-  font-size: 8px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(186, 247, 255, 0.78);
-}
-
-.webmap-marker-radial-menu {
-  position: absolute;
-  width: 292px;
-  height: 292px;
-  transform: translate(-50%, -50%);
-  z-index: 8;
-  pointer-events: none;
-}
-
-.webmap-marker-radial-menu::before {
-  content: "";
-  position: absolute;
-  inset: 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.7);
-  background:
-    radial-gradient(circle at center, rgba(59, 244, 255, 0.06), transparent 58%),
-    conic-gradient(
-      from 0deg,
-      rgba(59, 244, 255, 0.08),
-      rgba(59, 244, 255, 0.01),
-      rgba(59, 244, 255, 0.08),
-      rgba(59, 244, 255, 0.01),
-      rgba(59, 244, 255, 0.08)
-    );
-  box-shadow:
-    0 0 36px rgba(59, 244, 255, 0.16),
-    inset 0 0 24px rgba(59, 244, 255, 0.14);
-}
-
-.webmap-marker-radial-menu::after {
-  content: "";
-  position: absolute;
-  inset: 56px;
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.2);
-}
-
-.webmap-marker-radial-item {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 64px;
-  height: 64px;
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.56);
-  background: radial-gradient(circle at 35% 30%, rgba(59, 244, 255, 0.22), rgba(5, 18, 29, 0.95));
-  color: #a2f9ff;
-  display: grid;
-  place-items: center;
-  gap: 2px;
-  pointer-events: auto;
-  box-shadow:
-    0 0 14px rgba(59, 244, 255, 0.26),
-    inset 0 0 16px rgba(59, 244, 255, 0.14);
-  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
-}
-
-.webmap-marker-radial-item svg {
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.webmap-marker-radial-item span {
-  font-size: 8px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(183, 248, 255, 0.92);
-}
-
-.webmap-marker-radial-item:hover {
-  border-color: rgba(59, 244, 255, 0.95);
-  box-shadow:
-    0 0 20px rgba(59, 244, 255, 0.4),
-    inset 0 0 18px rgba(59, 244, 255, 0.24);
-}
-
-.webmap-marker-radial-item--danger {
-  border-color: rgba(255, 120, 120, 0.72);
-  color: #ffd0d0;
-  background: radial-gradient(circle at 35% 30%, rgba(255, 120, 120, 0.25), rgba(34, 9, 12, 0.96));
-  box-shadow:
-    0 0 14px rgba(255, 120, 120, 0.3),
-    inset 0 0 16px rgba(255, 120, 120, 0.16);
-}
-
-.webmap-marker-radial-item--danger:hover {
-  border-color: rgba(255, 138, 138, 0.98);
-  box-shadow:
-    0 0 20px rgba(255, 120, 120, 0.48),
-    inset 0 0 18px rgba(255, 120, 120, 0.25);
-}
-
-.webmap-marker-radial-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 84px;
-  height: 84px;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.84);
-  background: radial-gradient(circle at 35% 30%, rgba(59, 244, 255, 0.28), rgba(2, 11, 20, 0.96));
-  color: #98f8ff;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 2px;
-  pointer-events: auto;
-  box-shadow:
-    0 0 18px rgba(59, 244, 255, 0.38),
-    inset 0 0 18px rgba(59, 244, 255, 0.18);
-}
-
-.webmap-marker-radial-center svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.webmap-marker-radial-center span {
-  font-size: 8px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.webmap-marker-compass {
-  position: absolute;
-  width: 344px;
-  height: 344px;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  z-index: 7;
-  filter: drop-shadow(0 0 18px rgba(59, 244, 255, 0.28));
-}
-
-.webmap-marker-compass svg {
-  width: 100%;
-  height: 100%;
-}
-
-.webmap-marker-compass-orbit {
-  fill: none;
-  stroke: rgba(191, 243, 255, 0.96);
-  stroke-width: 2;
-}
-
-.webmap-marker-compass-inner-orbit {
-  fill: none;
-  stroke: rgba(59, 244, 255, 0.28);
-  stroke-width: 1.3;
-}
-
-.webmap-marker-compass-tick {
-  stroke: rgba(207, 249, 255, 0.86);
-  stroke-width: 1;
-  opacity: 0.86;
-}
-
-.webmap-marker-compass-tick--major {
-  stroke-width: 1.8;
-  opacity: 1;
-}
-
-.webmap-marker-compass-label {
-  fill: rgba(220, 251, 255, 0.82);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-anchor: middle;
-}
-
-.webmap-marker-compass-needle {
-  stroke: rgba(224, 249, 255, 0.92);
-  stroke-width: 1.2;
-}
-
-.webmap-marker-compass-needle--north {
-  stroke: #82fdff;
-  stroke-width: 2;
-}
-
-.webmap-marker-compass-axis {
-  stroke: rgba(59, 244, 255, 0.34);
-  stroke-width: 1;
-}
-
-.webmap-marker-compass-hub {
-  fill: rgba(5, 20, 31, 0.95);
-  stroke: rgba(59, 244, 255, 0.9);
-  stroke-width: 1.4;
-}
-
-.webmap-toolbar {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  right: 12px;
-  z-index: 6;
-  display: grid;
-  gap: 8px;
-  pointer-events: none;
-}
-
-.webmap-toolbar > * {
-  pointer-events: auto;
-}
-
-.webmap-toolbar-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.webmap-marker-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 0 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.35);
-  background: linear-gradient(180deg, rgba(8, 24, 38, 0.96), rgba(6, 16, 26, 0.94));
-  color: #dcfdff;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: 11px;
-  box-shadow: 0 0 14px rgba(59, 244, 255, 0.12);
-}
-
-.webmap-marker-trigger-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.55);
-  background: radial-gradient(circle at 30% 30%, rgba(59, 244, 255, 0.2), rgba(7, 20, 31, 0.88));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.webmap-marker-trigger-icon img {
-  width: 16px;
-  height: 16px;
-  object-fit: contain;
-  filter: drop-shadow(0 0 8px rgba(59, 244, 255, 0.55));
-}
-
-.webmap-marker-trigger-label {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.webmap-marker-trigger-arrow {
-  width: 18px;
-  height: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 160ms ease;
-}
-
-.webmap-marker-trigger-arrow svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.webmap-marker-trigger-arrow.open {
-  transform: rotate(180deg);
-}
-
-.webmap-place-btn {
-  min-height: 46px;
-  padding: 0 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(59, 244, 255, 0.3);
-  background: linear-gradient(180deg, rgba(9, 24, 37, 0.96), rgba(6, 15, 25, 0.95));
-  color: #d8fbff;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: 11px;
-}
-
-.webmap-place-btn-icon {
-  font-size: 16px;
-  line-height: 1;
-}
-
-.webmap-place-btn.active {
-  border-color: rgba(255, 179, 92, 0.62);
-  box-shadow:
-    0 0 16px rgba(255, 179, 92, 0.2),
-    inset 0 0 12px rgba(255, 179, 92, 0.2);
-  color: #ffe0bf;
-}
-
-.webmap-toolbar-hover-hint {
-  width: fit-content;
-  max-width: min(580px, 100%);
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px dashed rgba(59, 244, 255, 0.28);
-  background: rgba(7, 18, 30, 0.88);
-  color: rgba(219, 252, 255, 0.9);
-  text-transform: uppercase;
-  letter-spacing: 0.13em;
-  font-size: 10px;
-  pointer-events: none;
-}
-
-.webmap-marker-menu {
-  max-height: 300px;
-  overflow-y: auto;
-  padding: 8px;
-  width: min(420px, 100%);
-  border-radius: 12px;
-  border: 1px solid rgba(59, 244, 255, 0.28);
-  background: linear-gradient(180deg, rgba(6, 18, 30, 0.98), rgba(4, 12, 22, 0.98));
-  box-shadow: 0 20px 34px rgba(0, 0, 0, 0.42);
-}
-
-.webmap-marker-option {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 10px;
-  border-radius: 9px;
-  border: 1px solid rgba(59, 244, 255, 0.18);
-  background: rgba(7, 18, 30, 0.66);
-  color: #dcfdff;
-  padding: 8px 10px;
-}
-
-.webmap-marker-option-main {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.webmap-marker-option-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.55);
-  background: radial-gradient(circle at 30% 30%, rgba(59, 244, 255, 0.2), rgba(7, 20, 31, 0.88));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.webmap-marker-option-icon img {
-  width: 15px;
-  height: 15px;
-  object-fit: contain;
-  filter: drop-shadow(0 0 7px rgba(59, 244, 255, 0.55));
-}
-
-.webmap-marker-option + .webmap-marker-option {
-  margin-top: 6px;
-}
-
-.webmap-marker-option.active {
-  border-color: rgba(59, 244, 255, 0.56);
-  background: rgba(59, 244, 255, 0.13);
-}
-
-.webmap-marker-option-name {
-  text-transform: uppercase;
-  letter-spacing: 0.11em;
-  font-size: 11px;
-}
-
-.webmap-rename-popover {
-  position: absolute;
-  z-index: 7;
-  width: 260px;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(59, 244, 255, 0.35);
-  background: linear-gradient(180deg, rgba(9, 26, 39, 0.98), rgba(7, 18, 30, 0.98));
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
-}
-
-.webmap-rename-title {
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 10px;
-  color: rgba(220, 251, 255, 0.7);
-}
-
-.webmap-rename-input {
-  width: 100%;
-  border-radius: 8px;
-  border: 1px solid rgba(59, 244, 255, 0.3);
-  background: rgba(6, 15, 25, 0.9);
-  color: #e6feff;
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  padding: 8px 10px;
-}
-
-.webmap-rename-input:focus {
-  outline: none;
-  border-color: rgba(59, 244, 255, 0.64);
-  box-shadow: 0 0 12px rgba(59, 244, 255, 0.22);
-}
-
-.webmap-rename-actions {
-  margin-top: 8px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.webmap-rename-btn {
-  border-radius: 8px;
-  border: 1px solid rgba(59, 244, 255, 0.28);
-  background: rgba(7, 18, 30, 0.9);
-  color: rgba(218, 251, 255, 0.9);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.13em;
-  padding: 6px 10px;
-}
-
-.webmap-rename-btn--primary {
-  border-color: rgba(255, 179, 92, 0.52);
-  color: #ffdcb8;
-}
-
-.webmap-sidebar {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 12px;
-  border-radius: 16px;
-  border: 1px solid rgba(59, 244, 255, 0.24);
-  background: linear-gradient(180deg, var(--wm-panel), var(--wm-panel-alt));
-  box-shadow: inset 0 0 18px rgba(5, 14, 24, 0.9);
-}
-
-.webmap-sidebar--collapsed {
-  width: 58px;
-  padding: 8px;
-}
-
-.webmap-cosmos--sidebar-collapsed .webmap-sidebar--collapsed {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 8;
-}
-
-.webmap-sidebar-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.webmap-sidebar-title {
-  font-size: 12px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-}
-
-.webmap-sidebar-collapsed {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  font-size: 10px;
-  color: rgba(214, 251, 255, 0.62);
-}
-
-.webmap-sidebar-body {
-  margin-top: 10px;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  gap: 10px;
-  min-height: 0;
-}
-
-.webmap-filters {
-  display: grid;
-  gap: 8px;
-}
-
-.webmap-tabs {
-  width: fit-content;
-}
-
-.webmap-list-wrap {
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.webmap-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 8px;
-}
-
-.webmap-list-item {
-  border-radius: 10px;
-  border: 1px solid rgba(59, 244, 255, 0.18);
-  background: rgba(7, 18, 29, 0.75);
-  padding: 9px 10px;
-  cursor: pointer;
-}
-
-.webmap-list-item:hover {
-  border-color: rgba(59, 244, 255, 0.46);
-}
-
-.webmap-list-item--expired {
-  opacity: 0.56;
-  text-decoration: line-through;
-}
-
-.webmap-list-item--selected {
-  border-color: rgba(255, 179, 92, 0.58);
-  box-shadow: inset 0 0 0 1px rgba(255, 179, 92, 0.22);
-}
-
-.webmap-zone-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: space-between;
-}
-
-.webmap-zone-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.webmap-zone-action {
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.32);
-  background: rgba(7, 18, 29, 0.82);
-  color: rgba(215, 251, 255, 0.9);
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  padding: 3px 8px;
-}
-
-.webmap-zone-action:hover {
-  border-color: rgba(59, 244, 255, 0.62);
-}
-
-.webmap-zone-action--danger {
-  border-color: rgba(255, 120, 120, 0.5);
-  color: rgba(255, 200, 200, 0.92);
-}
-
-.webmap-zone-action--danger:hover {
-  border-color: rgba(255, 120, 120, 0.72);
-}
-
-.webmap-list-name {
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.webmap-list-meta {
-  margin-top: 4px;
-  font-size: 10px;
-  color: rgba(206, 248, 255, 0.62);
-}
-
-.webmap-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 10px;
-  color: rgba(214, 251, 255, 0.64);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.webmap-pagination-actions {
-  display: inline-flex;
-  gap: 6px;
-}
-
-:deep(.webmap-canvas .maplibregl-canvas) {
-  outline: none;
-}
-
-@media (max-width: 1280px) {
-  .webmap-cosmos {
-    grid-template-columns: 1fr;
-  }
-
-  .webmap-sidebar--collapsed {
-    width: 100%;
-    min-height: 54px;
-  }
-
-  .webmap-sidebar-collapsed {
-    writing-mode: horizontal-tb;
-    text-orientation: mixed;
-  }
-}
-
-@media (max-width: 860px) {
-  .webmap-marker-reticle {
-    width: min(74vw, 220px);
-  }
-
-  .webmap-marker-radial-menu {
-    width: 254px;
-    height: 254px;
-  }
-
-  .webmap-marker-radial-item {
-    width: 56px;
-    height: 56px;
-  }
-
-  .webmap-marker-radial-center {
-    width: 74px;
-    height: 74px;
-  }
-
-  .webmap-marker-compass {
-    width: 286px;
-    height: 286px;
-  }
-
-  .webmap-toolbar-row {
-    align-items: stretch;
-  }
-
-  .webmap-toolbar-hover-hint {
-    width: 100%;
-  }
-
-  .webmap-marker-trigger {
-    flex: 1;
-    min-width: 0;
-  }
-}
-</style>
 

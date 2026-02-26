@@ -1,10 +1,27 @@
 <template>
-  <div class="cui-panel p-4">
-    <div v-if="title" class="mb-2 text-sm font-semibold text-rth-text">{{ title }}</div>
+  <article class="cui-panel p-4" :class="cardClass">
+    <header v-if="title || $slots.header" class="mb-2 flex items-start justify-between gap-3">
+      <slot name="header">
+        <div class="text-sm font-semibold text-rth-text">{{ title }}</div>
+      </slot>
+    </header>
     <slot />
-  </div>
+  </article>
 </template>
 
 <script setup lang="ts">
-defineProps<{ title?: string }>();
+import { computed } from "vue";
+
+const props = withDefaults(
+  defineProps<{
+    title?: string;
+    compact?: boolean;
+  }>(),
+  {
+    title: "",
+    compact: false
+  }
+);
+
+const cardClass = computed(() => (props.compact ? "p-3" : "p-4"));
 </script>

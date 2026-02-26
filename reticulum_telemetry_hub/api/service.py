@@ -212,6 +212,92 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             return None
         return record.display_name
 
+    def list_identity_capabilities(self, identity: str) -> List[str]:
+        """Return active capabilities for an identity."""
+
+        if not identity:
+            return []
+        return self._storage.list_identity_capabilities(identity)
+
+    def list_capability_grants(self, identity: str | None = None) -> List[dict]:
+        """Return persisted capability grant entries."""
+
+        records = self._storage.list_identity_capability_grants(identity=identity)
+        return [
+            {
+                "grant_uid": record.grant_uid,
+                "identity": record.identity,
+                "capability": record.capability,
+                "granted": bool(record.granted),
+                "granted_by": record.granted_by,
+                "granted_at": record.granted_at.isoformat()
+                if record.granted_at
+                else None,
+                "expires_at": record.expires_at.isoformat()
+                if record.expires_at
+                else None,
+                "updated_at": record.updated_at.isoformat()
+                if record.updated_at
+                else None,
+            }
+            for record in records
+        ]
+
+    def grant_identity_capability(
+        self,
+        identity: str,
+        capability: str,
+        *,
+        granted_by: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> dict:
+        """Grant a capability to an identity."""
+
+        if not identity:
+            raise ValueError("identity is required")
+        if not capability:
+            raise ValueError("capability is required")
+        record = self._storage.upsert_identity_capability(
+            identity,
+            capability,
+            granted=True,
+            granted_by=granted_by,
+            expires_at=expires_at,
+        )
+        return {
+            "grant_uid": record.grant_uid,
+            "identity": record.identity,
+            "capability": record.capability,
+            "granted": bool(record.granted),
+        }
+
+    def revoke_identity_capability(
+        self,
+        identity: str,
+        capability: str,
+        *,
+        granted_by: str | None = None,
+    ) -> dict:
+        """Revoke a capability from an identity."""
+
+        if not identity:
+            raise ValueError("identity is required")
+        if not capability:
+            raise ValueError("capability is required")
+        record = self._storage.upsert_identity_capability(
+            identity,
+            capability,
+            granted=False,
+            granted_by=granted_by,
+            expires_at=None,
+        )
+        return {
+            "grant_uid": record.grant_uid,
+            "identity": record.identity,
+            "capability": record.capability,
+            "granted": bool(record.granted),
+        }
+
     # ------------------------------------------------------------------ #
     # File operations
     # ------------------------------------------------------------------ #

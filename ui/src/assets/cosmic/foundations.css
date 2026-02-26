@@ -1,0 +1,42 @@
+.cui-theme {
+  color: var(--cui-color-text);
+  font-family: var(--cui-font-body);
+}
+
+.cui-font-display {
+  font-family: var(--cui-font-display);
+}
+
+.cui-font-mono {
+  font-family: var(--cui-font-mono);
+}
+
+.cui-scrollbar,
+.cui-scrollbar * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 242, 255, 0.6) rgba(4, 18, 29, 0.7);
+}
+
+.cui-scrollbar::-webkit-scrollbar,
+.cui-scrollbar *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.cui-scrollbar::-webkit-scrollbar-track,
+.cui-scrollbar *::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(4, 12, 20, 0.95), rgba(6, 18, 30, 0.92));
+  border: 1px solid rgba(56, 244, 255, 0.12);
+}
+
+.cui-scrollbar::-webkit-scrollbar-thumb,
+.cui-scrollbar *::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(8, 36, 48, 0.95), rgba(44, 212, 230, 0.75));
+  border: 1px solid rgba(56, 244, 255, 0.28);
+  border-radius: 999px;
+}
+
+.cui-scrollbar::-webkit-scrollbar-thumb:hover,
+.cui-scrollbar *::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(12, 50, 64, 0.98), rgba(70, 244, 255, 0.9));
+}

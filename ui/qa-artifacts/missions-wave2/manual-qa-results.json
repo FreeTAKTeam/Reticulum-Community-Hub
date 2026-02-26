@@ -1,0 +1,180 @@
+{
+  "generatedAt": "2026-02-24T21:55:54.523Z",
+  "checks": [
+    {
+      "id": "seed",
+      "status": "PASS",
+      "check": "Mission data seed for workspace checks",
+      "notes": "Created mission: QA Wave2 2026-02-24T21-55-38-158Z",
+      "evidence": ""
+    },
+    {
+      "id": "1.2",
+      "status": "PASS",
+      "check": "UI started and missions route reachable",
+      "notes": "Status URL: http://127.0.0.1:8000",
+      "evidence": "missions-1440.png"
+    },
+    {
+      "id": "3.1",
+      "status": "PASS",
+      "check": "Top status area rendered with shared cosmic primitives",
+      "notes": "registry-top + status pills detected.",
+      "evidence": ""
+    },
+    {
+      "id": "3.2",
+      "status": "PASS",
+      "check": "Tokenized controls present",
+      "notes": "Buttons: 13, chips/badges: 2",
+      "evidence": ""
+    },
+    {
+      "id": "3.3",
+      "status": "PASS",
+      "check": "Keyboard focus indicator visible after tab navigation",
+      "notes": "{\"tag\":\"BUTTON\",\"className\":\"panel-tab mission-directory-create-button\",\"outlineWidth\":\"1px\",\"outlineStyle\":\"auto\",\"boxShadow\":\"none\"}",
+      "evidence": ""
+    },
+    {
+      "id": "3.4",
+      "status": "PASS",
+      "check": "Reduced-motion mode disables non-essential animation",
+      "notes": "{\"animationName\":\"none\",\"transitionDuration\":\"0s\",\"reducedMatch\":true}",
+      "evidence": ""
+    },
+    {
+      "id": "4.1",
+      "status": "PASS",
+      "check": "Form anatomy visible in Mission Create screen",
+      "notes": "Mission Create stage card rendered.",
+      "evidence": ""
+    },
+    {
+      "id": "4.1b",
+      "status": "PASS",
+      "check": "Field label/control anatomy present",
+      "notes": "labels: 21, controls: 21",
+      "evidence": ""
+    },
+    {
+      "id": "4.3",
+      "status": "PASS",
+      "check": "Readonly control semantics present (Mission UID)",
+      "notes": "readonly input found.",
+      "evidence": ""
+    },
+    {
+      "id": "4.4",
+      "status": "FAIL",
+      "check": "Required indicators appear consistently where required",
+      "notes": "No required markers/attributes detected on Mission Create form.",
+      "evidence": ""
+    },
+    {
+      "id": "4.5",
+      "status": "PASS",
+      "check": "Advanced/collapsible section expands and collapses",
+      "notes": "before=false, afterOpen=true, afterClose=false",
+      "evidence": ""
+    },
+    {
+      "id": "5.2-prep",
+      "status": "PASS",
+      "check": "Prepare mission audit sample data",
+      "notes": "Broadcast action executed.",
+      "evidence": ""
+    },
+    {
+      "id": "5.2",
+      "status": "PASS",
+      "check": "Mission audit table variant renders with scroll container",
+      "notes": "overflow-y: auto",
+      "evidence": ""
+    },
+    {
+      "id": "5.4",
+      "status": "PASS",
+      "check": "Audit row action is keyboard/click accessible and reveals details",
+      "notes": "enabled detail buttons: 3",
+      "evidence": ""
+    },
+    {
+      "id": "5.3",
+      "status": "PASS",
+      "check": "Asset registry list is scrollable and actions are below list",
+      "notes": "overflow-y: auto, action-row-below-list: true",
+      "evidence": ""
+    },
+    {
+      "id": "8.2",
+      "status": "PASS",
+      "check": "Workspace flow can pivot from Mission Overview to Checklists workspace",
+      "notes": "Checklist workspace rendered.",
+      "evidence": ""
+    },
+    {
+      "id": "6.3",
+      "status": "PASS",
+      "check": "Checklist tabs update selected state and content",
+      "notes": "Templates tab active: true",
+      "evidence": ""
+    },
+    {
+      "id": "6.1-focus-trap",
+      "status": "BLOCKED",
+      "check": "Modal focus trap wraps from last to first focusable element",
+      "notes": "No modal opened from checklist New action.",
+      "evidence": ""
+    },
+    {
+      "id": "6.1-escape",
+      "status": "BLOCKED",
+      "check": "Modal closes on Escape",
+      "notes": "No modal opened from checklist New action.",
+      "evidence": ""
+    },
+    {
+      "id": "6.4",
+      "status": "BLOCKED",
+      "check": "Tree selection updates and remains stable during in-page navigation",
+      "notes": "Need >=2 missions in directory; found 1.",
+      "evidence": ""
+    },
+    {
+      "id": "7.1",
+      "status": "PASS",
+      "check": "Responsive stability check at 1440x900",
+      "notes": "overflowPx=0, missionCreateVisible=true, screenActionVisible=true",
+      "evidence": "missions-desktop-1440.png"
+    },
+    {
+      "id": "7.2",
+      "status": "PASS",
+      "check": "Responsive stability check at 1280x800",
+      "notes": "overflowPx=0, missionCreateVisible=true, screenActionVisible=true",
+      "evidence": "missions-laptop-1280.png"
+    },
+    {
+      "id": "7.3",
+      "status": "PASS",
+      "check": "Responsive stability check at 900x1280",
+      "notes": "overflowPx=0, missionCreateVisible=true, screenActionVisible=true",
+      "evidence": "missions-tablet-900.png"
+    },
+    {
+      "id": "7.4",
+      "status": "PASS",
+      "check": "Responsive stability check at 390x844",
+      "notes": "overflowPx=0, missionCreateVisible=true, screenActionVisible=true",
+      "evidence": "missions-mobile-390.png"
+    },
+    {
+      "id": "3.5",
+      "status": "FAIL",
+      "check": "No console errors or page errors during interactions",
+      "notes": "error: Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "evidence": ""
+    }
+  ]
+}

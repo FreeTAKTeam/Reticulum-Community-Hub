@@ -135,6 +135,8 @@ export interface AppInfo {
   description?: string;
   rns_version?: string;
   lxmf_version?: string;
+  is_transport_enabled?: boolean;
+  is_connected_to_shared_instance?: boolean;
   reticulum_destination?: string;
   storage_paths?: Record<string, string>;
 }

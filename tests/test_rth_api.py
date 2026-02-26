@@ -433,6 +433,23 @@ def test_identity_statuses_dedupe_prefers_joined_identity(tmp_path):
     assert match.identity == "deadbeef"
 
 
+def test_identity_capability_grants_round_trip(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    assert api.list_identity_capabilities("deadbeef") == []
+
+    granted = api.grant_identity_capability("deadbeef", "mission.join")
+    assert granted["identity"] == "deadbeef"
+    assert granted["capability"] == "mission.join"
+    assert granted["granted"] is True
+
+    assert api.list_identity_capabilities("deadbeef") == ["mission.join"]
+
+    revoked = api.revoke_identity_capability("deadbeef", "mission.join")
+    assert revoked["granted"] is False
+    assert api.list_identity_capabilities("deadbeef") == []
+
+
 def test_create_topic_requires_fields(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
 

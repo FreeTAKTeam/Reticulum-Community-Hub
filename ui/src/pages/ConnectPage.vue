@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="space-y-6">
     <BaseCard title="Connection Settings">
       <div class="grid gap-4 md:grid-cols-2">
@@ -52,3 +52,4 @@ const testConnection = async () => {
   connectionStore.setOnline();
 };
 </script>
+

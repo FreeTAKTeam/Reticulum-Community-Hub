@@ -27,6 +27,7 @@ from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
 
@@ -37,6 +38,8 @@ from .routes_chat import register_chat_routes
 from .routes_control import ControlService
 from .routes_control import register_control_routes
 from .routes_markers import register_marker_routes
+from .routes_checklists import register_checklist_routes
+from .routes_r3akt import register_r3akt_routes
 from .routes_zones import register_zone_routes
 from .routes_rest import register_core_routes
 from .routes_subscribers import register_subscriber_routes
@@ -93,6 +96,7 @@ def create_app(
     marker_dispatcher: Optional[Callable[[Marker, str], bool]] = None,
     marker_service: Optional[MarkerService] = None,
     zone_service: Optional[ZoneService] = None,
+    mission_domain_service: Optional[MissionDomainService] = None,
     origin_rch: Optional[str] = None,
     message_listener: Optional[
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
@@ -160,6 +164,16 @@ def create_app(
         )
     if zone_service is None:
         zone_service = ZoneService(ZoneStorage(hub_db_path))
+    if mission_domain_service is None:
+        retention_days = 90
+        if config_manager is not None:
+            retention_days = int(
+                getattr(config_manager.runtime_config, "event_retention_days", 90)
+            )
+        mission_domain_service = MissionDomainService(
+            hub_db_path,
+            event_retention_days=retention_days,
+        )
     services = NorthboundServices(
         api=api,
         telemetry=telemetry_controller,
@@ -223,6 +237,17 @@ def create_app(
     register_zone_routes(
         app,
         services=services,
+        require_protected=require_protected,
+    )
+    register_checklist_routes(
+        app,
+        domain=mission_domain_service,
+        require_protected=require_protected,
+    )
+    register_r3akt_routes(
+        app,
+        api=api,
+        domain=mission_domain_service,
         require_protected=require_protected,
     )
     register_ws_routes(

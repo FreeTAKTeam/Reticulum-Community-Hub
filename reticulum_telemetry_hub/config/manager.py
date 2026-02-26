@@ -360,6 +360,10 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             or hub_section.get("marker_announce_interval"),
             defaults.marker_announce_interval_minutes,
         )
+        event_retention_days = self._coerce_int(
+            hub_section.get("event_retention_days"),
+            defaults.event_retention_days,
+        )
 
         gps_section = self._get_section("gpsd")
         gps_host = gps_section.get("host", defaults.gpsd_host)
@@ -488,6 +492,7 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
                 _expand_user_path(lxmf_path) if lxmf_path else None
             ),
             telemetry_filename=telemetry_filename,
+            event_retention_days=event_retention_days,
             file_storage_path=file_storage_path,
             image_storage_path=image_storage_path,
         )

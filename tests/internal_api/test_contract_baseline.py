@@ -37,7 +37,8 @@ def _hash_file(path: Path) -> str:
     """Return the SHA256 hash for a file."""
 
     digest = hashlib.sha256()
-    digest.update(path.read_bytes())
+    # Normalize CRLF to LF so manifest hashes are stable across platforms.
+    digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
     return digest.hexdigest().upper()
 
 

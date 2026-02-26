@@ -1,0 +1,13 @@
+[Missions // Mission Workspace]
+
+Purpose:
+This page is the mission operations workspace for R3AKT backend domains.
+
+Primary systems:
+- Mission Directory and Mission Overview with status visibility.
+- Mission Create/Edit, Team & Members, Asset Registry, and zone/asset assignment surfaces.
+- Checklist lifecycle screens: overview, details, creation, run detail, import, publish, and progress/compliance.
+- Excheck Template Library and Template Builder views.
+- Mission Excheck Board lane view for pending, late, and complete tasks.
+
+Use this page to coordinate mission state, checklist execution, and operational audit context from one consistent Cosmic UI workspace.

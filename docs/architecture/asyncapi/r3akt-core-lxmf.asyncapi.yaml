@@ -1,0 +1,491 @@
+asyncapi: "2.6.0"
+id: "urn:r3akt:asyncapi:core-lxmf"
+info:
+  title: "R3AKT Core LXMF Contract"
+  version: "0.1.0"
+  description: >
+    Authoritative AsyncAPI contract for command, reply, and event exchange with the R3AKT core
+    over Reticulum LXMF. OpenAPI remains authoritative only for northbound HTTP APIs.
+defaultContentType: application/json
+tags:
+  - name: core
+    description: Core control plane and event stream.
+  - name: commands
+    description: Commands that require explicit capability authorization.
+  - name: events
+    description: Immutable events and derived snapshots emitted by core.
+servers:
+  reticulum_lxmf:
+    protocol: lxmf
+    description: Reticulum LXMF destination for the authoritative R3AKT core node.
+    bindings:
+      x-lxmf:
+        delivery: at-least-once
+        propagation_nodes: supported
+        encryption: reticulum-e2e
+        signature: required
+        field_constants:
+          FIELD_COMMANDS: "0x09"
+          FIELD_RESULTS: "0x0A"
+          FIELD_GROUP: "0x0B"
+          FIELD_EVENT: "0x0D"
+channels:
+  r3akt.core.commands:
+    description: Commands submitted to core over LXMF (`FIELD_COMMANDS` / `0x09`).
+    x-lxmf-fields:
+      required:
+        - FIELD_COMMANDS
+      optional:
+        - FIELD_GROUP
+    publish:
+      operationId: publishCoreCommand
+      summary: Send a command envelope to the core node.
+      description: Every command is explicitly authorized against caller capabilities.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/DiagnosticsHealthGetCommand"
+          - $ref: "#/components/messages/DiagnosticsMetricsGetCommand"
+          - $ref: "#/components/messages/IdentityListCommand"
+          - $ref: "#/components/messages/IdentityApproveCommand"
+          - $ref: "#/components/messages/IdentityRevokeCommand"
+          - $ref: "#/components/messages/CapabilityListCommand"
+          - $ref: "#/components/messages/IdentityCapabilitySetCommand"
+          - $ref: "#/components/messages/TopicListCommand"
+          - $ref: "#/components/messages/TopicCreateCommand"
+          - $ref: "#/components/messages/TopicSubscribeCommand"
+          - $ref: "#/components/messages/TopicUnsubscribeCommand"
+          - $ref: "#/components/messages/RetentionGetPolicyCommand"
+          - $ref: "#/components/messages/RetentionSetPolicyCommand"
+          - $ref: "#/components/messages/AuditSearchCommand"
+  r3akt.core.replies:
+    description: Acknowledgement, rejection, and result envelopes for commands (`FIELD_RESULTS` / `0x0A`).
+    x-lxmf-fields:
+      required:
+        - FIELD_RESULTS
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeCoreReplies
+      summary: Receive command execution replies from core.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/CommandAccepted"
+          - $ref: "#/components/messages/CommandRejected"
+          - $ref: "#/components/messages/CommandResult"
+  r3akt.core.events:
+    description: Event stream and snapshots distributed by core (`FIELD_EVENT` / `0x0D`).
+    x-lxmf-fields:
+      required:
+        - FIELD_EVENT
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeCoreEvents
+      summary: Receive filtered events based on capability and topic policies.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/CoreEvent"
+          - $ref: "#/components/messages/TopicSnapshot"
+          - $ref: "#/components/messages/DomainObjectSnapshot"
+components:
+  messages:
+    DiagnosticsHealthGetCommand:
+      name: DiagnosticsHealthGetCommand
+      title: Get health status command
+      summary: Maps to HTTP operation `getHealth`.
+      x-http-operation: "GET /health"
+      x-capability-required:
+        - diagnostics.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: diagnostics.health.get
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    DiagnosticsMetricsGetCommand:
+      name: DiagnosticsMetricsGetCommand
+      title: Get metrics snapshot command
+      summary: Maps to HTTP operation `getMetrics`.
+      x-http-operation: "GET /metrics"
+      x-capability-required:
+        - diagnostics.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: diagnostics.metrics.get
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    IdentityListCommand:
+      name: IdentityListCommand
+      title: List approved identities command
+      summary: Maps to HTTP operation `listIdentities`.
+      x-http-operation: "GET /admin/identities"
+      x-capability-required:
+        - admin.identity.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: admin.identity.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    IdentityApproveCommand:
+      name: IdentityApproveCommand
+      title: Approve identity command
+      summary: Maps to HTTP operation `approveIdentity`.
+      x-http-operation: "POST /admin/identities"
+      x-capability-required:
+        - admin.identity.approve
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: admin.identity.approve
+              args:
+                type: object
+                required: [identity]
+                properties:
+                  identity:
+                    type: string
+                  notes:
+                    type: string
+            required: [command_type, args]
+    IdentityRevokeCommand:
+      name: IdentityRevokeCommand
+      title: Revoke identity command
+      summary: Maps to HTTP operation `revokeIdentity`.
+      x-http-operation: "POST /admin/identities/{identity}/revoke"
+      x-capability-required:
+        - admin.identity.revoke
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: admin.identity.revoke
+              args:
+                type: object
+                required: [identity]
+                properties:
+                  identity:
+                    type: string
+                  reason:
+                    type: string
+            required: [command_type, args]
+    CapabilityListCommand:
+      name: CapabilityListCommand
+      title: List capability definitions command
+      summary: Maps to HTTP operation `listCapabilities`.
+      x-http-operation: "GET /admin/capabilities"
+      x-capability-required:
+        - admin.capability.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: admin.capability.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    IdentityCapabilitySetCommand:
+      name: IdentityCapabilitySetCommand
+      title: Set identity capabilities command
+      summary: Maps to HTTP operation `setIdentityCapabilities`.
+      x-http-operation: "PUT /admin/identities/{identity}/capabilities"
+      x-capability-required:
+        - admin.capability.assign
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: admin.identity.capabilities.set
+              args:
+                type: object
+                required: [identity, capabilities]
+                properties:
+                  identity:
+                    type: string
+                  capabilities:
+                    type: array
+                    items:
+                      type: string
+            required: [command_type, args]
+    TopicListCommand:
+      name: TopicListCommand
+      title: List topics command
+      summary: Maps to HTTP operation `listTopics`.
+      x-http-operation: "GET /topics"
+      x-capability-required:
+        - topic.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: topic.list
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    TopicCreateCommand:
+      name: TopicCreateCommand
+      title: Create topic command
+      summary: Maps to HTTP operation `createTopic`.
+      x-http-operation: "POST /topics"
+      x-capability-required:
+        - topic.create
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: topic.create
+              args:
+                type: object
+                required: [topic]
+                properties:
+                  topic:
+                    type: string
+                  description:
+                    type: string
+            required: [command_type, args]
+    TopicSubscribeCommand:
+      name: TopicSubscribeCommand
+      title: Subscribe identity to topic command
+      summary: Maps to HTTP operation `subscribeTopic`.
+      x-http-operation: "POST /topics/{topic}/subscriptions"
+      x-capability-required:
+        - topic.subscribe.manage
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: topic.subscribe
+              args:
+                type: object
+                required: [topic, identity]
+                properties:
+                  topic:
+                    type: string
+                  identity:
+                    type: string
+            required: [command_type, args]
+    TopicUnsubscribeCommand:
+      name: TopicUnsubscribeCommand
+      title: Unsubscribe identity from topic command
+      summary: Maps to HTTP operation `unsubscribeTopic`.
+      x-http-operation: "DELETE /topics/{topic}/subscriptions"
+      x-capability-required:
+        - topic.subscribe.manage
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: topic.unsubscribe
+              args:
+                type: object
+                required: [topic, identity]
+                properties:
+                  topic:
+                    type: string
+                  identity:
+                    type: string
+            required: [command_type, args]
+    RetentionGetPolicyCommand:
+      name: RetentionGetPolicyCommand
+      title: Get retention policy command
+      summary: Maps to HTTP operation `getRetentionPolicy`.
+      x-http-operation: "GET /retention/policy"
+      x-capability-required:
+        - retention.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: retention.policy.get
+              args:
+                type: object
+                additionalProperties: false
+            required: [command_type, args]
+    RetentionSetPolicyCommand:
+      name: RetentionSetPolicyCommand
+      title: Set retention policy command
+      summary: Maps to HTTP operation `setRetentionPolicy`.
+      x-http-operation: "PUT /retention/policy"
+      x-capability-required:
+        - retention.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: retention.policy.set
+              args:
+                type: object
+                required: [policy]
+                properties:
+                  policy:
+                    $ref: "#/components/schemas/RetentionPolicy"
+            required: [command_type, args]
+    AuditSearchCommand:
+      name: AuditSearchCommand
+      title: Search audit records command
+      summary: Maps to HTTP operation `searchAudit`.
+      x-http-operation: "POST /audit/search"
+      x-capability-required:
+        - audit.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: audit.search
+              args:
+                $ref: "#/components/schemas/AuditSearchArgs"
+            required: [command_type, args]
+    CommandAccepted:
+      name: CommandAccepted
+      title: Command accepted
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, accepted_at]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: accepted
+          accepted_at:
+            type: string
+            format: date-time
+          by_identity:
+            type: string
+    CommandRejected:
+      name: CommandRejected
+      title: Command rejected
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, reason_code]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: rejected
+          reason_code:
+            type: string
+            enum: [unauthorized, invalid_payload, unknown_command, internal_error]
+          reason:
+            type: string
+          required_capabilities:
+            type: array
+            items:
+              type: string
+    CommandResult:
+      name: CommandResult
+      title: Command result
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, result]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: result
+          result:
+            type: object
+            additionalProperties: true
+    CoreEvent:
+      name: CoreEvent
+      title: Core event envelope
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        $ref: "../schemas/event.json"
+    TopicSnapshot:
+      name: TopicSnapshot
+      title: Topic snapshot
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        $ref: "../schemas/topic.json"
+    DomainObjectSnapshot:
+      name: DomainObjectSnapshot
+      title: Derived domain object snapshot
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        $ref: "../schemas/object.json"
+  schemas:
+    RetentionPolicy:
+      type: object
+      properties:
+        event_ttl_seconds:
+          type: integer
+          minimum: 0
+        max_events:
+          type: integer
+          minimum: 0
+        per_topic_overrides:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              event_ttl_seconds:
+                type: integer
+              max_events:
+                type: integer
+    AuditSearchArgs:
+      type: object
+      properties:
+        time_from:
+          type: string
+          format: date-time
+        time_to:
+          type: string
+          format: date-time
+        actor_identity:
+          type: string
+        topic:
+          type: string
+        text:
+          type: string

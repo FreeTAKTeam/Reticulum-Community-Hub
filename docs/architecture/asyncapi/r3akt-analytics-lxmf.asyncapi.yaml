@@ -1,0 +1,216 @@
+asyncapi: "2.6.0"
+id: "urn:r3akt:asyncapi:analytics-lxmf"
+info:
+  title: "R3AKT Analytics LXMF Contract"
+  version: "0.1.0"
+  description: >
+    AsyncAPI contract for analytics service command/reply/event exchange over Reticulum LXMF.
+    Mirrors the northbound HTTP analytics operations with async mesh-native semantics.
+defaultContentType: application/json
+tags:
+  - name: analytics
+    description: Analytics job and report workflows.
+servers:
+  reticulum_lxmf:
+    protocol: lxmf
+    description: Reticulum LXMF destination for the analytics auxiliary service.
+    bindings:
+      x-lxmf:
+        delivery: at-least-once
+        propagation_nodes: supported
+        encryption: reticulum-e2e
+        signature: required
+        field_constants:
+          FIELD_COMMANDS: "0x09"
+          FIELD_RESULTS: "0x0A"
+          FIELD_GROUP: "0x0B"
+          FIELD_EVENT: "0x0D"
+channels:
+  r3akt.analytics.commands:
+    description: Commands sent to the analytics service (`FIELD_COMMANDS` / `0x09`).
+    x-lxmf-fields:
+      required:
+        - FIELD_COMMANDS
+      optional:
+        - FIELD_GROUP
+    publish:
+      operationId: publishAnalyticsCommand
+      summary: Submit analytics command envelopes.
+      description: Every command is explicitly authorized against caller capabilities.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/AnalyticsJobCreateCommand"
+          - $ref: "#/components/messages/AnalyticsJobGetCommand"
+          - $ref: "#/components/messages/AnalyticsReportGetCommand"
+  r3akt.analytics.replies:
+    description: Acknowledgement, rejection, and result messages for analytics commands (`FIELD_RESULTS` / `0x0A`).
+    x-lxmf-fields:
+      required:
+        - FIELD_RESULTS
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeAnalyticsReplies
+      message:
+        oneOf:
+          - $ref: "#/components/messages/CommandAccepted"
+          - $ref: "#/components/messages/CommandRejected"
+          - $ref: "#/components/messages/CommandResult"
+  r3akt.analytics.events:
+    description: Analytics lifecycle events and report-ready notifications (`FIELD_EVENT` / `0x0D`).
+    x-lxmf-fields:
+      required:
+        - FIELD_EVENT
+      optional:
+        - FIELD_GROUP
+    subscribe:
+      operationId: subscribeAnalyticsEvents
+      message:
+        $ref: "#/components/messages/AnalyticsEvent"
+components:
+  messages:
+    AnalyticsJobCreateCommand:
+      name: AnalyticsJobCreateCommand
+      title: Create analytics job command
+      summary: Maps to HTTP operation `createJob`.
+      x-http-operation: "POST /jobs"
+      x-capability-required:
+        - analytics.job.create
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: analytics.job.create
+              args:
+                type: object
+                properties:
+                  topics:
+                    type: array
+                    items:
+                      type: string
+                  window_seconds:
+                    type: integer
+                    minimum: 0
+                  outputs:
+                    type: array
+                    items:
+                      type: string
+            required: [command_type, args]
+    AnalyticsJobGetCommand:
+      name: AnalyticsJobGetCommand
+      title: Get analytics job status command
+      summary: Maps to HTTP operation `getJob`.
+      x-http-operation: "GET /jobs/{job_id}"
+      x-capability-required:
+        - analytics.job.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: analytics.job.get
+              args:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id:
+                    type: string
+            required: [command_type, args]
+    AnalyticsReportGetCommand:
+      name: AnalyticsReportGetCommand
+      title: Get analytics report command
+      summary: Maps to HTTP operation `getReport`.
+      x-http-operation: "GET /reports/{report_id}"
+      x-capability-required:
+        - analytics.report.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: analytics.report.get
+              args:
+                type: object
+                required: [report_id]
+                properties:
+                  report_id:
+                    type: string
+            required: [command_type, args]
+    CommandAccepted:
+      name: CommandAccepted
+      title: Command accepted
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, accepted_at]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: accepted
+          accepted_at:
+            type: string
+            format: date-time
+    CommandRejected:
+      name: CommandRejected
+      title: Command rejected
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, reason_code]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: rejected
+          reason_code:
+            type: string
+            enum: [unauthorized, invalid_payload, unknown_command, internal_error]
+          reason:
+            type: string
+    CommandResult:
+      name: CommandResult
+      title: Command result
+      x-lxmf-field: FIELD_RESULTS
+      payload:
+        type: object
+        required: [command_id, status, result]
+        properties:
+          command_id:
+            type: string
+          correlation_id:
+            type: string
+          status:
+            type: string
+            const: result
+          result:
+            type: object
+            additionalProperties: true
+    AnalyticsEvent:
+      name: AnalyticsEvent
+      title: Analytics event envelope
+      summary: Uses the shared event envelope with analytics-specific event_type values.
+      x-lxmf-field: FIELD_EVENT
+      payload:
+        allOf:
+          - $ref: "../schemas/event.json"
+          - type: object
+            properties:
+              event_type:
+                type: string
+                enum:
+                  - analytics.job.accepted
+                  - analytics.job.progress
+                  - analytics.job.completed
+                  - analytics.job.failed
+                  - analytics.report.ready

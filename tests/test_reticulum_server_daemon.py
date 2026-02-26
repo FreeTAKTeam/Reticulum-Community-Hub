@@ -613,3 +613,186 @@ def test_subscriber_cache_refresh_after_subscribe(tmp_path):
         assert dest_two.identity.hash.hex().lower() in topic_hexes
     finally:
         hub.shutdown()
+
+
+def test_mission_registry_event_fanout_is_capability_aware(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+
+    source_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    peer_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    source_identity = source_dest.identity.hash.hex().lower()
+    peer_identity = peer_dest.identity.hash.hex().lower()
+
+    hub.connections = {
+        source_dest.identity.hash: source_dest,
+        peer_dest.identity.hash: peer_dest,
+    }
+
+    outbound: list[dict[str, object]] = []
+
+    def _capture_send(
+        message: str,
+        *,
+        topic: str | None = None,
+        destination: str | None = None,
+        exclude: set[str] | None = None,
+        fields: dict | None = None,
+        sender: RNS.Destination | None = None,
+    ) -> bool:
+        outbound.append(
+            {
+                "message": message,
+                "topic": topic,
+                "destination": destination,
+                "exclude": exclude,
+                "fields": fields,
+                "sender": sender,
+            }
+        )
+        return True
+
+    hub.send_message = _capture_send  # type: ignore[assignment]
+
+    try:
+        hub.api.grant_identity_capability(source_identity, "r3akt")
+        assert hub.mission_domain_service is not None
+        domain = hub.mission_domain_service
+        domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission"})
+        domain.upsert_team(
+            {
+                "uid": "team-1",
+                "team_name": "Ops",
+                "mission_uids": ["mission-1"],
+            }
+        )
+        domain.upsert_team_member(
+            {
+                "uid": "member-1",
+                "team_uid": "team-1",
+                "rns_identity": source_identity,
+                "display_name": "Source",
+            }
+        )
+        domain.upsert_team_member(
+            {
+                "uid": "member-2",
+                "team_uid": "team-1",
+                "rns_identity": peer_identity,
+                "display_name": "Peer",
+            }
+        )
+        domain.upsert_log_entry(
+            {
+                "entry_uid": "entry-1",
+                "mission_uid": "mission-1",
+                "content": "Mission delta",
+            }
+        )
+
+        custom_type_field = int(getattr(LXMF, "FIELD_CUSTOM_TYPE", 0xFB))
+        custom_data_field = int(getattr(LXMF, "FIELD_CUSTOM_DATA", 0xFC))
+        custom_meta_field = int(getattr(LXMF, "FIELD_CUSTOM_META", 0xFD))
+        renderer_field = int(getattr(LXMF, "FIELD_RENDERER", 0x0F))
+        renderer_markdown_value = int(getattr(LXMF, "RENDERER_MARKDOWN", 0x02))
+
+        custom_fanout = [
+            item
+            for item in outbound
+            if isinstance(item.get("fields"), dict)
+            and custom_type_field in item["fields"]
+        ]
+        assert len(custom_fanout) == 1
+        assert custom_fanout[0]["destination"] == source_identity
+        for item in custom_fanout:
+            fields = item["fields"]
+            assert isinstance(fields, dict)
+            assert fields[custom_type_field] == "r3akt.mission.change.v1"
+            assert fields[custom_data_field]["mission_uid"] == "mission-1"
+            assert (
+                fields[custom_meta_field]["event_type"]
+                == "mission.registry.mission_change.upserted"
+            )
+        generic_fanout = [
+            item
+            for item in outbound
+            if item.get("destination") == peer_identity
+            and "### Mission " in str(item.get("message") or "")
+        ]
+        assert len(generic_fanout) == 1
+        generic_message = str(generic_fanout[0].get("message") or "")
+        assert generic_message.startswith("### Mission ")
+        assert "mission-1" not in generic_message
+        peer_fields = generic_fanout[0].get("fields")
+        assert isinstance(peer_fields, dict)
+        assert custom_type_field not in peer_fields
+        assert peer_fields.get(renderer_field) == renderer_markdown_value
+    finally:
+        hub.shutdown()
+
+
+def test_mission_change_fanout_de_duplicates_by_change_uid(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    destination = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    destination_identity = destination.identity.hash.hex().lower()
+    outbound: list[dict[str, object]] = []
+
+    def _capture_send(
+        message: str,
+        *,
+        topic: str | None = None,
+        destination: str | None = None,
+        exclude: set[str] | None = None,
+        fields: dict | None = None,
+        sender: RNS.Destination | None = None,
+    ) -> bool:
+        outbound.append(
+            {
+                "message": message,
+                "topic": topic,
+                "destination": destination,
+                "exclude": exclude,
+                "fields": fields,
+                "sender": sender,
+            }
+        )
+        return True
+
+    hub.send_message = _capture_send  # type: ignore[assignment]
+    try:
+        assert hub.mission_domain_service is not None
+        domain = hub.mission_domain_service
+        domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission"})
+        domain.upsert_team(
+            {"uid": "team-1", "team_name": "Ops", "mission_uids": ["mission-1"]}
+        )
+        domain.upsert_team_member(
+            {
+                "uid": "member-1",
+                "team_uid": "team-1",
+                "rns_identity": destination_identity,
+                "display_name": "Peer",
+            }
+        )
+        hub.api.grant_identity_capability(destination_identity, "r3akt")
+        payload = {
+            "uid": "change-1",
+            "mission_uid": "mission-1",
+            "change_type": "ADD_CONTENT",
+            "delta": {"version": 1, "logs": [], "assets": [], "tasks": []},
+        }
+        domain.upsert_mission_change(payload)
+        domain.upsert_mission_change(payload)
+
+        fanout_for_change = [
+            item for item in outbound if item.get("destination") == destination_identity
+        ]
+        assert len(fanout_for_change) == 1
+    finally:
+        hub.shutdown()

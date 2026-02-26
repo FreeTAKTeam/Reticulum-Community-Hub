@@ -1,0 +1,233 @@
+﻿.mission-logs-workspace {
+  --neon: #37f2ff;
+  --panel-dark: rgba(4, 12, 22, 0.96);
+  --panel-light: rgba(10, 30, 45, 0.94);
+  color: #dffcff;
+  font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
+}
+
+
+.control-strip {
+  margin-top: 14px;
+}
+
+.control-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.control-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.control-filters {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 10px;
+}
+
+.filter-field {
+  display: grid;
+  gap: 6px;
+}
+
+.filter-field span {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(205, 248, 255, 0.74);
+}
+
+.filter-field input {
+  border: 1px solid rgba(55, 242, 255, 0.34);
+  border-radius: 8px;
+  background: rgba(5, 14, 22, 0.84);
+  color: #dffcff;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.feed-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(55, 242, 255, 0.28);
+  background: rgba(7, 18, 26, 0.82);
+}
+
+.feed-tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(209, 251, 255, 0.6);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+}
+
+.feed-tab.active {
+  border-color: rgba(55, 242, 255, 0.65);
+  color: #e0feff;
+  background: rgba(55, 242, 255, 0.12);
+}
+
+.control-meta {
+  margin-top: 10px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: rgba(204, 248, 255, 0.76);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+
+.editor-form {
+  display: grid;
+  gap: 10px;
+}
+
+
+.editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.editor-note {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: rgba(205, 248, 255, 0.78);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.panel-empty {
+  border: 1px dashed rgba(55, 242, 255, 0.26);
+  padding: 18px;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: rgba(210, 251, 255, 0.68);
+}
+
+.entry-list,
+.event-list {
+  display: grid;
+  gap: 10px;
+  max-height: 64vh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.entry-card,
+.event-card {
+  border: 1px solid rgba(55, 242, 255, 0.24);
+  border-radius: 10px;
+  background: rgba(7, 18, 28, 0.68);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.entry-head,
+.event-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.entry-head h4,
+.event-head h4 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.entry-head p,
+.event-head span {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: rgba(201, 248, 255, 0.72);
+}
+
+.entry-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.entry-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.entry-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(196, 246, 255, 0.72);
+}
+
+.event-meta {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(196, 246, 255, 0.72);
+}
+
+.event-payload {
+  margin: 0;
+  font-size: 11px;
+  border: 1px solid rgba(55, 242, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(4, 14, 22, 0.82);
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+
+@media (max-width: 1250px) {
+  .control-row {
+    grid-template-columns: 1fr;
+  }
+
+  .control-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .registry-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 800px) {
+  .registry-top {
+    grid-template-columns: 1fr;
+  }
+
+  .registry-status {
+    justify-self: center;
+    flex-wrap: wrap;
+  }
+}

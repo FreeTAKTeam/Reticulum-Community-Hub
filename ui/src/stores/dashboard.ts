@@ -4,6 +4,7 @@ import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
 import type { EventEntry } from "../api/types";
 import type { StatusResponse } from "../api/types";
+import type { MissionRaw } from "../types/missions/raw";
 import { useConnectionStore } from "./connection";
 
 type StatusApiPayload = StatusResponse & {
@@ -41,8 +42,27 @@ const normalizeEvent = (payload: EventApiPayload): EventEntry => ({
   metadata: payload.metadata ?? {}
 });
 
+const normalizeMissionStatus = (value: unknown): string => {
+  const token = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+  if (!token) {
+    return "";
+  }
+  if (token === "ACTIVE") {
+    return "MISSION_ACTIVE";
+  }
+  return token.startsWith("MISSION_") ? token : `MISSION_${token}`;
+};
+
+const isActiveMission = (mission: MissionRaw): boolean => {
+  return normalizeMissionStatus(mission.mission_status) === "MISSION_ACTIVE";
+};
+
 export const useDashboardStore = defineStore("dashboard", () => {
   const status = ref<StatusResponse | null>(null);
+  const activeMissions = ref<number | null>(null);
   const events = ref<EventEntry[]>([]);
   const loading = ref(false);
 
@@ -52,8 +72,22 @@ export const useDashboardStore = defineStore("dashboard", () => {
     try {
       const response = await get<StatusApiPayload>(endpoints.status);
       status.value = normalizeStatus(response);
-      const eventResponse = await get<EventApiPayload[]>(endpoints.events);
-      events.value = eventResponse.map(normalizeEvent);
+
+      const [eventResponse, missionResponse] = await Promise.allSettled([
+        get<EventApiPayload[]>(endpoints.events),
+        get<MissionRaw[]>(endpoints.r3aktMissions)
+      ]);
+
+      if (eventResponse.status !== "fulfilled") {
+        throw eventResponse.reason;
+      }
+      events.value = eventResponse.value.map(normalizeEvent);
+
+      if (missionResponse.status === "fulfilled") {
+        activeMissions.value = missionResponse.value.filter(isActiveMission).length;
+      } else {
+        activeMissions.value = null;
+      }
       connectionStore.setOnline();
     } finally {
       loading.value = false;
@@ -71,6 +105,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
 
   return {
     status,
+    activeMissions,
     events,
     loading,
     refresh,

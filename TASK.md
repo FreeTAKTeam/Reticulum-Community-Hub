@@ -1,4 +1,6 @@
 # TASKS
+- 2026-02-26: DONE. Abort gateway startup when API host/port is already bound to prevent duplicate hub instances and ratchet contention.
+- 2026-02-23: DONE. Optimize telemetry memory usage by querying latest-per-peer snapshots from SQL, reducing telemetry response event payload retention, and adding regression tests.
 - 2026-02-05: DONE. Remediate dependency vulnerabilities across Python, UI, and Electron (including lockfile refresh and audit verification).
 - 2026-02-05: DONE. Run a full consistency pass: harden Ruff excludes, add release metadata consistency tests, and refresh Electron docs.
 - 2026-02-05: DONE. Sync Electron app version to pyproject version during builds and enforce Windows artifact naming convention.
