@@ -153,6 +153,12 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
             )
         )
 
+    linked_marker_mission = service.link_mission_marker("mission-1", "hash-1")
+    assert linked_marker_mission["markers"] == ["hash-1"]
+    assert service.list_mission_markers("mission-1") == ["hash-1"]
+    unlinked_marker_mission = service.unlink_mission_marker("mission-1", "hash-1")
+    assert unlinked_marker_mission["markers"] == []
+
     with pytest.raises(ValueError):
         service.upsert_log_entry(
             {

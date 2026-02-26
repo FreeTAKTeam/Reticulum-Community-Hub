@@ -3,7 +3,8 @@
     title="Checklist Template"
     subtitle="Template records including CSV-sourced entries"
     collection-key="templates"
-    legacy-path="/checklists"
+    legacy-path="/missions"
+    legacy-screen="checklistOverview"
   />
 </template>
 

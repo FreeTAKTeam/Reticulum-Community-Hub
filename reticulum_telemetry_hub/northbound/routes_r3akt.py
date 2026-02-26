@@ -184,6 +184,31 @@ def register_r3akt_routes(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    @app.get("/api/r3akt/missions/{mission_uid}/markers", dependencies=[Depends(require_protected)])
+    def list_mission_markers(mission_uid: str) -> dict:
+        try:
+            return {"marker_ids": domain.list_mission_markers(mission_uid)}
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    @app.put("/api/r3akt/missions/{mission_uid}/markers/{marker_id}", dependencies=[Depends(require_protected)])
+    def link_mission_marker(mission_uid: str, marker_id: str) -> dict:
+        try:
+            return domain.link_mission_marker(mission_uid, marker_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.delete("/api/r3akt/missions/{mission_uid}/markers/{marker_id}", dependencies=[Depends(require_protected)])
+    def unlink_mission_marker(mission_uid: str, marker_id: str) -> dict:
+        try:
+            return domain.unlink_mission_marker(mission_uid, marker_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     @app.get("/api/r3akt/missions/{mission_uid}/rde", dependencies=[Depends(require_protected)])
     def get_mission_rde(mission_uid: str) -> dict:
         try:

@@ -3,7 +3,8 @@
     title="Team Member Skill"
     subtitle="Member-to-skill capability links"
     collection-key="teamMemberSkills"
-    legacy-path="/users"
+    legacy-path="/missions"
+    legacy-screen="missionTeamMembers"
   />
 </template>
 

@@ -3,7 +3,8 @@
     title="Mission Change"
     subtitle="Mission change records and broadcast entries"
     collection-key="missionChanges"
-    legacy-path="/missions/logs"
+    legacy-path="/missions"
+    legacy-screen="missionOverview"
   />
 </template>
 

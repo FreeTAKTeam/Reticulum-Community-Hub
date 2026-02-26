@@ -300,6 +300,39 @@
             </button>
           </div>
         </div>
+        <div
+          v-if="markerAssignOpen"
+          ref="markerAssignPopoverRef"
+          class="webmap-rename-popover webmap-zone-assign-popover"
+          :style="markerAssignStyle"
+          @click.stop
+          @contextmenu.prevent
+        >
+          <div class="webmap-rename-title">Assign Marker to Mission</div>
+          <select
+            v-model="markerAssignMissionUid"
+            class="webmap-rename-input"
+            :disabled="markerAssignBusy || markerAssignMissionsLoading"
+          >
+            <option value="" disabled>
+              {{ markerAssignMissionsLoading ? "Loading missions..." : "Select mission" }}
+            </option>
+            <option v-for="mission in markerAssignMissions" :key="mission.uid" :value="mission.uid">
+              {{ mission.name }}
+            </option>
+          </select>
+          <div class="webmap-rename-actions">
+            <button type="button" class="webmap-rename-btn" @click="closeMarkerAssign">Cancel</button>
+            <button
+              type="button"
+              class="webmap-rename-btn webmap-rename-btn--primary"
+              :disabled="markerAssignBusy || !markerAssignMissionUid"
+              @click="submitMarkerAssign"
+            >
+              {{ markerAssignBusy ? "Assigning..." : "Assign" }}
+            </button>
+          </div>
+        </div>
 
         <div
           v-if="markerRenameOpen"
@@ -591,7 +624,7 @@ import type { MissionRaw } from "../types/missions/raw";
 
 type ScreenPoint = { x: number; y: number };
 type MarkerRadialIcon = "edit" | "move" | "compass" | "assign" | "delete" | "inspect" | "back" | "close";
-type MarkerRadialAction = "rename" | "move" | "compass" | "delete" | "inspect";
+type MarkerRadialAction = "rename" | "move" | "compass" | "assign" | "delete" | "inspect";
 type MarkerRadialMenuNode = {
   id: string;
   label: string;
@@ -617,6 +650,7 @@ const markerRadialMenus: Record<MarkerRadialMenuProfile, MarkerRadialMenuNode[]>
     { id: "rename", label: "Edit", icon: "edit", action: "rename" },
     { id: "move", label: "Move", icon: "move", action: "move" },
     { id: "compass", label: "Compass", icon: "compass", action: "compass" },
+    { id: "assign", label: "Assign", icon: "assign", action: "assign" },
     { id: "delete", label: "Delete", icon: "delete", action: "delete" },
   ],
   telemetry: [{ id: "inspect", label: "Inspect", icon: "inspect", action: "inspect" }],
@@ -755,6 +789,14 @@ const zoneAssignBusy = ref(false);
 const zoneAssignMissions = ref<ZoneMissionOption[]>([]);
 const zoneAssignMissionsLoading = ref(false);
 const zoneAssignPopoverRef = ref<HTMLDivElement | null>(null);
+const markerAssignOpen = ref(false);
+const markerAssignMarkerId = ref("");
+const markerAssignMissionUid = ref("");
+const markerAssignPosition = ref({ left: 12, top: 12 });
+const markerAssignBusy = ref(false);
+const markerAssignMissions = ref<ZoneMissionOption[]>([]);
+const markerAssignMissionsLoading = ref(false);
+const markerAssignPopoverRef = ref<HTMLDivElement | null>(null);
 const toolbarHoverHint = ref("");
 type MarkerTab = "operator" | "telemetry" | "zones";
 const activeMarkerTab = ref<MarkerTab>("operator");
@@ -846,6 +888,10 @@ const zoneAssignStyle = computed(() => ({
   left: `${zoneAssignPosition.value.left}px`,
   top: `${zoneAssignPosition.value.top}px`
 }));
+const markerAssignStyle = computed(() => ({
+  left: `${markerAssignPosition.value.left}px`,
+  top: `${markerAssignPosition.value.top}px`
+}));
 const MARKER_RADIAL_MENU_EDGE_PADDING = 162;
 const MARKER_COMPASS_EDGE_PADDING = 176;
 const markerRadialIconPaths = (icon: MarkerRadialIcon) => markerRadialIconMap[icon] ?? [];
@@ -926,11 +972,18 @@ const closeZoneAssign = () => {
   zoneAssignMissionUid.value = "";
   zoneAssignBusy.value = false;
 };
+const closeMarkerAssign = () => {
+  markerAssignOpen.value = false;
+  markerAssignMarkerId.value = "";
+  markerAssignMissionUid.value = "";
+  markerAssignBusy.value = false;
+};
 const dismissRadialMenus = () => {
   markerToolbarOpen.value = false;
   closeMarkerRadialMenu();
   closeZoneRadialMenu();
   closeZoneAssign();
+  closeMarkerAssign();
   markerMoveArmId.value = null;
   closeMarkerCompass();
   clearHoveredOperatorMarker();
@@ -1136,6 +1189,7 @@ const openMarkerRadialMenu = (markerId: string, point?: ScreenPoint) => {
   }
   closeZoneRadialMenu();
   closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   markerRadialMenuProfile.value = resolveMarkerRadialMenuProfile(markerId);
   markerRadialMenuPath.value = [];
@@ -1150,6 +1204,7 @@ const openZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
   closeMarkerCompass();
   markerMoveArmId.value = null;
   closeZoneAssign();
+  closeMarkerAssign();
   closeZonePrompt();
   if (markerRenameOpen.value) {
     closeMarkerRename();
@@ -1201,6 +1256,14 @@ const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
     markerMoveArmId.value = markerId;
     closeMarkerRadialMenu();
     toastStore.push("Press and hold this marker to move it.", "info");
+    return;
+  }
+  if (item.action === "assign") {
+    const anchor = markerRadialMenuPoint.value ?? resolveMarkerScreenPoint(markerId);
+    closeMarkerRadialMenu();
+    if (anchor) {
+      void openMarkerAssignPopover(markerId, anchor);
+    }
     return;
   }
   if (item.action === "delete") {
@@ -1412,6 +1475,7 @@ const toggleZoneMode = () => {
   closeMarkerRadialMenu();
   closeZoneRadialMenu();
   closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   markerMoveArmId.value = null;
   clearHoveredOperatorMarker();
@@ -1431,6 +1495,7 @@ const toggleMarkerToolbar = () => {
   closeMarkerRadialMenu();
   closeZoneRadialMenu();
   closeZoneAssign();
+  closeMarkerAssign();
   markerToolbarOpen.value = !markerToolbarOpen.value;
 };
 
@@ -1438,6 +1503,7 @@ const selectMarkerSymbol = (symbolId: string) => {
   closeMarkerRadialMenu();
   closeZoneRadialMenu();
   closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   markerMoveArmId.value = null;
   markerCategory.value = symbolId;
@@ -1468,6 +1534,7 @@ const openZonePrompt = (
   options: { zoneId?: string; value?: string; point?: { x: number; y: number } } = {}
 ) => {
   closeZoneAssign();
+  closeMarkerAssign();
   const { zoneId = "", value = "", point = { x: 12, y: 12 } } = options;
   const container = mapContainer.value;
   if (!container) {
@@ -1497,12 +1564,73 @@ const loadZoneAssignMissions = async (): Promise<void> => {
   }
 };
 
+const loadMarkerAssignMissions = async (): Promise<void> => {
+  markerAssignMissionsLoading.value = true;
+  try {
+    const missions = await get<MissionRaw[]>(endpoints.r3aktMissions);
+    markerAssignMissions.value = toZoneMissionOptions(missions);
+  } catch (error) {
+    markerAssignMissions.value = [];
+    toastStore.push("Unable to load missions.", "danger");
+  } finally {
+    markerAssignMissionsLoading.value = false;
+  }
+};
+
+const openMarkerAssignPopover = async (markerId: string, point: ScreenPoint) => {
+  const container = mapContainer.value;
+  if (!container) {
+    return;
+  }
+  closeZoneAssign();
+  closeMarkerAssign();
+  closeZoneRadialMenu();
+  closeZonePrompt();
+  if (markerRenameOpen.value) {
+    closeMarkerRename();
+  }
+  const width = 280;
+  const height = 148;
+  const left = Math.min(Math.max(point.x + 12, 12), Math.max(12, container.clientWidth - width - 12));
+  const top = Math.min(Math.max(point.y + 12, 12), Math.max(12, container.clientHeight - height - 12));
+  markerAssignMarkerId.value = markerId;
+  markerAssignMissionUid.value = "";
+  markerAssignPosition.value = { left, top };
+  markerAssignOpen.value = true;
+  await loadMarkerAssignMissions();
+  if (!markerAssignMissions.value.length) {
+    toastStore.push("No missions available for assignment.", "warning");
+    closeMarkerAssign();
+    return;
+  }
+  markerAssignMissionUid.value = markerAssignMissions.value[0].uid;
+};
+
+const submitMarkerAssign = async () => {
+  const markerId = markerAssignMarkerId.value.trim();
+  const missionUid = markerAssignMissionUid.value.trim();
+  if (!markerId || !missionUid || markerAssignBusy.value) {
+    return;
+  }
+  markerAssignBusy.value = true;
+  try {
+    await put(`${endpoints.r3aktMissions}/${encodeURIComponent(missionUid)}/markers/${encodeURIComponent(markerId)}`);
+    toastStore.push("Marker assigned to mission.", "success");
+    closeMarkerAssign();
+  } catch (error) {
+    toastStore.push("Unable to assign marker to mission.", "danger");
+  } finally {
+    markerAssignBusy.value = false;
+  }
+};
+
 const openZoneAssignPopover = async (zoneId: string, point: ScreenPoint) => {
   const container = mapContainer.value;
   if (!container) {
     return;
   }
   closeZoneRadialMenu();
+  closeMarkerAssign();
   closeZonePrompt();
   if (markerRenameOpen.value) {
     closeMarkerRename();
@@ -1635,6 +1763,7 @@ const startZoneEdit = (zoneId: string) => {
   }
   closeZoneRadialMenu();
   closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerRadialMenu();
   closeMarkerCompass();
   markerMoveArmId.value = null;
@@ -1750,6 +1879,7 @@ const openMarkerRename = (markerId: string, point: { x: number; y: number }) => 
   }
   closeMarkerRadialMenu();
   closeMarkerCompass();
+  closeMarkerAssign();
   markerMoveArmId.value = null;
   const width = 260;
   const height = 140;
@@ -1849,6 +1979,11 @@ const handleDocumentPointerDown = (event: MouseEvent) => {
       closeZoneAssign();
     }
   }
+  if (markerAssignOpen.value && markerAssignPopoverRef.value) {
+    if (!target || !markerAssignPopoverRef.value.contains(target)) {
+      closeMarkerAssign();
+    }
+  }
   if (markerToolbarOpen.value && markerToolbarRef.value) {
     if (!target || !markerToolbarRef.value.contains(target)) {
       markerToolbarOpen.value = false;
@@ -1891,6 +2026,7 @@ const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
   closeMarkerRadialMenu();
   closeZoneRadialMenu();
   closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   markerMoveArmId.value = null;
   clearHoveredOperatorMarker();
@@ -3485,6 +3621,7 @@ onUnmounted(() => {
   closeMarkerRadialMenu();
   closeZoneRadialMenu();
   closeZoneAssign();
+  closeMarkerAssign();
   closeMarkerCompass();
   clearHoveredOperatorMarker();
   stopDrag();

@@ -530,6 +530,20 @@ class R3aktMissionZoneLinkRecord(Base):  # pylint: disable=too-few-public-method
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
+class R3aktMissionMarkerLinkRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for mission-to-marker links."""
+
+    __tablename__ = "r3akt_mission_marker_links"
+    __table_args__ = (
+        UniqueConstraint("mission_uid", "marker_id", name="uq_mission_marker_link"),
+    )
+
+    link_uid = Column(String, primary_key=True)
+    mission_uid = Column(String, nullable=False)
+    marker_id = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
 class R3aktMissionTeamLinkRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for mission-to-team links."""
 

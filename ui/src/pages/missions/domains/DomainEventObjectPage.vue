@@ -3,7 +3,8 @@
     title="Domain Event"
     subtitle="Domain event stream filtered by mission context"
     collection-key="events"
-    legacy-path="/missions/logs"
+    legacy-path="/missions"
+    legacy-screen="missionOverview"
   />
 </template>
 

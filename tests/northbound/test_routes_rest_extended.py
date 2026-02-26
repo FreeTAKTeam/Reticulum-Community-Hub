@@ -545,6 +545,15 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     assert marker.status_code == 201
     marker_ref = marker.json()["object_destination_hash"]
 
+    marker_link = client.put(
+        f"/api/r3akt/missions/{mission_uid}/markers/{marker_ref}",
+        headers=headers,
+    )
+    assert marker_link.status_code == 200
+    mission_markers = client.get(f"/api/r3akt/missions/{mission_uid}/markers", headers=headers)
+    assert mission_markers.status_code == 200
+    assert marker_ref in mission_markers.json()["marker_ids"]
+
     log_missing_mission = client.post(
         "/api/r3akt/log-entries",
         json={"entry_uid": "log-missing-mission", "content": "No mission"},

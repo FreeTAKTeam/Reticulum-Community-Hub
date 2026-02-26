@@ -36,6 +36,7 @@ from reticulum_telemetry_hub.api.storage_models import R3aktLogEntryRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionChangeRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionRdeRecord
+from reticulum_telemetry_hub.api.storage_models import R3aktMissionMarkerLinkRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionTaskAssignmentRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionTeamLinkRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktMissionZoneLinkRecord
@@ -524,6 +525,16 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         return [str(row[0]) for row in rows]
 
     @staticmethod
+    def _mission_marker_ids(session: Session, mission_uid: str) -> list[str]:
+        rows = (
+            session.query(R3aktMissionMarkerLinkRecord.marker_id)
+            .filter(R3aktMissionMarkerLinkRecord.mission_uid == mission_uid)
+            .order_by(R3aktMissionMarkerLinkRecord.created_at.asc())
+            .all()
+        )
+        return [str(row[0]) for row in rows]
+
+    @staticmethod
     def _dedupe_non_empty(values: list[str]) -> list[str]:
         seen: set[str] = set()
         normalized: list[str] = []
@@ -656,6 +667,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             "children": self._mission_children(session, row.uid),
             "feeds": list(row.feeds_json or []),
             "zones": self._mission_zone_ids(session, row.uid),
+            "markers": self._mission_marker_ids(session, row.uid),
             "password_hash": row.password_hash,
             "default_role": row.default_role,
             "mission_priority": row.mission_priority,
@@ -1105,6 +1117,77 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if session.get(R3aktMissionRecord, mission_uid) is None:
                 raise KeyError(f"Mission '{mission_uid}' not found")
             return self._mission_zone_ids(session, mission_uid)
+
+    def link_mission_marker(self, mission_uid: str, marker_id: str) -> dict[str, Any]:
+        marker_id = str(marker_id or "").strip()
+        if not marker_id:
+            raise ValueError("marker_id is required")
+        with self._session() as session:
+            mission = session.get(R3aktMissionRecord, mission_uid)
+            if mission is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+            self._ensure_marker_exists(session, marker_id)
+            row = (
+                session.query(R3aktMissionMarkerLinkRecord)
+                .filter(
+                    R3aktMissionMarkerLinkRecord.mission_uid == mission_uid,
+                    R3aktMissionMarkerLinkRecord.marker_id == marker_id,
+                )
+                .first()
+            )
+            if row is None:
+                session.add(
+                    R3aktMissionMarkerLinkRecord(
+                        link_uid=uuid.uuid4().hex,
+                        mission_uid=mission_uid,
+                        marker_id=marker_id,
+                    )
+                )
+            session.flush()
+            data = self._serialize_mission(session, mission)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=mission_uid,
+                event_type="mission.marker.linked",
+                payload={"mission_uid": mission_uid, "marker_id": marker_id},
+            )
+            return data
+
+    def unlink_mission_marker(self, mission_uid: str, marker_id: str) -> dict[str, Any]:
+        marker_id = str(marker_id or "").strip()
+        if not marker_id:
+            raise ValueError("marker_id is required")
+        with self._session() as session:
+            mission = session.get(R3aktMissionRecord, mission_uid)
+            if mission is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+            (
+                session.query(R3aktMissionMarkerLinkRecord)
+                .filter(
+                    R3aktMissionMarkerLinkRecord.mission_uid == mission_uid,
+                    R3aktMissionMarkerLinkRecord.marker_id == marker_id,
+                )
+                .delete(synchronize_session=False)
+            )
+            session.flush()
+            data = self._serialize_mission(session, mission)
+            self._record_event(
+                session,
+                domain="mission",
+                aggregate_type="mission",
+                aggregate_uid=mission_uid,
+                event_type="mission.marker.unlinked",
+                payload={"mission_uid": mission_uid, "marker_id": marker_id},
+            )
+            return data
+
+    def list_mission_markers(self, mission_uid: str) -> list[str]:
+        with self._session() as session:
+            if session.get(R3aktMissionRecord, mission_uid) is None:
+                raise KeyError(f"Mission '{mission_uid}' not found")
+            return self._mission_marker_ids(session, mission_uid)
 
     def upsert_mission_rde(self, mission_uid: str, role: str) -> dict[str, Any]:
         normalized_role = normalize_enum_value(

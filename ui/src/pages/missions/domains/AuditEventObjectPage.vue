@@ -137,10 +137,14 @@ const reload = async () => {
 
 const openLegacyWorkspace = () => {
   const selectedMissionUid = missionUid.value;
+  const query: Record<string, string> = { screen: "missionOverview" };
+  if (selectedMissionUid) {
+    query.mission_uid = selectedMissionUid;
+  }
   router
     .push({
-      path: "/missions/logs",
-      query: selectedMissionUid ? { mission_uid: selectedMissionUid } : undefined
+      path: "/missions",
+      query
     })
     .catch(() => undefined);
 };

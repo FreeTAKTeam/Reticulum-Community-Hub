@@ -3,7 +3,8 @@
     title="Topic"
     subtitle="Mission topic scope and taxonomy records"
     collection-key="topics"
-    legacy-path="/topics"
+    legacy-path="/missions"
+    legacy-screen="missionOverview"
   />
 </template>
 

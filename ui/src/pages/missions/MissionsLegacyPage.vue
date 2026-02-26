@@ -1766,6 +1766,20 @@ const toScreenId = (value: unknown): ScreenId | null => {
   return Object.prototype.hasOwnProperty.call(screenMeta, text) ? (text as ScreenId) : null;
 };
 
+const checklistPrimaryScreens = new Set<ScreenId>([
+  "checklistOverview",
+  "checklistDetails",
+  "checklistCreation",
+  "checklistRunDetail",
+  "checklistImportCsv",
+  "checklistPublish",
+  "checklistProgress"
+]);
+
+const tabForScreen = (screen: ScreenId): PrimaryTab => {
+  return checklistPrimaryScreens.has(screen) ? "checklists" : "mission";
+};
+
 const readPersistedMissionUid = (): string => {
   const stored = loadJson<string>(MISSION_SELECTION_STORAGE_KEY, "");
   return typeof stored === "string" ? stored.trim() : "";
@@ -4780,10 +4794,13 @@ watch(
     if (!nextScreen) {
       return;
     }
-    if (secondaryScreen.value === nextScreen) {
-      return;
+    const desiredTab = tabForScreen(nextScreen);
+    if (primaryTab.value !== desiredTab) {
+      setPrimaryTab(desiredTab, false);
     }
-    setSecondaryScreen(nextScreen);
+    if (secondaryScreen.value !== nextScreen) {
+      setSecondaryScreen(nextScreen);
+    }
   },
   { immediate: true }
 );
@@ -4883,9 +4900,14 @@ watch(
 watch(
   () => route.path,
   (path) => {
-    const desiredTab: PrimaryTab = path === "/checklists" ? "checklists" : "mission";
+    const requestedScreen = toScreenId(route.query.screen);
+    const desiredTab: PrimaryTab =
+      path === "/checklists" ? "checklists" : requestedScreen ? tabForScreen(requestedScreen) : "mission";
     if (primaryTab.value !== desiredTab) {
       setPrimaryTab(desiredTab, false);
+    }
+    if (requestedScreen && secondaryScreen.value !== requestedScreen) {
+      setSecondaryScreen(requestedScreen);
     }
   },
   { immediate: true }

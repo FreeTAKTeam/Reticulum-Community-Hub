@@ -3,7 +3,8 @@
     title="Skill"
     subtitle="Skill registry used by mission assignments"
     collection-key="skills"
-    legacy-path="/users"
+    legacy-path="/missions"
+    legacy-screen="missionTeamMembers"
   />
 </template>
 

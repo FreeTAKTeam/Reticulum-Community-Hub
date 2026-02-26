@@ -3,7 +3,8 @@
     title="Checklist"
     subtitle="Checklist instances in mission scope"
     collection-key="checklists"
-    legacy-path="/checklists"
+    legacy-path="/missions"
+    legacy-screen="checklistOverview"
   />
 </template>
 
