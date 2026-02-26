@@ -4,11 +4,13 @@
 import argparse
 from datetime import datetime
 from datetime import timezone
+import socket
 import sys
 import threading
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config import HubConfigurationManager
@@ -21,6 +23,7 @@ from reticulum_telemetry_hub.northbound.gateway import DEFAULT_API_HOST
 from reticulum_telemetry_hub.northbound.gateway import LOCAL_API_HOST
 from reticulum_telemetry_hub.northbound.gateway import _build_gateway_config
 from reticulum_telemetry_hub.northbound.gateway import _build_log_levels
+from reticulum_telemetry_hub.northbound.gateway import _is_api_port_available
 from reticulum_telemetry_hub.northbound.gateway import _parse_args
 from reticulum_telemetry_hub.northbound.gateway import _resolve_interval
 from reticulum_telemetry_hub.northbound.gateway import _start_hub_thread
@@ -71,6 +74,18 @@ def test_build_log_levels_contains_defaults() -> None:
     levels = _build_log_levels()
     assert "info" in levels
     assert "debug" in levels
+
+
+def test_is_api_port_available_reports_busy_port() -> None:
+    """Detect occupied ports and release cleanly."""
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind((LOCAL_API_HOST, 0))
+        listener.listen(1)
+        occupied_port = listener.getsockname()[1]
+        assert _is_api_port_available(LOCAL_API_HOST, occupied_port) is False
+
+    assert _is_api_port_available(LOCAL_API_HOST, occupied_port) is True
 
 
 def test_parse_args_accepts_data_dir(monkeypatch) -> None:
@@ -285,6 +300,7 @@ def test_gateway_main_runs_server(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(gateway, "_parse_args", lambda: object())
     monkeypatch.setattr(gateway, "_build_gateway_config", lambda _args: config)
+    monkeypatch.setattr(gateway, "_is_api_port_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(gateway, "HubConfigurationManager", DummyConfigManager)
     monkeypatch.setattr(gateway, "ReticulumTelemetryHub", DummyHub)
     monkeypatch.setattr(gateway, "_start_hub_thread", lambda *_args, **_kwargs: DummyThread())
@@ -297,3 +313,41 @@ def test_gateway_main_runs_server(monkeypatch, tmp_path) -> None:
     assert state["server_run"] is True
     assert state["shutdown_called"] is True
     assert state["joined"] is True
+
+
+def test_gateway_main_aborts_when_api_port_unavailable(monkeypatch, tmp_path) -> None:
+    """Exit early when the API host/port is already bound."""
+
+    config = GatewayConfig(
+        storage_path=tmp_path,
+        identity_path=tmp_path / "identity",
+        config_path=tmp_path / "config.ini",
+        display_name="RCH",
+        announce_interval=1,
+        hub_telemetry_interval=1,
+        service_telemetry_interval=1,
+        loglevel=1,
+        embedded=False,
+        daemon_mode=False,
+        services=[],
+        api_host=LOCAL_API_HOST,
+        api_port=8123,
+    )
+
+    called = {"hub": False}
+
+    class DummyHub:
+        def __init__(self, *args, **kwargs) -> None:
+            called["hub"] = True
+
+    monkeypatch.setattr(gateway, "_parse_args", lambda: object())
+    monkeypatch.setattr(gateway, "_build_gateway_config", lambda _args: config)
+    monkeypatch.setattr(gateway, "_is_api_port_available", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(gateway, "ReticulumTelemetryHub", DummyHub)
+
+    with pytest.raises(SystemExit) as excinfo:
+        gateway.main()
+
+    assert excinfo.value.code == 1
+
+    assert called["hub"] is False

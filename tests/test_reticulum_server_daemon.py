@@ -697,6 +697,8 @@ def test_mission_registry_event_fanout_is_capability_aware(tmp_path):
         custom_type_field = int(getattr(LXMF, "FIELD_CUSTOM_TYPE", 0xFB))
         custom_data_field = int(getattr(LXMF, "FIELD_CUSTOM_DATA", 0xFC))
         custom_meta_field = int(getattr(LXMF, "FIELD_CUSTOM_META", 0xFD))
+        renderer_field = int(getattr(LXMF, "FIELD_RENDERER", 0x0F))
+        renderer_markdown_value = int(getattr(LXMF, "RENDERER_MARKDOWN", 0x02))
 
         custom_fanout = [
             item
@@ -719,12 +721,16 @@ def test_mission_registry_event_fanout_is_capability_aware(tmp_path):
             item
             for item in outbound
             if item.get("destination") == peer_identity
-            and "### Mission Update" in str(item.get("message") or "")
+            and "### Mission " in str(item.get("message") or "")
         ]
         assert len(generic_fanout) == 1
+        generic_message = str(generic_fanout[0].get("message") or "")
+        assert generic_message.startswith("### Mission ")
+        assert "mission-1" not in generic_message
         peer_fields = generic_fanout[0].get("fields")
         assert isinstance(peer_fields, dict)
         assert custom_type_field not in peer_fields
+        assert peer_fields.get(renderer_field) == renderer_markdown_value
     finally:
         hub.shutdown()
 

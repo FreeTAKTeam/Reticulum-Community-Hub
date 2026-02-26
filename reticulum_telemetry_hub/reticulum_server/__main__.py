@@ -93,6 +93,10 @@ from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import ReticulumInternalAdapter
 from reticulum_telemetry_hub.reticulum_server.marker_objects import MarkerObjectManager
+from reticulum_telemetry_hub.reticulum_server.mission_delta_markdown import (
+    MissionDeltaNameResolver,
+    render_mission_delta_markdown,
+)
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_sync import MissionSyncRouter
 from .command_manager import CommandManager
@@ -125,6 +129,8 @@ R3AKT_CUSTOM_META_VERSION = "1.0"
 R3AKT_CUSTOM_TYPE_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_TYPE", 0xFB))
 R3AKT_CUSTOM_DATA_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_DATA", 0xFC))
 R3AKT_CUSTOM_META_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_META", 0xFD))
+MARKDOWN_RENDERER_FIELD = int(getattr(LXMF, "FIELD_RENDERER", 0x0F))
+MARKDOWN_RENDERER_VALUE = int(getattr(LXMF, "RENDERER_MARKDOWN", 0x02))
 ESCAPED_COMMAND_PREFIX = "\\\\\\"
 DEFAULT_OUTBOUND_QUEUE_SIZE = 64
 DEFAULT_OUTBOUND_WORKERS = 2
@@ -1075,40 +1081,6 @@ class ReticulumTelemetryHub:
             },
         }
 
-    @staticmethod
-    def _format_generic_mission_delta_markdown(
-        *,
-        mission_uid: str,
-        mission_change: dict[str, Any],
-        delta: dict[str, Any],
-    ) -> str:
-        logs = list(delta.get("logs") or [])
-        assets = list(delta.get("assets") or [])
-        tasks = list(delta.get("tasks") or [])
-        change_uid = str(mission_change.get("uid") or "").strip()
-        change_type = str(mission_change.get("change_type") or "ADD_CONTENT").strip()
-        summary = [
-            "### Mission Update",
-            f"- Mission: `{mission_uid}`",
-            f"- Change: `{change_uid}` (`{change_type}`)",
-            f"- Logs: `{len(logs)}`",
-            f"- Assets: `{len(assets)}`",
-            f"- Tasks: `{len(tasks)}`",
-        ]
-        if tasks:
-            task_op = str(tasks[0].get("op") or "").strip()
-            if task_op:
-                summary.append(f"- Task operation: `{task_op}`")
-        if assets:
-            asset_op = str(assets[0].get("op") or "").strip()
-            if asset_op:
-                summary.append(f"- Asset operation: `{asset_op}`")
-        if logs:
-            log_op = str(logs[0].get("op") or "").strip()
-            if log_op:
-                summary.append(f"- Log operation: `{log_op}`")
-        return "\n".join(summary)
-
     def _fanout_mission_change_to_recipients(
         self, mission_change: dict[str, Any]
     ) -> None:
@@ -1146,6 +1118,7 @@ class ReticulumTelemetryHub:
 
         delta = mission_change.get("delta")
         delta_payload = dict(delta) if isinstance(delta, dict) else {}
+        resolver = MissionDeltaNameResolver(domain)
         base_event_fields = {
             LXMF.FIELD_EVENT: self._build_mission_change_event_field(
                 mission_uid=mission_uid,
@@ -1154,10 +1127,11 @@ class ReticulumTelemetryHub:
             )
         }
 
-        markdown_body = self._format_generic_mission_delta_markdown(
+        markdown_body = render_mission_delta_markdown(
             mission_uid=mission_uid,
             mission_change=mission_change,
             delta=delta_payload,
+            resolver=resolver,
         )
         concise_body = (
             f"r3akt mission delta {mission_uid} {mission_change_uid}".strip()
@@ -1182,7 +1156,10 @@ class ReticulumTelemetryHub:
 
             merged_fields = self._merge_standard_fields(
                 source_fields=None,
-                extra_fields=base_event_fields,
+                extra_fields={
+                    **base_event_fields,
+                    MARKDOWN_RENDERER_FIELD: MARKDOWN_RENDERER_VALUE,
+                },
             )
             self.send_message(
                 markdown_body,

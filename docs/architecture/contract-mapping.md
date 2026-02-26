@@ -16,6 +16,7 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 - `FIELD_CUSTOM_TYPE (0xFB)`: set to `r3akt.mission.change.v1` for mission-team fanout.
 - `FIELD_CUSTOM_DATA (0xFC)`: mission delta payload object (`mission_uid`, `mission_change`, `delta`).
 - `FIELD_CUSTOM_META (0xFD)`: metadata (`version`, `event_type`, `mission_uid`, `encoding`, `source`).
+- `FIELD_RENDERER (0x0F)`: for generic markdown fanout, set to `RENDERER_MARKDOWN (0x02)` so markdown-capable clients render the body.
 - `FIELD_GROUP (0x0B)`: preserved from ingress to egress for scoped fan-out compatibility.
 
 ## Mission-Sync Commands
@@ -28,7 +29,9 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 - Recipient set is all identities associated with team members of
   mission-assigned teams (member identities + linked client identities).
 - R3AKT-capable recipients receive mission delta in custom fields.
-- Non-R3AKT recipients receive a markdown mission-update summary body.
+- Non-R3AKT recipients receive a markdown mission-update summary body with
+  heading `### Mission {mission_name}`, no raw UID fields in text, and
+  `FIELD_RENDERER=RENDERER_MARKDOWN`.
 - Registry command coverage includes mission, mission-change, log-entry, team,
   team-member, asset, skill, team-member-skill, task-skill-requirement,
   assignment, and mission/team-member/assignment association operations.

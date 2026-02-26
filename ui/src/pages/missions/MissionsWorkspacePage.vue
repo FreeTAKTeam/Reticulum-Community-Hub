@@ -1,7 +1,7 @@
 <template>
   <div class="missions-workspace">
     <div class="registry-shell">
-      <CosmicTopStatus title="Mission Domain Workspace" />
+      <CosmicTopStatus title="Mission Elements" />
 
       <section class="mission-kpis">
         <article class="kpi-card">
@@ -62,7 +62,7 @@
         <section class="panel registry-main">
           <div class="panel-header">
             <div>
-              <div class="panel-title">Domain Objects</div>
+              <div class="panel-title">Mission Elements</div>
               <div class="panel-subtitle">Canonical /missions/:mission_uid/* routes</div>
             </div>
             <div class="panel-chip">{{ selectedMissionUid || "No mission" }}</div>
@@ -138,13 +138,23 @@ const activeMissionUid = computed(() => {
   return String(workspace.missions[0]?.uid ?? "").trim();
 });
 
-const domainLink = (name: string) => ({
-  name,
-  params: {
-    mission_uid: activeMissionUid.value
-  },
-  query: activeMissionUid.value ? { mission_uid: activeMissionUid.value } : undefined
-});
+const domainLink = (name: string) => {
+  if (name === MISSION_DOMAIN_ROUTE_NAMES.mission) {
+    return {
+      path: "/missions",
+      query: activeMissionUid.value
+        ? { mission_uid: activeMissionUid.value, screen: "missionEdit" }
+        : { screen: "missionEdit" }
+    };
+  }
+  return {
+    name,
+    params: {
+      mission_uid: activeMissionUid.value
+    },
+    query: activeMissionUid.value ? { mission_uid: activeMissionUid.value } : undefined
+  };
+};
 
 const selectMission = (missionUid: string) => {
   const nextMissionUid = missionUid.trim();
