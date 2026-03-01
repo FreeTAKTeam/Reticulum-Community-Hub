@@ -599,14 +599,69 @@ class LXMPeer:
                 self.next_sync_attempt = time.time() + throttle_time
                 return
 
-            elif response == False:
+            elif response == LXMPeer.ERROR_INVALID_KEY:
+                RNS.log(
+                    "Remote indicated that the peering key was invalid, sync aborted",
+                    RNS.LOG_VERBOSE,
+                )
+                if self.link != None:
+                    self.link.teardown()
+                self.link = None
+                self.state = LXMPeer.IDLE
+                return
+
+            elif response == LXMPeer.ERROR_INVALID_DATA:
+                RNS.log(
+                    "Remote indicated that the sync offer data was invalid, sync aborted",
+                    RNS.LOG_VERBOSE,
+                )
+                if self.link != None:
+                    self.link.teardown()
+                self.link = None
+                self.state = LXMPeer.IDLE
+                return
+
+            elif response == LXMPeer.ERROR_INVALID_STAMP:
+                RNS.log(
+                    "Remote indicated that the sync offer stamp was invalid, sync aborted",
+                    RNS.LOG_VERBOSE,
+                )
+                if self.link != None:
+                    self.link.teardown()
+                self.link = None
+                self.state = LXMPeer.IDLE
+                return
+
+            elif response == LXMPeer.ERROR_TIMEOUT:
+                RNS.log(
+                    "Remote indicated that the sync offer timed out, sync aborted",
+                    RNS.LOG_VERBOSE,
+                )
+                if self.link != None:
+                    self.link.teardown()
+                self.link = None
+                self.state = LXMPeer.IDLE
+                return
+
+            elif type(response) == int:
+                RNS.log(
+                    f"Remote returned unknown sync offer response {response}, sync aborted",
+                    RNS.LOG_VERBOSE,
+                )
+                if self.link != None:
+                    self.link.teardown()
+                self.link = None
+                self.state = LXMPeer.IDLE
+                return
+
+            elif response is False:
                 # Peer already has all advertised messages
                 for transient_id in self.last_offer:
                     if transient_id in self.unhandled_messages:
                         self.add_handled_message(transient_id)
                         self.remove_unhandled_message(transient_id)
 
-            elif response == True:
+            elif response is True:
                 # Peer wants all advertised messages
                 for transient_id in self.last_offer:
                     wanted_messages.append(
@@ -614,7 +669,7 @@ class LXMPeer:
                     )
                     wanted_message_ids.append(transient_id)
 
-            else:
+            elif type(response) == list:
                 # Peer wants some advertised messages
                 for transient_id in self.last_offer.copy():
                     # If the peer did not want the message, it has
@@ -628,6 +683,17 @@ class LXMPeer:
                         self.router.propagation_entries[transient_id]
                     )
                     wanted_message_ids.append(transient_id)
+
+            else:
+                RNS.log(
+                    f"Remote returned invalid sync offer response type {type(response)}, sync aborted",
+                    RNS.LOG_VERBOSE,
+                )
+                if self.link != None:
+                    self.link.teardown()
+                self.link = None
+                self.state = LXMPeer.IDLE
+                return
 
             if len(wanted_messages) > 0:
                 RNS.log(
