@@ -35,7 +35,7 @@ def register_core_routes(
     telemetry_controller: TelemetryController,
     require_protected: Callable[[], None],
     resolve_openapi_spec: Callable[[], Optional[Path]],
-    auth: ApiAuth,
+    auth: Optional[ApiAuth] = None,
 ) -> None:
     """Register core REST routes on the FastAPI app.
 
@@ -46,11 +46,13 @@ def register_core_routes(
         telemetry_controller (TelemetryController): Telemetry controller instance.
         require_protected (Callable[[], None]): Dependency for protected routes.
         resolve_openapi_spec (Callable[[], Optional[Path]]): OpenAPI spec resolver.
-        auth (ApiAuth): API authentication helper.
+        auth (Optional[ApiAuth]): API authentication helper.
 
     Returns:
         None: Routes are registered on the application.
     """
+
+    auth_helper = auth or ApiAuth()
 
     @app.get("/openapi.yaml", include_in_schema=False)
     def openapi_yaml() -> Response:
@@ -111,14 +113,14 @@ def register_core_routes(
 
         return {
             "authenticated": True,
-            "auth_mode": "api_key" if auth.is_enabled() else "local_only",
+            "auth_mode": "api_key" if auth_helper.is_enabled() else "local_only",
             "app": {
                 "name": "ReticulumCommunityHub",
                 "version": "northbound",
             },
             "client": {
                 "host": request.client.host if request.client else None,
-                "local": auth.is_local_client(request.client.host if request.client else None),
+                "local": auth_helper.is_local_client(request.client.host if request.client else None),
             },
         }
 
