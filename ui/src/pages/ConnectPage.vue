@@ -1,16 +1,28 @@
 ﻿<template>
   <div class="space-y-6">
-    <BaseCard :title="connectionStore.isRemoteTarget ? 'Remote Login' : 'Connection Settings'">
+    <BaseCard :title="connectionStore.isRemoteTarget ? 'Remote Connection' : 'Local Connection Settings'">
       <div class="grid gap-4 md:grid-cols-2">
         <BaseInput v-model="connectionStore.baseUrl" label="Base URL" />
         <BaseInput v-model="connectionStore.wsBaseUrl" label="WebSocket Base URL" />
 
         <template v-if="connectionStore.isRemoteTarget">
+          <div class="md:col-span-2 rounded-md border border-rth-warning/40 bg-rth-warning/10 px-3 py-2 text-sm text-rth-warning">
+            Remote backend requires authentication.
+          </div>
           <BaseSelect v-model="connectionStore.authMode" label="Auth Mode" :options="authOptions" />
           <BaseInput v-model="connectionStore.token" label="Bearer Token" type="password" />
           <BaseInput v-model="connectionStore.apiKey" label="API Key" type="password" />
           <div class="md:col-span-2">
             <BaseCheckbox v-model="connectionStore.rememberSecrets" label="Remember credentials on this device" />
+          </div>
+          <div v-if="connectionStore.authValidationError" class="md:col-span-2 text-sm text-rth-danger">
+            {{ connectionStore.authValidationError }}
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="md:col-span-2 text-sm text-rth-muted">
+            Local backend detected. Authentication is optional for loopback connections.
           </div>
         </template>
       </div>
@@ -61,6 +73,10 @@ const authOptions = [
 ];
 
 const save = () => {
+  if (connectionStore.isRemoteTarget && !connectionStore.hasValidAuthConfig()) {
+    toastStore.push(connectionStore.authValidationError, "error");
+    return;
+  }
   connectionStore.persist(connectionStore.rememberSecrets);
   toastStore.push("Connection settings saved", "success");
 };
@@ -68,6 +84,13 @@ const save = () => {
 const login = async () => {
   isSubmitting.value = true;
   testResult.value = "";
+  if (!connectionStore.hasValidAuthConfig()) {
+    connectionStore.setAuthStatus("unauthenticated", connectionStore.authValidationError);
+    testResult.value = connectionStore.authValidationError;
+    toastStore.push(connectionStore.authValidationError, "error");
+    isSubmitting.value = false;
+    return;
+  }
   connectionStore.persist(connectionStore.rememberSecrets);
   try {
     const status = await get(endpoints.status);
