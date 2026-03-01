@@ -33,6 +33,18 @@ const isLoopbackHost = (host: string): boolean => {
   return normalizedHost === "localhost" || normalizedHost === "127.0.0.1" || normalizedHost === "::1";
 };
 
+const normalizeOrigin = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return trimmed;
+  }
+};
+
 const resolveDefaultBaseUrl = (): string => {
   const envBaseUrl = import.meta.env.VITE_RTH_BASE_URL;
   if (envBaseUrl) {
@@ -76,8 +88,19 @@ export const useConnectionStore = defineStore("connection", () => {
   const authStatus = ref<AuthStatus>("unknown");
   const authMessage = ref<string>("");
   const isAuthenticated = ref<boolean>(false);
+  const authenticatedTargetOrigin = ref<string>("");
   const lastAuthCheckAt = ref<number | null>(null);
   const wsConnections = ref(0);
+
+  const currentTargetOrigin = computed(() => {
+    if (baseUrl.value) {
+      return normalizeOrigin(baseUrl.value);
+    }
+    if (isFileOrigin()) {
+      return DEFAULT_LOCAL_HTTP;
+    }
+    return normalizeOrigin(window.location.origin);
+  });
 
   const resolveUrl = (path: string): string => {
     const origin = baseUrl.value || (isFileOrigin() ? DEFAULT_LOCAL_HTTP : window.location.origin);
@@ -133,7 +156,11 @@ export const useConnectionStore = defineStore("connection", () => {
     return !isLoopbackHost(host);
   });
 
-  const requiresLogin = computed(() => isRemoteTarget.value && !isAuthenticated.value);
+  const hasActiveAuthSession = computed(
+    () => isAuthenticated.value && authenticatedTargetOrigin.value === currentTargetOrigin.value
+  );
+
+  const requiresLogin = computed(() => isRemoteTarget.value && !hasActiveAuthSession.value);
 
   const statusLabel = computed(() => {
     if (status.value === "online") {
@@ -175,11 +202,13 @@ export const useConnectionStore = defineStore("connection", () => {
     lastAuthCheckAt.value = Date.now();
     if (next === "unauthenticated" || next === "forbidden") {
       isAuthenticated.value = false;
+      authenticatedTargetOrigin.value = "";
     }
   };
 
   const markAuthenticated = () => {
     isAuthenticated.value = true;
+    authenticatedTargetOrigin.value = currentTargetOrigin.value;
     authStatus.value = "ok";
     authMessage.value = "";
     lastAuthCheckAt.value = Date.now();
@@ -216,6 +245,7 @@ export const useConnectionStore = defineStore("connection", () => {
     authStatus,
     authMessage,
     isAuthenticated,
+    hasActiveAuthSession,
     lastAuthCheckAt,
     resolveUrl,
     resolveWsUrl,
