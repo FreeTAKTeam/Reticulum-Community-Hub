@@ -33,6 +33,18 @@ const isLoopbackHost = (host: string): boolean => {
   return normalizedHost === "localhost" || normalizedHost === "127.0.0.1" || normalizedHost === "::1";
 };
 
+const parseHost = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    return new URL(trimmed).hostname;
+  } catch {
+    return "";
+  }
+};
+
 const normalizeOrigin = (value: string): string => {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -136,11 +148,7 @@ export const useConnectionStore = defineStore("connection", () => {
 
   const targetHost = computed(() => {
     if (baseUrl.value) {
-      try {
-        return new URL(baseUrl.value).hostname;
-      } catch (error) {
-        return "";
-      }
+      return parseHost(baseUrl.value);
     }
     if (isFileOrigin()) {
       return "127.0.0.1";
@@ -148,19 +156,47 @@ export const useConnectionStore = defineStore("connection", () => {
     return window.location.hostname;
   });
 
+  const isLocalTarget = computed(() => {
+    const host = targetHost.value;
+    if (!host) {
+      return false;
+    }
+    return isLoopbackHost(host);
+  });
+
   const isRemoteTarget = computed(() => {
     const host = targetHost.value;
     if (!host) {
       return false;
     }
-    return !isLoopbackHost(host);
+    return !isLocalTarget.value;
+  });
+
+  const remoteAuthModeValid = computed(
+    () => authMode.value === "bearer" || authMode.value === "apiKey" || authMode.value === "both"
+  );
+
+  const authValidationError = computed(() => {
+    if (isLocalTarget.value) {
+      return "";
+    }
+    if (!remoteAuthModeValid.value) {
+      return "Remote backend requires authentication.";
+    }
+    if ((authMode.value === "bearer" || authMode.value === "both") && !token.value.trim()) {
+      return "Bearer token is required for remote backend authentication.";
+    }
+    if ((authMode.value === "apiKey" || authMode.value === "both") && !apiKey.value.trim()) {
+      return "API key is required for remote backend authentication.";
+    }
+    return "";
   });
 
   const hasActiveAuthSession = computed(
     () => isAuthenticated.value && authenticatedTargetOrigin.value === currentTargetOrigin.value
   );
 
-  const requiresLogin = computed(() => isRemoteTarget.value && !hasActiveAuthSession.value);
+  const requiresLogin = computed(() => isRemoteTarget.value && !hasActiveAuthSession.value && !authValidationError.value);
 
   const statusLabel = computed(() => {
     if (status.value === "online") {
@@ -233,6 +269,8 @@ export const useConnectionStore = defineStore("connection", () => {
     });
   };
 
+  const hasValidAuthConfig = (): boolean => !authValidationError.value;
+
   return {
     rememberSecrets,
     baseUrl,
@@ -251,7 +289,9 @@ export const useConnectionStore = defineStore("connection", () => {
     resolveWsUrl,
     authHeader,
     baseUrlDisplay,
+    isLocalTarget,
     isRemoteTarget,
+    authValidationError,
     requiresLogin,
     statusLabel,
     wsLabel,
@@ -262,6 +302,7 @@ export const useConnectionStore = defineStore("connection", () => {
     markAuthenticated,
     registerWsConnection,
     unregisterWsConnection,
-    persist
+    persist,
+    hasValidAuthConfig
   };
 });
