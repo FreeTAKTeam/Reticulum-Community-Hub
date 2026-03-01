@@ -25,6 +25,52 @@ resolve_public_host() {
   printf '127.0.0.1\n'
 }
 
+ensure_npm() {
+  local current_uid
+  local -a elevate=()
+
+  if command -v npm >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "npm was not found in PATH. Attempting to install Node.js and npm..."
+
+  current_uid="${EUID:-$(id -u)}"
+  if [[ "$current_uid" -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1; then
+      elevate=(sudo)
+    else
+      echo "npm is missing and this script needs root privileges to install it." >&2
+      echo "Install Node.js/npm manually or rerun this script with sudo." >&2
+      exit 1
+    fi
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    "${elevate[@]}" apt-get update
+    "${elevate[@]}" apt-get install -y nodejs npm
+  elif command -v dnf >/dev/null 2>&1; then
+    "${elevate[@]}" dnf install -y nodejs npm
+  elif command -v yum >/dev/null 2>&1; then
+    "${elevate[@]}" yum install -y nodejs npm
+  elif command -v apk >/dev/null 2>&1; then
+    "${elevate[@]}" apk add --no-cache nodejs npm
+  elif command -v pacman >/dev/null 2>&1; then
+    "${elevate[@]}" pacman -Sy --noconfirm nodejs npm
+  elif command -v zypper >/dev/null 2>&1; then
+    "${elevate[@]}" zypper --non-interactive install nodejs npm
+  else
+    echo "Could not auto-install npm: no supported package manager was found." >&2
+    echo "Install Node.js 20 LTS and npm manually, then rerun this script." >&2
+    exit 1
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is still unavailable after the install attempt." >&2
+    exit 1
+  fi
+}
+
 VENV_DIR="${VENV_DIR:-.venv}"
 RTH_STORAGE_DIR="${RTH_STORAGE_DIR:-RTH_Store}"
 RTH_HUB_MODE="${RTH_HUB_MODE:-embedded}"
@@ -93,10 +139,7 @@ if ! "$PYTHON_EXE" -c "import websockets" >/dev/null 2>&1; then
   "$PYTHON_EXE" -m pip install "websockets>=12,<14"
 fi
 
-if ! command -v npm >/dev/null 2>&1; then
-  echo "npm is required (Node.js 20 LTS recommended) but was not found in PATH." >&2
-  exit 1
-fi
+ensure_npm
 
 if [[ ! -d "ui/node_modules" ]]; then
   echo "Installing UI dependencies..."
