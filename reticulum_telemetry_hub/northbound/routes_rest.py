@@ -12,6 +12,7 @@ from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Query
+from fastapi import Request
 from fastapi import Response
 from fastapi import status
 
@@ -23,6 +24,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 from .models import ConfigRollbackPayload
 from .models import MessagePayload
 from .services import NorthboundServices
+from .auth import ApiAuth
 
 
 def register_core_routes(
@@ -33,6 +35,7 @@ def register_core_routes(
     telemetry_controller: TelemetryController,
     require_protected: Callable[[], None],
     resolve_openapi_spec: Callable[[], Optional[Path]],
+    auth: ApiAuth,
 ) -> None:
     """Register core REST routes on the FastAPI app.
 
@@ -43,6 +46,7 @@ def register_core_routes(
         telemetry_controller (TelemetryController): Telemetry controller instance.
         require_protected (Callable[[], None]): Dependency for protected routes.
         resolve_openapi_spec (Callable[[], Optional[Path]]): OpenAPI spec resolver.
+        auth (ApiAuth): API authentication helper.
 
     Returns:
         None: Routes are registered on the application.
@@ -93,6 +97,30 @@ def register_core_routes(
         """
 
         return services.status_snapshot()
+
+    @app.get("/api/v1/auth/validate", dependencies=[Depends(require_protected)])
+    def validate_auth(request: Request) -> dict:
+        """Validate authentication and return minimal UI metadata.
+
+        Args:
+            request (Request): FastAPI request instance.
+
+        Returns:
+            dict: Authentication status and UI-safe metadata.
+        """
+
+        return {
+            "authenticated": True,
+            "auth_mode": "api_key" if auth.is_enabled() else "local_only",
+            "app": {
+                "name": "ReticulumCommunityHub",
+                "version": "northbound",
+            },
+            "client": {
+                "host": request.client.host if request.client else None,
+                "local": auth.is_local_client(request.client.host if request.client else None),
+            },
+        }
 
     @app.get("/Events", dependencies=[Depends(require_protected)])
     def get_events() -> list[dict]:

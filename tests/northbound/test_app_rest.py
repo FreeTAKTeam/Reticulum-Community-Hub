@@ -102,3 +102,60 @@ def test_protected_endpoint_requires_api_key(tmp_path) -> None:
     response = client.get("/Status")
 
     assert response.status_code == 401
+
+
+def test_auth_validate_localhost_without_key_allowed(tmp_path) -> None:
+    """Allow localhost access to auth validation without configured API keys."""
+
+    api = _build_api(tmp_path)
+    app = create_app(
+        api=api,
+        telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),
+        auth=ApiAuth(api_key=None),
+    )
+    client = TestClient(app, client=("127.0.0.1", 50000))
+
+    response = client.get("/api/v1/auth/validate")
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is True
+    assert response.json()["auth_mode"] == "local_only"
+
+
+def test_auth_validate_remote_without_key_rejected(tmp_path) -> None:
+    """Reject remote auth validation requests without an API key."""
+
+    api = _build_api(tmp_path)
+    app = create_app(
+        api=api,
+        telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),
+        auth=ApiAuth(api_key=None),
+    )
+    client = TestClient(app, client=("198.51.100.10", 50000))
+
+    response = client.get("/api/v1/auth/validate")
+
+    assert response.status_code == 401
+
+
+def test_auth_validate_remote_with_bearer_token_allowed(tmp_path) -> None:
+    """Allow remote auth validation requests with a valid bearer token."""
+
+    api = _build_api(tmp_path)
+    app = create_app(
+        api=api,
+        telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),
+        auth=ApiAuth(api_key="secret"),
+    )
+    client = TestClient(app, client=("198.51.100.10", 50000))
+
+    response = client.get(
+        "/api/v1/auth/validate",
+        headers={"Authorization": "Bearer secret"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["authenticated"] is True
+    assert payload["auth_mode"] == "api_key"
+    assert payload["app"]["name"] == "ReticulumCommunityHub"
