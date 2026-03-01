@@ -86,6 +86,7 @@ from reticulum_telemetry_hub.reticulum_server.services import (
 )
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
+    OutboundPayload,
     OutboundMessageQueue,
 )
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
@@ -1634,6 +1635,7 @@ class ReticulumTelemetryHub:
         exclude: set[str] | None = None,
         fields: dict | None = None,
         sender: RNS.Destination | None = None,
+        chat_message_id: str | None = None,
     ) -> bool:
         """Sends a message to connected clients.
 
@@ -1645,6 +1647,8 @@ class ReticulumTelemetryHub:
                 hashes that should not receive the broadcast.
             fields (dict | None): Optional LXMF message fields.
             sender (RNS.Destination | None): Optional sender identity override.
+            chat_message_id (str | None): Optional persisted chat message ID
+                used to track delivery acknowledgements.
         """
 
         queue = self._ensure_outbound_queue()
@@ -1689,6 +1693,7 @@ class ReticulumTelemetryHub:
                 connection_hex,
                 fields,
                 sender=sender,
+                chat_message_id=chat_message_id,
             )
             if enqueued:
                 enqueued_any = True
@@ -1787,6 +1792,7 @@ class ReticulumTelemetryHub:
             topic=topic_id,
             destination=destination,
             fields=lxmf_fields,
+            chat_message_id=queued.message_id if queued is not None else None,
         )
         if api is not None and queued is not None:
             updated = api.update_chat_message_state(
@@ -1803,6 +1809,112 @@ class ReticulumTelemetryHub:
                 return updated
             return queued
         return None
+
+    def _handle_outbound_delivery_receipt(
+        self,
+        message: LXMF.LXMessage,
+        payload: OutboundPayload,
+    ) -> None:
+        """Persist and broadcast outbound delivery acknowledgements."""
+
+        destination = payload.destination_hex or self._message_destination_hex(message)
+        entry = self._update_outbound_chat_state(
+            message=message,
+            payload=payload,
+            state="delivered",
+            destination=destination,
+        )
+        event_log = getattr(self, "event_log", None)
+        if event_log is None:
+            return
+        destination_label = (
+            self._lookup_identity_label(destination) if destination else "unknown"
+        )
+        event_log.add_event(
+            "message_delivered",
+            f"Message delivered to {destination_label}",
+            metadata=entry,
+        )
+
+    def _handle_outbound_delivery_failure(
+        self,
+        message: LXMF.LXMessage,
+        payload: OutboundPayload,
+    ) -> None:
+        """Persist and broadcast outbound delivery failures."""
+
+        destination = payload.destination_hex or self._message_destination_hex(message)
+        entry = self._update_outbound_chat_state(
+            message=message,
+            payload=payload,
+            state="failed",
+            destination=destination,
+        )
+        event_log = getattr(self, "event_log", None)
+        if event_log is None:
+            return
+        destination_label = (
+            self._lookup_identity_label(destination) if destination else "unknown"
+        )
+        event_log.add_event(
+            "message_delivery_failed",
+            f"Message delivery failed for {destination_label}",
+            metadata=entry,
+        )
+
+    def _update_outbound_chat_state(
+        self,
+        *,
+        message: LXMF.LXMessage,
+        payload: OutboundPayload,
+        state: str,
+        destination: str | None,
+    ) -> dict[str, object]:
+        """Return metadata for outbound delivery state transitions."""
+
+        timestamp = _utcnow()
+        source_hash = self._origin_rch_hex()
+        source_label = self._hub_sender_label()
+        topic_id = self._extract_target_topic(getattr(message, "fields", None))
+        chat_message_id = payload.chat_message_id
+        api = getattr(self, "api", None)
+
+        if api is not None and chat_message_id and hasattr(api, "update_chat_message_state"):
+            try:
+                updated = api.update_chat_message_state(chat_message_id, state)
+            except Exception as exc:  # pragma: no cover - defensive log
+                RNS.log(
+                    f"Failed to update chat message state for '{chat_message_id}': {exc}",
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
+            else:
+                if updated is not None:
+                    entry = updated.to_dict()
+                    entry["SourceHash"] = source_hash
+                    entry["SourceLabel"] = source_label
+                    entry["Timestamp"] = timestamp.isoformat()
+                    self._notify_message_listeners(entry)
+                    return entry
+
+        scope = "topic" if topic_id else "dm"
+        if not destination and not topic_id:
+            scope = "broadcast"
+        return {
+            "MessageID": chat_message_id or self._message_id_hex(message),
+            "Direction": "outbound",
+            "Scope": scope,
+            "State": state,
+            "Content": payload.message_text,
+            "Source": source_hash or source_label,
+            "Destination": destination,
+            "TopicID": topic_id,
+            "Attachments": [],
+            "CreatedAt": timestamp.isoformat(),
+            "UpdatedAt": timestamp.isoformat(),
+            "SourceHash": source_hash,
+            "SourceLabel": source_label,
+            "Timestamp": timestamp.isoformat(),
+        }
 
     def dispatch_marker_event(self, marker: Marker, event_type: str) -> bool:
         """Dispatch marker announcements and telemetry events.
@@ -2188,6 +2300,8 @@ class ReticulumTelemetryHub:
                     self, "outbound_max_attempts", DEFAULT_OUTBOUND_MAX_ATTEMPTS
                 )
                 or DEFAULT_OUTBOUND_MAX_ATTEMPTS,
+                delivery_receipt_callback=self._handle_outbound_delivery_receipt,
+                delivery_failure_callback=self._handle_outbound_delivery_failure,
             )
         self._outbound_queue.start()
         return self._outbound_queue
@@ -2618,6 +2732,15 @@ class ReticulumTelemetryHub:
         source_hash = getattr(message, "source_hash", None)
         if isinstance(source_hash, (bytes, bytearray)) and source_hash:
             return source_hash.hex().lower()
+        return None
+
+    @staticmethod
+    def _message_destination_hex(message: LXMF.LXMessage) -> str | None:
+        destination_hash = getattr(message, "destination_hash", None)
+        if isinstance(destination_hash, (bytes, bytearray, memoryview)) and destination_hash:
+            return bytes(destination_hash).hex().lower()
+        if isinstance(destination_hash, str) and destination_hash:
+            return destination_hash.lower()
         return None
 
     @staticmethod

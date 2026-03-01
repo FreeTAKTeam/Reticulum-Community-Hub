@@ -2,6 +2,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from queue import Empty, Full, Queue
+from typing import Callable
 
 import LXMF
 import RNS
@@ -20,6 +21,7 @@ class OutboundPayload:
         destination_hex (str | None): Hex-encoded destination hash for logging.
         fields (dict | None): Optional LXMF fields to include with the message.
         sender (RNS.Destination): Sender identity for the message.
+        chat_message_id (str | None): Optional persisted chat message identifier.
         attempts (int): Number of delivery attempts performed.
         next_attempt_at (float): Monotonic timestamp before the next attempt.
     """
@@ -30,6 +32,7 @@ class OutboundPayload:
     destination_hex: str | None
     fields: dict | None = None
     sender: RNS.Destination | None = None
+    chat_message_id: str | None = None
     attempts: int = 0
     next_attempt_at: float = field(default_factory=time.monotonic)
 
@@ -49,6 +52,12 @@ class OutboundMessageQueue:
         send_timeout: float = 5.0,
         backoff_seconds: float = 0.5,
         max_attempts: int = 3,
+        delivery_receipt_callback: (
+            Callable[[LXMF.LXMessage, OutboundPayload], None] | None
+        ) = None,
+        delivery_failure_callback: (
+            Callable[[LXMF.LXMessage, OutboundPayload], None] | None
+        ) = None,
     ):
         """
         Initialize a bounded outbound queue.
@@ -61,6 +70,10 @@ class OutboundMessageQueue:
             send_timeout (float): Seconds to wait for a send before timing out.
             backoff_seconds (float): Base delay between retry attempts.
             max_attempts (int): Maximum attempts before dropping a message.
+            delivery_receipt_callback (Callable[[LXMF.LXMessage, OutboundPayload], None] | None):
+                Optional callback invoked when LXMF reports successful delivery.
+            delivery_failure_callback (Callable[[LXMF.LXMessage, OutboundPayload], None] | None):
+                Optional callback invoked when LXMF reports delivery failure.
         """
         self._lxm_router = lxm_router
         self._sender = sender
@@ -73,6 +86,8 @@ class OutboundMessageQueue:
         self._workers: list[threading.Thread] = []
         self._inflight = 0
         self._inflight_lock = threading.Lock()
+        self._delivery_receipt_callback = delivery_receipt_callback
+        self._delivery_failure_callback = delivery_failure_callback
 
     def start(self) -> None:
         """Start background worker threads if they are not already running."""
@@ -109,6 +124,7 @@ class OutboundMessageQueue:
         destination_hex: str | None,
         fields: dict | None = None,
         sender: RNS.Destination | None = None,
+        chat_message_id: str | None = None,
     ) -> bool:
         """
         Enqueue a message for delivery.
@@ -119,6 +135,7 @@ class OutboundMessageQueue:
             destination_hash (bytes | None): Raw destination hash for diagnostics.
             destination_hex (str | None): Hex-encoded destination hash for logging.
             fields (dict | None): Optional LXMF message fields.
+            chat_message_id (str | None): Optional persisted chat message identifier.
 
         Returns:
             bool: ``True`` when the message was queued successfully.
@@ -131,6 +148,7 @@ class OutboundMessageQueue:
             destination_hex=destination_hex,
             fields=fields,
             sender=sender or self._sender,
+            chat_message_id=chat_message_id,
         )
         return self._enqueue_payload(payload)
 
@@ -234,6 +252,20 @@ class OutboundMessageQueue:
                 )
                 if payload.destination_hash:
                     message.destination_hash = payload.destination_hash
+                if self._delivery_receipt_callback is not None:
+                    message.register_delivery_callback(
+                        lambda delivered_message, outbound_payload=payload: self._notify_delivery_receipt(
+                            delivered_message,
+                            outbound_payload,
+                        )
+                    )
+                if self._delivery_failure_callback is not None:
+                    message.register_failed_callback(
+                        lambda failed_message, outbound_payload=payload: self._notify_delivery_failure(
+                            failed_message,
+                            outbound_payload,
+                        )
+                    )
                 self._lxm_router.handle_outbound(message)
             except Exception as exc:  # pragma: no cover - defensive logging
                 error[0] = exc
@@ -261,6 +293,42 @@ class OutboundMessageQueue:
             )
             return False
         return True
+
+    def _notify_delivery_receipt(
+        self,
+        message: LXMF.LXMessage,
+        payload: OutboundPayload,
+    ) -> None:
+        """Forward LXMF delivery receipts to the configured callback."""
+
+        callback = self._delivery_receipt_callback
+        if callback is None:
+            return
+        try:
+            callback(message, payload)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            RNS.log(
+                f"Outbound delivery receipt callback failed: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+
+    def _notify_delivery_failure(
+        self,
+        message: LXMF.LXMessage,
+        payload: OutboundPayload,
+    ) -> None:
+        """Forward LXMF delivery failures to the configured callback."""
+
+        callback = self._delivery_failure_callback
+        if callback is None:
+            return
+        try:
+            callback(message, payload)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            RNS.log(
+                f"Outbound delivery failure callback failed: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
 
     def _handle_failure(self, payload: OutboundPayload) -> None:
         payload.attempts += 1

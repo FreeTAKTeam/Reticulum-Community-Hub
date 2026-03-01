@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -531,6 +532,71 @@ def test_delivery_callback_infers_image_extension(tmp_path):
         stored_path = Path(stored_images[0].path)
         assert stored_path.suffix == ".png"
         assert stored_path.read_bytes() == png_bytes
+    finally:
+        hub.shutdown()
+
+
+def test_dispatch_northbound_message_records_delivery_ack_event(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    recipient = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    recipient_hex = recipient.identity.hash.hex().lower()
+    hub.connections = {recipient.identity.hash: recipient}
+
+    def _simulate_outbound(message: LXMF.LXMessage) -> None:
+        callback = getattr(message, "_LXMessage__delivery_callback", None)
+        if not callable(callback):
+            return
+
+        def _deliver() -> None:
+            time.sleep(0.05)
+            message.state = LXMF.LXMessage.DELIVERED
+            callback(message)
+
+        threading.Thread(target=_deliver, daemon=True).start()
+
+    hub.lxm_router.handle_outbound = _simulate_outbound
+
+    try:
+        queued = hub.dispatch_northbound_message(
+            "delivery ack test",
+            destination=recipient_hex,
+        )
+        assert queued is not None
+        assert queued.message_id
+        deadline = time.time() + 1.5
+        delivered_message = None
+        while time.time() < deadline:
+            matches = [
+                message
+                for message in hub.api.list_chat_messages(limit=20, direction="outbound")
+                if message.message_id == queued.message_id
+            ]
+            if matches and matches[0].state == "delivered":
+                delivered_message = matches[0]
+                break
+            time.sleep(0.05)
+
+        assert delivered_message is not None
+        assert delivered_message.destination == recipient_hex
+
+        events = hub.event_log.list_events(limit=200)
+        delivered_event = next(
+            (
+                entry
+                for entry in events
+                if entry.get("type") == "message_delivered"
+                and isinstance(entry.get("metadata"), dict)
+                and entry["metadata"].get("MessageID") == queued.message_id
+            ),
+            None,
+        )
+        assert delivered_event is not None
+        metadata = delivered_event.get("metadata")
+        assert isinstance(metadata, dict)
+        assert metadata.get("State") == "delivered"
+        assert metadata.get("Destination") == recipient_hex
     finally:
         hub.shutdown()
 

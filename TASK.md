@@ -1,4 +1,5 @@
 # TASKS
+- 2026-02-26: DONE. Add LXMF outbound delivery acknowledgement handling and log recipient delivery confirmations to the event feed.
 - 2026-02-26: DONE. Abort gateway startup when API host/port is already bound to prevent duplicate hub instances and ratchet contention.
 - 2026-02-23: DONE. Optimize telemetry memory usage by querying latest-per-peer snapshots from SQL, reducing telemetry response event payload retention, and adding regression tests.
 - 2026-02-05: DONE. Remediate dependency vulnerabilities across Python, UI, and Electron (including lockfile refresh and audit verification).

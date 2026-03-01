@@ -1,5 +1,6 @@
 import time
 
+import LXMF
 import RNS
 
 from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
@@ -142,3 +143,50 @@ def test_outbound_queue_handles_multi_destination_fan_out():
         recipient_one.identity.hash,
         recipient_two.identity.hash,
     }
+
+
+def test_outbound_queue_reports_delivery_receipts():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    sender = _make_destination(RNS.Destination.IN)
+    recipient = _make_destination()
+    receipts: list[tuple[str | None, str | None, int]] = []
+
+    class ReceiptRouter:
+        def handle_outbound(self, message):
+            callback = getattr(message, "_LXMessage__delivery_callback", None)
+            if callable(callback):
+                message.state = LXMF.LXMessage.DELIVERED
+                callback(message)
+
+    queue = OutboundMessageQueue(
+        ReceiptRouter(),
+        sender,
+        queue_size=2,
+        worker_count=1,
+        send_timeout=0.1,
+        backoff_seconds=0.01,
+        max_attempts=1,
+        delivery_receipt_callback=lambda message, payload: receipts.append(
+            (payload.chat_message_id, payload.destination_hex, message.state)
+        ),
+    )
+
+    try:
+        queue.start()
+        queue.queue_message(
+            recipient,
+            "tracked-message",
+            recipient.identity.hash,
+            recipient.identity.hash.hex(),
+            None,
+            chat_message_id="chat-message-1",
+        )
+        assert queue.wait_for_flush(timeout=1.0)
+    finally:
+        queue.stop()
+
+    assert receipts == [
+        ("chat-message-1", recipient.identity.hash.hex(), LXMF.LXMessage.DELIVERED)
+    ]
