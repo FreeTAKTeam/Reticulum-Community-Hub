@@ -63,6 +63,7 @@ from reticulum_telemetry_hub.config.manager import _expand_user_path
 from reticulum_telemetry_hub.config.models import HubAppConfig
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
+from reticulum_telemetry_hub.lxmf_runtime import apply_lxmf_runtime_patches
 from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.reticulum_server.announce_capabilities import (
     AnnounceCapabilitiesConfig,
@@ -78,6 +79,8 @@ from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+
+apply_lxmf_runtime_patches()
 from reticulum_telemetry_hub.lxmf_telemetry.sampler import TelemetrySampler
 from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterManager
 from reticulum_telemetry_hub.reticulum_server.services import (

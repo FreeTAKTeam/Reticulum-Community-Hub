@@ -1,4 +1,6 @@
 # TASKS
+- 2026-03-01: DONE. Patch the installed LXMF runtime at startup so integer sync-offer error codes do not crash peer sync and block propagated messages from reaching the hub/UI.
+- 2026-03-01: DONE. Bump project version to 2.0.2 across Python, UI, and Electron manifests.
 - 2026-03-01: DONE. Fix LXMF peer offer-response handling so remote integer error codes do not crash sync processing with "'int' is not iterable".
 - 2026-03-01: DONE. Make app info prefer the configured hub display name so the UI shows the runtime hub name instead of the package name.
 - 2026-03-01: DONE. Add a remote launcher script that installs the backend from local source, installs npm when needed, and starts the API plus UI with the WebSocket URL derived from the API URL by default.
