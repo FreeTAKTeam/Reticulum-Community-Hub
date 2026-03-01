@@ -92,6 +92,14 @@ const waitForBackend = async () => {
     bootReady.value = true;
     return;
   }
+  if (connectionStore.isRemoteTarget && !connectionStore.hasActiveAuthSession) {
+    if (!connectionStore.hasValidAuthConfig()) {
+      connectionStore.setAuthStatus("unauthenticated", connectionStore.authValidationError);
+    }
+    bootProgress.value = 100;
+    bootReady.value = true;
+    return;
+  }
   while (!bootReady.value) {
     bootAttempt.value += 1;
     bootStatus.value = bootAttempt.value > 1 ? "retrying" : "pending";

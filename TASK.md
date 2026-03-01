@@ -1,5 +1,6 @@
 # TASKS
 - 2026-03-01: DONE. Add a remote launcher script that installs the backend from local source, installs npm when needed, and starts the API plus UI with the WebSocket URL derived from the API URL by default.
+- 2026-03-01: DONE. Fix remote UI boot flow so first-time remote users reach the Connect page and launcher-provided API settings override stale saved browser targets.
 - 2026-03-01: DONE. Add remote access documentation for LAN and public IP RCH deployments.
 - 2026-02-26: DONE. Add LXMF outbound delivery acknowledgement handling and log recipient delivery confirmations to the event feed.
 - 2026-02-26: DONE. Abort gateway startup when API host/port is already bound to prevent duplicate hub instances and ratchet contention.

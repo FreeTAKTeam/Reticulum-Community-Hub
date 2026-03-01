@@ -89,7 +89,13 @@ const resolveDefaultWsBaseUrl = (): string => {
   return "";
 };
 
+const resolveConfiguredBaseUrl = (): string => normalizeOrigin(import.meta.env.VITE_RTH_BASE_URL ?? "");
+
+const resolveConfiguredWsBaseUrl = (): string => normalizeOrigin(import.meta.env.VITE_RTH_WS_BASE_URL ?? "");
+
 export const useConnectionStore = defineStore("connection", () => {
+  const configuredBaseUrl = resolveConfiguredBaseUrl();
+  const configuredWsBaseUrl = resolveConfiguredWsBaseUrl();
   const defaultBaseUrl = resolveDefaultBaseUrl();
   const defaultWsBaseUrl = resolveDefaultWsBaseUrl();
   const stored = loadJson<ConnectionState>(STORAGE_KEY, {
@@ -102,11 +108,14 @@ export const useConnectionStore = defineStore("connection", () => {
   });
 
   const rememberSecrets = ref<boolean>(stored.rememberSecrets ?? false);
-  const initialBaseUrl = normalizeOrigin(stored.baseUrl ?? "") || defaultBaseUrl;
-  const persistedWsBaseUrl = normalizeOrigin(stored.wsBaseUrl ?? "");
+  const initialBaseUrl = configuredBaseUrl || normalizeOrigin(stored.baseUrl ?? "") || defaultBaseUrl;
+  const persistedWsBaseUrl =
+    configuredBaseUrl && !configuredWsBaseUrl ? "" : normalizeOrigin(stored.wsBaseUrl ?? "");
   const derivedWsBaseUrl = deriveWsBaseUrl(initialBaseUrl);
   const initialWsBaseUrl =
-    persistedWsBaseUrl && persistedWsBaseUrl !== derivedWsBaseUrl
+    configuredWsBaseUrl && configuredWsBaseUrl !== derivedWsBaseUrl
+      ? configuredWsBaseUrl
+      : persistedWsBaseUrl && persistedWsBaseUrl !== derivedWsBaseUrl
       ? persistedWsBaseUrl
       : defaultWsBaseUrl && normalizeOrigin(defaultWsBaseUrl) !== derivedWsBaseUrl
         ? normalizeOrigin(defaultWsBaseUrl)

@@ -8,6 +8,7 @@ This guide explains how to reach a Reticulum Community Hub (RCH) instance from a
 - For LAN or WAN access, run the gateway directly with `--api-host 0.0.0.0` (or another reachable interface).
 - For a single-command launcher that installs the backend from local source into a venv and starts both services, run `./run_server_ui_remote.sh`.
 - `run_server_ui_remote.sh` only preconfigures the REST base URL by default; the UI derives the WebSocket URL from that value unless you explicitly set `VITE_RTH_WS_BASE_URL`.
+- On first remote load, the UI should open the Connect page so you can enter the API key and log in before the live WebSocket streams start.
 - Remote clients must authenticate with `RTH_API_KEY`.
 - Remote requests can use either `X-API-Key: <key>` or `Authorization: Bearer <key>`.
 - If the hub is reachable over the public internet, prefer a VPN or HTTPS/WSS behind a reverse proxy.
