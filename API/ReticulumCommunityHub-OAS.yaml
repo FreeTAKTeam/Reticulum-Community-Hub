@@ -56,6 +56,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/auth/validate:
+    get:
+      x-scope: protected
+      tags:
+       - Auth
+      summary: Validate credentials and return UI-safe auth metadata.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Authentication validated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthValidationResponse'
+        '401':
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /Events:
     get:
       x-scope: protected
@@ -4666,6 +4688,43 @@ components:
           description: Optional subscriber metadata.
       required:
         - TopicID
+    AuthValidationResponse:
+      type: object
+      properties:
+        authenticated:
+          type: boolean
+        auth_mode:
+          type: string
+          enum: [api_key, local_only]
+        app:
+          type: object
+          properties:
+            name:
+              type: string
+            version:
+              type: string
+          required:
+            - name
+            - version
+          additionalProperties: false
+        client:
+          type: object
+          properties:
+            host:
+              type: string
+              nullable: true
+            local:
+              type: boolean
+          required:
+            - host
+            - local
+          additionalProperties: false
+      required:
+        - authenticated
+        - auth_mode
+        - app
+        - client
+      additionalProperties: false
     WsEnvelope:
       type: object
       description: RCH-WS v1 envelope.

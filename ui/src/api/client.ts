@@ -78,6 +78,16 @@ const buildRequestInit = (options: RequestOptions, headers: Record<string, strin
   return requestInit;
 };
 
+
+const validateAuthBeforeRequest = (): void => {
+  const connectionStore = useConnectionStore();
+  if (connectionStore.isRemoteTarget && !connectionStore.hasValidAuthConfig()) {
+    const message = connectionStore.authValidationError || "Remote backend requires authentication.";
+    connectionStore.setAuthStatus("unauthenticated", message);
+    throw createError(message, 401, { message });
+  }
+};
+
 const shouldRetry = (method: string, error: ApiError) => {
   if (method.toUpperCase() !== "GET") {
     return false;
@@ -90,6 +100,7 @@ const shouldRetry = (method: string, error: ApiError) => {
 
 const requestRaw = async (path: string, options: RequestOptions = {}): Promise<Response> => {
   const connectionStore = useConnectionStore();
+  validateAuthBeforeRequest();
   const url = connectionStore.resolveUrl(path);
   const headers = buildHeaders(options.body);
   const requestInit = buildRequestInit(options, headers);
@@ -113,7 +124,6 @@ const requestRaw = async (path: string, options: RequestOptions = {}): Promise<R
         throw createError(`Request failed: ${response.status}`, response.status, errorBody);
       }
       connectionStore.setOnline();
-      connectionStore.setAuthStatus("ok");
       return response;
     } catch (error) {
       const apiError = error instanceof Error ? (error as ApiError) : createError("Unknown error");

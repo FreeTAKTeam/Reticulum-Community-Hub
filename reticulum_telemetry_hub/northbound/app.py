@@ -210,6 +210,7 @@ def create_app(
         telemetry_controller=telemetry_controller,
         require_protected=require_protected,
         resolve_openapi_spec=_resolve_openapi_spec,
+        auth=auth,
     )
     register_file_routes(app, services=services, api=api)
     register_chat_routes(
