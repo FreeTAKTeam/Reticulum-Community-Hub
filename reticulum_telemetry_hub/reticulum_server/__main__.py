@@ -92,6 +92,15 @@ from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
     OutboundPayload,
     OutboundMessageQueue,
 )
+from reticulum_telemetry_hub.reticulum_server.propagation_selection import (
+    PropagationNodeAnnounceHandler,
+)
+from reticulum_telemetry_hub.reticulum_server.propagation_selection import (
+    PropagationNodeCandidate,
+)
+from reticulum_telemetry_hub.reticulum_server.propagation_selection import (
+    PropagationNodeRegistry,
+)
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
@@ -606,6 +615,8 @@ class ReticulumTelemetryHub:
         self.mission_domain_service = None
         self._remove_mission_change_listener: Callable[[], None] | None = None
         self._announce_handler: AnnounceHandler | None = None
+        self._propagation_node_registry = PropagationNodeRegistry()
+        self._propagation_announce_handler: PropagationNodeAnnounceHandler | None = None
 
         identity = self.load_or_generate_identity(self.identity_path)
         destination_hash = self._delivery_destination_hash(identity)
@@ -692,7 +703,11 @@ class ReticulumTelemetryHub:
             api=self.api,
             capability_callback=self._update_identity_capability_cache,
         )
+        self._propagation_announce_handler = PropagationNodeAnnounceHandler(
+            self._propagation_node_registry
+        )
         RNS.Transport.register_announce_handler(self._announce_handler)
+        RNS.Transport.register_announce_handler(self._propagation_announce_handler)
         self.tel_controller.set_api(self.api)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
         tak_config_manager = self.config_manager
@@ -1821,18 +1836,33 @@ class ReticulumTelemetryHub:
         """Persist and broadcast outbound delivery acknowledgements."""
 
         destination = payload.destination_hex or self._message_destination_hex(message)
+        is_propagated = payload.delivery_mode == "propagated"
         entry = self._update_outbound_chat_state(
             message=message,
             payload=payload,
-            state="delivered",
+            state="sent" if is_propagated else "delivered",
             destination=destination,
         )
+        entry = self._augment_outbound_delivery_metadata(entry, payload)
         event_log = getattr(self, "event_log", None)
         if event_log is None:
             return
-        destination_label = (
-            self._lookup_identity_label(destination) if destination else "unknown"
-        )
+        destination_label = self._lookup_identity_label(destination) if destination else "unknown"
+        if is_propagated:
+            if payload.local_propagation_fallback:
+                event_log.add_event(
+                    "message_propagated",
+                    f"Message stored for local propagation to {destination_label}",
+                    metadata=entry,
+                )
+                return
+            node_label = self._resolve_propagation_node_label(payload)
+            event_log.add_event(
+                "message_propagated",
+                f"Message accepted for propagation to {destination_label} via {node_label}",
+                metadata=entry,
+            )
+            return
         event_log.add_event(
             "message_delivered",
             f"Message delivered to {destination_label}",
@@ -1853,16 +1883,125 @@ class ReticulumTelemetryHub:
             state="failed",
             destination=destination,
         )
+        entry = self._augment_outbound_delivery_metadata(entry, payload)
         event_log = getattr(self, "event_log", None)
         if event_log is None:
             return
-        destination_label = (
-            self._lookup_identity_label(destination) if destination else "unknown"
-        )
+        destination_label = self._lookup_identity_label(destination) if destination else "unknown"
         event_log.add_event(
             "message_delivery_failed",
             f"Message delivery failed for {destination_label}",
             metadata=entry,
+        )
+
+    def _augment_outbound_delivery_metadata(
+        self,
+        entry: dict[str, object],
+        payload: OutboundPayload,
+    ) -> dict[str, object]:
+        """Add retry and propagation metadata to outbound event entries."""
+
+        augmented = dict(entry)
+        if payload.attempts > 0:
+            augmented["direct_attempts"] = payload.attempts
+        if payload.delivery_mode != "propagated":
+            return augmented
+        augmented["fallback_reason"] = "direct_delivery_failed"
+        augmented["delivery_method"] = (
+            "local_propagation_store"
+            if payload.local_propagation_fallback
+            else "propagated"
+        )
+        if payload.propagation_node_hex:
+            augmented["propagation_node"] = payload.propagation_node_hex
+        return augmented
+
+    def _build_outbound_attempt_metadata(
+        self,
+        payload: OutboundPayload,
+    ) -> dict[str, object]:
+        """Build event metadata for retry and fallback transitions."""
+
+        timestamp = _utcnow().isoformat()
+        topic_id = self._extract_target_topic(payload.fields)
+        scope = "topic" if topic_id else "dm"
+        if not payload.destination_hex and not topic_id:
+            scope = "broadcast"
+        entry: dict[str, object] = {
+            "MessageID": payload.chat_message_id,
+            "Direction": "outbound",
+            "Scope": scope,
+            "State": "sent",
+            "Content": payload.message_text,
+            "Source": self._origin_rch_hex() or self._hub_sender_label(),
+            "Destination": payload.destination_hex,
+            "TopicID": topic_id,
+            "Attachments": [],
+            "CreatedAt": timestamp,
+            "UpdatedAt": timestamp,
+            "SourceHash": self._origin_rch_hex(),
+            "SourceLabel": self._hub_sender_label(),
+            "Timestamp": timestamp,
+        }
+        return self._augment_outbound_delivery_metadata(entry, payload)
+
+    def _resolve_propagation_node_label(self, payload: OutboundPayload) -> str:
+        """Return the most useful label for the selected propagation node."""
+
+        if payload.local_propagation_fallback:
+            return self._hub_sender_label()
+        if payload.propagation_node_hex:
+            return self._lookup_identity_label(payload.propagation_node_hex)
+        return "unknown"
+
+    def _select_best_propagation_node(self) -> PropagationNodeCandidate | None:
+        """Return the current best remote propagation node and activate it."""
+
+        registry = getattr(self, "_propagation_node_registry", None)
+        if registry is None:
+            return None
+        return registry.best_candidate()
+
+    def _handle_outbound_retry_scheduled(self, payload: OutboundPayload) -> None:
+        """Record a direct-delivery retry event."""
+
+        event_log = getattr(self, "event_log", None)
+        if event_log is None:
+            return
+        destination_label = (
+            self._lookup_identity_label(payload.destination_hex)
+            if payload.destination_hex
+            else "unknown"
+        )
+        event_log.add_event(
+            "message_delivery_retrying",
+            f"Retrying message delivery to {destination_label}",
+            metadata=self._build_outbound_attempt_metadata(payload),
+        )
+
+    def _handle_outbound_propagation_fallback(self, payload: OutboundPayload) -> None:
+        """Record that direct delivery exhausted and propagation fallback is in use."""
+
+        event_log = getattr(self, "event_log", None)
+        if event_log is None:
+            return
+        destination_label = (
+            self._lookup_identity_label(payload.destination_hex)
+            if payload.destination_hex
+            else "unknown"
+        )
+        if payload.local_propagation_fallback:
+            message = f"Direct delivery exhausted; stored message for local propagation to {destination_label}"
+        else:
+            node_label = self._resolve_propagation_node_label(payload)
+            message = (
+                "Direct delivery exhausted; queued message for propagation to"
+                f" {destination_label} via {node_label}"
+            )
+        event_log.add_event(
+            "message_propagation_queued",
+            message,
+            metadata=self._build_outbound_attempt_metadata(payload),
         )
 
     def _update_outbound_chat_state(
@@ -2305,6 +2444,9 @@ class ReticulumTelemetryHub:
                 or DEFAULT_OUTBOUND_MAX_ATTEMPTS,
                 delivery_receipt_callback=self._handle_outbound_delivery_receipt,
                 delivery_failure_callback=self._handle_outbound_delivery_failure,
+                propagation_selector=self._select_best_propagation_node,
+                retry_scheduled_callback=self._handle_outbound_retry_scheduled,
+                propagation_fallback_callback=self._handle_outbound_propagation_fallback,
             )
         self._outbound_queue.start()
         return self._outbound_queue
@@ -3798,6 +3940,7 @@ class ReticulumTelemetryHub:
         if self._announce_handler is not None:
             self._announce_handler.close()
             self._announce_handler = None
+        self._propagation_announce_handler = None
         if self.embedded_lxmd is not None:
             self.embedded_lxmd.stop()
             self.embedded_lxmd = None
