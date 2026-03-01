@@ -113,7 +113,6 @@ const requestRaw = async (path: string, options: RequestOptions = {}): Promise<R
         throw createError(`Request failed: ${response.status}`, response.status, errorBody);
       }
       connectionStore.setOnline();
-      connectionStore.setAuthStatus("ok");
       return response;
     } catch (error) {
       const apiError = error instanceof Error ? (error as ApiError) : createError("Unknown error");

@@ -164,7 +164,7 @@ const buildInfo = computed(() => {
 const isTitlePaused = computed(() => {
   return (
     connectionStore.status === "offline" ||
-    connectionStore.authStatus === "unauthenticated" ||
+    connectionStore.requiresLogin ||
     connectionStore.authStatus === "forbidden"
   );
 });

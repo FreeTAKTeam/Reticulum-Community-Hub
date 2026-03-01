@@ -1,6 +1,7 @@
 import { createRouter } from "vue-router";
 import { createWebHistory } from "vue-router";
 import { MISSION_DOMAIN_ROUTE_NAMES } from "../types/missions/routes";
+import { useConnectionStore } from "../stores/connection";
 
 const DashboardPage = () => import("../pages/DashboardPage.vue");
 const MissionsPage = () => import("../pages/MissionsPage.vue");
@@ -116,6 +117,24 @@ const router = createRouter({
     { path: "/about", name: "about", component: AboutPage },
     { path: "/connect", name: "connect", component: ConnectPage }
   ]
+});
+
+
+const PUBLIC_ROUTES = new Set(["connect", "about"]);
+
+router.beforeEach((to) => {
+  const connectionStore = useConnectionStore();
+  const isPublicRoute = PUBLIC_ROUTES.has(String(to.name ?? "")) || to.path.startsWith("/Help") || to.path.startsWith("/Examples");
+  if (isPublicRoute) {
+    return true;
+  }
+  if (connectionStore.isRemoteTarget && !connectionStore.isAuthenticated) {
+    return {
+      path: "/connect",
+      query: { redirect: to.fullPath }
+    };
+  }
+  return true;
 });
 
 export default router;
