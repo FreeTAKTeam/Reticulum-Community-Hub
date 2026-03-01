@@ -4,6 +4,7 @@
 
 - `../README.md` (project overview and quickstart)
 - `userManual.md` (user and operator guide)
+- `remoteAccess.md` (LAN/WAN connection guide)
 - `architecture.md` (system overview and references)
 
 ## Architecture

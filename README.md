@@ -123,8 +123,11 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
   The UI uses Vite 6 (installed via `npm install`).
 
   Set `VITE_RCH_BASE_URL` and `VITE_RTH_WS_BASE_URL` when the UI should target a different hub.
+  For a remote-friendly combined launcher, run `./run_server_ui_remote.sh`.
 
 ### Remote access (LAN/WAN)
+
+For full setup examples, see `docs/remoteAccess.md`.
 
 1. Set an API key on the host that runs RCH:
    ```bash
