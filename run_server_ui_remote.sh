@@ -103,7 +103,7 @@ case "$RTH_PUBLIC_SCHEME" in
 esac
 
 VITE_RTH_BASE_URL="${VITE_RTH_BASE_URL:-${RTH_PUBLIC_SCHEME}://${RTH_PUBLIC_HOST}:${RTH_API_PORT}}"
-VITE_RTH_WS_BASE_URL="${VITE_RTH_WS_BASE_URL:-${RTH_PUBLIC_WS_SCHEME}://${RTH_PUBLIC_HOST}:${RTH_API_PORT}}"
+EFFECTIVE_WS_BASE_URL="${VITE_RTH_WS_BASE_URL:-${RTH_PUBLIC_WS_SCHEME}://${RTH_PUBLIC_HOST}:${RTH_API_PORT}}"
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON_CMD="python3"
@@ -179,7 +179,20 @@ echo "Starting hub + northbound API at ${VITE_RTH_BASE_URL} (bind ${RTH_API_HOST
 BACKEND_PID=$!
 
 echo "Starting UI dev server at http://${RTH_PUBLIC_HOST}:${RTH_UI_PORT} (bind ${RTH_UI_HOST}:${RTH_UI_PORT})"
-(cd ui && VITE_RTH_BASE_URL="$VITE_RTH_BASE_URL" VITE_RTH_WS_BASE_URL="$VITE_RTH_WS_BASE_URL" npm run dev -- --host "$RTH_UI_HOST" --port "$RTH_UI_PORT") &
+if [[ -n "${VITE_RTH_WS_BASE_URL:-}" ]]; then
+  (
+    cd ui && \
+      VITE_RTH_BASE_URL="$VITE_RTH_BASE_URL" \
+      VITE_RTH_WS_BASE_URL="$VITE_RTH_WS_BASE_URL" \
+      npm run dev -- --host "$RTH_UI_HOST" --port "$RTH_UI_PORT"
+  ) &
+else
+  (
+    cd ui && \
+      VITE_RTH_BASE_URL="$VITE_RTH_BASE_URL" \
+      npm run dev -- --host "$RTH_UI_HOST" --port "$RTH_UI_PORT"
+  ) &
+fi
 UI_PID=$!
 
 cleanup() {
@@ -195,7 +208,11 @@ trap cleanup EXIT INT TERM
 echo
 echo "Hub+API: storage=${RTH_STORAGE_DIR}  mode=${RTH_HUB_MODE}  daemon=${RTH_DAEMON}  services=${RTH_SERVICES}"
 echo "API URL: ${VITE_RTH_BASE_URL}"
-echo "WS URL:  ${VITE_RTH_WS_BASE_URL}"
+if [[ -n "${VITE_RTH_WS_BASE_URL:-}" ]]; then
+  echo "WS URL:  ${VITE_RTH_WS_BASE_URL} (explicit override)"
+else
+  echo "WS URL:  ${EFFECTIVE_WS_BASE_URL} (derived from API URL in the UI)"
+fi
 echo "UI URL:  http://${RTH_PUBLIC_HOST}:${RTH_UI_PORT}"
 echo
 echo "Press Ctrl+C to stop both processes."

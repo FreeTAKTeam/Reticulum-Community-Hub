@@ -45,4 +45,24 @@ describe("connection store target and auth validation", () => {
     expect(connectionStore.authValidationError).toBe("");
     expect(connectionStore.hasValidAuthConfig()).toBe(true);
   });
+
+  it("normalizes a redundant stored websocket base url to follow the base url", () => {
+    window.localStorage.setItem(
+      "rth-ui-connection",
+      JSON.stringify({
+        baseUrl: "http://10.0.0.5:8000",
+        wsBaseUrl: "ws://10.0.0.5:8000",
+        authMode: "apiKey",
+        apiKey: "secret"
+      })
+    );
+
+    const connectionStore = useConnectionStore();
+
+    expect(connectionStore.wsBaseUrl).toBe("");
+    expect(connectionStore.resolveWsUrl("/events/system")).toBe("ws://10.0.0.5:8000/events/system");
+
+    connectionStore.baseUrl = "http://192.168.1.20:8000";
+    expect(connectionStore.resolveWsUrl("/events/system")).toBe("ws://192.168.1.20:8000/events/system");
+  });
 });

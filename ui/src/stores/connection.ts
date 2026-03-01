@@ -57,6 +57,16 @@ const normalizeOrigin = (value: string): string => {
   }
 };
 
+const deriveWsBaseUrl = (origin: string): string => {
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) {
+    return "";
+  }
+  const scheme = normalizedOrigin.startsWith("https") ? "wss" : "ws";
+  const host = normalizedOrigin.replace(/^https?:\/\//, "");
+  return `${scheme}://${host}`;
+};
+
 const resolveDefaultBaseUrl = (): string => {
   const envBaseUrl = import.meta.env.VITE_RTH_BASE_URL;
   if (envBaseUrl) {
@@ -80,9 +90,11 @@ const resolveDefaultWsBaseUrl = (): string => {
 };
 
 export const useConnectionStore = defineStore("connection", () => {
+  const defaultBaseUrl = resolveDefaultBaseUrl();
+  const defaultWsBaseUrl = resolveDefaultWsBaseUrl();
   const stored = loadJson<ConnectionState>(STORAGE_KEY, {
-    baseUrl: resolveDefaultBaseUrl(),
-    wsBaseUrl: resolveDefaultWsBaseUrl(),
+    baseUrl: defaultBaseUrl,
+    wsBaseUrl: defaultWsBaseUrl,
     authMode: "none",
     token: "",
     apiKey: "",
@@ -90,8 +102,18 @@ export const useConnectionStore = defineStore("connection", () => {
   });
 
   const rememberSecrets = ref<boolean>(stored.rememberSecrets ?? false);
-  const baseUrl = ref<string>(stored.baseUrl ?? "");
-  const wsBaseUrl = ref<string>(stored.wsBaseUrl ?? "");
+  const initialBaseUrl = normalizeOrigin(stored.baseUrl ?? "") || defaultBaseUrl;
+  const persistedWsBaseUrl = normalizeOrigin(stored.wsBaseUrl ?? "");
+  const derivedWsBaseUrl = deriveWsBaseUrl(initialBaseUrl);
+  const initialWsBaseUrl =
+    persistedWsBaseUrl && persistedWsBaseUrl !== derivedWsBaseUrl
+      ? persistedWsBaseUrl
+      : defaultWsBaseUrl && normalizeOrigin(defaultWsBaseUrl) !== derivedWsBaseUrl
+        ? normalizeOrigin(defaultWsBaseUrl)
+        : "";
+
+  const baseUrl = ref<string>(initialBaseUrl);
+  const wsBaseUrl = ref<string>(initialWsBaseUrl);
   const authMode = ref<AuthMode>(stored.authMode ?? "none");
   const token = ref<string>(rememberSecrets.value ? (stored.token ?? "") : "");
   const apiKey = ref<string>(rememberSecrets.value ? (stored.apiKey ?? "") : "");
@@ -259,9 +281,13 @@ export const useConnectionStore = defineStore("connection", () => {
   };
 
   const persist = (includeSecrets = rememberSecrets.value) => {
+    const normalizedBaseUrl = normalizeOrigin(baseUrl.value);
+    const normalizedWsBaseUrl = normalizeOrigin(wsBaseUrl.value);
+    const persistedWsUrl =
+      normalizedWsBaseUrl && normalizedWsBaseUrl !== deriveWsBaseUrl(normalizedBaseUrl) ? normalizedWsBaseUrl : "";
     saveJson(STORAGE_KEY, {
-      baseUrl: baseUrl.value,
-      wsBaseUrl: wsBaseUrl.value,
+      baseUrl: normalizedBaseUrl,
+      wsBaseUrl: persistedWsUrl,
       authMode: authMode.value,
       token: includeSecrets ? token.value : "",
       apiKey: includeSecrets ? apiKey.value : "",
