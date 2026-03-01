@@ -110,8 +110,34 @@ def test_reticulum_info_to_dict_returns_all_fields():
     assert result["file_storage_path"] == "/tmp/storage/files"
     assert result["image_storage_path"] == "/tmp/storage/images"
     assert result["app_name"] == "RTH"
+    assert result["name"] == "RTH"
+    assert result["display_name"] is None
     assert result["app_description"] == "Reticulum Telemetry Hub instance"
     assert result["reticulum_destination"] == "deadbeef"
+
+
+def test_reticulum_info_to_dict_prefers_hub_display_name():
+    info = ReticulumInfo(
+        is_transport_enabled=True,
+        is_connected_to_shared_instance=False,
+        reticulum_config_path="/tmp/r.cfg",
+        database_path="/tmp/db",
+        storage_path="/tmp/storage",
+        file_storage_path="/tmp/storage/files",
+        image_storage_path="/tmp/storage/images",
+        app_name="ReticulumTelemetryHub",
+        rns_version="1.0",
+        lxmf_version="0.9",
+        app_version="0.0.0",
+        app_description="Reticulum Telemetry Hub instance",
+        hub_display_name="RCH - Altre Alternative",
+    )
+
+    result = info.to_dict()
+
+    assert result["name"] == "RCH - Altre Alternative"
+    assert result["display_name"] == "RCH - Altre Alternative"
+    assert result["app_name"] == "ReticulumTelemetryHub"
 
 
 def test_file_attachment_to_dict_serializes_fields():

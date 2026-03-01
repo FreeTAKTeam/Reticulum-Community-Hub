@@ -99,6 +99,9 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """
 
         payload = dict(info_dict)
+        payload["hub_display_name"] = self._config_manager.resolve_hub_display_name(
+            destination_hash=self._reticulum_destination
+        )
         payload["reticulum_destination"] = self._reticulum_destination
         return ReticulumInfo(**payload)
 

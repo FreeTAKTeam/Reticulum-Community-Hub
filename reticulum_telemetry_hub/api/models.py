@@ -181,15 +181,17 @@ class ReticulumInfo:
     lxmf_version: str
     app_version: str
     app_description: str
+    hub_display_name: Optional[str] = None
     reticulum_destination: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Serialize the info model to a dictionary."""
 
         data = asdict(self)
-        data["name"] = self.app_name
+        data["name"] = self.hub_display_name or self.app_name
         data["version"] = self.app_version
         data["description"] = self.app_description
+        data["display_name"] = self.hub_display_name
         data["storage_paths"] = {
             "storage": self.storage_path,
             "database": self.database_path,

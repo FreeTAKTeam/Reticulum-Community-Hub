@@ -159,3 +159,28 @@ def test_auth_validate_remote_with_bearer_token_allowed(tmp_path) -> None:
     assert payload["authenticated"] is True
     assert payload["auth_mode"] == "api_key"
     assert payload["app"]["name"] == "ReticulumCommunityHub"
+
+
+def test_app_info_prefers_hub_display_name(tmp_path) -> None:
+    """Expose the configured hub display name as the primary app-info name."""
+
+    (tmp_path / "config.ini").write_text(
+        "[hub]\ndisplay_name = RCH - Altre Alternative\n",
+        encoding="utf-8",
+    )
+    api = _build_api(tmp_path)
+    app = create_app(
+        api=api,
+        telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),
+        event_log=EventLog(),
+        auth=ApiAuth(api_key="secret"),
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/app/info")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "RCH - Altre Alternative"
+    assert payload["display_name"] == "RCH - Altre Alternative"
+    assert payload["app_name"] == "ReticulumTelemetryHub"

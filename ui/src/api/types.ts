@@ -131,6 +131,7 @@ export interface MarkerSymbolEntry {
 
 export interface AppInfo {
   name?: string;
+  display_name?: string;
   version?: string;
   description?: string;
   rns_version?: string;

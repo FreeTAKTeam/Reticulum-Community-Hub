@@ -1,4 +1,5 @@
 # TASKS
+- 2026-03-01: DONE. Make app info prefer the configured hub display name so the UI shows the runtime hub name instead of the package name.
 - 2026-03-01: DONE. Add a remote launcher script that installs the backend from local source, installs npm when needed, and starts the API plus UI with the WebSocket URL derived from the API URL by default.
 - 2026-03-01: DONE. Fix remote UI boot flow so first-time remote users reach the Connect page and launcher-provided API settings override stale saved browser targets.
 - 2026-03-01: DONE. Add remote access documentation for LAN and public IP RCH deployments.
