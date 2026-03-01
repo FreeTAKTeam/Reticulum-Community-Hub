@@ -27,7 +27,6 @@ resolve_public_host() {
 
 VENV_DIR="${VENV_DIR:-.venv}"
 RTH_STORAGE_DIR="${RTH_STORAGE_DIR:-RTH_Store}"
-RTH_BACKEND_PACKAGE="${RTH_BACKEND_PACKAGE:-ReticulumCommunityHub}"
 RTH_HUB_MODE="${RTH_HUB_MODE:-embedded}"
 RTH_DAEMON="${RTH_DAEMON:-0}"
 RTH_SERVICES="${RTH_SERVICES:-}"
@@ -85,9 +84,9 @@ if [[ "$STORAGE_DIR_PATH" != /* ]]; then
   STORAGE_DIR_PATH="${SCRIPT_DIR}/${STORAGE_DIR_PATH}"
 fi
 
-echo "Installing backend package '${RTH_BACKEND_PACKAGE}'..."
+echo "Installing backend from local source..."
 "$PYTHON_EXE" -m pip install --upgrade pip
-"$PYTHON_EXE" -m pip install --upgrade "$RTH_BACKEND_PACKAGE"
+"$PYTHON_EXE" -m pip install -e .
 
 echo "Ensuring WebSocket support for Uvicorn..."
 if ! "$PYTHON_EXE" -c "import websockets" >/dev/null 2>&1; then
