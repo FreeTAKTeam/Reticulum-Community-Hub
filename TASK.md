@@ -1,4 +1,8 @@
 # TASKS
+- 2026-03-01: DONE. Add a copy-paste Linux `systemd` service installation block to the remote access guide, including the exact service unit creation commands.
+- 2026-03-01: DONE. Expand remote access documentation with Linux `systemd` service setup and persistent `RTH_API_KEY` configuration guidance.
+- 2026-03-01: DONE. Harden attachment deletion on Linux and other mixed-platform deployments so malformed or non-inspectable stored paths do not return 400 and instead still remove the metadata record.
+- 2026-03-01: DONE. Fix image deletion for uploaded or legacy attachments by deleting the stored record path directly instead of rejecting records that no longer match the current image storage directory.
 - 2026-03-01: DONE. Patch the installed LXMF runtime at startup so integer sync-offer error codes do not crash peer sync and block propagated messages from reaching the hub/UI.
 - 2026-03-01: DONE. Bump project version to 2.0.2 across Python, UI, and Electron manifests.
 - 2026-03-01: DONE. Fix LXMF peer offer-response handling so remote integer error codes do not crash sync processing with "'int' is not iterable".

@@ -1,11 +1,14 @@
 """Tests for file/image routes in the northbound API."""
 # pylint: disable=import-error
 
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Tuple
 
 from fastapi.testclient import TestClient
 
+from reticulum_telemetry_hub.api.models import FileAttachment
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -138,3 +141,31 @@ def test_file_routes_delete_missing_entries_return_404(tmp_path: Path) -> None:
 
     assert client.delete("/File/999").status_code == 404
     assert client.delete("/Image/999").status_code == 404
+
+
+def test_delete_image_allows_legacy_attachment_paths(tmp_path: Path) -> None:
+    """Allow image deletion when the stored record path predates current image roots."""
+
+    client, api = _build_client(tmp_path)
+    legacy_dir = tmp_path / "legacy"
+    legacy_dir.mkdir()
+    legacy_path = legacy_dir / "legacy.jpg"
+    legacy_path.write_bytes(b"image")
+    timestamp = datetime.now(timezone.utc)
+    image_record = api._storage.create_file_record(  # pylint: disable=protected-access
+        FileAttachment(
+            name="legacy.jpg",
+            path=str(legacy_path),
+            category="image",
+            size=len(b"image"),
+            media_type="image/jpeg",
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+    )
+
+    response = client.delete(f"/Image/{image_record.file_id}")
+
+    assert response.status_code == 200
+    assert response.json()["FileID"] == image_record.file_id
+    assert not legacy_path.exists()

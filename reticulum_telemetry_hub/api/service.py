@@ -378,20 +378,12 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
     def delete_file(self, record_id: int) -> FileAttachment:
         """Delete a stored file from disk and metadata storage."""
 
-        return self._delete_attachment(
-            record_id,
-            expected_category=self._file_category,
-            expected_base_path=self._config_manager.config.file_storage_path,
-        )
+        return self._delete_attachment(record_id, expected_category=self._file_category)
 
     def delete_image(self, record_id: int) -> FileAttachment:
         """Delete a stored image from disk and metadata storage."""
 
-        return self._delete_attachment(
-            record_id,
-            expected_category=self._image_category,
-            expected_base_path=self._config_manager.config.image_storage_path,
-        )
+        return self._delete_attachment(record_id, expected_category=self._image_category)
 
     def store_uploaded_attachment(
         self,
@@ -1229,21 +1221,27 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         record_id: int,
         *,
         expected_category: str,
-        expected_base_path: Path,
     ) -> FileAttachment:
-        """Delete an attachment record and its on-disk file."""
+        """Delete an attachment record and its on-disk file.
+
+        The persisted attachment record already contains the canonical on-disk
+        path. Deletion should therefore use the stored path directly instead of
+        re-validating it against the *current* configuration, which can change
+        after the record was created or differ from older attachment layouts.
+        When the stored path itself cannot be inspected cleanly (for example
+        due to legacy malformed values on a different platform), the metadata
+        record is still removed so the operator is not blocked by a stale entry.
+        """
 
         record = self._retrieve_attachment(record_id, expected_category=expected_category)
-        resolved_base_path = self._filesystem.resolve(expected_base_path)
-        resolved_path = self._filesystem.resolve(Path(record.path))
-        try:
-            resolved_path.relative_to(resolved_base_path)
-        except ValueError as exc:
-            raise ValueError(
-                f"File '{record.path}' must be stored within '{resolved_base_path}'"
-            ) from exc
-        if self._filesystem.is_file(resolved_path):
-            self._filesystem.delete_file(resolved_path)
+        path_value = record.path
+        if isinstance(path_value, str) and path_value:
+            stored_path = Path(path_value)
+            try:
+                if self._filesystem.is_file(stored_path):
+                    self._filesystem.delete_file(stored_path)
+            except ValueError:
+                pass
         deleted = self._storage.delete_file_record(record_id)
         if deleted is None:
             raise KeyError(f"File '{record_id}' not found")
