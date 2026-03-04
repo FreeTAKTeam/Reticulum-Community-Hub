@@ -179,6 +179,7 @@ class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     lxmf_router_config_path: Path | None = None
     telemetry_filename: str = "telemetry.ini"
     event_retention_days: int = 90
+    chat_attachment_max_bytes: int = 8 * 1024 * 1024
     file_storage_path: Path | None = None
     image_storage_path: Path | None = None
 

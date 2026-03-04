@@ -115,8 +115,37 @@
           </div>
 
           <div class="panel-actions">
-            <BaseButton variant="secondary" icon-left="refresh" @click="filesStore.fetchFiles()">Refresh</BaseButton>
+            <BaseButton
+              variant="secondary"
+              icon-left="upload"
+              :loading="uploadInFlight && uploadCategory === 'file'"
+              :disabled="uploadInFlight"
+              @click="openUploadPicker('file')"
+            >
+              Upload File
+            </BaseButton>
+            <BaseButton
+              variant="secondary"
+              icon-left="upload"
+              :loading="uploadInFlight && uploadCategory === 'image'"
+              :disabled="uploadInFlight"
+              @click="openUploadPicker('image')"
+            >
+              Upload Image
+            </BaseButton>
+            <BaseButton variant="secondary" icon-left="refresh" :disabled="uploadInFlight" @click="filesStore.fetchFiles()">
+              Refresh
+            </BaseButton>
           </div>
+          <div class="upload-hint">Max upload size: 8 MB per file.</div>
+          <input ref="fileUploadInput" class="hidden-file-input" type="file" @change="handleUploadSelection($event, 'file')" />
+          <input
+            ref="imageUploadInput"
+            class="hidden-file-input"
+            type="file"
+            accept="image/*"
+            @change="handleUploadSelection($event, 'image')"
+          />
         </section>
       </div>
     </div>
@@ -161,6 +190,12 @@ const filesPage = ref(1);
 const imagesPage = ref(1);
 const filesPageSize = 8;
 const imagesPageSize = 8;
+const fileUploadInput = ref<HTMLInputElement | null>(null);
+const imageUploadInput = ref<HTMLInputElement | null>(null);
+const uploadInFlight = ref(false);
+const uploadCategory = ref<"file" | "image" | null>(null);
+
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 const pagedFiles = computed(() => {
   const start = (filesPage.value - 1) * filesPageSize;
@@ -272,6 +307,72 @@ const clearPreviewUrl = () => {
   previewName.value = "";
 };
 
+const openUploadPicker = (category: "file" | "image") => {
+  if (uploadInFlight.value) {
+    return;
+  }
+  if (category === "file") {
+    fileUploadInput.value?.click();
+    return;
+  }
+  imageUploadInput.value?.click();
+};
+
+const uploadErrorDetail = (error: unknown): string | undefined => {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const payload = error as { body?: unknown };
+  if (!payload.body || typeof payload.body !== "object") {
+    return undefined;
+  }
+  const detail = (payload.body as { detail?: unknown }).detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return detail.trim();
+  }
+  return undefined;
+};
+
+const handleUploadSelection = async (event: Event, category: "file" | "image") => {
+  const input = event.target as HTMLInputElement;
+  const selectedFile = input.files?.[0];
+  input.value = "";
+  if (!selectedFile) {
+    return;
+  }
+  if (selectedFile.size > MAX_ATTACHMENT_BYTES) {
+    toastStore.push(`Attachment ${selectedFile.name} exceeds 8MB.`, "warning");
+    return;
+  }
+  if (category === "image" && !selectedFile.type.startsWith("image/")) {
+    toastStore.push("Image uploads require an image content type.", "warning");
+    return;
+  }
+
+  uploadInFlight.value = true;
+  uploadCategory.value = category;
+  try {
+    await filesStore.uploadAttachment({
+      category,
+      file: selectedFile
+    });
+    if (category === "image") {
+      activeTab.value = "images";
+      imagesPage.value = 1;
+      toastStore.push("Image uploaded", "success");
+    } else {
+      activeTab.value = "files";
+      filesPage.value = 1;
+      toastStore.push("File uploaded", "success");
+    }
+  } catch (error) {
+    toastStore.push(uploadErrorDetail(error) ?? "Upload failed", "danger");
+  } finally {
+    uploadCategory.value = null;
+    uploadInFlight.value = false;
+  }
+};
+
 watch(previewOpen, (open) => {
   if (!open) {
     clearPreviewUrl();
@@ -308,7 +409,3 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped src="./styles/FilesPage.css"></style>
-
-
-
-

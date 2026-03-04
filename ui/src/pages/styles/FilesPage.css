@@ -10,7 +10,6 @@
   font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
 }
 
-
 .tree-list {
   margin-top: 10px;
   display: flex;
@@ -152,6 +151,19 @@
   flex-wrap: wrap;
 }
 
+.upload-hint {
+  margin-top: 8px;
+  text-align: right;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  color: rgba(180, 246, 255, 0.75);
+}
+
+.hidden-file-input {
+  display: none;
+}
+
 .mono {
   font-family: "JetBrains Mono", "Cascadia Mono", monospace;
 }
@@ -189,7 +201,6 @@
   text-underline-offset: 2px;
 }
 
-
 @media (max-width: 1100px) {
   .registry-grid {
     grid-template-columns: 1fr;
@@ -213,5 +224,13 @@
 
   .panel-tabs {
     align-self: flex-start;
+  }
+
+  .panel-actions {
+    justify-content: flex-start;
+  }
+
+  .upload-hint {
+    text-align: left;
   }
 }

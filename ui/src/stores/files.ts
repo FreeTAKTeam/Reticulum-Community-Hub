@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { del as delRequest, get } from "../api/client";
+import { post } from "../api/client";
 import type { FileEntry } from "../api/types";
 
 type FileApiPayload = {
@@ -48,6 +49,31 @@ export const useFilesStore = defineStore("files", () => {
     images.value = images.value.filter((item) => item.id !== id);
   };
 
+  const uploadAttachment = async (payload: {
+    category: "file" | "image";
+    file: File;
+    sha256?: string;
+    topic_id?: string;
+  }) => {
+    const form = new FormData();
+    form.append("category", payload.category);
+    form.append("file", payload.file, payload.file.name);
+    if (payload.sha256) {
+      form.append("sha256", payload.sha256);
+    }
+    if (payload.topic_id) {
+      form.append("topic_id", payload.topic_id);
+    }
+    const response = await post<FileApiPayload>(endpoints.chatAttachment, form);
+    const entry = fromApiFile(response);
+    if (payload.category === "image") {
+      images.value = [entry, ...images.value];
+    } else {
+      files.value = [entry, ...files.value];
+    }
+    return entry;
+  };
+
   return {
     files,
     images,
@@ -56,6 +82,7 @@ export const useFilesStore = defineStore("files", () => {
     fileRawUrl,
     imageRawUrl,
     removeFile,
-    removeImage
+    removeImage,
+    uploadAttachment
   };
 });

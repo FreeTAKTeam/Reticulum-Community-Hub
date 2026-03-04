@@ -419,6 +419,12 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             hub_section.get("event_retention_days"),
             defaults.event_retention_days,
         )
+        chat_attachment_max_bytes = self._coerce_optional_int_min(
+            hub_section.get("chat_attachment_max_bytes"),
+            minimum=1,
+        )
+        if chat_attachment_max_bytes is None:
+            chat_attachment_max_bytes = defaults.chat_attachment_max_bytes
 
         gps_section = self._get_section("gpsd")
         gps_host = gps_section.get("host", defaults.gpsd_host)
@@ -548,6 +554,7 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             ),
             telemetry_filename=telemetry_filename,
             event_retention_days=event_retention_days,
+            chat_attachment_max_bytes=chat_attachment_max_bytes,
             file_storage_path=file_storage_path,
             image_storage_path=image_storage_path,
         )

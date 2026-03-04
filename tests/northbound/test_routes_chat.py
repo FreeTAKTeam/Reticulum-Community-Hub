@@ -146,3 +146,28 @@ def test_chat_message_requires_dispatcher(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 503
+
+
+def test_chat_attachment_honors_configured_size_limit(tmp_path: Path) -> None:
+    """Ensure attachment uploads respect the configured byte limit."""
+
+    config_path = tmp_path / "config.ini"
+    config_path.write_text("[hub]\nchat_attachment_max_bytes = 4\n")
+    client, _hub = _build_gateway_client(tmp_path)
+
+    within_limit = client.post(
+        "/Chat/Attachment",
+        data={"category": "file"},
+        files={"file": ("ok.txt", b"1234", "text/plain")},
+    )
+
+    assert within_limit.status_code == 200
+
+    over_limit = client.post(
+        "/Chat/Attachment",
+        data={"category": "file"},
+        files={"file": ("too-big.txt", b"12345", "text/plain")},
+    )
+
+    assert over_limit.status_code == 413
+    assert over_limit.json()["detail"] == "Attachment exceeds size limit"

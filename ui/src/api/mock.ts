@@ -397,13 +397,23 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
   }
 
   if (pathname === "/Chat/Attachment" && method === "POST") {
+    const form = options.body instanceof FormData ? options.body : null;
+    const category = form?.get("category") === "image" ? "image" : "file";
+    const uploaded = form?.get("file");
+    const file = uploaded instanceof File ? uploaded : null;
     const attachment = {
       FileID: attachmentCounter++,
-      Name: "mock-upload.bin",
-      MediaType: "application/octet-stream",
-      Size: 2048,
-      Category: "file"
+      Name: file?.name ?? "mock-upload.bin",
+      MediaType: file?.type || (category === "image" ? "image/png" : "application/octet-stream"),
+      Size: file?.size ?? 2048,
+      Category: category,
+      CreatedAt: nowIso()
     };
+    if (category === "image") {
+      mockState.images = [attachment, ...mockState.images];
+    } else {
+      mockState.files = [attachment, ...mockState.files];
+    }
     return jsonResponse(attachment);
   }
 

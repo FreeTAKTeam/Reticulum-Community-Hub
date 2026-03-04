@@ -174,6 +174,16 @@ def create_app(
             hub_db_path,
             event_retention_days=retention_days,
         )
+
+    chat_attachment_max_bytes = 8 * 1024 * 1024
+    if config_manager is not None:
+        chat_attachment_max_bytes = int(
+            getattr(
+                config_manager.runtime_config,
+                "chat_attachment_max_bytes",
+                chat_attachment_max_bytes,
+            )
+        )
     services = NorthboundServices(
         api=api,
         telemetry=telemetry_controller,
@@ -217,6 +227,7 @@ def create_app(
         app,
         services=services,
         require_protected=require_protected,
+        max_attachment_bytes=chat_attachment_max_bytes,
     )
     register_topic_routes(
         app,

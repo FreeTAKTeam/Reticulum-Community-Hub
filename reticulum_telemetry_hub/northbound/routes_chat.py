@@ -19,14 +19,13 @@ from .models import ChatSendPayload
 from .services import NorthboundServices
 
 
-MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
-
 
 def register_chat_routes(
     app: FastAPI,
     *,
     services: NorthboundServices,
     require_protected,
+    max_attachment_bytes: int,
 ) -> None:
     """Register chat routes on the FastAPI app."""
 
@@ -94,7 +93,7 @@ def register_chat_routes(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Attachment content is empty",
             )
-        if len(content) > MAX_ATTACHMENT_BYTES:
+        if len(content) > max_attachment_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="Attachment exceeds size limit",

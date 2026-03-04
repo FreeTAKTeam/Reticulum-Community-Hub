@@ -45,6 +45,7 @@ def test_missing_config_is_bootstrapped_from_default_template(tmp_path):
     assert lxmf_router_path.exists()
     assert manager.config_parser.has_section("hub")
     assert manager.config_parser.has_option("hub", "telemetry_filename")
+    assert manager.config_parser.has_option("hub", "chat_attachment_max_bytes")
     assert manager.config_parser.has_section("announce.capabilities")
     assert manager.config_parser.has_option("announce.capabilities", "enabled")
     assert manager.config_parser.has_section("TAK")
@@ -125,6 +126,21 @@ def test_file_and_image_overrides_expand_and_create(monkeypatch, tmp_path):
     assert manager.runtime_config.image_storage_path == tmp_path / "custom/images"
     assert manager.runtime_config.file_storage_path.is_dir()
     assert manager.runtime_config.image_storage_path.is_dir()
+
+
+def test_chat_attachment_max_bytes_config_and_minimum(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text("[hub]\nchat_attachment_max_bytes = 1024\n")
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+
+    assert manager.runtime_config.chat_attachment_max_bytes == 1024
+
+    config_path.write_text("[hub]\nchat_attachment_max_bytes = 0\n")
+
+    clamped_manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+
+    assert clamped_manager.runtime_config.chat_attachment_max_bytes == 1
 
 
 def test_announce_capabilities_defaults(tmp_path):

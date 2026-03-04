@@ -179,6 +179,7 @@ Useful runtime keys include:
 - `services`
 - `reticulum_config_path`
 - `lxmf_router_config_path`
+- `chat_attachment_max_bytes` (max bytes accepted by `POST /Chat/Attachment`)
 
 LXMF router keys are accepted in both `<storage_dir>/lxmf-router.ini` and the
 main `config.ini` `[propagation]` / `[lxmf]` sections. When the same key exists
@@ -350,7 +351,7 @@ Reticulum runtime insight:
 
 Attachment upload notes:
 - `category` must be `file` or `image`
-- max payload is 8 MiB per upload
+- max payload is controlled by `[hub] chat_attachment_max_bytes` (default `8388608`, 8 MiB)
 - optional `sha256` integrity check is supported
 
 ### Marker and zone routes
