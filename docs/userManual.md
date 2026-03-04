@@ -149,6 +149,11 @@ When using `rch start`, you also get:
 RCH loads defaults from `<storage_dir>/config.ini`. If missing, it is bootstrapped
 from `reticulum_telemetry_hub/config/default_config.ini`.
 
+RCH also bootstraps `<storage_dir>/lxmf-router.ini` from
+`reticulum_telemetry_hub/config/default_lxmf_router_config.ini` when the target
+LXMF router config file does not exist. If `[hub] lxmf_router_config_path` is
+blank, the storage-local `lxmf-router.ini` path is used automatically.
+
 CLI flags override config file values.
 
 Current config template supports these sections:
@@ -174,6 +179,53 @@ Useful runtime keys include:
 - `services`
 - `reticulum_config_path`
 - `lxmf_router_config_path`
+
+LXMF router keys are accepted in both `<storage_dir>/lxmf-router.ini` and the
+main `config.ini` `[propagation]` / `[lxmf]` sections. When the same key exists
+in both places, `config.ini` wins.
+
+Supported `[propagation]` LXMF keys:
+- `enable_node`
+- `announce_interval`
+- `announce_at_start`
+- `autopeer`
+- `autopeer_maxdepth`
+- `node_name`
+- `prioritise_destinations`
+- `control_allowed`
+- `message_storage_limit`
+- `propagation_transfer_max_accepted_size`
+- `propagation_message_max_accepted_size` (legacy alias)
+- `propagation_sync_max_accepted_size`
+- `propagation_stamp_cost_target`
+- `propagation_stamp_cost_flexibility`
+- `peering_cost`
+- `remote_peering_cost_max`
+- `max_peers`
+- `static_peers`
+- `from_static_only`
+- `auth_required`
+- `startup_mode`
+- `propagation_start_mode` (legacy alias)
+- `startup_prune_enabled`
+- `propagation_startup_prune_enabled` (legacy alias)
+- `startup_max_messages`
+- `propagation_startup_max_messages` (legacy alias)
+- `startup_max_age_days`
+- `propagation_startup_max_age_days` (legacy alias)
+
+Supported `[lxmf]` keys:
+- `display_name`
+- `announce_at_start`
+- `announce_interval`
+- `delivery_transfer_max_accepted_size`
+- `on_inbound`
+- `enable_node` (fallback alias)
+- `propagation_node` (fallback alias)
+
+Optional LXMF sidecar files:
+- `allowed` (one identity hash per line, used when `auth_required = yes`)
+- `ignored` (one delivery destination hash per line, skipped on inbound)
 
 Config apply/rollback endpoints create and use backup files (`*.bak.*`).
 

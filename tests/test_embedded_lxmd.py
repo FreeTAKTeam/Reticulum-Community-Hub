@@ -189,6 +189,24 @@ def test_embedded_lxmd_fixture_emits_and_persists(
     assert payload["peered_propagation_rx_bytes"] == 8
 
 
+def test_embedded_lxmd_respects_startup_announce_flags(embedded_lxmd_factory) -> None:
+    harness = embedded_lxmd_factory(
+        interval_minutes=None,
+        peer_announce_at_start=False,
+        node_announce_at_start=False,
+    )
+    harness.embedded.DEFERRED_JOBS_DELAY = 0
+    harness.embedded.JOBS_INTERVAL_SECONDS = 0.01
+
+    try:
+        harness.embedded.start()
+        time.sleep(0.05)
+        assert harness.router.announce_calls == []
+        assert harness.router.announce_propagation_count == 0
+    finally:
+        harness.embedded.stop()
+
+
 def test_embedded_lxmd_can_restart_after_stop(running_embedded_lxmd):
     stats = {
         "destination_hash": b"\x66" * 16,

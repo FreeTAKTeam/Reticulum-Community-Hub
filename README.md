@@ -49,9 +49,11 @@ Read our full manifesto: [docs/Manifesto_Reticulum_Community_Hub.md](docs/Manife
    python -m pip install -e .
    ```
 4. Prepare a storage directory and config.
-   - Start once with your chosen `--storage_dir`; if `config.ini` is missing, RCH writes a default template with all accepted fields.
+   - Start once with your chosen `--storage_dir`; if `config.ini` or `lxmf-router.ini` is missing, RCH writes packaged defaults for both files.
    - You can also copy the shipped template from `reticulum_telemetry_hub/config/default_config.ini`.
+   - The shipped LXMF router template also lives at `reticulum_telemetry_hub/config/default_lxmf_router_config.ini`.
    - Adjust paths in the `[hub]`, `[files]`, and `[images]` sections as needed.
+   - `config.ini` `[propagation]` and `[lxmf]` values override matching keys from `lxmf-router.ini`.
 5. Start the hub.
    ```bash
    python -m reticulum_telemetry_hub.reticulum_server \

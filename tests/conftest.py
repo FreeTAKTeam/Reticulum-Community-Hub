@@ -67,15 +67,22 @@ class DummyConfigManager:
         self,
         *,
         enable_node: bool = True,
-        interval_minutes: int = 1,
+        interval_minutes: int | None = 1,
         propagation_start_mode: str = "blocking",
         startup_prune_enabled: bool = False,
         startup_max_messages: int | None = None,
         startup_max_age_days: int | None = None,
+        peer_announce_at_start: bool = True,
+        node_announce_at_start: bool = True,
     ) -> None:
         lxmf_router = SimpleNamespace(
             enable_node=enable_node,
-            announce_interval_minutes=interval_minutes,
+            peer_announce_at_start=peer_announce_at_start,
+            peer_announce_interval_minutes=interval_minutes,
+            node_announce_at_start=node_announce_at_start,
+            node_announce_interval_minutes=interval_minutes,
+            auth_required=False,
+            control_allowed_identities=(),
             propagation_start_mode=propagation_start_mode,
             propagation_startup_prune_enabled=startup_prune_enabled,
             propagation_startup_max_messages=startup_max_messages,
@@ -114,6 +121,8 @@ class DummyRouter:
         self.enable_delay_seconds = enable_delay_seconds
         self.announce_calls: list[bytes] = []
         self.announce_propagation_count = 0
+        self.auth_required = False
+        self.control_allowed_list: list[bytes] = []
 
     def enable_propagation(self) -> None:
         if self.enable_delay_seconds > 0:
@@ -125,6 +134,14 @@ class DummyRouter:
 
     def announce_propagation_node(self) -> None:
         self.announce_propagation_count += 1
+
+    def set_authentication(self, *, required: bool | None = None) -> None:
+        if required is not None:
+            self.auth_required = required
+
+    def allow_control(self, identity_hash: bytes | None = None) -> None:
+        if identity_hash is not None:
+            self.control_allowed_list.append(identity_hash)
 
     def compile_stats(self) -> dict[str, Any] | None:
         return self._stats
@@ -149,12 +166,14 @@ def embedded_lxmd_factory(telemetry_controller):
         stats: dict[str, Any] | None = None,
         destination_hash: bytes | None = None,
         enable_node: bool = True,
-        interval_minutes: int = 1,
+        interval_minutes: int | None = 1,
         propagation_start_mode: str = "blocking",
         startup_prune_enabled: bool = False,
         startup_max_messages: int | None = None,
         startup_max_age_days: int | None = None,
         enable_delay_seconds: float = 0.0,
+        peer_announce_at_start: bool = True,
+        node_announce_at_start: bool = True,
     ) -> EmbeddedTestHarness:
         router = DummyRouter(stats, enable_delay_seconds=enable_delay_seconds)
         destination = DummyDestination(destination_hash or b"\x11" * 16)
@@ -165,6 +184,8 @@ def embedded_lxmd_factory(telemetry_controller):
             startup_prune_enabled=startup_prune_enabled,
             startup_max_messages=startup_max_messages,
             startup_max_age_days=startup_max_age_days,
+            peer_announce_at_start=peer_announce_at_start,
+            node_announce_at_start=node_announce_at_start,
         )
         embedded = EmbeddedLxmd(
             router,

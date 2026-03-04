@@ -38,8 +38,11 @@ def test_config_manager_expands_optional_config_overrides(monkeypatch, tmp_path)
 def test_missing_config_is_bootstrapped_from_default_template(tmp_path):
     manager = HubConfigurationManager(storage_path=tmp_path)
     config_path = tmp_path / "config.ini"
+    lxmf_router_path = tmp_path / "lxmf-router.ini"
 
     assert config_path.exists()
+    assert manager.lxmf_router_config_path == lxmf_router_path
+    assert lxmf_router_path.exists()
     assert manager.config_parser.has_section("hub")
     assert manager.config_parser.has_option("hub", "telemetry_filename")
     assert manager.config_parser.has_section("announce.capabilities")
@@ -158,15 +161,60 @@ def test_lxmf_startup_options_loaded_from_propagation_section(tmp_path):
     config_path = tmp_path / "config.ini"
     config_path.write_text(
         "[propagation]\n"
+        "announce_at_start = no\n"
+        "autopeer = no\n"
+        "autopeer_maxdepth = 4\n"
+        "message_storage_limit = 12.5\n"
+        "propagation_transfer_max_accepted_size = 640\n"
+        "propagation_sync_max_accepted_size = 4096\n"
+        "propagation_stamp_cost_target = 15\n"
+        "propagation_stamp_cost_flexibility = 2\n"
+        "peering_cost = 9\n"
+        "remote_peering_cost_max = 18\n"
+        "prioritise_destinations = aa, bb\n"
+        "control_allowed = cc\n"
+        "max_peers = 7\n"
+        "static_peers = dd, ee\n"
+        "from_static_only = yes\n"
+        "auth_required = yes\n"
         "startup_mode = blocking\n"
         "startup_prune_enabled = yes\n"
         "startup_max_messages = 20000\n"
         "startup_max_age_days = 30\n"
+        "\n"
+        "[lxmf]\n"
+        "display_name = Relay\n"
+        "announce_at_start = no\n"
+        "announce_interval = 45\n"
+        "delivery_transfer_max_accepted_size = 900\n"
+        "on_inbound = python handler.py\n"
     )
 
     manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
     lxmf = manager.config.lxmf_router
 
+    assert lxmf.display_name == "Relay"
+    assert lxmf.peer_announce_at_start is False
+    assert lxmf.peer_announce_interval_minutes == 45
+    assert lxmf.delivery_transfer_max_accepted_size_kb == 900
+    assert lxmf.on_inbound == "python handler.py"
+    assert lxmf.auth_required is True
+    assert lxmf.node_announce_at_start is False
+    assert lxmf.node_announce_interval_minutes == 10
+    assert lxmf.autopeer is False
+    assert lxmf.autopeer_maxdepth == 4
+    assert lxmf.message_storage_limit_megabytes == 12.5
+    assert lxmf.propagation_transfer_max_accepted_size_kb == 640
+    assert lxmf.propagation_sync_max_accepted_size_kb == 4096
+    assert lxmf.propagation_stamp_cost_target == 15
+    assert lxmf.propagation_stamp_cost_flexibility == 2
+    assert lxmf.peering_cost == 9
+    assert lxmf.remote_peering_cost_max == 18
+    assert lxmf.prioritised_lxmf_destinations == ("aa", "bb")
+    assert lxmf.control_allowed_identities == ("cc",)
+    assert lxmf.max_peers == 7
+    assert lxmf.static_peers == ("dd", "ee")
+    assert lxmf.from_static_only is True
     assert lxmf.propagation_start_mode == "blocking"
     assert lxmf.propagation_startup_prune_enabled is True
     assert lxmf.propagation_startup_max_messages == 20000

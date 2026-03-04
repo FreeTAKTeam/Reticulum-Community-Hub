@@ -76,8 +76,29 @@ class LXMFRouterConfig:
 
     path: Path
     enable_node: bool = True
-    announce_interval_minutes: int = 10
-    display_name: str = "RTH_router"
+    display_name: str | None = None
+    peer_announce_at_start: bool = True
+    peer_announce_interval_minutes: int | None = 10
+    delivery_transfer_max_accepted_size_kb: float = 1000.0
+    on_inbound: str | None = None
+    node_name: str | None = None
+    auth_required: bool = False
+    node_announce_at_start: bool = True
+    node_announce_interval_minutes: int | None = 10
+    autopeer: bool = True
+    autopeer_maxdepth: int | None = 6
+    message_storage_limit_megabytes: float = 5.0
+    propagation_transfer_max_accepted_size_kb: float = 256.0
+    propagation_sync_max_accepted_size_kb: float = 10240.0
+    propagation_stamp_cost_target: int | None = None
+    propagation_stamp_cost_flexibility: int | None = None
+    peering_cost: int | None = None
+    remote_peering_cost_max: int | None = None
+    prioritised_lxmf_destinations: Tuple[str, ...] = ()
+    control_allowed_identities: Tuple[str, ...] = ()
+    static_peers: Tuple[str, ...] = ()
+    max_peers: int | None = None
+    from_static_only: bool = False
     propagation_start_mode: str = "background"
     propagation_startup_prune_enabled: bool = False
     propagation_startup_max_messages: int | None = None
@@ -93,8 +114,38 @@ class LXMFRouterConfig:
         return {
             "path": str(self.path),
             "enable_node": self.enable_node,
-            "announce_interval_minutes": self.announce_interval_minutes,
+            "announce_interval_minutes": self.node_announce_interval_minutes,
             "display_name": self.display_name,
+            "peer_announce_at_start": self.peer_announce_at_start,
+            "peer_announce_interval_minutes": self.peer_announce_interval_minutes,
+            "delivery_transfer_max_accepted_size_kb": (
+                self.delivery_transfer_max_accepted_size_kb
+            ),
+            "on_inbound": self.on_inbound,
+            "node_name": self.node_name,
+            "auth_required": self.auth_required,
+            "node_announce_at_start": self.node_announce_at_start,
+            "node_announce_interval_minutes": self.node_announce_interval_minutes,
+            "autopeer": self.autopeer,
+            "autopeer_maxdepth": self.autopeer_maxdepth,
+            "message_storage_limit_megabytes": self.message_storage_limit_megabytes,
+            "propagation_transfer_max_accepted_size_kb": (
+                self.propagation_transfer_max_accepted_size_kb
+            ),
+            "propagation_sync_max_accepted_size_kb": (
+                self.propagation_sync_max_accepted_size_kb
+            ),
+            "propagation_stamp_cost_target": self.propagation_stamp_cost_target,
+            "propagation_stamp_cost_flexibility": (
+                self.propagation_stamp_cost_flexibility
+            ),
+            "peering_cost": self.peering_cost,
+            "remote_peering_cost_max": self.remote_peering_cost_max,
+            "prioritised_lxmf_destinations": list(self.prioritised_lxmf_destinations),
+            "control_allowed_identities": list(self.control_allowed_identities),
+            "static_peers": list(self.static_peers),
+            "max_peers": self.max_peers,
+            "from_static_only": self.from_static_only,
             "propagation_start_mode": self.propagation_start_mode,
             "propagation_startup_prune_enabled": self.propagation_startup_prune_enabled,
             "propagation_startup_max_messages": self.propagation_startup_max_messages,

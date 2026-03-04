@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ReticulumTelemetryHub"
-version = "2.0.8"
+version = "2.1.0"
 description = "Reticulum-Telemetry-Hub (RTH) manages a complete TCP node across a Reticulum-based network, enabling communication and data sharing between clients like Sideband or Meshchat."
 authors = ["naman108, corvo"]
 readme = "README.md"
@@ -10,6 +10,8 @@ packages = [
 include = [
     { path = "reticulum_telemetry_hub/config/default_config.ini", format = "sdist" },
     { path = "reticulum_telemetry_hub/config/default_config.ini", format = "wheel" },
+    { path = "reticulum_telemetry_hub/config/default_lxmf_router_config.ini", format = "sdist" },
+    { path = "reticulum_telemetry_hub/config/default_lxmf_router_config.ini", format = "wheel" },
 ]
 
 [tool.poetry.dependencies]

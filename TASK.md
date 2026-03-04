@@ -1,4 +1,5 @@
 # TASKS
+- 2026-03-04: DONE. Expand LXMF config handling so the hub bootstraps a default `lxmf-router.ini`, lists the full LXMF key set in `config.ini`, and consumes the expanded router settings at runtime.
 - 2026-03-01: DONE. Add automatic propagation-node fallback for queued outbound LXMF messages, including direct retry events, propagation-node auto-selection, and propagated delivery state handling.
 - 2026-03-01: DONE. Add a copy-paste Linux `systemd` service installation block to the remote access guide, including the exact service unit creation commands.
 - 2026-03-01: DONE. Expand remote access documentation with Linux `systemd` service setup and persistent `RTH_API_KEY` configuration guidance.

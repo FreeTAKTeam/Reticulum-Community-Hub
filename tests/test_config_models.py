@@ -27,8 +27,29 @@ def test_lxmf_router_config_to_dict_includes_all_fields(tmp_path):
     router_config = LXMFRouterConfig(
         path=tmp_path / "router.ini",
         enable_node=False,
-        announce_interval_minutes=15,
         display_name="Relay",
+        peer_announce_at_start=False,
+        peer_announce_interval_minutes=15,
+        delivery_transfer_max_accepted_size_kb=768.0,
+        on_inbound="python handler.py",
+        node_name="Relay Node",
+        auth_required=True,
+        node_announce_at_start=False,
+        node_announce_interval_minutes=25,
+        autopeer=False,
+        autopeer_maxdepth=3,
+        message_storage_limit_megabytes=42.5,
+        propagation_transfer_max_accepted_size_kb=512.0,
+        propagation_sync_max_accepted_size_kb=4096.0,
+        propagation_stamp_cost_target=12,
+        propagation_stamp_cost_flexibility=2,
+        peering_cost=7,
+        remote_peering_cost_max=21,
+        prioritised_lxmf_destinations=("aa" * 16, "bb" * 16),
+        control_allowed_identities=("cc" * 16,),
+        static_peers=("dd" * 16,),
+        max_peers=8,
+        from_static_only=True,
         propagation_start_mode="blocking",
         propagation_startup_prune_enabled=True,
         propagation_startup_max_messages=5000,
@@ -39,8 +60,34 @@ def test_lxmf_router_config_to_dict_includes_all_fields(tmp_path):
 
     assert serialized["path"] == str(tmp_path / "router.ini")
     assert serialized["enable_node"] is False
-    assert serialized["announce_interval_minutes"] == 15
     assert serialized["display_name"] == "Relay"
+    assert serialized["peer_announce_at_start"] is False
+    assert serialized["peer_announce_interval_minutes"] == 15
+    assert serialized["delivery_transfer_max_accepted_size_kb"] == pytest.approx(768.0)
+    assert serialized["on_inbound"] == "python handler.py"
+    assert serialized["node_name"] == "Relay Node"
+    assert serialized["auth_required"] is True
+    assert serialized["announce_interval_minutes"] == 25
+    assert serialized["node_announce_at_start"] is False
+    assert serialized["node_announce_interval_minutes"] == 25
+    assert serialized["autopeer"] is False
+    assert serialized["autopeer_maxdepth"] == 3
+    assert serialized["message_storage_limit_megabytes"] == pytest.approx(42.5)
+    assert serialized["propagation_transfer_max_accepted_size_kb"] == pytest.approx(
+        512.0
+    )
+    assert serialized["propagation_sync_max_accepted_size_kb"] == pytest.approx(
+        4096.0
+    )
+    assert serialized["propagation_stamp_cost_target"] == 12
+    assert serialized["propagation_stamp_cost_flexibility"] == 2
+    assert serialized["peering_cost"] == 7
+    assert serialized["remote_peering_cost_max"] == 21
+    assert serialized["prioritised_lxmf_destinations"] == ["aa" * 16, "bb" * 16]
+    assert serialized["control_allowed_identities"] == ["cc" * 16]
+    assert serialized["static_peers"] == ["dd" * 16]
+    assert serialized["max_peers"] == 8
+    assert serialized["from_static_only"] is True
     assert serialized["propagation_start_mode"] == "blocking"
     assert serialized["propagation_startup_prune_enabled"] is True
     assert serialized["propagation_startup_max_messages"] == 5000

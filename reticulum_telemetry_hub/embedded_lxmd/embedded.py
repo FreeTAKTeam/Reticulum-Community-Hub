@@ -36,7 +36,12 @@ class EmbeddedLxmdConfig:
     """Runtime configuration for the embedded LXMD service."""
 
     enable_propagation_node: bool
-    announce_interval_seconds: int
+    peer_announce_at_start: bool
+    peer_announce_interval_seconds: int | None
+    node_announce_at_start: bool
+    node_announce_interval_seconds: int | None
+    auth_required: bool
+    control_allowed_identities: tuple[str, ...]
     propagation_start_mode: str
     propagation_startup_prune_enabled: bool
     propagation_startup_max_messages: int | None
@@ -45,7 +50,12 @@ class EmbeddedLxmdConfig:
     @classmethod
     def from_manager(cls, manager: HubConfigurationManager) -> "EmbeddedLxmdConfig":
         lxmf_config = manager.config.lxmf_router
-        interval = max(1, int(lxmf_config.announce_interval_minutes) * 60)
+        peer_interval = lxmf_config.peer_announce_interval_minutes
+        if peer_interval is not None:
+            peer_interval = max(1, int(peer_interval) * 60)
+        node_interval = lxmf_config.node_announce_interval_minutes
+        if node_interval is not None:
+            node_interval = max(1, int(node_interval) * 60)
         startup_mode = str(
             getattr(lxmf_config, "propagation_start_mode", "background")
         ).strip().lower()
@@ -53,7 +63,18 @@ class EmbeddedLxmdConfig:
             startup_mode = "background"
         return cls(
             enable_propagation_node=lxmf_config.enable_node,
-            announce_interval_seconds=interval,
+            peer_announce_at_start=bool(
+                getattr(lxmf_config, "peer_announce_at_start", True)
+            ),
+            peer_announce_interval_seconds=peer_interval,
+            node_announce_at_start=bool(
+                getattr(lxmf_config, "node_announce_at_start", True)
+            ),
+            node_announce_interval_seconds=node_interval,
+            auth_required=bool(getattr(lxmf_config, "auth_required", False)),
+            control_allowed_identities=tuple(
+                getattr(lxmf_config, "control_allowed_identities", ()) or ()
+            ),
             propagation_start_mode=startup_mode,
             propagation_startup_prune_enabled=bool(
                 getattr(lxmf_config, "propagation_startup_prune_enabled", False)
@@ -148,6 +169,8 @@ class EmbeddedLxmd:
         # Allow future ``start`` calls to run the deferred jobs loop again.
         self._stop_event.clear()
         self._started = False
+        self._last_peer_announce = None
+        self._last_node_announce = None
         next_state = "disabled" if not self.config.enable_propagation_node else "idle"
         self._set_propagation_state(next_state)
         self._maybe_emit_propagation_update(force=True)
@@ -372,14 +395,20 @@ class EmbeddedLxmd:
 
         elapsed = time.monotonic() - start
         self._set_propagation_state("ready", mark_finished=True)
+        self._apply_propagation_runtime_config()
         RNS.log(
             f"LXMF propagation node ready in {elapsed:.2f}s",
             RNS.LOG_NOTICE,
         )
 
         if self._started and not self._stop_event.is_set():
-            self._announce_propagation()
-            self._last_node_announce = time.monotonic()
+            now = time.monotonic()
+            if self._last_node_announce is None:
+                if self.config.node_announce_at_start:
+                    self._announce_propagation()
+                    self._last_node_announce = now
+                elif self.config.node_announce_interval_seconds is not None:
+                    self._last_node_announce = now
             self._maybe_emit_propagation_update(force=True)
 
     def _start_thread(self, target) -> None:
@@ -404,6 +433,25 @@ class EmbeddedLxmd:
                 f"Failed to announce embedded propagation node: {exc}",
                 RNS.LOG_ERROR,
             )
+
+    def _apply_propagation_runtime_config(self) -> None:
+        if self.config.auth_required:
+            try:
+                self.router.set_authentication(required=True)
+            except Exception as exc:  # pragma: no cover - logging guard
+                RNS.log(
+                    f"Failed to enable LXMF propagation authentication: {exc}",
+                    RNS.LOG_ERROR,
+                )
+
+        for identity_hash in self.config.control_allowed_identities:
+            try:
+                self.router.allow_control(bytes.fromhex(identity_hash))
+            except Exception as exc:  # pragma: no cover - logging guard
+                RNS.log(
+                    f"Failed to add LXMF propagation control identity '{identity_hash}': {exc}",
+                    RNS.LOG_WARNING,
+                )
 
     def _baseline_propagation_payload(self) -> dict[str, Any]:
         peers = getattr(self.router, "peers", {}) or {}
@@ -630,24 +678,36 @@ class EmbeddedLxmd:
         if self._stop_event.wait(self.DEFERRED_JOBS_DELAY):
             return
 
-        self._announce_delivery()
-        self._last_peer_announce = time.monotonic()
+        now = time.monotonic()
+        if self.config.peer_announce_at_start:
+            self._announce_delivery()
+            self._last_peer_announce = now
+        elif self.config.peer_announce_interval_seconds is not None:
+            self._last_peer_announce = now
 
         if self._is_propagation_ready():
-            self._announce_propagation()
-            self._last_node_announce = self._last_peer_announce
+            if self._last_node_announce is None:
+                if self.config.node_announce_at_start:
+                    self._announce_propagation()
+                    self._last_node_announce = now
+                elif self.config.node_announce_interval_seconds is not None:
+                    self._last_node_announce = now
 
         self._maybe_emit_propagation_update(force=True)
         self._start_thread(self._jobs)
 
     def _jobs(self) -> None:
-        interval = self.config.announce_interval_seconds
+        peer_interval = self.config.peer_announce_interval_seconds
+        node_interval = self.config.node_announce_interval_seconds
         while not self._stop_event.wait(self.JOBS_INTERVAL_SECONDS):
             self._maybe_emit_propagation_update()
             now = time.monotonic()
             if (
-                self._last_peer_announce is None
-                or now - self._last_peer_announce >= interval
+                peer_interval is not None
+                and (
+                    self._last_peer_announce is None
+                    or now - self._last_peer_announce >= peer_interval
+                )
             ):
                 self._announce_delivery()
                 self._last_peer_announce = now
@@ -656,8 +716,11 @@ class EmbeddedLxmd:
                 continue
 
             if (
-                self._last_node_announce is None
-                or now - self._last_node_announce >= interval
+                node_interval is not None
+                and (
+                    self._last_node_announce is None
+                    or now - self._last_node_announce >= node_interval
+                )
             ):
                 self._announce_propagation()
                 self._last_node_announce = now

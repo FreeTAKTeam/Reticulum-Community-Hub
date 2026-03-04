@@ -3,7 +3,7 @@ import json
 import RNS
 import pytest
 from msgpack import packb
-from types import MethodType
+from types import MethodType, SimpleNamespace
 
 from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.atak_cot import Remarks
@@ -44,6 +44,53 @@ def make_command_manager(api):
     )
     manager = CommandManager({}, DummyTelemetryController(), server_dest, api)
     return manager, server_dest
+
+
+def test_apply_lxmf_router_runtime_config_reads_allowed_and_ignored_sidecars(
+    tmp_path,
+):
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    calls: dict[str, list] = {
+        "allow": [],
+        "ignore_destination": [],
+    }
+
+    class DummyRouter:
+        def set_message_storage_limit(self, **kwargs):
+            calls["set_message_storage_limit"] = [kwargs]
+
+        def set_authentication(self, **kwargs):
+            calls["set_authentication"] = [kwargs]
+
+        def allow(self, identity_hash):
+            calls["allow"].append(identity_hash)
+
+        def ignore_destination(self, destination_hash):
+            calls["ignore_destination"].append(destination_hash)
+
+    lxmf_path = tmp_path / "lxmf-router.ini"
+    lxmf_path.write_text("[lxmf]\n", encoding="utf-8")
+    (tmp_path / "allowed").write_text(f"{'aa' * 16}\n# comment\n", encoding="utf-8")
+    (tmp_path / "ignored").write_text(f"{'bb' * 16}\n", encoding="utf-8")
+
+    hub.lxm_router = DummyRouter()
+    hub.config_manager = SimpleNamespace(
+        config=SimpleNamespace(
+            lxmf_router=SimpleNamespace(
+                path=lxmf_path,
+                message_storage_limit_megabytes=7.5,
+                auth_required=True,
+                prioritised_lxmf_destinations=(),
+            )
+        )
+    )
+
+    hub._apply_lxmf_router_runtime_config()
+
+    assert calls["set_message_storage_limit"] == [{"megabytes": 7.5}]
+    assert calls["set_authentication"] == [{"required": True}]
+    assert calls["allow"] == [bytes.fromhex("aa" * 16)]
+    assert calls["ignore_destination"] == [bytes.fromhex("bb" * 16)]
 
 
 COMMAND_HANDLER_MAP = [

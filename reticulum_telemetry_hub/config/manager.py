@@ -53,6 +53,23 @@ def _load_default_config_template_text() -> str:
         return ""
 
 
+def _load_default_lxmf_router_template_text() -> str:
+    """Return the packaged LXMF router template text when available."""
+
+    try:
+        template = resources.files("reticulum_telemetry_hub.config").joinpath(
+            "default_lxmf_router_config.ini"
+        )
+        return template.read_text(encoding="utf-8")
+    except (
+        FileNotFoundError,
+        ModuleNotFoundError,
+        OSError,
+        AttributeError,
+    ):
+        return ""
+
+
 class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
     """Load hub related configuration files and expose them as Python objects."""
 
@@ -73,6 +90,16 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
                 LXMF router configuration file.
         """
         load_env()
+        self._reticulum_config_override = (
+            _expand_user_path(reticulum_config_path)
+            if reticulum_config_path is not None
+            else None
+        )
+        self._lxmf_router_config_override = (
+            _expand_user_path(lxmf_router_config_path)
+            if lxmf_router_config_path is not None
+            else None
+        )
         self.storage_path = _expand_user_path(storage_path or DEFAULT_STORAGE_PATH)
         self.config_path = _expand_user_path(
             config_path or self.storage_path / "config.ini"
@@ -80,20 +107,8 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         self._write_default_config_if_missing()
         self._config_parser = self._load_config_parser(self.config_path)
         self.runtime_config = self._load_runtime_config()
-
-        reticulum_path_override = self.runtime_config.reticulum_config_path
-        lxmf_path_override = self.runtime_config.lxmf_router_config_path
-
-        self.reticulum_config_path = _expand_user_path(
-            reticulum_config_path
-            or reticulum_path_override
-            or Path.home() / ".reticulum" / "config"
-        )
-        self.lxmf_router_config_path = _expand_user_path(
-            lxmf_router_config_path
-            or lxmf_path_override
-            or Path.home() / ".lxmd" / "config"
-        )
+        self._reload_external_config_paths()
+        self._write_default_lxmf_router_config_if_missing()
         self._tak_config = self._load_tak_config()
         self._config = self._load()
 
@@ -130,6 +145,8 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         self._write_default_config_if_missing()
         self._config_parser = self._load_config_parser(self.config_path)
         self.runtime_config = self._load_runtime_config()
+        self._reload_external_config_paths()
+        self._write_default_lxmf_router_config_if_missing()
         self._tak_config = self._load_tak_config()
         self._config = self._load()
         return self._config
@@ -139,6 +156,12 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         """Return the shipped config.ini template text."""
 
         return _load_default_config_template_text()
+
+    @staticmethod
+    def default_lxmf_router_template_text() -> str:
+        """Return the shipped LXMF router template text."""
+
+        return _load_default_lxmf_router_template_text()
 
     def reticulum_info_snapshot(self) -> dict:
         """Return a summary of Reticulum runtime configuration."""
@@ -186,6 +209,23 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         if not self.reticulum_config_path.exists():
             return ""
         return self.reticulum_config_path.read_text(encoding="utf-8")
+
+    def _reload_external_config_paths(self) -> None:
+        """Refresh Reticulum and LXMF config file paths from overrides/defaults."""
+
+        reticulum_path_override = self.runtime_config.reticulum_config_path
+        lxmf_path_override = self.runtime_config.lxmf_router_config_path
+
+        self.reticulum_config_path = (
+            self._reticulum_config_override
+            or reticulum_path_override
+            or Path.home() / ".reticulum" / "config"
+        )
+        self.lxmf_router_config_path = (
+            self._lxmf_router_config_override
+            or lxmf_path_override
+            or self.storage_path / "lxmf-router.ini"
+        )
 
     def validate_config_text(self, config_text: str) -> dict:
         """Validate a config.ini payload without applying it.
@@ -329,6 +369,21 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             self.config_path.write_text(template_text, encoding="utf-8")
         except OSError:
             # Reason: config.ini is optional and startup should proceed with built-in defaults.
+            return
+
+    def _write_default_lxmf_router_config_if_missing(self) -> None:
+        """Create the default LXMF router config when the target file is absent."""
+
+        if self.lxmf_router_config_path.exists():
+            return
+        template_text = _load_default_lxmf_router_template_text()
+        if not template_text:
+            return
+        try:
+            self.lxmf_router_config_path.parent.mkdir(parents=True, exist_ok=True)
+            self.lxmf_router_config_path.write_text(template_text, encoding="utf-8")
+        except OSError:
+            # Reason: the dedicated LXMF config is optional and inline config.ini keys still work.
             return
 
     def _load_config_parser(self, path: Path) -> ConfigParser:
@@ -597,10 +652,100 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         enable_node = self._get_bool(
             {"enable_node": enable_node_value}, "enable_node", True
         )
-        announce_interval = self._coerce_int(
-            propagation_section.get("announce_interval"), 10
+        node_announce_interval = self._coerce_optional_positive_int(
+            propagation_section.get("announce_interval")
         )
-        display_name = lxmf_section.get("display_name", "RTH_router")
+        if node_announce_interval is None:
+            node_announce_interval = 10
+
+        peer_announce_interval = self._coerce_optional_positive_int(
+            lxmf_section.get("announce_interval")
+        )
+        if peer_announce_interval is None:
+            peer_announce_interval = node_announce_interval
+
+        display_name = self._normalize_display_name(lxmf_section.get("display_name"))
+        peer_announce_at_start = self._get_bool(
+            {"announce_at_start": lxmf_section.get("announce_at_start")},
+            "announce_at_start",
+            True,
+        )
+        delivery_transfer_limit = self._coerce_min_float(
+            lxmf_section.get("delivery_transfer_max_accepted_size"),
+            default=1000.0,
+            minimum=0.38,
+        )
+        on_inbound = self._normalize_optional_text(lxmf_section.get("on_inbound"))
+        node_name = self._normalize_optional_text(propagation_section.get("node_name"))
+        auth_required = self._get_bool(
+            {"auth_required": propagation_section.get("auth_required")},
+            "auth_required",
+            False,
+        )
+        node_announce_at_start = self._get_bool(
+            {"announce_at_start": propagation_section.get("announce_at_start")},
+            "announce_at_start",
+            True,
+        )
+        autopeer = self._get_bool(
+            {"autopeer": propagation_section.get("autopeer")},
+            "autopeer",
+            True,
+        )
+        autopeer_maxdepth = self._coerce_optional_int_min(
+            propagation_section.get("autopeer_maxdepth"),
+            minimum=0,
+        )
+        if autopeer_maxdepth is None:
+            autopeer_maxdepth = 6
+
+        message_storage_limit = self._coerce_min_float(
+            propagation_section.get("message_storage_limit"),
+            default=5.0,
+            minimum=0.005,
+        )
+        propagation_transfer_limit = self._coerce_min_float(
+            propagation_section.get("propagation_transfer_max_accepted_size")
+            or propagation_section.get("propagation_message_max_accepted_size"),
+            default=256.0,
+            minimum=0.38,
+        )
+        propagation_sync_limit = self._coerce_min_float(
+            propagation_section.get("propagation_sync_max_accepted_size"),
+            default=256.0 * 40,
+            minimum=0.38,
+        )
+        propagation_stamp_cost_target = self._coerce_optional_positive_int(
+            propagation_section.get("propagation_stamp_cost_target")
+        )
+        propagation_stamp_cost_flexibility = self._coerce_optional_int_min(
+            propagation_section.get("propagation_stamp_cost_flexibility"),
+            minimum=0,
+        )
+        peering_cost = self._coerce_optional_int_min(
+            propagation_section.get("peering_cost"),
+            minimum=0,
+        )
+        remote_peering_cost_max = self._coerce_optional_int_min(
+            propagation_section.get("remote_peering_cost_max"),
+            minimum=0,
+        )
+        prioritised_lxmf_destinations = self._coerce_csv_list(
+            propagation_section.get("prioritise_destinations")
+        )
+        control_allowed_identities = self._coerce_csv_list(
+            propagation_section.get("control_allowed")
+        )
+        static_peers = self._coerce_csv_list(propagation_section.get("static_peers"))
+        max_peers = self._coerce_optional_int_min(
+            propagation_section.get("max_peers"),
+            minimum=0,
+        )
+        from_static_only = self._get_bool(
+            {"from_static_only": propagation_section.get("from_static_only")},
+            "from_static_only",
+            False,
+        )
         startup_mode_value = propagation_section.get("startup_mode")
         if startup_mode_value is None:
             startup_mode_value = propagation_section.get("propagation_start_mode")
@@ -629,8 +774,29 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         return LXMFRouterConfig(
             path=path,
             enable_node=enable_node,
-            announce_interval_minutes=announce_interval,
             display_name=display_name,
+            peer_announce_at_start=peer_announce_at_start,
+            peer_announce_interval_minutes=peer_announce_interval,
+            delivery_transfer_max_accepted_size_kb=delivery_transfer_limit,
+            on_inbound=on_inbound,
+            node_name=node_name,
+            auth_required=auth_required,
+            node_announce_at_start=node_announce_at_start,
+            node_announce_interval_minutes=node_announce_interval,
+            autopeer=autopeer,
+            autopeer_maxdepth=autopeer_maxdepth,
+            message_storage_limit_megabytes=message_storage_limit,
+            propagation_transfer_max_accepted_size_kb=propagation_transfer_limit,
+            propagation_sync_max_accepted_size_kb=propagation_sync_limit,
+            propagation_stamp_cost_target=propagation_stamp_cost_target,
+            propagation_stamp_cost_flexibility=propagation_stamp_cost_flexibility,
+            peering_cost=peering_cost,
+            remote_peering_cost_max=remote_peering_cost_max,
+            prioritised_lxmf_destinations=prioritised_lxmf_destinations,
+            control_allowed_identities=control_allowed_identities,
+            static_peers=static_peers,
+            max_peers=max_peers,
+            from_static_only=from_static_only,
             propagation_start_mode=startup_mode,
             propagation_startup_prune_enabled=startup_prune_enabled,
             propagation_startup_max_messages=startup_max_messages,
@@ -662,6 +828,62 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
         except ValueError:
             return None
         return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _coerce_optional_int_min(value: str | None, *, minimum: int = 0) -> int | None:
+        """Return an integer constrained to a minimum, or ``None`` when unset."""
+
+        if value is None:
+            return None
+        compact = str(value).strip()
+        if not compact:
+            return None
+        try:
+            parsed = int(compact)
+        except ValueError:
+            return None
+        return parsed if parsed >= minimum else minimum
+
+    @staticmethod
+    def _coerce_min_float(
+        value: str | None,
+        *,
+        default: float,
+        minimum: float,
+    ) -> float:
+        """Return a float clamped to ``minimum`` with a fallback default."""
+
+        if value is None:
+            return default
+        compact = str(value).strip()
+        if not compact:
+            return default
+        try:
+            parsed = float(compact)
+        except ValueError:
+            return default
+        return parsed if parsed >= minimum else minimum
+
+    @staticmethod
+    def _coerce_csv_list(value: str | None) -> tuple[str, ...]:
+        """Return a tuple of non-empty comma-delimited values."""
+
+        if value is None:
+            return ()
+        return tuple(
+            part.strip().lower()
+            for part in str(value).split(",")
+            if part.strip()
+        )
+
+    @staticmethod
+    def _normalize_optional_text(value: str | None) -> str | None:
+        """Return a stripped string or ``None`` when the value is blank."""
+
+        if value is None:
+            return None
+        compact = str(value).strip()
+        return compact or None
 
     @staticmethod
     def _normalize_display_name(value: str | None) -> str | None:
