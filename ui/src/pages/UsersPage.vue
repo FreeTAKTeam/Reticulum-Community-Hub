@@ -153,6 +153,11 @@
                   <BaseBadge v-if="identity.blackholed" tone="warning">Blackholed</BaseBadge>
                 </div>
                 <div class="registry-card-actions">
+                  <BaseButton variant="danger" icon-left="ban" @click="actOnIdentity(identity.id, 'Ban')">Ban</BaseButton>
+                  <BaseButton variant="success" icon-left="unban" @click="actOnIdentity(identity.id, 'Unban')">Unban</BaseButton>
+                  <BaseButton variant="secondary" icon-left="blackhole" @click="actOnIdentity(identity.id, 'Blackhole')">
+                    Blackhole
+                  </BaseButton>
                   <BaseButton
                     variant="secondary"
                     icon-left="plus"
@@ -1023,7 +1028,9 @@ const clientTag = (lastSeenAt?: string) => {
   return clientPresenceTag(lastSeenAt);
 };
 
-const actOnClient = async (clientId?: string, action?: "Ban" | "Unban" | "Blackhole") => {
+type IdentityModerationAction = "Ban" | "Unban" | "Blackhole";
+
+const actOnClient = async (clientId?: string, action?: IdentityModerationAction) => {
   if (!clientId || !action) {
     return;
   }
@@ -1032,6 +1039,18 @@ const actOnClient = async (clientId?: string, action?: "Ban" | "Unban" | "Blackh
     toastStore.push(`Client ${action.toLowerCase()} action sent`, "success");
   } catch (error) {
     handleApiError(error, `Unable to ${action.toLowerCase()} client`);
+  }
+};
+
+const actOnIdentity = async (identityId?: string, action?: IdentityModerationAction) => {
+  if (!identityId || !action) {
+    return;
+  }
+  try {
+    await usersStore.actOnClient(identityId, action);
+    toastStore.push(`Identity ${action.toLowerCase()} action sent`, "success");
+  } catch (error) {
+    handleApiError(error, `Unable to ${action.toLowerCase()} identity`);
   }
 };
 

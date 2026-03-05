@@ -1,4 +1,6 @@
 # TASKS
+- 2026-03-05: DONE. Add Ban/Unban/Blackhole moderation controls to the Users > Identities tab so identity records can be moderated directly like Users entries.
+- 2026-03-05: DONE. Prevent chat relay spam from non-joined identities by requiring actual joined-client state (connection cache/API client registry) instead of announce-derived identity labels.
 - 2026-03-04: DONE. Expand LXMF config handling so the hub bootstraps a default `lxmf-router.ini`, lists the full LXMF key set in `config.ini`, and consumes the expanded router settings at runtime.
 - 2026-03-01: DONE. Add automatic propagation-node fallback for queued outbound LXMF messages, including direct retry events, propagation-node auto-selection, and propagated delivery state handling.
 - 2026-03-01: DONE. Add a copy-paste Linux `systemd` service installation block to the remote access guide, including the exact service unit creation commands.

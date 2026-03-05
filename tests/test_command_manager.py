@@ -1261,7 +1261,14 @@ def test_delivery_callback_emits_cot_chat_for_valid_message():
     hub.connections = {}
     hub.identities = {sender_hash: "peer-one"}
     hub.topic_subscribers = {}
-    hub.api = type("DummyAPI", (), {"list_subscribers": lambda self: []})()
+    hub.api = type(
+        "DummyAPI",
+        (),
+        {
+            "list_subscribers": lambda self: [],
+            "has_client": lambda self, identity: identity == sender_hash,
+        },
+    )()
     hub.tel_controller = type(
         "DummyController",
         (),
@@ -1545,7 +1552,7 @@ def test_delivery_callback_replies_help_and_skips_broadcast_when_not_joined():
     hub.connections = {
         joined_peer.identity.hash: joined_peer,
     }
-    hub.identities = {}
+    hub.identities = {sender.identity.hash.hex().lower(): "announced-only"}
     hub.topic_subscribers = {}
     hub.api = type(
         "DummyAPI",
