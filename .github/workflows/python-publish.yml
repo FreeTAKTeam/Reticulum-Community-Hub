@@ -34,6 +34,52 @@ jobs:
         run: |
           poetry build
 
+      - name: Validate Python-only distributions
+        run: |
+          python - <<'PY'
+          import pathlib
+          import sys
+          import tarfile
+          import zipfile
+
+          disallowed_prefixes = ("ui/", "electron/", "docs/", "API/", ".github/")
+          dist_dir = pathlib.Path("dist")
+          sdists = sorted(dist_dir.glob("*.tar.gz"))
+          wheels = sorted(dist_dir.glob("*.whl"))
+
+          if not sdists or not wheels:
+              print("Expected both sdist and wheel artifacts in dist/")
+              sys.exit(1)
+
+          failures: list[str] = []
+
+          for sdist in sdists:
+              with tarfile.open(sdist, "r:gz") as archive:
+                  for member in archive.getmembers():
+                      if not member.isfile():
+                          continue
+                      parts = member.name.split("/", 1)
+                      relative_name = parts[1] if len(parts) == 2 else parts[0]
+                      if relative_name.startswith(disallowed_prefixes):
+                          failures.append(f"{sdist.name}: {relative_name}")
+
+          for wheel in wheels:
+              with zipfile.ZipFile(wheel) as archive:
+                  for entry in archive.namelist():
+                      if entry.endswith("/"):
+                          continue
+                      if entry.startswith(disallowed_prefixes):
+                          failures.append(f"{wheel.name}: {entry}")
+
+          if failures:
+              print("Disallowed non-backend content found in release artifacts:")
+              for failure in failures:
+                  print(f" - {failure}")
+              sys.exit(1)
+
+          print("Artifact validation passed: no frontend/electron/docs/API paths in PyPI artifacts.")
+          PY
+
       - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:
@@ -64,6 +110,22 @@ jobs:
           path: dist/
 
       - name: Publish release distributions to PyPI
+        if: ${{ secrets.PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Publish release distributions to PyPI (trusted publisher)
+        if: ${{ secrets.PYPI_API_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      - name: Explain trusted publisher mismatch
+        if: ${{ failure() && secrets.PYPI_API_TOKEN == '' }}
+        run: |
+          echo "::error::Trusted publishing failed for this repository identity."
+          echo "::error::If the repository was renamed, update the PyPI trusted publisher to '${{ github.repository }}'."
+          echo "::error::As an alternative, set the 'PYPI_API_TOKEN' repository or environment secret."

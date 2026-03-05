@@ -13,6 +13,14 @@ include = [
     { path = "reticulum_telemetry_hub/config/default_lxmf_router_config.ini", format = "sdist" },
     { path = "reticulum_telemetry_hub/config/default_lxmf_router_config.ini", format = "wheel" },
 ]
+exclude = [
+    "ui/**",
+    "electron/**",
+    "docs/**",
+    "API/**",
+    "tests/**",
+    ".github/**",
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"

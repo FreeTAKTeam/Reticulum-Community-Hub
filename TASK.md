@@ -1,4 +1,6 @@
 # TASKS
+- 2026-03-05: DONE. Enforce Python-backend-only PyPI artifacts by excluding non-backend directories in Poetry packaging config and adding publish-workflow artifact validation for frontend/electron/docs/API paths.
+- 2026-03-05: DONE. Harden PyPI publish workflow with `PYPI_API_TOKEN` fallback and actionable trusted-publisher mismatch diagnostics after repository identity changes.
 - 2026-03-05: DONE. Add Ban/Unban/Blackhole moderation controls to the Users > Identities tab so identity records can be moderated directly like Users entries.
 - 2026-03-05: DONE. Prevent chat relay spam from non-joined identities by requiring actual joined-client state (connection cache/API client registry) instead of announce-derived identity labels.
 - 2026-03-04: DONE. Expand LXMF config handling so the hub bootstraps a default `lxmf-router.ini`, lists the full LXMF key set in `config.ini`, and consumes the expanded router settings at runtime.
