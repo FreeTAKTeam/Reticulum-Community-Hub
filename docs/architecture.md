@@ -22,8 +22,13 @@ transport-agnostic integrations.
 
 ## Data flows
 
-- **LXMF commands**: inbound LXMF messages are normalized by the command manager,
-  validated, applied via the API service, and replied to over LXMF.
+- **LXMF commands / southbound transport**: inbound LXMF commands enter through
+  `FIELD_COMMANDS` (or the escaped-body fallback for clients without command
+  fields), are normalized by the command manager, validated, applied via the
+  API service, and replied to over LXMF using `FIELD_RESULTS` or a specialized
+  response field such as `FIELD_TELEMETRY_STREAM`,
+  `FIELD_FILE_ATTACHMENTS`, or `FIELD_IMAGE`. `FIELD_THREAD` and `FIELD_GROUP`
+  are echoed into replies when present.
 - **Mission/checklist sync envelopes**: inbound `FIELD_COMMANDS` payloads with
   `command_type` are routed through `mission_sync` and `checklist_sync` with
   persisted capability ACL checks and standardized accepted/rejected/result
@@ -124,10 +129,10 @@ within `rth_api.sqlite`, including:
 
 ## Reference documents
 
+- `docs/southbound.md` (normative LXMF southbound field contract)
 - `docs/internal-api.md` (normative internal API contract)
 - `docs/internal-api-overview.md` (internal API overview)
 - `docs/internal-api-examples.md` (example envelopes)
-- `docs/reticulum-adapter-mapping.md` (LXMF to internal mapping)
 - `API/ReticulumCommunityHub-OAS.yaml` (REST/OpenAPI spec)
 - `docs/TelemetryDocumentation.md` (Sideband telemetry wire format)
 - `docs/tak.md` (TAK integration)

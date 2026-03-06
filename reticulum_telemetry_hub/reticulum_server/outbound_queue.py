@@ -74,6 +74,7 @@ class OutboundMessageQueue:
         queue_size: int = 64,
         worker_count: int = 2,
         send_timeout: float = 5.0,
+        delivery_receipt_timeout: float | None = None,
         backoff_seconds: float = 0.5,
         max_attempts: int = 3,
         delivery_receipt_callback: (
@@ -99,6 +100,8 @@ class OutboundMessageQueue:
             queue_size (int): Maximum queued payloads before applying backpressure.
             worker_count (int): Parallel worker threads processing the queue.
             send_timeout (float): Seconds to wait for a send before timing out.
+            delivery_receipt_timeout (float | None): Optional number of seconds
+                to wait for an LXMF delivery or failure callback after dispatch.
             backoff_seconds (float): Base delay between retry attempts.
             max_attempts (int): Maximum direct-delivery failures before fallback.
             delivery_receipt_callback (Callable[[LXMF.LXMessage, OutboundPayload], None] | None):
@@ -118,6 +121,11 @@ class OutboundMessageQueue:
         self._queue: Queue[OutboundPayload] = Queue(maxsize=max(queue_size, 1))
         self._worker_count = max(worker_count, 1)
         self._send_timeout = max(send_timeout, 0.1)
+        self._delivery_receipt_timeout = (
+            max(delivery_receipt_timeout, 0.01)
+            if delivery_receipt_timeout is not None
+            else None
+        )
         self._backoff_seconds = max(backoff_seconds, 0.01)
         self._max_attempts = max(max_attempts, 1)
         self._stop_event = threading.Event()
@@ -328,24 +336,39 @@ class OutboundMessageQueue:
 
         error: list[Exception | None] = [None]
         attempt_id = self._begin_attempt(payload)
+        callback_completed = threading.Event()
+        callback_failed = [False]
+
+        def _mark_receipt(
+            delivered_message: LXMF.LXMessage,
+            outbound_payload: OutboundPayload = payload,
+            token: int = attempt_id,
+        ) -> None:
+            callback_completed.set()
+            self._notify_delivery_receipt(
+                delivered_message,
+                outbound_payload,
+                token,
+            )
+
+        def _mark_failure(
+            failed_message: LXMF.LXMessage,
+            outbound_payload: OutboundPayload = payload,
+            token: int = attempt_id,
+        ) -> None:
+            callback_failed[0] = True
+            callback_completed.set()
+            self._notify_delivery_failure(
+                failed_message,
+                outbound_payload,
+                token,
+            )
 
         def _send() -> None:
             try:
                 message = self._build_message(payload)
-                message.register_delivery_callback(
-                    lambda delivered_message, outbound_payload=payload, token=attempt_id: self._notify_delivery_receipt(
-                        delivered_message,
-                        outbound_payload,
-                        token,
-                    )
-                )
-                message.register_failed_callback(
-                    lambda failed_message, outbound_payload=payload, token=attempt_id: self._notify_delivery_failure(
-                        failed_message,
-                        outbound_payload,
-                        token,
-                    )
-                )
+                message.register_delivery_callback(_mark_receipt)
+                message.register_failed_callback(_mark_failure)
                 self._lxm_router.handle_outbound(message)
             except Exception as exc:
                 error[0] = exc
@@ -375,7 +398,23 @@ class OutboundMessageQueue:
             )
             return "send_error"
 
-        return None
+        if self._delivery_receipt_timeout is None:
+            return None
+
+        if callback_completed.wait(timeout=self._delivery_receipt_timeout):
+            return None
+
+        self._invalidate_attempt(payload, attempt_id)
+        RNS.log(
+            (
+                "Timed out waiting for LXMF delivery acknowledgement from"
+                f" {payload.destination_hex or 'unknown destination'}"
+            ),
+            getattr(RNS, "LOG_WARNING", 2),
+        )
+        if callback_failed[0]:
+            return None
+        return "delivery_receipt_timeout"
 
     def _emit_delivery_receipt_callback(
         self,

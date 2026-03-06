@@ -991,11 +991,6 @@ def test_dispatch_northbound_message_prefixes_topic_payload():
             message.message_id = "queued-1"
             return message
 
-        def update_chat_message_state(self, message_id: str, state: str):
-            assert message_id == "queued-1"
-            assert state == "sent"
-            return None
-
     hub.api = DummyAPI()
     hub.display_name = "HubNode"
     hub.event_log = None
@@ -1006,6 +1001,7 @@ def test_dispatch_northbound_message_prefixes_topic_payload():
     queued = hub.dispatch_northbound_message("status ping", topic_id="topic-live")
 
     assert queued is not None
+    assert queued.state == "queued"
     assert queued.content == "/ops/live: HubNode > status ping"
     assert sent["message"] == "/ops/live: HubNode > status ping"
     assert sent["topic"] == "topic-live"
@@ -1024,11 +1020,6 @@ def test_dispatch_northbound_message_keeps_existing_sender_prefix():
             message.message_id = "queued-2"
             return message
 
-        def update_chat_message_state(self, message_id: str, state: str):
-            assert message_id == "queued-2"
-            assert state == "sent"
-            return None
-
     hub.api = DummyAPI()
     hub.display_name = "RTH"
     hub.event_log = None
@@ -1042,6 +1033,7 @@ def test_dispatch_northbound_message_keeps_existing_sender_prefix():
     )
 
     assert queued is not None
+    assert queued.state == "queued"
     assert queued.content == "var.venezuela: RCH - win test > this is about Venezuela"
     assert sent["message"] == "var.venezuela: RCH - win test > this is about Venezuela"
     assert sent["topic"] == "topic-venezuela"

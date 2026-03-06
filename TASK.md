@@ -1,4 +1,7 @@
 # TASKS
+- 2026-03-06: DONE. Rewrite `docs/supportedCommands.md` to enumerate the full LXMF southbound command surface, including legacy commands, telemetry, mission-sync/R3AKT commands, checklist commands, and known HTTP-only R3AKT routes.
+- 2026-03-06: DONE. Require actual LXMF delivery/failure acknowledgements before advancing outbound UI chat state, keep northbound messages queued until receipt, and fail silent callback loss via receipt timeout.
+- 2026-03-06: DONE. Document the LXMF southbound transport contract, including `FIELD_COMMANDS` ingress, `FIELD_RESULTS`/telemetry/attachment reply fields, and thread/group context propagation.
 - 2026-03-06: DONE. Surface handled runtime failures in the UI Event Feed by routing non-fatal command, daemon, telemetry, sampler, embedded-LXMD, and LXMF runtime exceptions through the shared event log with regression coverage.
 - 2026-03-06: DONE. Reap stale northbound WebSocket clients and cancel stray UI reconnect timers to prevent port-8000 file descriptor exhaustion under connection churn.
 - 2026-03-05: DONE. Enforce Python-backend-only PyPI artifacts by excluding non-backend directories in Poetry packaging config and adding publish-workflow artifact validation for frontend/electron/docs/API paths.

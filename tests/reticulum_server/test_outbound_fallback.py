@@ -15,7 +15,7 @@ def _make_payload() -> OutboundPayload:
     )
 
 
-def test_outbound_delivery_receipt_marks_propagated_messages_as_sent():
+def test_outbound_delivery_receipt_marks_propagated_messages_as_propagated():
     events: list[dict[str, object]] = []
     hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
     hub.event_log = SimpleNamespace(
@@ -48,7 +48,8 @@ def test_outbound_delivery_receipt_marks_propagated_messages_as_sent():
     assert events[0]["type"] == "message_propagated"
     metadata = events[0]["metadata"]
     assert isinstance(metadata, dict)
-    assert metadata["State"] == "sent"
+    assert metadata["State"] == "propagated"
+    assert metadata["acknowledgement_type"] == "propagation_acceptance"
     assert metadata["delivery_method"] == "propagated"
     assert metadata["propagation_node"] == payload.propagation_node_hex
     assert metadata["fallback_reason"] == "direct_delivery_failed"
@@ -88,8 +89,11 @@ def test_outbound_retry_and_local_propagation_events_include_metadata():
     retry_metadata = events[0]["metadata"]
     assert isinstance(retry_metadata, dict)
     assert retry_metadata["direct_attempts"] == 1
+    assert retry_metadata["State"] == "queued"
+    assert retry_metadata["delivery_method"] == "direct"
     propagation_metadata = events[1]["metadata"]
     assert isinstance(propagation_metadata, dict)
+    assert propagation_metadata["State"] == "queued"
     assert propagation_metadata["delivery_method"] == "local_propagation_store"
     assert propagation_metadata["fallback_reason"] == "direct_delivery_failed"
     assert propagation_metadata["direct_attempts"] == 3

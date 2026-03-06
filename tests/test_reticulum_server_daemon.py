@@ -901,6 +901,7 @@ def test_dispatch_northbound_message_records_delivery_ack_event(tmp_path):
         )
         assert queued is not None
         assert queued.message_id
+        assert queued.state == "queued"
         deadline = time.time() + 1.5
         delivered_message = None
         while time.time() < deadline:
@@ -932,6 +933,68 @@ def test_dispatch_northbound_message_records_delivery_ack_event(tmp_path):
         metadata = delivered_event.get("metadata")
         assert isinstance(metadata, dict)
         assert metadata.get("State") == "delivered"
+        assert metadata.get("Destination") == recipient_hex
+        assert metadata.get("acknowledgement_type") == "delivery_receipt"
+    finally:
+        hub.shutdown()
+
+
+def test_dispatch_northbound_message_fails_when_delivery_ack_never_arrives(tmp_path):
+    hub = ReticulumTelemetryHub(
+        "Daemon",
+        str(tmp_path),
+        tmp_path / "identity",
+        outbound_delivery_receipt_timeout=0.05,
+        outbound_backoff=0.01,
+        outbound_max_attempts=1,
+    )
+    recipient = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    recipient_hex = recipient.identity.hash.hex().lower()
+    hub.connections = {recipient.identity.hash: recipient}
+    hub.lxm_router.handle_outbound = lambda message: None
+
+    try:
+        queued = hub.dispatch_northbound_message(
+            "delivery timeout test",
+            destination=recipient_hex,
+        )
+        assert queued is not None
+        assert queued.message_id
+        assert queued.state == "queued"
+
+        deadline = time.time() + 1.5
+        failed_message = None
+        while time.time() < deadline:
+            matches = [
+                message
+                for message in hub.api.list_chat_messages(limit=20, direction="outbound")
+                if message.message_id == queued.message_id
+            ]
+            if matches and matches[0].state == "failed":
+                failed_message = matches[0]
+                break
+            time.sleep(0.05)
+
+        assert failed_message is not None
+        assert failed_message.destination == recipient_hex
+
+        events = hub.event_log.list_events(limit=200)
+        failure_event = next(
+            (
+                entry
+                for entry in events
+                if entry.get("type") == "message_delivery_failed"
+                and isinstance(entry.get("metadata"), dict)
+                and entry["metadata"].get("MessageID") == queued.message_id
+            ),
+            None,
+        )
+        assert failure_event is not None
+        metadata = failure_event.get("metadata")
+        assert isinstance(metadata, dict)
+        assert metadata.get("State") == "failed"
         assert metadata.get("Destination") == recipient_hex
     finally:
         hub.shutdown()
@@ -982,7 +1045,15 @@ def test_subscriber_cache_refresh_after_subscribe(tmp_path):
         dest_two.identity.hash: dest_two,
     }
     sent: list[LXMF.LXMessage] = []
-    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    def _simulate_outbound(message: LXMF.LXMessage) -> None:
+        sent.append(message)
+        callback = getattr(message, "_LXMessage__delivery_callback", None)
+        if callable(callback):
+            message.state = LXMF.LXMessage.DELIVERED
+            callback(message)
+
+    hub.lxm_router.handle_outbound = _simulate_outbound
 
     try:
         hub._refresh_topic_registry()

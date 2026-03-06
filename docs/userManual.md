@@ -258,6 +258,20 @@ Use:
 - `Examples` for payload examples
 - `docs/supportedCommands.md` for full public/protected command coverage
 
+### Southbound field contract
+
+RCH's southbound LXMF interface works like this:
+
+- Commands come in through `FIELD_COMMANDS` (`0x09`) when the client supports LXMF command fields.
+- Clients without `FIELD_COMMANDS` support can send the command in the message body by prefixing it with `\\\`.
+- Replies do not come back in `FIELD_COMMANDS`.
+- Standard command replies use the message body plus `FIELD_RESULTS` (`0x0A`) and `FIELD_EVENT` (`0x0D`).
+- Telemetry replies use `FIELD_TELEMETRY_STREAM` (`0x03`) as the payload field.
+- Attachment retrieval replies use `FIELD_FILE_ATTACHMENTS` (`0x05`) and, for images, `FIELD_IMAGE` (`0x06`).
+- `FIELD_THREAD` (`0x08`) and `FIELD_GROUP` (`0x0B`) are echoed into replies when present on the request.
+
+See `southbound.md` for the complete field map and receive/reply pipeline.
+
 ### Topic-targeted messages
 
 - Create topic: `CreateTopic`

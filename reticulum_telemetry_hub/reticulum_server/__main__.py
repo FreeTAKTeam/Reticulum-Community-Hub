@@ -154,6 +154,7 @@ ESCAPED_COMMAND_PREFIX = "\\\\\\"
 DEFAULT_OUTBOUND_QUEUE_SIZE = 64
 DEFAULT_OUTBOUND_WORKERS = 2
 DEFAULT_OUTBOUND_SEND_TIMEOUT = 5.0
+DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT = 30.0
 DEFAULT_OUTBOUND_BACKOFF = 0.5
 DEFAULT_OUTBOUND_MAX_ATTEMPTS = 3
 IDENTITY_CAPABILITY_CACHE_TTL_SECONDS = 6 * 60 * 60
@@ -754,6 +755,7 @@ class ReticulumTelemetryHub:
         outbound_queue_size: int = DEFAULT_OUTBOUND_QUEUE_SIZE,
         outbound_workers: int = DEFAULT_OUTBOUND_WORKERS,
         outbound_send_timeout: float = DEFAULT_OUTBOUND_SEND_TIMEOUT,
+        outbound_delivery_receipt_timeout: float = DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT,
         outbound_backoff: float = DEFAULT_OUTBOUND_BACKOFF,
         outbound_max_attempts: int = DEFAULT_OUTBOUND_MAX_ATTEMPTS,
     ):
@@ -773,6 +775,8 @@ class ReticulumTelemetryHub:
             outbound_queue_size (int): Maximum queued outbound LXMF payloads before applying backpressure.
             outbound_workers (int): Number of outbound worker threads to spin up.
             outbound_send_timeout (float): Seconds to wait before timing out a send attempt.
+            outbound_delivery_receipt_timeout (float): Seconds to wait for an
+                LXMF delivery/failure callback before retrying or failing.
             outbound_backoff (float): Base number of seconds to wait between retry attempts.
             outbound_max_attempts (int): Number of attempts before an outbound message is dropped.
         """
@@ -789,6 +793,7 @@ class ReticulumTelemetryHub:
         self.outbound_queue_size = outbound_queue_size
         self.outbound_workers = outbound_workers
         self.outbound_send_timeout = outbound_send_timeout
+        self.outbound_delivery_receipt_timeout = outbound_delivery_receipt_timeout
         self.outbound_backoff = outbound_backoff
         self.outbound_max_attempts = outbound_max_attempts
         self.config_manager: HubConfigurationManager | None = config_manager
@@ -2058,28 +2063,28 @@ class ReticulumTelemetryHub:
                 topic_id=topic_id,
                 destination=destination,
             )
-        sent = self.send_message(
+        enqueued = self.send_message(
             outbound_message,
             topic=topic_id,
             destination=destination,
             fields=lxmf_fields,
             chat_message_id=queued.message_id if queued is not None else None,
         )
-        if api is not None and queued is not None:
+        if api is not None and queued is not None and not enqueued:
             updated = api.update_chat_message_state(
-                queued.message_id or "", "sent" if sent else "failed"
+                queued.message_id or "", "failed"
             )
             if updated is not None:
                 self._notify_message_listeners(updated.to_dict())
                 if getattr(self, "event_log", None) is not None:
                     self.event_log.add_event(
-                        "message_sent" if sent else "message_failed",
-                        "Message sent" if sent else "Message failed",
+                        "message_failed",
+                        "Message failed",
                         metadata=updated.to_dict(),
                     )
                 return updated
             return queued
-        return None
+        return queued
 
     def _handle_outbound_delivery_receipt(
         self,
@@ -2093,10 +2098,13 @@ class ReticulumTelemetryHub:
         entry = self._update_outbound_chat_state(
             message=message,
             payload=payload,
-            state="sent" if is_propagated else "delivered",
+            state="propagated" if is_propagated else "delivered",
             destination=destination,
         )
         entry = self._augment_outbound_delivery_metadata(entry, payload)
+        entry["acknowledgement_type"] = (
+            "propagation_acceptance" if is_propagated else "delivery_receipt"
+        )
         event_log = getattr(self, "event_log", None)
         if event_log is None:
             return
@@ -2157,6 +2165,7 @@ class ReticulumTelemetryHub:
         augmented = dict(entry)
         if payload.attempts > 0:
             augmented["direct_attempts"] = payload.attempts
+        augmented["delivery_method"] = "direct"
         if payload.delivery_mode != "propagated":
             return augmented
         augmented["fallback_reason"] = "direct_delivery_failed"
@@ -2184,7 +2193,7 @@ class ReticulumTelemetryHub:
             "MessageID": payload.chat_message_id,
             "Direction": "outbound",
             "Scope": scope,
-            "State": "sent",
+            "State": "queued",
             "Content": payload.message_text,
             "Source": self._origin_rch_hex() or self._hub_sender_label(),
             "Destination": payload.destination_hex,
@@ -2687,6 +2696,12 @@ class ReticulumTelemetryHub:
                     self, "outbound_send_timeout", DEFAULT_OUTBOUND_SEND_TIMEOUT
                 )
                 or DEFAULT_OUTBOUND_SEND_TIMEOUT,
+                delivery_receipt_timeout=getattr(
+                    self,
+                    "outbound_delivery_receipt_timeout",
+                    DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT,
+                )
+                or DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT,
                 backoff_seconds=getattr(
                     self, "outbound_backoff", DEFAULT_OUTBOUND_BACKOFF
                 )

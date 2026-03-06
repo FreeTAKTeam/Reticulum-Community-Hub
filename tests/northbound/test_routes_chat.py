@@ -59,7 +59,7 @@ class _StubHub:
         return ChatMessage(
             direction="outbound",
             scope=scope,
-            state="sent",
+            state="queued",
             content=message,
             destination=destination,
             topic_id=topic_id,
@@ -109,6 +109,7 @@ def test_chat_message_send_success(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["Content"] == "hello"
+    assert payload["State"] == "queued"
     assert hub.dispatch_calls
     dispatch = hub.dispatch_calls[0]
     assert dispatch["message"] == "hello"

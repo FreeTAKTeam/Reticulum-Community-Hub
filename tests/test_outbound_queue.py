@@ -197,6 +197,52 @@ def test_outbound_queue_reports_delivery_receipts():
     ]
 
 
+def test_outbound_queue_times_out_missing_delivery_receipts():
+    sender = _make_destination(RNS.Destination.IN)
+    recipient = _make_destination()
+    failures: list[tuple[int, str | None]] = []
+
+    class SilentRouter:
+        propagation_node = False
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def handle_outbound(self, message):
+            self.calls += 1
+
+    router = SilentRouter()
+    queue = OutboundMessageQueue(
+        router,
+        sender,
+        queue_size=2,
+        worker_count=1,
+        send_timeout=0.1,
+        delivery_receipt_timeout=0.05,
+        backoff_seconds=0.01,
+        max_attempts=1,
+        delivery_failure_callback=lambda message, payload: failures.append(
+            (payload.attempts, payload.destination_hex)
+        ),
+    )
+
+    try:
+        queue.start()
+        queue.queue_message(
+            recipient,
+            "missing-ack",
+            recipient.identity.hash,
+            recipient.identity.hash.hex(),
+            None,
+        )
+        assert queue.wait_for_flush(timeout=1.0)
+    finally:
+        queue.stop()
+
+    assert router.calls == 1
+    assert failures == [(1, recipient.identity.hash.hex())]
+
+
 def test_outbound_queue_retries_failed_callbacks_before_terminal_failure():
     sender = _make_destination(RNS.Destination.IN)
     recipient = _make_destination()

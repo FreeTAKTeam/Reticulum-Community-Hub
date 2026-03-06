@@ -6,6 +6,7 @@
 - `userManual.md` (user and operator guide)
 - `remoteAccess.md` (LAN/WAN connection guide)
 - `architecture.md` (system overview and references)
+- `southbound.md` (LXMF southbound transport contract)
 
 ## Architecture
 
@@ -17,6 +18,7 @@
 
 - `../API/ReticulumCommunityHub-OAS.yaml` (REST/OpenAPI spec)
 - `supportedCommands.md` (LXMF command list)
+- `southbound.md` (LXMF command/reply field contract)
 - `internal-api.md` (internal API contract)
 - `internal-api-overview.md` (internal API overview)
 - `internal-api-examples.md` (internal API examples)
@@ -29,7 +31,7 @@
 ## Integrations
 
 - `tak.md` (TAK integration)
-- `reticulum-adapter-mapping.md` (LXMF adapter mapping)
+- `southbound.md` (Reticulum/LXMF southbound mapping)
 
 ## UI
 
