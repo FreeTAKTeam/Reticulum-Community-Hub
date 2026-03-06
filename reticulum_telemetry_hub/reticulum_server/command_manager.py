@@ -15,6 +15,9 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.runtime_events import (
+    report_nonfatal_exception,
+)
 
 from .constants import PLUGIN_COMMAND
 from .command_text import (
@@ -214,12 +217,17 @@ class CommandManager:
                 command_name = normalized.get(PLUGIN_COMMAND) or normalized.get(
                     "Command"
                 )
-                RNS.log(
-                    f"Command '{command_name}' failed: {exc}",
-                    getattr(RNS, "LOG_WARNING", 2),
+                resolved_name = str(command_name or "unknown")
+                report_nonfatal_exception(
+                    self.event_log,
+                    "command_error",
+                    f"Command '{resolved_name}' failed: {exc}",
+                    exc,
+                    metadata={"command": resolved_name},
+                    log_level=getattr(RNS, "LOG_WARNING", 2),
                 )
                 msg = self._reply(
-                    message, f"Command failed: {command_name or 'unknown'}"
+                    message, f"Command failed: {resolved_name}"
                 )
             if msg:
                 if isinstance(msg, list):

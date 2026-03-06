@@ -10,6 +10,10 @@ from typing import Callable, Protocol, Sequence
 import LXMF
 import RNS
 from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.runtime_events import (
+    report_nonfatal_exception,
+)
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_TIME,
 )
@@ -61,12 +65,14 @@ class TelemetrySampler:
         ) = None,
         telemeter_manager: TelemeterManager | None = None,
         broadcast_updates: bool = False,
+        event_log: EventLog | None = None,
     ) -> None:
         self._controller = controller
         self._router = router
         self._source_destination = source_destination
         self._connections = connections if connections is not None else {}
         self._broadcast_updates = broadcast_updates
+        self._event_log = event_log
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._jobs: list[_SamplerJob] = []
@@ -158,7 +164,17 @@ class TelemetrySampler:
         try:
             result = collector()
         except Exception as exc:  # pragma: no cover - defensive logging
-            RNS.log(f"Telemetry collector {collector!r} failed: {exc}", RNS.LOG_ERROR)
+            report_nonfatal_exception(
+                self._event_log,
+                "telemetry_error",
+                f"Telemetry collector {collector!r} failed: {exc}",
+                exc,
+                metadata={
+                    "operation": "collect",
+                    "collector": repr(collector),
+                },
+                log_level=RNS.LOG_ERROR,
+            )
             return None
 
         if result is None:
@@ -209,9 +225,17 @@ class TelemetrySampler:
                     message.destination_hash = destination.identity.hash
                 self._router.handle_outbound(message)
             except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
+                report_nonfatal_exception(
+                    self._event_log,
+                    "telemetry_error",
                     f"Failed to deliver telemetry sample to {destination}: {exc}",
-                    RNS.LOG_ERROR,
+                    exc,
+                    metadata={
+                        "operation": "broadcast",
+                        "destination": str(destination),
+                        "peer_dest": peer_dest,
+                    },
+                    log_level=RNS.LOG_ERROR,
                 )
 
     # ------------------------------------------------------------------

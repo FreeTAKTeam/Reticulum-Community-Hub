@@ -13,6 +13,27 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propa
     LXMFPropagation,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.telemeter import Telemeter
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+
+
+def _minimal_stats() -> dict[str, Any]:
+    return {
+        "destination_hash": b"\xaa" * 16,
+        "identity_hash": b"\xbb" * 16,
+        "uptime": 10.0,
+        "delivery_limit": 4096,
+        "propagation_limit": 2048,
+        "autopeer_maxdepth": 4,
+        "from_static_only": False,
+        "messagestore": None,
+        "clients": None,
+        "unpeered_propagation_incoming": 0,
+        "unpeered_propagation_rx_bytes": 0,
+        "static_peers": 0,
+        "max_peers": 5,
+        "peers": {},
+        "total_peers": 0,
+    }
 
 
 def test_embedded_lxmd_persists_propagation_stats(
@@ -114,6 +135,80 @@ def test_embedded_lxmd_deduplicates_snapshots(embedded_lxmd_factory):
 
     with lock:
         assert len(calls) == 1
+
+
+def test_embedded_lxmd_compile_stats_failure_records_event(
+    embedded_lxmd_factory,
+) -> None:
+    event_log = EventLog()
+    harness = embedded_lxmd_factory(event_log=event_log)
+
+    def compile_stats() -> dict[str, Any]:
+        raise RuntimeError("compile boom")
+
+    harness.router.compile_stats = compile_stats
+
+    assert harness.embedded._build_propagation_payload() is None
+
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "propagation_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["operation"] == "compile_stats"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "compile boom"
+
+
+def test_embedded_lxmd_observer_failure_records_event(
+    embedded_lxmd_factory,
+) -> None:
+    event_log = EventLog()
+    harness = embedded_lxmd_factory(stats=_minimal_stats(), event_log=event_log)
+
+    def observer(payload: dict[str, Any]) -> None:
+        _ = payload
+        raise RuntimeError("observer boom")
+
+    harness.embedded.add_propagation_observer(observer)
+    harness.embedded._maybe_emit_propagation_update(force=True)
+
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "propagation_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["operation"] == "observer"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "observer boom"
+
+
+def test_embedded_lxmd_persist_failure_records_event(
+    embedded_lxmd_factory,
+) -> None:
+    event_log = EventLog()
+
+    class FailingTelemetryController:
+        def save_telemetry(self, payload: dict[str, Any], peer_hash: str, timestamp) -> None:
+            _ = payload, peer_hash, timestamp
+            raise RuntimeError("persist boom")
+
+    harness = embedded_lxmd_factory(
+        stats=_minimal_stats(),
+        event_log=event_log,
+        telemetry_controller_override=FailingTelemetryController(),
+    )
+
+    harness.embedded._maybe_emit_propagation_update(force=True)
+
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "propagation_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["operation"] == "persist_telemetry"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "persist boom"
 
 
 def test_embedded_lxmd_fixture_emits_and_persists(

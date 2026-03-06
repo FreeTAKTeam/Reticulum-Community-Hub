@@ -20,6 +20,10 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.lxmf_propa
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_LXMF_PROPAGATION,
 )
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.runtime_events import (
+    report_nonfatal_exception,
+)
 
 if TYPE_CHECKING:
     from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
@@ -111,12 +115,14 @@ class EmbeddedLxmd:
         destination: RNS.Destination,
         config_manager: Optional[HubConfigurationManager] = None,
         telemetry_controller: Optional[TelemetryController] = None,
+        event_log: EventLog | None = None,
     ) -> None:
         self.router = router
         self.destination = destination
         self.config_manager = config_manager or HubConfigurationManager()
         self.config = EmbeddedLxmdConfig.from_manager(self.config_manager)
         self.telemetry_controller = telemetry_controller
+        self.event_log = event_log
         self._propagation_observers: list[Callable[[dict[str, Any]], None]] = []
         self._propagation_snapshot: bytes | None = None
         self._propagation_lock = threading.Lock()
@@ -181,6 +187,25 @@ class EmbeddedLxmd:
         """Register a callback notified whenever propagation state changes."""
 
         self._propagation_observers.append(observer)
+
+    def _report_propagation_exception(
+        self,
+        message: str,
+        exc: Exception,
+        *,
+        metadata: dict[str, object] | None = None,
+        log_level: int | None = None,
+    ) -> dict[str, object] | None:
+        """Record a handled embedded-LXMD failure in logs and the event feed."""
+
+        return report_nonfatal_exception(
+            self.event_log,
+            "propagation_error",
+            message,
+            exc,
+            metadata=metadata,
+            log_level=log_level if log_level is not None else getattr(RNS, "LOG_ERROR", 1),
+        )
 
     def propagation_startup_status(self) -> dict[str, Any]:
         """Return propagation startup state for control/status endpoints."""
@@ -269,8 +294,8 @@ class EmbeddedLxmd:
 
         return received
 
-    @staticmethod
     def _remove_startup_files(
+        self,
         paths: list[str],
         *,
         reason: str,
@@ -283,9 +308,15 @@ class EmbeddedLxmd:
             except FileNotFoundError:
                 continue
             except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
+                self._report_propagation_exception(
                     f"Failed to remove {reason} startup message file '{path}': {exc}",
-                    RNS.LOG_WARNING,
+                    exc,
+                    metadata={
+                        "operation": "startup_prune",
+                        "reason": reason,
+                        "path": path,
+                    },
+                    log_level=RNS.LOG_WARNING,
                 )
         return removed
 
@@ -387,9 +418,10 @@ class EmbeddedLxmd:
                 error=str(exc),
                 mark_finished=True,
             )
-            RNS.log(
+            self._report_propagation_exception(
                 f"Failed to enable LXMF propagation node in embedded mode: {exc}",
-                RNS.LOG_ERROR,
+                exc,
+                metadata={"operation": "enable_propagation"},
             )
             return
 
@@ -420,18 +452,20 @@ class EmbeddedLxmd:
         try:
             self.router.announce(self.destination.hash)
         except Exception as exc:  # pragma: no cover - logging guard
-            RNS.log(
+            self._report_propagation_exception(
                 f"Failed to announce embedded LXMF destination: {exc}",
-                RNS.LOG_ERROR,
+                exc,
+                metadata={"operation": "announce_delivery"},
             )
 
     def _announce_propagation(self) -> None:
         try:
             self.router.announce_propagation_node()
         except Exception as exc:  # pragma: no cover - logging guard
-            RNS.log(
+            self._report_propagation_exception(
                 f"Failed to announce embedded propagation node: {exc}",
-                RNS.LOG_ERROR,
+                exc,
+                metadata={"operation": "announce_propagation"},
             )
 
     def _apply_propagation_runtime_config(self) -> None:
@@ -439,18 +473,24 @@ class EmbeddedLxmd:
             try:
                 self.router.set_authentication(required=True)
             except Exception as exc:  # pragma: no cover - logging guard
-                RNS.log(
+                self._report_propagation_exception(
                     f"Failed to enable LXMF propagation authentication: {exc}",
-                    RNS.LOG_ERROR,
+                    exc,
+                    metadata={"operation": "set_authentication"},
                 )
 
         for identity_hash in self.config.control_allowed_identities:
             try:
                 self.router.allow_control(bytes.fromhex(identity_hash))
             except Exception as exc:  # pragma: no cover - logging guard
-                RNS.log(
+                self._report_propagation_exception(
                     f"Failed to add LXMF propagation control identity '{identity_hash}': {exc}",
-                    RNS.LOG_WARNING,
+                    exc,
+                    metadata={
+                        "operation": "allow_control",
+                        "identity_hash": identity_hash,
+                    },
+                    log_level=RNS.LOG_WARNING,
                 )
 
     def _baseline_propagation_payload(self) -> dict[str, Any]:
@@ -604,9 +644,10 @@ class EmbeddedLxmd:
         try:
             stats = self.router.compile_stats()
         except Exception as exc:  # pragma: no cover - defensive logging
-            RNS.log(
+            self._report_propagation_exception(
                 f"Failed to compile LXMF propagation stats: {exc}",
-                RNS.LOG_ERROR,
+                exc,
+                metadata={"operation": "compile_stats"},
             )
             return None
 
@@ -641,9 +682,13 @@ class EmbeddedLxmd:
             try:
                 observer(payload)
             except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
+                self._report_propagation_exception(
                     f"Propagation observer failed: {exc}",
-                    RNS.LOG_ERROR,
+                    exc,
+                    metadata={
+                        "operation": "observer",
+                        "observer": repr(observer),
+                    },
                 )
 
     def _persist_propagation_snapshot(self, payload: dict[str, Any]) -> None:
@@ -669,9 +714,13 @@ class EmbeddedLxmd:
                 _utcnow(),
             )
         except Exception as exc:  # pragma: no cover - defensive logging
-            RNS.log(
+            self._report_propagation_exception(
                 f"Failed to persist propagation telemetry: {exc}",
-                RNS.LOG_ERROR,
+                exc,
+                metadata={
+                    "operation": "persist_telemetry",
+                    "peer_hash": peer_hash,
+                },
             )
 
     def _deferred_start_jobs(self) -> None:

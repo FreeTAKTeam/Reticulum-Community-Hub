@@ -422,6 +422,51 @@ def test_handle_message_notifies_listener(telemetry_controller):
     assert isinstance(timestamp, datetime)
 
 
+def test_handle_message_listener_failure_records_event(telemetry_db_engine):
+    event_log = EventLog()
+    controller = TelemetryController(engine=telemetry_db_engine, event_log=event_log)
+
+    def listener(payload: dict, peer_hash, timestamp: datetime | None) -> None:
+        _ = payload, peer_hash, timestamp
+        raise RuntimeError("listener boom")
+
+    controller.register_listener(listener)
+
+    src = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    dst = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    location = Location()
+    location.latitude = 50.0
+    location.longitude = 15.0
+    location.altitude = 10.0
+    location.speed = 1.0
+    location.bearing = 2.0
+    location.accuracy = 0.5
+    location.last_update = datetime(2025, 11, 29, 20, 36, 2)
+    payload = {
+        SID_LOCATION: location.pack(),
+        SID_TIME: int(time.time()),
+    }
+
+    message = LXMF.LXMessage(
+        dst, src, fields={LXMF.FIELD_TELEMETRY: packb(payload, use_bin_type=True)}
+    )
+    assert controller.handle_message(message)
+
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "telemetry_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["operation"] == "listener"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "listener boom"
+
+
 def test_stream_ingest_followed_by_command_returns_valid_response(
     telemetry_controller, session_factory
 ):

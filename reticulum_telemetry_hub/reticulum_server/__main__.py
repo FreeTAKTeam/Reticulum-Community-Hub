@@ -115,6 +115,9 @@ from reticulum_telemetry_hub.reticulum_server.mission_delta_markdown import (
 )
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_sync import MissionSyncRouter
+from reticulum_telemetry_hub.reticulum_server.runtime_events import (
+    report_nonfatal_exception,
+)
 from .command_manager import CommandManager
 from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_INTERVAL,
@@ -623,9 +626,17 @@ class ReticulumTelemetryHub:
             try:
                 self._invoke_router_hook("allow", identity_hash)
             except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
+                report_nonfatal_exception(
+                    getattr(self, "event_log", None),
+                    "lxmf_runtime_error",
                     f"Failed to allow LXMF identity {identity_hash.hex()}: {exc}",
-                    getattr(RNS, "LOG_WARNING", 2),
+                    exc,
+                    metadata={
+                        "operation": "router_runtime_config",
+                        "hook": "allow",
+                        "identity_hash": identity_hash.hex(),
+                    },
+                    log_level=getattr(RNS, "LOG_WARNING", 2),
                 )
         for destination_hash in self._decode_lxmf_hashes(
             lxmf_config.prioritised_lxmf_destinations,
@@ -634,9 +645,17 @@ class ReticulumTelemetryHub:
             try:
                 self._invoke_router_hook("prioritise", destination_hash)
             except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
+                report_nonfatal_exception(
+                    getattr(self, "event_log", None),
+                    "lxmf_runtime_error",
                     f"Failed to prioritise LXMF destination {destination_hash.hex()}: {exc}",
-                    getattr(RNS, "LOG_WARNING", 2),
+                    exc,
+                    metadata={
+                        "operation": "router_runtime_config",
+                        "hook": "prioritise",
+                        "destination_hash": destination_hash.hex(),
+                    },
+                    log_level=getattr(RNS, "LOG_WARNING", 2),
                 )
         for destination_hash in self._load_lxmf_sidecar_hashes(
             "ignored",
@@ -645,9 +664,17 @@ class ReticulumTelemetryHub:
             try:
                 self._invoke_router_hook("ignore_destination", destination_hash)
             except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
+                report_nonfatal_exception(
+                    getattr(self, "event_log", None),
+                    "lxmf_runtime_error",
                     f"Failed to ignore LXMF destination {destination_hash.hex()}: {exc}",
-                    getattr(RNS, "LOG_WARNING", 2),
+                    exc,
+                    metadata={
+                        "operation": "router_runtime_config",
+                        "hook": "ignore_destination",
+                        "destination_hash": destination_hash.hex(),
+                    },
+                    log_level=getattr(RNS, "LOG_WARNING", 2),
                 )
 
     def _handle_lxmf_on_inbound(self, message: LXMF.LXMessage) -> None:
@@ -674,9 +701,17 @@ class ReticulumTelemetryHub:
         try:
             written_path = message.write_to_directory(str(inbound_directory))
         except Exception as exc:  # pragma: no cover - defensive logging
-            RNS.log(
+            report_nonfatal_exception(
+                getattr(self, "event_log", None),
+                "lxmf_runtime_error",
                 f"Failed to persist inbound LXMF message for on_inbound: {exc}",
-                getattr(RNS, "LOG_WARNING", 2),
+                exc,
+                metadata={
+                    "operation": "on_inbound_persist",
+                    "command": command,
+                    "directory": str(inbound_directory),
+                },
+                log_level=getattr(RNS, "LOG_WARNING", 2),
             )
             return
 
@@ -690,9 +725,17 @@ class ReticulumTelemetryHub:
                 stderr=subprocess.DEVNULL,
             )
         except Exception as exc:  # pragma: no cover - defensive logging
-            RNS.log(
+            report_nonfatal_exception(
+                getattr(self, "event_log", None),
+                "lxmf_runtime_error",
                 f"Failed to execute LXMF on_inbound command '{command}': {exc}",
-                getattr(RNS, "LOG_WARNING", 2),
+                exc,
+                metadata={
+                    "operation": "on_inbound_execute",
+                    "command": command,
+                    "path": str(written_path),
+                },
+                log_level=getattr(RNS, "LOG_WARNING", 2),
             )
 
     def __init__(
@@ -863,6 +906,7 @@ class ReticulumTelemetryHub:
                 destination=self.my_lxmf_dest,
                 config_manager=self.config_manager,
                 telemetry_controller=self.tel_controller,
+                event_log=self.event_log,
             )
             embedded_started = time.monotonic()
             self.embedded_lxmd.start()
@@ -912,6 +956,7 @@ class ReticulumTelemetryHub:
             hub_interval=hub_telemetry_interval,
             service_interval=service_telemetry_interval,
             telemeter_manager=self.telemeter_manager,
+            event_log=self.event_log,
         )
 
         self.command_manager = CommandManager(
@@ -1706,9 +1751,16 @@ class ReticulumTelemetryHub:
                             key in response_fields
                             for key in (LXMF.FIELD_FILE_ATTACHMENTS, LXMF.FIELD_IMAGE)
                         )
-                    RNS.log(
+                    report_nonfatal_exception(
+                        getattr(self, "event_log", None),
+                        "lxmf_runtime_error",
                         f"Failed to send response: {exc}",
-                        getattr(RNS, "LOG_WARNING", 2),
+                        exc,
+                        metadata={
+                            "operation": "send_response",
+                            "has_attachment": has_attachment,
+                        },
+                        log_level=getattr(RNS, "LOG_WARNING", 2),
                     )
                     if has_attachment:
                         fallback = self._reply_message(
@@ -1720,9 +1772,16 @@ class ReticulumTelemetryHub:
                         try:
                             self.lxm_router.handle_outbound(fallback)
                         except Exception as retry_exc:  # pragma: no cover - defensive log
-                            RNS.log(
+                            report_nonfatal_exception(
+                                getattr(self, "event_log", None),
+                                "lxmf_runtime_error",
                                 f"Failed to send fallback response: {retry_exc}",
-                                getattr(RNS, "LOG_WARNING", 2),
+                                retry_exc,
+                                metadata={
+                                    "operation": "send_fallback_response",
+                                    "has_attachment": has_attachment,
+                                },
+                                log_level=getattr(RNS, "LOG_WARNING", 2),
                             )
             if responses:
                 command_payload_present = True
@@ -1975,9 +2034,16 @@ class ReticulumTelemetryHub:
             try:
                 lxmf_fields = self._build_lxmf_attachment_fields(attachments)
             except Exception as exc:  # pragma: no cover - defensive log
-                RNS.log(
+                report_nonfatal_exception(
+                    getattr(self, "event_log", None),
+                    "lxmf_runtime_error",
                     f"Failed to build attachment fields: {exc}",
-                    getattr(RNS, "LOG_WARNING", 2),
+                    exc,
+                    metadata={
+                        "operation": "build_attachment_fields",
+                        "attachment_count": len(attachments),
+                    },
+                    log_level=getattr(RNS, "LOG_WARNING", 2),
                 )
         lxmf_fields = self._merge_standard_fields(
             source_fields=fields,
@@ -4100,13 +4166,22 @@ class ReticulumTelemetryHub:
             )
             return None
         try:
-            return factory(self)
+            service = factory(self)
         except Exception as exc:  # pragma: no cover - defensive
-            RNS.log(
+            report_nonfatal_exception(
+                getattr(self, "event_log", None),
+                "daemon_service_error",
                 f"Failed to initialize daemon service '{name}': {exc}",
-                RNS.LOG_ERROR,
+                exc,
+                metadata={
+                    "service": name,
+                    "operation": "init",
+                },
+                log_level=RNS.LOG_ERROR,
             )
             return None
+        service.event_log = getattr(self, "event_log", None)
+        return service
 
     def shutdown(self):
         if self._shutdown:

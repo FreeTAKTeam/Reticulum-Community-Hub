@@ -4,16 +4,19 @@ import re
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import LXMF
 import RNS
 
+from reticulum_telemetry_hub.api.models import FileAttachment
 from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
 from reticulum_telemetry_hub.reticulum_server import services
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 from reticulum_telemetry_hub.reticulum_server.__main__ import _dispatch_coroutine
 
@@ -136,9 +139,342 @@ def test_daemon_service_gating(monkeypatch, tmp_path):
         hub.start_daemon_workers(services=["unsupported", "supported"])
         assert "supported" in hub._active_services
         assert supported.started
+        assert supported.event_log is hub.event_log
         assert "unsupported" not in hub._active_services
     finally:
         hub.stop_daemon_workers()
+        hub.shutdown()
+
+
+def test_create_service_records_initialization_failure(monkeypatch, tmp_path):
+    hub = ReticulumTelemetryHub(
+        "Daemon",
+        str(tmp_path),
+        tmp_path / "identity",
+        hub_telemetry_interval=0.01,
+    )
+
+    def _broken_factory(_hub):
+        raise RuntimeError("init boom")
+
+    monkeypatch.setitem(services.SERVICE_FACTORIES, "broken", _broken_factory)
+
+    try:
+        assert hub._create_service("broken") is None
+        events = [
+            event
+            for event in hub.event_log.list_events()
+            if event.get("type") == "daemon_service_error"
+        ]
+        assert events
+        metadata = events[0]["metadata"]
+        assert metadata["service"] == "broken"
+        assert metadata["operation"] == "init"
+        assert metadata["exception_type"] == "RuntimeError"
+        assert metadata["exception_message"] == "init boom"
+    finally:
+        hub.shutdown()
+
+
+def test_hub_service_run_wrapper_records_event() -> None:
+    event_log = EventLog()
+
+    class CrashingService(services.HubService):
+        def __init__(self) -> None:
+            super().__init__(name="crashy", event_log=event_log)
+
+        def _run(self) -> None:
+            raise RuntimeError("service boom")
+
+    service = CrashingService()
+    service._run_wrapper()
+
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "daemon_service_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["service"] == "crashy"
+    assert metadata["operation"] == "run"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "service boom"
+
+
+def test_gps_service_connect_failure_records_event() -> None:
+    event_log = EventLog()
+
+    class DummyManager:
+        def enable_sensor(self, name: str) -> None:
+            _ = name
+
+        def get_sensor(self, name: str):
+            _ = name
+            return SimpleNamespace(
+                altitude=None,
+                speed=None,
+                bearing=None,
+                accuracy=None,
+                latitude=None,
+                longitude=None,
+                last_update=None,
+            )
+
+    service = services.GpsTelemetryService(
+        telemeter_manager=DummyManager(),
+        client_factory=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("gps boom")),
+        host="127.0.0.1",
+        port=2947,
+    )
+    service.event_log = event_log
+
+    service._run()
+
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "daemon_service_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["service"] == "gpsd"
+    assert metadata["operation"] == "connect"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "gps boom"
+
+
+def test_cot_service_send_failures_record_events() -> None:
+    event_log = EventLog()
+
+    class DummyConnector:
+        def __init__(self) -> None:
+            self.config = SimpleNamespace(
+                poll_interval_seconds=1.0,
+                keepalive_interval_seconds=1.0,
+            )
+            self.service: services.CotTelemetryService | None = None
+
+        async def send_ping(self) -> None:
+            if self.service is not None:
+                self.service._stop_event.set()
+            raise RuntimeError("ping boom")
+
+        async def send_keepalive(self) -> None:
+            raise RuntimeError("keepalive boom")
+
+        async def send_latest_location(self) -> None:
+            raise RuntimeError("location boom")
+
+    connector = DummyConnector()
+    service = services.CotTelemetryService(
+        connector=connector,
+        interval=1.0,
+        keepalive_interval=1.0,
+        ping_interval=1.0,
+    )
+    connector.service = service
+    service.event_log = event_log
+
+    service._run()
+
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "daemon_service_error"
+    ]
+    assert len(events) == 3
+    operations = {event["metadata"]["operation"] for event in events}
+    assert operations == {"send_ping", "send_keepalive", "send_latest_location"}
+
+
+def test_apply_lxmf_router_runtime_config_records_nonfatal_events(tmp_path) -> None:
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    hub.event_log = EventLog()
+
+    class DummyRouter:
+        def set_message_storage_limit(self, **kwargs):
+            _ = kwargs
+
+        def set_authentication(self, **kwargs):
+            _ = kwargs
+
+        def allow(self, identity_hash):
+            _ = identity_hash
+            raise RuntimeError("allow boom")
+
+        def prioritise(self, destination_hash):
+            _ = destination_hash
+            raise RuntimeError("prioritise boom")
+
+        def ignore_destination(self, destination_hash):
+            _ = destination_hash
+            raise RuntimeError("ignore boom")
+
+    lxmf_path = tmp_path / "lxmf-router.ini"
+    lxmf_path.write_text("[lxmf]\n", encoding="utf-8")
+    (tmp_path / "allowed").write_text(f"{'aa' * 16}\n", encoding="utf-8")
+    (tmp_path / "ignored").write_text(f"{'bb' * 16}\n", encoding="utf-8")
+
+    hub.lxm_router = DummyRouter()
+    hub.config_manager = SimpleNamespace(
+        config=SimpleNamespace(
+            lxmf_router=SimpleNamespace(
+                path=lxmf_path,
+                message_storage_limit_megabytes=7.5,
+                auth_required=True,
+                prioritised_lxmf_destinations=("cc" * 16,),
+            )
+        )
+    )
+
+    hub._apply_lxmf_router_runtime_config()
+
+    events = [
+        event
+        for event in hub.event_log.list_events()
+        if event.get("type") == "lxmf_runtime_error"
+    ]
+    assert len(events) == 3
+    hooks = {event["metadata"]["hook"] for event in events}
+    assert hooks == {"allow", "prioritise", "ignore_destination"}
+
+
+def test_handle_lxmf_on_inbound_persist_failure_records_event(tmp_path) -> None:
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    hub.event_log = EventLog()
+    hub.storage_path = tmp_path
+    hub.config_manager = SimpleNamespace(
+        config=SimpleNamespace(lxmf_router=SimpleNamespace(on_inbound="process-inbound"))
+    )
+
+    class FailingMessage:
+        def write_to_directory(self, path: str):
+            _ = path
+            raise RuntimeError("persist boom")
+
+    hub._handle_lxmf_on_inbound(FailingMessage())
+
+    events = [
+        event
+        for event in hub.event_log.list_events()
+        if event.get("type") == "lxmf_runtime_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["operation"] == "on_inbound_persist"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "persist boom"
+
+
+def test_handle_lxmf_on_inbound_execute_failure_records_event(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    hub.event_log = EventLog()
+    hub.storage_path = tmp_path
+    hub.config_manager = SimpleNamespace(
+        config=SimpleNamespace(lxmf_router=SimpleNamespace(on_inbound="process-inbound"))
+    )
+
+    class Message:
+        def write_to_directory(self, path: str):
+            written = Path(path) / "message.msg"
+            written.write_text("payload", encoding="utf-8")
+            return written
+
+    monkeypatch.setattr(
+        "reticulum_telemetry_hub.reticulum_server.__main__.subprocess.call",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("exec boom")),
+    )
+
+    hub._handle_lxmf_on_inbound(Message())
+
+    events = [
+        event
+        for event in hub.event_log.list_events()
+        if event.get("type") == "lxmf_runtime_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["operation"] == "on_inbound_execute"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "exec boom"
+
+
+def test_delivery_callback_records_response_send_failures(tmp_path) -> None:
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    calls = {"count": 0}
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_COMMANDS: [{PLUGIN_COMMAND: "TestCommand"}]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    attachment_response = hub._reply_message(
+        message,
+        "Attachment payload",
+        fields={
+            LXMF.FIELD_FILE_ATTACHMENTS: [
+                {"name": "report.txt", "data": b"payload", "media_type": "text/plain"}
+            ]
+        },
+    )
+    assert attachment_response is not None
+    hub.command_handler = lambda commands, inbound: [attachment_response]
+
+    def handle_outbound(_message):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("send boom")
+        raise RuntimeError("fallback boom")
+
+    hub.lxm_router.handle_outbound = handle_outbound
+
+    try:
+        hub.delivery_callback(message)
+        events = [
+            event
+            for event in hub.event_log.list_events()
+            if event.get("type") == "lxmf_runtime_error"
+        ]
+        operations = {event["metadata"]["operation"] for event in events}
+        assert operations == {"send_response", "send_fallback_response"}
+    finally:
+        hub.shutdown()
+
+
+def test_dispatch_northbound_message_records_attachment_build_failure(
+    tmp_path,
+) -> None:
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    hub.send_message = lambda *args, **kwargs: True
+    hub._build_lxmf_attachment_fields = lambda attachments: (_ for _ in ()).throw(
+        RuntimeError("attachment boom")
+    )
+
+    attachment = FileAttachment(
+        name="note.txt",
+        path=str(tmp_path / "note.txt"),
+        category="file",
+        size=4,
+        media_type="text/plain",
+    )
+
+    try:
+        hub.dispatch_northbound_message("hello", fields={"attachments": [attachment]})
+        events = [
+            event
+            for event in hub.event_log.list_events()
+            if event.get("type") == "lxmf_runtime_error"
+        ]
+        assert events
+        metadata = events[0]["metadata"]
+        assert metadata["operation"] == "build_attachment_fields"
+        assert metadata["exception_type"] == "RuntimeError"
+        assert metadata["exception_message"] == "attachment boom"
+    finally:
         hub.shutdown()
 
 

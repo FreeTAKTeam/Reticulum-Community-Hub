@@ -25,6 +25,9 @@ from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.northbound.routes_rest import register_core_routes
 from reticulum_telemetry_hub.northbound.services import NorthboundServices
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.runtime_events import (
+    report_nonfatal_exception,
+)
 from tests.factories import build_location_payload
 
 
@@ -303,6 +306,26 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
 
     info_response = client.get("/api/v1/app/info")
     assert info_response.status_code == 200
+
+
+def test_events_endpoint_returns_nonfatal_exception_entry(tmp_path: Path) -> None:
+    client, _api, event_log, _telemetry = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    report_nonfatal_exception(
+        event_log,
+        "telemetry_error",
+        "Telemetry collector failed: boom",
+        RuntimeError("boom"),
+        metadata={"operation": "collect"},
+        log_level=1,
+    )
+
+    response = client.get("/Events", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert any(entry["type"] == "telemetry_error" for entry in payload)
 
 
 def test_apply_config_rejects_invalid_payload(tmp_path: Path) -> None:

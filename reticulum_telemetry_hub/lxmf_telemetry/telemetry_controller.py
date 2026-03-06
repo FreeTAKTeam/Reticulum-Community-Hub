@@ -12,6 +12,9 @@ from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appea
 from reticulum_telemetry_hub.reticulum_server.appearance import (
     build_telemetry_icon_appearance_value,
 )
+from reticulum_telemetry_hub.reticulum_server.runtime_events import (
+    report_nonfatal_exception,
+)
 
 import LXMF
 import RNS
@@ -762,7 +765,19 @@ class TelemetryController:
         try:
             self._telemetry_listener(telemetry, peer_hash, timestamp)
         except Exception as exc:  # pragma: no cover - defensive logging
-            RNS.log(f"Telemetry listener raised an exception: {exc}", RNS.LOG_WARNING)
+            report_nonfatal_exception(
+                self._event_log,
+                "telemetry_error",
+                f"Telemetry listener raised an exception: {exc}",
+                exc,
+                metadata={
+                    "operation": "listener",
+                    "peer_hash": (
+                        peer_hash.hex() if isinstance(peer_hash, bytes) else peer_hash
+                    ),
+                },
+                log_level=RNS.LOG_WARNING,
+            )
 
     def _record_event(
         self,

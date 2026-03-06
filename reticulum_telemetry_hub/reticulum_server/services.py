@@ -21,6 +21,10 @@ from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import (
     TelemeterManager,
 )
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.runtime_events import (
+    report_nonfatal_exception,
+)
 
 if TYPE_CHECKING:
     from reticulum_telemetry_hub.reticulum_server.__main__ import (
@@ -43,6 +47,7 @@ class HubService:
     """Base class for long running Reticulum telemetry services."""
 
     name: str
+    event_log: EventLog | None = None
 
     def __post_init__(self) -> None:
         """
@@ -126,13 +131,35 @@ class HubService:
         try:
             self._run()
         except Exception as exc:  # pragma: no cover - defensive logging
-            RNS.log(
+            self._report_service_exception(
                 f"Daemon service '{self.name}' crashed: {exc}",
-                RNS.LOG_ERROR,
+                exc,
+                metadata={"operation": "run"},
             )
         finally:
             self._thread = None
             self._stop_event.clear()
+
+    def _report_service_exception(
+        self,
+        message: str,
+        exc: Exception,
+        *,
+        metadata: Mapping[str, object] | None = None,
+        log_level: int | None = None,
+    ) -> dict[str, object] | None:
+        """Record a handled daemon-service failure in logs and the event feed."""
+
+        event_metadata = dict(metadata or {})
+        event_metadata.setdefault("service", self.name)
+        return report_nonfatal_exception(
+            self.event_log,
+            "daemon_service_error",
+            message,
+            exc,
+            metadata=event_metadata,
+            log_level=log_level if log_level is not None else getattr(RNS, "LOG_ERROR", 1),
+        )
 
 
 class GpsTelemetryService(HubService):
@@ -194,9 +221,14 @@ class GpsTelemetryService(HubService):
         try:
             client = self._client_factory(host=self._host, port=self._port)
         except Exception as exc:
-            RNS.log(
-                ("Unable to connect to gpsd on " f"{self._host}:{self._port}: {exc}"),
-                RNS.LOG_ERROR,
+            self._report_service_exception(
+                f"Unable to connect to gpsd on {self._host}:{self._port}: {exc}",
+                exc,
+                metadata={
+                    "operation": "connect",
+                    "host": self._host,
+                    "port": self._port,
+                },
             )
             return
 
@@ -334,27 +366,30 @@ class CotTelemetryService(HubService):
                     asyncio.run(self._connector.send_ping())
                     last_ping = time.monotonic()
                 except Exception as exc:  # pragma: no cover - defensive logging
-                    RNS.log(
+                    self._report_service_exception(
                         f"TAK connector failed to send hello keepalive: {exc}",
-                        RNS.LOG_ERROR,
+                        exc,
+                        metadata={"operation": "send_ping"},
                     )
             if now - last_keepalive >= self._keepalive_interval:
                 try:
                     asyncio.run(self._connector.send_keepalive())
                     last_keepalive = time.monotonic()
                 except Exception as exc:  # pragma: no cover - defensive logging
-                    RNS.log(
+                    self._report_service_exception(
                         f"TAK connector failed to send keepalive: {exc}",
-                        RNS.LOG_ERROR,
+                        exc,
+                        metadata={"operation": "send_keepalive"},
                     )
             if now - last_location >= self._interval:
                 try:
                     asyncio.run(self._connector.send_latest_location())
                     last_location = time.monotonic()
                 except Exception as exc:  # pragma: no cover - defensive logging
-                    RNS.log(
+                    self._report_service_exception(
                         f"TAK connector failed to send CoT update: {exc}",
-                        RNS.LOG_ERROR,
+                        exc,
+                        metadata={"operation": "send_latest_location"},
                     )
             remaining_keepalive = self._keepalive_interval - (
                 time.monotonic() - last_keepalive

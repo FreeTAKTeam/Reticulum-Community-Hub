@@ -12,6 +12,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TIME,
 )
 from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterManager
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 
 
 class DummyRouter:
@@ -195,6 +196,30 @@ def test_invoke_collector_enforces_return_type(telemetry_controller):
         sampler._invoke_collector(lambda: "not-a-sample")
 
 
+def test_invoke_collector_records_event_on_exception(telemetry_controller):
+    router = DummyRouter()
+    server_dest = _destination()
+    event_log = EventLog()
+    sampler = TelemetrySampler(
+        telemetry_controller,
+        router,
+        server_dest,
+        event_log=event_log,
+    )
+
+    result = sampler._invoke_collector(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    assert result is None
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "telemetry_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["operation"] == "collect"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "boom"
+
+
 def test_execute_job_skips_none_samples(telemetry_controller):
     router = DummyRouter()
     server_dest = _destination()
@@ -240,6 +265,44 @@ def test_process_sample_handles_empty_destinations_with_broadcast_enabled():
 
     assert controller.calls
     assert not router.messages
+
+
+def test_process_sample_records_event_when_broadcast_fails():
+    class Controller:
+        def ingest_local_payload(self, payload, peer_dest):
+            self.calls = getattr(self, "calls", [])
+            self.calls.append((payload, peer_dest))
+            return b"encoded"
+
+    class FailingRouter(DummyRouter):
+        def handle_outbound(self, message):  # pragma: no cover - interface shim
+            _ = message
+            raise RuntimeError("send boom")
+
+    controller = Controller()
+    router = FailingRouter()
+    server_dest = _destination()
+    client_dest = _destination()
+    event_log = EventLog()
+    sampler = TelemetrySampler(
+        controller,
+        router,
+        server_dest,
+        connections=DummyConnections({client_dest.identity.hash: client_dest}),
+        broadcast_updates=True,
+        event_log=event_log,
+    )
+
+    sampler._process_sample(TelemetrySample(payload={"one": 1}))
+
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "telemetry_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["operation"] == "broadcast"
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "send boom"
 
 
 def test_telemeter_snapshot_collectors_include_timestamp(monkeypatch, telemetry_controller):

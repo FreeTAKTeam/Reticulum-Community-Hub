@@ -4,6 +4,7 @@ import RNS
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from tests.test_rth_api import make_config_manager
 
 
@@ -12,7 +13,11 @@ def ensure_reticulum() -> None:
         RNS.Reticulum()
 
 
-def build_manager(api: ReticulumTelemetryHubAPI) -> tuple[CommandManager, RNS.Destination]:
+def build_manager(
+    api: ReticulumTelemetryHubAPI,
+    *,
+    event_log: EventLog | None = None,
+) -> tuple[CommandManager, RNS.Destination]:
     class DummyTelemetryController:
         def handle_command(self, command, message, dest):  # noqa: ANN001
             return None
@@ -24,7 +29,13 @@ def build_manager(api: ReticulumTelemetryHubAPI) -> tuple[CommandManager, RNS.De
         "lxmf",
         "delivery",
     )
-    manager = CommandManager({}, DummyTelemetryController(), server_dest, api)
+    manager = CommandManager(
+        {},
+        DummyTelemetryController(),
+        server_dest,
+        api,
+        event_log=event_log,
+    )
     return manager, server_dest
 
 
@@ -245,7 +256,8 @@ def test_retrieve_file_exception_returns_error_message(tmp_path):
         def retrieve_image(self, record_id: int):  # noqa: ANN001
             raise RuntimeError("boom")
 
-    manager, server_dest = build_manager(FailingAPI())
+    event_log = EventLog()
+    manager, server_dest = build_manager(FailingAPI(), event_log=event_log)
     client_dest = make_client_destination()
     retrieve_msg = make_message(
         server_dest,
@@ -258,3 +270,11 @@ def test_retrieve_file_exception_returns_error_message(tmp_path):
 
     assert responses
     assert any("Command failed" in response.content_as_string() for response in responses)
+    events = [
+        event for event in event_log.list_events() if event.get("type") == "command_error"
+    ]
+    assert events
+    metadata = events[0]["metadata"]
+    assert metadata["command"] == CommandManager.CMD_RETRIEVE_FILE
+    assert metadata["exception_type"] == "RuntimeError"
+    assert metadata["exception_message"] == "boom"

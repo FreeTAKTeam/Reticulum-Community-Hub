@@ -18,6 +18,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance import Base
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 
 
@@ -174,6 +175,8 @@ def embedded_lxmd_factory(telemetry_controller):
         enable_delay_seconds: float = 0.0,
         peer_announce_at_start: bool = True,
         node_announce_at_start: bool = True,
+        event_log: EventLog | None = None,
+        telemetry_controller_override: TelemetryController | Any | None = None,
     ) -> EmbeddedTestHarness:
         router = DummyRouter(stats, enable_delay_seconds=enable_delay_seconds)
         destination = DummyDestination(destination_hash or b"\x11" * 16)
@@ -191,7 +194,12 @@ def embedded_lxmd_factory(telemetry_controller):
             router,
             destination,
             config_manager=config_manager,
-            telemetry_controller=telemetry_controller,
+            telemetry_controller=(
+                telemetry_controller_override
+                if telemetry_controller_override is not None
+                else telemetry_controller
+            ),
+            event_log=event_log,
         )
         return EmbeddedTestHarness(embedded, router, destination)
 
