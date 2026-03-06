@@ -20,6 +20,7 @@ export class WsClient {
   private registered = false;
   private shouldReconnect = true;
   private mockInterval: number | undefined;
+  private reconnectTimer: number | undefined;
   private readonly useMock = import.meta.env.VITE_RTH_MOCK === "true";
 
   constructor(path: string, handler: WsHandler, onOpen?: () => void) {
@@ -35,9 +36,17 @@ export class WsClient {
       this.connectMock();
       return;
     }
+    if (this.socket && (this.socket.readyState === WebSocket.CONNECTING || this.socket.readyState === WebSocket.OPEN)) {
+      return;
+    }
+    this.clearReconnectTimer();
     this.shouldReconnect = true;
-    this.socket = new WebSocket(this.url);
-    this.socket.onopen = () => {
+    const socket = new WebSocket(this.url);
+    this.socket = socket;
+    socket.onopen = () => {
+      if (this.socket !== socket) {
+        return;
+      }
       this.retryCount = 0;
       this.sendAuth();
       this.registerConnection();
@@ -45,7 +54,10 @@ export class WsClient {
         this.onOpen();
       }
     };
-    this.socket.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (this.socket !== socket) {
+        return;
+      }
       try {
         const payload = JSON.parse(event.data) as WsMessage;
         if (payload.type === "ping") {
@@ -57,9 +69,19 @@ export class WsClient {
         console.error("Invalid WS payload", error);
       }
     };
-    this.socket.onclose = () => {
+    socket.onerror = () => {
+      if (this.socket !== socket) {
+        return;
+      }
+      socket.close();
+    };
+    socket.onclose = () => {
+      const isActiveSocket = this.socket === socket;
+      if (isActiveSocket) {
+        this.socket = null;
+      }
       this.unregisterConnection();
-      if (this.shouldReconnect) {
+      if (isActiveSocket && this.shouldReconnect) {
         this.scheduleReconnect();
       }
     };
@@ -76,11 +98,14 @@ export class WsClient {
 
   close(): void {
     this.shouldReconnect = false;
+    this.clearReconnectTimer();
     if (this.mockInterval) {
       window.clearInterval(this.mockInterval);
       this.mockInterval = undefined;
     }
-    this.socket?.close();
+    const socket = this.socket;
+    this.socket = null;
+    socket?.close();
     this.unregisterConnection();
   }
 
@@ -97,14 +122,26 @@ export class WsClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.retryCount >= this.maxRetry) {
+    if (!this.shouldReconnect || this.retryCount >= this.maxRetry || this.reconnectTimer !== undefined) {
       return;
     }
     const delay = Math.min(1000 * 2 ** this.retryCount, 15000);
     this.retryCount += 1;
-    window.setTimeout(() => {
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = undefined;
+      if (!this.shouldReconnect) {
+        return;
+      }
       this.connect();
     }, delay);
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer === undefined) {
+      return;
+    }
+    window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
   }
 
   private registerConnection(): void {

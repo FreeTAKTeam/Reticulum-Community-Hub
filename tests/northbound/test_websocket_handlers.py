@@ -36,6 +36,14 @@ class _FakeWebSocket:
         self.closed.append(code)
 
 
+class _BlockingWebSocket(_FakeWebSocket):
+    """WebSocket test double that never yields another payload."""
+
+    async def receive_text(self) -> str:
+        await asyncio.sleep(1)
+        raise RuntimeError("disconnect")
+
+
 class _FakeAuth:
     def __init__(self, allowed: bool) -> None:
         self.allowed = allowed
@@ -201,6 +209,45 @@ def test_handle_telemetry_socket_subscribe_variants(monkeypatch) -> None:
         assert any(item["type"] == "error" for item in websocket.sent)
         assert broadcaster.calls == [("t1",)]
         assert broadcaster.unsubscribed is True
+
+    asyncio.run(_exercise())
+
+
+def test_handle_system_socket_times_out_inactive_clients(monkeypatch) -> None:
+    """Close stale websocket clients that stop responding to keepalives."""
+
+    async def _exercise() -> None:
+        websocket = _BlockingWebSocket([])
+        broadcaster = _FakeEventBroadcaster()
+
+        async def _fake_ping_loop(*_args, **_kwargs):
+            await asyncio.sleep(999)
+
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.authenticate_websocket",
+            lambda *args, **kwargs: asyncio.sleep(0, result=True),
+        )
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.ping_loop",
+            _fake_ping_loop,
+        )
+
+        await handle_system_socket(
+            websocket,
+            auth=_FakeAuth(True),
+            event_broadcaster=broadcaster,
+            status_provider=lambda: {"ok": True},
+            event_list_provider=lambda limit: [],
+            inactivity_timeout_seconds=0.01,
+        )
+
+        assert websocket.accepted is True
+        assert websocket.closed == [4004]
+        assert broadcaster.unsubscribed is True
+        assert any(
+            item["type"] == "error" and item["data"]["code"] == "timeout"
+            for item in websocket.sent
+        )
 
     asyncio.run(_exercise())
 

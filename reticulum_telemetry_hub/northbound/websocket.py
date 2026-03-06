@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
@@ -24,6 +26,11 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 
 from .auth import ApiAuth
+
+
+DEFAULT_WS_PING_INTERVAL_SECONDS = 30.0
+DEFAULT_WS_INACTIVITY_TIMEOUT_SECONDS = 90.0
+WS_INACTIVITY_CLOSE_CODE = 4004
 
 
 @dataclass(frozen=True)
@@ -645,7 +652,11 @@ async def authenticate_websocket(
     return True
 
 
-async def ping_loop(websocket: WebSocket, *, interval_seconds: float = 30.0) -> None:
+async def ping_loop(
+    websocket: WebSocket,
+    *,
+    interval_seconds: float = DEFAULT_WS_PING_INTERVAL_SECONDS,
+) -> None:
     """Send periodic ping messages to a WebSocket.
 
     Args:
@@ -655,7 +666,94 @@ async def ping_loop(websocket: WebSocket, *, interval_seconds: float = 30.0) -> 
 
     while True:
         await asyncio.sleep(interval_seconds)
-        await websocket.send_json(build_ping_message())
+        try:
+            await websocket.send_json(build_ping_message())
+        except Exception:  # pragma: no cover - socket shutdown varies
+            return
+
+
+def _remaining_inactivity_timeout(
+    last_activity_at: float,
+    *,
+    inactivity_timeout_seconds: float,
+) -> float:
+    """Return the remaining time before a websocket is considered stale.
+
+    Args:
+        last_activity_at (float): ``time.monotonic()`` timestamp of the most
+            recent client payload.
+        inactivity_timeout_seconds (float): Maximum idle time allowed.
+
+    Returns:
+        float: Positive timeout to use for the next receive call.
+    """
+
+    elapsed = time.monotonic() - last_activity_at
+    remaining = inactivity_timeout_seconds - elapsed
+    return max(0.1, remaining)
+
+
+async def _receive_text_with_inactivity_timeout(
+    websocket: WebSocket,
+    *,
+    last_activity_at: float,
+    inactivity_timeout_seconds: float,
+) -> str:
+    """Read the next websocket text payload with inactivity enforcement.
+
+    Args:
+        websocket (WebSocket): Active websocket connection.
+        last_activity_at (float): ``time.monotonic()`` timestamp of the most
+            recent inbound message.
+        inactivity_timeout_seconds (float): Maximum idle time allowed.
+
+    Returns:
+        str: Next inbound websocket payload.
+    """
+
+    timeout_seconds = _remaining_inactivity_timeout(
+        last_activity_at,
+        inactivity_timeout_seconds=inactivity_timeout_seconds,
+    )
+    return await asyncio.wait_for(websocket.receive_text(), timeout=timeout_seconds)
+
+
+async def _close_inactive_websocket(websocket: WebSocket) -> None:
+    """Close a websocket that stopped responding to keepalive traffic.
+
+    Args:
+        websocket (WebSocket): WebSocket to close.
+    """
+
+    try:
+        await websocket.send_json(
+            build_error_message("timeout", "WebSocket client timed out waiting for keepalive pong")
+        )
+    except Exception:  # pragma: no cover - best effort on broken sockets
+        pass
+
+    try:
+        await websocket.close(code=WS_INACTIVITY_CLOSE_CODE)
+    except Exception:  # pragma: no cover - close failures are non-fatal
+        pass
+
+
+async def _cancel_task(task: asyncio.Task[Any] | None) -> None:
+    """Cancel and await a background task.
+
+    Args:
+        task (asyncio.Task[Any] | None): Task to cancel.
+    """
+
+    if task is None:
+        return
+
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        try:
+            await task
+        except Exception:
+            return
 
 
 async def handle_system_socket(
@@ -665,6 +763,8 @@ async def handle_system_socket(
     event_broadcaster: EventBroadcaster,
     status_provider: Callable[[], Dict[str, object]],
     event_list_provider: Callable[[int], list[Dict[str, object]]],
+    ping_interval_seconds: float = DEFAULT_WS_PING_INTERVAL_SECONDS,
+    inactivity_timeout_seconds: float = DEFAULT_WS_INACTIVITY_TIMEOUT_SECONDS,
 ) -> None:
     """Handle the system events WebSocket.
 
@@ -674,6 +774,9 @@ async def handle_system_socket(
         event_broadcaster (EventBroadcaster): Event broadcaster.
         status_provider (Callable[[], Dict[str, object]]): Status snapshot provider.
         event_list_provider (Callable[[int], list[Dict[str, object]]]): Event list provider.
+        ping_interval_seconds (float): Interval between keepalive ping payloads.
+        inactivity_timeout_seconds (float): Maximum idle time allowed before the
+            socket is closed.
     """
 
     await websocket.accept()
@@ -683,6 +786,7 @@ async def handle_system_socket(
     include_status = True
     include_events = True
     events_limit = 50
+    last_activity_at = time.monotonic()
 
     async def _send_event(entry: Dict[str, object]) -> None:
         """Send event updates to the WebSocket client.
@@ -700,7 +804,9 @@ async def handle_system_socket(
             await websocket.send_json(build_ws_message("system.status", status_provider()))
 
     unsubscribe = event_broadcaster.subscribe(_send_event)
-    ping_task = asyncio.create_task(ping_loop(websocket))
+    ping_task = asyncio.create_task(
+        ping_loop(websocket, interval_seconds=ping_interval_seconds)
+    )
 
     try:
         if include_status:
@@ -710,7 +816,17 @@ async def handle_system_socket(
                 await websocket.send_json(build_ws_message("system.event", event))
 
         while True:
-            payload = await websocket.receive_text()
+            try:
+                payload = await _receive_text_with_inactivity_timeout(
+                    websocket,
+                    last_activity_at=last_activity_at,
+                    inactivity_timeout_seconds=inactivity_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                await _close_inactive_websocket(websocket)
+                return
+
+            last_activity_at = time.monotonic()
             message = parse_ws_message(payload)
             msg_type = _get_message_type(message)
             if msg_type == "system.subscribe":
@@ -726,7 +842,7 @@ async def handle_system_socket(
         return
     finally:
         unsubscribe()
-        ping_task.cancel()
+        await _cancel_task(ping_task)
 
 
 async def handle_telemetry_socket(
@@ -735,6 +851,8 @@ async def handle_telemetry_socket(
     auth: ApiAuth,
     telemetry_broadcaster: TelemetryBroadcaster,
     telemetry_snapshot: Callable[[int, Optional[str]], list[Dict[str, object]]],
+    ping_interval_seconds: float = DEFAULT_WS_PING_INTERVAL_SECONDS,
+    inactivity_timeout_seconds: float = DEFAULT_WS_INACTIVITY_TIMEOUT_SECONDS,
 ) -> None:
     """Handle the telemetry WebSocket.
 
@@ -743,18 +861,34 @@ async def handle_telemetry_socket(
         auth (ApiAuth): Auth validator.
         telemetry_broadcaster (TelemetryBroadcaster): Telemetry broadcaster.
         telemetry_snapshot (Callable[[int, Optional[str]], list[Dict[str, object]]]): Snapshot provider.
+        ping_interval_seconds (float): Interval between keepalive ping payloads.
+        inactivity_timeout_seconds (float): Maximum idle time allowed before the
+            socket is closed.
     """
 
     await websocket.accept()
     if not await authenticate_websocket(websocket, auth=auth):
         return
 
-    ping_task = asyncio.create_task(ping_loop(websocket))
+    ping_task = asyncio.create_task(
+        ping_loop(websocket, interval_seconds=ping_interval_seconds)
+    )
     unsubscribe = None
+    last_activity_at = time.monotonic()
 
     try:
         while True:
-            payload = await websocket.receive_text()
+            try:
+                payload = await _receive_text_with_inactivity_timeout(
+                    websocket,
+                    last_activity_at=last_activity_at,
+                    inactivity_timeout_seconds=inactivity_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                await _close_inactive_websocket(websocket)
+                return
+
+            last_activity_at = time.monotonic()
             message = parse_ws_message(payload)
             msg_type = _get_message_type(message)
             if msg_type == "telemetry.subscribe":
@@ -805,7 +939,7 @@ async def handle_telemetry_socket(
     finally:
         if unsubscribe:
             unsubscribe()
-        ping_task.cancel()
+        await _cancel_task(ping_task)
 
 
 async def handle_message_socket(
@@ -814,6 +948,8 @@ async def handle_message_socket(
     auth: ApiAuth,
     message_broadcaster: MessageBroadcaster,
     message_sender: Callable[[str, Optional[str], Optional[str]], None],
+    ping_interval_seconds: float = DEFAULT_WS_PING_INTERVAL_SECONDS,
+    inactivity_timeout_seconds: float = DEFAULT_WS_INACTIVITY_TIMEOUT_SECONDS,
 ) -> None:
     """Handle the messages WebSocket."""
 
@@ -821,12 +957,25 @@ async def handle_message_socket(
     if not await authenticate_websocket(websocket, auth=auth):
         return
 
-    ping_task = asyncio.create_task(ping_loop(websocket))
+    ping_task = asyncio.create_task(
+        ping_loop(websocket, interval_seconds=ping_interval_seconds)
+    )
     unsubscribe = None
+    last_activity_at = time.monotonic()
 
     try:
         while True:
-            payload = await websocket.receive_text()
+            try:
+                payload = await _receive_text_with_inactivity_timeout(
+                    websocket,
+                    last_activity_at=last_activity_at,
+                    inactivity_timeout_seconds=inactivity_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                await _close_inactive_websocket(websocket)
+                return
+
+            last_activity_at = time.monotonic()
             message = parse_ws_message(payload)
             msg_type = _get_message_type(message)
             if msg_type == "message.subscribe":
@@ -884,4 +1033,4 @@ async def handle_message_socket(
     finally:
         if unsubscribe:
             unsubscribe()
-        ping_task.cancel()
+        await _cancel_task(ping_task)

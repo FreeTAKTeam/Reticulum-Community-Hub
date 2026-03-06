@@ -34,6 +34,8 @@ from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetry
 
 LOCAL_API_HOST = "127.0.0.1"
 DEFAULT_API_HOST = "0.0.0.0"
+DEFAULT_WS_PING_INTERVAL_SECONDS = 30.0
+DEFAULT_WS_PING_TIMEOUT_SECONDS = 30.0
 
 
 class GatewayHub(Protocol):
@@ -603,6 +605,9 @@ def main() -> None:
         host=config.api_host,
         port=config.api_port,
         log_level="info",
+        timeout_keep_alive=5,
+        ws_ping_interval=DEFAULT_WS_PING_INTERVAL_SECONDS,
+        ws_ping_timeout=DEFAULT_WS_PING_TIMEOUT_SECONDS,
     )
     server = uvicorn.Server(server_config)
     control.attach_server(server)

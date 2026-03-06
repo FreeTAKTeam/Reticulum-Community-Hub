@@ -1,4 +1,5 @@
 # TASKS
+- 2026-03-06: DONE. Reap stale northbound WebSocket clients and cancel stray UI reconnect timers to prevent port-8000 file descriptor exhaustion under connection churn.
 - 2026-03-05: DONE. Enforce Python-backend-only PyPI artifacts by excluding non-backend directories in Poetry packaging config and adding publish-workflow artifact validation for frontend/electron/docs/API paths.
 - 2026-03-05: DONE. Harden PyPI publish workflow with `PYPI_API_TOKEN` fallback and actionable trusted-publisher mismatch diagnostics after repository identity changes.
 - 2026-03-05: DONE. Add Ban/Unban/Blackhole moderation controls to the Users > Identities tab so identity records can be moderated directly like Users entries.
