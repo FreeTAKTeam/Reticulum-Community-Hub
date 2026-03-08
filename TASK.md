@@ -1,4 +1,6 @@
 # TASKS
+- 2026-03-08: DONE. Reap disconnected `/internal/events/stream` WebSocket clients so idle internal adapter sockets do not accumulate and exhaust the gateway file-descriptor limit.
+- 2026-03-07: DONE. Add a subject-aware rights service with mission-scoped role bundles, team-member subject discovery, mission/checklist authorization integration, compatibility capability wrappers, and protected R3AKT rights-management routes.
 - 2026-03-06: DONE. Rewrite `docs/supportedCommands.md` to enumerate the full LXMF southbound command surface, including legacy commands, telemetry, mission-sync/R3AKT commands, checklist commands, and known HTTP-only R3AKT routes.
 - 2026-03-06: DONE. Require actual LXMF delivery/failure acknowledgements before advancing outbound UI chat state, keep northbound messages queued until receipt, and fail silent callback loss via receipt timeout.
 - 2026-03-06: DONE. Document the LXMF southbound transport contract, including `FIELD_COMMANDS` ingress, `FIELD_RESULTS`/telemetry/attachment reply fields, and thread/group context propagation.

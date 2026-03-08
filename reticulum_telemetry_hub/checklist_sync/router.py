@@ -120,8 +120,12 @@ class ChecklistSyncRouter:
             )
             return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
 
-        capabilities = set(self._api.list_identity_capabilities(source_identity))
-        if required_capability not in capabilities:
+        mission_uid = self._candidate_mission_uid(dict(envelope.args or {}))
+        if not self._api.authorize(
+            source_identity,
+            required_capability,
+            mission_uid=mission_uid,
+        ):
             rejected = MissionCommandRejected(
                 command_id=envelope.command_id,
                 reason_code="unauthorized",
@@ -422,6 +426,21 @@ class ChecklistSyncRouter:
         value = raw_command.get("correlation_id")
         if isinstance(value, str) and value.strip():
             return value
+        return None
+
+    def _candidate_mission_uid(self, args: dict[str, Any]) -> str | None:
+        rights = self._api.rights
+        mission_uid = str(args.get("mission_uid") or args.get("mission_id") or "").strip()
+        if mission_uid:
+            return mission_uid
+        checklist_uid = str(args.get("checklist_uid") or "").strip()
+        if checklist_uid:
+            resolved_mission_uid = rights.resolve_checklist_mission_uid(checklist_uid)
+            if resolved_mission_uid:
+                return resolved_mission_uid
+        mission_feed_uid = str(args.get("mission_feed_uid") or "").strip()
+        if mission_feed_uid:
+            return rights.resolve_mission_uid_for_feed(mission_feed_uid)
         return None
 
     def _record_event(self, event_type: str, metadata: dict[str, Any]) -> None:

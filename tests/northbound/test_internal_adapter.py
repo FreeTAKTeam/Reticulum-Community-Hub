@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from datetime import timezone
+from typing import Any
 from uuid import uuid4
 
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
@@ -21,8 +24,72 @@ from reticulum_telemetry_hub.internal_api.v1.schemas import CommandEnvelope
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from reticulum_telemetry_hub.northbound.internal_adapter import handle_internal_event_socket
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+
+
+class _FakeEventBus:
+    """Minimal event bus for internal websocket handler tests."""
+
+    def __init__(self) -> None:
+        self._handlers: list = []
+        self.unsubscribed = False
+
+    def subscribe(self, handler):
+        self._handlers.append(handler)
+
+        def _unsubscribe() -> None:
+            self.unsubscribed = True
+            if handler in self._handlers:
+                self._handlers.remove(handler)
+
+        return _unsubscribe
+
+    async def emit(self, event) -> None:
+        """Invoke subscribed handlers with the provided event."""
+
+        for handler in list(self._handlers):
+            result = handler(event)
+            if asyncio.iscoroutine(result):
+                await result
+
+
+class _FakeEvent:
+    """Simple event payload wrapper matching the handler contract."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def model_dump(self, mode: str = "json") -> dict[str, Any]:
+        """Return the serialized event payload."""
+
+        assert mode == "json"
+        return dict(self._payload)
+
+
+class _DisconnectingWebSocket:
+    """Fake websocket that can emit a disconnect to the handler."""
+
+    def __init__(self) -> None:
+        self.accepted = False
+        self.sent: list[dict[str, Any]] = []
+        self._disconnect = asyncio.Event()
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def receive_text(self) -> str:
+        await self._disconnect.wait()
+        raise WebSocketDisconnect()
+
+    async def send_json(self, payload: dict[str, Any]) -> None:
+        self.sent.append(payload)
+
+    def disconnect(self) -> None:
+        """Trigger a websocket disconnect."""
+
+        self._disconnect.set()
 
 
 def _build_api(tmp_path) -> ReticulumTelemetryHubAPI:
@@ -272,3 +339,31 @@ def test_internal_events_stream(tmp_path) -> None:
             event = websocket.receive_json()
 
     assert event["event_type"] == "TopicCreated"
+
+
+def test_handle_internal_event_socket_reaps_disconnected_clients() -> None:
+    """Ensure the internal event socket unsubscribes when the client disconnects."""
+
+    async def _exercise() -> None:
+        event_bus = _FakeEventBus()
+        websocket = _DisconnectingWebSocket()
+        task = asyncio.create_task(
+            handle_internal_event_socket(websocket, event_bus=event_bus)
+        )
+
+        await asyncio.sleep(0)
+        assert websocket.accepted is True
+
+        await event_bus.emit(_FakeEvent({"event_type": "TopicCreated"}))
+        for _ in range(10):
+            if websocket.sent:
+                break
+            await asyncio.sleep(0)
+        assert websocket.sent == [{"event_type": "TopicCreated"}]
+
+        websocket.disconnect()
+        await task
+
+        assert event_bus.unsubscribed is True
+
+    asyncio.run(_exercise())

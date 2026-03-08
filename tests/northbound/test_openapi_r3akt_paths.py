@@ -75,6 +75,10 @@ def test_openapi_includes_phase2_r3akt_paths() -> None:
         "/api/r3akt/snapshots": {"get"},
         "/api/r3akt/capabilities/{identity}": {"get"},
         "/api/r3akt/capabilities/{identity}/{capability}": {"put", "delete"},
+        "/api/r3akt/rights/definitions": {"get"},
+        "/api/r3akt/rights/subjects": {"get"},
+        "/api/r3akt/rights/grants": {"get", "put", "delete"},
+        "/api/r3akt/rights/mission-access": {"get", "put", "delete"},
     }
 
     for route, methods in required.items():

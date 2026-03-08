@@ -25,6 +25,7 @@ from .models import IdentityStatus
 from .models import ReticulumInfo
 from .models import Subscriber
 from .models import Topic
+from .rights_service import SubjectAwareRightsService
 from .storage import HubStorage
 
 
@@ -56,10 +57,18 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         hub_db_path = self._config_manager.config.hub_database_path
         self._storage = storage or HubStorage(hub_db_path)
         self._filesystem = filesystem or LocalFileSystemAdapter()
+        self._rights_storage = HubStorage(hub_db_path)
+        self._rights = SubjectAwareRightsService(self._rights_storage)
         self._file_category = "file"
         self._image_category = "image"
         self._on_config_reload = on_config_reload
         self._reticulum_destination: str | None = None
+
+    @property
+    def rights(self) -> SubjectAwareRightsService:
+        """Return the subject-aware rights service."""
+
+        return self._rights
 
     def set_reticulum_destination(self, destination: str | None) -> None:
         """Set the Reticulum destination hash for app info responses.
@@ -220,28 +229,34 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         if not identity:
             return []
-        return self._storage.list_identity_capabilities(identity)
+        return self._rights.resolve_effective_operations(identity, mission_uid=None)
 
     def list_capability_grants(self, identity: str | None = None) -> List[dict]:
         """Return persisted capability grant entries."""
 
-        records = self._storage.list_identity_capability_grants(identity=identity)
+        if identity:
+            records = self._rights.list_operation_rights(
+                subject_type="identity",
+                subject_id=identity,
+                scope_type="global",
+                scope_id="",
+            )
+        else:
+            records = self._rights.list_operation_rights(
+                subject_type="identity",
+                scope_type="global",
+                scope_id="",
+            )
         return [
             {
-                "grant_uid": record.grant_uid,
-                "identity": record.identity,
-                "capability": record.capability,
-                "granted": bool(record.granted),
-                "granted_by": record.granted_by,
-                "granted_at": record.granted_at.isoformat()
-                if record.granted_at
-                else None,
-                "expires_at": record.expires_at.isoformat()
-                if record.expires_at
-                else None,
-                "updated_at": record.updated_at.isoformat()
-                if record.updated_at
-                else None,
+                "grant_uid": record["grant_uid"],
+                "identity": record["subject_id"],
+                "capability": record["operation"],
+                "granted": bool(record["granted"]),
+                "granted_by": record["granted_by"],
+                "granted_at": record["granted_at"],
+                "expires_at": record["expires_at"],
+                "updated_at": record["updated_at"],
             }
             for record in records
         ]
@@ -260,18 +275,20 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             raise ValueError("identity is required")
         if not capability:
             raise ValueError("capability is required")
-        record = self._storage.upsert_identity_capability(
+        record = self._rights.grant_operation_right(
+            "identity",
             identity,
             capability,
-            granted=True,
+            scope_type="global",
+            scope_id="",
             granted_by=granted_by,
             expires_at=expires_at,
         )
         return {
-            "grant_uid": record.grant_uid,
-            "identity": record.identity,
-            "capability": record.capability,
-            "granted": bool(record.granted),
+            "grant_uid": record["grant_uid"],
+            "identity": record["subject_id"],
+            "capability": record["operation"],
+            "granted": bool(record["granted"]),
         }
 
     def revoke_identity_capability(
@@ -287,19 +304,159 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             raise ValueError("identity is required")
         if not capability:
             raise ValueError("capability is required")
-        record = self._storage.upsert_identity_capability(
+        record = self._rights.revoke_operation_right(
+            "identity",
             identity,
             capability,
-            granted=False,
+            scope_type="global",
+            scope_id="",
             granted_by=granted_by,
-            expires_at=None,
         )
         return {
-            "grant_uid": record.grant_uid,
-            "identity": record.identity,
-            "capability": record.capability,
-            "granted": bool(record.granted),
+            "grant_uid": record["grant_uid"],
+            "identity": record["subject_id"],
+            "capability": record["operation"],
+            "granted": bool(record["granted"]),
         }
+
+    def grant_operation_right(
+        self,
+        subject_type: str,
+        subject_id: str,
+        operation: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        granted_by: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> dict:
+        """Grant an operation right to an identity or team member."""
+
+        return self._rights.grant_operation_right(
+            subject_type,
+            subject_id,
+            operation,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            granted_by=granted_by,
+            expires_at=expires_at,
+        )
+
+    def revoke_operation_right(
+        self,
+        subject_type: str,
+        subject_id: str,
+        operation: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        granted_by: str | None = None,
+    ) -> dict:
+        """Revoke an operation right from an identity or team member."""
+
+        return self._rights.revoke_operation_right(
+            subject_type,
+            subject_id,
+            operation,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            granted_by=granted_by,
+        )
+
+    def list_operation_rights(
+        self,
+        *,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        operation: str | None = None,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+    ) -> List[dict]:
+        """Return persisted subject-aware operation rights."""
+
+        return self._rights.list_operation_rights(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            operation=operation,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+
+    def assign_mission_access_role(
+        self,
+        mission_uid: str,
+        subject_type: str,
+        subject_id: str,
+        *,
+        role: str | None = None,
+        assigned_by: str | None = None,
+    ) -> dict:
+        """Assign a standard mission access role."""
+
+        return self._rights.assign_mission_access_role(
+            mission_uid,
+            subject_type,
+            subject_id,
+            role=role,
+            assigned_by=assigned_by,
+        )
+
+    def revoke_mission_access_role(
+        self,
+        mission_uid: str,
+        subject_type: str,
+        subject_id: str,
+    ) -> dict:
+        """Remove a mission access role assignment."""
+
+        return self._rights.revoke_mission_access_role(
+            mission_uid,
+            subject_type,
+            subject_id,
+        )
+
+    def list_mission_access_assignments(
+        self,
+        *,
+        mission_uid: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+    ) -> List[dict]:
+        """Return mission access role assignments."""
+
+        return self._rights.list_mission_access_assignments(
+            mission_uid=mission_uid,
+            subject_type=subject_type,
+            subject_id=subject_id,
+        )
+
+    def list_team_member_subjects(
+        self,
+        *,
+        mission_uid: str | None = None,
+    ) -> List[dict]:
+        """Return team members as assignable rights subjects."""
+
+        return self._rights.list_team_member_subjects(mission_uid=mission_uid)
+
+    def resolve_effective_operations(
+        self,
+        identity: str,
+        mission_uid: str | None = None,
+    ) -> List[str]:
+        """Resolve effective operations for an identity."""
+
+        return self._rights.resolve_effective_operations(identity, mission_uid=mission_uid)
+
+    def authorize(
+        self,
+        identity: str,
+        operation: str,
+        mission_uid: str | None = None,
+    ) -> bool:
+        """Return whether an identity is authorized for an operation."""
+
+        return self._rights.authorize(identity, operation, mission_uid=mission_uid)
 
     # ------------------------------------------------------------------ #
     # File operations

@@ -693,6 +693,80 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     assert member_clients.status_code == 200
     assert "peer-a" in member_clients.json()["client_identities"]
 
+    rights_definitions = client.get("/api/r3akt/rights/definitions", headers=headers)
+    assert rights_definitions.status_code == 200
+    assert "MISSION_OWNER" in rights_definitions.json()["mission_role_bundles"]
+
+    rights_subjects = client.get(
+        "/api/r3akt/rights/subjects",
+        params={"mission_uid": mission_uid},
+        headers=headers,
+    )
+    assert rights_subjects.status_code == 200
+    assert rights_subjects.json()[0]["subject_id"] == "member-1"
+    assert "peer-a" in rights_subjects.json()[0]["client_identities"]
+
+    mission_access = client.put(
+        "/api/r3akt/rights/mission-access",
+        json={
+            "mission_uid": mission_uid,
+            "subject_type": "team_member",
+            "subject_id": "member-1",
+            "assigned_by": "admin",
+        },
+        headers=headers,
+    )
+    assert mission_access.status_code == 200
+    assert mission_access.json()["role"] == "MISSION_SUBSCRIBER"
+    mission_access_list = client.get(
+        "/api/r3akt/rights/mission-access",
+        params={"mission_uid": mission_uid},
+        headers=headers,
+    )
+    assert mission_access_list.status_code == 200
+    assert mission_access_list.json()[0]["subject_id"] == "member-1"
+
+    operation_grant = client.put(
+        "/api/r3akt/rights/grants",
+        json={
+            "subject_type": "team_member",
+            "subject_id": "member-1",
+            "operation": "topic.delete",
+            "scope_type": "mission",
+            "scope_id": mission_uid,
+            "granted_by": "admin",
+        },
+        headers=headers,
+    )
+    assert operation_grant.status_code == 200
+    rights_grants = client.get(
+        "/api/r3akt/rights/grants",
+        params={
+            "subject_type": "team_member",
+            "subject_id": "member-1",
+            "scope_type": "mission",
+            "scope_id": mission_uid,
+        },
+        headers=headers,
+    )
+    assert rights_grants.status_code == 200
+    assert any(item["operation"] == "topic.delete" for item in rights_grants.json())
+
+    operation_revoke = client.request(
+        "DELETE",
+        "/api/r3akt/rights/grants",
+        json={
+            "subject_type": "team_member",
+            "subject_id": "member-1",
+            "operation": "topic.delete",
+            "scope_type": "mission",
+            "scope_id": mission_uid,
+            "granted_by": "admin",
+        },
+        headers=headers,
+    )
+    assert operation_revoke.status_code == 200
+
     asset_invalid = client.post(
         "/api/r3akt/assets",
         json={
@@ -969,6 +1043,17 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         headers=headers,
     )
     assert member_client_unlink.status_code == 200
+    mission_access_delete = client.request(
+        "DELETE",
+        "/api/r3akt/rights/mission-access",
+        json={
+            "mission_uid": mission_uid,
+            "subject_type": "team_member",
+            "subject_id": "member-1",
+        },
+        headers=headers,
+    )
+    assert mission_access_delete.status_code == 200
     team_unlink_second = client.delete(
         "/api/r3akt/teams/team-1/missions/mission-parent",
         headers=headers,

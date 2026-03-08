@@ -8,13 +8,16 @@ from typing import Any
 from typing import Callable
 
 _OFFER_RESPONSE_PATCHED = "__rch_offer_response_patched__"
+_GENERATE_STAMP_PATCHED = "__rch_generate_stamp_patched__"
 
 
 def apply_lxmf_runtime_patches() -> None:
     """Patch external LXMF runtime behavior required by the hub."""
 
     lxmpeer_module = importlib.import_module("LXMF.LXMPeer")
+    lxstamper_module = importlib.import_module("LXMF.LXStamper")
     _patch_offer_response_class(lxmpeer_module.LXMPeer)
+    _patch_generate_stamp_function(lxstamper_module)
 
 
 def _patch_offer_response_class(peer_class: type[Any]) -> None:
@@ -107,3 +110,86 @@ def _abort_sync_offer(peer: Any, message: str) -> None:
 
     peer.link = None
     peer.state = getattr(peer.__class__, "IDLE", getattr(peer, "state", None))
+
+
+def _patch_generate_stamp_function(lxstamper_module: Any) -> None:
+    """Wrap ``generate_stamp`` so zero-duration timings do not crash worker threads."""
+
+    generate_stamp = getattr(lxstamper_module, "generate_stamp", None)
+    if not callable(generate_stamp):
+        return
+
+    if getattr(generate_stamp, _GENERATE_STAMP_PATCHED, False):
+        return
+
+    patched_generate_stamp = _build_generate_stamp_wrapper(lxstamper_module, generate_stamp)
+    setattr(patched_generate_stamp, _GENERATE_STAMP_PATCHED, True)
+    setattr(lxstamper_module, "generate_stamp", patched_generate_stamp)
+
+
+def _build_generate_stamp_wrapper(
+    lxstamper_module: Any,
+    original_generate_stamp: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Build a wrapper around LXMF ``generate_stamp`` with safe speed calculation."""
+
+    @wraps(original_generate_stamp)
+    def patched_generate_stamp(
+        message_id: bytes,
+        stamp_cost: int,
+        expand_rounds: int | None = None,
+    ) -> tuple[Any, int]:
+        import time
+
+        import RNS
+
+        effective_expand_rounds = (
+            getattr(lxstamper_module, "WORKBLOCK_EXPAND_ROUNDS")
+            if expand_rounds is None
+            else expand_rounds
+        )
+
+        RNS.log(
+            f"Generating stamp with cost {stamp_cost} for {RNS.prettyhexrep(message_id)}...",
+            RNS.LOG_DEBUG,
+        )
+        workblock = lxstamper_module.stamp_workblock(
+            message_id,
+            expand_rounds=effective_expand_rounds,
+        )
+
+        start_time = time.time()
+        stamp = None
+        rounds = 0
+        value = 0
+
+        if RNS.vendor.platformutils.is_windows() or RNS.vendor.platformutils.is_darwin():
+            stamp, rounds = lxstamper_module.job_simple(stamp_cost, workblock, message_id)
+        elif RNS.vendor.platformutils.is_android():
+            stamp, rounds = lxstamper_module.job_android(stamp_cost, workblock, message_id)
+        else:
+            stamp, rounds = lxstamper_module.job_linux(stamp_cost, workblock, message_id)
+
+        duration = time.time() - start_time
+        speed = _safe_rounds_per_second(rounds, duration)
+        if stamp is not None:
+            value = lxstamper_module.stamp_value(workblock, stamp)
+
+        RNS.log(
+            "Stamp with value "
+            f"{value} generated in {RNS.prettytime(duration)}, {rounds} rounds, "
+            f"{int(speed)} rounds per second",
+            RNS.LOG_DEBUG,
+        )
+
+        return stamp, value
+
+    return patched_generate_stamp
+
+
+def _safe_rounds_per_second(rounds: int, duration: float) -> float:
+    """Return a non-throwing rounds-per-second value for LXMF stamp logging."""
+
+    if duration <= 0:
+        return 0.0
+    return rounds / duration

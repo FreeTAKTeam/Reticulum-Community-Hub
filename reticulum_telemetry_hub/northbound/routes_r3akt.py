@@ -34,6 +34,20 @@ def register_r3akt_routes(
             if item and item.strip()
         }
 
+    def _parse_iso_datetime(value: object) -> datetime | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="expires_at must be ISO-8601",
+            ) from exc
+
     @app.get("/api/r3akt/capabilities/{identity}", dependencies=[Depends(require_protected)])
     def get_identity_capabilities(identity: str) -> dict:
         return {
@@ -52,15 +66,7 @@ def register_r3akt_routes(
         expires_at = None
         if isinstance(payload, dict):
             granted_by = payload.get("granted_by")
-            expires_raw = payload.get("expires_at")
-            if isinstance(expires_raw, str) and expires_raw.strip():
-                try:
-                    expires_at = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
-                except ValueError as exc:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="expires_at must be ISO-8601",
-                    ) from exc
+            expires_at = _parse_iso_datetime(payload.get("expires_at"))
         try:
             return api.grant_identity_capability(
                 identity,
@@ -83,6 +89,105 @@ def register_r3akt_routes(
                 identity,
                 capability,
                 granted_by=granted_by,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.get("/api/r3akt/rights/definitions", dependencies=[Depends(require_protected)])
+    def get_rights_definitions() -> dict:
+        return api.rights.operation_definitions()
+
+    @app.get("/api/r3akt/rights/subjects", dependencies=[Depends(require_protected)])
+    def list_rights_subjects(
+        mission_uid: str | None = Query(default=None),
+    ) -> list[dict]:
+        return api.list_team_member_subjects(mission_uid=mission_uid)
+
+    @app.get("/api/r3akt/rights/grants", dependencies=[Depends(require_protected)])
+    def list_operation_rights(
+        subject_type: str | None = Query(default=None),
+        subject_id: str | None = Query(default=None),
+        operation: str | None = Query(default=None),
+        scope_type: str | None = Query(default=None),
+        scope_id: str | None = Query(default=None),
+    ) -> list[dict]:
+        try:
+            return api.list_operation_rights(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                operation=operation,
+                scope_type=scope_type,
+                scope_id=scope_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.put("/api/r3akt/rights/grants", dependencies=[Depends(require_protected)])
+    def grant_operation_right(payload: dict = Body(default_factory=dict)) -> dict:
+        try:
+            return api.grant_operation_right(
+                str(payload.get("subject_type") or ""),
+                str(payload.get("subject_id") or ""),
+                str(payload.get("operation") or ""),
+                scope_type=payload.get("scope_type"),
+                scope_id=payload.get("scope_id"),
+                granted_by=payload.get("granted_by"),
+                expires_at=_parse_iso_datetime(payload.get("expires_at")),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.delete("/api/r3akt/rights/grants", dependencies=[Depends(require_protected)])
+    def revoke_operation_right(payload: dict = Body(default_factory=dict)) -> dict:
+        try:
+            return api.revoke_operation_right(
+                str(payload.get("subject_type") or ""),
+                str(payload.get("subject_id") or ""),
+                str(payload.get("operation") or ""),
+                scope_type=payload.get("scope_type"),
+                scope_id=payload.get("scope_id"),
+                granted_by=payload.get("granted_by"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.get("/api/r3akt/rights/mission-access", dependencies=[Depends(require_protected)])
+    def list_mission_access_assignments(
+        mission_uid: str | None = Query(default=None),
+        subject_type: str | None = Query(default=None),
+        subject_id: str | None = Query(default=None),
+    ) -> list[dict]:
+        try:
+            return api.list_mission_access_assignments(
+                mission_uid=mission_uid,
+                subject_type=subject_type,
+                subject_id=subject_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.put("/api/r3akt/rights/mission-access", dependencies=[Depends(require_protected)])
+    def assign_mission_access_role(payload: dict = Body(default_factory=dict)) -> dict:
+        try:
+            return api.assign_mission_access_role(
+                str(payload.get("mission_uid") or ""),
+                str(payload.get("subject_type") or ""),
+                str(payload.get("subject_id") or ""),
+                role=payload.get("role"),
+                assigned_by=payload.get("assigned_by"),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.delete("/api/r3akt/rights/mission-access", dependencies=[Depends(require_protected)])
+    def revoke_mission_access_role(payload: dict = Body(default_factory=dict)) -> dict:
+        try:
+            return api.revoke_mission_access_role(
+                str(payload.get("mission_uid") or ""),
+                str(payload.get("subject_type") or ""),
+                str(payload.get("subject_id") or ""),
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

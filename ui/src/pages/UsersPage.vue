@@ -44,6 +44,11 @@
               <span class="tree-label">Team Members</span>
               <span class="tree-count">{{ teamMemberRecords.length }}</span>
             </button>
+            <button class="tree-item" :class="{ active: activeTab === 'rights' }" type="button" @click="activeTab = 'rights'">
+              <span class="tree-dot" aria-hidden="true"></span>
+              <span class="tree-label">Rights</span>
+              <span class="tree-count">{{ teamMemberRecords.length }}</span>
+            </button>
           </div>
 
           <div v-if="activeTab === 'clients'" class="tree-search">
@@ -57,6 +62,9 @@
           </div>
           <div v-else-if="activeTab === 'team-members'" class="tree-search">
             <input v-model="teamMemberFilter" type="text" placeholder="Filter members by callsign/identity" />
+          </div>
+          <div v-else-if="activeTab === 'rights'" class="tree-note">
+            Team, mission scope, and operation filters are managed in the rights matrix panel.
           </div>
           <div v-else class="tree-note">
             Routing snapshot loads automatically when this tab is opened.
@@ -89,6 +97,9 @@
                 @click="activeTab = 'team-members'"
               >
                 Team Members
+              </button>
+              <button class="panel-tab" :class="{ active: activeTab === 'rights' }" type="button" @click="activeTab = 'rights'">
+                Rights
               </button>
             </div>
           </div>
@@ -287,6 +298,12 @@
                 </table>
               </div>
             </div>
+            <TeamRightsMatrixPanel
+              v-else-if="activeTab === 'rights'"
+              :teams="teamRecords"
+              :team-members="teamMemberRecords"
+              :missions="missionRecords"
+            />
           </div>
 
           <div class="panel-actions">
@@ -403,9 +420,13 @@ import BaseModal from "../components/BaseModal.vue";
 import BasePagination from "../components/BasePagination.vue";
 import BaseSelect from "../components/BaseSelect.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
+import TeamRightsMatrixPanel from "../components/users/TeamRightsMatrixPanel.vue";
 import type { ApiError } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import { del as deleteRequest, get, post, put } from "../api/client";
+import type { MissionRecord } from "../api/types";
+import type { TeamMemberRecord } from "../api/types";
+import type { TeamRecord } from "../api/types";
 import { useUsersStore } from "../stores/users";
 import { useToastStore } from "../stores/toasts";
 import { formatTimestamp } from "../utils/format";
@@ -413,42 +434,7 @@ import { clientPresenceTag } from "../utils/presence";
 import { resolveIdentityLabel, shortHash } from "../utils/identity";
 import { resolveTeamMemberPrimaryLabel } from "../utils/team-members";
 
-interface MissionRecord {
-  uid?: string;
-  mission_name?: string | null;
-}
-
-interface TeamRecord {
-  uid?: string;
-  mission_uid?: string | null;
-  mission_uids?: string[];
-  color?: string | null;
-  team_name?: string | null;
-  team_description?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
-
-interface TeamMemberRecord {
-  uid?: string;
-  team_uid?: string | null;
-  rns_identity?: string | null;
-  display_name?: string | null;
-  icon?: string | null;
-  role?: string | null;
-  callsign?: string | null;
-  freq?: number | null;
-  email?: string | null;
-  phone?: string | null;
-  modulation?: string | null;
-  availability?: string | null;
-  certifications?: string[];
-  client_identities?: string[];
-  created_at?: string | null;
-  updated_at?: string | null;
-}
-
-type ActiveTab = "clients" | "identities" | "routing" | "teams" | "team-members";
+type ActiveTab = "clients" | "identities" | "routing" | "teams" | "team-members" | "rights";
 
 const toStringList = (value: unknown): string[] =>
   Array.isArray(value)
@@ -554,6 +540,9 @@ const activeTabTitle = computed(() => {
   }
   if (activeTab.value === "team-members") {
     return "Team Members";
+  }
+  if (activeTab.value === "rights") {
+    return "Rights Matrix";
   }
   return "Routing";
 });
@@ -1392,6 +1381,7 @@ const applyNavigationIntent = () => {
     identities: "identities",
     routing: "routing",
     teams: "teams",
+    rights: "rights",
     "team-members": "team-members",
     teammembers: "team-members",
     members: "team-members"
@@ -1495,6 +1485,9 @@ watch(activeTab, (tab) => {
     if (!teamMemberRecords.value.length) {
       void loadTeamWorkspace();
     }
+  }
+  if (tab === "rights" && (!teamRecords.value.length || !teamMemberRecords.value.length)) {
+    void loadTeamWorkspace();
   }
 });
 

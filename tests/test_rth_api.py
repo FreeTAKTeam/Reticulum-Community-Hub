@@ -1,6 +1,7 @@
 import threading
 from datetime import datetime
 from datetime import timezone
+import uuid
 
 import pytest
 from sqlalchemy.exc import OperationalError
@@ -10,7 +11,9 @@ from reticulum_telemetry_hub.api import Subscriber
 from reticulum_telemetry_hub.api import Topic
 from reticulum_telemetry_hub.api.storage import TopicRecord
 from reticulum_telemetry_hub.api.storage_models import IdentityAnnounceRecord
+from reticulum_telemetry_hub.api.storage_models import IdentityCapabilityGrantRecord
 from reticulum_telemetry_hub.config import HubConfigurationManager
+from reticulum_telemetry_hub.mission_domain import MissionDomainService
 
 
 def make_config_manager(tmp_path):
@@ -448,6 +451,89 @@ def test_identity_capability_grants_round_trip(tmp_path):
     revoked = api.revoke_identity_capability("deadbeef", "mission.join")
     assert revoked["granted"] is False
     assert api.list_identity_capabilities("deadbeef") == []
+
+
+def test_subject_rights_backfill_legacy_identity_capabilities(tmp_path):
+    cfg = make_config_manager(tmp_path)
+    api = ReticulumTelemetryHubAPI(config_manager=cfg)
+
+    with api._storage._Session() as session:
+        session.add(
+            IdentityCapabilityGrantRecord(
+                grant_uid=uuid.uuid4().hex,
+                identity="legacy-peer",
+                capability="mission.join",
+                granted=True,
+            )
+        )
+        session.commit()
+
+    reloaded_api = ReticulumTelemetryHubAPI(config_manager=cfg)
+
+    assert reloaded_api.list_identity_capabilities("legacy-peer") == ["mission.join"]
+    grants = reloaded_api.list_capability_grants(identity="legacy-peer")
+    assert grants[0]["capability"] == "mission.join"
+
+
+def test_mission_access_roles_grant_effective_operations(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    domain = MissionDomainService(api._config_manager.config.hub_database_path)  # pylint: disable=protected-access
+
+    domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission One"})
+    domain.upsert_team({"uid": "team-1", "team_name": "Ops", "mission_uid": "mission-1"})
+    domain.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+        }
+    )
+
+    api.assign_mission_access_role(
+        "mission-1",
+        "team_member",
+        "member-1",
+        role="MISSION_SUBSCRIBER",
+    )
+
+    assert api.authorize("peer-a", "mission.message.send", mission_uid="mission-1") is True
+    assert api.authorize("peer-a", "topic.delete", mission_uid="mission-1") is False
+
+
+def test_explicit_revoke_overrides_mission_access_bundle(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    domain = MissionDomainService(api._config_manager.config.hub_database_path)  # pylint: disable=protected-access
+
+    domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission One"})
+    domain.upsert_team({"uid": "team-1", "team_name": "Ops", "mission_uid": "mission-1"})
+    domain.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-member",
+            "display_name": "Peer Member",
+        }
+    )
+    domain.link_team_member_client("member-1", "peer-client")
+
+    api.assign_mission_access_role(
+        "mission-1",
+        "team_member",
+        "member-1",
+        role="MISSION_SUBSCRIBER",
+    )
+    assert api.authorize("peer-client", "mission.message.send", mission_uid="mission-1") is True
+
+    api.revoke_operation_right(
+        "team_member",
+        "member-1",
+        "mission.message.send",
+        scope_type="mission",
+        scope_id="mission-1",
+    )
+
+    assert api.authorize("peer-client", "mission.message.send", mission_uid="mission-1") is False
 
 
 def test_create_topic_requires_fields(tmp_path):

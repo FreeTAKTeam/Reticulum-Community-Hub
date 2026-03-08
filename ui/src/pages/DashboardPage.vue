@@ -690,8 +690,8 @@ const sampleBrandTraceValue = (state: BrandTraceState, index: number) => {
   const position = index + state.travel;
   const baseIndex = Math.floor(position);
   const blend = position - baseIndex;
-  const current = baseIndex < state.values.length ? state.values[baseIndex] : state.incoming;
-  const next = baseIndex + 1 < state.values.length ? state.values[baseIndex + 1] : state.incoming;
+  const current = baseIndex >= 0 && baseIndex < state.values.length ? state.values[baseIndex] : state.incoming;
+  const next = baseIndex + 1 >= 0 && baseIndex + 1 < state.values.length ? state.values[baseIndex + 1] : state.incoming;
   return current + (next - current) * blend;
 };
 
@@ -722,7 +722,10 @@ const advanceBrandTrace = (deltaSeconds: number) => {
 };
 
 const animateBrandTrace = (timestamp: number) => {
-  const deltaSeconds = Math.min((timestamp - brandTraceLastFrameAt) / 1000, BRAND_TRACE_MAX_DELTA_SECONDS);
+  const deltaSeconds = Math.max(
+    0,
+    Math.min((timestamp - brandTraceLastFrameAt) / 1000, BRAND_TRACE_MAX_DELTA_SECONDS)
+  );
   brandTraceLastFrameAt = timestamp;
   advanceBrandTrace(deltaSeconds);
   renderBrandTrace();

@@ -10,6 +10,8 @@ from reticulum_telemetry_hub.mission_domain import MissionDomainService
 
 REQUIRED_PHASE2_TABLES = {
     "identity_capability_grants",
+    "subject_operation_grants",
+    "mission_access_assignments",
     "r3akt_missions",
     "r3akt_mission_changes",
     "r3akt_log_entries",

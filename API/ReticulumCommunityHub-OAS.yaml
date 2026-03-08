@@ -2393,6 +2393,196 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/R3aktCapabilityGrant'
+  /api/r3akt/rights/definitions:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List supported subject-aware rights definitions.
+      responses:
+        '200':
+          description: Rights definitions.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/r3akt/rights/subjects:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List team-member rights subjects.
+      parameters:
+        - name: mission_uid
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Assignable team-member subjects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+  /api/r3akt/rights/grants:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List explicit subject-aware grants.
+      parameters:
+        - name: subject_type
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: subject_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: operation
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: scope_type
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: scope_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Explicit rights list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Grant an explicit subject-aware right.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Explicit rights grant record.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Revoke an explicit subject-aware right.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Explicit rights revoke record.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/r3akt/rights/mission-access:
+    get:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: List mission access role assignments.
+      parameters:
+        - name: mission_uid
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: subject_type
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: subject_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Mission access role assignments.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+    put:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Assign a mission access role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Mission access assignment.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    delete:
+      x-scope: protected
+      tags:
+       - R3AKT
+      summary: Remove a mission access role assignment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Mission access deletion result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
   /File:
     get:
       x-scope: public

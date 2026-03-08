@@ -71,6 +71,86 @@ export interface ClientEntry {
   metadata?: Record<string, unknown>;
 }
 
+export interface MissionRecord {
+  uid?: string;
+  mission_name?: string | null;
+}
+
+export interface TeamRecord {
+  uid?: string;
+  mission_uid?: string | null;
+  mission_uids?: string[];
+  color?: string | null;
+  team_name?: string | null;
+  team_description?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface TeamMemberRecord {
+  uid?: string;
+  team_uid?: string | null;
+  rns_identity?: string | null;
+  display_name?: string | null;
+  icon?: string | null;
+  role?: string | null;
+  callsign?: string | null;
+  freq?: number | null;
+  email?: string | null;
+  phone?: string | null;
+  modulation?: string | null;
+  availability?: string | null;
+  certifications?: string[];
+  client_identities?: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface RightsDefinitions {
+  subject_types: string[];
+  scope_types: string[];
+  operations: string[];
+  mission_role_bundles: Record<string, string[]>;
+}
+
+export interface RightsSubjectRecord {
+  subject_type: string;
+  subject_id: string;
+  team_member_uid?: string | null;
+  rns_identity?: string | null;
+  display_name?: string | null;
+  team_uid?: string | null;
+  team_name?: string | null;
+  client_identities: string[];
+  mission_uids: string[];
+}
+
+export interface OperationRightGrantRecord {
+  grant_uid?: string;
+  subject_type: string;
+  subject_id: string;
+  operation: string;
+  scope_type: string;
+  scope_id?: string | null;
+  granted: boolean;
+  granted_by?: string | null;
+  granted_at?: string | null;
+  expires_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface MissionAccessAssignmentRecord {
+  assignment_uid?: string;
+  mission_uid: string;
+  subject_type: string;
+  subject_id: string;
+  role: string;
+  operations: string[];
+  assigned_by?: string | null;
+  assigned_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface TelemetryEntry {
   id?: string;
   identity_id?: string;

@@ -139,6 +139,44 @@ def test_mission_command_accepts_with_capability(tmp_path) -> None:
     assert event["event_type"] == "mission.joined"
 
 
+def test_mission_command_accepts_team_member_mission_access(tmp_path) -> None:
+    api, router, sent_messages, _log = _router(tmp_path)
+    domain = router._domain  # pylint: disable=protected-access
+    assert domain is not None
+
+    domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission One"})
+    domain.upsert_team({"uid": "team-1", "team_name": "Ops", "mission_uid": "mission-1"})
+    domain.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+        }
+    )
+    api.assign_mission_access_role(
+        "mission-1",
+        "team_member",
+        "member-1",
+        role="MISSION_SUBSCRIBER",
+    )
+
+    responses = router.handle_commands(
+        [
+            _command(
+                "mission.message.send",
+                {"content": "hello", "mission_uid": "mission-1"},
+                command_id="cmd-team-member-rights",
+            )
+        ],
+        source_identity="peer-a",
+    )
+
+    assert len(responses) == 2
+    assert _result(responses)["sent"] is True
+    assert sent_messages[-1] == ("hello", None, None)
+
+
 def test_mission_command_matrix_success_paths(tmp_path) -> None:
     api, router, sent_messages, event_log = _router(
         tmp_path,

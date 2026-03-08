@@ -118,6 +118,50 @@ def test_checklist_command_accepts_with_capability(tmp_path) -> None:
     assert event["event_type"] == "checklist.created"
 
 
+def test_checklist_command_accepts_linked_client_mission_access(tmp_path) -> None:
+    api, domain, router, _log = _router(tmp_path)
+
+    domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission One"})
+    domain.upsert_team({"uid": "team-1", "team_name": "Ops", "mission_uid": "mission-1"})
+    domain.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-member",
+            "display_name": "Peer Member",
+        }
+    )
+    domain.link_team_member_client("member-1", "peer-a")
+    checklist = domain.create_checklist_offline(
+        {
+            "name": "Mission Checklist",
+            "origin_type": "BLANK_TEMPLATE",
+            "source_identity": "peer-member",
+            "mission_uid": "mission-1",
+        }
+    )
+    api.assign_mission_access_role(
+        "mission-1",
+        "team_member",
+        "member-1",
+        role="MISSION_READONLY_SUBSCRIBER",
+    )
+
+    responses = router.handle_commands(
+        [
+            _command(
+                "checklist.get",
+                {"checklist_uid": checklist["uid"]},
+                command_id="cmd-linked-client-rights",
+            )
+        ],
+        source_identity="peer-a",
+    )
+
+    assert len(responses) == 2
+    assert _result(responses)["uid"] == checklist["uid"]
+
+
 def test_checklist_command_matrix_success_paths(tmp_path) -> None:
     api, _domain, router, event_log = _router(tmp_path, include_event_log=True)
     _grant_all_checklist_capabilities(api, "peer-a")

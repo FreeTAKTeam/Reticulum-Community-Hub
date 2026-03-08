@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
@@ -166,21 +167,7 @@ def register_internal_adapter(app: FastAPI, *, adapter: InternalAdapter) -> None
     async def stream_events(websocket: WebSocket) -> None:
         """Stream internal API events over WebSocket."""
 
-        await websocket.accept()
-        queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=32)
-
-        async def _handler(event) -> None:
-            await queue.put(event.model_dump(mode="json"))
-
-        unsubscribe = adapter.event_bus.subscribe(_handler)
-        try:
-            while True:
-                message = await queue.get()
-                await websocket.send_json(message)
-        except WebSocketDisconnect:
-            return
-        finally:
-            unsubscribe()
+        await handle_internal_event_socket(websocket, event_bus=adapter.event_bus)
 
     @router.get("/rch/announce-capabilities")
     async def get_announce_capabilities() -> dict:
@@ -313,3 +300,90 @@ def _utc_now() -> datetime:
     """Return the current UTC timestamp."""
 
     return datetime.now(timezone.utc)
+
+
+async def _cancel_task(task: asyncio.Task[object] | None) -> None:
+    """Cancel and await a background task."""
+
+    if task is None:
+        return
+
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        try:
+            await task
+        except WebSocketDisconnect:
+            return
+        except Exception:
+            return
+
+
+async def handle_internal_event_socket(
+    websocket: WebSocket,
+    *,
+    event_bus: EventBus,
+    queue_size: int = 32,
+) -> None:
+    """Stream internal API events while actively reaping disconnected clients.
+
+    Args:
+        websocket (WebSocket): Connected WebSocket instance.
+        event_bus (EventBus): Internal event bus subscription source.
+        queue_size (int): Maximum queued outbound events per client.
+    """
+
+    await websocket.accept()
+    queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=max(queue_size, 1))
+    overflow_logged = False
+
+    def _handler(event) -> None:
+        """Queue a serialized event without blocking the shared event bus."""
+
+        nonlocal overflow_logged
+
+        try:
+            queue.put_nowait(event.model_dump(mode="json"))
+            overflow_logged = False
+        except asyncio.QueueFull:
+            if not overflow_logged:
+                _LOGGER.warning("Dropping internal adapter websocket events for a slow client")
+                overflow_logged = True
+
+    unsubscribe = event_bus.subscribe(_handler)
+    queue_task: asyncio.Task[dict] | None = asyncio.create_task(queue.get())
+    receive_task: asyncio.Task[str] | None = asyncio.create_task(websocket.receive_text())
+
+    try:
+        while True:
+            pending_tasks = {task for task in (queue_task, receive_task) if task is not None}
+            done, _ = await asyncio.wait(pending_tasks, return_when=asyncio.FIRST_COMPLETED)
+
+            if receive_task in done:
+                try:
+                    receive_task.result()
+                except WebSocketDisconnect:
+                    return
+                except Exception:
+                    return
+                receive_task = asyncio.create_task(websocket.receive_text())
+
+            if queue_task in done:
+                try:
+                    message = queue_task.result()
+                except Exception:
+                    return
+
+                try:
+                    await websocket.send_json(message)
+                except WebSocketDisconnect:
+                    return
+                except Exception:
+                    return
+                finally:
+                    queue.task_done()
+
+                queue_task = asyncio.create_task(queue.get())
+    finally:
+        unsubscribe()
+        await _cancel_task(queue_task)
+        await _cancel_task(receive_task)
