@@ -2388,6 +2388,11 @@ class ReticulumTelemetryHub:
         ):
             caps.append("topic_broker")
             caps.append("group_chat")
+        if (
+            getattr(self, "mission_sync_router", None) is not None
+            and getattr(self, "checklist_sync_router", None) is not None
+        ):
+            caps.append("r3akt")
         if getattr(self, "tel_controller", None) is not None:
             caps.append("telemetry_relay")
         if getattr(self, "api", None) is not None:

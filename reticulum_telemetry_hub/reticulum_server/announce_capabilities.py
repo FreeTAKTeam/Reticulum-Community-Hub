@@ -22,6 +22,7 @@ CAPABILITY_SCHEMA = 1
 CAPABILITY_PRIORITY = [
     "topic_broker",
     "group_chat",
+    "r3akt",
     "telemetry_relay",
     "attachments",
     "tak_bridge",

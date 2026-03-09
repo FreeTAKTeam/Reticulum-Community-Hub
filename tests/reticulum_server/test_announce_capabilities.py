@@ -164,8 +164,27 @@ def test_send_announce_includes_capabilities(tmp_path):
         decoded_caps = encoder.decode(capability_payload)
         assert decoded_caps["app"] == "rch"
         assert decoded_caps["schema"] == 1
+        assert "r3akt" in decoded_caps["caps"]
     finally:
         hub.shutdown()
+
+
+
+
+def test_derive_announce_capabilities_only_advertises_r3akt_with_both_routers() -> None:
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    hub.command_manager = object()
+    hub.api = object()
+    hub.tel_controller = object()
+    hub.tak_connector = None
+    hub.mission_sync_router = object()
+    hub.checklist_sync_router = object()
+
+    assert "r3akt" in hub._derive_announce_capabilities()
+
+    hub.checklist_sync_router = None
+
+    assert "r3akt" not in hub._derive_announce_capabilities()
 
 
 def test_send_announce_emits_propagation_aspect_when_enabled(tmp_path):
