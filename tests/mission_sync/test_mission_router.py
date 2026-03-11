@@ -612,7 +612,6 @@ def test_mission_registry_command_paths(tmp_path) -> None:
                 "mission.registry.log_entry.upsert",
                 {
                     "entry_uid": "log-1",
-                    "mission_uid": "mission-1",
                     "content": "Log event",
                 },
                 command_id="cmd-registry-log-upsert",
@@ -621,18 +620,36 @@ def test_mission_registry_command_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert _result(log_entry_upsert)["entry_uid"] == "log-1"
+    assert _result(log_entry_upsert)["mission_uid"] == "mission-default"
+    assert _result(log_entry_upsert)["callsign"] == "Peer A"
 
     log_entry_list = router.handle_commands(
         [
             _command(
                 "mission.registry.log_entry.list",
-                {"mission_uid": "mission-1"},
+                {"mission_uid": "mission-default"},
                 command_id="cmd-registry-log-list",
             )
         ],
         source_identity="peer-a",
     )
     assert _result(log_entry_list)["log_entries"]
+
+    mission_log_entry_upsert = router.handle_commands(
+        [
+            _command(
+                "mission.registry.log_entry.upsert",
+                {
+                    "entry_uid": "log-2",
+                    "mission_uid": "mission-1",
+                    "content": "Mission 1 log event",
+                },
+                command_id="cmd-registry-log-upsert-mission-1",
+            )
+        ],
+        source_identity="peer-a",
+    )
+    assert _result(mission_log_entry_upsert)["mission_uid"] == "mission-1"
 
     team_upsert = router.handle_commands(
         [

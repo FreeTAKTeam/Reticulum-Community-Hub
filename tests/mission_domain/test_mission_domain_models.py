@@ -16,6 +16,7 @@ def test_domain_models_and_json_safe() -> None:
         mission_uid="m1",
         content="Marker observed",
         server_time=now,
+        callsign="EAGLE-1",
         client_time=now,
         content_hashes=["marker-1"],
         keywords=["marker", "observation"],
@@ -130,6 +131,7 @@ def test_domain_models_and_json_safe() -> None:
 
     assert mission.uid == "m1"
     assert change.mission_uid == "m1"
+    assert log_entry.callsign == "EAGLE-1"
     assert log_entry.content_hashes == ["marker-1"]
     assert team.team_name == "Alpha"
     assert member.display_name == "Peer A"

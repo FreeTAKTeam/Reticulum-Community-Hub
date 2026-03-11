@@ -1671,6 +1671,7 @@ paths:
       tags:
        - R3AKT
       summary: Create or update mission log entry.
+      description: When `mission_uid` is omitted for a new log entry, the hub associates it with the synthetic `Mission Default` mission.
       requestBody:
         required: true
         content:
@@ -4205,6 +4206,9 @@ components:
           type: string
         mission_uid:
           type: string
+        callsign:
+          type: string
+          nullable: true
         content:
           type: string
         server_time:
@@ -4238,6 +4242,35 @@ components:
     R3aktLogEntryUpsertRequest:
       type: object
       additionalProperties: true
+      properties:
+        entry_uid:
+          type: string
+        mission_uid:
+          type: string
+          nullable: true
+        callsign:
+          type: string
+          nullable: true
+        content:
+          type: string
+        server_time:
+          type: string
+          format: date-time
+          nullable: true
+        client_time:
+          type: string
+          format: date-time
+          nullable: true
+        content_hashes:
+          type: array
+          items:
+            type: string
+        keywords:
+          type: array
+          items:
+            type: string
+      required:
+        - content
     R3aktTeam:
       type: object
       properties:

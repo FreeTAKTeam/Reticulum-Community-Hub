@@ -853,6 +853,7 @@ interface MissionChangeRaw {
 interface LogEntryRaw {
   entry_uid?: string;
   mission_uid?: string | null;
+  callsign?: string | null;
   content?: string | null;
   server_time?: string | null;
   client_time?: string | null;
@@ -2760,6 +2761,7 @@ const missionAudit = computed<AuditEvent[]>(() => {
           source: "log_entry",
           entry_uid: entryUid || null,
           mission_uid: missionUid,
+          callsign: String(entry.callsign ?? "").trim() || null,
           content: content || null,
           server_time: serverTime || null,
           client_time: clientTime || null,

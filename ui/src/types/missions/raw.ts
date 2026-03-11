@@ -154,6 +154,7 @@ export interface MissionChangeRaw {
 export interface LogEntryRaw {
   entry_uid?: string;
   mission_uid?: string | null;
+  callsign?: string | null;
   content?: string | null;
   server_time?: string | null;
   client_time?: string | null;

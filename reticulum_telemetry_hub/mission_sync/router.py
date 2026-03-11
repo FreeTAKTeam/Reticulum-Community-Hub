@@ -17,6 +17,7 @@ from reticulum_telemetry_hub.api.models import ZonePoint
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.zone_service import ZoneService
+from reticulum_telemetry_hub.mission_domain.service import DEFAULT_LOG_MISSION_UID
 from reticulum_telemetry_hub.mission_domain.service import MissionDomainService
 from reticulum_telemetry_hub.mission_sync.capabilities import MISSION_COMMAND_CAPABILITIES
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandAccepted
@@ -448,7 +449,9 @@ class MissionSyncRouter:
                 return payload, "mission.registry.mission_change.listed", payload
             if command_type == "mission.registry.log_entry.upsert":
                 domain = self._require_domain_service()
-                updated = domain.upsert_log_entry(args)
+                payload = dict(args)
+                payload.setdefault("source_identity", source_identity)
+                updated = domain.upsert_log_entry(payload)
                 return updated, "mission.registry.log_entry.upserted", updated
             if command_type == "mission.registry.log_entry.list":
                 domain = self._require_domain_service()
@@ -868,6 +871,8 @@ class MissionSyncRouter:
         )
         if direct_mission_uid:
             mission_uids.add(direct_mission_uid)
+        elif command_type == "mission.registry.log_entry.upsert":
+            mission_uids.add(DEFAULT_LOG_MISSION_UID)
 
         topic_id = self._value_as_str(args.get("topic_id")) or self._value_as_str(args.get("id"))
         if topic_id:

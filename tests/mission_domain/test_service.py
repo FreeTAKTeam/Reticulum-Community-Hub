@@ -136,8 +136,10 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
     )
     assert service.list_mission_changes(mission_uid="mission-1")[0]["uid"] == change["uid"]
 
-    with pytest.raises(ValueError):
-        service.upsert_log_entry({"content": "Mission log without mission"})
+    default_log_entry = service.upsert_log_entry({"content": "Mission log without mission"})
+    assert default_log_entry["mission_uid"] == "mission-default"
+    default_mission = service.get_mission("mission-default")
+    assert default_mission["mission_name"] == "Mission Default"
 
     with service._session() as session:  # pylint: disable=protected-access
         session.add(
@@ -173,6 +175,7 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
         {
             "entry_uid": "log-1",
             "mission_uid": "mission-1",
+            "callsign": "EAGLE-1",
             "content": "Marker observed at waypoint",
             "server_time": datetime.now(timezone.utc).isoformat(),
             "client_time": datetime.now(timezone.utc).isoformat(),
@@ -181,6 +184,7 @@ def test_registry_domain_crud_and_filters(tmp_path) -> None:
         }
     )
     assert log_entry["entry_uid"] == "log-1"
+    assert log_entry["callsign"] == "EAGLE-1"
     assert log_entry["content_hashes"] == ["hash-1"]
     assert service.list_log_entries(mission_uid="mission-1")[0]["entry_uid"] == "log-1"
     assert service.list_log_entries(marker_ref="hash-1")[0]["entry_uid"] == "log-1"
@@ -655,6 +659,32 @@ def test_mission_delta_auto_emission_for_logs_assets_and_tasks(tmp_path) -> None
         "assignment_asset_linked",
         "assignment_asset_unlinked",
     } <= task_ops
+
+
+def test_upsert_log_entry_derives_callsign_from_source_identity(tmp_path) -> None:
+    service = _service(tmp_path)
+    service.upsert_mission({"uid": "mission-1", "mission_name": "Mission"})
+    service.upsert_team({"uid": "team-1", "mission_uid": "mission-1", "team_name": "Ops"})
+    service.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+            "callsign": "FALCON-2",
+        }
+    )
+
+    log_entry = service.upsert_log_entry(
+        {
+            "entry_uid": "log-derived",
+            "mission_uid": "mission-1",
+            "content": "Observed contact",
+            "source_identity": "peer-a",
+        }
+    )
+
+    assert log_entry["callsign"] == "FALCON-2"
 
 
 def test_checklist_task_mutations_without_mission_skip_mission_change(tmp_path) -> None:

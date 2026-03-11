@@ -118,6 +118,8 @@ MISSION_EXPAND_ALIASES = {
     "rde": "mission_rde",
     "all": "all",
 }
+DEFAULT_LOG_MISSION_UID = "mission-default"
+DEFAULT_LOG_MISSION_NAME = "Mission Default"
 
 
 def _utcnow() -> datetime:
@@ -200,6 +202,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         """Apply additive schema updates that SQLAlchemy ``create_all`` cannot handle."""
 
         self._ensure_mission_change_delta_column()
+        self._ensure_log_entry_callsign_column()
 
     def _ensure_mission_change_delta_column(self) -> None:
         """Ensure the mission-change ``delta`` JSON column exists for legacy databases."""
@@ -215,6 +218,22 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 return
             conn.exec_driver_sql(
                 "ALTER TABLE r3akt_mission_changes ADD COLUMN delta JSON;"
+            )
+
+    def _ensure_log_entry_callsign_column(self) -> None:
+        """Ensure legacy mission-log tables expose the log-author callsign column."""
+
+        with self._engine.connect().execution_options(
+            isolation_level="AUTOCOMMIT"
+        ) as conn:
+            rows = conn.exec_driver_sql(
+                "PRAGMA table_info(r3akt_log_entries);"
+            ).fetchall()
+            column_names = {str(row[1]) for row in rows if len(row) > 1}
+            if "callsign" in column_names:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE r3akt_log_entries ADD COLUMN callsign VARCHAR;"
             )
 
     def register_mission_change_listener(
@@ -360,6 +379,25 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
     def _ensure_mission_exists(session: Session, mission_uid: str) -> None:
         if session.get(R3aktMissionRecord, mission_uid) is None:
             raise ValueError(f"Mission '{mission_uid}' not found")
+
+    @staticmethod
+    def _ensure_default_log_mission(session: Session) -> str:
+        """Ensure the synthetic default mission exists for missionless log entries."""
+
+        mission = session.get(R3aktMissionRecord, DEFAULT_LOG_MISSION_UID)
+        if mission is None:
+            now = _utcnow()
+            mission = R3aktMissionRecord(
+                uid=DEFAULT_LOG_MISSION_UID,
+                mission_name=DEFAULT_LOG_MISSION_NAME,
+                description="Synthetic mission used for missionless log submissions.",
+                mission_status=MissionStatus.MISSION_ACTIVE.value,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(mission)
+            session.flush()
+        return str(mission.uid)
 
     @staticmethod
     def _ensure_team_exists(session: Session, team_uid: str) -> None:
@@ -1366,6 +1404,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         return {
             "entry_uid": row.entry_uid,
             "mission_uid": row.mission_uid,
+            "callsign": row.callsign,
             "content": row.content,
             "server_time": _dt(row.server_time),
             "client_time": _dt(row.client_time),
@@ -1375,15 +1414,47 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             "updated_at": _dt(row.updated_at),
         }
 
+    @staticmethod
+    def _team_member_callsign_for_identity(
+        session: Session, identity: str | None
+    ) -> str | None:
+        """Return a team-member callsign or display name for a known identity."""
+
+        normalized_identity = str(identity or "").strip().lower()
+        if not normalized_identity:
+            return None
+        row = (
+            session.query(
+                R3aktTeamMemberRecord.callsign,
+                R3aktTeamMemberRecord.display_name,
+            )
+            .filter(R3aktTeamMemberRecord.rns_identity == normalized_identity)
+            .first()
+        )
+        if row is None:
+            return None
+        callsign = str(row[0] or "").strip()
+        if callsign:
+            return callsign
+        display_name = str(row[1] or "").strip()
+        return display_name or None
+
     def upsert_log_entry(self, payload: dict[str, Any]) -> dict[str, Any]:
         uid = str(payload.get("entry_uid") or payload.get("uid") or uuid.uuid4().hex)
-        mission_uid = str(payload.get("mission_uid") or payload.get("mission_id") or "").strip()
-        if not mission_uid:
-            raise ValueError("mission_uid is required")
         raw_content = payload.get("content")
         with self._session() as session:
-            self._ensure_mission_exists(session, mission_uid)
             row = session.get(R3aktLogEntryRecord, uid)
+            raw_mission_uid = payload.get("mission_uid")
+            if raw_mission_uid is None:
+                raw_mission_uid = payload.get("mission_id")
+            if raw_mission_uid is None:
+                mission_uid = str(row.mission_uid or "").strip() if row is not None else ""
+            else:
+                mission_uid = str(raw_mission_uid or "").strip()
+            if mission_uid:
+                self._ensure_mission_exists(session, mission_uid)
+            else:
+                mission_uid = self._ensure_default_log_mission(session)
             if row is None:
                 content_text = str(raw_content or "").strip()
                 if not content_text:
@@ -1395,6 +1466,18 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 )
                 session.add(row)
             row.mission_uid = mission_uid
+            if any(key in payload for key in ("callsign", "author_callsign")):
+                raw_callsign = payload.get("callsign")
+                if raw_callsign is None:
+                    raw_callsign = payload.get("author_callsign")
+                callsign = str(raw_callsign or "").strip()
+                row.callsign = callsign or None
+            elif not str(row.callsign or "").strip():
+                row.callsign = self._team_member_callsign_for_identity(
+                    session,
+                    payload.get("source_identity")
+                    or payload.get("team_member_rns_identity"),
+                )
             if raw_content is not None:
                 content_text = str(raw_content).strip()
                 if not content_text:
@@ -1457,6 +1540,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 "op": "upsert",
                 "entry_uid": data["entry_uid"],
                 "mission_uid": data["mission_uid"],
+                "callsign": data["callsign"],
                 "content": data["content"],
                 "server_time": data["server_time"],
                 "client_time": data["client_time"],

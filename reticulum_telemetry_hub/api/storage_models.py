@@ -232,6 +232,7 @@ class R3aktLogEntryRecord(Base):  # pylint: disable=too-few-public-methods
 
     entry_uid = Column(String, primary_key=True)
     mission_uid = Column(String, nullable=False)
+    callsign = Column(String, nullable=True)
     content = Column(String, nullable=False)
     server_time = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     client_time = Column(DateTime(timezone=True), nullable=True)

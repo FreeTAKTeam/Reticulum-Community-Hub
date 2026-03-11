@@ -254,3 +254,54 @@ def test_mission_change_delta_column_is_added_for_legacy_table(tmp_path) -> None
     assert "delta" in columns
     assert row is not None
     assert row[0] == "legacy-change-1"
+
+
+def test_log_entry_callsign_column_is_added_for_legacy_table(tmp_path) -> None:
+    db_path = tmp_path / "legacy_log_entry.sqlite"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE r3akt_log_entries (
+                entry_uid TEXT PRIMARY KEY,
+                mission_uid TEXT NOT NULL,
+                content TEXT NOT NULL,
+                server_time TEXT,
+                client_time TEXT,
+                content_hashes TEXT,
+                keywords TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO r3akt_log_entries (
+                entry_uid, mission_uid, content, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-log-1",
+                "mission-legacy",
+                "Legacy log",
+                "2026-03-10T00:00:00+00:00",
+                "2026-03-10T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    MissionDomainService(db_path)
+
+    with sqlite3.connect(str(db_path)) as conn:
+        columns = [
+            row[1]
+            for row in conn.execute("PRAGMA table_info(r3akt_log_entries);").fetchall()
+        ]
+        row = conn.execute(
+            "SELECT entry_uid FROM r3akt_log_entries WHERE entry_uid = ?",
+            ("legacy-log-1",),
+        ).fetchone()
+
+    assert "callsign" in columns
+    assert row is not None
+    assert row[0] == "legacy-log-1"

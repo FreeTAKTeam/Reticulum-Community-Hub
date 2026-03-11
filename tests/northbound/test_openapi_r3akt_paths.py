@@ -161,3 +161,14 @@ def test_openapi_r3akt_mission_change_schema_includes_delta() -> None:
     assert "delta" in mission_change["properties"]
     assert mission_change["properties"]["delta"]["type"] == "object"
     assert "delta" in mission_change_request["properties"]
+
+
+def test_openapi_r3akt_log_entry_schema_includes_callsign_and_optional_mission() -> None:
+    schemas = _spec()["components"]["schemas"]
+    log_entry = schemas["R3aktLogEntry"]
+    log_entry_request = schemas["R3aktLogEntryUpsertRequest"]
+
+    assert "callsign" in log_entry["properties"]
+    assert log_entry["properties"]["callsign"]["type"] == "string"
+    assert "mission_uid" in log_entry_request["properties"]
+    assert log_entry_request["properties"]["mission_uid"]["nullable"] is True

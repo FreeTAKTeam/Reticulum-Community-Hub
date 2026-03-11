@@ -54,6 +54,7 @@ class LogEntry:
     mission_uid: str
     content: str
     server_time: datetime
+    callsign: str | None = None
     client_time: datetime | None = None
     content_hashes: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)

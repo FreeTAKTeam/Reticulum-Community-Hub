@@ -62,7 +62,11 @@
           </div>
 
           <form class="editor-form" @submit.prevent="saveLogEntry">
-            <BaseSelect v-model="editor.mission_uid" label="Mission" :options="missionSelectOptionsWithoutAll" />
+            <BaseSelect v-model="editor.mission_uid" label="Mission (optional)" :options="editorMissionOptions" />
+            <label class="field-control full">
+              <span>Author Callsign (optional)</span>
+              <input v-model="editor.callsign" type="text" maxlength="64" placeholder="EAGLE-1" />
+            </label>
             <label class="field-control full">
               <span>Keywords (comma separated)</span>
               <input v-model="editor.keywords" type="text" placeholder="ops,satcom,sitrep" />
@@ -128,6 +132,7 @@
               <p class="entry-content">{{ entry.content }}</p>
               <div class="entry-meta">
                 <span>ID: {{ entry.entry_uid }}</span>
+                <span v-if="entry.callsign">Callsign: {{ entry.callsign }}</span>
                 <span v-if="entry.keywords.length">Keywords: {{ entry.keywords.join(", ") }}</span>
               </div>
             </article>
@@ -170,6 +175,7 @@ interface MissionRaw {
 interface LogEntryRaw {
   entry_uid?: string;
   mission_uid?: string | null;
+  callsign?: string | null;
   content?: string | null;
   server_time?: string | null;
   client_time?: string | null;
@@ -188,6 +194,7 @@ interface DomainEventRaw {
 interface LogEntryView {
   entry_uid: string;
   mission_uid: string;
+  callsign: string;
   content: string;
   server_time: string;
   client_time: string;
@@ -233,6 +240,7 @@ function toNowDateTimeLocal(): string {
 const editor = ref({
   entry_uid: "",
   mission_uid: "",
+  callsign: "",
   content: "",
   keywords: "",
   client_time: toNowDateTimeLocal()
@@ -274,6 +282,10 @@ const missionSelectOptions = computed(() => {
 const missionSelectOptionsWithoutAll = computed(() =>
   missionSelectOptions.value.filter((entry) => entry.value.length > 0)
 );
+const editorMissionOptions = computed(() => [
+  { value: "", label: "Mission Default" },
+  ...missionSelectOptionsWithoutAll.value
+]);
 
 const selectedMissionLabel = computed(() => {
   if (!selectedMissionUid.value) {
@@ -293,6 +305,7 @@ const filteredLogEntries = computed<LogEntryView[]>(() => {
       return {
         entry_uid: uid,
         mission_uid: String(entry.mission_uid ?? "").trim(),
+        callsign: String(entry.callsign ?? "").trim(),
         content: String(entry.content ?? ""),
         server_time: String(entry.server_time ?? ""),
         client_time: String(entry.client_time ?? ""),
@@ -305,7 +318,7 @@ const filteredLogEntries = computed<LogEntryView[]>(() => {
       if (!search) {
         return true;
       }
-      return [entry.entry_uid, entry.content, entry.mission_uid, entry.keywords.join(" ")].join(" ").toLowerCase().includes(search);
+      return [entry.entry_uid, entry.callsign, entry.content, entry.mission_uid, entry.keywords.join(" ")].join(" ").toLowerCase().includes(search);
     })
     .sort((left, right) => {
       const leftTime = Date.parse(left.server_time || left.client_time || "");
@@ -374,7 +387,8 @@ const missionLabel = (missionUid: string) => missionByUid.value.get(missionUid) 
 const resetEditor = () => {
   editor.value = {
     entry_uid: "",
-    mission_uid: selectedMissionUid.value || missionSelectOptionsWithoutAll.value[0]?.value || "",
+    mission_uid: selectedMissionUid.value || "",
+    callsign: "",
     content: "",
     keywords: "",
     client_time: toNowDateTimeLocal()
@@ -385,6 +399,7 @@ const editEntry = (entry: LogEntryView) => {
   editor.value = {
     entry_uid: entry.entry_uid,
     mission_uid: entry.mission_uid,
+    callsign: entry.callsign,
     content: entry.content,
     keywords: entry.keywords.join(", "),
     client_time: toDateTimeLocal(entry.client_time || entry.server_time)
@@ -409,11 +424,8 @@ const toDateTimeLocal = (value?: string): string => {
 
 const saveLogEntry = async () => {
   const missionUid = editor.value.mission_uid.trim();
+  const callsign = editor.value.callsign.trim();
   const content = editor.value.content.trim();
-  if (!missionUid) {
-    toastStore.push("Select a mission before writing the log entry", "warning");
-    return;
-  }
   if (!content) {
     toastStore.push("Log content cannot be empty", "warning");
     return;
@@ -421,13 +433,18 @@ const saveLogEntry = async () => {
   submitting.value = true;
   try {
     const payload: Record<string, unknown> = {
-      mission_uid: missionUid,
       content,
       keywords: editor.value.keywords
         .split(",")
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0)
     };
+    if (missionUid) {
+      payload.mission_uid = missionUid;
+    }
+    if (callsign) {
+      payload.callsign = callsign;
+    }
     if (editor.value.entry_uid.trim()) {
       payload.entry_uid = editor.value.entry_uid.trim();
     }
@@ -452,6 +469,7 @@ const copyEntry = async (entry: LogEntryView) => {
         {
           entry_uid: entry.entry_uid,
           mission_uid: entry.mission_uid,
+          callsign: entry.callsign || null,
           server_time: entry.server_time,
           client_time: entry.client_time,
           keywords: entry.keywords,
@@ -488,7 +506,7 @@ const loadWorkspace = async () => {
     domainEvents.value = toArray<DomainEventRaw>(eventData);
     lastRefreshedAt.value = new Date().toISOString();
     if (!editor.value.mission_uid) {
-      editor.value.mission_uid = selectedMissionUid.value || missionSelectOptionsWithoutAll.value[0]?.value || "";
+      editor.value.mission_uid = selectedMissionUid.value || "";
     }
   } catch (error) {
     toastStore.push("Unable to load mission logs", "danger");
@@ -538,7 +556,7 @@ watch(selectedMissionUid, (missionUid) => {
     router.replace({ path: route.path, query: nextQuery }).catch(() => undefined);
   }
   if (!editor.value.entry_uid) {
-    editor.value.mission_uid = missionUid || missionSelectOptionsWithoutAll.value[0]?.value || "";
+    editor.value.mission_uid = missionUid || "";
   }
   loadWorkspace().catch(() => undefined);
 });
