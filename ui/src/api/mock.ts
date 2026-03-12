@@ -96,6 +96,90 @@ const mockState = {
       category: "system"
     }
   ],
+  r3aktMissions: [
+    {
+      uid: "mission-1",
+      mission_name: "Canadian Resistance",
+      description: "Mock mission workspace for UI verification.",
+      topic_id: "topic-1",
+      mission_status: "ACTIVE",
+      zones: ["zone-1"]
+    }
+  ],
+  r3aktMissionChanges: [],
+  r3aktLogEntries: [],
+  r3aktTeams: [
+    {
+      uid: "team-1",
+      mission_uid: "mission-1",
+      team_name: "ELIOPOLI",
+      team_description: "People that live here"
+    }
+  ],
+  r3aktTeamMembers: [
+    {
+      uid: "member-1",
+      team_uid: "team-1",
+      rns_identity: "member-1-rns",
+      display_name: "Silke",
+      callsign: "Silke",
+      role: "TEAM_MEMBER",
+      client_identities: ["web"]
+    },
+    {
+      uid: "member-2",
+      team_uid: "team-1",
+      rns_identity: "member-2-rns",
+      display_name: "Corvo Columba Pixel",
+      callsign: "Corvo Columba Pixel",
+      role: "TEAM_MEMBER",
+      client_identities: ["api"]
+    }
+  ],
+  r3aktAssets: [],
+  r3aktAssignments: [],
+  r3aktDomainEvents: [],
+  r3aktSkills: [
+    { skill_uid: "skill-1", name: "Medic" },
+    { skill_uid: "skill-2", name: "Signals" }
+  ],
+  r3aktTeamMemberSkills: [
+    { team_member_rns_identity: "member-1-rns", skill_uid: "skill-1", level: 2 },
+    { team_member_rns_identity: "member-2-rns", skill_uid: "skill-2", level: 1 }
+  ],
+  r3aktTaskSkillRequirements: [],
+  emergencyActionMessages: [
+    {
+      callsign: "Silke",
+      subjectType: "member",
+      subjectId: "member-1",
+      teamId: "team-1",
+      reportedAt: nowIso(),
+      overallStatus: "Yellow",
+      securityStatus: "Yellow",
+      capabilityStatus: "Unknown",
+      preparednessStatus: "Yellow",
+      medicalStatus: "Green",
+      mobilityStatus: "Green",
+      commsStatus: "Green"
+    },
+    {
+      callsign: "Corvo Columba Pixel",
+      subjectType: "member",
+      subjectId: "member-2",
+      teamId: "team-1",
+      reportedAt: nowIso(),
+      overallStatus: "Green",
+      securityStatus: "Green",
+      capabilityStatus: "Green",
+      preparednessStatus: "Green",
+      medicalStatus: "Green",
+      mobilityStatus: "Green",
+      commsStatus: "Green"
+    }
+  ],
+  checklists: [],
+  checklistTemplates: [],
   configText: "[core]\napp_name=RCH UI\n",
   reticulumConfigText:
     "[reticulum]\n" +
@@ -521,6 +605,99 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
 
   if (pathname === "/Telemetry") {
     return jsonResponse({ entries: mockState.telemetry });
+  }
+
+  if (pathname === "/checklists") {
+    return jsonResponse({ checklists: mockState.checklists });
+  }
+
+  if (pathname === "/checklists/templates") {
+    return jsonResponse({ templates: mockState.checklistTemplates });
+  }
+
+  if (pathname === "/api/r3akt/missions") {
+    return jsonResponse(mockState.r3aktMissions);
+  }
+
+  if (pathname === "/api/r3akt/mission-changes") {
+    return jsonResponse(mockState.r3aktMissionChanges);
+  }
+
+  if (pathname === "/api/r3akt/log-entries") {
+    return jsonResponse(mockState.r3aktLogEntries);
+  }
+
+  if (pathname === "/api/r3akt/teams") {
+    return jsonResponse(mockState.r3aktTeams);
+  }
+
+  if (pathname === "/api/r3akt/team-members") {
+    return jsonResponse(mockState.r3aktTeamMembers);
+  }
+
+  if (pathname === "/api/r3akt/assets") {
+    return jsonResponse(mockState.r3aktAssets);
+  }
+
+  if (pathname === "/api/r3akt/assignments") {
+    return jsonResponse(mockState.r3aktAssignments);
+  }
+
+  if (pathname === "/api/r3akt/events") {
+    return jsonResponse(mockState.r3aktDomainEvents);
+  }
+
+  if (pathname === "/api/r3akt/skills") {
+    return jsonResponse(mockState.r3aktSkills);
+  }
+
+  if (pathname === "/api/r3akt/team-member-skills") {
+    return jsonResponse(mockState.r3aktTeamMemberSkills);
+  }
+
+  if (pathname === "/api/r3akt/task-skill-requirements") {
+    return jsonResponse(mockState.r3aktTaskSkillRequirements);
+  }
+
+  if (pathname === "/api/EmergencyActionMessage") {
+    if (method === "GET") {
+      return jsonResponse(mockState.emergencyActionMessages);
+    }
+    if (method === "POST") {
+      const body = (await parseBody(options.body)) as Record<string, unknown>;
+      const subjectId = typeof body?.subjectId === "string" ? body.subjectId.trim() : "";
+      const callsign = typeof body?.callsign === "string" ? body.callsign.trim() : "";
+      if (!subjectId || !callsign) {
+        return jsonResponse({ detail: "subjectId and callsign are required" }, 400);
+      }
+      const nextRecord = {
+        ...body,
+        subjectType: "member",
+        subjectId,
+        callsign,
+        teamId: typeof body?.teamId === "string" ? body.teamId.trim() : "",
+        reportedAt: typeof body?.reportedAt === "string" ? body.reportedAt : nowIso(),
+        capabilityStatus:
+          typeof body?.capabilityStatus === "string"
+            ? body.capabilityStatus
+            : typeof body?.securityCapability === "string"
+              ? body.securityCapability
+              : "Unknown",
+        securityCapability:
+          typeof body?.capabilityStatus === "string"
+            ? body.capabilityStatus
+            : typeof body?.securityCapability === "string"
+              ? body.securityCapability
+              : "Unknown"
+      };
+      const existingIndex = mockState.emergencyActionMessages.findIndex((entry) => entry.subjectId === subjectId);
+      if (existingIndex >= 0) {
+        mockState.emergencyActionMessages.splice(existingIndex, 1, nextRecord);
+      } else {
+        mockState.emergencyActionMessages.push(nextRecord);
+      }
+      return jsonResponse(nextRecord);
+    }
   }
 
   if (pathname === "/api/markers") {

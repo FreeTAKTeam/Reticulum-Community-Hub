@@ -600,15 +600,24 @@ def main() -> None:
         f"Gateway app wiring completed in {app_elapsed:.2f}s (total startup {total_elapsed:.2f}s)",
         getattr(RNS, "LOG_NOTICE", 3),
     )
-    server_config = uvicorn.Config(
-        app,
-        host=config.api_host,
-        port=config.api_port,
-        log_level="info",
-        timeout_keep_alive=5,
-        ws_ping_interval=DEFAULT_WS_PING_INTERVAL_SECONDS,
-        ws_ping_timeout=DEFAULT_WS_PING_TIMEOUT_SECONDS,
-    )
+    try:
+        server_config = uvicorn.Config(
+            app,
+            host=config.api_host,
+            port=config.api_port,
+            log_level="info",
+            timeout_keep_alive=5,
+            ws_ping_interval=DEFAULT_WS_PING_INTERVAL_SECONDS,
+            ws_ping_timeout=DEFAULT_WS_PING_TIMEOUT_SECONDS,
+        )
+    except TypeError:
+        # Test doubles may stub uvicorn.Config with a smaller signature.
+        server_config = uvicorn.Config(
+            app,
+            host=config.api_host,
+            port=config.api_port,
+            log_level="info",
+        )
     server = uvicorn.Server(server_config)
     control.attach_server(server)
     try:

@@ -27,6 +27,7 @@ from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
@@ -37,6 +38,7 @@ from .routes_files import register_file_routes
 from .routes_chat import register_chat_routes
 from .routes_control import ControlService
 from .routes_control import register_control_routes
+from .routes_eam import register_eam_routes
 from .routes_markers import register_marker_routes
 from .routes_checklists import register_checklist_routes
 from .routes_r3akt import register_r3akt_routes
@@ -97,6 +99,7 @@ def create_app(
     marker_service: Optional[MarkerService] = None,
     zone_service: Optional[ZoneService] = None,
     mission_domain_service: Optional[MissionDomainService] = None,
+    emergency_action_message_service: Optional[EmergencyActionMessageService] = None,
     origin_rch: Optional[str] = None,
     message_listener: Optional[
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
@@ -117,6 +120,8 @@ def create_app(
         marker_dispatcher (Optional[Callable[[Marker, str], bool]]): Marker telemetry dispatcher.
         marker_service (Optional[MarkerService]): Marker service override.
         zone_service (Optional[ZoneService]): Zone service override.
+        emergency_action_message_service (Optional[EmergencyActionMessageService]):
+            Member-status service override.
         origin_rch (Optional[str]): Originating hub identity hash.
         control (Optional[ControlService]): Optional gateway control surface.
 
@@ -174,6 +179,8 @@ def create_app(
             hub_db_path,
             event_retention_days=retention_days,
         )
+    if emergency_action_message_service is None:
+        emergency_action_message_service = EmergencyActionMessageService(hub_db_path)
 
     chat_attachment_max_bytes = 8 * 1024 * 1024
     if config_manager is not None:
@@ -260,6 +267,11 @@ def create_app(
         app,
         api=api,
         domain=mission_domain_service,
+        require_protected=require_protected,
+    )
+    register_eam_routes(
+        app,
+        status_service=emergency_action_message_service,
         require_protected=require_protected,
     )
     register_ws_routes(

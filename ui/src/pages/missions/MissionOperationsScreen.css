@@ -23,6 +23,12 @@
   text-transform: uppercase;
 }
 
+.stage-card-copy {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: rgba(204, 248, 255, 0.72);
+}
+
 .stack-list {
   margin: 0;
   padding: 0;
@@ -49,6 +55,55 @@
 .stack-list li span {
   font-size: 11px;
   color: rgba(204, 248, 255, 0.8);
+}
+
+.stack-list-empty {
+  min-height: 96px;
+  align-content: center;
+}
+
+.stage-card-teams {
+  align-content: start;
+}
+
+.stack-list-teams {
+  gap: 10px;
+}
+
+.team-summary-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.team-summary-count,
+.status-board-badge {
+  border: 1px solid rgba(55, 242, 255, 0.26);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(221, 248, 255, 0.86);
+  background: rgba(8, 30, 48, 0.82);
+}
+
+.stage-card-status-board {
+  gap: 14px;
+}
+
+.status-board-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mission-member-status-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .cap-list {
@@ -135,6 +190,16 @@
 
 @media (max-width: 1200px) {
   .screen-grid.two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .status-board-header {
+    flex-direction: column;
+  }
+
+  .mission-member-status-grid {
     grid-template-columns: 1fr;
   }
 }

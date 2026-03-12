@@ -582,7 +582,8 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
         json={"entry_uid": "log-missing-mission", "content": "No mission"},
         headers=headers,
     )
-    assert log_missing_mission.status_code == 400
+    assert log_missing_mission.status_code == 200
+    assert log_missing_mission.json()["mission_uid"] == "mission-default"
 
     log_missing_marker = client.post(
         "/api/r3akt/log-entries",

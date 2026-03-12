@@ -11,6 +11,8 @@ rem   RTH_DAEMON       (default: 0)         [1 to enable daemon mode]
 rem   RTH_SERVICES     (default: empty)     comma-separated (e.g. tak_cot,gpsd)
 rem   RTH_API_HOST     (default: 127.0.0.1)
 rem   RTH_API_PORT     (default: 8000)
+rem   RTH_UI_HOST      (default: 127.0.0.1)
+rem   RTH_UI_PORT      (default: 5173)
 rem   VITE_RTH_BASE_URL (default: http://%RTH_API_HOST%:%RTH_API_PORT%)
 
 set "REPO_ROOT=%~dp0"
@@ -23,6 +25,8 @@ if not defined RTH_DAEMON set "RTH_DAEMON=0"
 if not defined RTH_SERVICES set "RTH_SERVICES="
 if not defined RTH_API_HOST set "RTH_API_HOST=127.0.0.1"
 if not defined RTH_API_PORT set "RTH_API_PORT=8000"
+if not defined RTH_UI_HOST set "RTH_UI_HOST=127.0.0.1"
+if not defined RTH_UI_PORT set "RTH_UI_PORT=5173"
 if not defined VITE_RTH_BASE_URL set "VITE_RTH_BASE_URL=http://%RTH_API_HOST%:%RTH_API_PORT%"
 
 rem --- Python venv ---------------------------------------------------------
@@ -85,13 +89,16 @@ for %%S in (!SERVICES_SPACED!) do (
 echo Starting hub + northbound API at http://%RTH_API_HOST%:%RTH_API_PORT%
 start "RTH Hub + API" /D "%REPO_ROOT%" cmd /k ""%PYTHON_EXE%" -m reticulum_telemetry_hub.northbound.gateway --storage_dir "%RTH_STORAGE_DIR%" --api-host %RTH_API_HOST% --api-port %RTH_API_PORT% !HUB_ARGS! !HUB_FLAGS!"
 
-echo Starting UI dev server at http://localhost:5173
-start "RTH UI" /D "%REPO_ROOT%ui" cmd /k "set \"VITE_RTH_BASE_URL=%VITE_RTH_BASE_URL%\" && npm run dev"
+call :find_open_ui_port
+if errorlevel 1 goto :fail
+
+echo Starting UI dev server at http://%RTH_UI_HOST%:%RTH_UI_PORT%
+start "RTH UI" /D "%REPO_ROOT%ui" cmd /k "set \"VITE_RTH_BASE_URL=%VITE_RTH_BASE_URL%\" && npm run dev -- --host %RTH_UI_HOST% --port %RTH_UI_PORT%"
 
 echo.
 echo Hub+API: storage=%RTH_STORAGE_DIR%  mode=%RTH_HUB_MODE%  daemon=%RTH_DAEMON%  services=%RTH_SERVICES%
 echo API: %VITE_RTH_BASE_URL%
-echo UI:  http://localhost:5173
+echo UI:  http://%RTH_UI_HOST%:%RTH_UI_PORT%
 echo.
 echo Close the spawned windows to stop.
 
@@ -117,3 +124,20 @@ exit /b 1
 :fail
 popd >nul
 exit /b 1
+
+:find_open_ui_port
+set "UI_PORT_CANDIDATE=%RTH_UI_PORT%"
+set /a UI_PORT_ATTEMPTS=0
+:find_open_ui_port_loop
+set /a UI_PORT_ATTEMPTS+=1
+if %UI_PORT_ATTEMPTS% GTR 25 (
+    echo Unable to find an open UI port starting from %RTH_UI_PORT%.
+    exit /b 1
+)
+netstat -ano -p tcp | findstr /R /C:":%UI_PORT_CANDIDATE% .*LISTENING" >nul
+if errorlevel 1 (
+    set "RTH_UI_PORT=%UI_PORT_CANDIDATE%"
+    exit /b 0
+)
+set /a UI_PORT_CANDIDATE+=1
+goto :find_open_ui_port_loop

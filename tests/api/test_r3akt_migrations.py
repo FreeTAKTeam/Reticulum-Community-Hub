@@ -5,6 +5,7 @@ import sqlite3
 
 from reticulum_telemetry_hub.api.models import Topic
 from reticulum_telemetry_hub.api.storage import HubStorage
+from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 
 
@@ -305,3 +306,14 @@ def test_log_entry_callsign_column_is_added_for_legacy_table(tmp_path) -> None:
     assert "callsign" in columns
     assert row is not None
     assert row[0] == "legacy-log-1"
+
+
+def test_eam_status_service_creates_status_table_idempotently(tmp_path) -> None:
+    db_path = tmp_path / "eam.sqlite"
+
+    EmergencyActionMessageService(db_path)
+    EmergencyActionMessageService(db_path)
+
+    tables = _list_tables(db_path)
+
+    assert "emergency_action_messages" in tables

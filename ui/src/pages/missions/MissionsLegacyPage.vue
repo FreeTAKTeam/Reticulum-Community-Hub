@@ -433,6 +433,7 @@
               :show-asset-area="showAssetArea"
               :mission-teams="missionTeams"
               :mission-members="missionMembers"
+              :pending-status-keys="pendingMemberStatusKeys"
               :mission-assets="missionAssets"
               :mission-assignments="missionAssignments"
               :zones="zones"
@@ -441,6 +442,7 @@
               :selected-mission-topic="selectedMission?.topic || ''"
               :preview-action="previewAction"
               :toggle-zone="toggleZone"
+              @cycle-status="cycleMissionMemberStatusValue"
             />
           </article>
         </section>
@@ -523,10 +525,15 @@ import MissionMemberAllocationModal from "./MissionMemberAllocationModal.vue";
 import MissionOperationsScreen from "./MissionOperationsScreen.vue";
 import MissionOverviewScreen from "./MissionOverviewScreen.vue";
 import MissionTeamAllocationModal from "./MissionTeamAllocationModal.vue";
+import type { EmergencyActionMessageRecord } from "./mission-member-status";
+import type { MissionMemberStatusKey } from "./mission-member-status";
+import { cycleMissionMemberStatus } from "./mission-member-status";
+import { deriveMissionMemberOverallStatus } from "./mission-member-status";
 import { getMissionStatusLabel } from "./mission-status";
 import { getMissionStatusTone } from "./mission-status";
 import { MISSION_STATUS_ENUM } from "./mission-status";
 import { normalizeMissionStatus } from "./mission-status";
+import { toMissionMemberStatusSummary } from "./mission-member-status";
 import { toMissionStatusValue } from "./mission-status";
 import { useChecklistTemplateDraft } from "../../composables/useChecklistTemplateDraft";
 import { useChecklistTemplateCrud } from "../../composables/useChecklistTemplateCrud";
@@ -648,8 +655,20 @@ interface Member {
   uid: string;
   mission_uid: string;
   callsign: string;
+  teamUid: string;
+  teamName: string;
   role: string;
   capabilities: string[];
+  overallStatus: "Green" | "Yellow" | "Red" | "Unknown";
+  securityStatus: "Green" | "Yellow" | "Red" | "Unknown";
+  capabilityStatus: "Green" | "Yellow" | "Red" | "Unknown";
+  preparednessStatus: "Green" | "Yellow" | "Red" | "Unknown";
+  medicalStatus: "Green" | "Yellow" | "Red" | "Unknown";
+  mobilityStatus: "Green" | "Yellow" | "Red" | "Unknown";
+  commsStatus: "Green" | "Yellow" | "Red" | "Unknown";
+  scorePercent: number;
+  reportedAt: string;
+  isExpired: boolean;
 }
 
 interface Asset {
@@ -1346,6 +1365,8 @@ const topicRecords = ref<TopicRaw[]>([]);
 const checklistRecords = ref<ChecklistRaw[]>([]);
 const teamRecords = ref<TeamRaw[]>([]);
 const memberRecords = ref<TeamMemberRaw[]>([]);
+const emergencyActionMessageRecords = ref<EmergencyActionMessageRecord[]>([]);
+const pendingMemberStatusKeys = ref<string[]>([]);
 const assetRecords = ref<AssetRaw[]>([]);
 const assignmentRecords = ref<AssignmentRaw[]>([]);
 const eventRecords = ref<DomainEventRaw[]>([]);
@@ -2453,6 +2474,19 @@ const teamNameByUid = computed(() => {
   return map;
 });
 
+const emergencyActionMessageBySubjectId = computed(() => {
+  const map = new Map<string, EmergencyActionMessageRecord>();
+  emergencyActionMessageRecords.value.forEach((entry) => {
+    const subjectId = String(entry.subjectId ?? "").trim();
+    const subjectType = String(entry.subjectType ?? "member").trim().toLowerCase();
+    if (!subjectId || subjectType !== "member") {
+      return;
+    }
+    map.set(subjectId, entry);
+  });
+  return map;
+});
+
 const teamAllocationExistingTeamOptions = computed(() => {
   const options = teams.value
     .filter((entry) => !missionTeamUidSet.value.has(entry.uid))
@@ -2542,15 +2576,100 @@ const missionMembers = computed<Member[]>(() => {
       const uid = String(entry.uid ?? "").trim();
       const identity = resolveTeamMemberIdentity(entry);
       const callsign = teamMemberPrimaryLabel(entry);
+      const teamUid = String(entry.team_uid ?? "").trim();
+      const teamName = (() => {
+        const resolvedTeamName = teamNameByUid.value.get(teamUid) ?? teamUid;
+        return resolvedTeamName || "Unassigned";
+      })();
+      const statusSummary = toMissionMemberStatusSummary(emergencyActionMessageBySubjectId.value.get(uid));
       return {
         uid,
         mission_uid: selectedMissionUid.value,
         callsign,
+        teamUid,
+        teamName,
         role: String(entry.role ?? "UNASSIGNED"),
-        capabilities: memberCapabilitiesByIdentity.value.get(normalizeIdentity(identity)) ?? []
+        capabilities: memberCapabilitiesByIdentity.value.get(normalizeIdentity(identity)) ?? [],
+        overallStatus: statusSummary.overallStatus,
+        securityStatus: statusSummary.securityStatus,
+        capabilityStatus: statusSummary.capabilityStatus,
+        preparednessStatus: statusSummary.preparednessStatus,
+        medicalStatus: statusSummary.medicalStatus,
+        mobilityStatus: statusSummary.mobilityStatus,
+        commsStatus: statusSummary.commsStatus,
+        scorePercent: statusSummary.scorePercent,
+        reportedAt: statusSummary.reportedAt,
+        isExpired: statusSummary.isExpired
       };
     });
 });
+
+const updatePendingMemberStatusKey = (entryKey: string, active: boolean) => {
+  const next = new Set(pendingMemberStatusKeys.value);
+  if (active) {
+    next.add(entryKey);
+  } else {
+    next.delete(entryKey);
+  }
+  pendingMemberStatusKeys.value = [...next];
+};
+
+const cycleMissionMemberStatusValue = async (memberUid: string, dimension: MissionMemberStatusKey) => {
+  const targetMember = missionMembers.value.find((entry) => entry.uid === memberUid);
+  if (!targetMember) {
+    toastStore.push("Unable to locate the selected team member.", "warning");
+    return;
+  }
+
+  const pendingKey = `${memberUid}:${dimension}`;
+  if (pendingMemberStatusKeys.value.includes(pendingKey)) {
+    return;
+  }
+
+  const currentRecord = emergencyActionMessageBySubjectId.value.get(memberUid);
+  const nextDimensions: Record<MissionMemberStatusKey, Member["overallStatus"]> = {
+    securityStatus: targetMember.securityStatus,
+    capabilityStatus: targetMember.capabilityStatus,
+    preparednessStatus: targetMember.preparednessStatus,
+    medicalStatus: targetMember.medicalStatus,
+    mobilityStatus: targetMember.mobilityStatus,
+    commsStatus: targetMember.commsStatus
+  };
+  nextDimensions[dimension] = cycleMissionMemberStatus(targetMember[dimension]);
+  const nextOverallStatus = deriveMissionMemberOverallStatus(Object.values(nextDimensions));
+
+  const payload: EmergencyActionMessageRecord = {
+    callsign: targetMember.callsign,
+    subjectType: "member",
+    subjectId: targetMember.uid,
+    teamId: targetMember.teamUid,
+    reportedBy: String(currentRecord?.reportedBy ?? DEFAULT_SOURCE_IDENTITY).trim() || DEFAULT_SOURCE_IDENTITY,
+    reportedAt: new Date().toISOString(),
+    notes: currentRecord?.notes ?? undefined,
+    confidence: Number.isFinite(Number(currentRecord?.confidence)) ? Number(currentRecord?.confidence) : undefined,
+    source: String(currentRecord?.source ?? "ui").trim() || "ui",
+    overallStatus: nextOverallStatus,
+    securityStatus: nextDimensions.securityStatus,
+    capabilityStatus: nextDimensions.capabilityStatus,
+    preparednessStatus: nextDimensions.preparednessStatus,
+    medicalStatus: nextDimensions.medicalStatus,
+    mobilityStatus: nextDimensions.mobilityStatus,
+    commsStatus: nextDimensions.commsStatus
+  };
+
+  updatePendingMemberStatusKey(pendingKey, true);
+  try {
+    const saved = await post<EmergencyActionMessageRecord>(endpoints.emergencyActionMessages, payload);
+    const nextRecords = emergencyActionMessageRecords.value.filter(
+      (entry) => String(entry.subjectId ?? "").trim() !== memberUid
+    );
+    emergencyActionMessageRecords.value = [...nextRecords, saved];
+  } catch (error) {
+    handleApiError(error, "Unable to update member status");
+  } finally {
+    updatePendingMemberStatusKey(pendingKey, false);
+  }
+};
 
 const missionAssignmentsRaw = computed(() =>
   assignmentRecords.value.filter((entry) => String(entry.mission_uid ?? "").trim() === selectedMissionUid.value)
@@ -3245,6 +3364,17 @@ const loadWorkspace = async () => {
       get<TaskSkillRequirementRaw[]>(endpoints.r3aktTaskSkillRequirements)
     ]);
 
+    let nextEmergencyActionMessageRecords: EmergencyActionMessageRecord[] = [];
+    try {
+      const emergencyActionMessageData = await get<EmergencyActionMessageRecord[]>(endpoints.emergencyActionMessages);
+      nextEmergencyActionMessageRecords = toArray<EmergencyActionMessageRecord>(emergencyActionMessageData);
+    } catch (error) {
+      const apiError = error as ApiError;
+      if (apiError?.status !== 404) {
+        handleApiError(error, "Member status refresh failed");
+      }
+    }
+
     missions.value = toArray<MissionRaw>(missionData)
       .map((entry) => {
         const uid = String(entry.uid ?? "").trim();
@@ -3284,6 +3414,7 @@ const loadWorkspace = async () => {
     templateRecords.value = toArray<TemplateRaw>(templatePayload.templates);
     teamRecords.value = toArray<TeamRaw>(teamData);
     memberRecords.value = toArray<TeamMemberRaw>(teamMemberData);
+    emergencyActionMessageRecords.value = nextEmergencyActionMessageRecords;
     assetRecords.value = toArray<AssetRaw>(assetData);
     assignmentRecords.value = toArray<AssignmentRaw>(assignmentData);
     eventRecords.value = toArray<DomainEventRaw>(eventData);

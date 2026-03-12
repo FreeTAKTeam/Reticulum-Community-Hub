@@ -66,7 +66,14 @@ from reticulum_telemetry_hub.config.manager import _expand_user_path
 from reticulum_telemetry_hub.config.models import HubAppConfig
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
-from reticulum_telemetry_hub.lxmf_runtime import apply_lxmf_runtime_patches
+import reticulum_telemetry_hub.lxmf_runtime  # noqa: F401
+from reticulum_telemetry_hub.config.constants import (
+    DEFAULT_ANNOUNCE_INTERVAL,
+    DEFAULT_HUB_TELEMETRY_INTERVAL,
+    DEFAULT_LOG_LEVEL_NAME,
+    DEFAULT_SERVICE_TELEMETRY_INTERVAL,
+    DEFAULT_STORAGE_PATH,
+)
 from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.reticulum_server.announce_capabilities import (
     AnnounceCapabilitiesConfig,
@@ -82,15 +89,20 @@ from reticulum_telemetry_hub.atak_cot.tak_connector import TakConnector
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
-
-apply_lxmf_runtime_patches()
 from reticulum_telemetry_hub.lxmf_telemetry.sampler import TelemetrySampler
 from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterManager
-from reticulum_telemetry_hub.reticulum_server.services import (
-    SERVICE_FACTORIES,
-    HubService,
-)
+from reticulum_telemetry_hub.mission_domain import MissionDomainService
+from reticulum_telemetry_hub.mission_sync import MissionSyncRouter
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
+from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
+from reticulum_telemetry_hub.reticulum_server.internal_adapter import ReticulumInternalAdapter
+from reticulum_telemetry_hub.reticulum_server.marker_objects import MarkerObjectManager
+from reticulum_telemetry_hub.reticulum_server.mission_delta_markdown import (
+    MissionDeltaNameResolver,
+    render_mission_delta_markdown,
+)
 from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
     OutboundPayload,
     OutboundMessageQueue,
@@ -104,28 +116,14 @@ from reticulum_telemetry_hub.reticulum_server.propagation_selection import (
 from reticulum_telemetry_hub.reticulum_server.propagation_selection import (
     PropagationNodeRegistry,
 )
-from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
-from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
-from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
-from reticulum_telemetry_hub.reticulum_server.internal_adapter import ReticulumInternalAdapter
-from reticulum_telemetry_hub.reticulum_server.marker_objects import MarkerObjectManager
-from reticulum_telemetry_hub.reticulum_server.mission_delta_markdown import (
-    MissionDeltaNameResolver,
-    render_mission_delta_markdown,
-)
-from reticulum_telemetry_hub.mission_domain import MissionDomainService
-from reticulum_telemetry_hub.mission_sync import MissionSyncRouter
 from reticulum_telemetry_hub.reticulum_server.runtime_events import (
     report_nonfatal_exception,
 )
-from .command_manager import CommandManager
-from reticulum_telemetry_hub.config.constants import (
-    DEFAULT_ANNOUNCE_INTERVAL,
-    DEFAULT_HUB_TELEMETRY_INTERVAL,
-    DEFAULT_LOG_LEVEL_NAME,
-    DEFAULT_SERVICE_TELEMETRY_INTERVAL,
-    DEFAULT_STORAGE_PATH,
+from reticulum_telemetry_hub.reticulum_server.services import (
+    SERVICE_FACTORIES,
+    HubService,
 )
+from .command_manager import CommandManager
 
 
 def _utcnow() -> datetime:

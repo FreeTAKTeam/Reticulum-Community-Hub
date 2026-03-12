@@ -1,4 +1,5 @@
 # TASKS
+- 2026-03-11: DONE. Add member-scoped `EmergencyActionMessage` status storage plus compatibility routes and team summary aggregation using worst-of semantics.
 - 2026-03-11: DONE. Extend R3AKT log entries to persist the author callsign and auto-associate missionless log submissions with the synthetic `Mission Default` mission.
 - 2026-03-08: DONE. Reap disconnected `/internal/events/stream` WebSocket clients so idle internal adapter sockets do not accumulate and exhaust the gateway file-descriptor limit.
 - 2026-03-07: DONE. Add a subject-aware rights service with mission-scoped role bundles, team-member subject discovery, mission/checklist authorization integration, compatibility capability wrappers, and protected R3AKT rights-management routes.

@@ -193,3 +193,6 @@ def _safe_rounds_per_second(rounds: int, duration: float) -> float:
     if duration <= 0:
         return 0.0
     return rounds / duration
+
+
+apply_lxmf_runtime_patches()

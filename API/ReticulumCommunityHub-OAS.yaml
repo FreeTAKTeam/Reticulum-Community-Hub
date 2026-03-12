@@ -56,6 +56,204 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/EmergencyActionMessage:
+    get:
+      x-scope: protected
+      tags:
+       - Status
+      summary: List member-scoped Emergency Action Message snapshots.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: teamId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: subjectType
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/SubjectType'
+        - name: overallStatus
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EAMStatus'
+      responses:
+        '200':
+          description: Status snapshot list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EmergencyActionMessage'
+    post:
+      x-scope: protected
+      tags:
+       - Status
+      summary: Create or update the current status snapshot for a team member.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmergencyActionMessageUpsertRequest'
+      responses:
+        '200':
+          description: Stored status snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmergencyActionMessage'
+  /api/EmergencyActionMessage/latest/{subjectType}/{subjectId}:
+    get:
+      x-scope: protected
+      tags:
+       - Status
+      summary: Retrieve the latest stored status snapshot for a subject.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: subjectType
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/SubjectType'
+        - name: subjectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Status snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmergencyActionMessage'
+        '404':
+          description: Status snapshot not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/EmergencyActionMessage/team/{teamId}/summary:
+    get:
+      x-scope: protected
+      tags:
+       - Status
+      summary: Compute the team-level aggregate from current member snapshots.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: teamId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Team status aggregate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamStatusSummary'
+        '404':
+          description: Team not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/EmergencyActionMessage/{callsign}:
+    get:
+      x-scope: protected
+      tags:
+       - Status
+      summary: Retrieve the current status snapshot for a callsign.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: callsign
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Status snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmergencyActionMessage'
+        '404':
+          description: Status snapshot not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      x-scope: protected
+      tags:
+       - Status
+      summary: Create or update the current status snapshot for a callsign.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: callsign
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmergencyActionMessageUpsertRequest'
+      responses:
+        '200':
+          description: Stored status snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmergencyActionMessage'
+    delete:
+      x-scope: protected
+      tags:
+       - Status
+      summary: Delete the current status snapshot for a callsign.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: callsign
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted status snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmergencyActionMessage'
+        '404':
+          description: Status snapshot not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/auth/validate:
     get:
       x-scope: protected
@@ -4271,6 +4469,198 @@ components:
             type: string
       required:
         - content
+    EAMStatus:
+      type: string
+      enum:
+        - Green
+        - Yellow
+        - Red
+        - Unknown
+    SubjectType:
+      type: string
+      enum:
+        - member
+    EmergencyActionMessage:
+      type: object
+      properties:
+        id:
+          type: string
+        callsign:
+          type: string
+        subjectType:
+          $ref: '#/components/schemas/SubjectType'
+        subjectId:
+          type: string
+        teamId:
+          type: string
+        reportedBy:
+          type: string
+          nullable: true
+        reportedAt:
+          type: string
+          format: date-time
+        overallStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        securityStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        capabilityStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        securityCapability:
+          allOf:
+            - $ref: '#/components/schemas/EAMStatus'
+          deprecated: true
+          description: Deprecated compatibility alias for capabilityStatus.
+        preparednessStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        medicalStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        mobilityStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        commsStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        notes:
+          type: string
+          nullable: true
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          nullable: true
+        ttlSeconds:
+          type: integer
+          minimum: 0
+          nullable: true
+        source:
+          type: string
+          nullable: true
+      required:
+        - id
+        - callsign
+        - subjectType
+        - subjectId
+        - teamId
+        - reportedAt
+        - overallStatus
+        - securityStatus
+        - capabilityStatus
+        - preparednessStatus
+        - medicalStatus
+        - mobilityStatus
+        - commsStatus
+    EmergencyActionMessageUpsertRequest:
+      type: object
+      properties:
+        callsign:
+          type: string
+        subjectType:
+          allOf:
+            - $ref: '#/components/schemas/SubjectType'
+          default: member
+        subjectId:
+          type: string
+        teamId:
+          type: string
+        reportedBy:
+          type: string
+          nullable: true
+        reportedAt:
+          type: string
+          format: date-time
+          nullable: true
+        securityStatus:
+          allOf:
+            - $ref: '#/components/schemas/EAMStatus'
+          default: Unknown
+        capabilityStatus:
+          allOf:
+            - $ref: '#/components/schemas/EAMStatus'
+          default: Unknown
+        securityCapability:
+          allOf:
+            - $ref: '#/components/schemas/EAMStatus'
+          deprecated: true
+          description: Deprecated compatibility alias for capabilityStatus.
+        preparednessStatus:
+          allOf:
+            - $ref: '#/components/schemas/EAMStatus'
+          default: Unknown
+        medicalStatus:
+          allOf:
+            - $ref: '#/components/schemas/EAMStatus'
+          default: Unknown
+        mobilityStatus:
+          allOf:
+            - $ref: '#/components/schemas/EAMStatus'
+          default: Unknown
+        commsStatus:
+          allOf:
+            - $ref: '#/components/schemas/EAMStatus'
+          default: Unknown
+        notes:
+          type: string
+          nullable: true
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          nullable: true
+        ttlSeconds:
+          type: integer
+          minimum: 0
+          nullable: true
+        source:
+          type: string
+          nullable: true
+      required:
+        - callsign
+        - subjectId
+        - teamId
+    TeamStatusSummary:
+      type: object
+      properties:
+        teamId:
+          type: string
+        computedAt:
+          type: string
+          format: date-time
+        overallStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        securityStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        capabilityStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        securityCapability:
+          allOf:
+            - $ref: '#/components/schemas/EAMStatus'
+          deprecated: true
+          description: Deprecated compatibility alias for capabilityStatus.
+        preparednessStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        medicalStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        mobilityStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        commsStatus:
+          $ref: '#/components/schemas/EAMStatus'
+        memberCount:
+          type: integer
+          minimum: 0
+        aggregationMethod:
+          type: string
+      required:
+        - teamId
+        - computedAt
+        - overallStatus
+        - securityStatus
+        - capabilityStatus
+        - preparednessStatus
+        - medicalStatus
+        - mobilityStatus
+        - commsStatus
+        - memberCount
+        - aggregationMethod
     R3aktTeam:
       type: object
       properties:

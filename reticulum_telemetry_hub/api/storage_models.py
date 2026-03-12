@@ -285,6 +285,39 @@ class R3aktTeamMemberRecord(Base):  # pylint: disable=too-few-public-methods
     )
 
 
+class EmergencyActionMessageRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for current team-member status snapshots."""
+
+    __tablename__ = "emergency_action_messages"
+    __table_args__ = (
+        UniqueConstraint("subject_type", "subject_id", name="uq_eam_subject"),
+        UniqueConstraint("callsign", name="uq_eam_callsign"),
+    )
+
+    id = Column(String, primary_key=True)
+    callsign = Column(String, nullable=False)
+    subject_type = Column(String, nullable=False)
+    subject_id = Column(String, nullable=False)
+    team_id = Column(String, nullable=False)
+    reported_by = Column(String, nullable=True)
+    reported_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    ttl_seconds = Column(Integer, nullable=True)
+    notes = Column(String, nullable=True)
+    confidence = Column(Float, nullable=True)
+    source = Column(String, nullable=True)
+    overall_status = Column(String, nullable=False, default="Unknown")
+    security_status = Column(String, nullable=False, default="Unknown")
+    capability_status = Column(String, nullable=False, default="Unknown")
+    preparedness_status = Column(String, nullable=False, default="Unknown")
+    medical_status = Column(String, nullable=False, default="Unknown")
+    mobility_status = Column(String, nullable=False, default="Unknown")
+    comms_status = Column(String, nullable=False, default="Unknown")
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
 class R3aktAssetRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for R3AKT assets."""
 
