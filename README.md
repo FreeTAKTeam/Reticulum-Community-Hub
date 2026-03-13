@@ -221,6 +221,8 @@ Marker management endpoints (used by the WebMap UI):
 - `docs/southbound.md` (LXMF southbound transport contract)
 - `API/ReticulumCommunityHub-OAS.yaml` (REST/OpenAPI reference)
 
+[![Ask DeepWiki about that!](https://deepwiki.com/badge.svg)](https://deepwiki.com/FreeTAKTeam/Reticulum-Community-Hub)
+
 ## Contributing
 
 We welcome and encourage contributions. Please include appropriate tests and follow the
