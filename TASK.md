@@ -1,4 +1,9 @@
 # TASKS
+- 2026-03-13: DONE. Add `subagents/runs/` to `.gitignore` so local subagent run artifacts are not tracked.
+- 2026-03-13: DONE. Merge `agent.md` into `AGENTS.md` and remove the redundant `agent.md` file.
+- 2026-03-13: DONE. Add a mission log southbound example and clarify that mission command/event payloads are JSON-compatible, not MessagePack-encoded.
+- 2026-03-13: DONE. Add mission-command and LXMF organization specifications to `docs/southbound.md`, including envelope, reply, event, and custom mission field rules.
+- 2026-03-13: DONE. Add Mermaid flowchart and sequence diagrams showing the mission log flow from the UI northbound route to the equivalent southbound mission-sync command path.
 - 2026-03-11: DONE. Add member-scoped `EmergencyActionMessage` status storage plus compatibility routes and team summary aggregation using worst-of semantics.
 - 2026-03-11: DONE. Extend R3AKT log entries to persist the author callsign and auto-associate missionless log submissions with the synthetic `Mission Default` mission.
 - 2026-03-08: DONE. Reap disconnected `/internal/events/stream` WebSocket clients so idle internal adapter sockets do not accumulate and exhaust the gateway file-descriptor limit.

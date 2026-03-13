@@ -45,6 +45,76 @@ transport-agnostic integrations.
   by `ZoneService` and persisted to the `zones` store for WebMap polygon
   overlays and mission-area awareness.
 
+## Mission Log Flow
+
+Mission log creation from the UI uses the northbound HTTP route
+`POST /api/r3akt/log-entries`. The southbound LXMF path accepts the equivalent
+`mission.registry.log_entry.upsert` command in `FIELD_COMMANDS`; both paths
+converge on the same mission-domain service and persistence/event pipeline.
+
+```mermaid
+flowchart LR
+  subgraph UI["Admin UI"]
+    page["`LogEntryObjectLegacyPage.vue`\nmission log editor"]
+    client["`post(endpoints.r3aktLogEntries, payload)`"]
+    page --> client
+  end
+
+  subgraph Northbound["Northbound HTTP"]
+    route["`POST /api/r3akt/log-entries`\n`routes_r3akt.upsert_log_entry()`"]
+  end
+
+  subgraph Domain["Shared Mission Domain"]
+    service["`MissionDomainService.upsert_log_entry(payload)`"]
+    store["Persist `R3aktLogEntryRecord`\nin `rth_api.sqlite`"]
+    event["Record domain event\n`mission.log_entry.upserted`"]
+    change["Emit synthetic mission change\n`MissionChangeType.ADD_CONTENT`"]
+    service --> store
+    service --> event
+    service --> change
+  end
+
+  subgraph Southbound["Southbound LXMF Equivalent"]
+    command["Inbound `FIELD_COMMANDS`\n`command_type: mission.registry.log_entry.upsert`\n`args: { mission_uid, callsign, content, ... }`"]
+    router["`MissionSyncRouter.handle_commands()`"]
+    reply["Reply via `FIELD_RESULTS`\n`mission.registry.log_entry.upserted`"]
+    command --> router --> service
+    service --> reply
+  end
+
+  client --> route --> service
+```
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Operator as UI Operator
+  participant UI as LogEntryObjectLegacyPage.vue
+  participant API as POST /api/r3akt/log-entries
+  participant Domain as MissionDomainService.upsert_log_entry
+  participant DB as rth_api.sqlite
+  participant Events as Domain event + mission change pipeline
+  participant LXMF as Southbound LXMF client
+  participant Router as MissionSyncRouter.handle_commands
+
+  Operator->>UI: Enter mission log content and submit
+  UI->>API: POST log-entry payload
+  API->>Domain: upsert_log_entry(payload)
+  Domain->>DB: Persist R3aktLogEntryRecord
+  Domain->>Events: Record mission.log_entry.upserted
+  Domain->>Events: Emit MissionChangeType.ADD_CONTENT
+  Domain-->>API: Return serialized log entry
+  API-->>UI: HTTP 200 log entry response
+
+  Note over LXMF,Router: Equivalent southbound mesh-native path
+  LXMF->>Router: FIELD_COMMANDS<br/>command_type=mission.registry.log_entry.upsert
+  Router->>Domain: upsert_log_entry(args + source_identity)
+  Domain->>DB: Persist R3aktLogEntryRecord
+  Domain->>Events: Record event and synthetic mission change
+  Domain-->>Router: Updated log entry
+  Router-->>LXMF: FIELD_RESULTS<br/>mission.registry.log_entry.upserted
+```
+
 ## DR-2 Structured SITREP Generation and Parsing
 
 RCH supports structured SITREP objects with:

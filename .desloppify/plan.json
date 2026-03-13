@@ -1,0 +1,1050 @@
+{
+  "version": 8,
+  "created": "2026-03-12T14:13:52+00:00",
+  "updated": "2026-03-12T14:13:52+00:00",
+  "queue_order": [
+    "subjective::abstraction_fitness",
+    "subjective::ai_generated_debt",
+    "subjective::api_surface_coherence",
+    "subjective::authorization_consistency",
+    "subjective::contract_coherence",
+    "subjective::convention_outlier",
+    "subjective::cross_module_architecture",
+    "subjective::dependency_health",
+    "subjective::design_coherence",
+    "subjective::error_consistency",
+    "subjective::high_level_elegance",
+    "subjective::incomplete_migration",
+    "subjective::initialization_coupling",
+    "subjective::logic_clarity",
+    "subjective::low_level_elegance",
+    "subjective::mid_level_elegance",
+    "subjective::naming_quality",
+    "subjective::package_organization",
+    "subjective::test_strategy",
+    "subjective::type_safety"
+  ],
+  "deferred": [],
+  "skipped": {},
+  "active_cluster": null,
+  "overrides": {
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::e:81": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::e:81",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::weight:515": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::weight:515",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::resource:718": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::resource:718",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::sys:2": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::sys:2",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1033": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1033",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1068": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1068",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1883": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1883",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1911": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1911",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::culled_peers:2804": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::culled_peers:2804",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::remote_timebase:3004": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::remote_timebase:3004",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::os:4": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::os:4",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::multiprocessing:7": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::multiprocessing:7",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::signature_validated:968": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::signature_validated:968",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::wb_time:35": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::wb_time:35",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::terminated:257": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::terminated:257",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::return_code:433": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::return_code:433",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::e:503": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::e:503",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::reticulum:519": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::reticulum:519",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::e:620": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::e:620",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::e:635": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::e:635",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::reticulum:1291": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::reticulum:1291",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/appearance.py::sqlalchemy.BLOB:1": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/appearance.py::sqlalchemy.BLOB:1",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::typing.Optional:2": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::typing.Optional:2",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::sqlalchemy.Column:3": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::sqlalchemy.Column:3",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::sqlalchemy.Integer:3": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::sqlalchemy.Integer:3",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::.telemeter.Telemeter:7": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::.telemeter.Telemeter:7",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/generic.py::.sensor_enum.SID_LXMF_PROPAGATION:16": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/generic.py::.sensor_enum.SID_LXMF_PROPAGATION:16",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/generic.py::.sensor_enum.SID_RNS_TRANSPORT:22": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/generic.py::.sensor_enum.SID_RNS_TRANSPORT:22",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py::sqlalchemy.Column:1": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py::sqlalchemy.Column:1",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py::sqlalchemy.Integer:8": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py::sqlalchemy.Integer:8",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::sqlalchemy.Column:3": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::sqlalchemy.Column:3",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::sqlalchemy.ForeignKey:3": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::sqlalchemy.ForeignKey:3",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::msgpack.packb:6": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::msgpack.packb:6",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::msgpack.unpackb:6": {
+      "issue_id": "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::msgpack.unpackb:6",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/api/filesystem.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/api/filesystem.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::untested_critical": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::untested_critical",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/reticulum_server/command_text.py::untested_critical": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/reticulum_server/command_text.py::untested_critical",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/atak_cot/event.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/atak_cot/event.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/northbound/routes_r3akt.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/northbound/routes_r3akt.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/northbound/routes_topics.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/northbound/routes_topics.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/lxmf_propagation.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/lxmf_propagation.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/battery.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/battery.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::untested_critical": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::untested_critical",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/pressure.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/pressure.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/sensor.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/sensor.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/humidity.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/humidity.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/atak_cot/base.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/atak_cot/base.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/magnetic_field.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/magnetic_field.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/ambient_light.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/ambient_light.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/generic.py::untested_critical": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/generic.py::untested_critical",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/angular_velocity.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/angular_velocity.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/connection_map.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/connection_map.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/proximity.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/proximity.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/temperature.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/temperature.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/api/marker_identity.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/api/marker_identity.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/northbound/routes_checklists.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/northbound/routes_checklists.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/atak_cot/detail.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/atak_cot/detail.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/northbound/routes_ws.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/northbound/routes_ws.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/api/storage_base.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/api/storage_base.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/gravity.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/gravity.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/reticulum_server/runtime_events.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/reticulum_server/runtime_events.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/sampler.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/sampler.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/information.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/information.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/northbound/routes_files.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/northbound/routes_files.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/rns_transport.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/rns_transport.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::untested_critical": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::untested_critical",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/acceleration.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/acceleration.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/northbound/routes_subscribers.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/northbound/routes_subscribers.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/received.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/received.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::untested_critical": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::untested_critical",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/api/rights_service.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/api/rights_service.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_daemon/Handlers.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_daemon/Handlers.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::untested_critical": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::untested_critical",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/physical_link.py::untested_module": {
+      "issue_id": "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/physical_link.py::untested_module",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/test_coverage",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/api/marker_identity.py::security::B110::reticulum_telemetry_hub/api/marker_identity.py::53": {
+      "issue_id": "security::reticulum_telemetry_hub/api/marker_identity.py::security::B110::reticulum_telemetry_hub/api/marker_identity.py::53",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/api/marker_service.py::security::B324::reticulum_telemetry_hub/api/marker_service.py::61": {
+      "issue_id": "security::reticulum_telemetry_hub/api/marker_service.py::security::B324::reticulum_telemetry_hub/api/marker_service.py::61",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/atak_cot/base.py::security::B405::reticulum_telemetry_hub/atak_cot/base.py::6": {
+      "issue_id": "security::reticulum_telemetry_hub/atak_cot/base.py::security::B405::reticulum_telemetry_hub/atak_cot/base.py::6",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/atak_cot/chat.py::security::B405::reticulum_telemetry_hub/atak_cot/chat.py::5": {
+      "issue_id": "security::reticulum_telemetry_hub/atak_cot/chat.py::security::B405::reticulum_telemetry_hub/atak_cot/chat.py::5",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/atak_cot/detail.py::security::B405::reticulum_telemetry_hub/atak_cot/detail.py::5": {
+      "issue_id": "security::reticulum_telemetry_hub/atak_cot/detail.py::security::B405::reticulum_telemetry_hub/atak_cot/detail.py::5",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/atak_cot/event.py::security::B405::reticulum_telemetry_hub/atak_cot/event.py::7": {
+      "issue_id": "security::reticulum_telemetry_hub/atak_cot/event.py::security::B405::reticulum_telemetry_hub/atak_cot/event.py::7",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/atak_cot/event.py::security::B314::reticulum_telemetry_hub/atak_cot/event.py::64": {
+      "issue_id": "security::reticulum_telemetry_hub/atak_cot/event.py::security::B314::reticulum_telemetry_hub/atak_cot/event.py::64",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/atak_cot/pytak_client.py::security::B405::reticulum_telemetry_hub/atak_cot/pytak_client.py::11": {
+      "issue_id": "security::reticulum_telemetry_hub/atak_cot/pytak_client.py::security::B405::reticulum_telemetry_hub/atak_cot/pytak_client.py::11",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/atak_cot/pytak_client.py::security::B110::reticulum_telemetry_hub/atak_cot/pytak_client.py::368": {
+      "issue_id": "security::reticulum_telemetry_hub/atak_cot/pytak_client.py::security::B110::reticulum_telemetry_hub/atak_cot/pytak_client.py::368",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/atak_cot/pytak_client.py::security::B110::reticulum_telemetry_hub/atak_cot/pytak_client.py::561": {
+      "issue_id": "security::reticulum_telemetry_hub/atak_cot/pytak_client.py::security::B110::reticulum_telemetry_hub/atak_cot/pytak_client.py::561",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/cli/rch.py::security::B404::reticulum_telemetry_hub/cli/rch.py::9": {
+      "issue_id": "security::reticulum_telemetry_hub/cli/rch.py::security::B404::reticulum_telemetry_hub/cli/rch.py::9",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/cli/rch.py::security::B603::reticulum_telemetry_hub/cli/rch.py::229": {
+      "issue_id": "security::reticulum_telemetry_hub/cli/rch.py::security::B603::reticulum_telemetry_hub/cli/rch.py::229",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/config/manager.py::security::B104::reticulum_telemetry_hub/config/manager.py::622": {
+      "issue_id": "security::reticulum_telemetry_hub/config/manager.py::security::B104::reticulum_telemetry_hub/config/manager.py::622",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/config/models.py::security::B104::reticulum_telemetry_hub/config/models.py::28": {
+      "issue_id": "security::reticulum_telemetry_hub/config/models.py::security::B104::reticulum_telemetry_hub/config/models.py::28",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::security::B110::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::2083": {
+      "issue_id": "security::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::security::B110::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::2083",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::security::B311::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::2923": {
+      "issue_id": "security::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::security::B311::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::2923",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::security::B110::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::305": {
+      "issue_id": "security::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::security::B110::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::305",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::security::B110::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::362": {
+      "issue_id": "security::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::security::B110::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::362",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::security::B404::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::36": {
+      "issue_id": "security::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::security::B404::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::36",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::security::B603::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::433": {
+      "issue_id": "security::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::security::B603::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::433",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py::security::B110::reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py::424": {
+      "issue_id": "security::reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py::security::B110::reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py::424",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/mission_domain/service.py::security::B112::reticulum_telemetry_hub/mission_domain/service.py::269": {
+      "issue_id": "security::reticulum_telemetry_hub/mission_domain/service.py::security::B112::reticulum_telemetry_hub/mission_domain/service.py::269",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/northbound/gateway.py::security::B104::reticulum_telemetry_hub/northbound/gateway.py::36": {
+      "issue_id": "security::reticulum_telemetry_hub/northbound/gateway.py::security::B104::reticulum_telemetry_hub/northbound/gateway.py::36",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/northbound/websocket.py::security::B110::reticulum_telemetry_hub/northbound/websocket.py::732": {
+      "issue_id": "security::reticulum_telemetry_hub/northbound/websocket.py::security::B110::reticulum_telemetry_hub/northbound/websocket.py::732",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/northbound/websocket.py::security::B110::reticulum_telemetry_hub/northbound/websocket.py::737": {
+      "issue_id": "security::reticulum_telemetry_hub/northbound/websocket.py::security::B110::reticulum_telemetry_hub/northbound/websocket.py::737",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/reticulum_server/__main__.py::security::B404::reticulum_telemetry_hub/reticulum_server/__main__.py::40": {
+      "issue_id": "security::reticulum_telemetry_hub/reticulum_server/__main__.py::security::B404::reticulum_telemetry_hub/reticulum_server/__main__.py::40",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/reticulum_server/__main__.py::security::B603::reticulum_telemetry_hub/reticulum_server/__main__.py::718": {
+      "issue_id": "security::reticulum_telemetry_hub/reticulum_server/__main__.py::security::B603::reticulum_telemetry_hub/reticulum_server/__main__.py::718",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/reticulum_server/__main__.py::security::B112::reticulum_telemetry_hub/reticulum_server/__main__.py::2882": {
+      "issue_id": "security::reticulum_telemetry_hub/reticulum_server/__main__.py::security::B112::reticulum_telemetry_hub/reticulum_server/__main__.py::2882",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::security::B112::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::404": {
+      "issue_id": "security::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::security::B112::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::404",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::security::B112::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::418": {
+      "issue_id": "security::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::security::B112::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::418",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/reticulum_server/event_log.py::security::B324::reticulum_telemetry_hub/reticulum_server/event_log.py::235": {
+      "issue_id": "security::reticulum_telemetry_hub/reticulum_server/event_log.py::security::B324::reticulum_telemetry_hub/reticulum_server/event_log.py::235",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/reticulum_server/event_log.py::security::B112::reticulum_telemetry_hub/reticulum_server/event_log.py::263": {
+      "issue_id": "security::reticulum_telemetry_hub/reticulum_server/event_log.py::security::B112::reticulum_telemetry_hub/reticulum_server/event_log.py::263",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "security::reticulum_telemetry_hub/reticulum_server/runtime_events.py::security::B110::reticulum_telemetry_hub/reticulum_server/runtime_events.py::39": {
+      "issue_id": "security::reticulum_telemetry_hub/reticulum_server/runtime_events.py::security::B110::reticulum_telemetry_hub/reticulum_server/runtime_events.py::39",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/security",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::abstraction_fitness": {
+      "issue_id": "subjective::abstraction_fitness",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::ai_generated_debt": {
+      "issue_id": "subjective::ai_generated_debt",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::api_surface_coherence": {
+      "issue_id": "subjective::api_surface_coherence",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::authorization_consistency": {
+      "issue_id": "subjective::authorization_consistency",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::contract_coherence": {
+      "issue_id": "subjective::contract_coherence",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::convention_outlier": {
+      "issue_id": "subjective::convention_outlier",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::cross_module_architecture": {
+      "issue_id": "subjective::cross_module_architecture",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::dependency_health": {
+      "issue_id": "subjective::dependency_health",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::design_coherence": {
+      "issue_id": "subjective::design_coherence",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::error_consistency": {
+      "issue_id": "subjective::error_consistency",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::high_level_elegance": {
+      "issue_id": "subjective::high_level_elegance",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::incomplete_migration": {
+      "issue_id": "subjective::incomplete_migration",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::initialization_coupling": {
+      "issue_id": "subjective::initialization_coupling",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::logic_clarity": {
+      "issue_id": "subjective::logic_clarity",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::low_level_elegance": {
+      "issue_id": "subjective::low_level_elegance",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::mid_level_elegance": {
+      "issue_id": "subjective::mid_level_elegance",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::naming_quality": {
+      "issue_id": "subjective::naming_quality",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::package_organization": {
+      "issue_id": "subjective::package_organization",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::test_strategy": {
+      "issue_id": "subjective::test_strategy",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    },
+    "subjective::type_safety": {
+      "issue_id": "subjective::type_safety",
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-12T14:13:52+00:00"
+    }
+  },
+  "clusters": {
+    "auto/unused": {
+      "name": "auto/unused",
+      "description": "Remove 34 unused issues",
+      "issue_ids": [
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::e:81",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::weight:515",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::resource:718",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::sys:2",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1033",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1068",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1883",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::e:1911",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::culled_peers:2804",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::remote_timebase:3004",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::os:4",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::multiprocessing:7",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::signature_validated:968",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::wb_time:35",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::terminated:257",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::return_code:433",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::e:503",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::reticulum:519",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::e:620",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::e:635",
+        "unused::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::reticulum:1291",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/appearance.py::sqlalchemy.BLOB:1",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::typing.Optional:2",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::sqlalchemy.Column:3",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::sqlalchemy.Integer:3",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/peer.py::.telemeter.Telemeter:7",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/generic.py::.sensor_enum.SID_LXMF_PROPAGATION:16",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/generic.py::.sensor_enum.SID_RNS_TRANSPORT:22",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py::sqlalchemy.Column:1",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py::sqlalchemy.Integer:8",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::sqlalchemy.Column:3",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::sqlalchemy.ForeignKey:3",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::msgpack.packb:6",
+        "unused::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/telemeter.py::msgpack.unpackb:6"
+      ],
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "updated_at": "2026-03-12T14:13:52+00:00",
+      "auto": true,
+      "cluster_key": "auto::unused",
+      "action": "desloppify autofix unused-imports --dry-run",
+      "user_modified": false
+    },
+    "auto/test_coverage": {
+      "name": "auto/test_coverage",
+      "description": "Fix 41 test coverage issues",
+      "issue_ids": [
+        "test_coverage::reticulum_telemetry_hub/api/filesystem.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::untested_critical",
+        "test_coverage::reticulum_telemetry_hub/reticulum_server/command_text.py::untested_critical",
+        "test_coverage::reticulum_telemetry_hub/atak_cot/event.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/northbound/routes_r3akt.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/northbound/routes_topics.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/lxmf_propagation.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/battery.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::untested_critical",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/pressure.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/sensor.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/humidity.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/atak_cot/base.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/magnetic_field.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/ambient_light.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/generic.py::untested_critical",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/angular_velocity.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/connection_map.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/proximity.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/temperature.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/api/marker_identity.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/northbound/routes_checklists.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/atak_cot/detail.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/northbound/routes_ws.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/api/storage_base.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/gravity.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/reticulum_server/runtime_events.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/sampler.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/information.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/northbound/routes_files.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/rns_transport.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::untested_critical",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/acceleration.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/northbound/routes_subscribers.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/location.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/received.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXMPeer.py::untested_critical",
+        "test_coverage::reticulum_telemetry_hub/api/rights_service.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_daemon/Handlers.py::untested_module",
+        "test_coverage::reticulum_telemetry_hub/lxmf_daemon/LXMessage.py::untested_critical",
+        "test_coverage::reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/physical_link.py::untested_module"
+      ],
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "updated_at": "2026-03-12T14:13:52+00:00",
+      "auto": true,
+      "cluster_key": "detector::test_coverage",
+      "action": "add tests for untested production modules \u2014 prioritize by import count",
+      "user_modified": false
+    },
+    "auto/security": {
+      "name": "auto/security",
+      "description": "Fix 33 security issues",
+      "issue_ids": [
+        "security::reticulum_telemetry_hub/api/marker_identity.py::security::B110::reticulum_telemetry_hub/api/marker_identity.py::53",
+        "security::reticulum_telemetry_hub/api/marker_service.py::security::B324::reticulum_telemetry_hub/api/marker_service.py::61",
+        "security::reticulum_telemetry_hub/atak_cot/base.py::security::B405::reticulum_telemetry_hub/atak_cot/base.py::6",
+        "security::reticulum_telemetry_hub/atak_cot/chat.py::security::B405::reticulum_telemetry_hub/atak_cot/chat.py::5",
+        "security::reticulum_telemetry_hub/atak_cot/detail.py::security::B405::reticulum_telemetry_hub/atak_cot/detail.py::5",
+        "security::reticulum_telemetry_hub/atak_cot/event.py::security::B405::reticulum_telemetry_hub/atak_cot/event.py::7",
+        "security::reticulum_telemetry_hub/atak_cot/event.py::security::B314::reticulum_telemetry_hub/atak_cot/event.py::64",
+        "security::reticulum_telemetry_hub/atak_cot/pytak_client.py::security::B405::reticulum_telemetry_hub/atak_cot/pytak_client.py::11",
+        "security::reticulum_telemetry_hub/atak_cot/pytak_client.py::security::B110::reticulum_telemetry_hub/atak_cot/pytak_client.py::368",
+        "security::reticulum_telemetry_hub/atak_cot/pytak_client.py::security::B110::reticulum_telemetry_hub/atak_cot/pytak_client.py::561",
+        "security::reticulum_telemetry_hub/cli/rch.py::security::B404::reticulum_telemetry_hub/cli/rch.py::9",
+        "security::reticulum_telemetry_hub/cli/rch.py::security::B603::reticulum_telemetry_hub/cli/rch.py::229",
+        "security::reticulum_telemetry_hub/config/manager.py::security::B104::reticulum_telemetry_hub/config/manager.py::622",
+        "security::reticulum_telemetry_hub/config/models.py::security::B104::reticulum_telemetry_hub/config/models.py::28",
+        "security::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::security::B110::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::2083",
+        "security::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::security::B311::reticulum_telemetry_hub/lxmf_daemon/LXMRouter.py::2923",
+        "security::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::security::B110::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::305",
+        "security::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::security::B110::reticulum_telemetry_hub/lxmf_daemon/LXStamper.py::362",
+        "security::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::security::B404::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::36",
+        "security::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::security::B603::reticulum_telemetry_hub/lxmf_daemon/lxmd.py::433",
+        "security::reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py::security::B110::reticulum_telemetry_hub/lxmf_telemetry/telemetry_controller.py::424",
+        "security::reticulum_telemetry_hub/mission_domain/service.py::security::B112::reticulum_telemetry_hub/mission_domain/service.py::269",
+        "security::reticulum_telemetry_hub/northbound/gateway.py::security::B104::reticulum_telemetry_hub/northbound/gateway.py::36",
+        "security::reticulum_telemetry_hub/northbound/websocket.py::security::B110::reticulum_telemetry_hub/northbound/websocket.py::732",
+        "security::reticulum_telemetry_hub/northbound/websocket.py::security::B110::reticulum_telemetry_hub/northbound/websocket.py::737",
+        "security::reticulum_telemetry_hub/reticulum_server/__main__.py::security::B404::reticulum_telemetry_hub/reticulum_server/__main__.py::40",
+        "security::reticulum_telemetry_hub/reticulum_server/__main__.py::security::B603::reticulum_telemetry_hub/reticulum_server/__main__.py::718",
+        "security::reticulum_telemetry_hub/reticulum_server/__main__.py::security::B112::reticulum_telemetry_hub/reticulum_server/__main__.py::2882",
+        "security::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::security::B112::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::404",
+        "security::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::security::B112::reticulum_telemetry_hub/reticulum_server/announce_capabilities.py::418",
+        "security::reticulum_telemetry_hub/reticulum_server/event_log.py::security::B324::reticulum_telemetry_hub/reticulum_server/event_log.py::235",
+        "security::reticulum_telemetry_hub/reticulum_server/event_log.py::security::B112::reticulum_telemetry_hub/reticulum_server/event_log.py::263",
+        "security::reticulum_telemetry_hub/reticulum_server/runtime_events.py::security::B110::reticulum_telemetry_hub/reticulum_server/runtime_events.py::39"
+      ],
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "updated_at": "2026-03-12T14:13:52+00:00",
+      "auto": true,
+      "cluster_key": "detector::security",
+      "action": "review and fix security issues \u2014 prioritize by severity",
+      "user_modified": false
+    },
+    "auto/initial-review": {
+      "name": "auto/initial-review",
+      "description": "Initial review of 20 unscored subjective dimensions",
+      "issue_ids": [
+        "subjective::abstraction_fitness",
+        "subjective::ai_generated_debt",
+        "subjective::api_surface_coherence",
+        "subjective::authorization_consistency",
+        "subjective::contract_coherence",
+        "subjective::convention_outlier",
+        "subjective::cross_module_architecture",
+        "subjective::dependency_health",
+        "subjective::design_coherence",
+        "subjective::error_consistency",
+        "subjective::high_level_elegance",
+        "subjective::incomplete_migration",
+        "subjective::initialization_coupling",
+        "subjective::logic_clarity",
+        "subjective::low_level_elegance",
+        "subjective::mid_level_elegance",
+        "subjective::naming_quality",
+        "subjective::package_organization",
+        "subjective::test_strategy",
+        "subjective::type_safety"
+      ],
+      "created_at": "2026-03-12T14:13:52+00:00",
+      "updated_at": "2026-03-12T14:13:52+00:00",
+      "auto": true,
+      "cluster_key": "subjective::unscored",
+      "action": "desloppify review --prepare --dimensions abstraction_fitness,ai_generated_debt,api_surface_coherence,authorization_consistency,contract_coherence,convention_outlier,cross_module_architecture,dependency_health,design_coherence,error_consistency,high_level_elegance,incomplete_migration,initialization_coupling,logic_clarity,low_level_elegance,mid_level_elegance,naming_quality,package_organization,test_strategy,type_safety",
+      "user_modified": false
+    }
+  },
+  "superseded": {},
+  "promoted_ids": [],
+  "plan_start_scores": {
+    "strict": 21.2,
+    "overall": 21.2,
+    "objective": 84.9,
+    "verified": 84.9
+  },
+  "refresh_state": {
+    "postflight_scan_completed_at_scan_count": 1,
+    "lifecycle_phase": "review"
+  },
+  "execution_log": [
+    {
+      "timestamp": "2026-03-12T14:13:52+00:00",
+      "action": "sync_subjective",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-12T14:13:52+00:00",
+      "action": "auto_cluster",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-12T14:13:52+00:00",
+      "action": "seed_start_scores",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {}
+    },
+    {
+      "timestamp": "2026-03-12T14:13:52+00:00",
+      "action": "complete_postflight_scan",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "scan_count": 1
+      }
+    },
+    {
+      "timestamp": "2026-03-12T14:13:52+00:00",
+      "action": "sync_lifecycle_phase",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "phase": "review"
+      }
+    }
+  ],
+  "epic_triage_meta": {},
+  "commit_log": [],
+  "uncommitted_issues": [],
+  "commit_tracking_branch": null,
+  "scan_count_at_plan_start": 1
+}

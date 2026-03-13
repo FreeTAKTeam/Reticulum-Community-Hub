@@ -6,6 +6,8 @@ lxmf_storage/
 telemetry.db
 RTH_Store/
 RCH_Store/
+.desloppify/subagents/runs/
+.desloppify/review_packets
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
