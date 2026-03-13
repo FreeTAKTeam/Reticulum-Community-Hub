@@ -269,7 +269,308 @@ Replies:
 This keeps the southbound response shape aligned with the rest of the hub:
 commands in through `FIELD_COMMANDS`, results out through `FIELD_RESULTS`.
 
+## Mission command specification
+
+Mission commands are the R3AKT southbound control-plane envelopes handled by
+`reticulum_telemetry_hub/mission_sync/router.py`.
+
+### Mission command envelope
+
+The LXMF `FIELD_COMMANDS` value is expected to be a list of mission envelope
+objects matching this schema:
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `command_id` | yes | string | Client-generated command identifier. If omitted or blank, the hub synthesizes one for rejection/error paths. |
+| `source.rns_identity` | yes | string | Must match the LXMF transport sender identity or the command is rejected as `unauthorized`. |
+| `timestamp` | yes | ISO-8601 datetime | Client-side command creation time. |
+| `command_type` | yes | string | Selects the mission operation. Values not starting with `checklist.` route to the mission-sync router. |
+| `args` | yes | object | Command-specific arguments. |
+| `correlation_id` | no | string | Optional client correlation token echoed into replies. |
+| `topics` | no | string array | Optional logical mission/event topics copied into emitted event envelopes. |
+
+Encoding rules:
+
+- Mission command envelopes are JSON-compatible objects.
+- Clients should send normal object/list values in `FIELD_COMMANDS`, not a
+  MessagePack blob.
+- The normative mission-sync contract declares `application/json` as the
+  content type.
+- This differs from telemetry payload fields, where packed sensor payloads are
+  MessagePack-encoded.
+
+Canonical example:
+
+```json
+[
+  {
+    "command_id": "cmd-123",
+    "source": {
+      "rns_identity": "<sender-identity>"
+    },
+    "timestamp": "2026-03-13T12:00:00Z",
+    "command_type": "mission.registry.log_entry.upsert",
+    "args": {
+      "mission_uid": "mission-1",
+      "content": "Operator note",
+      "callsign": "EAGLE-1"
+    },
+    "correlation_id": "ui-save-42",
+    "topics": ["mission-1", "audit"]
+  }
+]
+```
+
+### Routing and authorization rules
+
+- Commands with `command_type` beginning with `checklist.` are not mission
+  commands and are routed to `checklist_sync`.
+- All other `command_type` values in `FIELD_COMMANDS` are treated as
+  mission-sync commands.
+- The envelope source identity must match the transport-derived sender
+  identity.
+- Each `command_type` is capability-gated. Authorization is mission-aware when
+  the command payload carries a mission identifier.
+- Supported mission `command_type` values are enumerated in
+  [supportedCommands.md](supportedCommands.md) and in
+  `docs/architecture/asyncapi/r3akt-mission-sync-lxmf.asyncapi.yaml`.
+
+### Reply lifecycle
+
+Mission command replies are emitted as direct LXMF messages with body text
+`mission-sync`.
+
+Reply sequencing:
+
+- invalid payload or sender mismatch: one `rejected` reply only
+- authorized command accepted for execution: one `accepted` reply, then one
+  terminal `result` reply
+- accepted command that fails during execution: one `accepted` reply, then one
+  terminal `rejected` reply
+
+`FIELD_RESULTS` payload shapes:
+
+```json
+{
+  "command_id": "cmd-123",
+  "status": "accepted",
+  "accepted_at": "2026-03-13T12:00:01Z",
+  "correlation_id": "ui-save-42",
+  "by_identity": "<hub-identity>"
+}
+```
+
+```json
+{
+  "command_id": "cmd-123",
+  "status": "rejected",
+  "reason_code": "unauthorized",
+  "reason": "Capability 'mission.registry.log.write' is required",
+  "correlation_id": "ui-save-42",
+  "required_capabilities": ["mission.registry.log.write"]
+}
+```
+
+```json
+{
+  "command_id": "cmd-123",
+  "status": "result",
+  "result": {
+    "entry_uid": "log-1",
+    "mission_uid": "mission-1",
+    "content": "Operator note"
+  },
+  "correlation_id": "ui-save-42"
+}
+```
+
+When present on the inbound LXMF message, `FIELD_THREAD` and `FIELD_GROUP` are
+relayed onto mission replies by the runtime.
+
+Encoding rules:
+
+- `FIELD_RESULTS` payloads for mission commands are JSON-compatible objects,
+  not MessagePack blobs.
+- `FIELD_EVENT` payloads attached to mission command results are also
+  JSON-compatible objects.
+- `FIELD_CUSTOM_DATA` and `FIELD_CUSTOM_META` in the R3AKT mission profile are
+  emitted as structured JSON-compatible objects, with
+  `FIELD_CUSTOM_META.encoding = "json"`.
+
+### Event envelope
+
+Successful terminal mission replies may also carry `FIELD_EVENT`. The event
+envelope uses this organization:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `event_id` | string | Hub-generated unique event identifier. |
+| `source.rns_identity` | string | The transport sender identity for the command. |
+| `timestamp` | ISO-8601 datetime | Hub event creation time. |
+| `event_type` | string | Operation outcome such as `mission.registry.log_entry.upserted`. |
+| `topics` | string array | Copied from the inbound mission command envelope. |
+| `payload` | object | Command-specific event payload. |
+
+## LXMF organization for mission traffic
+
+Mission southbound traffic is organized into three LXMF message classes.
+
+### 1. Command ingress
+
+- LXMF field: `FIELD_COMMANDS` (`0x09`)
+- Payload class: mission command envelopes
+- Optional context field: `FIELD_GROUP` (`0x0B`)
+- Purpose: send a requested mission operation to the hub
+
+### 2. Command outcomes
+
+- LXMF field: `FIELD_RESULTS` (`0x0A`)
+- Payload class: `accepted`, `rejected`, or `result`
+- Optional companion field: `FIELD_EVENT` (`0x0D`) on successful terminal
+  replies
+- Optional relayed context: `FIELD_THREAD` (`0x08`), `FIELD_GROUP` (`0x0B`)
+- Purpose: acknowledge, reject, or complete a mission command
+
+### 3. Mission event and delta fan-out
+
+- Primary LXMF field: `FIELD_EVENT` (`0x0D`)
+- Optional group scope: `FIELD_GROUP` (`0x0B`)
+- Markdown fallback: `FIELD_RENDERER` (`0x0F`) set to
+  `RENDERER_MARKDOWN` (`0x02`) for generic LXMF clients
+- R3AKT custom profile:
+  - `FIELD_CUSTOM_TYPE` (`0xFB`) = `r3akt.mission.change.v1`
+  - `FIELD_CUSTOM_DATA` (`0xFC`) = mission event payload object
+  - `FIELD_CUSTOM_META` (`0xFD`) = mission event metadata
+
+The runtime augments mission replies and mission-related fan-out with custom
+R3AKT fields when a mission UID can be resolved from `FIELD_EVENT` /
+`FIELD_RESULTS`.
+
+Custom mission field organization:
+
+```json
+{
+  "FIELD_CUSTOM_TYPE": "r3akt.mission.change.v1",
+  "FIELD_CUSTOM_DATA": {
+    "mission_uid": "mission-1",
+    "event": {
+      "event_type": "mission.registry.log_entry.upserted",
+      "payload": {
+        "entry_uid": "log-1"
+      }
+    }
+  },
+  "FIELD_CUSTOM_META": {
+    "version": "1.0",
+    "event_type": "mission.registry.log_entry.upserted",
+    "mission_uid": "mission-1",
+    "encoding": "json",
+    "source": "rch"
+  }
+}
+```
+
+Operationally, this means:
+
+- R3AKT-aware clients can consume structured mission delta fields directly.
+- Generic markdown-oriented LXMF clients can still consume the human-readable
+  body plus `FIELD_EVENT`.
+- `FIELD_GROUP` remains routing/context metadata, not the command payload
+  itself.
+
 ## Practical examples
+
+### Example: `mission.registry.log_entry.upsert`
+
+Inbound:
+
+```json
+{
+  "FIELD_COMMANDS": [
+    {
+      "command_id": "cmd-log-001",
+      "source": {
+        "rns_identity": "<sender-identity>"
+      },
+      "timestamp": "2026-03-13T16:20:00Z",
+      "command_type": "mission.registry.log_entry.upsert",
+      "args": {
+        "mission_uid": "mission-1",
+        "callsign": "EAGLE-1",
+        "client_time": "2026-03-13T16:19:42Z",
+        "keywords": ["ops", "sitrep"],
+        "content": "Reached checkpoint bravo. No contact."
+      },
+      "correlation_id": "ui-log-save-001",
+      "topics": ["mission-1", "audit"]
+    }
+  ]
+}
+```
+
+Outbound:
+
+- body: `mission-sync`
+- first `FIELD_RESULTS`: accepted envelope
+- second `FIELD_RESULTS`: terminal `result` envelope with the saved log entry
+- `FIELD_EVENT`: `mission.registry.log_entry.upserted`
+- `FIELD_CUSTOM_TYPE`: `r3akt.mission.change.v1` when the mission UID is known
+- `FIELD_CUSTOM_DATA` / `FIELD_CUSTOM_META`: JSON-compatible mission event
+  objects, not MessagePack
+- `FIELD_THREAD` / `FIELD_GROUP`: echoed if they were on the request
+
+Example successful terminal reply fields:
+
+```json
+{
+  "FIELD_RESULTS": {
+    "command_id": "cmd-log-001",
+    "status": "result",
+    "result": {
+      "entry_uid": "log-1",
+      "mission_uid": "mission-1",
+      "callsign": "EAGLE-1",
+      "client_time": "2026-03-13T16:19:42Z",
+      "server_time": "2026-03-13T16:20:01Z",
+      "keywords": ["ops", "sitrep"],
+      "content": "Reached checkpoint bravo. No contact."
+    },
+    "correlation_id": "ui-log-save-001"
+  },
+  "FIELD_EVENT": {
+    "event_id": "<generated>",
+    "source": {
+      "rns_identity": "<sender-identity>"
+    },
+    "timestamp": "2026-03-13T16:20:01Z",
+    "event_type": "mission.registry.log_entry.upserted",
+    "topics": ["mission-1", "audit"],
+    "payload": {
+      "entry_uid": "log-1",
+      "mission_uid": "mission-1",
+      "callsign": "EAGLE-1",
+      "content": "Reached checkpoint bravo. No contact."
+    }
+  },
+  "FIELD_CUSTOM_TYPE": "r3akt.mission.change.v1",
+  "FIELD_CUSTOM_DATA": {
+    "mission_uid": "mission-1",
+    "event": {
+      "event_type": "mission.registry.log_entry.upserted",
+      "payload": {
+        "entry_uid": "log-1"
+      }
+    }
+  },
+  "FIELD_CUSTOM_META": {
+    "version": "1.0",
+    "event_type": "mission.registry.log_entry.upserted",
+    "mission_uid": "mission-1",
+    "encoding": "json",
+    "source": "rch"
+  }
+}
+```
 
 ### Example: `ListTopic`
 

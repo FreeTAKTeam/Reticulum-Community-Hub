@@ -151,10 +151,21 @@ python -m reticulum_telemetry_hub.reticulum_server --storage_dir ./RCH_Store --d
 # Run the gateway (hub + API)
 python -m reticulum_telemetry_hub.northbound.gateway --data-dir ./RCH_Store --port 8000
 
+# Run only the API server (without hub runtime wiring)
+uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
+
 # Or use the CLI
 rch start --data-dir ./RCH_Store --port 8000 --log-level info
 rch status --data-dir ./RCH_Store
 rch stop --data-dir ./RCH_Store
+
+# Combined backend + UI launchers
+./run_server_ui.sh           # Linux/macOS local bind (127.0.0.1 defaults)
+run_server_ui.bat            # Windows local bind (127.0.0.1 defaults)
+./run_server_ui_remote.sh    # Linux remote-friendly bind; requires RTH_API_KEY
+
+# Remote-access gateway bind (LAN/WAN)
+python -m reticulum_telemetry_hub.northbound.gateway --data-dir ./RCH_Store --api-host 0.0.0.0 --port 8000
 ```
 
 ### UI Development
@@ -469,15 +480,19 @@ Real-time events broadcast via WebSocket:
 
 1. **Read `PLANNING.md`** for architecture and constraints
 2. **Check `TASK.md`** for current tasks and context
-3. **Verify file paths** exist before referencing
+3. **Add the task to `TASK.md`** with today's date if it is not already listed
+4. **Verify file paths** exist before referencing
 
 ### During Development
 
 1. **Add tests** for every new feature/function
-2. **Run linting**: `ruff check .`
-3. **Run tests**: `pytest` (ensure coverage >= 90%)
-4. **Update version** in `pyproject.toml` (minor bump for features, patch for fixes)
-5. **Sync versions** to `ui/package.json` and `electron/package.json`
+2. **Update existing tests** when behavior changes
+3. **Use `venv_linux`** whenever executing Python commands, including tests
+4. **Include tests for example/demo apps** when they are affected
+5. **Run linting**: `ruff check .`
+6. **Run tests**: `pytest` (ensure coverage >= 90%)
+7. **Update version** in `pyproject.toml` (minor bump for features, patch for fixes)
+8. **Sync versions** to `ui/package.json` and `electron/package.json`
 
 ### Before Committing
 
@@ -493,6 +508,8 @@ Real-time events broadcast via WebSocket:
 - Mark completed tasks in `TASK.md`
 - Add discovered TODOs under "Discovered During Work" section
 - Update `README.md` if features or setup changed
+- Align any duplicated version strings in app/package manifests and lockfiles
+  when a version bump is part of the change
 
 ---
 
@@ -531,12 +548,30 @@ with self.storage.session() as session:
     # Session auto-commits on success, rolls back on exception
 ```
 
+## Documentation and Explainability
+
+- Update `README.md` when new features are added, dependencies change, or setup
+  steps are modified.
+- Comment non-obvious code so it remains understandable to a mid-level
+  developer.
+- When a code path is complex enough to justify it, add a brief `# Reason:`
+  comment explaining why the code exists, not just what it does.
+
+## AI Behavior Rules
+
+- Never assume missing context when local files can confirm it.
+- Never hallucinate libraries or functions; use only verified project
+  dependencies.
+- Always confirm file paths and module names exist before referencing them in
+  code, tests, or documentation.
+
 ---
 
 ## Documentation References
 
 - `docs/architecture.md` - System architecture and data flows
 - `docs/userManual.md` - User and operator guide
+- `docs/remoteAccess.md` - LAN/WAN access and `systemd` deployment guide
 - `docs/internal-api.md` - Internal API contract
 - `docs/TelemetryDocumentation.md` - Telemetry wire format
 - `docs/tak.md` - TAK integration details
