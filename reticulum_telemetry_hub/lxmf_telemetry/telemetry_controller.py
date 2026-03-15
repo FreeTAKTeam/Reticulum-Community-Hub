@@ -58,12 +58,12 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
     SID_TEMPERATURE,
     SID_TIME,
 )
-from sqlalchemy import and_
+from sqlalchemy import bindparam
 from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session, joinedload, sessionmaker
+from sqlalchemy.orm import Session, selectinload, sessionmaker
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.sql.functions import count as sa_count
 from sqlalchemy.sql.functions import max as sa_max
@@ -127,6 +127,7 @@ class TelemetryController:
         self._engine = engine
         self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
+        self._ensure_indexes()
         self._session_cls = sessionmaker(bind=self._engine, expire_on_commit=False)
         self._telemetry_listener: (
             Callable[[dict, str | bytes | None, Optional[datetime]], None] | None
@@ -169,6 +170,26 @@ class TelemetryController:
                 conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
         except OperationalError as exc:
             RNS.log(f"Failed enabling WAL mode: {exc}", RNS.LOG_WARNING)
+
+    def _ensure_indexes(self) -> None:
+        """Create hot-path indexes for telemetry snapshot queries."""
+
+        statements = (
+            "CREATE INDEX IF NOT EXISTS idx_telemeter_peer_time ON Telemeter(peer_dest, time DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_telemeter_time ON Telemeter(time DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_sensor_telemeter_id ON Sensor(telemeter_id);",
+            "CREATE INDEX IF NOT EXISTS idx_sensor_telemeter_sid ON Sensor(telemeter_id, sid);",
+            (
+                "CREATE INDEX IF NOT EXISTS idx_lxmf_propagation_peer_propagation_id "
+                "ON LXMFPropagationPeer(propagation_id);"
+            ),
+        )
+        try:
+            with self._engine.begin() as conn:
+                for statement in statements:
+                    conn.exec_driver_sql(statement)
+        except OperationalError as exc:
+            RNS.log(f"Failed creating telemetry indexes: {exc}", RNS.LOG_WARNING)
 
     @contextmanager
     def _session_scope(self):
@@ -223,12 +244,95 @@ class TelemetryController:
             query = query.filter(Telemeter.time <= end_time)
         query = query.order_by(Telemeter.time.desc())
         tels = query.options(
-            joinedload(Telemeter.sensors),
-            joinedload(Telemeter.sensors.of_type(LXMFPropagation)).joinedload(
+            selectinload(Telemeter.sensors),
+            selectinload(Telemeter.sensors.of_type(LXMFPropagation)).selectinload(
                 LXMFPropagation.peers
             ),
         ).all()
         return tels
+
+    def _latest_telemeter_ids(
+        self,
+        session: Session,
+        *,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        peer_destinations: set[str] | None = None,
+    ) -> list[int]:
+        """Return ordered latest telemeter IDs for peers with location data."""
+
+        if peer_destinations is not None and not peer_destinations:
+            return []
+
+        query = text(
+            """
+            WITH latest AS (
+                SELECT peer_dest, MAX(time) AS max_time
+                FROM Telemeter
+                WHERE (:start_time IS NULL OR time >= :start_time)
+                  AND (:end_time IS NULL OR time <= :end_time)
+                  AND (:has_dest_filter = 0 OR peer_dest IN :peer_destinations)
+                GROUP BY peer_dest
+            )
+            SELECT t.id, t.peer_dest
+            FROM Telemeter AS t
+            JOIN latest
+              ON t.peer_dest = latest.peer_dest
+             AND t.time = latest.max_time
+            WHERE EXISTS (
+                SELECT 1
+                FROM Sensor AS s
+                JOIN Location AS l ON l.id = s.id
+                WHERE s.telemeter_id = t.id
+                  AND s.sid = :location_sid
+                  AND l.latitude IS NOT NULL
+                  AND l.longitude IS NOT NULL
+            )
+            ORDER BY t.time DESC, t.id DESC
+            """
+        ).bindparams(bindparam("peer_destinations", expanding=True))
+        rows = session.execute(
+            query,
+            {
+                "start_time": start_time,
+                "end_time": end_time,
+                "has_dest_filter": 1 if peer_destinations is not None else 0,
+                "peer_destinations": sorted(peer_destinations or []),
+                "location_sid": SID_LOCATION,
+            },
+        ).mappings()
+
+        ordered_ids: list[int] = []
+        seen_peers: set[str] = set()
+        for row in rows:
+            peer_dest = str(row["peer_dest"] or "").strip()
+            telemeter_id = row["id"]
+            if not peer_dest or peer_dest in seen_peers or not isinstance(telemeter_id, int):
+                continue
+            seen_peers.add(peer_dest)
+            ordered_ids.append(telemeter_id)
+        return ordered_ids
+
+    def _load_telemeters_by_ids(
+        self, session: Session, telemeter_ids: list[int]
+    ) -> list[Telemeter]:
+        """Load telemeters and sensors for the provided ordered IDs."""
+
+        if not telemeter_ids:
+            return []
+        telemeters = (
+            session.query(Telemeter)
+            .filter(Telemeter.id.in_(telemeter_ids))
+            .options(
+                selectinload(Telemeter.sensors),
+                selectinload(Telemeter.sensors.of_type(LXMFPropagation)).selectinload(
+                    LXMFPropagation.peers
+                ),
+            )
+            .all()
+        )
+        by_id = {telemeter.id: telemeter for telemeter in telemeters}
+        return [by_id[telemeter_id] for telemeter_id in telemeter_ids if telemeter_id in by_id]
 
     def _load_latest_telemetry(
         self,
@@ -240,43 +344,13 @@ class TelemetryController:
     ) -> list[Telemeter]:
         """Return the newest telemetry row per peer for the requested window."""
 
-        if peer_destinations is not None and not peer_destinations:
-            return []
-
-        latest_by_peer = session.query(
-            Telemeter.peer_dest.label("peer_dest"),
-            sa_max(Telemeter.time).label("max_time"),
+        telemeter_ids = self._latest_telemeter_ids(
+            session,
+            start_time=start_time,
+            end_time=end_time,
+            peer_destinations=peer_destinations,
         )
-        if start_time is not None:
-            latest_by_peer = latest_by_peer.filter(Telemeter.time >= start_time)
-        if end_time is not None:
-            latest_by_peer = latest_by_peer.filter(Telemeter.time <= end_time)
-        if peer_destinations is not None:
-            latest_by_peer = latest_by_peer.filter(
-                Telemeter.peer_dest.in_(sorted(peer_destinations))
-            )
-        latest_by_peer = latest_by_peer.group_by(Telemeter.peer_dest).subquery()
-
-        telemeters = (
-            session.query(Telemeter)
-            .join(
-                latest_by_peer,
-                and_(
-                    Telemeter.peer_dest == latest_by_peer.c.peer_dest,
-                    Telemeter.time == latest_by_peer.c.max_time,
-                ),
-            )
-            .order_by(Telemeter.time.desc(), Telemeter.id.desc())
-            .options(
-                joinedload(Telemeter.sensors),
-                joinedload(Telemeter.sensors.of_type(LXMFPropagation)).joinedload(
-                    LXMFPropagation.peers
-                ),
-            )
-            .all()
-        )
-        # Keep one entry per peer and retain the existing location-only policy.
-        return self._latest_by_peer(telemeters)
+        return self._load_telemeters_by_ids(session, telemeter_ids)
 
     def get_telemetry(
         self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
@@ -702,30 +776,6 @@ class TelemetryController:
             readable[name] = decoded
         return readable
 
-    def _latest_by_peer(self, telemeters: list[Telemeter]) -> list[Telemeter]:
-        """Return the most recent telemetry entry per peer."""
-        latest: dict[str, Telemeter] = {}
-        for tel in telemeters:
-            if not self._telemeter_has_location(tel):
-                continue
-            peer_dest = (tel.peer_dest or "").strip()
-            if not peer_dest:
-                continue
-            existing = latest.get(peer_dest)
-            if existing is None:
-                latest[peer_dest] = tel
-                continue
-            if existing.time is None:
-                latest[peer_dest] = tel
-                continue
-            if tel.time and tel.time > existing.time:
-                latest[peer_dest] = tel
-        return sorted(
-            latest.values(),
-            key=lambda tel: tel.time or datetime.min,
-            reverse=True,
-        )
-
     def _build_appearance_payload(
         self, telemetry_payload: dict[int, object]
     ) -> list[object]:
@@ -739,18 +789,6 @@ class TelemetryController:
         """
 
         return build_telemetry_icon_appearance_value(telemetry_payload)
-
-    def _telemeter_has_location(self, telemeter: Telemeter) -> bool:
-        """Return True when the telemeter includes usable location data."""
-        for sensor in telemeter.sensors:
-            if getattr(sensor, "sid", None) != SID_LOCATION:
-                continue
-            latitude = getattr(sensor, "latitude", None)
-            longitude = getattr(sensor, "longitude", None)
-            if latitude is None or longitude is None:
-                return False
-            return True
-        return False
 
     def _notify_listener(
         self,

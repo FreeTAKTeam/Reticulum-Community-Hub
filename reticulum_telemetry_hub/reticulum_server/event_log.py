@@ -19,6 +19,9 @@ from typing import Optional
 
 DEFAULT_EVENT_LOG_FILENAME = "events.jsonl"
 DEFAULT_TAIL_INTERVAL_SECONDS = 0.5
+DEFAULT_EVENT_LOG_MAX_BYTES = 5 * 1024 * 1024
+DEFAULT_EVENT_LOG_TRUNCATE_TO_BYTES = 4 * 1024 * 1024
+DEFAULT_EVENT_LOG_LOAD_TAIL_BYTES = 512 * 1024
 
 
 def resolve_event_log_path(storage_path: Path | str) -> Path:
@@ -43,6 +46,9 @@ class EventLog:
         event_path: Path | str | None = None,
         tail: bool = False,
         tail_interval: float = DEFAULT_TAIL_INTERVAL_SECONDS,
+        max_file_bytes: int = DEFAULT_EVENT_LOG_MAX_BYTES,
+        truncate_to_bytes: int = DEFAULT_EVENT_LOG_TRUNCATE_TO_BYTES,
+        load_tail_bytes: int = DEFAULT_EVENT_LOG_LOAD_TAIL_BYTES,
     ) -> None:
         """Initialize the event log with a fixed-size buffer.
 
@@ -65,10 +71,17 @@ class EventLog:
         self._tail_stop = threading.Event()
         self._tail_thread: threading.Thread | None = None
         self._tail_offset = 0
+        self._max_file_bytes = max(max_file_bytes, 0)
+        self._truncate_to_bytes = max(
+            min(truncate_to_bytes, self._max_file_bytes or truncate_to_bytes),
+            0,
+        )
+        self._load_tail_bytes = max(load_tail_bytes, 0)
 
         if self._event_path:
             self._event_path.parent.mkdir(parents=True, exist_ok=True)
             self._event_path.touch(exist_ok=True)
+            self._truncate_file_if_needed()
             self._tail_offset = self._load_existing_events()
             if tail:
                 self._start_tailer()
@@ -163,8 +176,13 @@ class EventLog:
             return
         try:
             payload = json.dumps(entry, ensure_ascii=True, default=str)
+            should_truncate = False
             with self._event_path.open("a", encoding="utf-8") as handle:
                 handle.write(payload + "\n")
+                if self._max_file_bytes and handle.tell() > self._max_file_bytes:
+                    should_truncate = True
+            if should_truncate:
+                self._truncate_file_if_needed()
         except (OSError, TypeError, ValueError):
             # Reason: event logging should never break event recording.
             return
@@ -174,15 +192,26 @@ class EventLog:
 
         if not self._event_path or not self._event_path.exists():
             return 0
-        offset = 0
         try:
-            with self._event_path.open("r", encoding="utf-8") as handle:
+            with self._event_path.open("rb") as handle:
+                file_size = handle.seek(0, 2)
+                start_offset = 0
+                if self._load_tail_bytes and file_size > self._load_tail_bytes:
+                    start_offset = max(file_size - self._load_tail_bytes, 0)
+                    handle.seek(start_offset)
+                    if start_offset > 0:
+                        handle.readline()
+                else:
+                    handle.seek(0)
                 for line in handle:
-                    self._ingest_line(line, notify=False, allow_origin=True)
-                offset = handle.tell()
+                    self._ingest_line(
+                        line.decode("utf-8", errors="ignore"),
+                        notify=False,
+                        allow_origin=True,
+                    )
+                return file_size
         except OSError:
             return 0
-        return offset
 
     def _start_tailer(self) -> None:
         """Start a background thread that tails the shared log file."""
@@ -201,6 +230,14 @@ class EventLog:
             with self._event_path.open("r", encoding="utf-8") as handle:
                 handle.seek(self._tail_offset)
                 while not self._tail_stop.is_set():
+                    try:
+                        current_size = self._event_path.stat().st_size
+                    except OSError:
+                        current_size = 0
+                    if current_size < handle.tell():
+                        handle.close()
+                        handle = self._event_path.open("r", encoding="utf-8")
+                        handle.seek(0)
                     line = handle.readline()
                     if not line:
                         time.sleep(self._tail_interval)
@@ -355,3 +392,31 @@ class EventLog:
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         return str(value)
+
+    def _truncate_file_if_needed(self) -> None:
+        """Trim the shared log file to the configured tail size."""
+
+        if (
+            not self._event_path
+            or not self._event_path.exists()
+            or not self._max_file_bytes
+            or not self._truncate_to_bytes
+        ):
+            return
+        try:
+            current_size = self._event_path.stat().st_size
+            if current_size <= self._max_file_bytes:
+                return
+            with self._event_path.open("rb") as handle:
+                start_offset = max(current_size - self._truncate_to_bytes, 0)
+                handle.seek(start_offset)
+                if start_offset > 0:
+                    handle.readline()
+                payload = handle.read()
+            temp_path = self._event_path.with_suffix(self._event_path.suffix + ".tmp")
+            with temp_path.open("wb") as handle:
+                handle.write(payload)
+            temp_path.replace(self._event_path)
+            self._tail_offset = min(self._tail_offset, len(payload))
+        except OSError:
+            return

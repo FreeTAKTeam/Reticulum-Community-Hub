@@ -60,6 +60,7 @@ class HubStorage(HubStorageBase):
         self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
         self._ensure_file_topic_column()
+        self._ensure_indexes()
         self._backfill_identity_capability_grants()
         self._session_factory = sessionmaker(  # pylint: disable=invalid-name
             bind=self._engine, expire_on_commit=False
@@ -219,6 +220,17 @@ class HubStorage(HubStorageBase):
             records = session.query(SubscriberRecord).all()
             return [self._subscriber_from_record(r) for r in records]
 
+    def list_subscribers_for_topic(self, topic_id: str) -> List[Subscriber]:
+        """Return subscribers stored for a topic identifier."""
+
+        with self._session_scope() as session:
+            records = (
+                session.query(SubscriberRecord)
+                .filter(SubscriberRecord.topic_id == topic_id)
+                .all()
+            )
+            return [self._subscriber_from_record(record) for record in records]
+
     def get_subscriber(self, subscriber_id: str) -> Optional[Subscriber]:
         """Fetch a subscriber by ID.
 
@@ -252,6 +264,28 @@ class HubStorage(HubStorageBase):
     def update_subscriber(self, subscriber: Subscriber) -> Subscriber:
         """Update a subscriber by merging fields."""
         return self.create_subscriber(subscriber)
+
+    def list_topics_for_destination(self, destination: str) -> List[Topic]:
+        """Return topics associated with a subscriber destination."""
+
+        with self._session_scope() as session:
+            records = (
+                session.query(TopicRecord)
+                .join(SubscriberRecord, SubscriberRecord.topic_id == TopicRecord.id)
+                .filter(SubscriberRecord.destination == destination)
+                .order_by(TopicRecord.created_at, TopicRecord.id)
+                .distinct()
+                .all()
+            )
+            return [
+                Topic(
+                    topic_id=record.id,
+                    topic_name=record.name,
+                    topic_path=record.path,
+                    topic_description=record.description or "",
+                )
+                for record in records
+            ]
 
     def upsert_client(self, identity: str) -> Client:
         """Insert or update a client record.
@@ -965,6 +999,32 @@ class HubStorage(HubStorageBase):
                 conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
         except OperationalError as exc:
             logging.warning("Failed to enable WAL mode: %s", exc)
+
+    def _ensure_indexes(self) -> None:
+        """Create hot-path SQLite indexes for existing databases."""
+
+        statements = (
+            "CREATE INDEX IF NOT EXISTS ix_subscribers_topic_id ON subscribers(topic_id);",
+            "CREATE INDEX IF NOT EXISTS ix_subscribers_destination ON subscribers(destination);",
+            (
+                "CREATE INDEX IF NOT EXISTS ix_chat_messages_topic_created_at "
+                "ON chat_messages(topic_id, created_at DESC);"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_chat_messages_destination_created_at "
+                "ON chat_messages(destination, created_at DESC);"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_chat_messages_source_created_at "
+                "ON chat_messages(source, created_at DESC);"
+            ),
+        )
+        try:
+            with self._engine.begin() as conn:
+                for statement in statements:
+                    conn.exec_driver_sql(statement)
+        except OperationalError as exc:
+            logging.warning("Failed to create SQLite indexes: %s", exc)
 
     def _backfill_identity_capability_grants(self) -> None:
         """Copy legacy identity capability grants into subject-aware rights."""

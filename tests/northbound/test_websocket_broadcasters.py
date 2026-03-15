@@ -192,3 +192,33 @@ def test_telemetry_subscription_filters_peer_destinations() -> None:
         assert received == ["peer-1"]
 
     _run_async(_exercise)
+
+
+def test_event_broadcaster_bounds_delivery_queue() -> None:
+    """Ensure slow subscribers do not accumulate unbounded pending tasks."""
+
+    async def _exercise() -> None:
+        event_log = EventLog()
+        broadcaster = EventBroadcaster(event_log, delivery_queue_size=1)
+        blocker = asyncio.Event()
+        received: list[str] = []
+
+        async def _callback(entry: dict) -> None:
+            """Record delivery order and block the first event."""
+
+            received.append(str(entry["message"]))
+            if entry["message"] == "first":
+                await blocker.wait()
+
+        broadcaster.subscribe(_callback)
+        event_log.add_event("test", "first")
+        await asyncio.sleep(0)
+        event_log.add_event("test", "second")
+        event_log.add_event("test", "third")
+        await asyncio.sleep(0)
+        blocker.set()
+        await asyncio.sleep(0.05)
+
+        assert received == ["first", "third"]
+
+    _run_async(_exercise)

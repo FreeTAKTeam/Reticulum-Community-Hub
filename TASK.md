@@ -1,4 +1,5 @@
 # TASKS
+- 2026-03-15: DONE. Investigate hub performance degradation over long uptimes and implement telemetry, subscriber lookup, websocket backpressure, and event-log retention fixes.
 - 2026-03-13: DONE. Add `subagents/runs/` to `.gitignore` so local subagent run artifacts are not tracked.
 - 2026-03-13: DONE. Merge `agent.md` into `AGENTS.md` and remove the redundant `agent.md` file.
 - 2026-03-13: DONE. Add a mission log southbound example and clarify that mission command/event payloads are JSON-compatible, not MessagePack-encoded.

@@ -9,6 +9,7 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from datetime import timezone
 from typing import Any
@@ -30,22 +31,134 @@ from .auth import ApiAuth
 
 DEFAULT_WS_PING_INTERVAL_SECONDS = 30.0
 DEFAULT_WS_INACTIVITY_TIMEOUT_SECONDS = 90.0
+DEFAULT_WS_DELIVERY_QUEUE_SIZE = 64
 WS_INACTIVITY_CLOSE_CODE = 4004
 
 
-@dataclass(frozen=True)
+@dataclass(eq=False)
+class _QueuedDelivery:
+    """Bounded delivery queue for a websocket subscriber callback."""
+
+    callback: Callable[[Dict[str, object]], Awaitable[None]]
+    loop: Optional[asyncio.AbstractEventLoop]
+    queue_size: int = DEFAULT_WS_DELIVERY_QUEUE_SIZE
+    _queue: asyncio.Queue[object] | None = field(
+        init=False, default=None, repr=False, compare=False
+    )
+    _worker: asyncio.Task[None] | None = field(
+        init=False, default=None, repr=False, compare=False
+    )
+    _closed: bool = field(init=False, default=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Initialize the worker queue when a loop is available."""
+
+        if self.loop is None:
+            return
+        self._queue = asyncio.Queue(maxsize=max(int(self.queue_size), 1))
+        self._worker = self.loop.create_task(self._run())
+
+    async def _run(self) -> None:
+        """Drain queued entries sequentially for a subscriber."""
+
+        if self._queue is None:
+            return
+        while True:
+            item = await self._queue.get()
+            try:
+                if item is None:
+                    return
+                await self.callback(item)
+            except Exception:
+                continue
+            finally:
+                self._queue.task_done()
+
+    def enqueue(self, entry: Dict[str, object]) -> None:
+        """Queue an entry for bounded delivery."""
+
+        if self._closed:
+            return
+        if self._queue is None or self.loop is None or not self.loop.is_running():
+            self._dispatch_direct(entry)
+            return
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        if current_loop is self.loop:
+            self._enqueue_on_loop(entry)
+            return
+        self.loop.call_soon_threadsafe(self._enqueue_on_loop, entry)
+
+    def _enqueue_on_loop(self, entry: Dict[str, object]) -> None:
+        """Enqueue an entry on the subscriber loop, dropping oldest on overflow."""
+
+        if self._closed or self._queue is None:
+            return
+        if self._queue.full():
+            with suppress(asyncio.QueueEmpty):
+                self._queue.get_nowait()
+                self._queue.task_done()
+        with suppress(asyncio.QueueFull):
+            self._queue.put_nowait(entry)
+
+    def _dispatch_direct(self, entry: Dict[str, object]) -> None:
+        """Fallback direct dispatch when no loop-backed queue exists."""
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self.callback(entry))
+
+    def close(self) -> None:
+        """Stop the worker queue for this subscriber."""
+
+        if self._closed:
+            return
+        self._closed = True
+        if self._queue is None or self.loop is None or not self.loop.is_running():
+            if self._worker is not None:
+                self._worker.cancel()
+            return
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        if current_loop is self.loop:
+            self._close_on_loop()
+            return
+        self.loop.call_soon_threadsafe(self._close_on_loop)
+
+    def _close_on_loop(self) -> None:
+        """Close the queue on its owning event loop."""
+
+        if self._queue is None:
+            if self._worker is not None:
+                self._worker.cancel()
+            return
+        while self._queue.full():
+            with suppress(asyncio.QueueEmpty):
+                self._queue.get_nowait()
+                self._queue.task_done()
+        with suppress(asyncio.QueueFull):
+            self._queue.put_nowait(None)
+
+
+@dataclass(eq=False)
 class _TelemetrySubscriber:
     """Configuration for a telemetry WebSocket subscriber."""
 
-    callback: Callable[[Dict[str, object]], Awaitable[None]]
+    delivery: _QueuedDelivery
     allowed_destinations: Optional[frozenset[str]]
 
 
-@dataclass(frozen=True)
+@dataclass(eq=False)
 class _MessageSubscriber:
     """Configuration for a message WebSocket subscriber."""
 
-    callback: Callable[[Dict[str, object]], Awaitable[None]]
+    delivery: _QueuedDelivery
     topic_id: Optional[str]
     source_hash: Optional[str]
 
@@ -53,7 +166,12 @@ class _MessageSubscriber:
 class EventBroadcaster:
     """Fan out events to active WebSocket subscribers."""
 
-    def __init__(self, event_log: EventLog) -> None:
+    def __init__(
+        self,
+        event_log: EventLog,
+        *,
+        delivery_queue_size: int = DEFAULT_WS_DELIVERY_QUEUE_SIZE,
+    ) -> None:
         """Initialize the event broadcaster.
 
         Args:
@@ -61,8 +179,8 @@ class EventBroadcaster:
         """
 
         self._event_log = event_log
-        self._subscribers: set[Callable[[Dict[str, object]], Awaitable[None]]] = set()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._subscribers: set[_QueuedDelivery] = set()
+        self._delivery_queue_size = max(int(delivery_queue_size), 1)
         self._event_log.add_listener(self._handle_event)
 
     def subscribe(
@@ -78,8 +196,12 @@ class EventBroadcaster:
             Callable[[], None]: Unsubscribe callback.
         """
 
-        self._subscribers.add(callback)
-        self._capture_loop()
+        delivery = _QueuedDelivery(
+            callback=callback,
+            loop=self._running_loop(),
+            queue_size=self._delivery_queue_size,
+        )
+        self._subscribers.add(delivery)
 
         def _unsubscribe() -> None:
             """Remove the event callback subscription.
@@ -88,29 +210,19 @@ class EventBroadcaster:
                 None: Removes the callback.
             """
 
-            self._subscribers.discard(callback)
+            self._subscribers.discard(delivery)
+            delivery.close()
 
         return _unsubscribe
 
-    def _capture_loop(self) -> None:
-        """Capture the running event loop for cross-thread dispatch."""
+    @staticmethod
+    def _running_loop() -> Optional[asyncio.AbstractEventLoop]:
+        """Return the current loop when called from async context."""
 
-        if self._loop is not None and self._loop.is_running():
-            return
         try:
-            self._loop = asyncio.get_running_loop()
+            return asyncio.get_running_loop()
         except RuntimeError:
-            self._loop = None
-
-    def _create_task(
-        self,
-        callback: Callable[[Dict[str, object]], Awaitable[None]],
-        entry: Dict[str, object],
-    ) -> None:
-        """Create an asyncio task for a callback on the current loop."""
-
-        loop = asyncio.get_running_loop()
-        loop.create_task(callback(entry))
+            return None
 
     def _handle_event(self, entry: Dict[str, object]) -> None:
         """Dispatch a new event to subscribers.
@@ -119,17 +231,8 @@ class EventBroadcaster:
             entry (Dict[str, object]): Recorded event entry.
         """
 
-        for callback in list(self._subscribers):
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(callback(entry))
-                continue
-            except RuntimeError:
-                pass
-            if self._loop is None or not self._loop.is_running():
-                # Reason: skip async dispatch when no loop is running.
-                continue
-            self._loop.call_soon_threadsafe(self._create_task, callback, entry)
+        for delivery in list(self._subscribers):
+            delivery.enqueue(entry)
 
 
 class TelemetryBroadcaster:
@@ -139,6 +242,8 @@ class TelemetryBroadcaster:
         self,
         controller: TelemetryController,
         api: Optional[ReticulumTelemetryHubAPI],
+        *,
+        delivery_queue_size: int = DEFAULT_WS_DELIVERY_QUEUE_SIZE,
     ) -> None:
         """Initialize the telemetry broadcaster.
 
@@ -151,7 +256,7 @@ class TelemetryBroadcaster:
         self._controller = controller
         self._api = api
         self._subscribers: set[_TelemetrySubscriber] = set()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._delivery_queue_size = max(int(delivery_queue_size), 1)
         self._controller.register_listener(self._handle_telemetry)
 
     def subscribe(
@@ -179,9 +284,15 @@ class TelemetryBroadcaster:
             allowed = frozenset(
                 subscriber.destination for subscriber in subscribers
             )
-        subscriber = _TelemetrySubscriber(callback=callback, allowed_destinations=allowed)
+        subscriber = _TelemetrySubscriber(
+            delivery=_QueuedDelivery(
+                callback=callback,
+                loop=EventBroadcaster._running_loop(),
+                queue_size=self._delivery_queue_size,
+            ),
+            allowed_destinations=allowed,
+        )
         self._subscribers.add(subscriber)
-        self._capture_loop()
 
         def _unsubscribe() -> None:
             """Remove the telemetry callback subscription.
@@ -191,28 +302,9 @@ class TelemetryBroadcaster:
             """
 
             self._subscribers.discard(subscriber)
+            subscriber.delivery.close()
 
         return _unsubscribe
-
-    def _capture_loop(self) -> None:
-        """Capture the running event loop for cross-thread dispatch."""
-
-        if self._loop is not None and self._loop.is_running():
-            return
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = None
-
-    def _create_task(
-        self,
-        callback: Callable[[Dict[str, object]], Awaitable[None]],
-        entry: Dict[str, object],
-    ) -> None:
-        """Create an asyncio task for a callback on the current loop."""
-
-        loop = asyncio.get_running_loop()
-        loop.create_task(callback(entry))
 
     def _handle_telemetry(
         self,
@@ -248,20 +340,7 @@ class TelemetryBroadcaster:
             if subscriber.allowed_destinations is not None:
                 if peer_dest not in subscriber.allowed_destinations:
                     continue
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(subscriber.callback(entry))
-                continue
-            except RuntimeError:
-                pass
-            if self._loop is None or not self._loop.is_running():
-                # Reason: skip async dispatch when no loop is running.
-                continue
-            self._loop.call_soon_threadsafe(
-                self._create_task,
-                subscriber.callback,
-                entry,
-            )
+            subscriber.delivery.enqueue(entry)
 
 
 class MessageBroadcaster:
@@ -272,11 +351,13 @@ class MessageBroadcaster:
         register_listener: Optional[
             Callable[[Callable[[Dict[str, object]], None]], Callable[[], None]]
         ] = None,
+        *,
+        delivery_queue_size: int = DEFAULT_WS_DELIVERY_QUEUE_SIZE,
     ) -> None:
         """Initialize the message broadcaster."""
 
         self._subscribers: set[_MessageSubscriber] = set()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._delivery_queue_size = max(int(delivery_queue_size), 1)
         self._unsubscribe_source: Optional[Callable[[], None]] = None
         if register_listener is not None:
             self._unsubscribe_source = register_listener(self._handle_message)
@@ -291,39 +372,23 @@ class MessageBroadcaster:
         """Register a message callback."""
 
         subscriber = _MessageSubscriber(
-            callback=callback,
+            delivery=_QueuedDelivery(
+                callback=callback,
+                loop=EventBroadcaster._running_loop(),
+                queue_size=self._delivery_queue_size,
+            ),
             topic_id=topic_id,
             source_hash=_normalize_peer(source_hash) if source_hash else None,
         )
         self._subscribers.add(subscriber)
-        self._capture_loop()
 
         def _unsubscribe() -> None:
             """Remove the message callback subscription."""
 
             self._subscribers.discard(subscriber)
+            subscriber.delivery.close()
 
         return _unsubscribe
-
-    def _capture_loop(self) -> None:
-        """Capture the running event loop for cross-thread dispatch."""
-
-        if self._loop is not None and self._loop.is_running():
-            return
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = None
-
-    def _create_task(
-        self,
-        callback: Callable[[Dict[str, object]], Awaitable[None]],
-        entry: Dict[str, object],
-    ) -> None:
-        """Create an asyncio task for a callback on the current loop."""
-
-        loop = asyncio.get_running_loop()
-        loop.create_task(callback(entry))
 
     def _handle_message(self, entry: Dict[str, object]) -> None:
         """Dispatch inbound messages to subscribers."""
@@ -335,20 +400,7 @@ class MessageBroadcaster:
                 continue
             if subscriber.source_hash and subscriber.source_hash != entry_source:
                 continue
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(subscriber.callback(entry))
-                continue
-            except RuntimeError:
-                pass
-            if self._loop is None or not self._loop.is_running():
-                # Reason: skip async dispatch when no loop is running.
-                continue
-            self._loop.call_soon_threadsafe(
-                self._create_task,
-                subscriber.callback,
-                entry,
-            )
+            subscriber.delivery.enqueue(entry)
 
 
 def _normalize_peer(peer_hash: str | bytes | None) -> str:

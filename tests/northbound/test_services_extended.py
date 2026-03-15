@@ -101,6 +101,37 @@ def test_record_event_and_list_events(tmp_path: Path) -> None:
     assert events[0]["type"] == "test"
 
 
+def test_event_log_truncates_to_recent_tail(tmp_path: Path) -> None:
+    """Keep event log files bounded while preserving recent entries on reload."""
+
+    event_path = tmp_path / "events.jsonl"
+    event_log = EventLog(
+        event_path=event_path,
+        max_entries=20,
+        max_file_bytes=600,
+        truncate_to_bytes=300,
+        load_tail_bytes=300,
+    )
+    for index in range(20):
+        event_log.add_event("test", f"event-{index}", metadata={"index": index})
+    event_log.close()
+
+    assert event_path.stat().st_size <= 600
+
+    reloaded = EventLog(
+        event_path=event_path,
+        max_entries=20,
+        max_file_bytes=600,
+        truncate_to_bytes=300,
+        load_tail_bytes=300,
+    )
+    messages = [str(entry["message"]) for entry in reloaded.list_events()]
+    reloaded.close()
+
+    assert "event-19" in messages
+    assert "event-0" not in messages
+
+
 def test_dump_routing_uses_provider(tmp_path: Path) -> None:
     services, _, _, _ = _build_services(tmp_path, routing_provider=lambda: ["a", "b"])
 
@@ -116,6 +147,23 @@ def test_dump_routing_falls_back_to_clients(tmp_path: Path) -> None:
     result = services.dump_routing()
 
     assert result["destinations"] == ["dest-1"]
+
+
+def test_db_backed_topic_subscriber_lookups(tmp_path: Path) -> None:
+    """Return topic and subscriber lookups without Python-side full scans."""
+
+    _, api, _, _ = _build_services(tmp_path)
+    alerts = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
+    ops = api.create_topic(Topic(topic_name="ops", topic_path="ops"))
+    api.create_subscriber(Subscriber(destination="dest-1", topic_id=alerts.topic_id))
+    api.create_subscriber(Subscriber(destination="dest-1", topic_id=ops.topic_id))
+    api.create_subscriber(Subscriber(destination="dest-2", topic_id=ops.topic_id))
+
+    subscribers = api.list_subscribers_for_topic(ops.topic_id)
+    topics = api.list_topics_for_destination("dest-1")
+
+    assert {subscriber.destination for subscriber in subscribers} == {"dest-1", "dest-2"}
+    assert [topic.topic_id for topic in topics] == [alerts.topic_id, ops.topic_id]
 
 
 def test_send_message_requires_dispatcher(tmp_path: Path) -> None:

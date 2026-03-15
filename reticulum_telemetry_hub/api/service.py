@@ -63,6 +63,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         self._image_category = "image"
         self._on_config_reload = on_config_reload
         self._reticulum_destination: str | None = None
+        self._topic_registry_change_listeners: list[Callable[[], None]] = []
 
     @property
     def rights(self) -> SubjectAwareRightsService:
@@ -113,6 +114,28 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         )
         payload["reticulum_destination"] = self._reticulum_destination
         return ReticulumInfo(**payload)
+
+    def register_topic_registry_change_listener(
+        self, listener: Callable[[], None]
+    ) -> Callable[[], None]:
+        """Register a callback invoked after topic/subscriber writes."""
+
+        self._topic_registry_change_listeners.append(listener)
+
+        def _remove_listener() -> None:
+            if listener in self._topic_registry_change_listeners:
+                self._topic_registry_change_listeners.remove(listener)
+
+        return _remove_listener
+
+    def _notify_topic_registry_change(self) -> None:
+        """Notify listeners that topic subscriber mappings changed."""
+
+        for listener in list(self._topic_registry_change_listeners):
+            try:
+                listener()
+            except Exception:
+                continue
 
     def _notify_config_reload(self, config: HubAppConfig) -> None:
         """Invoke the config reload callback when configured.
@@ -647,7 +670,9 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         if not topic.topic_name or not topic.topic_path:
             raise ValueError("TopicName and TopicPath are required")
         topic.topic_id = topic.topic_id or uuid.uuid4().hex
-        return self._storage.create_topic(topic)
+        created = self._storage.create_topic(topic)
+        self._notify_topic_registry_change()
+        return created
 
     def list_topics(self) -> List[Topic]:
         """List all topics known to the hub.
@@ -689,6 +714,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         topic = self._storage.delete_topic(topic_id)
         if not topic:
             raise KeyError(f"Topic '{topic_id}' not found")
+        self._notify_topic_registry_change()
         return topic
 
     def patch_topic(self, topic_id: str, **updates) -> Topic:
@@ -731,6 +757,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         updated_topic = self._storage.update_topic(topic.topic_id, **update_fields)
         if not updated_topic:
             raise KeyError(f"Topic '{topic_id}' not found")
+        self._notify_topic_registry_change()
         return updated_topic
 
     def subscribe_topic(
@@ -796,7 +823,9 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             raise ValueError("Subscriber destination is required")
         subscriber.topic_id = subscriber.topic_id or ""
         subscriber.subscriber_id = subscriber.subscriber_id or uuid.uuid4().hex
-        return self._storage.create_subscriber(subscriber)
+        created = self._storage.create_subscriber(subscriber)
+        self._notify_topic_registry_change()
+        return created
 
     def list_subscribers(self) -> List[Subscriber]:
         """List all subscribers.
@@ -819,11 +848,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             KeyError: If the topic does not exist.
         """
         self.retrieve_topic(topic_id)
-        return [
-            subscriber
-            for subscriber in self._storage.list_subscribers()
-            if subscriber.topic_id == topic_id
-        ]
+        return self._storage.list_subscribers_for_topic(topic_id)
 
     def list_topics_for_destination(self, destination: str) -> List[Topic]:
         """Return topics a destination is subscribed to.
@@ -834,12 +859,9 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         Returns:
             List[Topic]: Topics matching the destination's subscriptions.
         """
-        topic_ids = {
-            subscriber.topic_id
-            for subscriber in self._storage.list_subscribers()
-            if subscriber.destination == destination and subscriber.topic_id
-        }
-        return [topic for topic in self.list_topics() if topic.topic_id in topic_ids]
+        if not destination:
+            return []
+        return self._storage.list_topics_for_destination(destination)
 
     def retrieve_subscriber(self, subscriber_id: str) -> Subscriber:
         """Fetch a subscriber by identifier.
@@ -873,6 +895,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         subscriber = self._storage.delete_subscriber(subscriber_id)
         if not subscriber:
             raise KeyError(f"Subscriber '{subscriber_id}' not found")
+        self._notify_topic_registry_change()
         return subscriber
 
     def patch_subscriber(self, subscriber_id: str, **updates) -> Subscriber:
@@ -915,7 +938,9 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         if metadata_key is not None:
             subscriber.metadata = updates[metadata_key]
-        return self._storage.update_subscriber(subscriber)
+        updated = self._storage.update_subscriber(subscriber)
+        self._notify_topic_registry_change()
+        return updated
 
     def add_subscriber(self, subscriber: Subscriber) -> Subscriber:
         """Alias for :meth:`create_subscriber`.

@@ -140,7 +140,6 @@ LOG_LEVELS = {
     "info": getattr(RNS, "LOG_INFO", 3),
     "debug": getattr(RNS, "LOG_DEBUG", DEFAULT_LOG_LEVEL),
 }
-TOPIC_REGISTRY_TTL_SECONDS = 5
 R3AKT_CUSTOM_TYPE_IDENTIFIER = "r3akt.mission.change.v1"
 R3AKT_CUSTOM_META_VERSION = "1.0"
 R3AKT_CUSTOM_TYPE_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_TYPE", 0xFB))
@@ -843,6 +842,7 @@ class ReticulumTelemetryHub:
         self.checklist_sync_router = None
         self.mission_domain_service = None
         self._remove_mission_change_listener: Callable[[], None] | None = None
+        self._remove_topic_registry_change_listener: Callable[[], None] | None = None
         self._announce_handler: AnnounceHandler | None = None
         self._propagation_node_registry = PropagationNodeRegistry()
         self._propagation_announce_handler: PropagationNodeAnnounceHandler | None = None
@@ -931,6 +931,11 @@ class ReticulumTelemetryHub:
         self.api.set_reticulum_destination(self._origin_rch_hex())
         self._backfill_identity_announces()
         self._load_persisted_clients()
+        self._remove_topic_registry_change_listener = (
+            self.api.register_topic_registry_change_listener(
+                self._invalidate_topic_registry
+            )
+        )
         self._announce_handler = AnnounceHandler(
             self.identities,
             api=self.api,
@@ -997,7 +1002,7 @@ class ReticulumTelemetryHub:
         )
         self.internal_adapter = ReticulumInternalAdapter(send_message=self.send_message)
         self.topic_subscribers: dict[str, set[str]] = {}
-        self._topic_registry_last_refresh: float = 0.0
+        self._topic_registry_dirty = True
         self._refresh_topic_registry()
         if self.mission_domain_service is not None:
             self._remove_mission_change_listener = (
@@ -1090,10 +1095,10 @@ class ReticulumTelemetryHub:
         if legacy_commands:
             responses.extend(manager.handle_commands(legacy_commands, message))
 
-        if self._commands_affect_subscribers(legacy_commands) or self._mission_commands_affect_subscribers(
-            mission_commands
-        ):
-            self._refresh_topic_registry()
+        if self._commands_affect_subscribers(
+            legacy_commands
+        ) or self._mission_commands_affect_subscribers(mission_commands):
+            self._invalidate_topic_registry()
         return responses
 
     def _mission_sync_response_to_lxmf(
@@ -3055,7 +3060,6 @@ class ReticulumTelemetryHub:
         return fallback
 
     def _refresh_topic_registry(self) -> None:
-        self._topic_registry_last_refresh = time.monotonic()
         if not self.api:
             return
         try:
@@ -3066,6 +3070,7 @@ class ReticulumTelemetryHub:
                 getattr(RNS, "LOG_WARNING", 2),
             )
             self.topic_subscribers = {}
+            self._topic_registry_dirty = True
             return
         registry: dict[str, set[str]] = {}
         for subscriber in subscribers:
@@ -3075,21 +3080,20 @@ class ReticulumTelemetryHub:
                 continue
             registry.setdefault(topic_id, set()).add(destination.lower())
         self.topic_subscribers = registry
-        self._topic_registry_last_refresh = time.monotonic()
+
+        self._topic_registry_dirty = False
+
+    def _invalidate_topic_registry(self) -> None:
+        """Mark the topic subscriber cache dirty."""
+
+        self._topic_registry_dirty = True
 
     def _subscribers_for_topic(self, topic_id: str) -> set[str]:
         if not topic_id:
             return set()
-        if not hasattr(self, "_topic_registry_last_refresh"):
-            self._topic_registry_last_refresh = time.monotonic()
-        now = time.monotonic()
-        last_refresh = getattr(self, "_topic_registry_last_refresh", 0.0)
-        is_stale = (now - last_refresh) >= TOPIC_REGISTRY_TTL_SECONDS
-        if is_stale or topic_id not in self.topic_subscribers:
+        if getattr(self, "_topic_registry_dirty", False) or topic_id not in self.topic_subscribers:
             if self.api:
                 self._refresh_topic_registry()
-            else:
-                self._topic_registry_last_refresh = now
         return self.topic_subscribers.get(topic_id, set())
 
     def _commands_affect_subscribers(self, commands: list[dict] | None) -> bool:
@@ -4211,6 +4215,11 @@ class ReticulumTelemetryHub:
                 self._remove_mission_change_listener()
             finally:
                 self._remove_mission_change_listener = None
+        if self._remove_topic_registry_change_listener is not None:
+            try:
+                self._remove_topic_registry_change_listener()
+            finally:
+                self._remove_topic_registry_change_listener = None
         if self._announce_handler is not None:
             self._announce_handler.close()
             self._announce_handler = None

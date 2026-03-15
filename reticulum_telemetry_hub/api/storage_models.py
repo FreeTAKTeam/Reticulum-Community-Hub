@@ -9,6 +9,7 @@ from sqlalchemy import Boolean
 from sqlalchemy import Column
 from sqlalchemy import DateTime
 from sqlalchemy import Float
+from sqlalchemy import Index
 from sqlalchemy import Integer
 from sqlalchemy import JSON
 from sqlalchemy import String
@@ -40,6 +41,10 @@ class SubscriberRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for subscribers."""
 
     __tablename__ = "subscribers"
+    __table_args__ = (
+        Index("ix_subscribers_topic_id", "topic_id"),
+        Index("ix_subscribers_destination", "destination"),
+    )
 
     id = Column(String, primary_key=True)
     destination = Column(String, nullable=False)
@@ -119,6 +124,11 @@ class ChatMessageRecord(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy record for persisted chat messages."""
 
     __tablename__ = "chat_messages"
+    __table_args__ = (
+        Index("ix_chat_messages_topic_created_at", "topic_id", "created_at"),
+        Index("ix_chat_messages_destination_created_at", "destination", "created_at"),
+        Index("ix_chat_messages_source_created_at", "source", "created_at"),
+    )
 
     id = Column(String, primary_key=True)
     direction = Column(String, nullable=False)
