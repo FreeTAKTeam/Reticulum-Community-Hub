@@ -151,10 +151,21 @@ python -m reticulum_telemetry_hub.reticulum_server --storage_dir ./RCH_Store --d
 # Run the gateway (hub + API)
 python -m reticulum_telemetry_hub.northbound.gateway --data-dir ./RCH_Store --port 8000
 
+# Run only the API server (without hub runtime wiring)
+uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
+
 # Or use the CLI
 rch start --data-dir ./RCH_Store --port 8000 --log-level info
 rch status --data-dir ./RCH_Store
 rch stop --data-dir ./RCH_Store
+
+# Combined backend + UI launchers
+./run_server_ui.sh           # Linux/macOS local bind (127.0.0.1 defaults)
+run_server_ui.bat            # Windows local bind (127.0.0.1 defaults)
+./run_server_ui_remote.sh    # Linux remote-friendly bind; requires RTH_API_KEY
+
+# Remote-access gateway bind (LAN/WAN)
+python -m reticulum_telemetry_hub.northbound.gateway --data-dir ./RCH_Store --api-host 0.0.0.0 --port 8000
 ```
 
 ### UI Development
@@ -560,6 +571,7 @@ with self.storage.session() as session:
 
 - `docs/architecture.md` - System architecture and data flows
 - `docs/userManual.md` - User and operator guide
+- `docs/remoteAccess.md` - LAN/WAN access and `systemd` deployment guide
 - `docs/internal-api.md` - Internal API contract
 - `docs/TelemetryDocumentation.md` - Telemetry wire format
 - `docs/tak.md` - TAK integration details
