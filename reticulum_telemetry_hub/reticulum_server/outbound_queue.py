@@ -10,6 +10,7 @@ from queue import Empty
 from queue import Full
 from queue import Queue
 from typing import Callable
+from typing import NamedTuple
 
 import LXMF
 import RNS
@@ -55,6 +56,7 @@ class OutboundPayload:
     route_type: str = "broadcast"
     attempts: int = 0
     next_attempt_at: float = field(default_factory=time.monotonic)
+    enqueued_at: float = field(default_factory=time.monotonic)
     delivery_mode: str = "direct"
     propagation_node_hash: bytes | None = None
     propagation_node_hex: str | None = None
@@ -67,6 +69,12 @@ class OutboundPayload:
         repr=False,
         compare=False,
     )
+
+
+class _PendingReceipt(NamedTuple):
+    payload: OutboundPayload
+    attempt_id: int
+    deadline: float
 
 
 class OutboundMessageQueue:
@@ -144,8 +152,13 @@ class OutboundMessageQueue:
         self._max_attempts = max(max_attempts, 1)
         self._stop_event = threading.Event()
         self._workers: list[threading.Thread] = []
+        self._receipt_monitor: threading.Thread | None = None
         self._inflight = 0
         self._inflight_lock = threading.Lock()
+        self._active_dispatches = 0
+        self._active_dispatch_lock = threading.Lock()
+        self._pending_receipts: dict[tuple[int, int], _PendingReceipt] = {}
+        self._pending_receipts_lock = threading.Lock()
         self._delivery_receipt_callback = delivery_receipt_callback
         self._delivery_failure_callback = delivery_failure_callback
         self._propagation_selector = propagation_selector
@@ -169,6 +182,13 @@ class OutboundMessageQueue:
             )
             worker.start()
             self._workers.append(worker)
+        if self._receipt_monitor is None:
+            self._receipt_monitor = threading.Thread(
+                target=self._receipt_monitor_loop,
+                name="lxmf-outbound-receipts",
+                daemon=True,
+            )
+            self._receipt_monitor.start()
 
     def stop(self) -> None:
         """Signal workers to stop and wait for them to exit."""
@@ -180,6 +200,9 @@ class OutboundMessageQueue:
         for worker in self._workers:
             worker.join(timeout=0.5)
         self._workers.clear()
+        if self._receipt_monitor is not None:
+            self._receipt_monitor.join(timeout=0.5)
+            self._receipt_monitor = None
 
     def queue_message(
         self,
@@ -238,10 +261,29 @@ class OutboundMessageQueue:
         while time.monotonic() < deadline:
             with self._inflight_lock:
                 inflight = self._inflight
-            if self._queue.empty() and inflight == 0:
+            with self._pending_receipts_lock:
+                pending_receipts = len(self._pending_receipts)
+            if self._queue.empty() and inflight == 0 and pending_receipts == 0:
                 return True
             time.sleep(0.01)
         return False
+
+    def stats(self) -> dict[str, int]:
+        """Return queue counters for routing and backpressure metrics."""
+
+        with self._inflight_lock:
+            inflight = self._inflight
+        with self._active_dispatch_lock:
+            active_dispatches = self._active_dispatches
+        with self._pending_receipts_lock:
+            pending_receipts = len(self._pending_receipts)
+        return {
+            "queue_depth": self._queue.qsize(),
+            "inflight": inflight,
+            "active_dispatches": active_dispatches,
+            "pending_receipts": pending_receipts,
+            "worker_count": self._worker_count,
+        }
 
     def _enqueue_payload(self, payload: OutboundPayload) -> bool:
         try:
@@ -337,6 +379,72 @@ class OutboundMessageQueue:
             if payload._active_attempt_id == attempt_id:
                 payload._active_attempt_id = 0
 
+    def _attempt_is_active(self, payload: OutboundPayload, attempt_id: int) -> bool:
+        """Return whether the current attempt is still active."""
+
+        with payload._attempt_lock:
+            return payload._active_attempt_id == attempt_id
+
+    def _register_pending_receipt(
+        self,
+        payload: OutboundPayload,
+        attempt_id: int,
+    ) -> None:
+        """Track a dispatched payload until a delivery callback or timeout arrives."""
+
+        if self._delivery_receipt_timeout is None:
+            return
+        deadline = time.monotonic() + self._delivery_receipt_timeout
+        key = (id(payload), attempt_id)
+        with self._pending_receipts_lock:
+            self._pending_receipts[key] = _PendingReceipt(payload, attempt_id, deadline)
+
+    def _pop_pending_receipt(
+        self,
+        payload: OutboundPayload,
+        attempt_id: int,
+    ) -> _PendingReceipt | None:
+        """Remove and return the pending receipt entry for an attempt."""
+
+        key = (id(payload), attempt_id)
+        with self._pending_receipts_lock:
+            return self._pending_receipts.pop(key, None)
+
+    def _receipt_monitor_loop(self) -> None:
+        """Fail pending attempts whose delivery callback never arrives."""
+
+        while not self._stop_event.is_set():
+            now = time.monotonic()
+            expired: list[_PendingReceipt] = []
+            with self._pending_receipts_lock:
+                for key, pending in list(self._pending_receipts.items()):
+                    if pending.deadline <= now:
+                        expired.append(self._pending_receipts.pop(key))
+            for pending in expired:
+                self._handle_receipt_timeout(pending.payload, pending.attempt_id)
+            self._stop_event.wait(0.05)
+
+    def _handle_receipt_timeout(
+        self,
+        payload: OutboundPayload,
+        attempt_id: int,
+    ) -> None:
+        """Convert a missing delivery callback into a retry/failure transition."""
+
+        if not self._claim_attempt(payload, attempt_id):
+            return
+        RNS.log(
+            (
+                "Timed out waiting for LXMF delivery acknowledgement from"
+                f" {payload.destination_hex or 'unknown destination'}"
+            ),
+            getattr(RNS, "LOG_WARNING", 2),
+        )
+        self._handle_delivery_attempt_failure(
+            payload,
+            reason="delivery_receipt_timeout",
+        )
+
     def _build_message(self, payload: OutboundPayload) -> LXMF.LXMessage:
         """Construct an LXMF message for the current payload mode."""
 
@@ -361,15 +469,12 @@ class OutboundMessageQueue:
 
         error: list[Exception | None] = [None]
         attempt_id = self._begin_attempt(payload)
-        callback_completed = threading.Event()
-        callback_failed = [False]
 
         def _mark_receipt(
             delivered_message: LXMF.LXMessage,
             outbound_payload: OutboundPayload = payload,
             token: int = attempt_id,
         ) -> None:
-            callback_completed.set()
             self._notify_delivery_receipt(
                 delivered_message,
                 outbound_payload,
@@ -381,8 +486,6 @@ class OutboundMessageQueue:
             outbound_payload: OutboundPayload = payload,
             token: int = attempt_id,
         ) -> None:
-            callback_failed[0] = True
-            callback_completed.set()
             self._notify_delivery_failure(
                 failed_message,
                 outbound_payload,
@@ -390,6 +493,8 @@ class OutboundMessageQueue:
             )
 
         def _send() -> None:
+            with self._active_dispatch_lock:
+                self._active_dispatches += 1
             try:
                 message = self._build_message(payload)
                 message.register_delivery_callback(_mark_receipt)
@@ -397,6 +502,9 @@ class OutboundMessageQueue:
                 self._lxm_router.handle_outbound(message)
             except Exception as exc:
                 error[0] = exc
+            finally:
+                with self._active_dispatch_lock:
+                    self._active_dispatches -= 1
 
         sender = threading.Thread(target=_send, name="lxmf-send", daemon=True)
         sender.start()
@@ -425,21 +533,10 @@ class OutboundMessageQueue:
 
         if self._delivery_receipt_timeout is None:
             return None
-
-        if callback_completed.wait(timeout=self._delivery_receipt_timeout):
+        if not self._attempt_is_active(payload, attempt_id):
             return None
-
-        self._invalidate_attempt(payload, attempt_id)
-        RNS.log(
-            (
-                "Timed out waiting for LXMF delivery acknowledgement from"
-                f" {payload.destination_hex or 'unknown destination'}"
-            ),
-            getattr(RNS, "LOG_WARNING", 2),
-        )
-        if callback_failed[0]:
-            return None
-        return "delivery_receipt_timeout"
+        self._register_pending_receipt(payload, attempt_id)
+        return None
 
     def _emit_delivery_receipt_callback(
         self,
@@ -485,6 +582,7 @@ class OutboundMessageQueue:
     ) -> None:
         """Handle an LXMF delivery receipt for the current active attempt."""
 
+        self._pop_pending_receipt(payload, attempt_id)
         if not self._claim_attempt(payload, attempt_id):
             return
         self._emit_delivery_receipt_callback(message, payload)
@@ -497,6 +595,7 @@ class OutboundMessageQueue:
     ) -> None:
         """Handle an LXMF delivery failure for the current active attempt."""
 
+        self._pop_pending_receipt(payload, attempt_id)
         if not self._claim_attempt(payload, attempt_id):
             return
         self._handle_delivery_attempt_failure(

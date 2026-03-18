@@ -1,4 +1,6 @@
 # TASKS
+- 2026-03-18: DONE. Apply TAK TLS patch adding `tls_client_password` config support and the hosted Vite dev script flag.
+- 2026-03-18: DONE. Move telemetry fan-out onto the outbound queue, decouple outbound receipt waiting from send workers, raise/configure worker concurrency, and emit queue depth/enqueue/active-send/drop metrics.
 - 2026-03-18: DONE. Review GitHub Dependabot/security alerts and remediate actionable dependency vulnerabilities across Python, UI, and Electron manifests/lockfiles.
 - 2026-03-16: DONE. Verify southbound LXMF handling against the delivery strategy and document canonical TopicID normalization, `RTHDelivery` validation, UTC/TTL/skew rules, routing exclusivity, and retry/ack persistence.
 - 2026-03-16: DONE. Improve message delivery strategy with canonical TopicID normalization, validated delivery envelopes, UTC/TTL/skew guards, explicit fan-out vs targeted routing, and persisted outbound retry state.

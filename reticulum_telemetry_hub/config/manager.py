@@ -539,6 +539,13 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
                 hub_section.get("service_telemetry_interval"),
                 defaults.service_telemetry_interval,
             ),
+            outbound_workers=max(
+                1,
+                self._coerce_int(
+                    hub_section.get("outbound_workers"),
+                    defaults.outbound_workers,
+                ),
+            ),
             log_level=hub_section.get("log_level", defaults.log_level).lower(),
             embedded_lxmd=self._get_bool(
                 hub_section, "embedded_lxmd", defaults.embedded_lxmd
@@ -1045,6 +1052,7 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             tls_client_cert=section.get("tls_client_cert"),
             tls_client_key=section.get("tls_client_key"),
             tls_ca=section.get("tls_ca"),
+            tls_client_password=section.get("tls_client_password"),
             tls_insecure=self._get_bool(section, "tls_insecure", defaults.tls_insecure),
             tak_proto=tak_proto,
             fts_compat=fts_compat,

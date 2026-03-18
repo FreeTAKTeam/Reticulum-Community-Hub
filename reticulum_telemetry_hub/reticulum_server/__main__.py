@@ -162,7 +162,7 @@ MARKDOWN_RENDERER_FIELD = int(getattr(LXMF, "FIELD_RENDERER", 0x0F))
 MARKDOWN_RENDERER_VALUE = int(getattr(LXMF, "RENDERER_MARKDOWN", 0x02))
 ESCAPED_COMMAND_PREFIX = "\\\\\\"
 DEFAULT_OUTBOUND_QUEUE_SIZE = 64
-DEFAULT_OUTBOUND_WORKERS = 2
+DEFAULT_OUTBOUND_WORKERS = 4
 DEFAULT_OUTBOUND_SEND_TIMEOUT = 5.0
 DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT = 30.0
 DEFAULT_OUTBOUND_BACKOFF = 0.5
@@ -977,6 +977,7 @@ class ReticulumTelemetryHub:
             hub_interval=hub_telemetry_interval,
             service_interval=service_telemetry_interval,
             telemeter_manager=self.telemeter_manager,
+            outbound_queue=self._ensure_outbound_queue(),
             event_log=self.event_log,
         )
 
@@ -1979,6 +1980,7 @@ class ReticulumTelemetryHub:
                 if self._connection_hex(connection) in subscriber_hex
             ]
         message_id = self._delivery_message_id(fields, chat_message_id=chat_message_id)
+        enqueue_started = time.perf_counter()
         recipient_count = 0
         enqueued_any = False
         for connection in available:
@@ -2016,12 +2018,18 @@ class ReticulumTelemetryHub:
                     ),
                     getattr(RNS, "LOG_WARNING", 2),
                 )
+        enqueue_duration_ms = round((time.perf_counter() - enqueue_started) * 1000, 3)
+        queue_stats = queue.stats()
         self._record_outbound_route_metrics(
             message_id=message_id,
             route_type=route_type,
             fanout_count=recipient_count if route_type == "fanout" else 0,
             targeted_recipient_count=recipient_count if route_type == "targeted" else 0,
             drop_reason=None if enqueued_any else "no_recipients",
+            enqueue_duration_ms=enqueue_duration_ms,
+            queue_depth=queue_stats["queue_depth"],
+            active_sends=queue_stats["active_dispatches"],
+            pending_receipts=queue_stats["pending_receipts"],
         )
         return enqueued_any
 
@@ -2527,6 +2535,7 @@ class ReticulumTelemetryHub:
             "topic_id": payload.topic_id,
             "attempts": payload.attempts,
             "delivery_mode": payload.delivery_mode,
+            "enqueue_age_ms": round((time.monotonic() - payload.enqueued_at) * 1000, 3),
             "propagation_node_hex": payload.propagation_node_hex,
             "local_propagation_fallback": payload.local_propagation_fallback,
             "destination": payload.destination_hex,
@@ -2574,6 +2583,10 @@ class ReticulumTelemetryHub:
         fanout_count: int,
         targeted_recipient_count: int,
         drop_reason: str | None,
+        enqueue_duration_ms: float,
+        queue_depth: int,
+        active_sends: int,
+        pending_receipts: int,
     ) -> None:
         """Emit event-log metrics for routing selection outcomes."""
 
@@ -2588,6 +2601,10 @@ class ReticulumTelemetryHub:
                 "route_type": route_type,
                 "fanout_count": fanout_count,
                 "targeted_recipient_count": targeted_recipient_count,
+                "enqueue_duration_ms": enqueue_duration_ms,
+                "queue_depth": queue_depth,
+                "active_sends": active_sends,
+                "pending_receipts": pending_receipts,
                 "drop_reason": drop_reason,
             },
         )

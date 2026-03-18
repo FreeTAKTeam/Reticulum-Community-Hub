@@ -243,6 +243,94 @@ def test_outbound_queue_times_out_missing_delivery_receipts():
     assert failures == [(1, recipient.identity.hash.hex())]
 
 
+def test_outbound_queue_releases_worker_while_waiting_for_receipt():
+    sender = _make_destination(RNS.Destination.IN)
+    recipient_one = _make_destination()
+    recipient_two = _make_destination()
+    sent_hashes: list[str] = []
+
+    class SlowReceiptRouter:
+        propagation_node = False
+
+        def handle_outbound(self, message):
+            sent_hashes.append(message.destination_hash.hex())
+
+    queue = OutboundMessageQueue(
+        SlowReceiptRouter(),
+        sender,
+        queue_size=4,
+        worker_count=1,
+        send_timeout=0.1,
+        delivery_receipt_timeout=0.2,
+        backoff_seconds=0.01,
+        max_attempts=1,
+    )
+
+    try:
+        queue.start()
+        queue.queue_message(
+            recipient_one,
+            "first",
+            recipient_one.identity.hash,
+            recipient_one.identity.hash.hex(),
+            None,
+        )
+        queue.queue_message(
+            recipient_two,
+            "second",
+            recipient_two.identity.hash,
+            recipient_two.identity.hash.hex(),
+            None,
+        )
+        deadline = time.time() + 0.3
+        while time.time() < deadline and len(sent_hashes) < 2:
+            time.sleep(0.01)
+    finally:
+        queue.stop()
+
+    assert sent_hashes == [
+        recipient_one.identity.hash.hex(),
+        recipient_two.identity.hash.hex(),
+    ]
+
+
+def test_outbound_queue_reports_runtime_stats():
+    sender = _make_destination(RNS.Destination.IN)
+    recipient = _make_destination()
+
+    class SilentRouter:
+        def handle_outbound(self, message):
+            _ = message
+
+    queue = OutboundMessageQueue(
+        SilentRouter(),
+        sender,
+        queue_size=2,
+        worker_count=3,
+        send_timeout=0.1,
+        delivery_receipt_timeout=0.2,
+        backoff_seconds=0.01,
+        max_attempts=1,
+    )
+
+    try:
+        queue.queue_message(
+            recipient,
+            "stats",
+            recipient.identity.hash,
+            recipient.identity.hash.hex(),
+            None,
+        )
+        stats = queue.stats()
+    finally:
+        queue.stop()
+
+    assert stats["queue_depth"] == 1
+    assert stats["worker_count"] == 3
+    assert stats["active_dispatches"] == 0
+    assert stats["pending_receipts"] == 0
+
+
 def test_outbound_queue_retries_failed_callbacks_before_terminal_failure():
     sender = _make_destination(RNS.Destination.IN)
     recipient = _make_destination()

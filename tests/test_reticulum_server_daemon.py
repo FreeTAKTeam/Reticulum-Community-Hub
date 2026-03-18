@@ -905,13 +905,25 @@ def test_dispatch_northbound_message_records_delivery_ack_event(tmp_path):
         assert queued.state == "queued"
         deadline = time.time() + 1.5
         delivered_message = None
+        delivered_event = None
         while time.time() < deadline:
             matches = [
                 message
                 for message in hub.api.list_chat_messages(limit=20, direction="outbound")
                 if message.message_id == queued.message_id
             ]
-            if matches and matches[0].state == "delivered":
+            events = hub.event_log.list_events(limit=200)
+            delivered_event = next(
+                (
+                    entry
+                    for entry in events
+                    if entry.get("type") == "message_delivered"
+                    and isinstance(entry.get("metadata"), dict)
+                    and entry["metadata"].get("MessageID") == queued.message_id
+                ),
+                None,
+            )
+            if matches and matches[0].state == "delivered" and delivered_event is not None:
                 delivered_message = matches[0]
                 break
             time.sleep(0.05)
@@ -922,23 +934,13 @@ def test_dispatch_northbound_message_records_delivery_ack_event(tmp_path):
         assert delivered_message.delivery_metadata["route_type"] == "targeted"
         assert delivered_message.delivery_metadata["content_type"] == "text/plain; schema=lxmf.chat.v1"
 
-        events = hub.event_log.list_events(limit=200)
-        delivered_event = next(
-            (
-                entry
-                for entry in events
-                if entry.get("type") == "message_delivered"
-                and isinstance(entry.get("metadata"), dict)
-                and entry["metadata"].get("MessageID") == queued.message_id
-            ),
-            None,
-        )
         assert delivered_event is not None
         metadata = delivered_event.get("metadata")
         assert isinstance(metadata, dict)
         assert metadata.get("State") == "delivered"
         assert metadata.get("Destination") == recipient_hex
         assert metadata.get("acknowledgement_type") == "delivery_receipt"
+        assert "enqueue_age_ms" in metadata.get("DeliveryMetadata", {})
     finally:
         hub.shutdown()
 
@@ -1002,6 +1004,23 @@ def test_dispatch_northbound_message_fails_when_delivery_ack_never_arrives(tmp_p
         assert metadata.get("Destination") == recipient_hex
         assert failed_message.delivery_metadata["acked"] is False
         assert failed_message.delivery_metadata["attempts"] == 1
+        routed_event = next(
+            (
+                entry
+                for entry in events
+                if entry.get("type") == "message_routed"
+                and isinstance(entry.get("metadata"), dict)
+                and entry["metadata"].get("MessageID") == queued.message_id
+            ),
+            None,
+        )
+        assert routed_event is not None
+        routed_metadata = routed_event.get("metadata")
+        assert isinstance(routed_metadata, dict)
+        assert "queue_depth" in routed_metadata
+        assert "enqueue_duration_ms" in routed_metadata
+        assert "active_sends" in routed_metadata
+        assert "pending_receipts" in routed_metadata
     finally:
         hub.shutdown()
 

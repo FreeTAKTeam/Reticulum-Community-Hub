@@ -29,6 +29,24 @@ class TelemetryCollector(Protocol):
     def __call__(self) -> "TelemetrySample | dict | None": ...
 
 
+class TelemetryDispatchQueue(Protocol):
+    """Protocol describing the outbound queue contract used for telemetry fan-out."""
+
+    def queue_message(
+        self,
+        connection: RNS.Destination,
+        message_text: str,
+        destination_hash: bytes | None,
+        destination_hex: str | None,
+        fields: dict | None = None,
+        sender: RNS.Destination | None = None,
+        chat_message_id: str | None = None,
+        message_id: str | None = None,
+        topic_id: str | None = None,
+        route_type: str = "broadcast",
+    ) -> bool: ...
+
+
 @dataclass
 class TelemetrySample:
     """Container describing telemetry payloads gathered by the sampler."""
@@ -66,6 +84,7 @@ class TelemetrySampler:
         telemeter_manager: TelemeterManager | None = None,
         broadcast_updates: bool = False,
         event_log: EventLog | None = None,
+        outbound_queue: TelemetryDispatchQueue | None = None,
     ) -> None:
         self._controller = controller
         self._router = router
@@ -73,6 +92,7 @@ class TelemetrySampler:
         self._connections = connections if connections is not None else {}
         self._broadcast_updates = broadcast_updates
         self._event_log = event_log
+        self._outbound_queue = outbound_queue
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._jobs: list[_SamplerJob] = []
@@ -213,16 +233,39 @@ class TelemetrySampler:
 
         for destination in destinations:
             try:
+                fields = apply_icon_appearance({LXMF.FIELD_TELEMETRY: encoded})
+                destination_hash = (
+                    destination.identity.hash
+                    if hasattr(destination, "identity") and hasattr(destination.identity, "hash")
+                    else None
+                )
+                destination_hex = (
+                    destination_hash.hex()
+                    if isinstance(destination_hash, (bytes, bytearray))
+                    else None
+                )
+                if self._outbound_queue is not None:
+                    queued = self._outbound_queue.queue_message(
+                        destination,
+                        "",
+                        destination_hash,
+                        destination_hex,
+                        fields,
+                        sender=self._source_destination,
+                        route_type="broadcast",
+                    )
+                    if queued:
+                        continue
+                    raise RuntimeError("telemetry broadcast queue is saturated")
+
                 message = LXMF.LXMessage(
                     destination,
                     self._source_destination,
-                    fields=apply_icon_appearance({LXMF.FIELD_TELEMETRY: encoded}),
+                    fields=fields,
                     desired_method=LXMF.LXMessage.DIRECT,
                 )
-                if hasattr(destination, "identity") and hasattr(
-                    destination.identity, "hash"
-                ):
-                    message.destination_hash = destination.identity.hash
+                if destination_hash:
+                    message.destination_hash = destination_hash
                 self._router.handle_outbound(message)
             except Exception as exc:  # pragma: no cover - defensive logging
                 report_nonfatal_exception(

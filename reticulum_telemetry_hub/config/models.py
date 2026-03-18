@@ -17,6 +17,7 @@ from reticulum_telemetry_hub.config.constants import (
     DEFAULT_HUB_TELEMETRY_INTERVAL,
     DEFAULT_LOG_LEVEL_NAME,
     DEFAULT_MARKER_ANNOUNCE_INTERVAL_MINUTES,
+    DEFAULT_OUTBOUND_WORKERS,
     DEFAULT_SERVICE_TELEMETRY_INTERVAL,
 )
 
@@ -170,6 +171,7 @@ class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     )
     hub_telemetry_interval: int = DEFAULT_HUB_TELEMETRY_INTERVAL
     service_telemetry_interval: int = DEFAULT_SERVICE_TELEMETRY_INTERVAL
+    outbound_workers: int = DEFAULT_OUTBOUND_WORKERS
     log_level: str = DEFAULT_LOG_LEVEL_NAME
     embedded_lxmd: bool = False
     default_services: Tuple[str, ...] = ()
@@ -245,9 +247,11 @@ class TakConnectionConfig:  # pylint: disable=too-many-instance-attributes
     tls_client_cert: str | None = None
     tls_client_key: str | None = None
     tls_ca: str | None = None
-    tls_insecure: bool = False
+    tls_insecure: bool = True
     tak_proto: int = 0
     fts_compat: int = 1
+    tls_client_password: str | None = None
+    pytak_tls_dont_verify: int = 1
 
     def to_config_parser(self) -> ConfigParser:
         """Return a ConfigParser that PyTAK understands.
@@ -260,10 +264,11 @@ class TakConnectionConfig:  # pylint: disable=too-many-instance-attributes
         parser["fts"] = {
             "COT_URL": self.cot_url,
             "CALLSIGN": self.callsign,
-            "SSL_CLIENT_CERT": self.tls_client_cert or "",
-            "SSL_CLIENT_KEY": self.tls_client_key or "",
+            "PYTAK_TLS_CLIENT_CERT": self.tls_client_cert or "",
+            "PYTAK_TLS_CLIENT_KEY": self.tls_client_key or "",
             "SSL_CLIENT_CAFILE": self.tls_ca or "",
-            "SSL_VERIFY": "false" if self.tls_insecure else "true",
+            "PYTAK_TLS_CLIENT_PASSWORD": self.tls_client_password or "",
+            "PYTAK_TLS_DONT_VERIFY": str(self.pytak_tls_dont_verify),
             "TAK_PROTO": str(self.tak_proto),
             "FTS_COMPAT": str(self.fts_compat),
         }
@@ -287,4 +292,5 @@ class TakConnectionConfig:  # pylint: disable=too-many-instance-attributes
             "tls_insecure": self.tls_insecure,
             "tak_proto": self.tak_proto,
             "fts_compat": self.fts_compat,
+            "tls_client_password": self.tls_client_password,
         }

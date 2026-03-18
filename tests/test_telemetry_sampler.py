@@ -27,6 +27,40 @@ class DummyConnections(dict):
     """Mutable mapping storing destinations by hash."""
 
 
+class DummyOutboundQueue:
+    def __init__(self) -> None:
+        self.messages: list[dict[str, object]] = []
+
+    def queue_message(
+        self,
+        connection,
+        message_text,
+        destination_hash,
+        destination_hex,
+        fields=None,
+        sender=None,
+        chat_message_id=None,
+        message_id=None,
+        topic_id=None,
+        route_type="broadcast",
+    ):
+        self.messages.append(
+            {
+                "connection": connection,
+                "message_text": message_text,
+                "destination_hash": destination_hash,
+                "destination_hex": destination_hex,
+                "fields": fields,
+                "sender": sender,
+                "chat_message_id": chat_message_id,
+                "message_id": message_id,
+                "topic_id": topic_id,
+                "route_type": route_type,
+            }
+        )
+        return True
+
+
 def _destination() -> RNS.Destination:
     identity = RNS.Identity()
     return RNS.Destination(
@@ -100,6 +134,32 @@ def test_sampler_can_broadcast_when_enabled(telemetry_controller):
 
     assert router.messages
     assert not router.messages[0].content
+
+
+def test_sampler_queues_broadcasts_on_outbound_queue(telemetry_controller):
+    router = DummyRouter()
+    outbound_queue = DummyOutboundQueue()
+    server_dest = _destination()
+    client_dest = _destination()
+    connections = DummyConnections({client_dest.identity.hash: client_dest})
+
+    sampler = TelemetrySampler(
+        telemetry_controller,
+        router,
+        server_dest,
+        connections=connections,
+        broadcast_updates=True,
+        outbound_queue=outbound_queue,
+    )
+
+    sampler._process_sample(TelemetrySample(payload={"one": 1}))
+
+    assert not router.messages
+    assert len(outbound_queue.messages) == 1
+    queued = outbound_queue.messages[0]
+    assert queued["message_text"] == ""
+    assert queued["route_type"] == "broadcast"
+    assert queued["destination_hash"] == client_dest.identity.hash
 
 
 def test_sampler_schedules_service_collectors_independently(telemetry_controller):

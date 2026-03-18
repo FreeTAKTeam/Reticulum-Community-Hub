@@ -23,6 +23,7 @@ from fastapi import FastAPI
 
 from reticulum_telemetry_hub.config.constants import DEFAULT_HUB_TELEMETRY_INTERVAL
 from reticulum_telemetry_hub.config.constants import DEFAULT_LOG_LEVEL_NAME
+from reticulum_telemetry_hub.config.constants import DEFAULT_OUTBOUND_WORKERS
 from reticulum_telemetry_hub.config.constants import DEFAULT_SERVICE_TELEMETRY_INTERVAL
 from reticulum_telemetry_hub.config.constants import DEFAULT_STORAGE_PATH
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
@@ -83,6 +84,7 @@ class GatewayConfig:
     services: list[str]
     api_host: str
     api_port: int
+    outbound_workers: int = DEFAULT_OUTBOUND_WORKERS
 
 
 def _resolve_interval(value: int | None, fallback: int) -> int:
@@ -226,6 +228,7 @@ def _build_gateway_config(args: argparse.Namespace) -> GatewayConfig:
         args.service_telemetry_interval,
         runtime_config.service_telemetry_interval or DEFAULT_SERVICE_TELEMETRY_INTERVAL,
     )
+    outbound_workers = max(1, int(runtime_config.outbound_workers))
     log_level_name = (
         args.log_level or runtime_config.log_level or DEFAULT_LOG_LEVEL_NAME
     ).lower()
@@ -245,6 +248,7 @@ def _build_gateway_config(args: argparse.Namespace) -> GatewayConfig:
         announce_interval=announce_interval,
         hub_telemetry_interval=hub_interval,
         service_telemetry_interval=service_interval,
+        outbound_workers=outbound_workers,
         loglevel=loglevel,
         embedded=embedded,
         daemon_mode=bool(args.daemon),
@@ -572,6 +576,7 @@ def main() -> None:
         loglevel=config.loglevel,
         hub_telemetry_interval=config.hub_telemetry_interval,
         service_telemetry_interval=config.service_telemetry_interval,
+        outbound_workers=config.outbound_workers,
         config_manager=config_manager,
     )
     hub_init_elapsed = time.monotonic() - hub_init_started
