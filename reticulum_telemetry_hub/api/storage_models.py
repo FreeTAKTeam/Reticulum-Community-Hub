@@ -139,6 +139,7 @@ class ChatMessageRecord(Base):  # pylint: disable=too-few-public-methods
     destination = Column(String, nullable=True)
     topic_id = Column(String, nullable=True)
     attachments_json = Column("attachments", JSON, nullable=True)
+    delivery_metadata_json = Column("delivery_metadata", JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False

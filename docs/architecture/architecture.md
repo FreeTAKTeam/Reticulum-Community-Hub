@@ -27,8 +27,12 @@ transport-agnostic integrations.
   fields), are normalized by the command manager, validated, applied via the
   API service, and replied to over LXMF using `FIELD_RESULTS` or a specialized
   response field such as `FIELD_TELEMETRY_STREAM`,
-  `FIELD_FILE_ATTACHMENTS`, or `FIELD_IMAGE`. `FIELD_THREAD` and `FIELD_GROUP`
-  are echoed into replies when present.
+  `FIELD_FILE_ATTACHMENTS`, or `FIELD_IMAGE`. Topic identifiers are normalized
+  to one canonical string form across publish, route, persist, and subscribe
+  paths. When an inbound message includes the `RTHDelivery` sideband envelope,
+  the runtime validates required headers, accepted content types, UTC/TTL/skew
+  constraints, and rejects invalid messages before command execution.
+  `FIELD_THREAD` and `FIELD_GROUP` are echoed into replies when present.
 - **Mission/checklist sync envelopes**: inbound `FIELD_COMMANDS` payloads with
   `command_type` are routed through `mission_sync` and `checklist_sync` with
   persisted capability ACL checks and standardized accepted/rejected/result
@@ -40,7 +44,11 @@ transport-agnostic integrations.
   while WebSocket streams read from the event log and telemetry broadcaster.
   Canonical join/leave routes are exposed at `/RCH` with `/RTH` retained as a
   compatibility alias. Checklist lifecycle routes are exposed under
-  `/checklists/*` and R3AKT registry routes under `/api/r3akt/*`.
+  `/checklists/*` and R3AKT registry routes under `/api/r3akt/*`. Northbound
+  message dispatch attaches `RTHDelivery` to hub-originated outbound chat,
+  enforces exactly one routing mode (`broadcast`, `fanout`, or `targeted`),
+  and persists outbound delivery metadata including `Message-ID`, attempts,
+  ack state, drop reasons, and propagation fallback transitions.
 - **Operational zones**: zone create/list/update/delete requests are validated
   by `ZoneService` and persisted to the `zones` store for WebMap polygon
   overlays and mission-area awareness.

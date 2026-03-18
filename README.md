@@ -14,6 +14,7 @@ Read our full manifesto: [docs/Manifesto_Reticulum_Community_Hub.md](docs/Manife
 ## What it does
 
 - One-to-many and topic-scoped message fan-out over LXMF.
+- Canonical TopicID normalization plus validated delivery metadata for hub-originated message sends.
 - Telemetry collection and on-demand telemetry responses.
 - File and image attachment storage with retrieval and deletion by ID.
 - sci-fi themed admin UI.
@@ -108,6 +109,8 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 - Remote clients must authenticate. Set `RTH_API_KEY` and send it as `X-API-Key` or a Bearer token (`RCH_API_KEY` remains a backward-compatible alias).
 - Loopback/local requests from the same machine are allowed without API credentials.
 - Marker identity encryption is derived from the hub identity (no extra key configuration required).
+- Northbound message dispatch applies exactly one routing mode per send: broadcast, topic fan-out, or targeted destination.
+- Hub-originated outbound chat attaches an `RTHDelivery` envelope carrying `Message-ID`, `Content-Type`, `Schema-Version`, `TTL`, `Priority`, `Sender`, `Born`, and optional `Created-At`, and persists retry/ack state in chat history metadata.
 - The admin UI sidebar can be collapsed and pinned (stored per-browser).
 - Telemetry map markers render MDI icons when telemetry payloads include `telemetry_type`, `symbol`, `category`, or `type`.
 - The WebMap shows a live latitude/longitude readout for the map cursor.
@@ -217,8 +220,8 @@ Marker management endpoints (used by the WebMap UI):
 
 - `docs/README.md` (documentation map)
 - `docs/userManual.md` (user and operator guide)
-- `docs/architecture.md` (system overview and references)
-- `docs/southbound.md` (LXMF southbound transport contract)
+- `docs/architecture/architecture.md` (system overview and references)
+- `docs/southbound.md` (LXMF southbound transport and `RTHDelivery` contract)
 - `API/ReticulumCommunityHub-OAS.yaml` (REST/OpenAPI reference)
 
 [![Ask DeepWiki about that!](https://deepwiki.com/badge.svg)](https://deepwiki.com/FreeTAKTeam/Reticulum-Community-Hub)

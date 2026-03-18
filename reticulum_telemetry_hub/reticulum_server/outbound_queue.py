@@ -33,6 +33,9 @@ class OutboundPayload:
         fields (dict | None): Optional LXMF fields to include with the message.
         sender (RNS.Destination): Sender identity for the message.
         chat_message_id (str | None): Optional persisted chat message identifier.
+        message_id (str | None): Canonical transport Message-ID.
+        topic_id (str | None): Canonical TopicID used for fan-out.
+        route_type (str): ``"broadcast"``, ``"fanout"``, or ``"targeted"``.
         attempts (int): Number of direct-delivery failures observed so far.
         next_attempt_at (float): Monotonic timestamp before the next attempt.
         delivery_mode (str): ``"direct"`` or ``"propagated"``.
@@ -47,6 +50,9 @@ class OutboundPayload:
     fields: dict | None = None
     sender: RNS.Destination | None = None
     chat_message_id: str | None = None
+    message_id: str | None = None
+    topic_id: str | None = None
+    route_type: str = "broadcast"
     attempts: int = 0
     next_attempt_at: float = field(default_factory=time.monotonic)
     delivery_mode: str = "direct"
@@ -90,6 +96,10 @@ class OutboundMessageQueue:
         propagation_fallback_callback: (
             Callable[[OutboundPayload], None] | None
         ) = None,
+        attempt_started_callback: Callable[[OutboundPayload], None] | None = None,
+        payload_dropped_callback: (
+            Callable[[OutboundPayload, str], None] | None
+        ) = None,
     ) -> None:
         """
         Initialize a bounded outbound queue.
@@ -114,6 +124,10 @@ class OutboundMessageQueue:
                 Optional callback invoked when direct delivery is requeued.
             propagation_fallback_callback (Callable[[OutboundPayload], None] | None):
                 Optional callback invoked when propagation fallback is selected.
+            attempt_started_callback (Callable[[OutboundPayload], None] | None):
+                Optional callback invoked when a delivery attempt begins.
+            payload_dropped_callback (Callable[[OutboundPayload, str], None] | None):
+                Optional callback invoked when queue backpressure drops a payload.
         """
 
         self._lxm_router = lxm_router
@@ -137,6 +151,8 @@ class OutboundMessageQueue:
         self._propagation_selector = propagation_selector
         self._retry_scheduled_callback = retry_scheduled_callback
         self._propagation_fallback_callback = propagation_fallback_callback
+        self._attempt_started_callback = attempt_started_callback
+        self._payload_dropped_callback = payload_dropped_callback
 
     def start(self) -> None:
         """Start background worker threads if they are not already running."""
@@ -174,6 +190,9 @@ class OutboundMessageQueue:
         fields: dict | None = None,
         sender: RNS.Destination | None = None,
         chat_message_id: str | None = None,
+        message_id: str | None = None,
+        topic_id: str | None = None,
+        route_type: str = "broadcast",
     ) -> bool:
         """
         Enqueue a message for delivery.
@@ -198,6 +217,9 @@ class OutboundMessageQueue:
             fields=fields,
             sender=sender or self._sender,
             chat_message_id=chat_message_id,
+            message_id=message_id,
+            topic_id=topic_id,
+            route_type=route_type,
         )
         return self._enqueue_payload(payload)
 
@@ -228,6 +250,7 @@ class OutboundMessageQueue:
         except Full:
             dropped = self._drop_oldest()
             if dropped is not None:
+                self._notify_payload_dropped(dropped, "queue_backpressure_drop_oldest")
                 RNS.log(
                     (
                         "Outbound queue is full; dropped oldest payload destined for"
@@ -239,6 +262,7 @@ class OutboundMessageQueue:
                 self._queue.put_nowait(payload)
                 return True
             except Full:
+                self._notify_payload_dropped(payload, "queue_saturated")
                 RNS.log(
                     (
                         "Outbound queue is saturated; dropping payload destined for"
@@ -281,6 +305,7 @@ class OutboundMessageQueue:
             self._inflight += 1
 
         try:
+            self._notify_attempt_started(payload)
             failure_reason = self._send_with_timeout(payload)
             if failure_reason is not None:
                 self._handle_delivery_attempt_failure(payload, reason=failure_reason)
@@ -505,6 +530,34 @@ class OutboundMessageQueue:
         except Exception as exc:
             RNS.log(
                 f"Outbound propagation fallback callback failed: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+
+    def _notify_attempt_started(self, payload: OutboundPayload) -> None:
+        """Emit the optional attempt-started callback."""
+
+        callback = self._attempt_started_callback
+        if callback is None:
+            return
+        try:
+            callback(payload)
+        except Exception as exc:
+            RNS.log(
+                f"Outbound attempt callback failed: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+
+    def _notify_payload_dropped(self, payload: OutboundPayload, reason: str) -> None:
+        """Emit the optional payload-dropped callback."""
+
+        callback = self._payload_dropped_callback
+        if callback is None:
+            return
+        try:
+            callback(payload, reason)
+        except Exception as exc:
+            RNS.log(
+                f"Outbound drop callback failed: {exc}",
                 getattr(RNS, "LOG_WARNING", 2),
             )
 

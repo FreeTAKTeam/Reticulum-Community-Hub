@@ -36,6 +36,7 @@ from reticulum_telemetry_hub.api.zone_service import ZoneUpdateResult
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from reticulum_telemetry_hub.message_delivery import classify_delivery_mode
 from reticulum_telemetry_hub.reticulum_server import command_text
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.marker_objects import (
@@ -472,6 +473,7 @@ class NorthboundServices:
 
         if not self.message_dispatcher:
             raise RuntimeError("Message dispatch is not configured")
+        classify_delivery_mode(topic_id=topic_id, destination=destination)
         self.message_dispatcher(content, topic_id, destination, None)
 
     def send_chat_message(
@@ -487,6 +489,7 @@ class NorthboundServices:
 
         if not self.message_dispatcher:
             raise RuntimeError("Message dispatch is not configured")
+        classify_delivery_mode(topic_id=topic_id, destination=destination)
         chat_attachments = [
             self.api.chat_attachment_from_file(item) for item in attachments
         ]

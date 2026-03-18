@@ -5,12 +5,12 @@
 - `../README.md` (project overview and quickstart)
 - `userManual.md` (user and operator guide)
 - `remoteAccess.md` (LAN/WAN connection guide)
-- `architecture.md` (system overview and references)
-- `southbound.md` (LXMF southbound transport contract)
+- `architecture/architecture.md` (system overview and references)
+- `southbound.md` (LXMF southbound transport contract, `RTHDelivery`, and routing rules)
 
 ## Architecture
 
-- `architecture.md` (system architecture and component/data-flow overview)
+- `architecture/architecture.md` (system architecture and component/data-flow overview)
 - `dataArchitecture.md` (domain class diagram including SITREP and zone models)
 - `architecture/R3AKT_Domain_Class_Diagram.mmd` (standalone Mermaid source)
 
@@ -18,7 +18,7 @@
 
 - `../API/ReticulumCommunityHub-OAS.yaml` (REST/OpenAPI spec)
 - `supportedCommands.md` (LXMF command list)
-- `southbound.md` (LXMF command/reply field contract)
+- `southbound.md` (LXMF command/reply field contract plus delivery-envelope rules)
 - `internal-api.md` (internal API contract)
 - `internal-api-overview.md` (internal API overview)
 - `internal-api-examples.md` (internal API examples)

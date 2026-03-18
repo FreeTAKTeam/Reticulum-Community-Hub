@@ -163,7 +163,7 @@ def test_db_backed_topic_subscriber_lookups(tmp_path: Path) -> None:
     topics = api.list_topics_for_destination("dest-1")
 
     assert {subscriber.destination for subscriber in subscribers} == {"dest-1", "dest-2"}
-    assert [topic.topic_id for topic in topics] == [alerts.topic_id, ops.topic_id]
+    assert {topic.topic_id for topic in topics} == {alerts.topic_id, ops.topic_id}
 
 
 def test_send_message_requires_dispatcher(tmp_path: Path) -> None:
@@ -183,14 +183,24 @@ def test_send_message_dispatches_payload(tmp_path: Path) -> None:
         captured["fields"] = fields
 
     services, _, _, _ = _build_services(tmp_path, message_dispatcher=_dispatcher)
-    services.send_message("hello", topic_id="topic-1", destination="dest-1")
+    services.send_message("hello", topic_id="topic-1")
 
     assert captured == {
         "content": "hello",
         "topic_id": "topic-1",
-        "destination": "dest-1",
+        "destination": None,
         "fields": None,
     }
+
+
+def test_send_message_rejects_mixed_routing_modes(tmp_path: Path) -> None:
+    services, _, _, _ = _build_services(
+        tmp_path,
+        message_dispatcher=lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        services.send_message("hello", topic_id="topic-1", destination="dest-1")
 
 
 def test_telemetry_entries_proxy(tmp_path: Path) -> None:

@@ -14,6 +14,8 @@ from typing import Dict
 from typing import List
 from typing import Optional
 
+from reticulum_telemetry_hub.message_delivery import normalize_topic_id
+
 
 def _now() -> datetime:
     """Return the current UTC timestamp with timezone information."""
@@ -86,7 +88,7 @@ class Topic:
             topic_description=data.get("TopicDescription")
             or data.get("topic_description")
             or "",
-            topic_id=data.get("TopicID") or data.get("topic_id"),
+            topic_id=normalize_topic_id(data.get("TopicID") or data.get("topic_id")),
         )
 
 
@@ -131,7 +133,7 @@ class Subscriber:
 
         return cls(
             destination=data.get("Destination") or data.get("destination") or "",
-            topic_id=data.get("TopicID") or data.get("topic_id"),
+            topic_id=normalize_topic_id(data.get("TopicID") or data.get("topic_id")),
             reject_tests=reject_tests,
             metadata=data.get("Metadata") or data.get("metadata") or {},
             subscriber_id=data.get("SubscriberID") or data.get("subscriber_id"),
@@ -354,6 +356,7 @@ class ChatMessage:
     destination: Optional[str] = None
     topic_id: Optional[str] = None
     attachments: List[ChatAttachment] = field(default_factory=list)
+    delivery_metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
     message_id: Optional[str] = None
@@ -371,6 +374,7 @@ class ChatMessage:
             "Destination": self.destination,
             "TopicID": self.topic_id,
             "Attachments": [attachment.to_dict() for attachment in self.attachments],
+            "DeliveryMetadata": _json_safe(self.delivery_metadata or {}),
             "CreatedAt": self.created_at.isoformat(),
             "UpdatedAt": self.updated_at.isoformat(),
         }

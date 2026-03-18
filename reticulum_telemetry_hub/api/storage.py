@@ -22,6 +22,7 @@ from .models import Client
 from .models import FileAttachment
 from .models import Subscriber
 from .models import Topic
+from reticulum_telemetry_hub.message_delivery import normalize_topic_id
 from .rights_storage_models import MissionAccessAssignmentRecord
 from .rights_storage_models import SubjectOperationGrantRecord
 from .storage_base import HubStorageBase
@@ -60,6 +61,7 @@ class HubStorage(HubStorageBase):
         self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
         self._ensure_file_topic_column()
+        self._ensure_chat_delivery_metadata_column()
         self._ensure_indexes()
         self._backfill_identity_capability_grants()
         self._session_factory = sessionmaker(  # pylint: disable=invalid-name
@@ -81,8 +83,9 @@ class HubStorage(HubStorageBase):
             Topic: Stored topic with an ID assigned.
         """
         with self._session_scope() as session:
+            normalized_topic_id = normalize_topic_id(topic.topic_id) or uuid.uuid4().hex
             record = TopicRecord(
-                id=topic.topic_id or uuid.uuid4().hex,
+                id=normalized_topic_id,
                 name=topic.topic_name,
                 path=topic.topic_path,
                 description=topic.topic_description,
@@ -123,8 +126,9 @@ class HubStorage(HubStorageBase):
         Returns:
             Optional[Topic]: Matching topic or ``None`` if missing.
         """
+        normalized_topic_id = normalize_topic_id(topic_id)
         with self._session_scope() as session:
-            record = session.get(TopicRecord, topic_id)
+            record = session.get(TopicRecord, normalized_topic_id)
             if not record:
                 return None
             return Topic(
@@ -143,8 +147,9 @@ class HubStorage(HubStorageBase):
         Returns:
             Optional[Topic]: Removed topic or ``None`` when absent.
         """
+        normalized_topic_id = normalize_topic_id(topic_id)
         with self._session_scope() as session:
-            record = session.get(TopicRecord, topic_id)
+            record = session.get(TopicRecord, normalized_topic_id)
             if not record:
                 return None
             session.delete(record)
@@ -175,8 +180,9 @@ class HubStorage(HubStorageBase):
         Returns:
             Optional[Topic]: Updated topic or ``None`` when not found.
         """
+        normalized_topic_id = normalize_topic_id(topic_id)
         with self._session_scope() as session:
-            record = session.get(TopicRecord, topic_id)
+            record = session.get(TopicRecord, normalized_topic_id)
             if not record:
                 return None
             if topic_name is not None:
@@ -206,7 +212,7 @@ class HubStorage(HubStorageBase):
             record = SubscriberRecord(
                 id=subscriber.subscriber_id or uuid.uuid4().hex,
                 destination=subscriber.destination,
-                topic_id=subscriber.topic_id,
+                topic_id=normalize_topic_id(subscriber.topic_id),
                 reject_tests=subscriber.reject_tests,
                 metadata_json=subscriber.metadata or {},
             )
@@ -223,10 +229,11 @@ class HubStorage(HubStorageBase):
     def list_subscribers_for_topic(self, topic_id: str) -> List[Subscriber]:
         """Return subscribers stored for a topic identifier."""
 
+        normalized_topic_id = normalize_topic_id(topic_id)
         with self._session_scope() as session:
             records = (
                 session.query(SubscriberRecord)
-                .filter(SubscriberRecord.topic_id == topic_id)
+                .filter(SubscriberRecord.topic_id == normalized_topic_id)
                 .all()
             )
             return [self._subscriber_from_record(record) for record in records]
@@ -909,6 +916,7 @@ class HubStorage(HubStorageBase):
                 destination=message.destination,
                 topic_id=message.topic_id,
                 attachments_json=[attachment.to_dict() for attachment in message.attachments],
+                delivery_metadata_json=message.delivery_metadata or {},
                 created_at=message.created_at,
                 updated_at=message.updated_at,
             )
@@ -944,7 +952,13 @@ class HubStorage(HubStorageBase):
             )
             return [self._chat_from_record(record) for record in records]
 
-    def update_chat_message_state(self, message_id: str, state: str) -> ChatMessage | None:
+    def update_chat_message_state(
+        self,
+        message_id: str,
+        state: str,
+        *,
+        delivery_metadata: dict | None = None,
+    ) -> ChatMessage | None:
         """Update a chat message delivery state."""
 
         with self._session_scope() as session:
@@ -952,6 +966,10 @@ class HubStorage(HubStorageBase):
             if not record:
                 return None
             record.state = state
+            if delivery_metadata:
+                merged_metadata = dict(record.delivery_metadata_json or {})
+                merged_metadata.update(delivery_metadata)
+                record.delivery_metadata_json = merged_metadata
             record.updated_at = _utcnow()
             session.commit()
             return self._chat_from_record(record)

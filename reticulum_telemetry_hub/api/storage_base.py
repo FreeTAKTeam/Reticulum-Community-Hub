@@ -44,6 +44,26 @@ class HubStorageBase:
         except OperationalError as exc:
             logging.warning("Failed to ensure file_records.topic_id column: %s", exc)
 
+    def _ensure_chat_delivery_metadata_column(self) -> None:
+        """Ensure the chat_messages table has the delivery_metadata column."""
+
+        try:
+            with self._engine.connect() as conn:  # type: ignore[attr-defined]
+                result = conn.execute(text("PRAGMA table_info(chat_messages);"))
+                column_names = [row[1] for row in result.fetchall()]
+                if "delivery_metadata" not in column_names:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE chat_messages "
+                            "ADD COLUMN delivery_metadata JSON;"
+                        )
+                    )
+        except OperationalError as exc:
+            logging.warning(
+                "Failed to ensure chat_messages.delivery_metadata column: %s",
+                exc,
+            )
+
     @contextmanager
     def _session_scope(self):
         """Yield a database session with automatic cleanup."""
@@ -144,6 +164,7 @@ class HubStorageBase:
             destination=record.destination,
             topic_id=record.topic_id,
             attachments=attachments,
+            delivery_metadata=record.delivery_metadata_json or {},
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

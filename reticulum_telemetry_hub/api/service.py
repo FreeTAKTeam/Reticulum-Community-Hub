@@ -14,6 +14,7 @@ from typing import Optional
 
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.config.models import HubAppConfig
+from reticulum_telemetry_hub.message_delivery import normalize_topic_id
 
 from .filesystem import FileSystemAdapter
 from .filesystem import LocalFileSystemAdapter
@@ -614,6 +615,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
     def record_chat_message(self, message: ChatMessage) -> ChatMessage:
         """Persist a chat message and return the stored record."""
 
+        message.topic_id = normalize_topic_id(message.topic_id)
         message.message_id = message.message_id or uuid.uuid4().hex
         return self._storage.create_chat_message(message)
 
@@ -631,15 +633,25 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         return self._storage.list_chat_messages(
             limit=limit,
             direction=direction,
-            topic_id=topic_id,
+            topic_id=normalize_topic_id(topic_id),
             destination=destination,
             source=source,
         )
 
-    def update_chat_message_state(self, message_id: str, state: str) -> ChatMessage | None:
+    def update_chat_message_state(
+        self,
+        message_id: str,
+        state: str,
+        *,
+        delivery_metadata: dict | None = None,
+    ) -> ChatMessage | None:
         """Update a chat message delivery state."""
 
-        return self._storage.update_chat_message_state(message_id, state)
+        return self._storage.update_chat_message_state(
+            message_id,
+            state,
+            delivery_metadata=delivery_metadata,
+        )
 
     def chat_message_stats(self) -> dict[str, int]:
         """Return aggregated chat message counters."""
@@ -669,7 +681,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """
         if not topic.topic_name or not topic.topic_path:
             raise ValueError("TopicName and TopicPath are required")
-        topic.topic_id = topic.topic_id or uuid.uuid4().hex
+        topic.topic_id = normalize_topic_id(topic.topic_id) or uuid.uuid4().hex
         created = self._storage.create_topic(topic)
         self._notify_topic_registry_change()
         return created
@@ -694,9 +706,10 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         Raises:
             KeyError: If the topic does not exist.
         """
-        topic = self._storage.get_topic(topic_id)
+        normalized_topic_id = normalize_topic_id(topic_id) or topic_id
+        topic = self._storage.get_topic(normalized_topic_id)
         if not topic:
-            raise KeyError(f"Topic '{topic_id}' not found")
+            raise KeyError(f"Topic '{normalized_topic_id}' not found")
         return topic
 
     def delete_topic(self, topic_id: str) -> Topic:
@@ -711,9 +724,10 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         Raises:
             KeyError: If the topic does not exist.
         """
-        topic = self._storage.delete_topic(topic_id)
+        normalized_topic_id = normalize_topic_id(topic_id) or topic_id
+        topic = self._storage.delete_topic(normalized_topic_id)
         if not topic:
-            raise KeyError(f"Topic '{topic_id}' not found")
+            raise KeyError(f"Topic '{normalized_topic_id}' not found")
         self._notify_topic_registry_change()
         return topic
 
@@ -738,7 +752,8 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             ``topic_description`` defaults to an empty string when explicitly
             set to ``None`` or an empty value.
         """
-        topic = self.retrieve_topic(topic_id)
+        normalized_topic_id = normalize_topic_id(topic_id) or topic_id
+        topic = self.retrieve_topic(normalized_topic_id)
         update_fields = {}
         if "topic_name" in updates or "TopicName" in updates:
             topic.topic_name = updates.get("topic_name") or updates.get("TopicName")
@@ -756,7 +771,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             return topic
         updated_topic = self._storage.update_topic(topic.topic_id, **update_fields)
         if not updated_topic:
-            raise KeyError(f"Topic '{topic_id}' not found")
+            raise KeyError(f"Topic '{normalized_topic_id}' not found")
         self._notify_topic_registry_change()
         return updated_topic
 
@@ -789,7 +804,8 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             >>> api.subscribe_topic(topic_id, "dest")
             Subscriber(..., subscriber_id="<uuid>", metadata={})
         """
-        topic = self.retrieve_topic(topic_id)
+        normalized_topic_id = normalize_topic_id(topic_id) or topic_id
+        topic = self.retrieve_topic(normalized_topic_id)
         subscriber = Subscriber(
             destination=destination,
             topic_id=topic.topic_id,
@@ -821,7 +837,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """
         if not subscriber.destination:
             raise ValueError("Subscriber destination is required")
-        subscriber.topic_id = subscriber.topic_id or ""
+        subscriber.topic_id = normalize_topic_id(subscriber.topic_id) or ""
         subscriber.subscriber_id = subscriber.subscriber_id or uuid.uuid4().hex
         created = self._storage.create_subscriber(subscriber)
         self._notify_topic_registry_change()
@@ -847,8 +863,9 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         Raises:
             KeyError: If the topic does not exist.
         """
-        self.retrieve_topic(topic_id)
-        return self._storage.list_subscribers_for_topic(topic_id)
+        normalized_topic_id = normalize_topic_id(topic_id) or topic_id
+        self.retrieve_topic(normalized_topic_id)
+        return self._storage.list_subscribers_for_topic(normalized_topic_id)
 
     def list_topics_for_destination(self, destination: str) -> List[Topic]:
         """Return topics a destination is subscribed to.
@@ -925,7 +942,9 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
                 "Destination"
             )
         if "topic_id" in updates or "TopicID" in updates:
-            subscriber.topic_id = updates.get("topic_id") or updates.get("TopicID")
+            subscriber.topic_id = normalize_topic_id(
+                updates.get("topic_id") or updates.get("TopicID")
+            )
         if "reject_tests" in updates:
             subscriber.reject_tests = updates["reject_tests"]
         elif "RejectTests" in updates:

@@ -43,6 +43,16 @@ Telemetry requests use the numeric Sideband-compatible form:
 If a client cannot set `FIELD_COMMANDS`, RCH also accepts the escaped-body
 fallback described in [southbound.md](southbound.md).
 
+Topic-routing rules shared with the runtime and northbound API:
+
+- `TopicID` values are normalized to one canonical string form before routing,
+  persistence, and subscriber lookup.
+- A send must choose exactly one routing mode: `topic_id` fan-out,
+  `destination` unicast, or broadcast with neither.
+- `topic_id` and `destination` together are rejected.
+- Hub-originated outbound chat/messages attach an `RTHDelivery` envelope with
+  `Message-ID`, content-type/schema, sender, TTL, priority, and UTC timestamps.
+
 ### Mission-sync and checklist envelopes
 
 R3AKT mission and checklist commands use the mission envelope schema in
@@ -145,7 +155,7 @@ by `mission_sync/capabilities.py`.
 | `mission.join` | `mission.join` | optional `identity` | Join the mission transport identity. Defaults to the LXMF sender identity. |
 | `mission.leave` | `mission.leave` | optional `identity` | Leave the mission transport identity. Defaults to the LXMF sender identity. |
 | `mission.events.list` | `mission.audit.read` | none | Return recent hub event log entries. |
-| `mission.message.send` | `mission.message.send` | `content`; optional `topic_id`, `destination` | Send a message via the hub from the mission-sync path. |
+| `mission.message.send` | `mission.message.send` | `content`; optional `topic_id`, `destination` | Send a message via the hub from the mission-sync path. Provide at most one of `topic_id` or `destination`. |
 | `topic.list` | `topic.read` | none | List topics through the mission-sync API. |
 | `topic.create` | `topic.create` | topic payload | Create a topic through the mission-sync API. |
 | `topic.patch` | `topic.write` | `topic_id`; optional patch fields | Patch a topic through the mission-sync API. |
@@ -298,10 +308,17 @@ are not separate LXMF commands unless listed above.
 - Telemetry replies use `FIELD_TELEMETRY_STREAM` (`0x03`) instead of
   `FIELD_RESULTS` as the primary payload field, and successful telemetry
   replies intentionally leave the text body empty.
+- `TopicID` values accepted by southbound commands are canonicalized before the
+  hub routes, persists, or subscribes against them.
 - When relaying messages, RCH forwards `FIELD_THREAD` (`0x08`) and
   `FIELD_GROUP` (`0x0B`) so clients can keep conversation/group context.
 - Command and relay responses include `FIELD_EVENT` (`0x0D`) with structured
   event metadata.
+- When `RTHDelivery` is present on inbound traffic, the hub validates required
+  fields, accepted content types, TTL, schema version, and clock skew.
+- Outbound delivery state uses `Message-ID` plus persisted `delivery_metadata`
+  so retries, acks, propagation fallback, and drop reasons stay visible to the
+  UI/API.
 - Help and Examples responses include `FIELD_RENDERER` (`0x0F`) set to
   `RENDERER_MARKDOWN` (`0x02`).
 - Command names are normalized across common casing variants.

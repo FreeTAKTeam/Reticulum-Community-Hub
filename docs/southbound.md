@@ -17,6 +17,12 @@ In short:
   `FIELD_TELEMETRY_STREAM` (`0x03`) for telemetry responses and
   `FIELD_FILE_ATTACHMENTS` (`0x05`) / `FIELD_IMAGE` (`0x06`) for attachment
   retrieval.
+- Hub-originated outbound chat messages attach an `RTHDelivery` sideband
+  envelope that carries canonical `TopicID`, `Message-ID`, content-type/schema,
+  TTL, priority, sender, and UTC timestamps.
+- Inbound LXMF messages are still backward compatible with legacy clients. The
+  `RTHDelivery` envelope is validated when present, but it is not yet required
+  on every inbound southbound command.
 
 ## Scope
 
@@ -49,24 +55,144 @@ This is distinct from the northbound REST/WebSocket API exposed by FastAPI.
 | Outbound | `FIELD_EVENT` (`0x0D`) | Structured response/event metadata | Added to command, telemetry, relay, and outbound messages. |
 | Outbound | `FIELD_RENDERER` (`0x0F`) | Markdown renderer hint | Used by `Help` and `Examples`. |
 
+## Delivery strategy overlay
+
+The southbound field contract above still applies, but message delivery now has
+an additional sideband contract implemented in
+`reticulum_telemetry_hub/message_delivery.py`.
+
+### TopicID encoding
+
+- RCH uses one canonical string form for every `TopicID`.
+- UUID-like topic IDs normalize to lowercase hex without hyphens.
+- Existing non-UUID string topic IDs are preserved as trimmed UTF-8 strings.
+- The same normalized `TopicID` is used at publish time, when resolving
+  subscribers, when persisting records, and when extracting topic scope from
+  inbound LXMF commands or fields.
+- Guardrail coverage exists in `tests/test_message_delivery.py`:
+  `TopicID -> serialize_topic_id() -> deserialize_topic_id() -> compare`.
+
+### `RTHDelivery` sideband envelope
+
+`RTHDelivery` is a structured delivery envelope stored as an LXMF field value.
+
+Current runtime behavior:
+
+- Outbound hub-originated chat/messages from the northbound dispatcher always
+  attach `RTHDelivery`.
+- Inbound southbound messages are validated against `RTHDelivery` when that
+  field is present.
+- Legacy southbound command traffic without `RTHDelivery` remains supported for
+  Sideband and other existing LXMF clients.
+
+Required `RTHDelivery` fields:
+
+| Field | Meaning |
+| --- | --- |
+| `Message-ID` | Stable message identifier used for dedupe and delivery tracking. |
+| `Content-Type` | Frozen payload type. Unknown values are rejected. |
+| `Schema-Version` | Delivery-envelope schema version. Current value is `1`. |
+| `TTL` | Delivery lifetime in seconds. Must be greater than zero. |
+| `Priority` | Integer delivery priority. |
+| `Sender` | Lowercase sender identity/destination hash. |
+| `Born` | UTC epoch milliseconds used for TTL/skew validation. |
+
+Optional field:
+
+| Field | Meaning |
+| --- | --- |
+| `Created-At` | RFC3339 UTC timestamp for human/audit use. |
+
+Accepted `Content-Type` values are fixed to:
+
+- `text/plain; schema=lxmf.chat.v1`
+- `application/json; schema=event.v1`
+- `application/cbor; schema=lxmf.v1`
+
+Unknown content types, missing required fields, unsupported schema versions,
+expired TTLs, and excessive clock skew are rejected with a direct error reply
+and an event-log entry such as `message_quarantined`.
+
+### Timestamps and time zones
+
+- Delivery timestamps are UTC everywhere.
+- `Born` is the machine-checked delivery age timestamp and is always epoch
+  milliseconds.
+- `Created-At`, when present, must be RFC3339 with a UTC offset.
+- Locale-dependent date strings are not part of the southbound delivery
+  contract.
+- Inbound envelopes are rejected if the future skew exceeds the configured
+  budget or if `now - Born` exceeds `TTL`.
+
+### Routing modes
+
+Every outbound send takes exactly one routing path:
+
+- `broadcast`: no `topic_id` and no explicit `destination`
+- `fanout`: canonical `topic_id`, no explicit `destination`
+- `targeted`: explicit `destination`, no `topic_id`
+
+Mixed routing semantics are rejected:
+
+- northbound `/Message` and chat send routes return `400`
+- direct runtime send attempts are dropped and logged
+
+The runtime records:
+
+- `fanout_count`
+- `targeted_recipient_count`
+- `drop_reason`
+
+### Acknowledgements, retries, and persistence
+
+Outbound southbound delivery uses an at-least-once retry model. `Message-ID`
+is the stable identifier exposed for tracking and downstream dedupe.
+
+Current queue behavior:
+
+- direct delivery attempts use bounded worker queues
+- attempts are retried with backoff and a finite max-attempt budget
+- after direct delivery is exhausted, the queue may fall back to propagation
+  storage when a propagation node is available
+- queue backpressure drops are persisted as terminal failures
+
+Persisted delivery state for northbound-originated chat records includes:
+
+- `message_id`
+- `route_type`
+- `attempts`
+- `acked`
+- `last_attempt_at`
+- `retry_scheduled`
+- `drop_reason`
+- `local_propagation_fallback`
+- `fanout_count`
+- `targeted_recipient_count`
+
+This state is stored in chat-message `delivery_metadata` so UI/API consumers can
+see the latest delivery outcome after restarts. The queue itself is not
+currently rehydrated from storage on startup.
+
 ## Receive pipeline
 
 Inbound LXMF processing currently works in this order:
 
 1. The delivery callback validates the message signature and logs the delivery.
-2. If `FIELD_COMMANDS` is present, that payload is used as the command list.
-3. Otherwise, the hub checks for an escape-prefixed body beginning with `\\\`.
-4. Before commands are executed, inbound `FIELD_FILE_ATTACHMENTS` and
+2. If an `RTHDelivery` envelope is present, it is validated before any command
+   or attachment handling.
+3. If `FIELD_COMMANDS` is present, that payload is used as the command list.
+4. Otherwise, the hub checks for an escape-prefixed body beginning with `\\\`.
+5. Before commands are executed, inbound `FIELD_FILE_ATTACHMENTS` and
    `FIELD_IMAGE` payloads are normalized, written to disk, and recorded in the
    API database.
-5. Commands are split into three buckets:
+6. Commands are split into three buckets:
    - mission-sync commands: entries with `command_type` not starting with
      `checklist.`
    - checklist-sync commands: entries with `command_type` starting with
      `checklist.`
    - legacy/plugin commands: entries using `Command` / `plugin_command`
-6. Each bucket is routed to its handler and turned into direct LXMF replies.
-7. If a reply carries attachments, the hub also emits a second text-only reply
+7. Each bucket is routed to its handler and turned into direct LXMF replies.
+8. If a reply carries attachments, the hub also emits a second text-only reply
    as a compatibility mirror.
 
 ## Command ingress
@@ -193,6 +319,8 @@ Notes:
 
 - Numeric key `1` is `TelemetryRequest`
 - `TopicID` is optional and scopes results to a topic
+- `TopicID` is normalized through the same canonical topic-ID helper used by
+  topic CRUD, subscriber routing, and outbound chat delivery
 - If the sender is not subscribed to the requested topic, the request is denied
 
 ### Response form
@@ -477,6 +605,9 @@ Operationally, this means:
   body plus `FIELD_EVENT`.
 - `FIELD_GROUP` remains routing/context metadata, not the command payload
   itself.
+- For `mission.message.send` and equivalent northbound dispatches, clients must
+  choose exactly one routing coordinate: `topic_id` for fan-out or
+  `destination` for unicast.
 
 ## Practical examples
 
@@ -647,4 +778,7 @@ model:
 - expect ordinary command replies in `FIELD_RESULTS`
 - expect telemetry in `FIELD_TELEMETRY_STREAM`
 - expect attachments in `FIELD_FILE_ATTACHMENTS` / `FIELD_IMAGE`
+- treat `topic_id` and `destination` as mutually exclusive routing coordinates
+- validate `RTHDelivery` when you choose to send it, and expect it on
+  hub-originated outbound chat/messages
 - do not expect the hub to answer with `FIELD_COMMANDS`

@@ -1,4 +1,7 @@
 # TASKS
+- 2026-03-18: DONE. Review GitHub Dependabot/security alerts and remediate actionable dependency vulnerabilities across Python, UI, and Electron manifests/lockfiles.
+- 2026-03-16: DONE. Verify southbound LXMF handling against the delivery strategy and document canonical TopicID normalization, `RTHDelivery` validation, UTC/TTL/skew rules, routing exclusivity, and retry/ack persistence.
+- 2026-03-16: DONE. Improve message delivery strategy with canonical TopicID normalization, validated delivery envelopes, UTC/TTL/skew guards, explicit fan-out vs targeted routing, and persisted outbound retry state.
 - 2026-03-15: DONE. Investigate hub performance degradation over long uptimes and implement telemetry, subscriber lookup, websocket backpressure, and event-log retention fixes.
 - 2026-03-13: DONE. Add `subagents/runs/` to `.gitignore` so local subagent run artifacts are not tracked.
 - 2026-03-13: DONE. Merge `agent.md` into `AGENTS.md` and remove the redundant `agent.md` file.

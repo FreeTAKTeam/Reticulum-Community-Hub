@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import LXMF
+import pytest
 import RNS
 
 from reticulum_telemetry_hub.api.models import FileAttachment
@@ -917,6 +918,9 @@ def test_dispatch_northbound_message_records_delivery_ack_event(tmp_path):
 
         assert delivered_message is not None
         assert delivered_message.destination == recipient_hex
+        assert delivered_message.delivery_metadata["acked"] is True
+        assert delivered_message.delivery_metadata["route_type"] == "targeted"
+        assert delivered_message.delivery_metadata["content_type"] == "text/plain; schema=lxmf.chat.v1"
 
         events = hub.event_log.list_events(limit=200)
         delivered_event = next(
@@ -996,6 +1000,22 @@ def test_dispatch_northbound_message_fails_when_delivery_ack_never_arrives(tmp_p
         assert isinstance(metadata, dict)
         assert metadata.get("State") == "failed"
         assert metadata.get("Destination") == recipient_hex
+        assert failed_message.delivery_metadata["acked"] is False
+        assert failed_message.delivery_metadata["attempts"] == 1
+    finally:
+        hub.shutdown()
+
+
+def test_dispatch_northbound_message_rejects_mixed_routing_modes(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+
+    try:
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            hub.dispatch_northbound_message(
+                "mixed route",
+                topic_id="ops.alpha",
+                destination="deadbeef",
+            )
     finally:
         hub.shutdown()
 

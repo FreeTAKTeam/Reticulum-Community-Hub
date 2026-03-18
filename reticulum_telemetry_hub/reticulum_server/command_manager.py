@@ -13,6 +13,7 @@ import LXMF
 from reticulum_telemetry_hub.api.models import Client, FileAttachment, Subscriber, Topic
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
+from reticulum_telemetry_hub.message_delivery import normalize_topic_id
 from reticulum_telemetry_hub.reticulum_server.appearance import apply_icon_appearance
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.runtime_events import (
@@ -1323,7 +1324,7 @@ class CommandManager:
 
     @staticmethod
     def _extract_topic_id(command: dict) -> Optional[str]:
-        return (
+        return normalize_topic_id(
             command.get("TopicID")
             or command.get("topic_id")
             or command.get("id")
