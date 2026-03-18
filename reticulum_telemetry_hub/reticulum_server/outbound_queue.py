@@ -510,11 +510,11 @@ class OutboundMessageQueue:
         sender.start()
         sender.join(timeout=self._send_timeout)
         if sender.is_alive():
-            self._invalidate_attempt(payload, attempt_id)
             RNS.log(
                 (
                     "Timed out delivering outbound message to"
-                    f" {payload.destination_hex or 'unknown destination'}"
+                    f" {payload.destination_hex or 'unknown destination'}; "
+                    "keeping the original attempt active until the sender thread exits"
                 ),
                 getattr(RNS, "LOG_WARNING", 2),
             )

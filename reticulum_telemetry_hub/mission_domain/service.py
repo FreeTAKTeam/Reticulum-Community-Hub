@@ -1015,9 +1015,14 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             return data
 
     def list_missions(
-        self, *, expand_topic: bool = False, expand: set[str] | list[str] | str | None = None
+        self,
+        *,
+        expand_topic: bool = False,
+        expand: set[str] | list[str] | str | None = None,
+        limit: int = 200,
     ) -> list[dict[str, Any]]:
         expand_values = self._normalize_mission_expand(expand)
+        normalized_limit = max(1, min(int(limit), 2000))
         with self._session() as session:
             return [
                 self._serialize_mission(
@@ -1028,6 +1033,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 )
                 for row in session.query(R3aktMissionRecord)
                 .order_by(R3aktMissionRecord.created_at.desc())
+                .limit(normalized_limit)
                 .all()
             ]
 

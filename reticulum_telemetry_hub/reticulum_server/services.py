@@ -87,8 +87,17 @@ class HubService:
         """Stop the background thread and reset lifecycle flags."""
         if self._thread is None:
             return
+        thread = self._thread
         self._stop_event.set()
-        self._thread.join()
+        thread.join(timeout=5.0)
+        if thread.is_alive():
+            RNS.log(
+                (
+                    f"Background service '{self.name}' did not stop within 5.0s; "
+                    "continuing shutdown with the worker still running"
+                ),
+                RNS.LOG_WARNING,
+            )
         self._thread = None
         self._stop_event.clear()
 

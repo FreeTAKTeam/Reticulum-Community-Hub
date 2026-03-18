@@ -201,10 +201,17 @@ def register_r3akt_routes(
         return domain.list_domain_snapshots(limit=limit)
 
     @app.get("/api/r3akt/missions", dependencies=[Depends(require_protected)])
-    def list_missions(expand: str | None = Query(default=None)) -> list[dict]:
+    def list_missions(
+        expand: str | None = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=2000),
+    ) -> list[dict]:
         expand_values = _expand_tokens(expand)
         expand_topic = "topic" in expand_values or "all" in expand_values
-        return domain.list_missions(expand_topic=expand_topic, expand=expand_values)
+        return domain.list_missions(
+            expand_topic=expand_topic,
+            expand=expand_values,
+            limit=limit,
+        )
 
     @app.post("/api/r3akt/missions", dependencies=[Depends(require_protected)])
     def upsert_mission(payload: dict = Body(default_factory=dict)) -> dict:

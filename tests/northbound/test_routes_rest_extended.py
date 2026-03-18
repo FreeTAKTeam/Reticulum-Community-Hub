@@ -1071,6 +1071,27 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     assert events.json()
 
 
+def test_r3akt_missions_route_applies_limit(tmp_path: Path) -> None:
+    client, _, _, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    for mission_uid in ("mission-1", "mission-2", "mission-3"):
+        response = client.post(
+            "/api/r3akt/missions",
+            json={"uid": mission_uid, "mission_name": mission_uid},
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+    limited = client.get("/api/r3akt/missions", params={"limit": 2}, headers=headers)
+    single = client.get("/api/r3akt/missions", params={"limit": 1}, headers=headers)
+
+    assert limited.status_code == 200
+    assert len(limited.json()) == 2
+    assert single.status_code == 200
+    assert len(single.json()) == 1
+
+
 def test_checklist_routes_matrix_and_errors(tmp_path: Path) -> None:
     client, _, _, _ = _build_client(tmp_path)
     headers = {"X-API-Key": "secret"}

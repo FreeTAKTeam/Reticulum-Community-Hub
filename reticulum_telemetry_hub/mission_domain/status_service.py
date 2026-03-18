@@ -191,7 +191,11 @@ class EmergencyActionMessageService:
                     EmergencyActionMessageRecord.subject_id.asc(),
                 ).all()
             )
-            return [self._serialize_message(row) for row in rows]
+            return [
+                self._serialize_message(row)
+                for row in rows
+                if not self._is_expired(row)
+            ]
 
     def upsert_message(
         self, payload: dict[str, Any], *, expected_callsign: str | None = None
@@ -299,6 +303,10 @@ class EmergencyActionMessageService:
             if row is None:
                 raise KeyError(
                     f"No EmergencyActionMessage found for {normalized_subject_type}/{normalized_subject_id}"
+                )
+            if self._is_expired(row):
+                raise KeyError(
+                    f"No active EmergencyActionMessage found for {normalized_subject_type}/{normalized_subject_id}"
                 )
             return self._serialize_message(row)
 

@@ -172,6 +172,43 @@ def test_eam_team_summary_route_handles_missing_and_expired_reports(tmp_path: Pa
     assert missing_team.status_code == 404
 
 
+def test_eam_routes_hide_expired_snapshots_from_list_and_latest(tmp_path: Path) -> None:
+    client, _, domain = _build_client(tmp_path)
+    _seed_team(domain)
+    headers = {"X-API-Key": "secret"}
+
+    created = client.post(
+        "/api/EmergencyActionMessage",
+        json={
+            "callsign": "ORANGE-1",
+            "subjectType": "member",
+            "subjectId": "member-1",
+            "teamId": "team-1",
+            "reportedAt": (
+                datetime.now(timezone.utc) - timedelta(minutes=10)
+            ).isoformat(),
+            "ttlSeconds": 60,
+            "securityStatus": "Red",
+            "capabilityStatus": "Red",
+            "preparednessStatus": "Red",
+            "medicalStatus": "Red",
+            "mobilityStatus": "Red",
+            "commsStatus": "Red",
+        },
+        headers=headers,
+    )
+    listed = client.get("/api/EmergencyActionMessage", headers=headers)
+    latest = client.get(
+        "/api/EmergencyActionMessage/latest/member/member-1",
+        headers=headers,
+    )
+
+    assert created.status_code == 200
+    assert listed.status_code == 200
+    assert listed.json() == []
+    assert latest.status_code == 404
+
+
 def test_eam_team_summary_route_matches_team_orange_example(tmp_path: Path) -> None:
     client, _, domain = _build_client(tmp_path)
     headers = {"X-API-Key": "secret"}
