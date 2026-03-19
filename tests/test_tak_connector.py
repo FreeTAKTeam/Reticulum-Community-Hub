@@ -630,14 +630,15 @@ def test_send_latest_location_logs_payload(monkeypatch):
     assert client.sent
     assert logs
     payload_entry = next(
-        (msg for msg, level in logs if "payload:" in msg and level == RNS.LOG_INFO),
+        (
+            msg
+            for msg, level in logs
+            if connector.EVENT_TYPE in msg and "payload:" not in msg and level == RNS.LOG_INFO
+        ),
         None,
     )
     assert payload_entry is not None
-    payload_text = payload_entry.split("payload:", maxsplit=1)[1].strip()
-    payload = json.loads(payload_text)
-    payload_event = payload.get("event", payload)
-    assert payload_event.get("type") == connector.EVENT_TYPE
+    assert "bytes" in payload_entry
 
 
 def test_send_chat_event_logs_payload(monkeypatch):
@@ -667,14 +668,15 @@ def test_send_chat_event_logs_payload(monkeypatch):
     assert client.sent
     assert logs
     payload_entry = next(
-        (msg for msg, level in logs if "payload:" in msg and level == RNS.LOG_INFO),
+        (
+            msg
+            for msg, level in logs
+            if connector.CHAT_EVENT_TYPE in msg and "payload:" not in msg and level == RNS.LOG_INFO
+        ),
         None,
     )
     assert payload_entry is not None
-    payload_text = payload_entry.split("payload:", maxsplit=1)[1].strip()
-    payload = json.loads(payload_text)
-    payload_event = payload.get("event", payload)
-    assert payload_event.get("type") == connector.CHAT_EVENT_TYPE
+    assert "bytes" in payload_entry
 
 
 def test_chat_event_uid_uses_source_identifier():

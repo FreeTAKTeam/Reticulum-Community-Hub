@@ -129,6 +129,7 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
     telemetry_response = client.get(
         "/Telemetry",
         params={"since": int(now.timestamp())},
+        headers=headers,
     )
     assert telemetry_response.status_code == 200
 
@@ -216,16 +217,16 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
     assert routing_response.status_code == 200
     assert routing_response.json()["destinations"] == ["dest-1"]
 
-    join_response = client.post("/RTH", params={"identity": "dest-1"})
+    join_response = client.post("/RTH", params={"identity": "dest-1"}, headers=headers)
     assert join_response.status_code == 200
 
-    leave_response = client.put("/RTH", params={"identity": "dest-1"})
+    leave_response = client.put("/RTH", params={"identity": "dest-1"}, headers=headers)
     assert leave_response.status_code == 200
 
-    join_alias_response = client.post("/RCH", params={"identity": "dest-2"})
+    join_alias_response = client.post("/RCH", params={"identity": "dest-2"}, headers=headers)
     assert join_alias_response.status_code == 200
 
-    leave_alias_response = client.put("/RCH", params={"identity": "dest-2"})
+    leave_alias_response = client.put("/RCH", params={"identity": "dest-2"}, headers=headers)
     assert leave_alias_response.status_code == 200
 
     capability_response = client.put(
@@ -680,7 +681,7 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     member_missing = client.get("/api/r3akt/team-members/missing", headers=headers)
     assert member_missing.status_code == 404
 
-    join_client = client.post("/RCH", params={"identity": "peer-a"})
+    join_client = client.post("/RCH", params={"identity": "peer-a"}, headers=headers)
     assert join_client.status_code == 200
     member_client_link = client.put(
         "/api/r3akt/team-members/member-1/clients/peer-a",
@@ -1090,6 +1091,18 @@ def test_r3akt_missions_route_applies_limit(tmp_path: Path) -> None:
     assert len(limited.json()) == 2
     assert single.status_code == 200
     assert len(single.json()) == 1
+
+
+def test_sensitive_core_routes_require_auth_for_remote_clients(tmp_path: Path) -> None:
+    client, _, _, _ = _build_client(tmp_path)
+    remote_client = TestClient(client.app, client=("198.51.100.10", 50000))
+    now = int(datetime.now(timezone.utc).timestamp())
+
+    assert remote_client.get("/Telemetry", params={"since": now}).status_code == 401
+    assert remote_client.post("/RTH", params={"identity": "dest-1"}).status_code == 401
+    assert remote_client.put("/RTH", params={"identity": "dest-1"}).status_code == 401
+    assert remote_client.post("/RCH", params={"identity": "dest-1"}).status_code == 401
+    assert remote_client.put("/RCH", params={"identity": "dest-1"}).status_code == 401
 
 
 def test_checklist_routes_matrix_and_errors(tmp_path: Path) -> None:

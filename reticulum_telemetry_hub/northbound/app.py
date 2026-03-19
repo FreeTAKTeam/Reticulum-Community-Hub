@@ -229,7 +229,12 @@ def create_app(
         resolve_openapi_spec=_resolve_openapi_spec,
         auth=auth,
     )
-    register_file_routes(app, services=services, api=api)
+    register_file_routes(
+        app,
+        services=services,
+        api=api,
+        require_protected=require_protected,
+    )
     register_chat_routes(
         app,
         services=services,

@@ -40,7 +40,7 @@ def register_topic_routes(
         None: Routes are registered on the application.
     """
 
-    @app.get("/Topic/{topic_id}")
+    @app.get("/Topic/{topic_id}", dependencies=[Depends(require_protected)])
     def retrieve_topic(topic_id: str) -> dict:
         """Retrieve a topic by ID.
 
@@ -94,7 +94,7 @@ def register_topic_routes(
         services.record_event("topic_deleted", f"Topic deleted: {topic.topic_id}")
         return serialize_topic(topic)
 
-    @app.get("/Topic")
+    @app.get("/Topic", dependencies=[Depends(require_protected)])
     def list_topics() -> list[dict]:
         """List topics.
 
@@ -127,7 +127,7 @@ def register_topic_routes(
         services.record_event("topic_updated", f"Topic updated: {topic.topic_id}")
         return serialize_topic(topic)
 
-    @app.post("/Topic/Subscribe")
+    @app.post("/Topic/Subscribe", dependencies=[Depends(require_protected)])
     def subscribe_topic(payload: SubscribeTopicRequest) -> dict:
         """Subscribe a destination to a topic.
 

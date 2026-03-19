@@ -254,12 +254,12 @@ class MissionSyncRouter:
         args = dict(envelope.args or {})
         try:
             if command_type == "mission.join":
-                identity = str(args.get("identity") or source_identity)
+                identity = str(source_identity)
                 joined = self._api.join(identity)
                 payload = {"identity": identity, "joined": bool(joined)}
                 return payload, "mission.joined", payload
             if command_type == "mission.leave":
-                identity = str(args.get("identity") or source_identity)
+                identity = str(source_identity)
                 left = self._api.leave(identity)
                 payload = {"identity": identity, "left": bool(left)}
                 return payload, "mission.left", payload

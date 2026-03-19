@@ -226,7 +226,11 @@ def test_marker_telemetry_recorded_without_dispatcher(tmp_path: Path, monkeypatc
     marker_id = create_response.json()["object_destination_hash"]
 
     since = int(datetime.now(timezone.utc).timestamp()) - 60
-    telemetry_response = client.get("/Telemetry", params={"since": since})
+    telemetry_response = client.get(
+        "/Telemetry",
+        params={"since": since},
+        headers={"X-API-Key": "secret"},
+    )
 
     assert telemetry_response.status_code == 200
     entries = telemetry_response.json().get("entries", [])

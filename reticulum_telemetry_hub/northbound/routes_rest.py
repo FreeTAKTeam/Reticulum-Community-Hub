@@ -134,7 +134,7 @@ def register_core_routes(
 
         return services.list_events()
 
-    @app.get("/Telemetry")
+    @app.get("/Telemetry", dependencies=[Depends(require_protected)])
     def get_telemetry(
         since: int = Query(alias="since"),
         topic_id: Optional[str] = Query(default=None, alias="topic_id"),
@@ -402,7 +402,7 @@ def register_core_routes(
         services.record_event("identity_blackholed", f"Identity blackholed: {identity}")
         return status_entry.to_dict()
 
-    @app.post("/RTH")
+    @app.post("/RTH", dependencies=[Depends(require_protected)])
     def rth_join(identity: str = Query(alias="identity")) -> bool:
         """Join the Reticulum Telemetry Hub.
 
@@ -415,7 +415,7 @@ def register_core_routes(
 
         return api.join(identity)
 
-    @app.put("/RTH")
+    @app.put("/RTH", dependencies=[Depends(require_protected)])
     def rth_leave(identity: str = Query(alias="identity")) -> bool:
         """Leave the Reticulum Telemetry Hub.
 
@@ -428,13 +428,13 @@ def register_core_routes(
 
         return api.leave(identity)
 
-    @app.post("/RCH")
+    @app.post("/RCH", dependencies=[Depends(require_protected)])
     def rch_join(identity: str = Query(alias="identity")) -> bool:
         """Join the Reticulum Community Hub (canonical alias)."""
 
         return api.join(identity)
 
-    @app.put("/RCH")
+    @app.put("/RCH", dependencies=[Depends(require_protected)])
     def rch_leave(identity: str = Query(alias="identity")) -> bool:
         """Leave the Reticulum Community Hub (canonical alias)."""
 

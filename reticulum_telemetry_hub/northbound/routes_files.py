@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
+from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import status
@@ -18,6 +21,7 @@ def register_file_routes(
     *,
     services: NorthboundServices,
     api: ReticulumTelemetryHubAPI,
+    require_protected: Callable[[], None],
 ) -> None:
     """Register file and image routes on the FastAPI app.
 
@@ -25,12 +29,13 @@ def register_file_routes(
         app (FastAPI): FastAPI application instance.
         services (NorthboundServices): Aggregated services.
         api (ReticulumTelemetryHubAPI): API service instance.
+        require_protected (Callable[[], None]): Dependency for protected routes.
 
     Returns:
         None: Routes are registered on the application.
     """
 
-    @app.get("/File")
+    @app.get("/File", dependencies=[Depends(require_protected)])
     def list_files() -> list[dict]:
         """List stored files.
 
@@ -40,7 +45,7 @@ def register_file_routes(
 
         return [attachment.to_dict() for attachment in services.list_files()]
 
-    @app.get("/File/{file_id}")
+    @app.get("/File/{file_id}", dependencies=[Depends(require_protected)])
     def retrieve_file(file_id: int) -> dict:
         """Retrieve file metadata by ID.
 
@@ -57,7 +62,7 @@ def register_file_routes(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return attachment.to_dict()
 
-    @app.get("/File/{file_id}/raw")
+    @app.get("/File/{file_id}/raw", dependencies=[Depends(require_protected)])
     def retrieve_file_raw(file_id: int) -> FileResponse:
         """Return raw file bytes by ID.
 
@@ -74,7 +79,7 @@ def register_file_routes(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return FileResponse(path=attachment.path, media_type=attachment.media_type)
 
-    @app.delete("/File/{file_id}")
+    @app.delete("/File/{file_id}", dependencies=[Depends(require_protected)])
     def delete_file(file_id: int) -> dict:
         """Delete a stored file and its metadata."""
 
@@ -86,7 +91,7 @@ def register_file_routes(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         return attachment.to_dict()
 
-    @app.get("/Image")
+    @app.get("/Image", dependencies=[Depends(require_protected)])
     def list_images() -> list[dict]:
         """List stored images.
 
@@ -96,7 +101,7 @@ def register_file_routes(
 
         return [attachment.to_dict() for attachment in services.list_images()]
 
-    @app.get("/Image/{file_id}")
+    @app.get("/Image/{file_id}", dependencies=[Depends(require_protected)])
     def retrieve_image(file_id: int) -> dict:
         """Retrieve image metadata by ID.
 
@@ -113,7 +118,7 @@ def register_file_routes(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return attachment.to_dict()
 
-    @app.get("/Image/{file_id}/raw")
+    @app.get("/Image/{file_id}/raw", dependencies=[Depends(require_protected)])
     def retrieve_image_raw(file_id: int) -> FileResponse:
         """Return raw image bytes by ID.
 
@@ -130,7 +135,7 @@ def register_file_routes(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return FileResponse(path=attachment.path, media_type=attachment.media_type)
 
-    @app.delete("/Image/{file_id}")
+    @app.delete("/Image/{file_id}", dependencies=[Depends(require_protected)])
     def delete_image(file_id: int) -> dict:
         """Delete a stored image and its metadata."""
 

@@ -54,11 +54,11 @@ def test_topic_crud_and_subscribe_flow(tmp_path: Path) -> None:
     assert create_response.status_code == 200
     topic_id = create_response.json()["TopicID"]
 
-    list_response = client.get("/Topic")
+    list_response = client.get("/Topic", headers=headers)
     assert list_response.status_code == 200
     assert list_response.json()
 
-    get_response = client.get(f"/Topic/{topic_id}")
+    get_response = client.get(f"/Topic/{topic_id}", headers=headers)
     assert get_response.status_code == 200
 
     patch_response = client.patch(
@@ -80,12 +80,17 @@ def test_topic_crud_and_subscribe_flow(tmp_path: Path) -> None:
     assert assoc_response.status_code == 200
     assert assoc_response.json()["TopicID"] == topic_id
 
-    subscribe_missing = client.post("/Topic/Subscribe", json={"TopicID": topic_id})
+    subscribe_missing = client.post(
+        "/Topic/Subscribe",
+        json={"TopicID": topic_id},
+        headers=headers,
+    )
     assert subscribe_missing.status_code == 400
 
     subscribe_response = client.post(
         "/Topic/Subscribe",
         json={"TopicID": topic_id, "Destination": "dest-1"},
+        headers=headers,
     )
     assert subscribe_response.status_code == 200
 
@@ -96,8 +101,21 @@ def test_topic_crud_and_subscribe_flow(tmp_path: Path) -> None:
     )
     assert delete_response.status_code == 200
 
-    missing_response = client.get("/Topic/missing")
+    missing_response = client.get("/Topic/missing", headers=headers)
     assert missing_response.status_code == 404
+
+
+def test_topic_routes_require_auth_for_remote_clients(tmp_path: Path) -> None:
+    client, api = _build_client(tmp_path)
+    topic = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
+    remote_client, _ = _build_client(tmp_path, client_address=("198.51.100.10", 50000))
+
+    assert remote_client.get("/Topic").status_code == 401
+    assert remote_client.get(f"/Topic/{topic.topic_id}").status_code == 401
+    assert remote_client.post(
+        "/Topic/Subscribe",
+        json={"TopicID": topic.topic_id, "Destination": "dest-1"},
+    ).status_code == 401
 
 
 def test_topic_patch_requires_id(tmp_path: Path) -> None:

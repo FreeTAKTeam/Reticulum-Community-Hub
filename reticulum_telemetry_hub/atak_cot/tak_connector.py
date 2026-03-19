@@ -181,10 +181,9 @@ class TakConnector:  # pylint: disable=too-many-instance-attributes
             event = self._build_event_from_snapshot(
                 snapshot, uid=uid, callsign=callsign
             )
-            event_payload = json.dumps(event.to_dict())
+            event_size = len(json.dumps(event.to_dict()))
             RNS.log(
-                "TAK connector sending event type "
-                f"{event.type} with payload: {event_payload}",
+                f"TAK connector sending event type {event.type} ({event_size} bytes)",
                 RNS.LOG_INFO,
             )
             await self._pytak_client.create_and_send_message(
@@ -271,9 +270,9 @@ class TakConnector:  # pylint: disable=too-many-instance-attributes
             )
             return False
 
-        event_payload = json.dumps(event.to_dict())
+        event_size = len(json.dumps(event.to_dict()))
         RNS.log(
-            f"TAK connector sending event type {event.type} with payload: {event_payload}",
+            f"TAK connector sending event type {event.type} ({event_size} bytes)",
             RNS.LOG_INFO,
         )
         await self._pytak_client.create_and_send_message(
@@ -433,9 +432,9 @@ class TakConnector:  # pylint: disable=too-many-instance-attributes
             timestamp=timestamp,
             message_uuid=message_uuid,
         )
-        event_payload = json.dumps(event.to_dict())
+        event_size = len(json.dumps(event.to_dict()))
         RNS.log(
-            f"TAK connector sending event type {event.type} with payload: {event_payload}",
+            f"TAK connector sending event type {event.type} ({event_size} bytes)",
             RNS.LOG_INFO,
         )
         await self._pytak_client.create_and_send_message(
