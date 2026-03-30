@@ -397,6 +397,14 @@ Replies:
 This keeps the southbound response shape aligned with the rest of the hub:
 commands in through `FIELD_COMMANDS`, results out through `FIELD_RESULTS`.
 
+Excheck/task sharing uses the existing checklist southbound command family.
+The canonical shared workflow is:
+`checklist.create.online` -> `checklist.task.row.add` /
+`checklist.task.cell.set` / `checklist.task.status.set`, with
+`checklist.feed.publish` used only when a mission feed publication is needed.
+`checklist.create.offline` remains the explicit local-draft path and will
+surface as `OFFLINE` / `LOCAL_ONLY` until uploaded.
+
 ## Mission command specification
 
 Mission commands are the R3AKT southbound control-plane envelopes handled by
@@ -768,6 +776,125 @@ Outbound:
 - `FIELD_IMAGE`: image payload
 - `FIELD_FILE_ATTACHMENTS`: same payload for compatibility
 - `FIELD_EVENT`: `rch.command.result`
+
+## Emergency Action Message status
+
+RCH exposes Emergency Action Message (EAM) status as mission-sync southbound
+commands carried in `FIELD_COMMANDS`.
+
+Current command types:
+
+- `mission.registry.eam.list`
+- `mission.registry.eam.upsert`
+- `mission.registry.eam.get`
+- `mission.registry.eam.latest`
+- `mission.registry.eam.delete`
+- `mission.registry.eam.team.summary`
+
+These commands follow the existing mission-sync reply lifecycle:
+
+- one `accepted` reply in `FIELD_RESULTS`
+- one terminal `result` or `rejected` reply in `FIELD_RESULTS`
+- one terminal `FIELD_EVENT` on success
+
+The southbound schema is member-scoped only:
+
+- clients do not send `subject_type`; southbound EAM is implicitly member-only
+- `mission.registry.eam.upsert` requires `callsign`, `team_member_uid`, and
+  `team_uid`
+- stored results include `eam_uid`, `reported_at`, and computed
+  `overall_status`
+- the per-dimension status fields are:
+  `security_status`, `capability_status`, `preparedness_status`,
+  `medical_status`, `mobility_status`, and `comms_status`
+- `securityCapability` is not accepted southbound; use `capability_status`
+- optional metadata fields are `reported_by`, `notes`, `confidence`,
+  `ttl_seconds`, and `source`
+
+Status values use the same enum across member snapshots and team summaries:
+
+- `Green`
+- `Yellow`
+- `Red`
+- `Unknown`
+
+Representative `mission.registry.eam.upsert` envelope:
+
+```json
+[
+  {
+    "command_id": "cmd-eam-upsert-001",
+    "source": {
+      "rns_identity": "<sender-identity>"
+    },
+    "timestamp": "2026-03-20T12:00:00Z",
+    "command_type": "mission.registry.eam.upsert",
+    "args": {
+      "callsign": "EAGLE-1",
+      "team_member_uid": "team-member-1",
+      "team_uid": "team-1",
+      "reported_by": "EAGLE-1",
+      "reported_at": "2026-03-20T12:00:00Z",
+      "security_status": "Green",
+      "capability_status": "Yellow",
+      "preparedness_status": "Green",
+      "medical_status": "Unknown",
+      "mobility_status": "Green",
+      "comms_status": "Red",
+      "notes": "Needs alternate comms path",
+      "confidence": 0.8,
+      "ttl_seconds": 3600,
+      "source": "lxmf-client"
+    }
+  }
+]
+```
+
+Successful terminal result payload for snapshot reads/writes:
+
+```json
+{
+  "eam": {
+    "eam_uid": "<snapshot-id>",
+    "callsign": "EAGLE-1",
+    "team_member_uid": "team-member-1",
+    "team_uid": "team-1",
+    "reported_by": "EAGLE-1",
+    "reported_at": "2026-03-20T12:00:00+00:00",
+    "overall_status": "Red",
+    "security_status": "Green",
+    "capability_status": "Yellow",
+    "preparedness_status": "Green",
+    "medical_status": "Unknown",
+    "mobility_status": "Green",
+    "comms_status": "Red",
+    "notes": "Needs alternate comms path",
+    "confidence": 0.8,
+    "ttl_seconds": 3600,
+    "source": "lxmf-client"
+  }
+}
+```
+
+`mission.registry.eam.team.summary` returns:
+
+```json
+{
+  "summary": {
+    "team_uid": "team-1",
+    "computed_at": "2026-03-20T12:00:05+00:00",
+    "member_count": 4,
+    "aggregation_method": "worst-of",
+    "overall_status": "Red",
+    "security_status": "Yellow",
+    "capability_status": "Red",
+    "preparedness_status": "Red",
+    "medical_status": "Yellow",
+    "mobility_status": "Yellow",
+    "comms_status": "Yellow"
+  }
+}
+```
 
 ## Current rule of thumb
 

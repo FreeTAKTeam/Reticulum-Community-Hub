@@ -1,5 +1,4 @@
 import asyncio
-import json
 import time
 from configparser import ConfigParser
 from datetime import datetime, timedelta

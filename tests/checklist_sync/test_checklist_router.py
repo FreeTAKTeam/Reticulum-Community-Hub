@@ -17,6 +17,26 @@ FIELD_GROUP = 11
 FIELD_EVENT = 13
 
 
+def _columns() -> list[dict[str, object]]:
+    return [
+        {
+            "column_name": "Due",
+            "display_order": 1,
+            "column_type": "RELATIVE_TIME",
+            "column_editable": False,
+            "is_removable": False,
+            "system_key": "DUE_RELATIVE_DTG",
+        },
+        {
+            "column_name": "Task",
+            "display_order": 2,
+            "column_type": "SHORT_STRING",
+            "column_editable": True,
+            "is_removable": True,
+        },
+    ]
+
+
 def _router(tmp_path, *, include_event_log: bool = False):
     cfg = make_config_manager(tmp_path)
     api = ReticulumTelemetryHubAPI(config_manager=cfg)
@@ -116,6 +136,36 @@ def test_checklist_command_accepts_with_capability(tmp_path) -> None:
     assert result["status"] == "result"
     assert result["result"]["uid"]
     assert event["event_type"] == "checklist.created"
+    assert result["result"]["mode"] == "OFFLINE"
+    assert result["result"]["sync_state"] == "LOCAL_ONLY"
+
+
+def test_checklist_create_online_direct_columns_creates_shared_checklist(tmp_path) -> None:
+    api, _domain, router, _log = _router(tmp_path)
+    api.grant_identity_capability("peer-a", "checklist.write")
+
+    responses = router.handle_commands(
+        [
+            _command(
+                "checklist.create.online",
+                {
+                    "name": "Shared Excheck",
+                    "description": "Shared by default",
+                    "origin_type": "BLANK_TEMPLATE",
+                    "columns": _columns(),
+                },
+                command_id="cmd-shared-excheck",
+            )
+        ],
+        source_identity="peer-a",
+    )
+
+    assert len(responses) == 2
+    result = responses[1].fields[FIELD_RESULTS]
+    assert result["status"] == "result"
+    assert result["result"]["mode"] == "ONLINE"
+    assert result["result"]["sync_state"] == "SYNCED"
+    assert responses[1].fields[FIELD_EVENT]["event_type"] == "checklist.created"
 
 
 def test_checklist_command_accepts_linked_client_mission_access(tmp_path) -> None:
@@ -273,6 +323,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
+    assert _result(create_online)["mode"] == "ONLINE"
+    assert _result(create_online)["sync_state"] == "SYNCED"
     checklist_uid = _result(create_online)["uid"]
 
     create_offline = router.handle_commands(

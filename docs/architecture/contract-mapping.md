@@ -32,9 +32,10 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 - Non-R3AKT recipients receive a markdown mission-update summary body with
   heading `### Mission {mission_name}`, no raw UID fields in text, and
   `FIELD_RENDERER=RENDERER_MARKDOWN`.
-- Registry command coverage includes mission, mission-change, log-entry, team,
-  team-member, asset, skill, team-member-skill, task-skill-requirement,
-  assignment, and mission/team-member/assignment association operations.
+- Registry command coverage includes mission, mission-change, log-entry,
+  Emergency Action Message status, team, team-member, asset, skill,
+  team-member-skill, task-skill-requirement, assignment, and
+  mission/team-member/assignment association operations.
 - Legacy command path (`Command` / `PLUGIN_COMMAND`) remains active via `command_manager.py`.
 
 ## Checklist Commands

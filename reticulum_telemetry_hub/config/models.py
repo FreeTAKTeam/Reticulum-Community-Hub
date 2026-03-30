@@ -264,9 +264,12 @@ class TakConnectionConfig:  # pylint: disable=too-many-instance-attributes
         parser["fts"] = {
             "COT_URL": self.cot_url,
             "CALLSIGN": self.callsign,
+            "SSL_CLIENT_CERT": self.tls_client_cert or "",
+            "SSL_CLIENT_KEY": self.tls_client_key or "",
             "PYTAK_TLS_CLIENT_CERT": self.tls_client_cert or "",
             "PYTAK_TLS_CLIENT_KEY": self.tls_client_key or "",
             "SSL_CLIENT_CAFILE": self.tls_ca or "",
+            "SSL_VERIFY": str(not self.tls_insecure).lower(),
             "PYTAK_TLS_CLIENT_PASSWORD": self.tls_client_password or "",
             "PYTAK_TLS_DONT_VERIFY": str(self.pytak_tls_dont_verify),
             "TAK_PROTO": str(self.tak_proto),

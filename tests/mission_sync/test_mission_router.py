@@ -10,6 +10,7 @@ from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.zone_service import ZoneService
 from reticulum_telemetry_hub.api.zone_storage import ZoneStorage
+from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_sync.capabilities import MISSION_COMMAND_CAPABILITIES
 from reticulum_telemetry_hub.mission_sync.router import MissionSyncRouter
@@ -43,6 +44,7 @@ def _router(
     )
     zone_service = ZoneService(ZoneStorage(cfg.config.hub_database_path)) if include_zone else None
     domain_service = MissionDomainService(cfg.config.hub_database_path)
+    emergency_action_message_service = EmergencyActionMessageService(cfg.config.hub_database_path)
     event_log = EventLog() if include_event_log else None
     sent_messages: list[tuple[str, str | None, str | None]] = []
 
@@ -56,6 +58,7 @@ def _router(
         marker_service=marker_service,
         zone_service=zone_service,
         domain_service=domain_service,
+        emergency_action_message_service=emergency_action_message_service,
         event_log=event_log,
         hub_identity_resolver=lambda: "hub-1",
         field_results=FIELD_RESULTS,

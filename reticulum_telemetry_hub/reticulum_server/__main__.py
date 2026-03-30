@@ -104,6 +104,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 from reticulum_telemetry_hub.lxmf_telemetry.sampler import TelemetrySampler
 from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterManager
+from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_sync import MissionSyncRouter
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
@@ -469,6 +470,7 @@ class ReticulumTelemetryHub:
     mission_sync_router: MissionSyncRouter | None
     checklist_sync_router: ChecklistSyncRouter | None
     mission_domain_service: MissionDomainService | None
+    emergency_action_message_service: EmergencyActionMessageService | None
     _active_services: dict[str, HubService]
 
     TELEMETRY_PLACEHOLDERS = {"telemetry data", "telemetry update"}
@@ -854,6 +856,7 @@ class ReticulumTelemetryHub:
         self.mission_sync_router = None
         self.checklist_sync_router = None
         self.mission_domain_service = None
+        self.emergency_action_message_service = None
         self._remove_mission_change_listener: Callable[[], None] | None = None
         self._remove_topic_registry_change_listener: Callable[[], None] | None = None
         self._announce_handler: AnnounceHandler | None = None
@@ -941,6 +944,7 @@ class ReticulumTelemetryHub:
             hub_db_path,
             event_retention_days=event_retention_days,
         )
+        self.emergency_action_message_service = EmergencyActionMessageService(hub_db_path)
         self.api.set_reticulum_destination(self._origin_rch_hex())
         self._backfill_identity_announces()
         self._load_persisted_clients()
@@ -999,6 +1003,7 @@ class ReticulumTelemetryHub:
             marker_service=self.marker_service,
             zone_service=self.zone_service,
             domain_service=self.mission_domain_service,
+            emergency_action_message_service=self.emergency_action_message_service,
             event_log=self.event_log,
             hub_identity_resolver=self._origin_rch_hex,
             field_results=LXMF.FIELD_RESULTS,

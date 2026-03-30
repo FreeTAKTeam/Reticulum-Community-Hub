@@ -23,6 +23,18 @@
           <span v-if="selectedTemplateOption.task_rows > 0"> | {{ selectedTemplateOption.task_rows }} tasks </span>
           <span v-if="selectedTemplateOption.source_type === 'csv_import'"> | sourced from CSV import</span>
         </p>
+        <label class="field-control full">
+          <span>Create Mode</span>
+          <label class="template-modal-checkbox">
+            <input
+              :checked="createOfflineDraft"
+              type="checkbox"
+              @change="emit('update:create-offline-draft', readInputChecked($event))"
+            />
+            <span>Create as local draft (`OFFLINE` / `LOCAL_ONLY`) instead of shared (`ONLINE` / `SYNCED`).</span>
+          </label>
+        </label>
+        <p class="template-modal-hint">Shared is the default. Local drafts stay on the current node until uploaded.</p>
       </div>
       <p v-else class="template-modal-empty">No checklist templates available.</p>
 
@@ -57,6 +69,7 @@ defineProps<{
   open: boolean;
   checklistNameDraft: string;
   selectionUid: string;
+  createOfflineDraft: boolean;
   submitting: boolean;
   templateOptions: TemplateOption[];
   selectOptions: SelectOption[];
@@ -67,12 +80,18 @@ const emit = defineEmits<{
   (event: "close"): void;
   (event: "update:checklist-name-draft", value: string): void;
   (event: "update:selection-uid", value: string): void;
+  (event: "update:create-offline-draft", value: boolean): void;
   (event: "submit"): void;
 }>();
 
 const readInputValue = (event: Event): string => {
   const target = event.target as HTMLInputElement | null;
   return String(target?.value ?? "");
+};
+
+const readInputChecked = (event: Event): boolean => {
+  const target = event.target as HTMLInputElement | null;
+  return Boolean(target?.checked);
 };
 </script>
 

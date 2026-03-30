@@ -275,22 +275,21 @@
               <article class="stage-card">
                 <h4>CSV Upload</h4>
                 <div class="field-grid single-col">
-                  <label class="field-control full">
-                    <span>Select CSV File</span>
-                    <input
-                      ref="csvUploadInputRef"
-                      class="csv-upload-native"
-                      type="file"
-                      accept=".csv,text/csv"
-                      @change="handleCsvUpload"
-                    />
-                    <div class="csv-upload-picker">
-                      <BaseButton size="sm" variant="secondary" icon-left="upload" @click="openCsvUploadPicker">
-                        Choose File
-                      </BaseButton>
-                      <span class="csv-upload-filename">{{ csvImportFilename || "No file chosen" }}</span>
-                    </div>
-                  </label>
+                <div class="field-control full">
+                  <span>Select CSV File</span>
+                  <input
+                    id="mission-csv-upload-input"
+                    class="csv-upload-native"
+                    type="file"
+                    accept=".csv,.cvf,text/csv,text/cvf"
+                    @click="prepareCsvUploadPicker"
+                    @change="handleCsvUpload"
+                  />
+                  <div class="csv-upload-picker">
+                    <label for="mission-csv-upload-input" class="csv-upload-trigger cui-btn inline-flex items-center justify-center gap-2 font-semibold tracking-[0.02em] cui-btn--secondary cui-btn--sm cui-tone-primary cui-btn--action">Choose File</label>
+                    <span class="csv-upload-filename">{{ csvImportFilename || "No file chosen" }}</span>
+                  </div>
+                </div>
                 </div>
                 <ul class="stack-list csv-meta">
                   <li>
@@ -485,6 +484,7 @@
       :open="checklistTemplateModalOpen"
       :checklist-name-draft="checklistTemplateNameDraft"
       :selection-uid="checklistTemplateSelectionUid"
+      :create-offline-draft="checklistCreateOfflineDraft"
       :submitting="checklistTemplateSubmitting"
       :template-options="checklistTemplateOptions"
       :select-options="checklistTemplateSelectOptions"
@@ -492,6 +492,7 @@
       @close="closeChecklistTemplateModal"
       @update:checklist-name-draft="checklistTemplateNameDraft = $event"
       @update:selection-uid="checklistTemplateSelectionUid = $event"
+      @update:create-offline-draft="checklistCreateOfflineDraft = $event"
       @submit="submitChecklistTemplateSelection"
     />
 
@@ -538,6 +539,7 @@ import { toMissionStatusValue } from "./mission-status";
 import { useChecklistTemplateDraft } from "../../composables/useChecklistTemplateDraft";
 import { useChecklistTemplateCrud } from "../../composables/useChecklistTemplateCrud";
 import { useToastStore } from "../../stores/toasts";
+import { resolveChecklistCreateEndpoint } from "../../utils/checklist-create";
 import { loadJson, saveJson } from "../../utils/storage";
 import { resolveTeamMemberPrimaryLabel } from "../../utils/team-members";
 
@@ -1295,8 +1297,6 @@ const csvImportFilename = ref("");
 const csvImportBase64 = ref("");
 const csvImportHeaders = ref<string[]>([]);
 const csvImportRows = ref<string[][]>([]);
-const csvUploadInputRef = ref<HTMLInputElement | null>(null);
-
 const csvImportPreviewRows = computed(() => csvImportRows.value.slice(0, 12));
 
 const clearCsvUpload = () => {
@@ -1306,8 +1306,17 @@ const clearCsvUpload = () => {
   csvImportRows.value = [];
 };
 
-const openCsvUploadPicker = () => {
-  csvUploadInputRef.value?.click();
+const prepareCsvUploadPicker = (event: MouseEvent) => {
+  const uploadInput = event.currentTarget as HTMLInputElement | null;
+  if (!uploadInput) {
+    return;
+  }
+  uploadInput.value = "";
+};
+
+const isCsvFilename = (filename: string): boolean => {
+  const normalized = String(filename ?? "").toLowerCase();
+  return normalized.endsWith(".csv") || normalized.endsWith(".cvf");
 };
 
 const renderUploadedCsv = (): string => {
@@ -1323,7 +1332,7 @@ const handleCsvUpload = async (event: Event) => {
     return;
   }
   try {
-    if (!file.name.toLowerCase().endsWith(".csv")) {
+    if (!isCsvFilename(file.name)) {
       throw new Error("Select a file with .csv extension");
     }
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -1724,7 +1733,7 @@ const screenMeta: Record<ScreenId, { title: string; subtitle: string; actions: s
   assetRegistry: { title: "Asset Registry", subtitle: "Hardware inventory, status, and readiness.", actions: [] },
   checklistOverview: { title: "Checklists", subtitle: "Manage checklist instances and templates.", actions: [] },
   checklistDetails: { title: "Checklist Details", subtitle: "Task grid, callsigns, due relative DTG, and status.", actions: ["Edit Cell", "Sync"] },
-  checklistCreation: { title: "Checklist Creation Page", subtitle: "Create online/offline checklist runs from templates.", actions: ["Create", "Validate"] },
+  checklistCreation: { title: "Checklist Creation Page", subtitle: "Create shared checklist runs by default, or keep them local as explicit drafts.", actions: ["Create", "Validate"] },
   checklistRunDetail: { title: "Checklist Run Detail", subtitle: "Task status transitions and operator updates.", actions: ["Set Status", "Upload"] },
   taskAssignmentWorkspace: { title: "Task Assignment Workspace", subtitle: "Task ownership and asset mapping controls.", actions: ["Assign", "Reassign"] },
   checklistImportCsv: { title: "Import from CSV", subtitle: "Import checklist rows from CSV payloads.", actions: ["Import", "Preview"] },
@@ -1833,6 +1842,7 @@ const missionAdvancedPropertiesOpen = ref(false);
 const missionDraftZoneUids = ref<string[]>([]);
 const missionDraftAssetUids = ref<string[]>([]);
 const checklistTemplateModalOpen = ref(false);
+const checklistCreateOfflineDraft = ref(false);
 const checklistTemplateSelectionUid = ref("");
 const checklistTemplateNameDraft = ref("");
 const checklistTemplateSubmitting = ref(false);
@@ -3915,7 +3925,7 @@ const createChecklistAction = async () => {
       source_identity: DEFAULT_SOURCE_IDENTITY
     });
   } else {
-    await post<ChecklistRaw>(endpoints.checklistsOffline, {
+    await post<ChecklistRaw>(resolveChecklistCreateEndpoint(checklistCreateOfflineDraft.value), {
       mission_uid: missionUid,
       name: checklistName,
       origin_type: "BLANK_TEMPLATE",
@@ -3974,173 +3984,35 @@ const parseDueRelativeMinutes = (task: ChecklistTaskRaw, sourceDueColumnUid: str
   return Math.trunc(parsed);
 };
 
-const parseCsvDueRelativeMinutes = (value: string): number | undefined => {
-  const raw = String(value ?? "").trim();
-  if (!raw) {
-    return undefined;
-  }
-  const direct = Number(raw);
-  if (Number.isFinite(direct)) {
-    return Math.trunc(direct);
-  }
-  const match = raw.match(/^T?\s*([+-])?\s*(\d{1,3})(?::(\d{1,2}))?$/i);
-  if (!match) {
-    return undefined;
-  }
-  const sign = match[1] === "-" ? -1 : 1;
-  const hours = Number(match[2] ?? "0");
-  const minutes = Number(match[3] ?? "0");
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
-    return undefined;
-  }
-  return sign * (Math.trunc(hours) * 60 + Math.trunc(minutes));
-};
-
-const normalizeCsvHeaderLabel = (value: string): string =>
-  String(value ?? "")
-    .trim()
-    .toUpperCase()
-    .replace(/[_-]/g, " ")
-    .replace(/\s+/g, " ");
-
 const createChecklistFromUploadedCsvAction = async (
   checklistName: string,
   missionUid?: string
 ): Promise<ChecklistRaw> => {
-  const headers = [...csvImportHeaders.value];
-  const rows = [...csvImportRows.value];
-  if (!headers.length || !rows.length) {
+  if (!csvImportBase64.value || !csvImportHeaders.value.length || !csvImportRows.value.length) {
     throw new Error("Upload a CSV file before importing");
   }
-
-  const dueAliases = new Set(["DUE", "DUE RELATIVE MINUTES", "DUE MINUTES"]);
-  const dueHeaderIndex = headers.findIndex((header) => dueAliases.has(normalizeCsvHeaderLabel(header)));
-  const columns: Array<Record<string, unknown>> = [];
-  if (dueHeaderIndex < 0) {
-    columns.push({
-      column_name: "Due",
-      display_order: 1,
-      column_type: "RELATIVE_TIME",
-      column_editable: false,
-      is_removable: false,
-      system_key: "DUE_RELATIVE_DTG"
-    });
-    headers.forEach((header, index) => {
-      columns.push({
-        column_name: header || `Column ${index + 1}`,
-        display_order: index + 2,
-        column_type: "SHORT_STRING",
-        column_editable: true,
-        is_removable: true
-      });
-    });
-  } else {
-    headers.forEach((header, index) => {
-      if (index === dueHeaderIndex) {
-        columns.push({
-          column_name: header || "Due",
-          display_order: index + 1,
-          column_type: "RELATIVE_TIME",
-          column_editable: false,
-          is_removable: false,
-          system_key: "DUE_RELATIVE_DTG"
-        });
-        return;
-      }
-      columns.push({
-        column_name: header || `Column ${index + 1}`,
-        display_order: index + 1,
-        column_type: "SHORT_STRING",
-        column_editable: true,
-        is_removable: true
-      });
-    });
-  }
-
-  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, {
-    mission_uid: missionUid,
-    name: checklistName,
-    origin_type: "CSV_IMPORT",
+  const imported = await post<ChecklistRaw>(endpoints.checklistsImportCsv, {
+    csv_filename: csvImportFilename.value || `${checklistName}.csv`,
+    csv_base64: csvImportBase64.value,
     source_identity: DEFAULT_SOURCE_IDENTITY,
-    columns
+    mission_uid: missionUid
   });
-  const createdChecklistUid = String(created.uid ?? "").trim();
+
+  const createdChecklistUid = String(imported.uid ?? "").trim();
   if (!createdChecklistUid) {
     throw new Error("Checklist import failed");
   }
-
-  const createdColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(created.columns));
-  const dueColumnOrder = dueHeaderIndex < 0 ? 1 : dueHeaderIndex + 1;
-  const dueColumnUid =
-    createdColumns.find((column) => Number(column.display_order ?? 0) === dueColumnOrder)?.column_uid ?? "";
-  const targetByHeaderIndex = new Map<number, string>();
-  headers.forEach((_, headerIndex) => {
-    if (headerIndex === dueHeaderIndex) {
-      return;
-    }
-    const displayOrder = dueHeaderIndex < 0 ? headerIndex + 2 : headerIndex + 1;
-    const columnUid = createdColumns.find((column) => Number(column.display_order ?? 0) === displayOrder)?.column_uid ?? "";
-    if (columnUid) {
-      targetByHeaderIndex.set(headerIndex, columnUid);
-    }
-  });
-
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const row = rows[rowIndex];
-    const taskNumber = rowIndex + 1;
-    const taskPayload: Record<string, unknown> = { number: taskNumber };
-    const rowLegacyValue =
-      headers
-        .map((_, headerIndex) => ({
-          headerIndex,
-          value: String(row[headerIndex] ?? "").trim()
-        }))
-        .find(
-          (entry) =>
-            entry.value.length > 0 &&
-            (dueHeaderIndex < 0 || entry.headerIndex !== dueHeaderIndex)
-        )?.value ?? "";
-    if (rowLegacyValue) {
-      taskPayload.legacy_value = rowLegacyValue;
-    }
-    if (dueHeaderIndex >= 0) {
-      const dueValue = String(row[dueHeaderIndex] ?? "").trim();
-      const dueMinutes = parseCsvDueRelativeMinutes(dueValue);
-      if (dueMinutes !== undefined) {
-        taskPayload.due_relative_minutes = dueMinutes;
-      }
-    }
-    const taskCreated = await post<ChecklistRaw>(`${endpoints.checklists}/${createdChecklistUid}/tasks`, taskPayload);
-    const createdTaskUid = String(
-      toArray<ChecklistTaskRaw>(taskCreated.tasks).find((task) => Number(task.number ?? 0) === taskNumber)?.task_uid ?? ""
-    ).trim();
-    if (!createdTaskUid) {
-      continue;
-    }
-    for (const [headerIndex, targetColumnUid] of targetByHeaderIndex.entries()) {
-      const value = String(row[headerIndex] ?? "").trim();
-      if (!value) {
-        continue;
-      }
-      if (targetColumnUid === dueColumnUid) {
-        continue;
-      }
-      await patchRequest(`${endpoints.checklists}/${createdChecklistUid}/tasks/${createdTaskUid}/cells/${targetColumnUid}`, {
-        value,
-        updated_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
-      });
-    }
-  }
-
   const hydrated = await hydrateChecklistRecord(createdChecklistUid);
-  return hydrated ?? created;
+  return hydrated ?? imported;
 };
 
 const createChecklistFromCsvImportAction = async (
   sourceChecklistUid: string,
   checklistName: string,
-  missionUid?: string
+  missionUid?: string,
+  createOfflineDraft = false
 ): Promise<ChecklistRaw> => {
+  void createOfflineDraft;
   let sourceChecklist = checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === sourceChecklistUid);
   try {
     const hydrated = await hydrateChecklistRecord(sourceChecklistUid);
@@ -4257,6 +4129,7 @@ const buildChecklistDraftName = (): string => {
 
 const openChecklistTemplateModal = () => {
   checklistTemplateNameDraft.value = buildChecklistDraftName();
+  checklistCreateOfflineDraft.value = false;
   if (!checklistTemplateOptions.value.length) {
     checklistTemplateSelectionUid.value = "";
     checklistTemplateModalOpen.value = true;
@@ -4272,6 +4145,7 @@ const closeChecklistTemplateModal = () => {
   if (checklistTemplateSubmitting.value) {
     return;
   }
+  checklistCreateOfflineDraft.value = false;
   checklistTemplateModalOpen.value = false;
 };
 
@@ -4288,13 +4162,18 @@ const createChecklistFromSelectedTemplateAction = async () => {
   const checklistName = checklistTemplateNameDraft.value.trim() || buildChecklistDraftName();
   const created =
     selectedTemplate.source_type === "template"
-      ? await post<ChecklistRaw>(endpoints.checklists, {
+      ? await post<ChecklistRaw>(resolveChecklistCreateEndpoint(checklistCreateOfflineDraft.value), {
           template_uid: selectionUid,
           mission_uid: missionUid,
           name: checklistName,
           source_identity: DEFAULT_SOURCE_IDENTITY
         })
-      : await createChecklistFromCsvImportAction(selectionUid, checklistName, missionUid);
+      : await createChecklistFromCsvImportAction(
+          selectionUid,
+          checklistName,
+          missionUid,
+          checklistCreateOfflineDraft.value
+        );
   await loadWorkspace();
   const createdUid = String(created.uid ?? "").trim();
   if (createdUid) {
@@ -4314,10 +4193,15 @@ const submitChecklistTemplateSelection = async () => {
     return;
   }
   checklistTemplateSubmitting.value = true;
+  const createOfflineDraft = checklistCreateOfflineDraft.value;
   try {
     await createChecklistFromSelectedTemplateAction();
     checklistTemplateModalOpen.value = false;
-    toastStore.push("Checklist run created", "success");
+    checklistCreateOfflineDraft.value = false;
+    toastStore.push(
+      createOfflineDraft ? "Local checklist draft created" : "Shared checklist run created",
+      "success"
+    );
   } catch (error) {
     handleApiError(error, "Unable to create checklist run");
   } finally {

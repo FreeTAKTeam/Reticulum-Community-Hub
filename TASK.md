@@ -1,4 +1,10 @@
 # TASKS
+- 2026-03-30: DONE. Convert the ARES go-kit PDF into a structured radio checklist CSV under `Files/ExCheckTemplates`.
+- 2026-03-30: DONE. Create evacuation, bug-out, vehicle, and safe-zone exfil checklist CSV templates under `Files/ExCheckTemplates` based on the existing checklist examples.
+- 2026-03-30: DONE. Make Exchecks shared by default, keep local drafts explicit, and document the LXMF checklist task-sharing workflow.
+- 2026-03-24: DONE. Clean up linked git worktrees by pruning clean Codex worktrees and stashing recoverable edits from dirty detached worktrees before removal.
+- 2026-03-20: DONE. Add southbound LXMF `mission.registry.eam.*` support with dedicated status rights, mission-sync routing, tests, and docs.
+- 2026-03-20: DONE. Document the Emergency Action Message payload shape and current action surface, including the absence of a dedicated LXMF southbound command path.
 - 2026-03-18: DONE. Apply TAK TLS patch adding `tls_client_password` config support and the hosted Vite dev script flag.
 - 2026-03-18: DONE. Move telemetry fan-out onto the outbound queue, decouple outbound receipt waiting from send workers, raise/configure worker concurrency, and emit queue depth/enqueue/active-send/drop metrics.
 - 2026-03-18: DONE. Review GitHub Dependabot/security alerts and remediate actionable dependency vulnerabilities across Python, UI, and Electron manifests/lockfiles.

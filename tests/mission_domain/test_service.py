@@ -937,6 +937,15 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
             "mission_uid": "mission-1",
         }
     )
+    shared_from_columns = service.create_checklist_online(
+        {
+            "name": "Shared Excheck",
+            "description": "Shared by default",
+            "source_identity": "peer-a",
+            "origin_type": "BLANK_TEMPLATE",
+            "columns": _columns(),
+        }
+    )
     offline = service.create_checklist_offline(
         {
             "name": "Offline Checklist",
@@ -945,6 +954,12 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
             "origin_type": "BLANK_TEMPLATE",
         }
     )
+    assert online["mode"] == "ONLINE"
+    assert online["sync_state"] == "SYNCED"
+    assert shared_from_columns["mode"] == "ONLINE"
+    assert shared_from_columns["sync_state"] == "SYNCED"
+    assert offline["mode"] == "OFFLINE"
+    assert offline["sync_state"] == "LOCAL_ONLY"
 
     assert service.list_active_checklists(search="Checklist", sort_by="name_desc")
     assert service.list_active_checklists(sort_by="created_at_asc")

@@ -190,6 +190,17 @@ by `mission_sync/capabilities.py`.
 | `mission.registry.log_entry.upsert` | `mission.registry.log.write` | log-entry payload | Create or update a log entry. |
 | `mission.registry.log_entry.list` | `mission.registry.log.read` | optional `mission_uid`, `marker_ref` | List log entries. |
 
+### Emergency Action Message status
+
+| `command_type` | Required capability | Key args | Description |
+| --- | --- | --- | --- |
+| `mission.registry.eam.list` | `mission.registry.status.read` | optional `team_uid`, `overall_status` | List current EAM snapshots in the southbound LXMF shape. |
+| `mission.registry.eam.upsert` | `mission.registry.status.write` | `callsign`, `team_member_uid`, `team_uid`; optional `reported_by`, `reported_at`, six `*_status` fields, `notes`, `confidence`, `ttl_seconds`, `source` | Create or update a member-scoped EAM snapshot. |
+| `mission.registry.eam.get` | `mission.registry.status.read` | `callsign` | Retrieve the current EAM snapshot for a callsign. |
+| `mission.registry.eam.latest` | `mission.registry.status.read` | `team_member_uid` | Retrieve the latest non-expired EAM snapshot for a team member. |
+| `mission.registry.eam.delete` | `mission.registry.status.write` | `callsign` | Delete the current EAM snapshot for a callsign. |
+| `mission.registry.eam.team.summary` | `mission.registry.status.read` | `team_uid` | Compute the current team summary using worst-of semantics across member snapshots. |
+
 ### Teams and memberships
 
 | `command_type` | Required capability | Key args | Description |
@@ -262,6 +273,19 @@ by `checklist_sync/capabilities.py`.
 | `checklist.get` | `checklist.read` | `checklist_uid` | Return one checklist. |
 | `checklist.upload` | `checklist.upload` | `checklist_uid` | Upload a checklist state snapshot. |
 | `checklist.feed.publish` | `checklist.feed.publish` | `checklist_uid`, `mission_feed_uid` | Publish a checklist feed update. |
+
+### Shared Excheck/task workflow
+
+RCH Exchecks are shared by default through the checklist command family:
+
+- create the shared run with `checklist.create.online`
+- add rows with `checklist.task.row.add`
+- update row cells with `checklist.task.cell.set`
+- change completion state with `checklist.task.status.set`
+- publish to a mission feed only when needed with `checklist.feed.publish`
+
+Use `checklist.create.offline` only for explicit local drafts that should stay
+`OFFLINE` / `LOCAL_ONLY` until they are uploaded.
 
 ### Checklist task editing commands
 

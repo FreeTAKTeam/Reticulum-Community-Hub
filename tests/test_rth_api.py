@@ -498,7 +498,21 @@ def test_mission_access_roles_grant_effective_operations(tmp_path):
     )
 
     assert api.authorize("peer-a", "mission.message.send", mission_uid="mission-1") is True
+    assert api.authorize("peer-a", "mission.registry.status.read", mission_uid="mission-1") is True
+    assert api.authorize("peer-a", "mission.registry.status.write", mission_uid="mission-1") is True
     assert api.authorize("peer-a", "topic.delete", mission_uid="mission-1") is False
+
+
+def test_operation_definitions_include_status_rights_and_bundles(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+    definitions = api.rights.operation_definitions()
+
+    assert "mission.registry.status.read" in definitions["operations"]
+    assert "mission.registry.status.write" in definitions["operations"]
+    assert "mission.registry.status.read" in definitions["mission_role_bundles"]["MISSION_READONLY_SUBSCRIBER"]
+    assert "mission.registry.status.write" in definitions["mission_role_bundles"]["MISSION_SUBSCRIBER"]
+    assert "mission.registry.status.write" in definitions["mission_role_bundles"]["MISSION_OWNER"]
 
 
 def test_explicit_revoke_overrides_mission_access_bundle(tmp_path):

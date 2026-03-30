@@ -17,9 +17,12 @@ from reticulum_telemetry_hub.api.models import ZonePoint
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.zone_service import ZoneService
+from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
 from reticulum_telemetry_hub.mission_domain.service import DEFAULT_LOG_MISSION_UID
 from reticulum_telemetry_hub.mission_domain.service import MissionDomainService
 from reticulum_telemetry_hub.mission_sync.capabilities import MISSION_COMMAND_CAPABILITIES
+from reticulum_telemetry_hub.mission_sync.eam_commands import EmergencyActionMessageCommandError
+from reticulum_telemetry_hub.mission_sync.eam_commands import execute_eam_command
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandAccepted
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandRejected
@@ -68,6 +71,7 @@ class MissionSyncRouter:
         marker_service: MarkerService | None,
         zone_service: ZoneService | None,
         domain_service: MissionDomainService | None,
+        emergency_action_message_service: EmergencyActionMessageService | None,
         event_log: EventLog | None,
         hub_identity_resolver: Callable[[], str | None],
         field_results: int,
@@ -79,6 +83,7 @@ class MissionSyncRouter:
         self._marker_service = marker_service
         self._zone_service = zone_service
         self._domain = domain_service
+        self._emergency_action_message_service = emergency_action_message_service
         self._event_log = event_log
         self._hub_identity_resolver = hub_identity_resolver
         self._field_results = field_results
@@ -464,6 +469,16 @@ class MissionSyncRouter:
                     )
                 }
                 return payload, "mission.registry.log_entry.listed", payload
+            if command_type.startswith("mission.registry.eam."):
+                status_service = self._require_emergency_action_message_service()
+                try:
+                    return execute_eam_command(
+                        command_type,
+                        args,
+                        status_service=status_service,
+                    )
+                except EmergencyActionMessageCommandError as exc:
+                    raise MissionCommandError(exc.reason_code, exc.reason) from exc
             if command_type == "mission.registry.team.upsert":
                 domain = self._require_domain_service()
                 updated = domain.upsert_team(args)
@@ -858,6 +873,14 @@ class MissionSyncRouter:
             )
         return self._domain
 
+    def _require_emergency_action_message_service(self) -> EmergencyActionMessageService:
+        if self._emergency_action_message_service is None:
+            raise MissionCommandError(
+                "unsupported_operation",
+                "Emergency Action Message service is not configured",
+            )
+        return self._emergency_action_message_service
+
     def _candidate_mission_uids(
         self,
         command_type: str,
@@ -879,13 +902,19 @@ class MissionSyncRouter:
             mission_uids.update(rights.resolve_topic_mission_uids(topic_id))
 
         team_uid = self._value_as_str(args.get("team_uid")) or self._value_as_str(args.get("uid"))
-        if command_type.startswith("mission.registry.team.") and team_uid:
+        if (
+            command_type.startswith("mission.registry.team.")
+            or command_type.startswith("mission.registry.eam.")
+        ) and team_uid:
             mission_uids.update(rights.resolve_team_mission_uids(team_uid))
 
         team_member_uid = self._value_as_str(args.get("team_member_uid")) or self._value_as_str(
             args.get("uid")
         )
-        if command_type.startswith("mission.registry.team_member.") and team_member_uid:
+        if (
+            command_type.startswith("mission.registry.team_member.")
+            or command_type.startswith("mission.registry.eam.")
+        ) and team_member_uid:
             mission_uids.update(rights.resolve_team_member_mission_uids(team_member_uid))
 
         asset_uid = self._value_as_str(args.get("asset_uid"))

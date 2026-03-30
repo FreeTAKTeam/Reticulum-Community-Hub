@@ -223,14 +223,14 @@
                 <article class="stage-card">
                   <h4>CSV Upload</h4>
                   <div class="field-grid single-col">
-                    <label class="field-control full">
-                      <span>Select CSV File</span>
-                      <input ref="csvUploadInputRef" class="csv-upload-native" type="file" accept=".csv,text/csv" @change="handleCsvUpload" />
-                      <div class="csv-upload-picker">
-                        <BaseButton size="sm" variant="secondary" icon-left="upload" @click="openCsvUploadPicker">Choose File</BaseButton>
-                        <span class="csv-upload-filename">{{ csvImportFilename || "No file chosen" }}</span>
-                      </div>
-                    </label>
+                  <div class="field-control full">
+                    <span>Select CSV File</span>
+                    <input id="checklist-csv-upload-input" class="csv-upload-native" type="file" accept=".csv,.cvf,text/csv,text/cvf" @click="prepareCsvUploadPicker" @change="handleCsvUpload" />
+                    <div class="csv-upload-picker">
+                      <label for="checklist-csv-upload-input" class="csv-upload-trigger cui-btn inline-flex items-center justify-center gap-2 font-semibold tracking-[0.02em] cui-btn--secondary cui-btn--sm cui-tone-primary cui-btn--action">Choose File</label>
+                      <span class="csv-upload-filename">{{ csvImportFilename || "No file chosen" }}</span>
+                    </div>
+                  </div>
                   </div>
                   <ul class="stack-list csv-meta">
                     <li><strong>Selected File</strong><span>{{ csvImportFilename || "No file selected" }}</span></li>
@@ -1005,7 +1005,6 @@ const csvImportFilename = ref("");
 const csvImportBase64 = ref("");
 const csvImportHeaders = ref<string[]>([]);
 const csvImportRows = ref<string[][]>([]);
-const csvUploadInputRef = ref<HTMLInputElement | null>(null);
 const csvImportPreviewRows = computed(() => csvImportRows.value.slice(0, 12));
 
 // Computed
@@ -1384,7 +1383,17 @@ const openChecklistDetailView = async (checklistUid: string) => {
 const closeChecklistDetailView = () => { checklistLinkMissionModalOpen.value = false; checklistDetailUid.value = ""; checklistCsvImportView.value = false; };
 const navigateToChecklistTemplateList = () => { checklistCsvImportView.value = false; clearCsvUpload(); };
 const clearCsvUpload = () => { csvImportFilename.value = ""; csvImportBase64.value = ""; csvImportHeaders.value = []; csvImportRows.value = []; };
-const openCsvUploadPicker = () => { csvUploadInputRef.value?.click(); };
+const prepareCsvUploadPicker = (event: MouseEvent) => {
+  const uploadInput = event.currentTarget as HTMLInputElement | null;
+  if (!uploadInput) {
+    return;
+  }
+  uploadInput.value = "";
+};
+const isCsvFilename = (filename: string): boolean => {
+  const normalized = String(filename ?? "").toLowerCase();
+  return normalized.endsWith(".csv") || normalized.endsWith(".cvf");
+};
 const parseCsvRows = (payload: string): string[][] => {
   const rows: string[][] = []; let row: string[] = []; let cell = ""; let inQuotes = false;
   for (let index = 0; index < payload.length; index += 1) {
@@ -1411,7 +1420,7 @@ const handleCsvUpload = async (event: Event) => {
   const file = target?.files?.[0];
   if (!file) { clearCsvUpload(); return; }
   try {
-    if (!file.name.toLowerCase().endsWith(".csv")) throw new Error("Select a file with .csv extension");
+    if (!isCsvFilename(file.name)) throw new Error("Select a file with .csv extension");
     const bytes = new Uint8Array(await file.arrayBuffer());
     const text = new TextDecoder("utf-8").decode(bytes);
     const parsedRows = normalizeCsvRows(parseCsvRows(text));
@@ -1497,78 +1506,16 @@ const previewCsvAction = () => {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 };
-const normalizeCsvHeaderLabel = (value: string): string => String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, " ");
 const createTemplateFromUploadedCsvAction = async (templateName: string): Promise<ChecklistRaw> => {
-  const headers = [...csvImportHeaders.value];
-  const rows = [...csvImportRows.value];
-  if (!headers.length || !rows.length) throw new Error("Upload a CSV file before importing");
-  const dueAliases = new Set(["DUE", "DUE RELATIVE MINUTES", "DUE MINUTES"]);
-  const dueHeaderIndex = headers.findIndex((header) => dueAliases.has(normalizeCsvHeaderLabel(header)));
-  const columns: Array<Record<string, unknown>> = [];
-  if (dueHeaderIndex < 0) {
-    columns.push({ column_name: "Due", display_order: 1, column_type: "RELATIVE_TIME", column_editable: false, is_removable: false, system_key: "DUE_RELATIVE_DTG" });
-    headers.forEach((header, index) => columns.push({ column_name: header || `Column ${index + 1}`, display_order: index + 2, column_type: "SHORT_STRING", column_editable: true, is_removable: true }));
-  } else {
-    headers.forEach((header, index) => {
-      if (index === dueHeaderIndex) { columns.push({ column_name: header || "Due", display_order: index + 1, column_type: "RELATIVE_TIME", column_editable: false, is_removable: false, system_key: "DUE_RELATIVE_DTG" }); return; }
-      columns.push({ column_name: header || `Column ${index + 1}`, display_order: index + 1, column_type: "SHORT_STRING", column_editable: true, is_removable: true });
-    });
+  if (!csvImportBase64.value || !csvImportHeaders.value.length || !csvImportRows.value.length) {
+    throw new Error("Upload a CSV file before importing");
   }
-  
-  // Create checklist with CSV_IMPORT origin (acts as a template with rows)
-  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, {
-    name: templateName,
-    origin_type: "CSV_IMPORT",
+  return post<ChecklistRaw>(endpoints.checklistsImportCsv, {
+    csv_filename: csvImportFilename.value || `${templateName}.csv`,
+    csv_base64: csvImportBase64.value,
     source_identity: DEFAULT_SOURCE_IDENTITY,
-    columns
+    mission_uid: undefined
   });
-  const createdChecklistUid = String(created.uid ?? "").trim();
-  if (!createdChecklistUid) throw new Error("Template creation failed");
-  
-  // Create tasks from CSV rows
-  const createdColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(created.columns));
-  const targetByHeaderIndex = new Map<number, string>();
-  headers.forEach((_, headerIndex) => {
-    if (headerIndex === dueHeaderIndex) return;
-    const displayOrder = dueHeaderIndex < 0 ? headerIndex + 2 : headerIndex + 1;
-    const columnUid = createdColumns.find((column) => Number(column.display_order ?? 0) === displayOrder)?.column_uid ?? "";
-    if (columnUid) targetByHeaderIndex.set(headerIndex, columnUid);
-  });
-  
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const row = rows[rowIndex];
-    const taskNumber = rowIndex + 1;
-    const taskPayload: Record<string, unknown> = { number: taskNumber };
-    
-    // Get first non-due cell value as legacy value
-    const rowLegacyValue = headers.map((_, headerIndex) => ({ headerIndex, value: String(row[headerIndex] ?? "").trim() }))
-      .find((entry) => entry.value.length > 0 && (dueHeaderIndex < 0 || entry.headerIndex !== dueHeaderIndex))?.value ?? "";
-    if (rowLegacyValue) taskPayload.legacy_value = rowLegacyValue;
-    
-    // Set due minutes if present
-    if (dueHeaderIndex >= 0) {
-      const dueValue = String(row[dueHeaderIndex] ?? "").trim();
-      const dueMinutes = dueValue ? Math.trunc(Number(dueValue)) : undefined;
-      if (dueMinutes !== undefined && !Number.isNaN(dueMinutes)) taskPayload.due_relative_minutes = dueMinutes;
-    }
-    
-    // Create task
-    const taskCreated = await post<ChecklistRaw>(`${endpoints.checklists}/${createdChecklistUid}/tasks`, taskPayload);
-    const createdTaskUid = String(toArray<ChecklistTaskRaw>(taskCreated.tasks).find((task) => Number(task.number ?? 0) === taskNumber)?.task_uid ?? "").trim();
-    if (!createdTaskUid) continue;
-    
-    // Set cell values
-    for (const [headerIndex, targetColumnUid] of targetByHeaderIndex.entries()) {
-      const value = String(row[headerIndex] ?? "").trim();
-      if (!value) continue;
-      await patchRequest(`${endpoints.checklists}/${createdChecklistUid}/tasks/${createdTaskUid}/cells/${targetColumnUid}`, {
-        value,
-        updated_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
-      });
-    }
-  }
-  
-  return created;
 };
 const buildChecklistTemplateDraftName = (): string => `Template ${buildTimestampTag().slice(-6)}`;
 const applyChecklistTemplateEditorDraft = (payload: { selectionUid: string; selectionSourceType: ChecklistTemplateSourceType | ""; mode: ChecklistTemplateEditorMode; templateUid: string; templateName: string; description: string; columns: Array<ChecklistColumnRaw | ChecklistTemplateDraftColumn>; ensureTaskColumn?: boolean }) => {

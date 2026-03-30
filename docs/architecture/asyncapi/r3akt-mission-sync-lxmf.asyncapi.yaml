@@ -78,6 +78,12 @@ channels:
           - $ref: "#/components/messages/MissionChangeListCommand"
           - $ref: "#/components/messages/LogEntryUpsertCommand"
           - $ref: "#/components/messages/LogEntryListCommand"
+          - $ref: "#/components/messages/EamListCommand"
+          - $ref: "#/components/messages/EamUpsertCommand"
+          - $ref: "#/components/messages/EamGetCommand"
+          - $ref: "#/components/messages/EamLatestCommand"
+          - $ref: "#/components/messages/EamDeleteCommand"
+          - $ref: "#/components/messages/EamTeamSummaryCommand"
           - $ref: "#/components/messages/TeamUpsertCommand"
           - $ref: "#/components/messages/TeamGetCommand"
           - $ref: "#/components/messages/TeamListCommand"
@@ -591,6 +597,134 @@ components:
                 properties:
                   mission_uid: { type: string }
                   marker_ref: { type: string }
+            required: [command_type, args]
+    EamListCommand:
+      name: EamListCommand
+      x-http-operation: "GET /api/EmergencyActionMessage"
+      x-capability-required:
+        - mission.registry.status.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.eam.list
+              args:
+                type: object
+                additionalProperties: false
+                properties:
+                  team_uid: { type: string }
+                  overall_status: { type: string }
+            required: [command_type, args]
+    EamUpsertCommand:
+      name: EamUpsertCommand
+      x-http-operation: "POST /api/EmergencyActionMessage"
+      x-capability-required:
+        - mission.registry.status.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.eam.upsert
+              args:
+                type: object
+                additionalProperties: false
+                required: [callsign, team_member_uid, team_uid]
+                properties:
+                  callsign: { type: string }
+                  team_member_uid: { type: string }
+                  team_uid: { type: string }
+                  reported_by: { type: string }
+                  reported_at: { type: string, format: date-time }
+                  security_status: { type: string }
+                  capability_status: { type: string }
+                  preparedness_status: { type: string }
+                  medical_status: { type: string }
+                  mobility_status: { type: string }
+                  comms_status: { type: string }
+                  notes: { type: string }
+                  confidence: { type: number }
+                  ttl_seconds: { type: integer }
+                  source: { type: string }
+            required: [command_type, args]
+    EamGetCommand:
+      name: EamGetCommand
+      x-http-operation: "GET /api/EmergencyActionMessage/{callsign}"
+      x-capability-required:
+        - mission.registry.status.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.eam.get
+              args:
+                type: object
+                additionalProperties: false
+                required: [callsign]
+                properties:
+                  callsign: { type: string }
+            required: [command_type, args]
+    EamLatestCommand:
+      name: EamLatestCommand
+      x-http-operation: "GET /api/EmergencyActionMessage/latest/{subjectType}/{subjectId}"
+      x-capability-required:
+        - mission.registry.status.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.eam.latest
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_member_uid]
+                properties:
+                  team_member_uid: { type: string }
+            required: [command_type, args]
+    EamDeleteCommand:
+      name: EamDeleteCommand
+      x-http-operation: "DELETE /api/EmergencyActionMessage/{callsign}"
+      x-capability-required:
+        - mission.registry.status.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.eam.delete
+              args:
+                type: object
+                additionalProperties: false
+                required: [callsign]
+                properties:
+                  callsign: { type: string }
+            required: [command_type, args]
+    EamTeamSummaryCommand:
+      name: EamTeamSummaryCommand
+      x-http-operation: "GET /api/EmergencyActionMessage/team/{teamId}/summary"
+      x-capability-required:
+        - mission.registry.status.read
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.eam.team.summary
+              args:
+                type: object
+                additionalProperties: false
+                required: [team_uid]
+                properties:
+                  team_uid: { type: string }
             required: [command_type, args]
     TeamUpsertCommand:
       name: TeamUpsertCommand
@@ -1224,6 +1358,12 @@ components:
                   - mission.registry.mission_change.listed
                   - mission.registry.log_entry.upserted
                   - mission.registry.log_entry.listed
+                  - mission.registry.eam.listed
+                  - mission.registry.eam.upserted
+                  - mission.registry.eam.retrieved
+                  - mission.registry.eam.latest_retrieved
+                  - mission.registry.eam.deleted
+                  - mission.registry.eam.team_summary.retrieved
                   - mission.registry.team.upserted
                   - mission.registry.team.retrieved
                   - mission.registry.team.listed
