@@ -3420,7 +3420,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                     )
             header_display_orders = {index: index + 1 for index in range(len(headers))}
 
-        checklist = self.create_checklist_offline(
+        checklist = self.create_checklist_online(
             {
                 "origin_type": "CSV_IMPORT",
                 "name": Path(filename).stem or "Checklist CSV",

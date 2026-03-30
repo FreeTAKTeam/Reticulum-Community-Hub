@@ -541,6 +541,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         source_identity="peer-a",
     )
     assert _result(import_csv)["origin_type"] == "CSV_IMPORT"
+    assert _result(import_csv)["mode"] == "ONLINE"
+    assert _result(import_csv)["sync_state"] == "SYNCED"
 
     template_delete = router.handle_commands(
         [

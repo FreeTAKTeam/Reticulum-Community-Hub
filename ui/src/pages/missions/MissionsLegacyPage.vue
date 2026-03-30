@@ -483,7 +483,7 @@
     <MissionChecklistTemplateModal
       :open="checklistTemplateModalOpen"
       :checklist-name-draft="checklistTemplateNameDraft"
-      :selection-uid="checklistTemplateSelectionUid"
+      :selection-uid="checklistTemplateSelectionKey"
       :create-offline-draft="checklistCreateOfflineDraft"
       :submitting="checklistTemplateSubmitting"
       :template-options="checklistTemplateOptions"
@@ -491,7 +491,7 @@
       :selected-template-option="selectedChecklistTemplateOption"
       @close="closeChecklistTemplateModal"
       @update:checklist-name-draft="checklistTemplateNameDraft = $event"
-      @update:selection-uid="checklistTemplateSelectionUid = $event"
+      @update:selection-uid="checklistTemplateSelectionKey = $event"
       @update:create-offline-draft="checklistCreateOfflineDraft = $event"
       @submit="submitChecklistTemplateSelection"
     />
@@ -1192,6 +1192,29 @@ const formatDomainEventMessage = (event: DomainEventRaw): string => {
 };
 
 const buildTimestampTag = (): string => new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14);
+const CHECKLIST_TEMPLATE_SELECTION_SEPARATOR = "::";
+const buildChecklistTemplateSelectionKey = (uid: string, sourceType: ChecklistTemplateSourceType): string => {
+  const normalizedUid = String(uid ?? "").trim();
+  return normalizedUid ? `${sourceType}${CHECKLIST_TEMPLATE_SELECTION_SEPARATOR}${normalizedUid}` : "";
+};
+const parseChecklistTemplateSelectionKey = (
+  value?: string | null
+): { uid: string; sourceType: ChecklistTemplateSourceType | "" } => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return { uid: "", sourceType: "" };
+  }
+  const separatorIndex = normalized.indexOf(CHECKLIST_TEMPLATE_SELECTION_SEPARATOR);
+  if (separatorIndex < 0) {
+    return { uid: normalized, sourceType: "" };
+  }
+  const sourceType = normalized.slice(0, separatorIndex).trim() as ChecklistTemplateSourceType;
+  const uid = normalized.slice(separatorIndex + CHECKLIST_TEMPLATE_SELECTION_SEPARATOR.length).trim();
+  if ((sourceType === "template" || sourceType === "csv_import") && uid) {
+    return { uid, sourceType };
+  }
+  return { uid, sourceType: "" };
+};
 
 const downloadJson = (filename: string, payload: unknown) => {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -1589,7 +1612,7 @@ const checklistTemplateOptions = computed<ChecklistTemplateOption[]>(() => {
 
 const checklistTemplateSelectOptions = computed(() => {
   return checklistTemplateOptions.value.map((entry) => ({
-    value: entry.uid,
+    value: buildChecklistTemplateSelectionKey(entry.uid, entry.source_type),
     label:
       entry.source_type === "csv_import"
         ? `${entry.name} (${entry.columns} columns, CSV import)`
@@ -1597,9 +1620,13 @@ const checklistTemplateSelectOptions = computed(() => {
   }));
 });
 
-const selectedChecklistTemplateOption = computed(() =>
-  checklistTemplateOptions.value.find((entry) => entry.uid === checklistTemplateSelectionUid.value)
-);
+const selectedChecklistTemplateOption = computed(() => {
+  const { uid, sourceType } = parseChecklistTemplateSelectionKey(checklistTemplateSelectionKey.value);
+  if (!uid || !sourceType) {
+    return null;
+  }
+  return checklistTemplateOptions.value.find((entry) => entry.uid === uid && entry.source_type === sourceType) ?? null;
+});
 
 const skillNameByUid = computed(() => {
   const map = new Map<string, string>();
@@ -1843,6 +1870,7 @@ const missionDraftZoneUids = ref<string[]>([]);
 const missionDraftAssetUids = ref<string[]>([]);
 const checklistTemplateModalOpen = ref(false);
 const checklistCreateOfflineDraft = ref(false);
+const checklistTemplateSelectionKey = ref("");
 const checklistTemplateSelectionUid = ref("");
 const checklistTemplateNameDraft = ref("");
 const checklistTemplateSubmitting = ref(false);
@@ -3077,7 +3105,10 @@ const createChecklistFromDetailTemplate = () => {
     return;
   }
   if (checklistTemplateOptions.value.some((entry) => entry.uid === detailUid)) {
-    checklistTemplateSelectionUid.value = detailUid;
+    const selectedOption = checklistTemplateOptions.value.find((entry) => entry.uid === detailUid) ?? null;
+    if (selectedOption) {
+      checklistTemplateSelectionKey.value = buildChecklistTemplateSelectionKey(selectedOption.uid, selectedOption.source_type);
+    }
   }
   try {
     openChecklistTemplateModal();
@@ -4032,7 +4063,7 @@ const createChecklistFromCsvImportAction = async (
     throw new Error("Selected CSV template has no columns");
   }
 
-  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, {
+  const created = await post<ChecklistRaw>(endpoints.checklists, {
     mission_uid: missionUid,
     name: checklistName,
     origin_type: "RCH_TEMPLATE",
@@ -4131,12 +4162,13 @@ const openChecklistTemplateModal = () => {
   checklistTemplateNameDraft.value = buildChecklistDraftName();
   checklistCreateOfflineDraft.value = false;
   if (!checklistTemplateOptions.value.length) {
-    checklistTemplateSelectionUid.value = "";
+    checklistTemplateSelectionKey.value = "";
     checklistTemplateModalOpen.value = true;
     return;
   }
-  if (!checklistTemplateOptions.value.some((entry) => entry.uid === checklistTemplateSelectionUid.value)) {
-    checklistTemplateSelectionUid.value = checklistTemplateOptions.value[0].uid;
+  if (!selectedChecklistTemplateOption.value) {
+    const firstOption = checklistTemplateOptions.value[0];
+    checklistTemplateSelectionKey.value = buildChecklistTemplateSelectionKey(firstOption.uid, firstOption.source_type);
   }
   checklistTemplateModalOpen.value = true;
 };
@@ -4150,11 +4182,15 @@ const closeChecklistTemplateModal = () => {
 };
 
 const createChecklistFromSelectedTemplateAction = async () => {
-  const selectionUid = checklistTemplateSelectionUid.value.trim();
-  if (!selectionUid) {
+  const { uid: selectionUid, sourceType: selectionSourceType } = parseChecklistTemplateSelectionKey(
+    checklistTemplateSelectionKey.value
+  );
+  if (!selectionUid || !selectionSourceType) {
     throw new Error("Select a checklist template");
   }
-  const selectedTemplate = checklistTemplateOptions.value.find((entry) => entry.uid === selectionUid);
+  const selectedTemplate = checklistTemplateOptions.value.find(
+    (entry) => entry.uid === selectionUid && entry.source_type === selectionSourceType
+  );
   if (!selectedTemplate) {
     throw new Error("Selected checklist template could not be found");
   }
@@ -4744,8 +4780,11 @@ watch(
 watch(
   checklistTemplateOptions,
   (entries) => {
-    if (checklistTemplateSelectionUid.value && !entries.some((entry) => entry.uid === checklistTemplateSelectionUid.value)) {
-      checklistTemplateSelectionUid.value = entries[0]?.uid ?? "";
+    if (checklistTemplateSelectionKey.value && !selectedChecklistTemplateOption.value) {
+      const firstOption = entries[0];
+      checklistTemplateSelectionKey.value = firstOption
+        ? buildChecklistTemplateSelectionKey(firstOption.uid, firstOption.source_type)
+        : "";
     }
 
     const selected = selectedChecklistTemplateEditorOption.value;

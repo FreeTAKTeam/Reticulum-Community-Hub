@@ -1102,6 +1102,8 @@ def test_template_and_checklist_lifecycle_and_constraints(tmp_path) -> None:
         }
     )
     assert imported["origin_type"] == "CSV_IMPORT"
+    assert imported["mode"] == "ONLINE"
+    assert imported["sync_state"] == "SYNCED"
     assert imported["name"] == "ops"
     assert len(imported["tasks"]) == 3
     assert any(column["column_name"] == "Task" for column in imported["columns"])

@@ -545,7 +545,7 @@
 
         <div v-if="checklistTemplateOptions.length" class="template-modal-list">
           <BaseSelect
-            v-model="checklistTemplateSelectionUid"
+            v-model="checklistTemplateSelectionKey"
             label="Template"
             :options="checklistTemplateSelectOptions"
           />
@@ -563,7 +563,7 @@
           <BaseButton variant="ghost" icon-left="undo" @click="closeChecklistTemplateModal">Cancel</BaseButton>
           <BaseButton
             icon-left="plus"
-            :disabled="checklistTemplateSubmitting || !checklistTemplateSelectionUid"
+            :disabled="checklistTemplateSubmitting || !checklistTemplateSelectionKey"
             @click="submitChecklistTemplateSelection"
           >
             {{ checklistTemplateSubmitting ? "Creating..." : "Create" }}
@@ -871,9 +871,26 @@ const formatDueRelativeMinutesLabel = (value?: number | null): string => {
   return `T${sign}${hours}:${mins}`;
 };
 const buildTimestampTag = (): string => new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14);
+const CHECKLIST_TEMPLATE_SELECTION_SEPARATOR = "::";
 const normalizeChecklistTemplateColumnType = (value?: string | null): ChecklistTemplateColumnType => {
   const normalized = String(value ?? "").trim().toUpperCase() as ChecklistTemplateColumnType;
   return checklistTemplateColumnTypeSet.has(normalized) ? normalized : "SHORT_STRING";
+};
+const buildChecklistTemplateSelectionKey = (uid: string, sourceType: ChecklistTemplateSourceType): string => {
+  const normalizedUid = String(uid ?? "").trim();
+  return normalizedUid ? `${sourceType}${CHECKLIST_TEMPLATE_SELECTION_SEPARATOR}${normalizedUid}` : "";
+};
+const parseChecklistTemplateSelectionKey = (
+  value?: string | null
+): { uid: string; sourceType: ChecklistTemplateSourceType | "" } => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return { uid: "", sourceType: "" };
+  const separatorIndex = normalized.indexOf(CHECKLIST_TEMPLATE_SELECTION_SEPARATOR);
+  if (separatorIndex < 0) return { uid: normalized, sourceType: "" };
+  const sourceType = normalized.slice(0, separatorIndex).trim() as ChecklistTemplateSourceType;
+  const uid = normalized.slice(separatorIndex + CHECKLIST_TEMPLATE_SELECTION_SEPARATOR.length).trim();
+  if ((sourceType === "template" || sourceType === "csv_import") && uid) return { uid, sourceType };
+  return { uid, sourceType: "" };
 };
 const isChecklistTemplateDueColumn = (column?: { system_key?: string | null }): boolean =>
   String(column?.system_key ?? "").trim().toUpperCase() === SYSTEM_DUE_COLUMN_KEY;
@@ -987,6 +1004,7 @@ const checklistLinkMissionSelectionUid = ref("");
 const checklistLinkMissionSubmitting = ref(false);
 const checklistTemplateDeleteBusyByUid = ref<Record<string, boolean>>({});
 const checklistTemplateModalOpen = ref(false);
+const checklistTemplateSelectionKey = ref("");
 const checklistTemplateSelectionUid = ref("");
 const checklistTemplateNameDraft = ref("");
 const checklistTemplateSubmitting = ref(false);
@@ -1292,10 +1310,17 @@ const checklistTemplateOptions = computed<ChecklistTemplateOption[]>(() => colle
 const checklistTemplateCount = computed(() => checklistTemplateOptions.value.length);
 
 const checklistTemplateSelectOptions = computed(() =>
-  checklistTemplateOptions.value.map((entry) => ({ value: entry.uid, label: entry.source_type === "csv_import" ? `${entry.name} (${entry.columns} columns, CSV import)` : entry.name }))
+  checklistTemplateOptions.value.map((entry) => ({
+    value: buildChecklistTemplateSelectionKey(entry.uid, entry.source_type),
+    label: entry.source_type === "csv_import" ? `${entry.name} (${entry.columns} columns, CSV import)` : entry.name
+  }))
 );
 
-const selectedChecklistTemplateOption = computed(() => checklistTemplateOptions.value.find((entry) => entry.uid === checklistTemplateSelectionUid.value));
+const selectedChecklistTemplateOption = computed(() => {
+  const { uid, sourceType } = parseChecklistTemplateSelectionKey(checklistTemplateSelectionKey.value);
+  if (!uid || !sourceType) return null;
+  return checklistTemplateOptions.value.find((entry) => entry.uid === uid && entry.source_type === sourceType) ?? null;
+});
 
 const filteredChecklistTemplates = computed(() => {
   const sorted = [...checklistTemplateOptions.value].sort((left, right) => left.name.localeCompare(right.name));
@@ -1445,7 +1470,10 @@ const handleCsvUpload = async (event: Event) => {
 const createChecklistFromDetailTemplate = () => {
   const detailUid = checklistDetailRecord.value?.uid ?? "";
   if (!detailUid) return;
-  if (checklistTemplateOptions.value.some((entry) => entry.uid === detailUid)) checklistTemplateSelectionUid.value = detailUid;
+  const selectedOption = checklistTemplateOptions.value.find((entry) => entry.uid === detailUid) ?? null;
+  if (selectedOption) {
+    checklistTemplateSelectionKey.value = buildChecklistTemplateSelectionKey(selectedOption.uid, selectedOption.source_type);
+  }
   try { openChecklistTemplateModal(); } catch (error) { handleApiError(error, "Unable to open checklist template selector"); }
 };
 const openChecklistCreationModal = () => { try { openChecklistTemplateModal(); } catch (error) { handleApiError(error, "Unable to open checklist template selector"); } };
@@ -1536,7 +1564,7 @@ const selectChecklistTemplateForEditor = (templateUid: string, sourceType: Check
   if (!uid) return;
   const option = checklistTemplateOptions.value.find((entry) => entry.uid === uid && entry.source_type === sourceType) ?? null;
   if (!option) return;
-  checklistTemplateSelectionUid.value = option.uid;
+  checklistTemplateSelectionKey.value = buildChecklistTemplateSelectionKey(option.uid, option.source_type);
   if (option.source_type === "template") {
     const templateRecord = templateRecords.value.find((entry) => String(entry.uid ?? "").trim() === option.uid) ?? null;
     if (!templateRecord) { toastStore.push("Selected template is unavailable", "warning"); return; }
@@ -1696,7 +1724,8 @@ const deleteChecklistTemplateFromCard = async (templateUid: string, sourceType: 
   checklistTemplateDeleteBusyByUid.value = { ...checklistTemplateDeleteBusyByUid.value, [uid]: true };
   try {
     if (sourceType === "template") await deleteRequest(`${endpoints.checklistTemplates}/${uid}`); else await deleteRequest(`${endpoints.checklists}/${uid}`);
-    if (checklistTemplateSelectionUid.value === uid) checklistTemplateSelectionUid.value = "";
+    const currentSelection = selectedChecklistTemplateOption.value;
+    if (currentSelection?.uid === uid && currentSelection.source_type === sourceType) checklistTemplateSelectionKey.value = "";
     await loadWorkspace();
     toastStore.push(sourceType === "template" ? "Template deleted" : "CSV import template deleted", "success");
     return true;
@@ -1775,18 +1804,21 @@ const buildChecklistDraftName = (): string => `Checklist ${new Date().toISOStrin
 const openChecklistTemplateModal = () => {
   checklistTemplateNameDraft.value = buildChecklistDraftName();
   if (!checklistTemplateOptions.value.length) {
-    checklistTemplateSelectionUid.value = "";
+    checklistTemplateSelectionKey.value = "";
     checklistTemplateModalOpen.value = true;
     return;
   }
-  if (!checklistTemplateOptions.value.some((entry) => entry.uid === checklistTemplateSelectionUid.value)) checklistTemplateSelectionUid.value = checklistTemplateOptions.value[0].uid;
+  if (!selectedChecklistTemplateOption.value) {
+    const firstOption = checklistTemplateOptions.value[0];
+    checklistTemplateSelectionKey.value = buildChecklistTemplateSelectionKey(firstOption.uid, firstOption.source_type);
+  }
   checklistTemplateModalOpen.value = true;
 };
 const closeChecklistTemplateModal = () => { if (checklistTemplateSubmitting.value) return; checklistTemplateModalOpen.value = false; };
 const createChecklistFromSelectedTemplateAction = async () => {
-  const selectionUid = checklistTemplateSelectionUid.value.trim();
-  if (!selectionUid) throw new Error("Select a checklist template");
-  const selectedTemplate = checklistTemplateOptions.value.find((entry) => entry.uid === selectionUid);
+  const { uid: selectionUid, sourceType: selectionSourceType } = parseChecklistTemplateSelectionKey(checklistTemplateSelectionKey.value);
+  if (!selectionUid || !selectionSourceType) throw new Error("Select a checklist template");
+  const selectedTemplate = checklistTemplateOptions.value.find((entry) => entry.uid === selectionUid && entry.source_type === selectionSourceType);
   if (!selectedTemplate) throw new Error("Selected checklist template could not be found");
   const missionUid = checklistDetailRecord.value?.mission_uid || undefined;
   const checklistName = checklistTemplateNameDraft.value.trim() || buildChecklistDraftName();
@@ -1816,7 +1848,7 @@ const createChecklistFromCsvImportAction = async (sourceChecklistUid: string, ch
   if (!sourceChecklist) throw new Error("Selected CSV template could not be found");
   const sourceColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(sourceChecklist.columns));
   if (!sourceColumns.length) throw new Error("Selected CSV template has no columns");
-  const created = await post<ChecklistRaw>(endpoints.checklistsOffline, {
+  const created = await post<ChecklistRaw>(endpoints.checklists, {
     mission_uid: missionUid,
     name: checklistName,
     origin_type: "RCH_TEMPLATE",
@@ -1878,7 +1910,10 @@ const loadWorkspace = async () => {
 // Watchers
 watch([checklistTemplateDraftName, checklistTemplateDraftDescription, checklistTemplateDraftColumns], () => { if (checklistTemplateEditorHydrating.value || checklistTemplateEditorMode.value === "csv_readonly") return; checklistTemplateEditorDirty.value = true; }, { deep: true });
 watch(checklistTemplateOptions, (entries) => {
-  if (checklistTemplateSelectionUid.value && !entries.some((entry) => entry.uid === checklistTemplateSelectionUid.value)) checklistTemplateSelectionUid.value = entries[0]?.uid ?? "";
+  if (checklistTemplateSelectionKey.value && !selectedChecklistTemplateOption.value) {
+    const firstOption = entries[0];
+    checklistTemplateSelectionKey.value = firstOption ? buildChecklistTemplateSelectionKey(firstOption.uid, firstOption.source_type) : "";
+  }
   const selected = selectedChecklistTemplateEditorOption.value;
   if (selected) return;
   if (!entries.length) { if (checklistWorkspaceView.value === "templates") startNewChecklistTemplateDraft(); return; }
