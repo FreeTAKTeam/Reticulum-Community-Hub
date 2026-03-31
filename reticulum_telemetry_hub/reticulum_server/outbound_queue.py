@@ -261,9 +261,16 @@ class OutboundMessageQueue:
         while time.monotonic() < deadline:
             with self._inflight_lock:
                 inflight = self._inflight
+            with self._active_dispatch_lock:
+                active_dispatches = self._active_dispatches
             with self._pending_receipts_lock:
                 pending_receipts = len(self._pending_receipts)
-            if self._queue.empty() and inflight == 0 and pending_receipts == 0:
+            if (
+                self._queue.empty()
+                and inflight == 0
+                and active_dispatches == 0
+                and pending_receipts == 0
+            ):
                 return True
             time.sleep(0.01)
         return False
@@ -510,15 +517,42 @@ class OutboundMessageQueue:
         sender.start()
         sender.join(timeout=self._send_timeout)
         if sender.is_alive():
+            def _await_sender_completion() -> None:
+                sender.join()
+                if error[0] is not None:
+                    if not self._claim_attempt(payload, attempt_id):
+                        return
+                    RNS.log(
+                        (
+                            "Failed to deliver outbound message to"
+                            f" {payload.destination_hex or 'unknown destination'}: {error[0]}"
+                        ),
+                        getattr(RNS, "LOG_WARNING", 2),
+                    )
+                    self._handle_delivery_attempt_failure(payload, reason="send_error")
+                    return
+
+                if self._delivery_receipt_timeout is None:
+                    return
+                if not self._attempt_is_active(payload, attempt_id):
+                    return
+                self._register_pending_receipt(payload, attempt_id)
+
+            completion_watcher = threading.Thread(
+                target=_await_sender_completion,
+                name="lxmf-send-complete",
+                daemon=True,
+            )
+            completion_watcher.start()
             RNS.log(
                 (
                     "Timed out delivering outbound message to"
                     f" {payload.destination_hex or 'unknown destination'}; "
-                    "keeping the original attempt active until the sender thread exits"
+                    "waiting for the sender thread to finish before retrying"
                 ),
                 getattr(RNS, "LOG_WARNING", 2),
             )
-            return "send_timeout"
+            return None
 
         if error[0] is not None:
             self._invalidate_attempt(payload, attempt_id)

@@ -223,6 +223,28 @@ class MissionSyncRouter:
                 },
             )
             return responses
+        except Exception as exc:
+            rejected = MissionCommandRejected(
+                command_id=envelope.command_id,
+                reason_code="internal_error",
+                reason="Mission command failed unexpectedly",
+                correlation_id=envelope.correlation_id,
+            )
+            responses.append(
+                self._response_from_results(rejected.model_dump(mode="json"), group=group)
+            )
+            self._record_event(
+                "mission_command_rejected",
+                {
+                    "command_id": envelope.command_id,
+                    "command_type": envelope.command_type,
+                    "reason_code": "internal_error",
+                    "reason": "Mission command failed unexpectedly",
+                    "identity": source_identity,
+                    "exception_type": type(exc).__name__,
+                },
+            )
+            return responses
 
         result = MissionCommandResult(
             command_id=envelope.command_id,

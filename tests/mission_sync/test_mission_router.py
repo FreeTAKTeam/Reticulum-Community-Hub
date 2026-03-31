@@ -1106,3 +1106,24 @@ def test_mission_command_rejects_source_identity_mismatch(tmp_path) -> None:
         source_identity="peer-b",
     )
     assert responses[0].fields[FIELD_RESULTS]["reason_code"] == "unauthorized"
+
+
+def test_mission_command_rejects_unexpected_execution_errors(tmp_path, monkeypatch) -> None:
+    api, router, _sent, _log = _router(tmp_path)
+    api.grant_identity_capability("peer-a", "mission.join")
+
+    def _raise_unexpected(*args, **kwargs):
+        _ = args, kwargs
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(router, "_execute_command", _raise_unexpected)
+
+    responses = router.handle_commands(
+        [_command("mission.join", {"identity": "peer-a"}, command_id="cmd-boom")],
+        source_identity="peer-a",
+    )
+
+    assert len(responses) == 2
+    assert responses[0].fields[FIELD_RESULTS]["status"] == "accepted"
+    assert responses[1].fields[FIELD_RESULTS]["status"] == "rejected"
+    assert responses[1].fields[FIELD_RESULTS]["reason_code"] == "internal_error"

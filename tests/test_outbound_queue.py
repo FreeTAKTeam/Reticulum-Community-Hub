@@ -610,3 +610,93 @@ def test_outbound_queue_propagated_failure_is_terminal():
     assert selector_calls == [1]
     assert router.methods == [LXMF.LXMessage.DIRECT, LXMF.LXMessage.PROPAGATED]
     assert failures == [(1, "propagated")]
+
+
+def test_outbound_queue_waits_for_timed_out_sender_before_retrying():
+    sender = _make_destination(RNS.Destination.IN)
+    recipient = _make_destination()
+    attempts_started: list[float] = []
+    active_calls = 0
+    max_active_calls = 0
+
+    class SlowFailingRouter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def handle_outbound(self, message):
+            nonlocal active_calls, max_active_calls
+            _ = message
+            self.calls += 1
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+            attempts_started.append(time.monotonic())
+            try:
+                if self.calls == 1:
+                    time.sleep(0.2)
+                    raise RuntimeError("temporary timeout")
+            finally:
+                active_calls -= 1
+
+    router = SlowFailingRouter()
+    queue = OutboundMessageQueue(
+        router,
+        sender,
+        queue_size=2,
+        worker_count=1,
+        send_timeout=0.05,
+        backoff_seconds=0.01,
+        max_attempts=2,
+    )
+
+    try:
+        queue.start()
+        queue.queue_message(
+            recipient,
+            "slow-retry",
+            recipient.identity.hash,
+            recipient.identity.hash.hex(),
+            None,
+        )
+        time.sleep(0.08)
+        assert router.calls == 1
+        assert queue.wait_for_flush(timeout=1.0)
+    finally:
+        queue.stop()
+
+    assert router.calls == 2
+    assert max_active_calls == 1
+    assert attempts_started[1] > attempts_started[0]
+
+
+def test_outbound_queue_flush_waits_for_timed_out_sender_completion():
+    sender = _make_destination(RNS.Destination.IN)
+    recipient = _make_destination()
+
+    class SlowRouter:
+        def handle_outbound(self, message):
+            _ = message
+            time.sleep(0.2)
+
+    queue = OutboundMessageQueue(
+        SlowRouter(),
+        sender,
+        queue_size=2,
+        worker_count=1,
+        send_timeout=0.05,
+        backoff_seconds=0.01,
+        max_attempts=1,
+    )
+
+    try:
+        queue.start()
+        queue.queue_message(
+            recipient,
+            "slow-flush",
+            recipient.identity.hash,
+            recipient.identity.hash.hex(),
+            None,
+        )
+        assert queue.wait_for_flush(timeout=0.1) is False
+        assert queue.wait_for_flush(timeout=1.0) is True
+    finally:
+        queue.stop()

@@ -177,6 +177,33 @@ def test_create_service_records_initialization_failure(monkeypatch, tmp_path):
         hub.shutdown()
 
 
+def test_headless_run_clamps_non_positive_announce_interval(monkeypatch, tmp_path):
+    hub = ReticulumTelemetryHub(
+        "Daemon",
+        str(tmp_path),
+        tmp_path / "identity",
+        announce_interval=0,
+    )
+    sleep_calls: list[int] = []
+
+    monkeypatch.setattr(hub, "_refresh_announce_capabilities", lambda **kwargs: None)
+    monkeypatch.setattr(hub, "_announce_active_markers", lambda: None)
+
+    def _send_announce(*, reason: str) -> None:
+        assert reason == "periodic"
+        hub._shutdown = True
+
+    monkeypatch.setattr(hub, "_send_announce", _send_announce)
+    monkeypatch.setattr(time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    try:
+        hub.run()
+    finally:
+        hub.shutdown()
+
+    assert sleep_calls == [1]
+
+
 def test_hub_service_run_wrapper_records_event() -> None:
     event_log = EventLog()
 

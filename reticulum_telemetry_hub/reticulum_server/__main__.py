@@ -4450,8 +4450,9 @@ class ReticulumTelemetryHub:
         daemon_mode: bool = False,
         services: list[str] | tuple[str, ...] | None = None,
     ):
+        announce_interval = max(1, int(self.announce_interval))
         RNS.log(
-            f"Starting headless hub; announcing every {self.announce_interval}s",
+            f"Starting headless hub; announcing every {announce_interval}s",
             getattr(RNS, "LOG_INFO", 3),
         )
         self._refresh_announce_capabilities(log_startup=True)
@@ -4460,7 +4461,7 @@ class ReticulumTelemetryHub:
         self._announce_active_markers()
         while not self._shutdown:
             self._send_announce(reason="periodic")
-            time.sleep(self.announce_interval)
+            time.sleep(announce_interval)
 
     def start_daemon_workers(
         self, *, services: list[str] | tuple[str, ...] | None = None
@@ -4636,7 +4637,13 @@ if __name__ == "__main__":
     runtime_config = app_config.runtime
 
     display_name = args.display_name
-    announce_interval = args.announce_interval or runtime_config.announce_interval
+    announce_interval = max(
+        1,
+        _resolve_interval(
+            args.announce_interval,
+            runtime_config.announce_interval or DEFAULT_ANNOUNCE_INTERVAL,
+        ),
+    )
     hub_interval = _resolve_interval(
         args.hub_telemetry_interval,
         runtime_config.hub_telemetry_interval or DEFAULT_HUB_TELEMETRY_INTERVAL,
