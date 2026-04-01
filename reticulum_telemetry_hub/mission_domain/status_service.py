@@ -6,8 +6,10 @@ from contextlib import contextmanager
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+import json
 from pathlib import Path
 from typing import Any
+from typing import Mapping
 import uuid
 
 from sqlalchemy import create_engine
@@ -21,17 +23,18 @@ from reticulum_telemetry_hub.api.storage_models import Base
 from reticulum_telemetry_hub.api.storage_models import EmergencyActionMessageRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktTeamMemberRecord
 from reticulum_telemetry_hub.api.storage_models import R3aktTeamRecord
+from reticulum_telemetry_hub.mission_domain.canonical_teams import canonical_team_for_color
+from reticulum_telemetry_hub.mission_domain.canonical_teams import canonical_team_for_uid
 
 
 ALLOWED_EAM_STATUSES = {"Green", "Yellow", "Red", "Unknown"}
-ALLOWED_SUBJECT_TYPES = {"member"}
 STATUS_DIMENSION_FIELDS = (
-    "securityStatus",
-    "capabilityStatus",
-    "preparednessStatus",
-    "medicalStatus",
-    "mobilityStatus",
-    "commsStatus",
+    "security_status",
+    "capability_status",
+    "preparedness_status",
+    "medical_status",
+    "mobility_status",
+    "comms_status",
 )
 
 
@@ -47,22 +50,33 @@ def _dt(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _as_datetime(value: Any, *, default: datetime | None = None) -> datetime | None:
+def _dt_ms(value: datetime | None) -> int:
+    """Return a Unix timestamp in milliseconds."""
+
+    resolved = value or _utcnow()
+    if resolved.tzinfo is None:
+        resolved = resolved.replace(tzinfo=timezone.utc)
+    else:
+        resolved = resolved.astimezone(timezone.utc)
+    return int(resolved.timestamp() * 1000)
+
+
+def _as_datetime(value: Any) -> datetime | None:
     """Normalize an ISO-8601 datetime-like value."""
 
     if value is None:
-        return default
+        return None
     if isinstance(value, datetime):
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
     text = str(value).strip()
     if not text:
-        return default
+        return None
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
-        return default
+        return None
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -90,19 +104,6 @@ def _normalize_status(value: object, *, field_name: str) -> str:
     return mapping[normalized]
 
 
-def _normalize_subject_type(value: object) -> str:
-    """Normalize the subject type for status records."""
-
-    if value is None:
-        return "member"
-    text = str(value).strip().lower()
-    if not text:
-        return "member"
-    if text not in ALLOWED_SUBJECT_TYPES:
-        raise ValueError("subjectType must be 'member'")
-    return text
-
-
 def _aggregate_status(values: list[str]) -> str:
     """Aggregate a list of statuses using worst-of semantics."""
 
@@ -118,7 +119,7 @@ def _aggregate_status(values: list[str]) -> str:
 
 
 class EmergencyActionMessageService:
-    """Manage current member-scoped Emergency Action Message snapshots."""
+    """Manage REM-compatible member-scoped Emergency Action Message snapshots."""
 
     def __init__(self, db_path: Path) -> None:
         """Initialize the service against the shared hub database."""
@@ -165,25 +166,21 @@ class EmergencyActionMessageService:
     def list_messages(
         self,
         *,
-        team_id: str | None = None,
-        subject_type: str | None = None,
+        team_uid: str | None = None,
         overall_status: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return status snapshots with optional filters."""
+        """Return REM-compatible EAM snapshots with optional filters."""
 
         with self._session() as session:
             query = session.query(EmergencyActionMessageRecord)
-            if team_id:
-                query = query.filter(EmergencyActionMessageRecord.team_id == str(team_id).strip())
-            if subject_type:
+            if team_uid:
                 query = query.filter(
-                    EmergencyActionMessageRecord.subject_type
-                    == _normalize_subject_type(subject_type)
+                    EmergencyActionMessageRecord.team_id == str(team_uid).strip()
                 )
             if overall_status:
                 query = query.filter(
                     EmergencyActionMessageRecord.overall_status
-                    == _normalize_status(overall_status, field_name="overallStatus")
+                    == _normalize_status(overall_status, field_name="overall_status")
                 )
             rows = (
                 query.order_by(
@@ -192,7 +189,7 @@ class EmergencyActionMessageService:
                 ).all()
             )
             return [
-                self._serialize_message(row)
+                self._serialize_message(session, row)
                 for row in rows
                 if not self._is_expired(row)
             ]
@@ -200,30 +197,37 @@ class EmergencyActionMessageService:
     def upsert_message(
         self, payload: dict[str, Any], *, expected_callsign: str | None = None
     ) -> dict[str, Any]:
-        """Create or update the current status snapshot for a member."""
+        """Create or update the current REM-compatible EAM snapshot."""
 
         normalized = self._normalize_payload(payload, expected_callsign=expected_callsign)
         with self._session() as session:
-            subject_id = normalized["subjectId"]
-            team_id = normalized["teamId"]
-            member = session.get(R3aktTeamMemberRecord, subject_id)
-            if member is None:
-                raise ValueError(f"subjectId '{subject_id}' does not map to a team member")
-            member_team_id = str(member.team_uid or "").strip()
-            if not member_team_id:
-                raise ValueError(f"team member '{subject_id}' is not assigned to a team")
-            if member_team_id != team_id:
-                raise ValueError(
-                    f"teamId '{team_id}' does not match team member '{subject_id}'"
+            team_row = self._resolve_team_row(
+                session,
+                normalized["team_uid"],
+                normalized["group_name"],
+            )
+            member_row = session.get(R3aktTeamMemberRecord, normalized["team_member_uid"])
+            if member_row is None:
+                member_row = self._provision_team_member(
+                    session,
+                    team_uid=str(team_row.uid),
+                    team_member_uid=normalized["team_member_uid"],
+                    callsign=normalized["callsign"],
+                    reported_by=normalized["reported_by"],
+                    source=normalized["source"],
                 )
-            if session.get(R3aktTeamRecord, team_id) is None:
-                raise ValueError(f"teamId '{team_id}' does not map to a team")
+            else:
+                member_team_uid = str(member_row.team_uid or "").strip()
+                if member_team_uid != normalized["team_uid"]:
+                    raise ValueError(
+                        f"team_member_uid '{normalized['team_member_uid']}' does not belong to team_uid '{normalized['team_uid']}'"
+                    )
 
             row = (
                 session.query(EmergencyActionMessageRecord)
                 .filter(
-                    EmergencyActionMessageRecord.subject_type == normalized["subjectType"],
-                    EmergencyActionMessageRecord.subject_id == subject_id,
+                    EmergencyActionMessageRecord.subject_type == "member",
+                    EmergencyActionMessageRecord.subject_id == normalized["team_member_uid"],
                 )
                 .one_or_none()
             )
@@ -240,148 +244,127 @@ class EmergencyActionMessageService:
                 )
 
             if row is None:
-                row = EmergencyActionMessageRecord(id=uuid.uuid4().hex)
+                row = EmergencyActionMessageRecord(
+                    id=normalized["eam_uid"] or uuid.uuid4().hex
+                )
                 session.add(row)
+            elif normalized["eam_uid"] and row.id != normalized["eam_uid"]:
+                raise ValueError(
+                    f"eam_uid '{normalized['eam_uid']}' does not match the existing snapshot for team_member_uid '{normalized['team_member_uid']}'"
+                )
 
             row.callsign = normalized["callsign"]
-            row.subject_type = normalized["subjectType"]
-            row.subject_id = subject_id
-            row.team_id = team_id
-            row.reported_by = normalized["reportedBy"]
-            row.reported_at = normalized["reportedAt"]
-            row.ttl_seconds = normalized["ttlSeconds"]
+            row.subject_type = "member"
+            row.subject_id = normalized["team_member_uid"]
+            row.team_id = normalized["team_uid"]
+            row.reported_by = normalized["reported_by"]
+            row.reported_at = normalized["reported_at"]
+            row.ttl_seconds = normalized["ttl_seconds"]
             row.notes = normalized["notes"]
             row.confidence = normalized["confidence"]
-            row.source = normalized["source"]
-            row.security_status = normalized["securityStatus"]
-            row.capability_status = normalized["capabilityStatus"]
-            row.preparedness_status = normalized["preparednessStatus"]
-            row.medical_status = normalized["medicalStatus"]
-            row.mobility_status = normalized["mobilityStatus"]
-            row.comms_status = normalized["commsStatus"]
+            row.source = self._serialize_source(normalized["source"])
+            row.security_status = normalized["security_status"]
+            row.capability_status = normalized["capability_status"]
+            row.preparedness_status = normalized["preparedness_status"]
+            row.medical_status = normalized["medical_status"]
+            row.mobility_status = normalized["mobility_status"]
+            row.comms_status = normalized["comms_status"]
             row.overall_status = self._compute_overall_status(normalized)
 
             try:
                 session.flush()
             except IntegrityError as exc:
-                raise ValueError("EmergencyActionMessage conflicts with an existing snapshot") from exc
+                raise ValueError(
+                    "EmergencyActionMessage conflicts with an existing snapshot"
+                ) from exc
 
-            return self._serialize_message(row)
+            return self._serialize_message(session, row)
 
     def get_message_by_callsign(self, callsign: str) -> dict[str, Any]:
         """Return the current snapshot for a callsign."""
 
         with self._session() as session:
             row = self._get_message_row_by_callsign(session, callsign)
-            return self._serialize_message(row)
+            return self._serialize_message(session, row)
 
     def delete_message(self, callsign: str) -> dict[str, Any]:
         """Delete the current snapshot for a callsign."""
 
         with self._session() as session:
             row = self._get_message_row_by_callsign(session, callsign)
-            data = self._serialize_message(row)
+            data = self._serialize_message(session, row)
             session.delete(row)
             return data
 
-    def get_latest_message(self, subject_type: str, subject_id: str) -> dict[str, Any]:
-        """Return the latest stored snapshot for a subject."""
+    def get_latest_message(self, team_member_uid: str) -> dict[str, Any]:
+        """Return the latest stored snapshot for a team member UID."""
 
-        normalized_subject_type = _normalize_subject_type(subject_type)
-        normalized_subject_id = str(subject_id or "").strip()
-        if not normalized_subject_id:
-            raise ValueError("subjectId is required")
+        normalized_team_member_uid = str(team_member_uid or "").strip()
+        if not normalized_team_member_uid:
+            raise ValueError("team_member_uid is required")
         with self._session() as session:
             row = (
                 session.query(EmergencyActionMessageRecord)
                 .filter(
-                    EmergencyActionMessageRecord.subject_type == normalized_subject_type,
-                    EmergencyActionMessageRecord.subject_id == normalized_subject_id,
+                    EmergencyActionMessageRecord.subject_type == "member",
+                    EmergencyActionMessageRecord.subject_id == normalized_team_member_uid,
                 )
                 .one_or_none()
             )
-            if row is None:
+            if row is None or self._is_expired(row):
                 raise KeyError(
-                    f"No EmergencyActionMessage found for {normalized_subject_type}/{normalized_subject_id}"
+                    f"No active EmergencyActionMessage found for member/{normalized_team_member_uid}"
                 )
-            if self._is_expired(row):
-                raise KeyError(
-                    f"No active EmergencyActionMessage found for {normalized_subject_type}/{normalized_subject_id}"
-                )
-            return self._serialize_message(row)
+            return self._serialize_message(session, row)
 
-    def get_team_summary(self, team_id: str) -> dict[str, Any]:
-        """Compute a team summary from the latest valid member snapshots."""
+    def get_team_summary(self, team_uid: str) -> dict[str, Any]:
+        """Compute a REM-compatible team summary from active snapshots."""
 
-        normalized_team_id = str(team_id or "").strip()
-        if not normalized_team_id:
-            raise ValueError("teamId is required")
+        normalized_team_uid = str(team_uid or "").strip()
+        if not normalized_team_uid:
+            raise ValueError("team_uid is required")
         with self._session() as session:
-            team = session.get(R3aktTeamRecord, normalized_team_id)
+            team = session.get(R3aktTeamRecord, normalized_team_uid)
             if team is None:
-                raise KeyError(f"Team '{normalized_team_id}' not found")
-            members = (
-                session.query(R3aktTeamMemberRecord)
-                .filter(R3aktTeamMemberRecord.team_uid == normalized_team_id)
-                .order_by(R3aktTeamMemberRecord.created_at.asc())
-                .all()
-            )
-            snapshots = (
+                raise KeyError(f"Team '{normalized_team_uid}' not found")
+            rows = (
                 session.query(EmergencyActionMessageRecord)
-                .filter(
-                    EmergencyActionMessageRecord.subject_type == "member",
-                    EmergencyActionMessageRecord.team_id == normalized_team_id,
-                )
+                .filter(EmergencyActionMessageRecord.team_id == normalized_team_uid)
                 .all()
             )
-            snapshot_by_subject = {
-                str(row.subject_id): row for row in snapshots
-            }
-            aggregated_dimensions: dict[str, str] = {}
-            now = _utcnow()
-            for field_name in STATUS_DIMENSION_FIELDS:
-                values: list[str] = []
-                for member in members:
-                    row = snapshot_by_subject.get(str(member.uid))
-                    if row is None or self._is_expired(row, now=now):
-                        values.append("Unknown")
-                        continue
-                    values.append(self._message_dimension_value(row, field_name))
-                aggregated_dimensions[field_name] = _aggregate_status(values)
-
-            overall_status = _aggregate_status(list(aggregated_dimensions.values()))
+            active_rows = [row for row in rows if not self._is_expired(row)]
+            updated_at = max(
+                (row.updated_at for row in active_rows),
+                default=_utcnow(),
+            )
+            green_total = sum(1 for row in active_rows if row.overall_status == "Green")
+            yellow_total = sum(1 for row in active_rows if row.overall_status == "Yellow")
+            red_total = sum(1 for row in active_rows if row.overall_status == "Red")
+            overall_status: str | None = None
+            if red_total > 0:
+                overall_status = "Red"
+            elif yellow_total > 0:
+                overall_status = "Yellow"
+            elif green_total > 0:
+                overall_status = "Green"
             return {
-                "teamId": normalized_team_id,
-                "computedAt": _dt(now),
-                "overallStatus": overall_status,
-                "securityStatus": aggregated_dimensions["securityStatus"],
-                "capabilityStatus": aggregated_dimensions["capabilityStatus"],
-                "securityCapability": aggregated_dimensions["capabilityStatus"],
-                "preparednessStatus": aggregated_dimensions["preparednessStatus"],
-                "medicalStatus": aggregated_dimensions["medicalStatus"],
-                "mobilityStatus": aggregated_dimensions["mobilityStatus"],
-                "commsStatus": aggregated_dimensions["commsStatus"],
-                "memberCount": len(members),
-                "aggregationMethod": "worst-of",
+                "team_uid": normalized_team_uid,
+                "total": len(active_rows),
+                "active_total": len(active_rows),
+                "deleted_total": 0,
+                "overall_status": overall_status,
+                "green_total": green_total,
+                "yellow_total": yellow_total,
+                "red_total": red_total,
+                "updated_at_ms": _dt_ms(updated_at),
             }
 
     def _normalize_payload(
-        self, payload: dict[str, Any], *, expected_callsign: str | None = None
+        self, payload: Mapping[str, Any], *, expected_callsign: str | None = None
     ) -> dict[str, Any]:
-        """Normalize and validate an incoming status payload."""
+        """Normalize and validate an incoming REM-compatible EAM payload."""
 
         normalized = dict(payload or {})
-        raw_capability = normalized.get("capabilityStatus")
-        raw_legacy_capability = normalized.get("securityCapability")
-        if raw_capability is not None and raw_legacy_capability is not None:
-            if _normalize_status(
-                raw_capability, field_name="capabilityStatus"
-            ) != _normalize_status(raw_legacy_capability, field_name="securityCapability"):
-                raise ValueError(
-                    "capabilityStatus and securityCapability must match when both are provided"
-                )
-        if raw_capability is None and raw_legacy_capability is not None:
-            normalized["capabilityStatus"] = raw_legacy_capability
 
         callsign = str(normalized.get("callsign") or expected_callsign or "").strip()
         if not callsign:
@@ -389,70 +372,55 @@ class EmergencyActionMessageService:
         if expected_callsign is not None and callsign != str(expected_callsign).strip():
             raise ValueError("callsign in body must match the path callsign")
 
-        subject_id = str(normalized.get("subjectId") or "").strip()
-        if not subject_id:
-            raise ValueError("subjectId is required")
-        team_id = str(normalized.get("teamId") or "").strip()
-        if not team_id:
-            raise ValueError("teamId is required")
+        team_member_uid = str(normalized.get("team_member_uid") or "").strip()
+        if not team_member_uid:
+            raise ValueError("team_member_uid is required")
+        team_uid = str(normalized.get("team_uid") or "").strip()
+        if not team_uid:
+            raise ValueError("team_uid is required")
 
-        reported_at = _as_datetime(normalized.get("reportedAt"), default=_utcnow())
-        if reported_at is None:
-            raise ValueError("reportedAt must be ISO-8601")
+        reported_at = self._normalize_reported_at(normalized.get("reported_at"))
+        ttl_seconds = self._normalize_ttl(normalized.get("ttl_seconds"))
+        confidence = self._normalize_confidence(normalized.get("confidence"))
+        source = self._normalize_source(normalized.get("source"))
 
-        ttl_seconds = normalized.get("ttlSeconds")
-        if ttl_seconds is None or ttl_seconds == "":
-            normalized_ttl = None
-        else:
-            try:
-                normalized_ttl = int(ttl_seconds)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("ttlSeconds must be an integer") from exc
-            if normalized_ttl < 0:
-                raise ValueError("ttlSeconds must be greater than or equal to 0")
-
-        confidence = normalized.get("confidence")
-        if confidence is None or confidence == "":
-            normalized_confidence = None
-        else:
-            try:
-                normalized_confidence = float(confidence)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("confidence must be numeric") from exc
-            if normalized_confidence < 0 or normalized_confidence > 1:
-                raise ValueError("confidence must be between 0 and 1")
-
-        normalized_payload = {
+        return {
+            "eam_uid": self._normalize_optional_text(normalized.get("eam_uid")),
             "callsign": callsign,
-            "subjectType": _normalize_subject_type(normalized.get("subjectType")),
-            "subjectId": subject_id,
-            "teamId": team_id,
-            "reportedBy": self._normalize_optional_text(normalized.get("reportedBy")),
-            "reportedAt": reported_at,
-            "ttlSeconds": normalized_ttl,
+            "group_name": self._normalize_optional_text(normalized.get("group_name")),
+            "team_member_uid": team_member_uid,
+            "team_uid": team_uid,
+            "reported_by": self._normalize_optional_text(normalized.get("reported_by")),
+            "reported_at": reported_at,
             "notes": self._normalize_optional_text(normalized.get("notes")),
-            "confidence": normalized_confidence,
-            "source": self._normalize_optional_text(normalized.get("source")),
-            "securityStatus": _normalize_status(
-                normalized.get("securityStatus"), field_name="securityStatus"
+            "confidence": confidence,
+            "ttl_seconds": ttl_seconds,
+            "source": source,
+            "security_status": _normalize_status(
+                normalized.get("security_status"),
+                field_name="security_status",
             ),
-            "capabilityStatus": _normalize_status(
-                normalized.get("capabilityStatus"), field_name="capabilityStatus"
+            "capability_status": _normalize_status(
+                normalized.get("capability_status"),
+                field_name="capability_status",
             ),
-            "preparednessStatus": _normalize_status(
-                normalized.get("preparednessStatus"), field_name="preparednessStatus"
+            "preparedness_status": _normalize_status(
+                normalized.get("preparedness_status"),
+                field_name="preparedness_status",
             ),
-            "medicalStatus": _normalize_status(
-                normalized.get("medicalStatus"), field_name="medicalStatus"
+            "medical_status": _normalize_status(
+                normalized.get("medical_status"),
+                field_name="medical_status",
             ),
-            "mobilityStatus": _normalize_status(
-                normalized.get("mobilityStatus"), field_name="mobilityStatus"
+            "mobility_status": _normalize_status(
+                normalized.get("mobility_status"),
+                field_name="mobility_status",
             ),
-            "commsStatus": _normalize_status(
-                normalized.get("commsStatus"), field_name="commsStatus"
+            "comms_status": _normalize_status(
+                normalized.get("comms_status"),
+                field_name="comms_status",
             ),
         }
-        return normalized_payload
 
     @staticmethod
     def _normalize_optional_text(value: object) -> str | None:
@@ -463,32 +431,68 @@ class EmergencyActionMessageService:
         text = str(value).strip()
         return text or None
 
-    def _compute_overall_status(self, payload: dict[str, Any]) -> str:
+    @staticmethod
+    def _normalize_reported_at(value: object) -> datetime:
+        """Normalize the ``reported_at`` field."""
+
+        if value is None or str(value).strip() == "":
+            return _utcnow()
+        reported_at = _as_datetime(value)
+        if reported_at is None:
+            raise ValueError("reported_at must be ISO-8601")
+        return reported_at
+
+    @staticmethod
+    def _normalize_ttl(value: object) -> int | None:
+        """Normalize ``ttl_seconds``."""
+
+        if value is None or value == "":
+            return None
+        try:
+            ttl_seconds = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("ttl_seconds must be an integer") from exc
+        if ttl_seconds < 0:
+            raise ValueError("ttl_seconds must be greater than or equal to 0")
+        return ttl_seconds
+
+    @staticmethod
+    def _normalize_confidence(value: object) -> float | None:
+        """Normalize ``confidence``."""
+
+        if value is None or value == "":
+            return None
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("confidence must be numeric") from exc
+        if confidence < 0 or confidence > 1:
+            raise ValueError("confidence must be between 0 and 1")
+        return confidence
+
+    @staticmethod
+    def _normalize_source(value: object) -> dict[str, str | None] | None:
+        """Normalize a REM EAM source payload."""
+
+        if value is None:
+            return None
+        if not isinstance(value, Mapping):
+            raise ValueError("source must be an object")
+        rns_identity = str(value.get("rns_identity") or "").strip() or None
+        display_name = str(value.get("display_name") or "").strip() or None
+        if rns_identity is None and display_name is None:
+            return None
+        return {
+            "rns_identity": rns_identity,
+            "display_name": display_name,
+        }
+
+    def _compute_overall_status(self, payload: Mapping[str, Any]) -> str:
         """Compute overall status from the six dimensions."""
 
         return _aggregate_status(
             [str(payload[field_name]) for field_name in STATUS_DIMENSION_FIELDS]
         )
-
-    @staticmethod
-    def _message_dimension_value(
-        row: EmergencyActionMessageRecord, field_name: str
-    ) -> str:
-        """Return a dimension value from a stored snapshot."""
-
-        if field_name == "securityStatus":
-            return str(row.security_status)
-        if field_name == "capabilityStatus":
-            return str(row.capability_status)
-        if field_name == "preparednessStatus":
-            return str(row.preparedness_status)
-        if field_name == "medicalStatus":
-            return str(row.medical_status)
-        if field_name == "mobilityStatus":
-            return str(row.mobility_status)
-        if field_name == "commsStatus":
-            return str(row.comms_status)
-        raise KeyError(f"Unknown dimension '{field_name}'")
 
     @staticmethod
     def _is_expired(
@@ -499,10 +503,144 @@ class EmergencyActionMessageService:
         if row.ttl_seconds is None:
             return False
         current_time = now or _utcnow()
-        reported_at = _as_datetime(row.reported_at, default=_utcnow())
+        reported_at = _as_datetime(row.reported_at)
         if reported_at is None:
             return False
         return current_time >= reported_at + timedelta(seconds=int(row.ttl_seconds))
+
+    def _resolve_team_row(
+        self,
+        session: Session,
+        team_uid: str,
+        group_name: str | None,
+    ) -> R3aktTeamRecord:
+        """Return the referenced team, auto-provisioning canonical color teams."""
+
+        canonical_team = canonical_team_for_uid(team_uid)
+        if canonical_team is not None and group_name is not None:
+            canonical_group = canonical_team_for_color(group_name)
+            if canonical_group is None or canonical_group["uid"] != canonical_team["uid"]:
+                raise ValueError(
+                    f"group_name '{group_name}' does not match canonical team_uid '{team_uid}'"
+                )
+
+        team_row = session.get(R3aktTeamRecord, team_uid)
+        if team_row is not None:
+            if canonical_team is not None:
+                team_row.color = canonical_team["color"]
+                if not str(team_row.team_name or "").strip():
+                    team_row.team_name = canonical_team["team_name"]
+            return team_row
+        if canonical_team is None:
+            raise ValueError(f"team_uid '{team_uid}' does not map to a team")
+
+        team_row = R3aktTeamRecord(
+            uid=canonical_team["uid"],
+            mission_uid=None,
+            color=canonical_team["color"],
+            team_name=canonical_team["team_name"],
+            team_description="",
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
+        )
+        session.add(team_row)
+        session.flush()
+        return team_row
+
+    @staticmethod
+    def _provision_team_member(
+        session: Session,
+        *,
+        team_uid: str,
+        team_member_uid: str,
+        callsign: str,
+        reported_by: str | None,
+        source: Mapping[str, str | None] | None,
+    ) -> R3aktTeamMemberRecord:
+        """Create a missing team-member record from an inbound REM EAM."""
+
+        source_identity = str((source or {}).get("rns_identity") or "").strip()
+        if not source_identity:
+            raise ValueError(
+                f"team_member_uid '{team_member_uid}' is missing and source.rns_identity is required to provision it"
+            )
+        display_name = str(reported_by or callsign).strip()
+        if not display_name:
+            display_name = team_member_uid
+        member_row = R3aktTeamMemberRecord(
+            uid=team_member_uid,
+            team_uid=team_uid,
+            rns_identity=source_identity,
+            icon=None,
+            display_name=display_name,
+            role=None,
+            callsign=callsign,
+            freq=None,
+            email=None,
+            phone=None,
+            modulation=None,
+            availability=None,
+            certifications_json=[],
+            last_active=None,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
+        )
+        session.add(member_row)
+        session.flush()
+        return member_row
+
+    @staticmethod
+    def _serialize_source(source: Mapping[str, str | None] | None) -> str | None:
+        """Serialize a REM source payload for storage."""
+
+        if source is None:
+            return None
+        return json.dumps(
+            {
+                "rns_identity": source.get("rns_identity"),
+                "display_name": source.get("display_name"),
+            },
+            sort_keys=True,
+        )
+
+    @staticmethod
+    def _deserialize_source(source: str | None) -> dict[str, str | None] | None:
+        """Deserialize a stored REM source payload."""
+
+        if source is None:
+            return None
+        text = str(source).strip()
+        if not text:
+            return None
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return {"rns_identity": text, "display_name": None}
+        if not isinstance(payload, dict):
+            return None
+        rns_identity = str(payload.get("rns_identity") or "").strip() or None
+        display_name = str(payload.get("display_name") or "").strip() or None
+        if rns_identity is None and display_name is None:
+            return None
+        return {
+            "rns_identity": rns_identity,
+            "display_name": display_name,
+        }
+
+    @staticmethod
+    def _group_name_for_team(team_row: R3aktTeamRecord | None, team_uid: str) -> str | None:
+        """Derive the REM group name for a team."""
+
+        canonical_team = canonical_team_for_uid(team_uid)
+        if canonical_team is not None:
+            return canonical_team["group_name"]
+        if team_row is None:
+            return None
+        color = str(team_row.color or "").strip()
+        if color:
+            return color
+        name = str(team_row.team_name or "").strip()
+        return name or None
 
     def _get_message_row_by_callsign(
         self, session: Session, callsign: str
@@ -521,27 +659,29 @@ class EmergencyActionMessageService:
             raise KeyError(f"EmergencyActionMessage '{normalized_callsign}' not found")
         return row
 
-    def _serialize_message(self, row: EmergencyActionMessageRecord) -> dict[str, Any]:
-        """Serialize a snapshot into the compatibility API shape."""
+    def _serialize_message(
+        self, session: Session, row: EmergencyActionMessageRecord
+    ) -> dict[str, Any]:
+        """Serialize a snapshot into the REM-compatible API shape."""
 
+        team_row = session.get(R3aktTeamRecord, str(row.team_id or ""))
         return {
-            "id": row.id,
+            "eam_uid": row.id,
             "callsign": row.callsign,
-            "subjectType": row.subject_type,
-            "subjectId": row.subject_id,
-            "teamId": row.team_id,
-            "reportedBy": row.reported_by,
-            "reportedAt": _dt(row.reported_at),
-            "overallStatus": row.overall_status,
-            "securityStatus": row.security_status,
-            "capabilityStatus": row.capability_status,
-            "securityCapability": row.capability_status,
-            "preparednessStatus": row.preparedness_status,
-            "medicalStatus": row.medical_status,
-            "mobilityStatus": row.mobility_status,
-            "commsStatus": row.comms_status,
+            "group_name": self._group_name_for_team(team_row, str(row.team_id or "")),
+            "team_member_uid": row.subject_id,
+            "team_uid": row.team_id,
+            "reported_by": row.reported_by,
+            "reported_at": _dt(row.reported_at),
+            "overall_status": row.overall_status,
+            "security_status": row.security_status,
+            "capability_status": row.capability_status,
+            "preparedness_status": row.preparedness_status,
+            "medical_status": row.medical_status,
+            "mobility_status": row.mobility_status,
+            "comms_status": row.comms_status,
             "notes": row.notes,
             "confidence": row.confidence,
-            "ttlSeconds": row.ttl_seconds,
-            "source": row.source,
+            "ttl_seconds": row.ttl_seconds,
+            "source": self._deserialize_source(row.source),
         }

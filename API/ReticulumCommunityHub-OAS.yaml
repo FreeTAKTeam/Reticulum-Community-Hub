@@ -66,17 +66,12 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - name: teamId
+        - name: team_uid
           in: query
           required: false
           schema:
             type: string
-        - name: subjectType
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/SubjectType'
-        - name: overallStatus
+        - name: overall_status
           in: query
           required: false
           schema:
@@ -111,22 +106,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmergencyActionMessage'
-  /api/EmergencyActionMessage/latest/{subjectType}/{subjectId}:
+  /api/EmergencyActionMessage/latest/{team_member_uid}:
     get:
       x-scope: protected
       tags:
        - Status
-      summary: Retrieve the latest stored status snapshot for a subject.
+      summary: Retrieve the latest stored status snapshot for a team member.
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - name: subjectType
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/SubjectType'
-        - name: subjectId
+        - name: team_member_uid
           in: path
           required: true
           schema:
@@ -144,17 +134,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /api/EmergencyActionMessage/team/{teamId}/summary:
+  /api/EmergencyActionMessage/team/{team_uid}/summary:
     get:
       x-scope: protected
       tags:
        - Status
-      summary: Compute the team-level aggregate from current member snapshots.
+      summary: Compute the REM team aggregate from current member snapshots.
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - name: teamId
+        - name: team_uid
           in: path
           required: true
           schema:
@@ -4476,47 +4466,48 @@ components:
         - Yellow
         - Red
         - Unknown
-    SubjectType:
-      type: string
-      enum:
-        - member
+    EAMSource:
+      type: object
+      properties:
+        rns_identity:
+          type: string
+          nullable: true
+        display_name:
+          type: string
+          nullable: true
     EmergencyActionMessage:
       type: object
       properties:
-        id:
+        eam_uid:
           type: string
         callsign:
           type: string
-        subjectType:
-          $ref: '#/components/schemas/SubjectType'
-        subjectId:
-          type: string
-        teamId:
-          type: string
-        reportedBy:
+        group_name:
           type: string
           nullable: true
-        reportedAt:
+        team_member_uid:
+          type: string
+        team_uid:
+          type: string
+        reported_by:
+          type: string
+          nullable: true
+        reported_at:
           type: string
           format: date-time
-        overallStatus:
+        overall_status:
           $ref: '#/components/schemas/EAMStatus'
-        securityStatus:
+        security_status:
           $ref: '#/components/schemas/EAMStatus'
-        capabilityStatus:
+        capability_status:
           $ref: '#/components/schemas/EAMStatus'
-        securityCapability:
-          allOf:
-            - $ref: '#/components/schemas/EAMStatus'
-          deprecated: true
-          description: Deprecated compatibility alias for capabilityStatus.
-        preparednessStatus:
+        preparedness_status:
           $ref: '#/components/schemas/EAMStatus'
-        medicalStatus:
+        medical_status:
           $ref: '#/components/schemas/EAMStatus'
-        mobilityStatus:
+        mobility_status:
           $ref: '#/components/schemas/EAMStatus'
-        commsStatus:
+        comms_status:
           $ref: '#/components/schemas/EAMStatus'
         notes:
           type: string
@@ -4527,73 +4518,69 @@ components:
           minimum: 0
           maximum: 1
           nullable: true
-        ttlSeconds:
+        ttl_seconds:
           type: integer
           minimum: 0
           nullable: true
         source:
-          type: string
+          $ref: '#/components/schemas/EAMSource'
           nullable: true
       required:
-        - id
+        - eam_uid
         - callsign
-        - subjectType
-        - subjectId
-        - teamId
-        - reportedAt
-        - overallStatus
-        - securityStatus
-        - capabilityStatus
-        - preparednessStatus
-        - medicalStatus
-        - mobilityStatus
-        - commsStatus
+        - team_member_uid
+        - team_uid
+        - reported_at
+        - overall_status
+        - security_status
+        - capability_status
+        - preparedness_status
+        - medical_status
+        - mobility_status
+        - comms_status
     EmergencyActionMessageUpsertRequest:
       type: object
       properties:
-        callsign:
-          type: string
-        subjectType:
-          allOf:
-            - $ref: '#/components/schemas/SubjectType'
-          default: member
-        subjectId:
-          type: string
-        teamId:
-          type: string
-        reportedBy:
+        eam_uid:
           type: string
           nullable: true
-        reportedAt:
+        callsign:
+          type: string
+        group_name:
+          type: string
+          nullable: true
+        team_member_uid:
+          type: string
+        team_uid:
+          type: string
+        reported_by:
+          type: string
+          nullable: true
+        reported_at:
           type: string
           format: date-time
           nullable: true
-        securityStatus:
+        security_status:
           allOf:
             - $ref: '#/components/schemas/EAMStatus'
           default: Unknown
-        capabilityStatus:
+        capability_status:
           allOf:
             - $ref: '#/components/schemas/EAMStatus'
           default: Unknown
-        securityCapability:
-          allOf:
-            - $ref: '#/components/schemas/EAMStatus'
-          deprecated: true
-          description: Deprecated compatibility alias for capabilityStatus.
-        preparednessStatus:
+        preparedness_status:
           allOf:
             - $ref: '#/components/schemas/EAMStatus'
           default: Unknown
-        medicalStatus:
+        medical_status:
           allOf:
             - $ref: '#/components/schemas/EAMStatus'
           default: Unknown
-        mobilityStatus:
+        mobility_status:
           allOf:
             - $ref: '#/components/schemas/EAMStatus'
           default: Unknown
-        commsStatus:
+        comms_status:
           allOf:
             - $ref: '#/components/schemas/EAMStatus'
           default: Unknown
@@ -4606,61 +4593,56 @@ components:
           minimum: 0
           maximum: 1
           nullable: true
-        ttlSeconds:
+        ttl_seconds:
           type: integer
           minimum: 0
           nullable: true
         source:
-          type: string
+          $ref: '#/components/schemas/EAMSource'
           nullable: true
       required:
         - callsign
-        - subjectId
-        - teamId
+        - team_member_uid
+        - team_uid
     TeamStatusSummary:
       type: object
       properties:
-        teamId:
+        team_uid:
           type: string
-        computedAt:
-          type: string
-          format: date-time
-        overallStatus:
-          $ref: '#/components/schemas/EAMStatus'
-        securityStatus:
-          $ref: '#/components/schemas/EAMStatus'
-        capabilityStatus:
-          $ref: '#/components/schemas/EAMStatus'
-        securityCapability:
-          allOf:
-            - $ref: '#/components/schemas/EAMStatus'
-          deprecated: true
-          description: Deprecated compatibility alias for capabilityStatus.
-        preparednessStatus:
-          $ref: '#/components/schemas/EAMStatus'
-        medicalStatus:
-          $ref: '#/components/schemas/EAMStatus'
-        mobilityStatus:
-          $ref: '#/components/schemas/EAMStatus'
-        commsStatus:
-          $ref: '#/components/schemas/EAMStatus'
-        memberCount:
+        total:
           type: integer
           minimum: 0
-        aggregationMethod:
-          type: string
+        active_total:
+          type: integer
+          minimum: 0
+        deleted_total:
+          type: integer
+          minimum: 0
+        overall_status:
+          $ref: '#/components/schemas/EAMStatus'
+          nullable: true
+        green_total:
+          type: integer
+          minimum: 0
+        yellow_total:
+          type: integer
+          minimum: 0
+        red_total:
+          type: integer
+          minimum: 0
+        updated_at_ms:
+          type: integer
+          minimum: 0
       required:
-        - teamId
-        - computedAt
-        - overallStatus
-        - securityStatus
-        - capabilityStatus
-        - preparednessStatus
-        - medicalStatus
-        - mobilityStatus
-        - commsStatus
-        - memberCount
-        - aggregationMethod
+        - team_uid
+        - total
+        - active_total
+        - deleted_total
+        - overall_status
+        - green_total
+        - yellow_total
+        - red_total
+        - updated_at_ms
     R3aktTeam:
       type: object
       properties:

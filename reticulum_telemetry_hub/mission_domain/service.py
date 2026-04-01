@@ -48,6 +48,9 @@ from reticulum_telemetry_hub.api.storage_models import R3aktTeamMemberSkillRecor
 from reticulum_telemetry_hub.api.storage_models import R3aktTeamRecord
 from reticulum_telemetry_hub.api.storage_models import TopicRecord
 from reticulum_telemetry_hub.api.storage_models import ZoneRecord
+from reticulum_telemetry_hub.mission_domain.canonical_teams import (
+    canonical_team_from_payload,
+)
 from reticulum_telemetry_hub.mission_domain.enums import AssetStatus
 from reticulum_telemetry_hub.mission_domain.enums import ChecklistColumnType
 from reticulum_telemetry_hub.mission_domain.enums import ChecklistMode
@@ -1601,7 +1604,11 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         }
 
     def upsert_team(self, payload: dict[str, Any]) -> dict[str, Any]:
-        uid = str(payload.get("uid") or uuid.uuid4().hex)
+        canonical_team = canonical_team_from_payload(payload)
+        if canonical_team is not None:
+            uid = canonical_team["uid"]
+        else:
+            uid = str(payload.get("uid") or uuid.uuid4().hex)
         with self._session() as session:
             row = session.get(R3aktTeamRecord, uid)
             if row is None:
@@ -1635,13 +1642,21 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 mission_uids = self._team_mission_ids(session, uid)
 
             row.mission_uid = mission_uids[0] if mission_uids else None
-            row.color = self._normalize_optional_enum(
-                payload.get("color"),
-                field_name="color",
-                allowed_values=enum_values(TeamColor),
-                current=row.color,
+            if canonical_team is not None:
+                row.color = canonical_team["color"]
+            else:
+                row.color = self._normalize_optional_enum(
+                    payload.get("color"),
+                    field_name="color",
+                    allowed_values=enum_values(TeamColor),
+                    current=row.color,
+                )
+            fallback_team_name = (
+                canonical_team["team_name"] if canonical_team is not None else row.team_name
             )
-            row.team_name = str(payload.get("team_name") or payload.get("name") or row.team_name)
+            row.team_name = str(
+                payload.get("team_name") or payload.get("name") or fallback_team_name
+            )
             row.team_description = str(payload.get("team_description") or payload.get("description") or row.team_description or "")
             session.flush()
             data = self._serialize_team(session, row)

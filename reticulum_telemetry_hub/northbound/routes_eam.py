@@ -1,4 +1,4 @@
-"""Compatibility routes for Emergency Action Message status snapshots."""
+"""REM-compatible routes for Emergency Action Message status snapshots."""
 
 from __future__ import annotations
 
@@ -22,18 +22,16 @@ def register_eam_routes(
     status_service: EmergencyActionMessageService,
     require_protected: Callable[[], None],
 ) -> None:
-    """Register compatibility routes for member-scoped EAM status."""
+    """Register REM-compatible routes for member-scoped EAM status."""
 
     @app.get("/api/EmergencyActionMessage", dependencies=[Depends(require_protected)])
     def list_emergency_action_messages(
-        team_id: str | None = Query(default=None, alias="teamId"),
-        subject_type: str | None = Query(default=None, alias="subjectType"),
-        overall_status: str | None = Query(default=None, alias="overallStatus"),
+        team_uid: str | None = Query(default=None),
+        overall_status: str | None = Query(default=None),
     ) -> list[dict]:
         try:
             return status_service.list_messages(
-                team_id=team_id,
-                subject_type=subject_type,
+                team_uid=team_uid,
                 overall_status=overall_status,
             )
         except ValueError as exc:
@@ -47,24 +45,24 @@ def register_eam_routes(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get(
-        "/api/EmergencyActionMessage/latest/{subjectType}/{subjectId}",
+        "/api/EmergencyActionMessage/latest/{team_member_uid}",
         dependencies=[Depends(require_protected)],
     )
-    def get_latest_emergency_action_message(subjectType: str, subjectId: str) -> dict:
+    def get_latest_emergency_action_message(team_member_uid: str) -> dict:
         try:
-            return status_service.get_latest_message(subjectType, subjectId)
+            return status_service.get_latest_message(team_member_uid)
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get(
-        "/api/EmergencyActionMessage/team/{teamId}/summary",
+        "/api/EmergencyActionMessage/team/{team_uid}/summary",
         dependencies=[Depends(require_protected)],
     )
-    def get_team_status_summary(teamId: str) -> dict:
+    def get_team_status_summary(team_uid: str) -> dict:
         try:
-            return status_service.get_team_summary(teamId)
+            return status_service.get_team_summary(team_uid)
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except ValueError as exc:

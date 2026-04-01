@@ -1,4 +1,5 @@
 # TASKS
+- 2026-04-01: DONE. Align Emergency Action Message handling with REM by adopting canonical color-team UIDs, REM-native EAM payloads, automatic canonical team/member provisioning, and matching southbound/northbound tests.
 - 2026-03-30: DONE. Convert the ARES go-kit PDF into a structured radio checklist CSV under `Files/ExCheckTemplates`.
 - 2026-03-30: DONE. Create evacuation, bug-out, vehicle, and safe-zone exfil checklist CSV templates under `Files/ExCheckTemplates` based on the existing checklist examples.
 - 2026-03-30: DONE. Make Exchecks shared by default, keep local drafts explicit, and document the LXMF checklist task-sharing workflow.

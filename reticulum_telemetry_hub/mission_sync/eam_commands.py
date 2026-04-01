@@ -34,6 +34,7 @@ DISALLOWED_FIELD_MESSAGES = {
     "reportedBy": "reportedBy is not supported southbound; use reported_by",
     "overall_status": "overall_status is computed server-side and is not accepted on writes",
     "overallStatus": "overallStatus is computed server-side and is not accepted on writes",
+    "groupName": "groupName is not supported southbound; use group_name",
     "securityStatus": "securityStatus is not supported southbound; use security_status",
     "capabilityStatus": "capabilityStatus is not supported southbound; use capability_status",
     "preparednessStatus": "preparednessStatus is not supported southbound; use preparedness_status",
@@ -99,10 +100,10 @@ def _list_eams(
     team_uid = _optional_text(args, "team_uid")
     overall_status = _optional_text(args, "overall_status")
     snapshots = status_service.list_messages(
-        team_id=team_uid,
+        team_uid=team_uid,
         overall_status=overall_status,
     )
-    return {"eams": [_serialize_snapshot(item) for item in snapshots]}
+    return {"eams": [dict(item) for item in snapshots]}
 
 
 def _upsert_eam(
@@ -115,19 +116,21 @@ def _upsert_eam(
     _reject_disallowed_fields(args)
     payload: dict[str, Any] = {
         "callsign": _required_text(args, "callsign"),
-        "subjectId": _required_text(args, "team_member_uid"),
-        "teamId": _required_text(args, "team_uid"),
+        "eam_uid": _optional_text(args, "eam_uid"),
+        "group_name": _optional_text(args, "group_name"),
+        "team_member_uid": _required_text(args, "team_member_uid"),
+        "team_uid": _required_text(args, "team_uid"),
     }
     reported_by = _optional_text(args, "reported_by")
     if reported_by is not None:
-        payload["reportedBy"] = reported_by
+        payload["reported_by"] = reported_by
     reported_at = _optional_text(args, "reported_at")
     if reported_at is not None:
-        payload["reportedAt"] = reported_at
+        payload["reported_at"] = reported_at
     notes = _optional_text(args, "notes")
     if notes is not None:
         payload["notes"] = notes
-    source = _optional_text(args, "source")
+    source = args.get("source")
     if source is not None:
         payload["source"] = source
 
@@ -136,14 +139,14 @@ def _upsert_eam(
         payload["confidence"] = confidence
     ttl_seconds = args.get("ttl_seconds")
     if ttl_seconds is not None:
-        payload["ttlSeconds"] = ttl_seconds
+        payload["ttl_seconds"] = ttl_seconds
 
     for field_name in STATUS_FIELD_NAMES:
         if field_name in args:
-            payload[_snake_to_camel(field_name)] = args.get(field_name)
+            payload[field_name] = args.get(field_name)
 
     snapshot = status_service.upsert_message(payload)
-    return {"eam": _serialize_snapshot(snapshot)}
+    return {"eam": dict(snapshot)}
 
 
 def _get_eam(
@@ -159,7 +162,7 @@ def _get_eam(
         snapshot = status_service.get_message_by_callsign(callsign)
     except KeyError as exc:
         raise EmergencyActionMessageCommandError("not_found", str(exc)) from exc
-    return {"eam": _serialize_snapshot(snapshot)}
+    return {"eam": dict(snapshot)}
 
 
 def _get_latest_eam(
@@ -172,10 +175,10 @@ def _get_latest_eam(
     _reject_disallowed_fields(args)
     team_member_uid = _required_text(args, "team_member_uid")
     try:
-        snapshot = status_service.get_latest_message("member", team_member_uid)
+        snapshot = status_service.get_latest_message(team_member_uid)
     except KeyError as exc:
         raise EmergencyActionMessageCommandError("not_found", str(exc)) from exc
-    return {"eam": _serialize_snapshot(snapshot)}
+    return {"eam": dict(snapshot)}
 
 
 def _delete_eam(
@@ -191,7 +194,7 @@ def _delete_eam(
         snapshot = status_service.delete_message(callsign)
     except KeyError as exc:
         raise EmergencyActionMessageCommandError("not_found", str(exc)) from exc
-    return {"eam": _serialize_snapshot(snapshot)}
+    return {"eam": dict(snapshot)}
 
 
 def _team_summary(
@@ -207,49 +210,7 @@ def _team_summary(
         summary = status_service.get_team_summary(team_uid)
     except KeyError as exc:
         raise EmergencyActionMessageCommandError("not_found", str(exc)) from exc
-    return {"summary": _serialize_summary(summary)}
-
-
-def _serialize_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
-    """Convert the northbound record shape into the southbound LXMF shape."""
-
-    return {
-        "eam_uid": str(snapshot.get("id") or ""),
-        "callsign": snapshot.get("callsign"),
-        "team_member_uid": snapshot.get("subjectId"),
-        "team_uid": snapshot.get("teamId"),
-        "reported_by": snapshot.get("reportedBy"),
-        "reported_at": snapshot.get("reportedAt"),
-        "overall_status": snapshot.get("overallStatus"),
-        "security_status": snapshot.get("securityStatus"),
-        "capability_status": snapshot.get("capabilityStatus"),
-        "preparedness_status": snapshot.get("preparednessStatus"),
-        "medical_status": snapshot.get("medicalStatus"),
-        "mobility_status": snapshot.get("mobilityStatus"),
-        "comms_status": snapshot.get("commsStatus"),
-        "notes": snapshot.get("notes"),
-        "confidence": snapshot.get("confidence"),
-        "ttl_seconds": snapshot.get("ttlSeconds"),
-        "source": snapshot.get("source"),
-    }
-
-
-def _serialize_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
-    """Convert the northbound team summary into the southbound LXMF shape."""
-
-    return {
-        "team_uid": summary.get("teamId"),
-        "computed_at": summary.get("computedAt"),
-        "member_count": summary.get("memberCount"),
-        "aggregation_method": summary.get("aggregationMethod"),
-        "overall_status": summary.get("overallStatus"),
-        "security_status": summary.get("securityStatus"),
-        "capability_status": summary.get("capabilityStatus"),
-        "preparedness_status": summary.get("preparednessStatus"),
-        "medical_status": summary.get("medicalStatus"),
-        "mobility_status": summary.get("mobilityStatus"),
-        "comms_status": summary.get("commsStatus"),
-    }
+    return {"summary": dict(summary)}
 
 
 def _reject_disallowed_fields(args: Mapping[str, Any]) -> None:
@@ -282,10 +243,3 @@ def _optional_text(args: Mapping[str, Any], field_name: str) -> str | None:
         return None
     text = str(value).strip()
     return text or None
-
-
-def _snake_to_camel(field_name: str) -> str:
-    """Convert snake_case southbound fields into the northbound/service shape."""
-
-    head, *tail = field_name.split("_")
-    return head + "".join(part.capitalize() for part in tail)
