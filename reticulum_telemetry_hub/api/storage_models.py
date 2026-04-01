@@ -313,6 +313,7 @@ class EmergencyActionMessageRecord(Base):  # pylint: disable=too-few-public-meth
     reported_by = Column(String, nullable=True)
     reported_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     ttl_seconds = Column(Integer, nullable=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(String, nullable=True)
     confidence = Column(Float, nullable=True)
     source = Column(String, nullable=True)

@@ -182,7 +182,7 @@ def test_eam_routes_reject_legacy_http_fields(tmp_path: Path) -> None:
         headers=headers,
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 def test_eam_team_summary_route_handles_missing_and_expired_reports(tmp_path: Path) -> None:
@@ -237,7 +237,7 @@ def test_eam_team_summary_route_handles_missing_and_expired_reports(tmp_path: Pa
 
     assert summary.status_code == 200
     assert summary.json()["team_uid"] == "team-1"
-    assert summary.json()["total"] == 0
+    assert summary.json()["total"] == 1
     assert summary.json()["active_total"] == 0
     assert summary.json()["deleted_total"] == 0
     assert summary.json()["overall_status"] is None

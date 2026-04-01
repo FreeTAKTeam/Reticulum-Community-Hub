@@ -136,6 +136,7 @@ class EmergencyActionMessageService:
         )
         self._enable_wal_mode()
         Base.metadata.create_all(self._engine)
+        self._ensure_deleted_at_column()
         self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
 
     def _enable_wal_mode(self) -> None:
@@ -146,6 +147,26 @@ class EmergencyActionMessageService:
                 isolation_level="AUTOCOMMIT"
             ) as conn:
                 conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
+        except OperationalError:
+            return
+
+    def _ensure_deleted_at_column(self) -> None:
+        """Backfill the soft-delete column for existing SQLite databases."""
+
+        try:
+            with self._engine.connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as conn:
+                columns = {
+                    str(row[1])
+                    for row in conn.exec_driver_sql(
+                        "PRAGMA table_info(emergency_action_messages);"
+                    ).fetchall()
+                }
+                if "deleted_at" not in columns:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE emergency_action_messages ADD COLUMN deleted_at DATETIME;"
+                    )
         except OperationalError:
             return
 
@@ -191,7 +212,7 @@ class EmergencyActionMessageService:
             return [
                 self._serialize_message(session, row)
                 for row in rows
-                if not self._is_expired(row)
+                if row.deleted_at is None and not self._is_expired(row)
             ]
 
     def upsert_message(
@@ -260,6 +281,7 @@ class EmergencyActionMessageService:
             row.reported_by = normalized["reported_by"]
             row.reported_at = normalized["reported_at"]
             row.ttl_seconds = normalized["ttl_seconds"]
+            row.deleted_at = None
             row.notes = normalized["notes"]
             row.confidence = normalized["confidence"]
             row.source = self._serialize_source(normalized["source"])
@@ -293,7 +315,7 @@ class EmergencyActionMessageService:
         with self._session() as session:
             row = self._get_message_row_by_callsign(session, callsign)
             data = self._serialize_message(session, row)
-            session.delete(row)
+            row.deleted_at = _utcnow()
             return data
 
     def get_latest_message(self, team_member_uid: str) -> dict[str, Any]:
@@ -311,7 +333,7 @@ class EmergencyActionMessageService:
                 )
                 .one_or_none()
             )
-            if row is None or self._is_expired(row):
+            if row is None or row.deleted_at is not None or self._is_expired(row):
                 raise KeyError(
                     f"No active EmergencyActionMessage found for member/{normalized_team_member_uid}"
                 )
@@ -332,11 +354,16 @@ class EmergencyActionMessageService:
                 .filter(EmergencyActionMessageRecord.team_id == normalized_team_uid)
                 .all()
             )
-            active_rows = [row for row in rows if not self._is_expired(row)]
+            active_rows = [
+                row
+                for row in rows
+                if row.deleted_at is None and not self._is_expired(row)
+            ]
             updated_at = max(
-                (row.updated_at for row in active_rows),
+                (row.updated_at for row in rows),
                 default=_utcnow(),
             )
+            deleted_total = sum(1 for row in rows if row.deleted_at is not None)
             green_total = sum(1 for row in active_rows if row.overall_status == "Green")
             yellow_total = sum(1 for row in active_rows if row.overall_status == "Yellow")
             red_total = sum(1 for row in active_rows if row.overall_status == "Red")
@@ -349,9 +376,9 @@ class EmergencyActionMessageService:
                 overall_status = "Green"
             return {
                 "team_uid": normalized_team_uid,
-                "total": len(active_rows),
+                "total": len(rows),
                 "active_total": len(active_rows),
-                "deleted_total": 0,
+                "deleted_total": deleted_total,
                 "overall_status": overall_status,
                 "green_total": green_total,
                 "yellow_total": yellow_total,
@@ -528,8 +555,7 @@ class EmergencyActionMessageService:
         if team_row is not None:
             if canonical_team is not None:
                 team_row.color = canonical_team["color"]
-                if not str(team_row.team_name or "").strip():
-                    team_row.team_name = canonical_team["team_name"]
+                team_row.team_name = canonical_team["team_name"]
             return team_row
         if canonical_team is None:
             raise ValueError(f"team_uid '{team_uid}' does not map to a team")
@@ -652,7 +678,10 @@ class EmergencyActionMessageService:
             raise ValueError("callsign is required")
         row = (
             session.query(EmergencyActionMessageRecord)
-            .filter(EmergencyActionMessageRecord.callsign == normalized_callsign)
+            .filter(
+                EmergencyActionMessageRecord.callsign == normalized_callsign,
+                EmergencyActionMessageRecord.deleted_at.is_(None),
+            )
             .one_or_none()
         )
         if row is None:

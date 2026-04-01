@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from typing import Dict
+from typing import Literal
 from typing import Optional
 
 from pydantic import AliasChoices
@@ -349,3 +351,80 @@ class ZoneUpdatePayload(BaseModel):
         if self.name is None and self.points is None:
             raise ValueError("At least one zone field must be provided")
         return self
+
+
+EamStatus = Literal["Green", "Yellow", "Red", "Unknown"]
+
+
+class EamSourcePayload(BaseModel):
+    """Typed REM EAM source metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rns_identity: Optional[str] = None
+    display_name: Optional[str] = None
+
+
+class EmergencyActionMessageUpsertPayload(BaseModel):
+    """Typed REM-compatible EAM write payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    eam_uid: Optional[str] = None
+    callsign: str
+    group_name: Optional[str] = None
+    team_member_uid: str
+    team_uid: str
+    reported_by: Optional[str] = None
+    reported_at: Optional[datetime] = None
+    security_status: Optional[EamStatus] = None
+    capability_status: Optional[EamStatus] = None
+    preparedness_status: Optional[EamStatus] = None
+    medical_status: Optional[EamStatus] = None
+    mobility_status: Optional[EamStatus] = None
+    comms_status: Optional[EamStatus] = None
+    notes: Optional[str] = None
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    ttl_seconds: Optional[int] = Field(default=None, ge=0)
+    source: Optional[EamSourcePayload] = None
+
+
+class EmergencyActionMessagePayload(BaseModel):
+    """Typed REM-compatible EAM response payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    eam_uid: str
+    callsign: str
+    group_name: Optional[str] = None
+    team_member_uid: str
+    team_uid: str
+    reported_by: Optional[str] = None
+    reported_at: datetime
+    overall_status: EamStatus
+    security_status: EamStatus
+    capability_status: EamStatus
+    preparedness_status: EamStatus
+    medical_status: EamStatus
+    mobility_status: EamStatus
+    comms_status: EamStatus
+    notes: Optional[str] = None
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    ttl_seconds: Optional[int] = Field(default=None, ge=0)
+    source: Optional[EamSourcePayload] = None
+
+
+class EamTeamSummaryPayload(BaseModel):
+    """Typed REM-compatible EAM team summary payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    team_uid: str
+    total: int = Field(ge=0)
+    active_total: int = Field(ge=0)
+    deleted_total: int = Field(ge=0)
+    overall_status: Optional[EamStatus] = None
+    green_total: int = Field(ge=0)
+    yellow_total: int = Field(ge=0)
+    red_total: int = Field(ge=0)
+    updated_at_ms: int = Field(ge=0)

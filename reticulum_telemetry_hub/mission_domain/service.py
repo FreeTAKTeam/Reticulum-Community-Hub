@@ -1644,6 +1644,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             row.mission_uid = mission_uids[0] if mission_uids else None
             if canonical_team is not None:
                 row.color = canonical_team["color"]
+                row.team_name = canonical_team["team_name"]
             else:
                 row.color = self._normalize_optional_enum(
                     payload.get("color"),
@@ -1651,12 +1652,9 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                     allowed_values=enum_values(TeamColor),
                     current=row.color,
                 )
-            fallback_team_name = (
-                canonical_team["team_name"] if canonical_team is not None else row.team_name
-            )
-            row.team_name = str(
-                payload.get("team_name") or payload.get("name") or fallback_team_name
-            )
+                row.team_name = str(
+                    payload.get("team_name") or payload.get("name") or row.team_name
+                )
             row.team_description = str(payload.get("team_description") or payload.get("description") or row.team_description or "")
             session.flush()
             data = self._serialize_team(session, row)

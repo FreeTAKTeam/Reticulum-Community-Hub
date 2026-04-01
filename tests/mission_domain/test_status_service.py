@@ -270,7 +270,7 @@ def test_status_service_ttl_overall_status_and_summary_shape(tmp_path) -> None:
     assert listed[0]["source"] == {"rns_identity": "peer-2", "display_name": "Peer 2"}
     assert summary == {
         "team_uid": team_uid,
-        "total": 1,
+        "total": 2,
         "active_total": 1,
         "deleted_total": 0,
         "overall_status": "Green",
@@ -337,3 +337,45 @@ def test_status_service_team_summary_prefers_worst_active_status(tmp_path) -> No
     assert summary["green_total"] == 1
     assert summary["yellow_total"] == 1
     assert summary["red_total"] == 1
+
+
+def test_status_service_soft_deletes_messages_and_counts_deleted_rows(tmp_path) -> None:
+    domain, status_service = _services(tmp_path)
+    team_uid = "team-soft-delete"
+    _seed_team(
+        domain,
+        team_uid=team_uid,
+        team_name="Ops",
+        member_ids=("member-a",),
+    )
+
+    status_service.upsert_message(
+        _payload(
+            callsign="OPS-1",
+            team_member_uid="member-a",
+            team_uid=team_uid,
+            group_name="Ops",
+            source={"rns_identity": "peer-a", "display_name": "Peer A"},
+        )
+    )
+
+    deleted = status_service.delete_message("OPS-1")
+    listed = status_service.list_messages(team_uid=team_uid)
+    summary = status_service.get_team_summary(team_uid)
+
+    assert deleted["callsign"] == "OPS-1"
+    assert listed == []
+    with pytest.raises(KeyError):
+        status_service.get_message_by_callsign("OPS-1")
+    assert summary == {
+        "team_uid": team_uid,
+        "total": 1,
+        "active_total": 0,
+        "deleted_total": 1,
+        "overall_status": None,
+        "green_total": 0,
+        "yellow_total": 0,
+        "red_total": 0,
+        "updated_at_ms": summary["updated_at_ms"],
+    }
+    assert isinstance(summary["updated_at_ms"], int)

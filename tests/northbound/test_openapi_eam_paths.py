@@ -85,20 +85,34 @@ def test_openapi_exposes_rem_query_and_path_params(tmp_path: Path) -> None:
 def test_openapi_exposes_generic_object_and_array_contracts(tmp_path: Path) -> None:
     spec = _spec(tmp_path)
     paths = spec["paths"]
+    schemas = spec["components"]["schemas"]
 
     assert (
         paths["/api/EmergencyActionMessage"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["type"]
         == "array"
     )
     assert (
-        paths["/api/EmergencyActionMessage"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["type"]
-        == "object"
+        paths["/api/EmergencyActionMessage"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["items"]["$ref"]
+        == "#/components/schemas/EmergencyActionMessagePayload"
     )
     assert (
-        paths["/api/EmergencyActionMessage/latest/{team_member_uid}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["type"]
-        == "object"
+        paths["/api/EmergencyActionMessage"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/EmergencyActionMessageUpsertPayload"
     )
     assert (
-        paths["/api/EmergencyActionMessage/team/{team_uid}/summary"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["type"]
-        == "object"
+        paths["/api/EmergencyActionMessage/latest/{team_member_uid}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/EmergencyActionMessagePayload"
     )
+    assert (
+        paths["/api/EmergencyActionMessage/team/{team_uid}/summary"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/EamTeamSummaryPayload"
+    )
+    assert {"EmergencyActionMessagePayload", "EmergencyActionMessageUpsertPayload", "EamTeamSummaryPayload", "EamSourcePayload"}.issubset(
+        set(schemas)
+    )
+    assert schemas["EmergencyActionMessagePayload"]["properties"]["overall_status"]["enum"] == [
+        "Green",
+        "Yellow",
+        "Red",
+        "Unknown",
+    ]
