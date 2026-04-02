@@ -188,6 +188,71 @@ class HubStorageBase:
         )
 
     @staticmethod
+    def _identity_announce_preferred(
+        candidate: IdentityAnnounceRecord,
+        current: IdentityAnnounceRecord,
+    ) -> bool:
+        """Return True when ``candidate`` should be the canonical base record."""
+
+        candidate_source = str(candidate.source_interface or "").strip().lower()
+        current_source = str(current.source_interface or "").strip().lower()
+        if candidate_source != current_source:
+            return candidate_source == "identity"
+        return bool(candidate.display_name) and not bool(current.display_name)
+
+    @staticmethod
+    def _merge_identity_announce_records(
+        current: IdentityAnnounceRecord | None,
+        candidate: IdentityAnnounceRecord,
+    ) -> IdentityAnnounceRecord:
+        """Return a canonical announce record merged across announce sources."""
+
+        if current is None:
+            merged = IdentityAnnounceRecord(destination_hash=candidate.destination_hash)
+            merged.announced_identity_hash = candidate.announced_identity_hash
+            merged.display_name = candidate.display_name
+            merged.announce_capabilities_json = candidate.announce_capabilities_json
+            merged.client_type = candidate.client_type
+            merged.first_seen = candidate.first_seen
+            merged.last_seen = candidate.last_seen
+            merged.last_capability_seen_at = candidate.last_capability_seen_at
+            merged.source_interface = candidate.source_interface
+            return merged
+
+        preferred = candidate if HubStorageBase._identity_announce_preferred(candidate, current) else current
+        other = current if preferred is candidate else candidate
+        merged = IdentityAnnounceRecord(destination_hash=preferred.destination_hash)
+        merged.announced_identity_hash = preferred.announced_identity_hash or other.announced_identity_hash
+        merged.display_name = preferred.display_name or other.display_name
+        merged.announce_capabilities_json = (
+            preferred.announce_capabilities_json
+            if preferred.announce_capabilities_json
+            else other.announce_capabilities_json
+        )
+        merged.client_type = preferred.client_type or other.client_type
+        merged.first_seen = min(
+            [value for value in (current.first_seen, candidate.first_seen) if value is not None],
+            default=None,
+        )
+        merged.last_seen = max(
+            [value for value in (current.last_seen, candidate.last_seen) if value is not None],
+            default=None,
+        )
+        merged.last_capability_seen_at = max(
+            [
+                value
+                for value in (
+                    current.last_capability_seen_at,
+                    candidate.last_capability_seen_at,
+                )
+                if value is not None
+            ],
+            default=None,
+        )
+        merged.source_interface = preferred.source_interface or other.source_interface
+        return merged
+
+    @staticmethod
     def _identity_announce_map(session) -> dict[str, IdentityAnnounceRecord]:
         """Return a lookup table for announce metadata."""
 
@@ -199,15 +264,8 @@ class HubStorageBase:
             ).strip().lower()
             if not identity_key:
                 continue
-            existing = announce_map.get(identity_key)
-            source = str(record.source_interface or "").strip().lower()
-            existing_source = (
-                str(existing.source_interface or "").strip().lower()
-                if existing is not None
-                else ""
+            announce_map[identity_key] = HubStorageBase._merge_identity_announce_records(
+                announce_map.get(identity_key),
+                record,
             )
-            if existing is None or (
-                source == "identity" and existing_source != "identity"
-            ):
-                announce_map[identity_key] = record
         return announce_map

@@ -152,6 +152,7 @@ def _utcnow() -> datetime:
 # Constants
 STORAGE_PATH = DEFAULT_STORAGE_PATH  # Path to store temporary files
 APP_NAME = LXMF.APP_NAME + ".delivery"  # Application name for LXMF
+REM_APP_NAME = "r3akt.emergency"
 DEFAULT_LOG_LEVEL = getattr(RNS, "LOG_DEBUG", getattr(RNS, "LOG_INFO", 3))
 LOG_LEVELS = {
     "error": getattr(RNS, "LOG_ERROR", 1),
@@ -252,11 +253,14 @@ class AnnounceHandler:
         *,
         persist_queue_size: int = _DEFAULT_PERSIST_QUEUE_SIZE,
         capability_callback: Callable[[str, set[str]], None] | None = None,
+        aspect_filter: str = APP_NAME,
+        decode_display_name: bool = True,
     ):
-        self.aspect_filter = APP_NAME
+        self.aspect_filter = aspect_filter
         self.identities = identities
         self._api = api
         self._capability_callback = capability_callback
+        self._decode_display_name_enabled = decode_display_name
         self._persist_queue: queue.Queue[
             tuple[str, str | None, str | None, str | None, list[str] | None]
         ] = queue.Queue(
@@ -332,7 +336,7 @@ class AnnounceHandler:
         # RNS.log(f"\t| Announced identity     : {announced_identity}")
         # RNS.log(f"\t| App data               : {app_data}")
         # RNS.log("\t+---------------------------------------------------------------")
-        label = self._decode_app_data(app_data)
+        label = self._decode_app_data(app_data) if self._decode_display_name_enabled else None
         capabilities = self._decode_capabilities(app_data)
         destination_key = self._normalize_hash(destination_hash)
         identity_key = self._normalize_hash(announced_identity)
@@ -902,6 +906,7 @@ class ReticulumTelemetryHub:
         self._remove_eam_status_listener: Callable[[], None] | None = None
         self._remove_topic_registry_change_listener: Callable[[], None] | None = None
         self._announce_handler: AnnounceHandler | None = None
+        self._rem_app_announce_handler: AnnounceHandler | None = None
         self._propagation_node_registry = PropagationNodeRegistry()
         self._propagation_announce_handler: PropagationNodeAnnounceHandler | None = None
 
@@ -1000,10 +1005,18 @@ class ReticulumTelemetryHub:
             api=self.api,
             capability_callback=self._update_identity_capability_cache,
         )
+        self._rem_app_announce_handler = AnnounceHandler(
+            self.identities,
+            api=self.api,
+            capability_callback=self._update_identity_capability_cache,
+            aspect_filter=REM_APP_NAME,
+            decode_display_name=False,
+        )
         self._propagation_announce_handler = PropagationNodeAnnounceHandler(
             self._propagation_node_registry
         )
         RNS.Transport.register_announce_handler(self._announce_handler)
+        RNS.Transport.register_announce_handler(self._rem_app_announce_handler)
         RNS.Transport.register_announce_handler(self._propagation_announce_handler)
         self.tel_controller.set_api(self.api)
         self.telemeter_manager = TelemeterManager(config_manager=self.config_manager)
@@ -4910,6 +4923,9 @@ class ReticulumTelemetryHub:
         if self._announce_handler is not None:
             self._announce_handler.close()
             self._announce_handler = None
+        if self._rem_app_announce_handler is not None:
+            self._rem_app_announce_handler.close()
+            self._rem_app_announce_handler = None
         self._propagation_announce_handler = None
         if self.embedded_lxmd is not None:
             self.embedded_lxmd.stop()

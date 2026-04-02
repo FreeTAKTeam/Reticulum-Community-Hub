@@ -495,6 +495,12 @@ class HubStorage(HubStorageBase):
         with self._session_scope() as session:
             return session.query(IdentityAnnounceRecord).all()
 
+    def list_canonical_identity_announces(self) -> List[IdentityAnnounceRecord]:
+        """Return announce metadata merged by canonical announced identity."""
+
+        with self._session_scope() as session:
+            return list(self._identity_announce_map(session).values())
+
     def upsert_identity_rem_mode(
         self,
         identity: str,

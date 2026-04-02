@@ -99,3 +99,25 @@ def test_announce_handler_extracts_plain_string_rem_capabilities() -> None:
     assert "r3akt" in flattened_caps
     assert "emergencymessages" in flattened_caps
     assert "telemetry" in flattened_caps
+
+
+def test_app_announce_handler_can_skip_display_name_decode_for_rem_capabilities() -> None:
+    identities: dict[str, str] = {}
+    captured: list[tuple[str, set[str]]] = []
+    handler = AnnounceHandler(
+        identities,
+        capability_callback=lambda identity, caps: captured.append((identity, set(caps))),
+        aspect_filter="r3akt.emergency",
+        decode_display_name=False,
+    )
+
+    handler.received_announce(
+        b"\x01\x02",
+        announced_identity=b"\x0a\x0b",
+        app_data=b"R3AKT,EMergencyMessages,Telemetry",
+    )
+
+    assert identities == {}
+    flattened_caps = {cap for _, caps in captured for cap in caps}
+    assert "r3akt" in flattened_caps
+    assert "emergencymessages" in flattened_caps

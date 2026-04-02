@@ -21,6 +21,8 @@ from reticulum_telemetry_hub.reticulum_server import services
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from reticulum_telemetry_hub.reticulum_server.__main__ import APP_NAME
+from reticulum_telemetry_hub.reticulum_server.__main__ import REM_APP_NAME
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 from reticulum_telemetry_hub.reticulum_server.__main__ import _dispatch_coroutine
 
@@ -205,6 +207,25 @@ def test_headless_run_clamps_non_positive_announce_interval(monkeypatch, tmp_pat
         hub.shutdown()
 
     assert sleep_calls == [1]
+
+
+def test_hub_registers_delivery_and_rem_app_announce_handlers(monkeypatch, tmp_path) -> None:
+    registered_handlers: list[object] = []
+
+    monkeypatch.setattr(
+        RNS.Transport,
+        "register_announce_handler",
+        lambda handler: registered_handlers.append(handler),
+    )
+
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+
+    try:
+        aspects = [getattr(handler, "aspect_filter", None) for handler in registered_handlers]
+        assert APP_NAME in aspects
+        assert REM_APP_NAME in aspects
+    finally:
+        hub.shutdown()
 
 
 def test_hub_service_run_wrapper_records_event() -> None:

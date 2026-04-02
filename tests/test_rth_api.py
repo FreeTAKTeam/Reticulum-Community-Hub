@@ -391,6 +391,34 @@ def test_generic_clients_do_not_report_rem_mode(tmp_path):
     assert status.is_rem_capable is False
 
 
+def test_delivery_announce_display_name_does_not_strip_rem_classification(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.record_identity_announce(
+        "pixel-app-destination",
+        announced_identity_hash="0a92e053b7e6ba49f0a045e9cc55eaa2",
+        source_interface="destination",
+        announce_capabilities="R3AKT,EMergencyMessages,Telemetry",
+    )
+    api.record_identity_announce(
+        "0a92e053b7e6ba49f0a045e9cc55eaa2",
+        announced_identity_hash="0a92e053b7e6ba49f0a045e9cc55eaa2",
+        display_name="Pixel",
+        source_interface="identity",
+    )
+
+    status = next(
+        item
+        for item in api.list_identity_statuses()
+        if item.identity == "0a92e053b7e6ba49f0a045e9cc55eaa2"
+    )
+
+    assert status.display_name == "Pixel"
+    assert status.client_type == "rem"
+    assert status.is_rem_capable is True
+    assert "r3akt" in status.announce_capabilities
+    assert "emergencymessages" in status.announce_capabilities
+
+
 def test_identity_announce_ignores_missing_name(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     api.record_identity_announce("deadbeef", display_name="Sideband-Alice")

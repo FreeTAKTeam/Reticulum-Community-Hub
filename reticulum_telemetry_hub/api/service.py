@@ -1152,24 +1152,15 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         announces: dict[str, IdentityAnnounceRecord] = {}
         announce_sources: dict[str, str | None] = {}
-        for record in self._storage.list_identity_announces():
+        for record in self._storage.list_canonical_identity_announces():
             identity_key = str(
                 record.announced_identity_hash or record.destination_hash or ""
             ).strip().lower()
             if not identity_key:
                 continue
             source = str(record.source_interface or "").strip().lower() or None
-            existing = announces.get(identity_key)
-            existing_source = (
-                (existing.source_interface or "").strip().lower()
-                if existing is not None
-                else None
-            )
-            if existing is None or (
-                source == "identity" and existing_source != "identity"
-            ):
-                announces[identity_key] = record
-                announce_sources[identity_key] = source
+            announces[identity_key] = record
+            announce_sources[identity_key] = source
         identities = sorted(
             set(clients.keys()) | set(states.keys()) | set(announces.keys())
         )
