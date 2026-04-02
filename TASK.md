@@ -1,4 +1,5 @@
 # TASKS
+- 2026-04-02: DONE. Harden Reticulum discovery snapshots against missing runtime attributes, fix checklist CSV import to create online checklists without a template UID, and repair the announce persistence call signature.
 - 2026-04-02: DONE. Stop auto-help replies from treating passive background LXMF traffic as user text so idle clients do not receive periodic command lists.
 - 2026-04-02: DONE. Add REM peer classification, persisted REM mode registration, southbound REM peer/mode commands, connected-mode EAM/log fanout policy, and UI visibility for REM vs generic LXMF clients.
 - 2026-04-01: DONE. Align Emergency Action Message handling with REM by adopting canonical color-team UIDs, REM-native EAM payloads, automatic canonical team/member provisioning, and matching southbound/northbound tests.

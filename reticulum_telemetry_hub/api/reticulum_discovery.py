@@ -198,21 +198,32 @@ def get_discovery_snapshot() -> dict[str, Any]:
 
     payload["runtime_active"] = True
     payload["should_autoconnect"] = bool(
-        _safe_call(getattr(reticulum_class, "should_autoconnect_discovered_interfaces"), False)
+        _safe_call(
+            getattr(reticulum_class, "should_autoconnect_discovered_interfaces", None),
+            False,
+        )
     )
     payload["max_autoconnected_interfaces"] = _safe_call(
-        getattr(reticulum_class, "max_autoconnected_interfaces"), None
+        getattr(reticulum_class, "max_autoconnected_interfaces", None),
+        None,
     )
     payload["required_discovery_value"] = _safe_call(
-        getattr(reticulum_class, "required_discovery_value"), None
+        getattr(reticulum_class, "required_discovery_value", None),
+        None,
     )
-    source_identities = _safe_call(getattr(reticulum_class, "interface_discovery_sources"), [])
+    source_identities = _safe_call(
+        getattr(reticulum_class, "interface_discovery_sources", None),
+        [],
+    )
     if isinstance(source_identities, Iterable) and not isinstance(source_identities, (str, bytes, bytearray)):
         payload["interface_discovery_sources"] = [
             str(_to_json_safe(value)) for value in source_identities if value is not None
         ]
 
-    discovered_interfaces = _safe_call(getattr(reticulum_class, "discovered_interfaces"), [])
+    discovered_interfaces = _safe_call(
+        getattr(reticulum_class, "discovered_interfaces", None),
+        [],
+    )
     discovered_sequence = _as_sequence(discovered_interfaces)
 
     required_keys = [

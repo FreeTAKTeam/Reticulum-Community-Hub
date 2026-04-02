@@ -113,3 +113,24 @@ def test_capabilities_and_discovery_runtime_snapshot(monkeypatch) -> None:
     assert entry["transport"] == "tcp"
     assert entry["port"] == 4242
     assert entry["config_entry"]["target_host"] == "10.0.0.44"
+
+
+def test_discovery_snapshot_tolerates_missing_runtime_attributes(monkeypatch) -> None:
+    """Return an empty discovery list when optional Reticulum attributes are absent."""
+
+    class _FakeReticulum:
+        @staticmethod
+        def get_instance():
+            return object()
+
+    class _FakeRNS:
+        Reticulum = _FakeReticulum
+
+    monkeypatch.setattr(discovery, "RNS", _FakeRNS)
+
+    snapshot = discovery.get_discovery_snapshot()
+
+    assert snapshot["runtime_active"] is True
+    assert snapshot["should_autoconnect"] is False
+    assert snapshot["interface_discovery_sources"] == []
+    assert snapshot["discovered_interfaces"] == []

@@ -258,7 +258,7 @@ class AnnounceHandler:
         self._api = api
         self._capability_callback = capability_callback
         self._persist_queue: queue.Queue[
-            tuple[str, str | None, str | None, list[str] | None]
+            tuple[str, str | None, str | None, str | None, list[str] | None]
         ] = queue.Queue(
             maxsize=max(1, int(persist_queue_size))
         )
@@ -301,7 +301,7 @@ class AnnounceHandler:
             if self._persist_stop_event.is_set() and self._persist_queue.empty():
                 return
             try:
-                destination_hash, display_name, source_interface, capabilities = self._persist_queue.get(
+                destination_hash, announced_identity_hash, display_name, source_interface, capabilities = self._persist_queue.get(
                     timeout=0.2
                 )
             except queue.Empty:
@@ -313,6 +313,7 @@ class AnnounceHandler:
                     continue
                 api.record_identity_announce(
                     destination_hash,
+                    announced_identity_hash=announced_identity_hash,
                     display_name=display_name,
                     source_interface=source_interface,
                     announce_capabilities=capabilities,
@@ -347,14 +348,16 @@ class AnnounceHandler:
         if destination_key:
             self._persist_announce_async(
                 destination_key,
-                label,
+                announced_identity_hash=identity_key,
+                display_name=label,
                 source_interface="destination",
                 announce_capabilities=list(capabilities) if capabilities else None,
             )
         if identity_key and identity_key != destination_key:
             self._persist_announce_async(
                 identity_key,
-                label,
+                announced_identity_hash=identity_key,
+                display_name=label,
                 source_interface="identity",
                 announce_capabilities=list(capabilities) if capabilities else None,
             )
@@ -436,6 +439,7 @@ class AnnounceHandler:
     def _persist_announce_async(
         self,
         destination_hash: str,
+        announced_identity_hash: str | None,
         display_name: str | None,
         *,
         source_interface: str | None = None,
@@ -458,6 +462,7 @@ class AnnounceHandler:
             self._persist_queue.put_nowait(
                 (
                     destination_hash,
+                    announced_identity_hash,
                     display_name,
                     source_interface,
                     list(announce_capabilities or []) or None,

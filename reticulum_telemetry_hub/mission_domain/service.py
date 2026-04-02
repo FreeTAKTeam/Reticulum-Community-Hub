@@ -3433,15 +3433,20 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                     )
             header_display_orders = {index: index + 1 for index in range(len(headers))}
 
-        checklist = self.create_checklist_online(
-            {
-                "origin_type": "CSV_IMPORT",
-                "name": Path(filename).stem or "Checklist CSV",
-                "description": f"Imported from {filename}",
-                "source_identity": args.get("source_identity"),
-                "mission_uid": args.get("mission_uid"),
-                "columns": columns,
-            }
+        checklist = self._create_checklist(
+            mode=CHECKLIST_MODE_ONLINE,
+            sync_state=CHECKLIST_SYNC_SYNCED,
+            origin_type=ChecklistOriginType.CSV_IMPORT.value,
+            name=Path(filename).stem or "Checklist CSV",
+            description=f"Imported from {filename}",
+            start_time=_utcnow(),
+            created_by=str(
+                args.get("source_identity")
+                or args.get("created_by_team_member_rns_identity")
+                or "unknown"
+            ),
+            mission_uid=args.get("mission_uid"),
+            columns=columns,
         )
         checklist_uid = str(checklist["uid"])
         created_columns = {int(col.get("display_order") or 0): str(col.get("column_uid") or "") for col in checklist.get("columns") or []}
