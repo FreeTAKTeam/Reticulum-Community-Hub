@@ -61,6 +61,10 @@ export interface IdentityEntry {
   last_seen?: string;
   banned?: boolean;
   blackholed?: boolean;
+  client_type?: string;
+  announce_capabilities?: string[];
+  rem_mode?: string;
+  is_rem_capable?: boolean;
 }
 
 export interface ClientEntry {
@@ -69,6 +73,21 @@ export interface ClientEntry {
   identity_id?: string;
   display_name?: string;
   metadata?: Record<string, unknown>;
+  client_type?: string;
+  announce_capabilities?: string[];
+  rem_mode?: string;
+  is_rem_capable?: boolean;
+}
+
+export interface RemPeerEntry {
+  identity?: string;
+  destination_hash?: string;
+  display_name?: string;
+  announce_capabilities?: string[];
+  client_type?: string;
+  registered_mode?: string;
+  last_seen?: string;
+  status?: string;
 }
 
 export interface MissionRecord {

@@ -9,7 +9,10 @@ from types import SimpleNamespace
 import LXMF
 import pytest
 import RNS
+from msgpack import packb
+from sqlalchemy import text as sqlalchemy_text
 
+import reticulum_telemetry_hub.api.storage as api_storage
 from reticulum_telemetry_hub.api.models import FileAttachment
 from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.config import HubConfigurationManager
@@ -743,6 +746,90 @@ def test_delivery_callback_escape_prefixed_invalid_json_replies_error(tmp_path):
         hub.shutdown()
 
 
+def test_delivery_callback_telemetry_only_from_unjoined_sender_does_not_reply_help(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(api_storage, "text", sqlalchemy_text, raising=False)
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    payload = packb({1: int(time.time())}, use_bin_type=True)
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_TELEMETRY: payload},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        assert sent == []
+    finally:
+        hub.shutdown()
+
+
+def test_delivery_callback_plaintext_from_unjoined_sender_replies_help(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(api_storage, "text", sqlalchemy_text, raising=False)
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        content="hello hub",
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        assert len(sent) == 1
+        assert "Command" in sent[0].content_as_string()
+    finally:
+        hub.shutdown()
+
+
+def test_delivery_callback_unknown_command_from_unjoined_sender_does_not_duplicate_help(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(api_storage, "text", sqlalchemy_text, raising=False)
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda message: sent.append(message)
+
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    message = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_COMMANDS: [{PLUGIN_COMMAND: "NotARealCommand"}]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    message.signature_validated = True
+
+    try:
+        hub.delivery_callback(message)
+        assert len(sent) == 1
+        assert "Unknown command" in sent[0].content_as_string()
+    finally:
+        hub.shutdown()
+
+
 def test_delivery_callback_stores_image_field(tmp_path):
     hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
     sent: list[LXMF.LXMessage] = []
@@ -1198,7 +1285,17 @@ def test_mission_registry_event_fanout_is_capability_aware(tmp_path):
     hub.send_message = _capture_send  # type: ignore[assignment]
 
     try:
-        hub.api.grant_identity_capability(source_identity, "r3akt")
+        hub.api.record_identity_announce(
+            source_identity,
+            display_name="REM Alpha",
+            announce_capabilities="R3AKT,EMergencyMessages",
+        )
+        hub.api.record_identity_announce(
+            peer_identity,
+            display_name="Generic Bravo",
+            announce_capabilities=["telemetry"],
+        )
+        hub.api.set_rem_mode(source_identity, "connected")
         assert hub.mission_domain_service is not None
         domain = hub.mission_domain_service
         domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission"})
@@ -1233,43 +1330,178 @@ def test_mission_registry_event_fanout_is_capability_aware(tmp_path):
             }
         )
 
-        custom_type_field = int(getattr(LXMF, "FIELD_CUSTOM_TYPE", 0xFB))
-        custom_data_field = int(getattr(LXMF, "FIELD_CUSTOM_DATA", 0xFC))
-        custom_meta_field = int(getattr(LXMF, "FIELD_CUSTOM_META", 0xFD))
+        event_field = int(getattr(LXMF, "FIELD_EVENT", 0xED))
         renderer_field = int(getattr(LXMF, "FIELD_RENDERER", 0x0F))
         renderer_markdown_value = int(getattr(LXMF, "RENDERER_MARKDOWN", 0x02))
 
-        custom_fanout = [
+        rem_fanout = [
             item
             for item in outbound
             if isinstance(item.get("fields"), dict)
-            and custom_type_field in item["fields"]
+            and event_field in item["fields"]
         ]
-        assert len(custom_fanout) == 1
-        assert custom_fanout[0]["destination"] == source_identity
-        for item in custom_fanout:
+        assert len(rem_fanout) == 1
+        assert rem_fanout[0]["destination"] == source_identity
+        for item in rem_fanout:
             fields = item["fields"]
             assert isinstance(fields, dict)
-            assert fields[custom_type_field] == "r3akt.mission.change.v1"
-            assert fields[custom_data_field]["mission_uid"] == "mission-1"
-            assert (
-                fields[custom_meta_field]["event_type"]
-                == "mission.registry.mission_change.upserted"
-            )
+            assert fields[event_field]["event_type"] == "mission.registry.log_entry.upserted"
+            assert fields[event_field]["payload"]["mission_uid"] == "mission-1"
         generic_fanout = [
             item
             for item in outbound
-            if item.get("destination") == peer_identity
-            and "### Mission " in str(item.get("message") or "")
+            if item.get("destination") == peer_identity and "### Mission Log Update" in str(item.get("message") or "")
         ]
         assert len(generic_fanout) == 1
         generic_message = str(generic_fanout[0].get("message") or "")
-        assert generic_message.startswith("### Mission ")
-        assert "mission-1" not in generic_message
+        assert generic_message.startswith("### Mission Log Update")
+        assert "Mission: mission-1" in generic_message
         peer_fields = generic_fanout[0].get("fields")
         assert isinstance(peer_fields, dict)
-        assert custom_type_field not in peer_fields
         assert peer_fields.get(renderer_field) == renderer_markdown_value
+    finally:
+        hub.shutdown()
+
+
+def test_rem_registry_commands_and_connected_eam_fanout(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+
+    rem_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    generic_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    rem_identity = rem_dest.identity.hash.hex().lower()
+    generic_identity = generic_dest.identity.hash.hex().lower()
+    hub.connections = {
+        rem_dest.identity.hash: rem_dest,
+        generic_dest.identity.hash: generic_dest,
+    }
+    outbound: list[dict[str, object]] = []
+
+    def _capture_send(
+        message: str,
+        *,
+        topic: str | None = None,
+        destination: str | None = None,
+        exclude: set[str] | None = None,
+        fields: dict | None = None,
+        sender: RNS.Destination | None = None,
+    ) -> bool:
+        outbound.append(
+            {
+                "message": message,
+                "topic": topic,
+                "destination": destination,
+                "exclude": exclude,
+                "fields": fields,
+                "sender": sender,
+            }
+        )
+        return True
+
+    class _InboundMessage:
+        def __init__(self, source_destination: RNS.Destination) -> None:
+            self.source = source_destination
+            self.fields: dict = {}
+
+        def get_source(self):
+            return self.source
+
+    hub.send_message = _capture_send  # type: ignore[assignment]
+
+    try:
+        hub.api.record_identity_announce(
+            rem_identity,
+            display_name="REM Alpha",
+            announce_capabilities="R3AKT,EMergencyMessages",
+        )
+        hub.api.record_identity_announce(
+            generic_identity,
+            display_name="Generic Bravo",
+            announce_capabilities=["telemetry"],
+        )
+
+        command_message = _InboundMessage(rem_dest)
+        mode_responses = hub.command_handler(
+            [
+                {
+                    "command_id": "mode-1",
+                    "source": {"rns_identity": rem_identity},
+                    "timestamp": "2026-04-02T12:00:00Z",
+                    "command_type": "rem.registry.mode.set",
+                    "args": {"mode": "connected"},
+                },
+                {
+                    "command_id": "peers-1",
+                    "source": {"rns_identity": rem_identity},
+                    "timestamp": "2026-04-02T12:00:00Z",
+                    "command_type": "rem.registry.peers.list",
+                    "args": {},
+                },
+            ],
+            command_message,
+        )
+
+        result_payloads = [
+            response.fields[LXMF.FIELD_RESULTS]
+            for response in mode_responses
+            if LXMF.FIELD_RESULTS in response.fields
+            and response.fields[LXMF.FIELD_RESULTS].get("status") == "result"
+        ]
+        assert any(payload["result"]["mode"] == "connected" for payload in result_payloads if "mode" in payload["result"])
+        assert any(payload["result"]["items"][0]["identity"] == rem_identity for payload in result_payloads if "items" in payload["result"])
+
+        assert hub.mission_domain_service is not None
+        hub.mission_domain_service.upsert_team({"uid": "team-1", "team_name": "Ops"})
+        hub.mission_domain_service.upsert_team_member(
+            {
+                "uid": "member-1",
+                "team_uid": "team-1",
+                "rns_identity": rem_identity,
+                "display_name": "REM Alpha",
+                "callsign": "OPS-1",
+            }
+        )
+        assert hub.emergency_action_message_service is not None
+        hub.emergency_action_message_service.upsert_message(
+            {
+                "eam_uid": "eam-1",
+                "callsign": "OPS-1",
+                "group_name": "Ops",
+                "team_member_uid": "member-1",
+                "team_uid": "team-1",
+                "reported_by": "REM Alpha",
+                "security_status": "Green",
+                "capability_status": "Red",
+                "preparedness_status": "Green",
+                "medical_status": "Green",
+                "mobility_status": "Green",
+                "comms_status": "Green",
+                "source": {"rns_identity": rem_identity},
+            }
+        )
+
+        rem_messages = [
+            item
+            for item in outbound
+            if item.get("destination") == rem_identity
+            and isinstance(item.get("fields"), dict)
+            and LXMF.FIELD_COMMANDS in item["fields"]
+        ]
+        generic_messages = [
+            item
+            for item in outbound
+            if item.get("destination") == generic_identity
+            and "### Emergency Message Updated" in str(item.get("message") or "")
+        ]
+
+        assert rem_messages
+        command_payload = rem_messages[0]["fields"][LXMF.FIELD_COMMANDS][0]
+        assert command_payload["command_type"] == "mission.registry.eam.upsert"
+        assert command_payload["args"]["eam_uid"] == "eam-1"
+        assert generic_messages
     finally:
         hub.shutdown()
 

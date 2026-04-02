@@ -272,7 +272,7 @@ def test_status_service_ttl_overall_status_and_summary_shape(tmp_path) -> None:
         "team_uid": team_uid,
         "total": 2,
         "active_total": 1,
-        "deleted_total": 0,
+        "deleted_total": 1,
         "overall_status": "Green",
         "green_total": 1,
         "yellow_total": 0,
@@ -379,3 +379,61 @@ def test_status_service_soft_deletes_messages_and_counts_deleted_rows(tmp_path) 
         "updated_at_ms": summary["updated_at_ms"],
     }
     assert isinstance(summary["updated_at_ms"], int)
+
+
+def test_status_service_recreates_deleted_rows_for_same_member_and_callsign(tmp_path) -> None:
+    domain, status_service = _services(tmp_path)
+    team_uid = "team-recreate"
+    _seed_team(
+        domain,
+        team_uid=team_uid,
+        team_name="Ops",
+        member_ids=("member-a", "member-b"),
+    )
+
+    status_service.upsert_message(
+        _payload(
+            eam_uid="eam-old",
+            callsign="OPS-1",
+            team_member_uid="member-a",
+            team_uid=team_uid,
+            group_name="Ops",
+            source={"rns_identity": "peer-a", "display_name": "Peer A"},
+        )
+    )
+    status_service.delete_message("OPS-1")
+
+    recreated_same_member = status_service.upsert_message(
+        _payload(
+            eam_uid="eam-new",
+            callsign="OPS-1A",
+            team_member_uid="member-a",
+            team_uid=team_uid,
+            group_name="Ops",
+            source={"rns_identity": "peer-a", "display_name": "Peer A"},
+        )
+    )
+    status_service.delete_message("OPS-1A")
+
+    recreated_same_callsign = status_service.upsert_message(
+        _payload(
+            eam_uid="eam-third",
+            callsign="OPS-1A",
+            team_member_uid="member-b",
+            team_uid=team_uid,
+            group_name="Ops",
+            source={"rns_identity": "peer-b", "display_name": "Peer B"},
+        )
+    )
+
+    assert recreated_same_member["eam_uid"] == "eam-new"
+    assert recreated_same_member["team_member_uid"] == "member-a"
+    assert recreated_same_member["callsign"] == "OPS-1A"
+    assert recreated_same_callsign["eam_uid"] == "eam-third"
+    assert recreated_same_callsign["team_member_uid"] == "member-b"
+    assert recreated_same_callsign["callsign"] == "OPS-1A"
+    listed = status_service.list_messages(team_uid=team_uid)
+    assert len(listed) == 1
+    assert listed[0]["eam_uid"] == "eam-third"
+    assert listed[0]["team_member_uid"] == "member-b"
+    assert listed[0]["callsign"] == "OPS-1A"

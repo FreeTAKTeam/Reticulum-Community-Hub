@@ -122,12 +122,30 @@ class HubStorageBase:
         """Convert a ClientRecord into a domain model."""
         metadata = dict(record.metadata_json or {})
         display_name = None
+        announce_capabilities: list[str] = []
+        client_type = "generic_lxmf"
         if announce is not None and announce.display_name:
             display_name = announce.display_name
             metadata.setdefault("display_name", display_name)
         elif isinstance(metadata.get("display_name"), str):
             display_name = metadata.get("display_name")
-        client = Client(identity=record.identity, metadata=metadata, display_name=display_name)
+        if announce is not None:
+            raw_caps = announce.announce_capabilities_json or []
+            if isinstance(raw_caps, list):
+                announce_capabilities = [
+                    str(item).strip().lower() for item in raw_caps if str(item).strip()
+                ]
+            raw_client_type = str(announce.client_type or "").strip().lower()
+            if raw_client_type:
+                client_type = raw_client_type
+        client = Client(
+            identity=record.identity,
+            metadata=metadata,
+            display_name=display_name,
+            client_type=client_type,
+            announce_capabilities=announce_capabilities,
+            is_rem_capable=client_type == "rem",
+        )
         client.last_seen = record.last_seen
         return client
 

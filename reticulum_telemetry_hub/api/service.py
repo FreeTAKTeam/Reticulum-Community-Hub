@@ -23,6 +23,9 @@ from .models import ChatMessage
 from .models import Client
 from .models import FileAttachment
 from .models import IdentityStatus
+from .models import RemPeer
+from .rem_registry_service import DEFAULT_REM_MODE
+from .rem_registry_service import RemRegistryService
 from .models import ReticulumInfo
 from .models import Subscriber
 from .models import Topic
@@ -60,6 +63,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         self._filesystem = filesystem or LocalFileSystemAdapter()
         self._rights_storage = HubStorage(hub_db_path)
         self._rights = SubjectAwareRightsService(self._rights_storage)
+        self._rem_registry = RemRegistryService(self._storage)
         self._file_category = "file"
         self._image_category = "image"
         self._on_config_reload = on_config_reload
@@ -199,7 +203,10 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         Returns:
             List[Client]: All persisted client records in insertion order.
         """
-        return self._storage.list_clients()
+        return [
+            self._rem_registry.annotate_client(client)
+            for client in self._storage.list_clients()
+        ]
 
     def has_client(self, identity: str) -> bool:
         """Return ``True`` when the client is registered with the hub.
@@ -220,6 +227,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         *,
         display_name: str | None = None,
         source_interface: str | None = None,
+        announce_capabilities: object = None,
     ) -> None:
         """Persist announce metadata for a Reticulum identity.
 
@@ -232,10 +240,11 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         if not identity:
             raise ValueError("identity is required")
         identity = identity.lower()
-        self._storage.upsert_identity_announce(
+        self._rem_registry.record_identity_announce(
             identity,
             display_name=display_name,
             source_interface=source_interface,
+            announce_capabilities=announce_capabilities,
         )
 
     def resolve_identity_display_name(self, identity: str) -> str | None:
@@ -254,6 +263,55 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         if not identity:
             return []
         return self._rights.resolve_effective_operations(identity, mission_uid=None)
+
+    def list_identity_announce_capabilities(self, identity: str) -> List[str]:
+        """Return normalized announce capabilities for an identity."""
+
+        if not identity:
+            return []
+        record = self._storage.get_identity_announce(identity.lower())
+        if record is None or not isinstance(record.announce_capabilities_json, list):
+            return []
+        return [
+            str(item).strip().lower()
+            for item in record.announce_capabilities_json
+            if str(item).strip()
+        ]
+
+    def get_rem_mode(self, identity: str) -> str:
+        """Return the persisted or default REM mode for an identity."""
+
+        if not identity:
+            return DEFAULT_REM_MODE
+        return self._rem_registry.get_rem_mode(identity)
+
+    def set_rem_mode(self, identity: str, mode: str) -> dict[str, object]:
+        """Persist and return a REM mode registration result."""
+
+        return self._rem_registry.set_rem_mode(identity, mode=mode)
+
+    def list_rem_peers(self) -> list[RemPeer]:
+        """Return active REM-capable peers."""
+
+        return self._rem_registry.list_active_rem_peers()
+
+    def rem_peer_registry(self) -> dict[str, object]:
+        """Return the canonical REM peer registry payload."""
+
+        return self._rem_registry.build_peer_list_payload()
+
+    def effective_rem_connected_mode(self) -> bool:
+        """Return True when connected REM mode is currently enabled."""
+
+        return self._rem_registry.effective_connected_mode()
+
+    def rem_fanout_recipients(
+        self,
+        joined_identities: list[str],
+    ) -> dict[str, list[str]]:
+        """Return mode-aware REM/generic fanout recipient buckets."""
+
+        return self._rem_registry.fanout_recipients(joined_identities)
 
     def list_capability_grants(self, identity: str | None = None) -> List[dict]:
         """Return persisted capability grant entries."""
@@ -1135,7 +1193,8 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             elif announce and announce.destination_hash:
                 identity_value = announce.destination_hash
             statuses.append(
-                IdentityStatus(
+                self._rem_registry.annotate_identity_status(
+                    IdentityStatus(
                     identity=identity_value,
                     status=status,
                     last_seen=last_seen,
@@ -1143,6 +1202,13 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
                     metadata=metadata,
                     is_banned=is_banned,
                     is_blackholed=is_blackholed,
+                    client_type=str(announce.client_type or "generic_lxmf").strip().lower()
+                    if announce is not None
+                    else "generic_lxmf",
+                    announce_capabilities=list(announce.announce_capabilities_json or [])
+                    if announce is not None and isinstance(announce.announce_capabilities_json, list)
+                    else [],
+                    )
                 )
             )
         return self._dedupe_identity_statuses(
@@ -1308,7 +1374,8 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         last_seen = announce.last_seen if announce else None
         if last_seen and last_seen.tzinfo is None:
             last_seen = last_seen.replace(tzinfo=timezone.utc)
-        return IdentityStatus(
+        return self._rem_registry.annotate_identity_status(
+            IdentityStatus(
             identity=identity,
             status="banned",
             last_seen=last_seen or (client.last_seen if client else None),
@@ -1316,6 +1383,13 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             metadata=metadata,
             is_banned=state.is_banned,
             is_blackholed=state.is_blackholed,
+            client_type=str(announce.client_type or "generic_lxmf").strip().lower()
+            if announce is not None
+            else "generic_lxmf",
+            announce_capabilities=list(announce.announce_capabilities_json or [])
+            if announce is not None and isinstance(announce.announce_capabilities_json, list)
+            else [],
+            )
         )
 
     def unban_identity(self, identity: str) -> IdentityStatus:
@@ -1338,7 +1412,8 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         status = "inactive"
         if last_seen and last_seen >= datetime.now(timezone.utc) - timedelta(minutes=60):
             status = "active"
-        return IdentityStatus(
+        return self._rem_registry.annotate_identity_status(
+            IdentityStatus(
             identity=identity,
             status=status,
             last_seen=last_seen or (client.last_seen if client else None),
@@ -1346,6 +1421,13 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             metadata=metadata,
             is_banned=state.is_banned,
             is_blackholed=state.is_blackholed,
+            client_type=str(announce.client_type or "generic_lxmf").strip().lower()
+            if announce is not None
+            else "generic_lxmf",
+            announce_capabilities=list(announce.announce_capabilities_json or [])
+            if announce is not None and isinstance(announce.announce_capabilities_json, list)
+            else [],
+            )
         )
 
     def blackhole_identity(self, identity: str) -> IdentityStatus:
@@ -1363,7 +1445,8 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         last_seen = announce.last_seen if announce else None
         if last_seen and last_seen.tzinfo is None:
             last_seen = last_seen.replace(tzinfo=timezone.utc)
-        return IdentityStatus(
+        return self._rem_registry.annotate_identity_status(
+            IdentityStatus(
             identity=identity,
             status="blackholed",
             last_seen=last_seen or (client.last_seen if client else None),
@@ -1371,6 +1454,13 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             metadata=metadata,
             is_banned=state.is_banned,
             is_blackholed=state.is_blackholed,
+            client_type=str(announce.client_type or "generic_lxmf").strip().lower()
+            if announce is not None
+            else "generic_lxmf",
+            announce_capabilities=list(announce.announce_capabilities_json or [])
+            if announce is not None and isinstance(announce.announce_capabilities_json, list)
+            else [],
+            )
         )
 
     def _store_attachment(  # pylint: disable=too-many-arguments

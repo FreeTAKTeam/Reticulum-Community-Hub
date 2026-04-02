@@ -305,19 +305,60 @@ def test_join_and_leave_require_identity(tmp_path):
 
 def test_identity_announce_merges_display_name(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
+    api.record_identity_announce(
+        "deadbeef",
+        display_name="Sideband-Alice",
+        announce_capabilities=["R3AKT", "EMergencyMessages"],
+    )
     api.join("deadbeef")
+    api.set_rem_mode("deadbeef", "semi_autonomous")
 
     clients = api.list_clients()
     assert len(clients) == 1
     client = clients[0]
     assert client.display_name == "Sideband-Alice"
     assert client.metadata.get("display_name") == "Sideband-Alice"
+    assert client.client_type == "rem"
+    assert client.announce_capabilities == ["r3akt", "emergencymessages"]
+    assert client.rem_mode == "semi_autonomous"
+    assert client.is_rem_capable is True
 
     statuses = api.list_identity_statuses()
     status = next(item for item in statuses if item.identity == "deadbeef")
     assert status.display_name == "Sideband-Alice"
     assert status.metadata.get("display_name") == "Sideband-Alice"
+    assert status.client_type == "rem"
+    assert status.rem_mode == "semi_autonomous"
+    assert status.is_rem_capable is True
+
+
+def test_rem_mode_and_peer_registry_persist_between_instances(tmp_path):
+    cfg = make_config_manager(tmp_path)
+    api1 = ReticulumTelemetryHubAPI(config_manager=cfg)
+    api1.record_identity_announce(
+        "deadbeef",
+        display_name="REM Alpha",
+        source_interface="identity",
+        announce_capabilities="R3AKT,EMergencyMessages,Telemetry",
+    )
+    api1.record_identity_announce(
+        "cafebabe",
+        display_name="Generic Bravo",
+        source_interface="identity",
+        announce_capabilities=["telemetry"],
+    )
+    api1.set_rem_mode("deadbeef", "connected")
+
+    api2 = ReticulumTelemetryHubAPI(config_manager=cfg)
+    payload = api2.rem_peer_registry()
+
+    assert api2.get_rem_mode("deadbeef") == "connected"
+    assert api2.effective_rem_connected_mode() is True
+    assert payload["effective_connected_mode"] is True
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["identity"] == "deadbeef"
+    assert payload["items"][0]["client_type"] == "rem"
+    assert payload["items"][0]["registered_mode"] == "connected"
 
 
 def test_identity_announce_ignores_missing_name(tmp_path):

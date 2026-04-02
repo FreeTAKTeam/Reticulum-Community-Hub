@@ -8,6 +8,7 @@ from datetime import timedelta
 from datetime import timezone
 import json
 from pathlib import Path
+from typing import Callable
 from typing import Any
 from typing import Mapping
 import uuid
@@ -138,6 +139,7 @@ class EmergencyActionMessageService:
         Base.metadata.create_all(self._engine)
         self._ensure_deleted_at_column()
         self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
+        self._status_listeners: list[Callable[[str, dict[str, Any]], None]] = []
 
     def _enable_wal_mode(self) -> None:
         """Enable WAL mode when SQLite supports it."""
@@ -183,6 +185,29 @@ class EmergencyActionMessageService:
             raise
         finally:
             session.close()
+
+    def register_status_listener(
+        self,
+        listener: Callable[[str, dict[str, Any]], None],
+    ) -> Callable[[], None]:
+        """Register a callback invoked after EAM upsert/delete operations."""
+
+        self._status_listeners.append(listener)
+
+        def _remove_listener() -> None:
+            if listener in self._status_listeners:
+                self._status_listeners.remove(listener)
+
+        return _remove_listener
+
+    def _notify_status_listeners(self, event_type: str, payload: dict[str, Any]) -> None:
+        """Notify registered EAM listeners with the latest snapshot payload."""
+
+        for listener in list(self._status_listeners):
+            try:
+                listener(event_type, dict(payload))
+            except Exception:
+                continue
 
     def list_messages(
         self,
@@ -244,35 +269,72 @@ class EmergencyActionMessageService:
                         f"team_member_uid '{normalized['team_member_uid']}' does not belong to team_uid '{normalized['team_uid']}'"
                     )
 
-            row = (
+            active_row = (
                 session.query(EmergencyActionMessageRecord)
                 .filter(
                     EmergencyActionMessageRecord.subject_type == "member",
                     EmergencyActionMessageRecord.subject_id == normalized["team_member_uid"],
+                    EmergencyActionMessageRecord.deleted_at.is_(None),
                 )
                 .one_or_none()
             )
-            conflicting_callsign = (
+            deleted_row = (
                 session.query(EmergencyActionMessageRecord)
-                .filter(EmergencyActionMessageRecord.callsign == normalized["callsign"])
+                .filter(
+                    EmergencyActionMessageRecord.subject_type == "member",
+                    EmergencyActionMessageRecord.subject_id == normalized["team_member_uid"],
+                    EmergencyActionMessageRecord.deleted_at.is_not(None),
+                )
                 .one_or_none()
             )
-            if conflicting_callsign is not None and (
-                row is None or conflicting_callsign.id != row.id
+            active_callsign = (
+                session.query(EmergencyActionMessageRecord)
+                .filter(
+                    EmergencyActionMessageRecord.callsign == normalized["callsign"],
+                    EmergencyActionMessageRecord.deleted_at.is_(None),
+                )
+                .one_or_none()
+            )
+            deleted_callsign = (
+                session.query(EmergencyActionMessageRecord)
+                .filter(
+                    EmergencyActionMessageRecord.callsign == normalized["callsign"],
+                    EmergencyActionMessageRecord.deleted_at.is_not(None),
+                )
+                .one_or_none()
+            )
+
+            if active_callsign is not None and (
+                active_row is None or active_callsign.id != active_row.id
             ):
                 raise ValueError(
                     f"callsign '{normalized['callsign']}' is already assigned to another status snapshot"
                 )
+
+            row = active_row
+            if row is None:
+                revive_candidates = {
+                    candidate.id: candidate
+                    for candidate in (deleted_row, deleted_callsign)
+                    if candidate is not None
+                }
+                if len(revive_candidates) > 1:
+                    raise ValueError(
+                        "eam_uid cannot be recreated because deleted subject and callsign snapshots refer to different records"
+                    )
+                row = next(iter(revive_candidates.values()), None)
 
             if row is None:
                 row = EmergencyActionMessageRecord(
                     id=normalized["eam_uid"] or uuid.uuid4().hex
                 )
                 session.add(row)
-            elif normalized["eam_uid"] and row.id != normalized["eam_uid"]:
+            elif active_row is not None and normalized["eam_uid"] and row.id != normalized["eam_uid"]:
                 raise ValueError(
                     f"eam_uid '{normalized['eam_uid']}' does not match the existing snapshot for team_member_uid '{normalized['team_member_uid']}'"
                 )
+            elif normalized["eam_uid"]:
+                row.id = normalized["eam_uid"]
 
             row.callsign = normalized["callsign"]
             row.subject_type = "member"
@@ -300,7 +362,9 @@ class EmergencyActionMessageService:
                     "EmergencyActionMessage conflicts with an existing snapshot"
                 ) from exc
 
-            return self._serialize_message(session, row)
+            snapshot = self._serialize_message(session, row)
+            self._notify_status_listeners("mission.registry.eam.upserted", snapshot)
+            return snapshot
 
     def get_message_by_callsign(self, callsign: str) -> dict[str, Any]:
         """Return the current snapshot for a callsign."""
@@ -316,6 +380,7 @@ class EmergencyActionMessageService:
             row = self._get_message_row_by_callsign(session, callsign)
             data = self._serialize_message(session, row)
             row.deleted_at = _utcnow()
+            self._notify_status_listeners("mission.registry.eam.deleted", data)
             return data
 
     def get_latest_message(self, team_member_uid: str) -> dict[str, Any]:
@@ -340,7 +405,7 @@ class EmergencyActionMessageService:
             return self._serialize_message(session, row)
 
     def get_team_summary(self, team_uid: str) -> dict[str, Any]:
-        """Compute a REM-compatible team summary from active snapshots."""
+        """Compute a REM-compatible team summary using active/deleted buckets."""
 
         normalized_team_uid = str(team_uid or "").strip()
         if not normalized_team_uid:
@@ -359,11 +424,13 @@ class EmergencyActionMessageService:
                 for row in rows
                 if row.deleted_at is None and not self._is_expired(row)
             ]
+            deleted_or_expired_total = sum(
+                1 for row in rows if row.deleted_at is not None or self._is_expired(row)
+            )
             updated_at = max(
                 (row.updated_at for row in rows),
                 default=_utcnow(),
             )
-            deleted_total = sum(1 for row in rows if row.deleted_at is not None)
             green_total = sum(1 for row in active_rows if row.overall_status == "Green")
             yellow_total = sum(1 for row in active_rows if row.overall_status == "Yellow")
             red_total = sum(1 for row in active_rows if row.overall_status == "Red")
@@ -378,7 +445,7 @@ class EmergencyActionMessageService:
                 "team_uid": normalized_team_uid,
                 "total": len(rows),
                 "active_total": len(active_rows),
-                "deleted_total": deleted_total,
+                "deleted_total": deleted_or_expired_total,
                 "overall_status": overall_status,
                 "green_total": green_total,
                 "yellow_total": yellow_total,

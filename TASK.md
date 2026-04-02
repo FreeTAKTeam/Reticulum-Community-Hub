@@ -1,4 +1,6 @@
 # TASKS
+- 2026-04-02: DONE. Stop auto-help replies from treating passive background LXMF traffic as user text so idle clients do not receive periodic command lists.
+- 2026-04-02: DONE. Add REM peer classification, persisted REM mode registration, southbound REM peer/mode commands, connected-mode EAM/log fanout policy, and UI visibility for REM vs generic LXMF clients.
 - 2026-04-01: DONE. Align Emergency Action Message handling with REM by adopting canonical color-team UIDs, REM-native EAM payloads, automatic canonical team/member provisioning, and matching southbound/northbound tests.
 - 2026-03-30: DONE. Convert the ARES go-kit PDF into a structured radio checklist CSV under `Files/ExCheckTemplates`.
 - 2026-03-30: DONE. Create evacuation, bug-out, vehicle, and safe-zone exfil checklist CSV templates under `Files/ExCheckTemplates` based on the existing checklist examples.

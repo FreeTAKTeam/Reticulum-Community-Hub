@@ -15,6 +15,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
+from sqlalchemy.sql import text
 from sqlalchemy.sql.functions import count as sa_count
 
 from .models import ChatMessage
@@ -32,6 +33,7 @@ from .storage_models import ClientRecord
 from .storage_models import FileRecord
 from .storage_models import IdentityAnnounceRecord
 from .storage_models import IdentityCapabilityGrantRecord
+from .storage_models import IdentityRemModeRecord
 from .storage_models import IdentityStateRecord
 from .storage_models import R3aktMissionRecord
 from .storage_models import R3aktTeamMemberClientLinkRecord
@@ -62,6 +64,7 @@ class HubStorage(HubStorageBase):
         Base.metadata.create_all(self._engine)
         self._ensure_file_topic_column()
         self._ensure_chat_delivery_metadata_column()
+        self._ensure_identity_announce_columns()
         self._ensure_indexes()
         self._backfill_identity_capability_grants()
         self._session_factory = sessionmaker(  # pylint: disable=invalid-name
@@ -431,6 +434,8 @@ class HubStorage(HubStorageBase):
         *,
         display_name: str | None = None,
         source_interface: str | None = None,
+        announce_capabilities: list[str] | None = None,
+        client_type: str | None = None,
     ) -> IdentityAnnounceRecord:
         """Insert or update Reticulum announce metadata."""
 
@@ -440,8 +445,11 @@ class HubStorage(HubStorageBase):
             insert_values = {
                 "destination_hash": identity,
                 "display_name": display_name,
+                "announce_capabilities": list(announce_capabilities or []) or None,
+                "client_type": client_type,
                 "first_seen": now,
                 "last_seen": now,
+                "last_capability_seen_at": now if announce_capabilities is not None else None,
                 "source_interface": source_interface,
             }
             update_values = {"last_seen": now}
@@ -449,7 +457,12 @@ class HubStorage(HubStorageBase):
                 update_values["display_name"] = display_name
             if source_interface:
                 update_values["source_interface"] = source_interface
-            stmt = sqlite_insert(IdentityAnnounceRecord).values(**insert_values)
+            if announce_capabilities is not None:
+                update_values["announce_capabilities"] = list(announce_capabilities)
+                update_values["last_capability_seen_at"] = now
+            if client_type:
+                update_values["client_type"] = client_type
+            stmt = sqlite_insert(IdentityAnnounceRecord.__table__).values(**insert_values)
             stmt = stmt.on_conflict_do_update(
                 index_elements=[IdentityAnnounceRecord.destination_hash],
                 set_=update_values,
@@ -472,6 +485,55 @@ class HubStorage(HubStorageBase):
 
         with self._session_scope() as session:
             return session.query(IdentityAnnounceRecord).all()
+
+    def upsert_identity_rem_mode(
+        self,
+        identity: str,
+        *,
+        mode: str,
+    ) -> IdentityRemModeRecord:
+        """Insert or update a persisted REM mode registration."""
+
+        normalized_identity = identity.strip().lower()
+        normalized_mode = mode.strip().lower()
+        now = _utcnow()
+        with self._session_scope() as session:
+            insert_values = {
+                "identity": normalized_identity,
+                "mode": normalized_mode,
+                "requested_at": now,
+                "updated_at": now,
+            }
+            stmt = sqlite_insert(IdentityRemModeRecord).values(**insert_values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[IdentityRemModeRecord.identity],
+                set_={
+                    "mode": normalized_mode,
+                    "updated_at": now,
+                },
+            )
+            session.execute(stmt)
+            session.commit()
+            record = session.get(IdentityRemModeRecord, normalized_identity)
+            if record is None:  # pragma: no cover - defensive
+                raise RuntimeError("Failed to persist identity REM mode")
+            return record
+
+    def get_identity_rem_mode(self, identity: str) -> IdentityRemModeRecord | None:
+        """Return the persisted REM mode registration for an identity."""
+
+        with self._session_scope() as session:
+            return session.get(IdentityRemModeRecord, identity.strip().lower())
+
+    def list_identity_rem_modes(self) -> List[IdentityRemModeRecord]:
+        """Return all persisted REM mode registrations."""
+
+        with self._session_scope() as session:
+            return (
+                session.query(IdentityRemModeRecord)
+                .order_by(IdentityRemModeRecord.identity.asc())
+                .all()
+            )
 
     def upsert_identity_capability(
         self,
@@ -1043,6 +1105,33 @@ class HubStorage(HubStorageBase):
                     conn.exec_driver_sql(statement)
         except OperationalError as exc:
             logging.warning("Failed to create SQLite indexes: %s", exc)
+
+    def _ensure_identity_announce_columns(self) -> None:
+        """Ensure REM announce metadata columns exist on legacy databases."""
+
+        statements = []
+        try:
+            with self._engine.connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as conn:
+                result = conn.execute(text("PRAGMA table_info(identity_announces);"))
+                column_names = {str(row[1]) for row in result.fetchall()}
+                if "announce_capabilities" not in column_names:
+                    statements.append(
+                        "ALTER TABLE identity_announces ADD COLUMN announce_capabilities JSON;"
+                    )
+                if "client_type" not in column_names:
+                    statements.append(
+                        "ALTER TABLE identity_announces ADD COLUMN client_type VARCHAR;"
+                    )
+                if "last_capability_seen_at" not in column_names:
+                    statements.append(
+                        "ALTER TABLE identity_announces ADD COLUMN last_capability_seen_at DATETIME;"
+                    )
+                for statement in statements:
+                    conn.execute(text(statement))
+        except OperationalError as exc:
+            logging.warning("Failed to ensure identity_announces REM columns: %s", exc)
 
     def _backfill_identity_capability_grants(self) -> None:
         """Copy legacy identity capability grants into subject-aware rights."""

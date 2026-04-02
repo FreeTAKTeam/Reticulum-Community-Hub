@@ -44,6 +44,7 @@ from .routes_checklists import register_checklist_routes
 from .routes_r3akt import register_r3akt_routes
 from .routes_zones import register_zone_routes
 from .routes_rest import register_core_routes
+from .routes_rem import register_rem_routes
 from .routes_subscribers import register_subscriber_routes
 from .routes_topics import register_topic_routes
 from .routes_ws import register_ws_routes
@@ -228,6 +229,11 @@ def create_app(
         require_protected=require_protected,
         resolve_openapi_spec=_resolve_openapi_spec,
         auth=auth,
+    )
+    register_rem_routes(
+        app,
+        api=api,
+        require_protected=require_protected,
     )
     register_file_routes(
         app,

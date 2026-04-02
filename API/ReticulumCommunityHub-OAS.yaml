@@ -84,7 +84,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/EmergencyActionMessage'
+                  $ref: '#/components/schemas/EmergencyActionMessagePayload'
     post:
       x-scope: protected
       tags:
@@ -98,14 +98,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/EmergencyActionMessageUpsertRequest'
+              $ref: '#/components/schemas/EmergencyActionMessageUpsertPayload'
       responses:
         '200':
           description: Stored status snapshot.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EmergencyActionMessage'
+                $ref: '#/components/schemas/EmergencyActionMessagePayload'
   /api/EmergencyActionMessage/latest/{team_member_uid}:
     get:
       x-scope: protected
@@ -127,7 +127,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EmergencyActionMessage'
+                $ref: '#/components/schemas/EmergencyActionMessagePayload'
         '404':
           description: Status snapshot not found.
           content:
@@ -155,7 +155,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TeamStatusSummary'
+                $ref: '#/components/schemas/EamTeamSummaryPayload'
         '404':
           description: Team not found.
           content:
@@ -183,7 +183,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EmergencyActionMessage'
+                $ref: '#/components/schemas/EmergencyActionMessagePayload'
         '404':
           description: Status snapshot not found.
           content:
@@ -209,14 +209,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/EmergencyActionMessageUpsertRequest'
+              $ref: '#/components/schemas/EmergencyActionMessageUpsertPayload'
       responses:
         '200':
           description: Stored status snapshot.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EmergencyActionMessage'
+                $ref: '#/components/schemas/EmergencyActionMessagePayload'
     delete:
       x-scope: protected
       tags:
@@ -237,7 +237,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EmergencyActionMessage'
+                $ref: '#/components/schemas/EmergencyActionMessagePayload'
         '404':
           description: Status snapshot not found.
           content:
@@ -4466,7 +4466,7 @@ components:
         - Yellow
         - Red
         - Unknown
-    EAMSource:
+    EamSourcePayload:
       type: object
       properties:
         rns_identity:
@@ -4475,7 +4475,7 @@ components:
         display_name:
           type: string
           nullable: true
-    EmergencyActionMessage:
+    EmergencyActionMessagePayload:
       type: object
       properties:
         eam_uid:
@@ -4523,7 +4523,7 @@ components:
           minimum: 0
           nullable: true
         source:
-          $ref: '#/components/schemas/EAMSource'
+          $ref: '#/components/schemas/EamSourcePayload'
           nullable: true
       required:
         - eam_uid
@@ -4538,7 +4538,7 @@ components:
         - medical_status
         - mobility_status
         - comms_status
-    EmergencyActionMessageUpsertRequest:
+    EmergencyActionMessageUpsertPayload:
       type: object
       properties:
         eam_uid:
@@ -4598,13 +4598,13 @@ components:
           minimum: 0
           nullable: true
         source:
-          $ref: '#/components/schemas/EAMSource'
+          $ref: '#/components/schemas/EamSourcePayload'
           nullable: true
       required:
         - callsign
         - team_member_uid
         - team_uid
-    TeamStatusSummary:
+    EamTeamSummaryPayload:
       type: object
       properties:
         team_uid:

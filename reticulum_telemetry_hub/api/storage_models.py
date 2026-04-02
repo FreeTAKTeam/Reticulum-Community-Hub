@@ -164,9 +164,25 @@ class IdentityAnnounceRecord(Base):  # pylint: disable=too-few-public-methods
 
     destination_hash = Column(String, primary_key=True)
     display_name = Column(String, nullable=True)
+    announce_capabilities_json = Column("announce_capabilities", JSON, nullable=True)
+    client_type = Column(String, nullable=True)
     first_seen = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     last_seen = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    last_capability_seen_at = Column(DateTime(timezone=True), nullable=True)
     source_interface = Column(String, nullable=True)
+
+
+class IdentityRemModeRecord(Base):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy record for persisted REM client mode registrations."""
+
+    __tablename__ = "identity_rem_modes"
+
+    identity = Column(String, primary_key=True)
+    mode = Column(String, nullable=False)
+    requested_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
 
 
 class IdentityCapabilityGrantRecord(Base):  # pylint: disable=too-few-public-methods

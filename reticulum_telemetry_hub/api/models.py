@@ -148,6 +148,10 @@ class Client:
     last_seen: datetime = field(default_factory=_now)
     display_name: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    client_type: str = "generic_lxmf"
+    announce_capabilities: List[str] = field(default_factory=list)
+    rem_mode: Optional[str] = None
+    is_rem_capable: bool = False
 
     def touch(self) -> None:
         """Update ``last_seen`` to the latest timestamp in UTC."""
@@ -391,6 +395,10 @@ class IdentityStatus:
     metadata: Dict[str, Any] = field(default_factory=dict)
     is_banned: bool = False
     is_blackholed: bool = False
+    client_type: str = "generic_lxmf"
+    announce_capabilities: List[str] = field(default_factory=list)
+    rem_mode: Optional[str] = None
+    is_rem_capable: bool = False
 
     def to_dict(self) -> dict:
         """Serialize the identity status into JSON-friendly values."""
@@ -403,4 +411,36 @@ class IdentityStatus:
             "Metadata": _json_safe(self.metadata or {}),
             "IsBanned": self.is_banned,
             "IsBlackholed": self.is_blackholed,
+            "ClientType": self.client_type,
+            "AnnounceCapabilities": list(self.announce_capabilities or []),
+            "RemMode": self.rem_mode,
+            "IsRemCapable": self.is_rem_capable,
+        }
+
+
+@dataclass
+class RemPeer:
+    """Backend-computed REM peer registry entry."""
+
+    identity: str
+    destination_hash: str
+    display_name: Optional[str] = None
+    announce_capabilities: List[str] = field(default_factory=list)
+    client_type: str = "generic_lxmf"
+    registered_mode: str = "autonomous"
+    last_seen: Optional[datetime] = None
+    status: str = "inactive"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the REM peer entry for northbound and southbound responses."""
+
+        return {
+            "identity": self.identity,
+            "destination_hash": self.destination_hash,
+            "display_name": self.display_name,
+            "announce_capabilities": _json_safe(list(self.announce_capabilities or [])),
+            "client_type": self.client_type,
+            "registered_mode": self.registered_mode,
+            "last_seen": self.last_seen.isoformat() if self.last_seen else None,
+            "status": self.status,
         }

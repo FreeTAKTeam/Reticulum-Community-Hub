@@ -24,6 +24,11 @@
               <span class="tree-label">Identities</span>
               <span class="tree-count">{{ usersStore.identities.length }}</span>
             </button>
+            <button class="tree-item" :class="{ active: activeTab === 'rem-peers' }" type="button" @click="activeTab = 'rem-peers'">
+              <span class="tree-dot" aria-hidden="true"></span>
+              <span class="tree-label">REM Peers</span>
+              <span class="tree-count">{{ usersStore.remPeers.length }}</span>
+            </button>
             <button class="tree-item" :class="{ active: activeTab === 'routing' }" type="button" @click="activeTab = 'routing'">
               <span class="tree-dot" aria-hidden="true"></span>
               <span class="tree-label">Routing</span>
@@ -57,6 +62,9 @@
           <div v-else-if="activeTab === 'identities'" class="tree-search">
             <input v-model="identityFilter" type="text" placeholder="Filter identities by name/hash" />
           </div>
+          <div v-else-if="activeTab === 'rem-peers'" class="tree-search">
+            <input v-model="remPeerFilter" type="text" placeholder="Filter REM peers by name/hash/mode" />
+          </div>
           <div v-else-if="activeTab === 'teams'" class="tree-search">
             <input v-model="teamFilter" type="text" placeholder="Filter teams by name/mission" />
           </div>
@@ -84,6 +92,9 @@
               <button class="panel-tab" :class="{ active: activeTab === 'identities' }" type="button" @click="activeTab = 'identities'">
                 Identities
               </button>
+              <button class="panel-tab" :class="{ active: activeTab === 'rem-peers' }" type="button" @click="activeTab = 'rem-peers'">
+                REM Peers
+              </button>
               <button class="panel-tab" :class="{ active: activeTab === 'routing' }" type="button" @click="activeTab = 'routing'">
                 Routing
               </button>
@@ -104,7 +115,7 @@
             </div>
           </div>
 
-          <LoadingSkeleton v-if="usersStore.loading && (activeTab === 'clients' || activeTab === 'identities')" />
+          <LoadingSkeleton v-if="usersStore.loading && (activeTab === 'clients' || activeTab === 'identities' || activeTab === 'rem-peers')" />
           <div v-else>
             <div v-if="activeTab === 'clients'" class="card-grid">
               <div
@@ -124,6 +135,12 @@
                 <div class="registry-card-meta">
                   <div><span>Last Seen</span><span>{{ formatTimestamp(client.last_seen_at) }}</span></div>
                   <div><span>Metadata</span><span class="mono">{{ formatMetadata(client.metadata) }}</span></div>
+                </div>
+                <div class="registry-card-badges">
+                  <BaseBadge :tone="client.is_rem_capable ? 'success' : 'neutral'">
+                    {{ clientTypeLabel(client.client_type, client.is_rem_capable) }}
+                  </BaseBadge>
+                  <BaseBadge v-if="client.rem_mode" tone="warning">{{ client.rem_mode }}</BaseBadge>
                 </div>
                 <div class="registry-card-actions">
                   <BaseButton variant="danger" icon-left="ban" @click="actOnClient(client.id, 'Ban')">Ban</BaseButton>
@@ -160,6 +177,10 @@
                   <div><span>Status</span><span>{{ identity.status || "-" }}</span></div>
                 </div>
                 <div class="registry-card-badges">
+                  <BaseBadge :tone="identity.is_rem_capable ? 'success' : 'neutral'">
+                    {{ clientTypeLabel(identity.client_type, identity.is_rem_capable) }}
+                  </BaseBadge>
+                  <BaseBadge v-if="identity.rem_mode" tone="warning">{{ identity.rem_mode }}</BaseBadge>
                   <BaseBadge v-if="identity.banned" tone="danger">Banned</BaseBadge>
                   <BaseBadge v-if="identity.blackholed" tone="warning">Blackholed</BaseBadge>
                 </div>
@@ -187,6 +208,37 @@
                 :page-size="identitiesPageSize"
                 :total="filteredIdentities.length"
               />
+            </div>
+
+            <div v-else-if="activeTab === 'rem-peers'" class="card-grid">
+              <div
+                v-for="(peer, index) in sortedRemPeers"
+                :key="`rem-peer-${peer.identity ?? index}`"
+                class="registry-card cui-panel"
+              >
+                <div class="registry-card-header">
+                  <div>
+                    <div class="registry-card-title">{{ resolveIdentityLabel(peer.display_name, peer.identity) }}</div>
+                    <div class="registry-card-subtitle mono">{{ peer.identity || "Unknown identity" }}</div>
+                  </div>
+                  <div class="registry-card-tag">{{ peer.status || "Unknown" }}</div>
+                </div>
+                <div class="registry-card-meta">
+                  <div><span>Destination</span><span class="mono">{{ peer.destination_hash || "-" }}</span></div>
+                  <div><span>Last Seen</span><span>{{ formatTimestamp(peer.last_seen) }}</span></div>
+                  <div><span>Capabilities</span><span>{{ toStringList(peer.announce_capabilities).join(", ") || "-" }}</span></div>
+                </div>
+                <div class="registry-card-badges">
+                  <BaseBadge :tone="peer.client_type === 'rem' ? 'success' : 'neutral'">
+                    {{ clientTypeLabel(peer.client_type, peer.client_type === 'rem') }}
+                  </BaseBadge>
+                  <BaseBadge tone="warning">{{ peer.registered_mode || "autonomous" }}</BaseBadge>
+                  <BaseBadge :tone="usersStore.remConnectedMode ? 'danger' : 'neutral'">
+                    {{ usersStore.remConnectedMode ? "Connected Mode Enabled" : "Passive Mode" }}
+                  </BaseBadge>
+                </div>
+              </div>
+              <div v-if="sortedRemPeers.length === 0" class="panel-empty">No active REM peers match the current filter.</div>
             </div>
 
             <div v-else-if="activeTab === 'teams'" class="card-grid">
@@ -308,7 +360,7 @@
 
           <div class="panel-actions">
             <BaseButton
-              v-if="activeTab === 'clients' || activeTab === 'identities'"
+              v-if="activeTab === 'clients' || activeTab === 'identities' || activeTab === 'rem-peers'"
               variant="secondary"
               icon-left="refresh"
               @click="usersStore.fetchUsers()"
@@ -434,7 +486,7 @@ import { clientPresenceTag } from "../utils/presence";
 import { resolveIdentityLabel, shortHash } from "../utils/identity";
 import { resolveTeamMemberPrimaryLabel } from "../utils/team-members";
 
-type ActiveTab = "clients" | "identities" | "routing" | "teams" | "team-members" | "rights";
+type ActiveTab = "clients" | "identities" | "rem-peers" | "routing" | "teams" | "team-members" | "rights";
 
 const toStringList = (value: unknown): string[] =>
   Array.isArray(value)
@@ -483,6 +535,7 @@ const teamsPageSize = 9;
 const teamMembersPageSize = 9;
 const identityFilter = ref("");
 const clientFilter = ref("");
+const remPeerFilter = ref("");
 const teamFilter = ref("");
 const teamMemberFilter = ref("");
 
@@ -525,6 +578,7 @@ const totalRecords = computed(
   () =>
     usersStore.clients.length +
     usersStore.identities.length +
+    usersStore.remPeers.length +
     teamRecords.value.length +
     teamMemberRecords.value.length
 );
@@ -534,6 +588,9 @@ const activeTabTitle = computed(() => {
   }
   if (activeTab.value === "identities") {
     return "Identities";
+  }
+  if (activeTab.value === "rem-peers") {
+    return "REM Peers";
   }
   if (activeTab.value === "teams") {
     return "Teams";
@@ -594,6 +651,25 @@ const filteredIdentities = computed(() => {
   });
 });
 
+const filteredRemPeers = computed(() => {
+  const filter = remPeerFilter.value.trim().toLowerCase();
+  if (!filter) {
+    return usersStore.remPeers;
+  }
+  return usersStore.remPeers.filter((peer) => {
+    const displayName = String(peer.display_name ?? "").toLowerCase();
+    const identity = String(peer.identity ?? "").toLowerCase();
+    const mode = String(peer.registered_mode ?? "").toLowerCase();
+    const capabilities = toStringList(peer.announce_capabilities).join(" ").toLowerCase();
+    return (
+      displayName.includes(filter) ||
+      identity.includes(filter) ||
+      mode.includes(filter) ||
+      capabilities.includes(filter)
+    );
+  });
+});
+
 const sortedIdentities = computed(() => {
   return [...filteredIdentities.value].sort((a, b) => {
     const delta = lastSeenValue(b.last_seen) - lastSeenValue(a.last_seen);
@@ -601,6 +677,16 @@ const sortedIdentities = computed(() => {
       return delta;
     }
     return (a.id ?? "").localeCompare(b.id ?? "");
+  });
+});
+
+const sortedRemPeers = computed(() => {
+  return [...filteredRemPeers.value].sort((a, b) => {
+    const delta = lastSeenValue(b.last_seen) - lastSeenValue(a.last_seen);
+    if (delta !== 0) {
+      return delta;
+    }
+    return String(a.identity ?? "").localeCompare(String(b.identity ?? ""));
   });
 });
 
@@ -1017,6 +1103,10 @@ const clientTag = (lastSeenAt?: string) => {
   return clientPresenceTag(lastSeenAt);
 };
 
+const clientTypeLabel = (clientType?: string, isRemCapable?: boolean): string => {
+  return isRemCapable || clientType === "rem" ? "REM" : "Generic LXMF";
+};
+
 type IdentityModerationAction = "Ban" | "Unban" | "Blackhole";
 
 const actOnClient = async (clientId?: string, action?: IdentityModerationAction) => {
@@ -1379,6 +1469,7 @@ const applyNavigationIntent = () => {
   const tabMap: Record<string, ActiveTab> = {
     clients: "clients",
     identities: "identities",
+    "rem-peers": "rem-peers",
     routing: "routing",
     teams: "teams",
     rights: "rights",

@@ -12,6 +12,7 @@ export const endpoints = {
   chatAttachment: "/Chat/Attachment",
   clients: "/Client",
   identities: "/Identities",
+  remPeers: "/api/rem/peers",
   config: "/Config",
   configValidate: "/Config/Validate",
   configRollback: "/Config/Rollback",

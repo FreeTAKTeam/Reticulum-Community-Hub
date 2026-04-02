@@ -54,6 +54,10 @@ import RNS.vendor.umsgpack as msgpack
 from reticulum_telemetry_hub.api.models import ChatMessage
 from reticulum_telemetry_hub.api.models import FileAttachment
 from reticulum_telemetry_hub.api.models import Marker
+from reticulum_telemetry_hub.api.rem_registry_service import (
+    REM_CLIENT_TYPE,
+    RemRegistryService,
+)
 from reticulum_telemetry_hub.api.marker_identity import derive_marker_identity_key
 from reticulum_telemetry_hub.api.marker_service import MarkerService
 from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
@@ -117,6 +121,7 @@ from reticulum_telemetry_hub.reticulum_server.mission_delta_markdown import (
     MissionDeltaNameResolver,
     render_mission_delta_markdown,
 )
+from reticulum_telemetry_hub.reticulum_server.rem_command_router import RemCommandRouter
 from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
     OutboundPayload,
     OutboundMessageQueue,
@@ -252,7 +257,9 @@ class AnnounceHandler:
         self.identities = identities
         self._api = api
         self._capability_callback = capability_callback
-        self._persist_queue: queue.Queue[tuple[str, str | None, str | None]] = queue.Queue(
+        self._persist_queue: queue.Queue[
+            tuple[str, str | None, str | None, list[str] | None]
+        ] = queue.Queue(
             maxsize=max(1, int(persist_queue_size))
         )
         self._persist_stop_event = threading.Event()
@@ -294,7 +301,7 @@ class AnnounceHandler:
             if self._persist_stop_event.is_set() and self._persist_queue.empty():
                 return
             try:
-                destination_hash, display_name, source_interface = self._persist_queue.get(
+                destination_hash, display_name, source_interface, capabilities = self._persist_queue.get(
                     timeout=0.2
                 )
             except queue.Empty:
@@ -308,6 +315,7 @@ class AnnounceHandler:
                     destination_hash,
                     display_name=display_name,
                     source_interface=source_interface,
+                    announce_capabilities=capabilities,
                 )
             except Exception as exc:  # pragma: no cover - defensive log
                 RNS.log(
@@ -341,12 +349,14 @@ class AnnounceHandler:
                 destination_key,
                 label,
                 source_interface="destination",
+                announce_capabilities=list(capabilities) if capabilities else None,
             )
         if identity_key and identity_key != destination_key:
             self._persist_announce_async(
                 identity_key,
                 label,
                 source_interface="identity",
+                announce_capabilities=list(capabilities) if capabilities else None,
             )
 
     @staticmethod
@@ -383,26 +393,45 @@ class AnnounceHandler:
 
     @staticmethod
     def _decode_capabilities(app_data) -> set[str]:
+        if isinstance(app_data, str):
+            return set(RemRegistryService.normalize_capabilities(app_data))
         if not isinstance(app_data, (bytes, bytearray, memoryview)):
             return set()
+
+        raw_bytes = bytes(app_data)
         try:
-            decoded = msgpack.unpackb(bytes(app_data), raw=False)
+            raw_text = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            raw_text = ""
+        if raw_text and any(separator in raw_text for separator in (",", ";", "|")):
+            return set(RemRegistryService.normalize_capabilities(raw_text))
+
+        try:
+            decoded = msgpack.unpackb(raw_bytes, raw=False)
         except Exception:
-            return set()
+            try:
+                return set(
+                    RemRegistryService.normalize_capabilities(
+                        raw_bytes.decode("utf-8", errors="ignore")
+                    )
+                )
+            except Exception:
+                return set()
+
+        if isinstance(decoded, str):
+            return set(RemRegistryService.normalize_capabilities(decoded))
+        if isinstance(decoded, (bytes, bytearray, memoryview)):
+            return set(
+                RemRegistryService.normalize_capabilities(
+                    bytes(decoded).decode("utf-8", errors="ignore")
+                )
+            )
         if not isinstance(decoded, list) or len(decoded) < 3:
             return set()
         payload = decode_inbound_capability_payload(decoded[2])
         if not isinstance(payload, dict):
             return set()
-        raw_caps = payload.get("caps")
-        if not isinstance(raw_caps, list):
-            return set()
-        normalized: set[str] = set()
-        for item in raw_caps:
-            text = str(item or "").strip().lower()
-            if text:
-                normalized.add(text)
-        return normalized
+        return set(RemRegistryService.normalize_capabilities(payload.get("caps")))
 
     def _persist_announce_async(
         self,
@@ -410,6 +439,7 @@ class AnnounceHandler:
         display_name: str | None,
         *,
         source_interface: str | None = None,
+        announce_capabilities: list[str] | None = None,
     ) -> None:
         """Persist announce metadata on a background thread.
 
@@ -426,7 +456,12 @@ class AnnounceHandler:
 
         try:
             self._persist_queue.put_nowait(
-                (destination_hash, display_name, source_interface)
+                (
+                    destination_hash,
+                    display_name,
+                    source_interface,
+                    list(announce_capabilities or []) or None,
+                )
             )
         except queue.Full:
             self._dropped_persist_count += 1
@@ -854,10 +889,12 @@ class ReticulumTelemetryHub:
         self._mission_change_fanout_cache: dict[str, float] = {}
         self.command_manager = None
         self.mission_sync_router = None
+        self.rem_command_router = None
         self.checklist_sync_router = None
         self.mission_domain_service = None
         self.emergency_action_message_service = None
         self._remove_mission_change_listener: Callable[[], None] | None = None
+        self._remove_eam_status_listener: Callable[[], None] | None = None
         self._remove_topic_registry_change_listener: Callable[[], None] | None = None
         self._announce_handler: AnnounceHandler | None = None
         self._propagation_node_registry = PropagationNodeRegistry()
@@ -1010,6 +1047,14 @@ class ReticulumTelemetryHub:
             field_event=LXMF.FIELD_EVENT,
             field_group=LXMF.FIELD_GROUP,
         )
+        self.rem_command_router = RemCommandRouter(
+            api=self.api,
+            event_log=self.event_log,
+            hub_identity_resolver=self._origin_rch_hex,
+            field_results=LXMF.FIELD_RESULTS,
+            field_event=LXMF.FIELD_EVENT,
+            field_group=LXMF.FIELD_GROUP,
+        )
         self.checklist_sync_router = ChecklistSyncRouter(
             api=self.api,
             domain_service=self.mission_domain_service,
@@ -1027,6 +1072,12 @@ class ReticulumTelemetryHub:
             self._remove_mission_change_listener = (
                 self.mission_domain_service.register_mission_change_listener(
                     self._fanout_mission_change_to_recipients
+                )
+            )
+        if self.emergency_action_message_service is not None:
+            self._remove_eam_status_listener = (
+                self.emergency_action_message_service.register_status_listener(
+                    self._handle_eam_status_update
                 )
             )
         self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
@@ -1055,6 +1106,7 @@ class ReticulumTelemetryHub:
             return []
 
         mission_commands: list[dict[str, Any]] = []
+        rem_commands: list[dict[str, Any]] = []
         checklist_commands: list[dict[str, Any]] = []
         legacy_commands: list[Any] = []
         for command in commands:
@@ -1063,7 +1115,9 @@ class ReticulumTelemetryHub:
                 continue
             command_type = command.get("command_type")
             if isinstance(command_type, str) and command_type.strip():
-                if command_type.startswith("checklist."):
+                if command_type.startswith("rem."):
+                    rem_commands.append(command)
+                elif command_type.startswith("checklist."):
                     checklist_commands.append(command)
                 else:
                     mission_commands.append(command)
@@ -1074,6 +1128,24 @@ class ReticulumTelemetryHub:
         source_identity = self._message_source_hex(message)
         message_fields = message.fields if isinstance(message.fields, dict) else {}
         group = message_fields.get(LXMF.FIELD_GROUP)
+
+        rem_router = getattr(self, "rem_command_router", None)
+        if rem_commands and rem_router is not None:
+            rem_replies = rem_router.handle_commands(
+                rem_commands,
+                source_identity=source_identity,
+                group=group,
+            )
+            responses.extend(
+                [
+                    response
+                    for response in (
+                        self._mission_sync_response_to_lxmf(message, entry)
+                        for entry in rem_replies
+                    )
+                    if response is not None
+                ]
+            )
 
         mission_router = getattr(self, "mission_sync_router", None)
         if mission_commands and mission_router is not None:
@@ -1276,6 +1348,19 @@ class ReticulumTelemetryHub:
         if api is None:
             return set()
         try:
+            announced = api.list_identity_announce_capabilities(normalized_identity)
+        except Exception:
+            announced = []
+        if announced:
+            normalized = {
+                str(value or "").strip().lower() for value in announced if value
+            }
+            self._identity_capability_cache[normalized_identity] = (
+                normalized,
+                now + IDENTITY_CAPABILITY_CACHE_TTL_SECONDS,
+            )
+            return normalized
+        try:
             grants = api.list_identity_capabilities(normalized_identity)
         except Exception:
             return set()
@@ -1291,6 +1376,67 @@ class ReticulumTelemetryHub:
     def _identity_supports_r3akt(self, identity: str) -> bool:
         capabilities = self._identity_capabilities(identity)
         return "r3akt" in capabilities
+
+    def _identity_client_type(self, identity: str) -> str:
+        """Return the normalized client type for a peer identity."""
+
+        return RemRegistryService.classify_client_type(self._identity_capabilities(identity))
+
+    def _identity_is_rem(self, identity: str) -> bool:
+        """Return True when an identity announces REM capabilities."""
+
+        return self._identity_client_type(identity) == REM_CLIENT_TYPE
+
+    def _connected_identities(self) -> list[str]:
+        """Return normalized identity hashes for current LXMF connections."""
+
+        available = (
+            list(self.connections.values())
+            if hasattr(self.connections, "values")
+            else list(self.connections)
+        )
+        results: list[str] = []
+        for connection in available:
+            connection_hex = self._connection_hex(connection)
+            if connection_hex:
+                results.append(connection_hex)
+        return results
+
+    def _rem_fanout_recipients(self) -> dict[str, list[str]]:
+        """Return connected-mode REM and generic recipient buckets."""
+
+        api = getattr(self, "api", None)
+        if api is None:
+            return {"rem": [], "generic": []}
+        return api.rem_fanout_recipients(self._connected_identities())
+
+    def _ensure_reachable_identity_destination(self, identity: str) -> None:
+        """Recall and cache an LXMF destination for an identity when possible."""
+
+        normalized_identity = normalize_hash(identity)
+        if not normalized_identity:
+            return
+        for connection in (
+            list(self.connections.values())
+            if hasattr(self.connections, "values")
+            else list(self.connections)
+        ):
+            if self._connection_hex(connection) == normalized_identity:
+                return
+        try:
+            recalled = RNS.Identity.recall(bytes.fromhex(normalized_identity))
+            if recalled is None:
+                return
+            destination = RNS.Destination(
+                recalled,
+                RNS.Destination.OUT,
+                RNS.Destination.SINGLE,
+                "lxmf",
+                "delivery",
+            )
+        except Exception:
+            return
+        self.connections[destination.identity.hash] = destination
 
     def _prune_mission_change_fanout_cache(self) -> None:
         now = time.time()
@@ -1358,6 +1504,134 @@ class ReticulumTelemetryHub:
             },
         }
 
+    def _render_generic_log_update_markdown(self, log_entry: dict[str, Any]) -> str:
+        """Render a human-readable markdown summary for generic LXMF peers."""
+
+        mission_uid = str(log_entry.get("mission_uid") or "").strip() or "unknown"
+        callsign = str(log_entry.get("callsign") or "").strip() or "Unknown"
+        content = str(log_entry.get("content") or "").strip() or "(empty)"
+        return (
+            "### Mission Log Update\n"
+            f"Mission: {mission_uid}\n\n"
+            f"From: {callsign}\n\n"
+            f"{content}"
+        )
+
+    def _build_rem_log_event_fields(
+        self,
+        log_entry: dict[str, Any],
+    ) -> dict[int | str, object]:
+        """Build LXMF field-native mission log payloads for REM peers."""
+
+        return {
+            LXMF.FIELD_EVENT: {
+                "event_type": "mission.registry.log_entry.upserted",
+                "payload": dict(log_entry),
+                "source": {"rns_identity": self._origin_rch_hex()},
+            }
+        }
+
+    def _render_generic_eam_markdown(
+        self,
+        event_type: str,
+        snapshot: dict[str, Any],
+    ) -> str:
+        """Render a human-readable emergency message summary for generic peers."""
+
+        callsign = str(snapshot.get("callsign") or "").strip() or "Unknown"
+        group_name = str(snapshot.get("group_name") or "").strip() or "Unknown"
+        overall_status = str(snapshot.get("overall_status") or "Unknown").strip()
+        notes = str(snapshot.get("notes") or "").strip()
+        if event_type == "mission.registry.eam.deleted":
+            return (
+                "### Emergency Message Deleted\n"
+                f"Callsign: {callsign}\n\n"
+                f"Team: {group_name}"
+            )
+        body = (
+            "### Emergency Message Updated\n"
+            f"Callsign: {callsign}\n\n"
+            f"Team: {group_name}\n\n"
+            f"Overall: {overall_status}"
+        )
+        if notes:
+            body += f"\n\nNotes: {notes}"
+        return body
+
+    def _build_rem_eam_command_fields(
+        self,
+        event_type: str,
+        snapshot: dict[str, Any],
+    ) -> dict[int | str, object]:
+        """Build FIELD_COMMANDS payloads for REM EAM update delivery."""
+
+        command_type = "mission.registry.eam.delete"
+        args: dict[str, Any] = {"callsign": snapshot.get("callsign")}
+        if event_type != "mission.registry.eam.deleted":
+            command_type = "mission.registry.eam.upsert"
+            args = dict(snapshot)
+        return {
+            LXMF.FIELD_COMMANDS: [
+                {
+                    "command_id": uuid.uuid4().hex,
+                    "source": {"rns_identity": self._origin_rch_hex()},
+                    "timestamp": utc_now_rfc3339(),
+                    "command_type": command_type,
+                    "args": args,
+                }
+            ]
+        }
+
+    def _fanout_log_update(self, log_entry: dict[str, Any]) -> None:
+        """Deliver a mission log update according to REM connected-mode policy."""
+
+        recipients = self._rem_fanout_recipients()
+        if not recipients["rem"] and not recipients["generic"]:
+            return
+        concise_body = f"mission log update {log_entry.get('entry_uid') or ''}".strip()
+        for destination in recipients["rem"]:
+            self._ensure_reachable_identity_destination(destination)
+            self.send_message(
+                concise_body,
+                destination=destination,
+                fields=self._build_rem_log_event_fields(log_entry),
+            )
+        generic_fields = {MARKDOWN_RENDERER_FIELD: MARKDOWN_RENDERER_VALUE}
+        markdown_body = self._render_generic_log_update_markdown(log_entry)
+        for destination in recipients["generic"]:
+            self.send_message(
+                markdown_body,
+                destination=destination,
+                fields=generic_fields,
+            )
+
+    def _handle_eam_status_update(
+        self,
+        event_type: str,
+        snapshot: dict[str, Any],
+    ) -> None:
+        """Deliver EAM updates according to REM connected-mode policy."""
+
+        recipients = self._rem_fanout_recipients()
+        if not recipients["rem"] and not recipients["generic"]:
+            return
+        concise_body = f"eam update {snapshot.get('callsign') or ''}".strip()
+        for destination in recipients["rem"]:
+            self._ensure_reachable_identity_destination(destination)
+            self.send_message(
+                concise_body,
+                destination=destination,
+                fields=self._build_rem_eam_command_fields(event_type, snapshot),
+            )
+        generic_fields = {MARKDOWN_RENDERER_FIELD: MARKDOWN_RENDERER_VALUE}
+        generic_body = self._render_generic_eam_markdown(event_type, snapshot)
+        for destination in recipients["generic"]:
+            self.send_message(
+                generic_body,
+                destination=destination,
+                fields=generic_fields,
+            )
+
     def _fanout_mission_change_to_recipients(
         self, mission_change: dict[str, Any]
     ) -> None:
@@ -1395,6 +1669,15 @@ class ReticulumTelemetryHub:
 
         delta = mission_change.get("delta")
         delta_payload = dict(delta) if isinstance(delta, dict) else {}
+        source_event_type = str(delta_payload.get("source_event_type") or "").strip()
+        if source_event_type == "mission.log_entry.upserted":
+            log_items = delta_payload.get("logs")
+            if isinstance(log_items, list) and log_items:
+                first_log = log_items[0]
+                if isinstance(first_log, dict):
+                    self._fanout_log_update(dict(first_log))
+                    self._mark_mission_change_fanned_out(mission_change_uid)
+            return
         resolver = MissionDeltaNameResolver(domain)
         base_event_fields = {
             LXMF.FIELD_EVENT: self._build_mission_change_event_field(
@@ -1828,7 +2111,17 @@ class ReticulumTelemetryHub:
             if telemetry_handled:
                 RNS.log("Telemetry data saved")
 
+            # Reason: some clients emit background telemetry/control packets
+            # without user intent. Those should not trigger the unjoined help flow.
+            if (message.content is None or message.content == b"") and not stored_attachments:
+                return
+
+            if self._is_telemetry_only(message, telemetry_handled):
+                return
+
             if not sender_joined:
+                if command_payload_present:
+                    return
                 self._reply_with_help(message)
                 return
 
@@ -1849,13 +2142,6 @@ class ReticulumTelemetryHub:
                         f"Internal adapter failed to process inbound message: {exc}",
                         getattr(RNS, "LOG_WARNING", 2),
                     )
-
-            # Skip if the message content is empty and no attachments were stored.
-            if (message.content is None or message.content == b"") and not stored_attachments:
-                return
-
-            if self._is_telemetry_only(message, telemetry_handled):
-                return
 
             if command_payload_present:
                 return
@@ -4544,6 +4830,11 @@ class ReticulumTelemetryHub:
                 self._remove_mission_change_listener()
             finally:
                 self._remove_mission_change_listener = None
+        if self._remove_eam_status_listener is not None:
+            try:
+                self._remove_eam_status_listener()
+            finally:
+                self._remove_eam_status_listener = None
         if self._remove_topic_registry_change_listener is not None:
             try:
                 self._remove_topic_registry_change_listener()

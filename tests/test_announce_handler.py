@@ -75,3 +75,22 @@ def test_announce_handler_extracts_capabilities_from_app_data() -> None:
     assert captured
     flattened_caps = {cap for _, caps in captured for cap in caps}
     assert "r3akt" in flattened_caps
+
+
+def test_announce_handler_extracts_plain_string_rem_capabilities() -> None:
+    captured: list[tuple[str, set[str]]] = []
+    handler = AnnounceHandler(
+        {},
+        capability_callback=lambda identity, caps: captured.append((identity, set(caps))),
+    )
+
+    handler.received_announce(
+        b"\x01\x02",
+        announced_identity=b"\x0a\x0b",
+        app_data=b"R3AKT,EMergencyMessages,Telemetry",
+    )
+
+    flattened_caps = {cap for _, caps in captured for cap in caps}
+    assert "r3akt" in flattened_caps
+    assert "emergencymessages" in flattened_caps
+    assert "telemetry" in flattened_caps

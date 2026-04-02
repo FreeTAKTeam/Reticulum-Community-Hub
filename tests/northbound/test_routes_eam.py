@@ -239,7 +239,7 @@ def test_eam_team_summary_route_handles_missing_and_expired_reports(tmp_path: Pa
     assert summary.json()["team_uid"] == "team-1"
     assert summary.json()["total"] == 1
     assert summary.json()["active_total"] == 0
-    assert summary.json()["deleted_total"] == 0
+    assert summary.json()["deleted_total"] == 1
     assert summary.json()["overall_status"] is None
     assert missing_team.status_code == 404
 
@@ -279,6 +279,62 @@ def test_eam_routes_hide_expired_snapshots_from_list_and_latest(tmp_path: Path) 
     assert listed.status_code == 200
     assert listed.json() == []
     assert latest.status_code == 404
+
+
+def test_eam_routes_allow_recreate_after_delete(tmp_path: Path) -> None:
+    client, _, domain = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    domain.upsert_team({"uid": "team-1", "team_name": "Ops"})
+    domain.upsert_team_member(
+        {
+            "uid": "member-1",
+            "team_uid": "team-1",
+            "rns_identity": "peer-a",
+            "display_name": "Peer A",
+            "callsign": "OPS-1",
+        }
+    )
+    domain.upsert_team_member(
+        {
+            "uid": "member-2",
+            "team_uid": "team-1",
+            "rns_identity": "peer-b",
+            "display_name": "Peer B",
+            "callsign": "OPS-2",
+        }
+    )
+
+    created = client.post(
+        "/api/EmergencyActionMessage",
+        json={
+            "eam_uid": "eam-1",
+            "callsign": "OPS-1",
+            "team_member_uid": "member-1",
+            "team_uid": "team-1",
+            "source": {"rns_identity": "peer-a"},
+        },
+        headers=headers,
+    )
+    deleted = client.delete("/api/EmergencyActionMessage/OPS-1", headers=headers)
+    recreated = client.post(
+        "/api/EmergencyActionMessage",
+        json={
+            "eam_uid": "eam-2",
+            "callsign": "OPS-1",
+            "team_member_uid": "member-2",
+            "team_uid": "team-1",
+            "source": {"rns_identity": "peer-b"},
+        },
+        headers=headers,
+    )
+
+    assert created.status_code == 200
+    assert deleted.status_code == 200
+    assert recreated.status_code == 200
+    assert recreated.json()["eam_uid"] == "eam-2"
+    assert recreated.json()["team_member_uid"] == "member-2"
+    assert recreated.json()["callsign"] == "OPS-1"
 
 
 def test_eam_team_summary_route_matches_team_orange_example(tmp_path: Path) -> None:

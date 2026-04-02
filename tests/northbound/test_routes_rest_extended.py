@@ -219,15 +219,20 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
 
     join_response = client.post("/RTH", params={"identity": "dest-1"}, headers=headers)
     assert join_response.status_code == 200
-
-    leave_response = client.put("/RTH", params={"identity": "dest-1"}, headers=headers)
-    assert leave_response.status_code == 200
+    api.record_identity_announce(
+        "dest-1",
+        display_name="REM Alpha",
+        announce_capabilities="R3AKT,EMergencyMessages",
+    )
+    api.set_rem_mode("dest-1", "connected")
 
     join_alias_response = client.post("/RCH", params={"identity": "dest-2"}, headers=headers)
     assert join_alias_response.status_code == 200
-
-    leave_alias_response = client.put("/RCH", params={"identity": "dest-2"}, headers=headers)
-    assert leave_alias_response.status_code == 200
+    api.record_identity_announce(
+        "dest-2",
+        display_name="Generic Bravo",
+        announce_capabilities=["telemetry"],
+    )
 
     capability_response = client.put(
         "/api/r3akt/capabilities/dest-1/mission.join",
@@ -304,6 +309,28 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
 
     client_list = client.get("/Client", headers=headers)
     assert client_list.status_code == 200
+    client_map = {entry["identity"]: entry for entry in client_list.json()}
+    assert client_map["dest-1"]["client_type"] == "rem"
+    assert client_map["dest-1"]["rem_mode"] == "connected"
+    assert client_map["dest-1"]["is_rem_capable"] is True
+    assert client_map["dest-2"]["client_type"] == "generic_lxmf"
+
+    identities_response = client.get("/Identities", headers=headers)
+    assert identities_response.status_code == 200
+    identity_map = {entry["Identity"]: entry for entry in identities_response.json()}
+    assert identity_map["dest-1"]["ClientType"] == "rem"
+    assert identity_map["dest-1"]["RemMode"] == "connected"
+
+    rem_peers_response = client.get("/api/rem/peers", headers=headers)
+    assert rem_peers_response.status_code == 200
+    assert rem_peers_response.json()["effective_connected_mode"] is True
+    assert rem_peers_response.json()["items"][0]["identity"] == "dest-1"
+
+    leave_response = client.put("/RTH", params={"identity": "dest-1"}, headers=headers)
+    assert leave_response.status_code == 200
+
+    leave_alias_response = client.put("/RCH", params={"identity": "dest-2"}, headers=headers)
+    assert leave_alias_response.status_code == 200
 
     info_response = client.get("/api/v1/app/info")
     assert info_response.status_code == 200

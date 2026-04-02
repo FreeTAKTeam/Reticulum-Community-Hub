@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
 from reticulum_telemetry_hub.config import HubConfigurationManager
@@ -116,3 +118,35 @@ def test_openapi_exposes_generic_object_and_array_contracts(tmp_path: Path) -> N
         "Red",
         "Unknown",
     ]
+
+
+def test_checked_in_oas_uses_the_same_eam_schema_names() -> None:
+    oas_path = (
+        Path(__file__).resolve().parents[2]
+        / "API"
+        / "ReticulumCommunityHub-OAS.yaml"
+    )
+    with oas_path.open("r", encoding="utf-8") as handle:
+        spec = yaml.safe_load(handle)
+
+    schemas = spec["components"]["schemas"]
+    paths = spec["paths"]
+
+    assert {
+        "EmergencyActionMessagePayload",
+        "EmergencyActionMessageUpsertPayload",
+        "EamTeamSummaryPayload",
+        "EamSourcePayload",
+    }.issubset(set(schemas))
+    assert (
+        paths["/api/EmergencyActionMessage"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["items"]["$ref"]
+        == "#/components/schemas/EmergencyActionMessagePayload"
+    )
+    assert (
+        paths["/api/EmergencyActionMessage"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/EmergencyActionMessageUpsertPayload"
+    )
+    assert (
+        paths["/api/EmergencyActionMessage/team/{team_uid}/summary"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/EamTeamSummaryPayload"
+    )
