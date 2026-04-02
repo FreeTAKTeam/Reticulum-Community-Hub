@@ -1215,6 +1215,14 @@ class ReticulumTelemetryHub:
         content = getattr(message, "content", None)
         if content not in (None, b"", ""):
             return False
+        fields = message.fields if isinstance(message.fields, dict) else {}
+        has_non_command_signal = any(
+            key != LXMF.FIELD_COMMANDS
+            and value not in (None, "", b"", {}, [], ())
+            for key, value in fields.items()
+        )
+        if not has_non_command_signal:
+            return False
 
         manager = getattr(self, "command_manager", None)
         normalize_name = getattr(manager, "_normalize_command_name", None)
