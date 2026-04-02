@@ -358,7 +358,7 @@ class HubStorage(HubStorageBase):
             record = session.get(ClientRecord, identity)
             if not record:
                 return None
-            announce = session.get(IdentityAnnounceRecord, identity.lower())
+            announce = self._identity_announce_map(session).get(identity.lower())
             return self._client_from_record(record, announce)
 
     def create_file_record(self, attachment: FileAttachment) -> FileAttachment:
@@ -432,6 +432,7 @@ class HubStorage(HubStorageBase):
         self,
         identity: str,
         *,
+        announced_identity_hash: str | None = None,
         display_name: str | None = None,
         source_interface: str | None = None,
         announce_capabilities: list[str] | None = None,
@@ -440,10 +441,16 @@ class HubStorage(HubStorageBase):
         """Insert or update Reticulum announce metadata."""
 
         identity = identity.lower()
+        normalized_announced_identity = (
+            announced_identity_hash.strip().lower()
+            if isinstance(announced_identity_hash, str) and announced_identity_hash.strip()
+            else None
+        )
         now = _utcnow()
         with self._session_scope() as session:
             insert_values = {
                 "destination_hash": identity,
+                "announced_identity_hash": normalized_announced_identity,
                 "display_name": display_name,
                 "announce_capabilities": list(announce_capabilities or []) or None,
                 "client_type": client_type,
@@ -453,6 +460,8 @@ class HubStorage(HubStorageBase):
                 "source_interface": source_interface,
             }
             update_values = {"last_seen": now}
+            if normalized_announced_identity:
+                update_values["announced_identity_hash"] = normalized_announced_identity
             if display_name:
                 update_values["display_name"] = display_name
             if source_interface:
@@ -478,7 +487,7 @@ class HubStorage(HubStorageBase):
         """Return announce metadata for an identity when present."""
 
         with self._session_scope() as session:
-            return session.get(IdentityAnnounceRecord, identity.lower())
+            return self._identity_announce_map(session).get(identity.lower())
 
     def list_identity_announces(self) -> List[IdentityAnnounceRecord]:
         """Return all announce metadata records."""
@@ -1120,6 +1129,10 @@ class HubStorage(HubStorageBase):
                     statements.append(
                         "ALTER TABLE identity_announces ADD COLUMN announce_capabilities JSON;"
                     )
+                if "announced_identity_hash" not in column_names:
+                    statements.append(
+                        "ALTER TABLE identity_announces ADD COLUMN announced_identity_hash VARCHAR;"
+                    )
                 if "client_type" not in column_names:
                     statements.append(
                         "ALTER TABLE identity_announces ADD COLUMN client_type VARCHAR;"
@@ -1130,6 +1143,14 @@ class HubStorage(HubStorageBase):
                     )
                 for statement in statements:
                     conn.execute(text(statement))
+                conn.execute(
+                    text(
+                        "UPDATE identity_announces "
+                        "SET announced_identity_hash = destination_hash "
+                        "WHERE (source_interface IS NULL OR source_interface = 'identity') "
+                        "AND announced_identity_hash IS NULL"
+                    )
+                )
         except OperationalError as exc:
             logging.warning("Failed to ensure identity_announces REM columns: %s", exc)
 

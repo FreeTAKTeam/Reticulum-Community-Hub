@@ -42,7 +42,7 @@ describe("users store REM registry mapping", () => {
           display_name: "Generic Bravo",
           client_type: "generic_lxmf",
           announce_capabilities: ["telemetry"],
-          rem_mode: "autonomous",
+          rem_mode: null,
           is_rem_capable: false
         }
       ])
@@ -78,6 +78,7 @@ describe("users store REM registry mapping", () => {
     expect(store.clients[0].client_type).toBe("rem");
     expect(store.clients[0].rem_mode).toBe("connected");
     expect(store.clients[1].client_type).toBe("generic_lxmf");
+    expect(store.clients[1].rem_mode).toBeUndefined();
     expect(store.identities[0].is_rem_capable).toBe(true);
     expect(store.remConnectedMode).toBe(true);
     expect(store.remPeers[0].registered_mode).toBe("connected");

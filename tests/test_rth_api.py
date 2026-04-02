@@ -336,7 +336,15 @@ def test_rem_mode_and_peer_registry_persist_between_instances(tmp_path):
     cfg = make_config_manager(tmp_path)
     api1 = ReticulumTelemetryHubAPI(config_manager=cfg)
     api1.record_identity_announce(
+        "deadbeef-destination",
+        announced_identity_hash="deadbeef",
+        display_name="REM Alpha",
+        source_interface="destination",
+        announce_capabilities="R3AKT,EMergencyMessages,Telemetry",
+    )
+    api1.record_identity_announce(
         "deadbeef",
+        announced_identity_hash="deadbeef",
         display_name="REM Alpha",
         source_interface="identity",
         announce_capabilities="R3AKT,EMergencyMessages,Telemetry",
@@ -357,8 +365,30 @@ def test_rem_mode_and_peer_registry_persist_between_instances(tmp_path):
     assert payload["effective_connected_mode"] is True
     assert len(payload["items"]) == 1
     assert payload["items"][0]["identity"] == "deadbeef"
+    assert payload["items"][0]["destination_hash"] == "deadbeef-destination"
     assert payload["items"][0]["client_type"] == "rem"
     assert payload["items"][0]["registered_mode"] == "connected"
+
+
+def test_generic_clients_do_not_report_rem_mode(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.record_identity_announce(
+        "cafebabe",
+        display_name="Generic Bravo",
+        source_interface="identity",
+        announce_capabilities=["telemetry"],
+    )
+    api.join("cafebabe")
+
+    client = next(item for item in api.list_clients() if item.identity == "cafebabe")
+    status = next(item for item in api.list_identity_statuses() if item.identity == "cafebabe")
+
+    assert client.client_type == "generic_lxmf"
+    assert client.rem_mode is None
+    assert client.is_rem_capable is False
+    assert status.client_type == "generic_lxmf"
+    assert status.rem_mode is None
+    assert status.is_rem_capable is False
 
 
 def test_identity_announce_ignores_missing_name(tmp_path):

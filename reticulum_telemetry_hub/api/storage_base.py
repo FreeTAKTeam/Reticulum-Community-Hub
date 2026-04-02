@@ -192,4 +192,22 @@ class HubStorageBase:
         """Return a lookup table for announce metadata."""
 
         records = session.query(IdentityAnnounceRecord).all()
-        return {record.destination_hash: record for record in records}
+        announce_map: dict[str, IdentityAnnounceRecord] = {}
+        for record in records:
+            identity_key = str(
+                record.announced_identity_hash or record.destination_hash or ""
+            ).strip().lower()
+            if not identity_key:
+                continue
+            existing = announce_map.get(identity_key)
+            source = str(record.source_interface or "").strip().lower()
+            existing_source = (
+                str(existing.source_interface or "").strip().lower()
+                if existing is not None
+                else ""
+            )
+            if existing is None or (
+                source == "identity" and existing_source != "identity"
+            ):
+                announce_map[identity_key] = record
+        return announce_map

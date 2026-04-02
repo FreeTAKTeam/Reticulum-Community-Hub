@@ -11,6 +11,7 @@ from reticulum_telemetry_hub.api.models import Client
 from reticulum_telemetry_hub.api.models import IdentityStatus
 from reticulum_telemetry_hub.api.models import RemPeer
 from reticulum_telemetry_hub.api.storage import HubStorage
+from reticulum_telemetry_hub.api.storage_models import IdentityAnnounceRecord
 
 
 REM_CLIENT_TYPE = "rem"
@@ -104,6 +105,7 @@ class RemRegistryService:
         self,
         identity: str,
         *,
+        announced_identity_hash: str | None = None,
         display_name: str | None = None,
         source_interface: str | None = None,
         announce_capabilities: object = None,
@@ -114,6 +116,7 @@ class RemRegistryService:
         client_type = self.classify_client_type(capabilities)
         self._storage.upsert_identity_announce(
             identity,
+            announced_identity_hash=announced_identity_hash,
             display_name=display_name,
             source_interface=source_interface,
             announce_capabilities=capabilities if announce_capabilities is not None else None,
@@ -161,7 +164,11 @@ class RemRegistryService:
         client.client_type = str(client.client_type or GENERIC_LXMF_CLIENT_TYPE).strip().lower() or GENERIC_LXMF_CLIENT_TYPE
         client.announce_capabilities = self.normalize_capabilities(client.announce_capabilities)
         client.is_rem_capable = client.client_type == REM_CLIENT_TYPE
-        client.rem_mode = self.get_rem_mode(normalized_identity) if normalized_identity else DEFAULT_REM_MODE
+        client.rem_mode = (
+            self.get_rem_mode(normalized_identity)
+            if normalized_identity and client.is_rem_capable
+            else None
+        )
         return client
 
     def annotate_identity_status(self, status: IdentityStatus) -> IdentityStatus:
@@ -171,7 +178,11 @@ class RemRegistryService:
         status.client_type = str(status.client_type or GENERIC_LXMF_CLIENT_TYPE).strip().lower() or GENERIC_LXMF_CLIENT_TYPE
         status.announce_capabilities = self.normalize_capabilities(status.announce_capabilities)
         status.is_rem_capable = status.client_type == REM_CLIENT_TYPE
-        status.rem_mode = self.get_rem_mode(normalized_identity) if normalized_identity else DEFAULT_REM_MODE
+        status.rem_mode = (
+            self.get_rem_mode(normalized_identity)
+            if normalized_identity and status.is_rem_capable
+            else None
+        )
         return status
 
     def list_active_rem_peers(
@@ -187,11 +198,12 @@ class RemRegistryService:
             for record in self._storage.list_identity_states()
             if str(record.identity or "").strip()
         }
-        peers: list[RemPeer] = []
-        seen: set[str] = set()
+        candidates: dict[str, tuple[IdentityAnnounceRecord, str]] = {}
         for record in self._storage.list_identity_announces():
-            identity = str(record.destination_hash or "").strip().lower()
-            if not identity or identity in seen:
+            identity = str(
+                record.announced_identity_hash or record.destination_hash or ""
+            ).strip().lower()
+            if not identity:
                 continue
             last_seen = _ensure_aware(getattr(record, "last_seen", None))
             if last_seen is None or last_seen < cutoff:
@@ -202,19 +214,31 @@ class RemRegistryService:
             state = moderation.get(identity)
             if state is not None and (bool(state.is_banned) or bool(state.is_blackholed)):
                 continue
+            source = str(record.source_interface or "").strip().lower() or "identity"
+            existing = candidates.get(identity)
+            existing_source = existing[1] if existing is not None else ""
+            if existing is None or (
+                source == "destination" and existing_source != "destination"
+            ):
+                candidates[identity] = (record, source)
+        peers: list[RemPeer] = []
+        for identity, (record, source) in candidates.items():
             capabilities = self.normalize_capabilities(record.announce_capabilities_json)
-            peer = RemPeer(
-                identity=identity,
-                destination_hash=identity,
-                display_name=str(record.display_name or "").strip() or None,
-                announce_capabilities=capabilities,
-                client_type=client_type,
-                registered_mode=self.get_rem_mode(identity),
-                last_seen=last_seen,
-                status="active",
+            destination_hash = str(record.destination_hash or identity).strip().lower()
+            if source != "destination":
+                destination_hash = identity
+            peers.append(
+                RemPeer(
+                    identity=identity,
+                    destination_hash=destination_hash,
+                    display_name=str(record.display_name or "").strip() or None,
+                    announce_capabilities=capabilities,
+                    client_type=str(record.client_type or GENERIC_LXMF_CLIENT_TYPE).strip().lower(),
+                    registered_mode=self.get_rem_mode(identity),
+                    last_seen=_ensure_aware(getattr(record, "last_seen", None)),
+                    status="active",
+                )
             )
-            peers.append(peer)
-            seen.add(identity)
         return peers
 
     def build_peer_list_payload(self) -> dict[str, object]:

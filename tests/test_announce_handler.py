@@ -43,7 +43,12 @@ def test_announce_handler_persist_queue_is_non_blocking_when_full():
 
     started = time.monotonic()
     for _ in range(200):
-        handler._persist_announce_async("aabb", "Name", source_interface="destination")
+        handler._persist_announce_async(
+            "aabb",
+            "aabb",
+            "Name",
+            source_interface="destination",
+        )
     elapsed = time.monotonic() - started
 
     time.sleep(0.1)

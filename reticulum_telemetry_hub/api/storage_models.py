@@ -163,6 +163,7 @@ class IdentityAnnounceRecord(Base):  # pylint: disable=too-few-public-methods
     __tablename__ = "identity_announces"
 
     destination_hash = Column(String, primary_key=True)
+    announced_identity_hash = Column(String, nullable=True)
     display_name = Column(String, nullable=True)
     announce_capabilities_json = Column("announce_capabilities", JSON, nullable=True)
     client_type = Column(String, nullable=True)

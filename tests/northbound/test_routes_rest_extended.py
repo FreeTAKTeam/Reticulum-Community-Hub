@@ -314,12 +314,14 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
     assert client_map["dest-1"]["rem_mode"] == "connected"
     assert client_map["dest-1"]["is_rem_capable"] is True
     assert client_map["dest-2"]["client_type"] == "generic_lxmf"
+    assert client_map["dest-2"]["rem_mode"] is None
 
     identities_response = client.get("/Identities", headers=headers)
     assert identities_response.status_code == 200
     identity_map = {entry["Identity"]: entry for entry in identities_response.json()}
     assert identity_map["dest-1"]["ClientType"] == "rem"
     assert identity_map["dest-1"]["RemMode"] == "connected"
+    assert identity_map["dest-2"]["RemMode"] is None
 
     rem_peers_response = client.get("/api/rem/peers", headers=headers)
     assert rem_peers_response.status_code == 200

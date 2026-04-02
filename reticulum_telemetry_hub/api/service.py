@@ -31,6 +31,7 @@ from .models import Subscriber
 from .models import Topic
 from .rights_service import SubjectAwareRightsService
 from .storage import HubStorage
+from .storage_models import IdentityAnnounceRecord
 
 
 class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
@@ -225,6 +226,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         self,
         identity: str,
         *,
+        announced_identity_hash: str | None = None,
         display_name: str | None = None,
         source_interface: str | None = None,
         announce_capabilities: object = None,
@@ -242,6 +244,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         identity = identity.lower()
         self._rem_registry.record_identity_announce(
             identity,
+            announced_identity_hash=announced_identity_hash,
             display_name=display_name,
             source_interface=source_interface,
             announce_capabilities=announce_capabilities,
@@ -1147,14 +1150,26 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
                 entry["identity"] = identity_value
                 entry["updated_at"] = updated_at
 
-        announces = {
-            record.destination_hash.lower(): record
-            for record in self._storage.list_identity_announces()
-        }
-        announce_sources = {
-            key: (record.source_interface or "").strip().lower() or None
-            for key, record in announces.items()
-        }
+        announces: dict[str, IdentityAnnounceRecord] = {}
+        announce_sources: dict[str, str | None] = {}
+        for record in self._storage.list_identity_announces():
+            identity_key = str(
+                record.announced_identity_hash or record.destination_hash or ""
+            ).strip().lower()
+            if not identity_key:
+                continue
+            source = str(record.source_interface or "").strip().lower() or None
+            existing = announces.get(identity_key)
+            existing_source = (
+                (existing.source_interface or "").strip().lower()
+                if existing is not None
+                else None
+            )
+            if existing is None or (
+                source == "identity" and existing_source != "identity"
+            ):
+                announces[identity_key] = record
+                announce_sources[identity_key] = source
         identities = sorted(
             set(clients.keys()) | set(states.keys()) | set(announces.keys())
         )
