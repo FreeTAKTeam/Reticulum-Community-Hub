@@ -1197,6 +1197,54 @@ class ReticulumTelemetryHub:
             self._invalidate_topic_registry()
         return responses
 
+    def _should_ignore_passive_command_payload(
+        self,
+        commands: list[dict] | None,
+        message: LXMF.LXMessage,
+    ) -> bool:
+        """Return True for background numeric command payloads with no user text.
+
+        Some clients emit machine-generated ``FIELD_COMMANDS`` updates that use the
+        numeric plugin key ``0`` but do not actually represent user CLI commands.
+        When those packets have no message body and the key-0 token is not a known
+        command, treating them as CLI input only produces unsolicited help spam.
+        """
+
+        if not commands:
+            return False
+        content = getattr(message, "content", None)
+        if content not in (None, b"", ""):
+            return False
+
+        manager = getattr(self, "command_manager", None)
+        normalize_name = getattr(manager, "_normalize_command_name", None)
+        all_names = getattr(manager, "_all_command_names", None) if manager is not None else None
+        if not callable(normalize_name) or not callable(all_names):
+            return False
+        known_names = set(all_names())
+
+        for command in commands:
+            if not isinstance(command, dict):
+                return False
+            command_type = command.get("command_type")
+            if isinstance(command_type, str) and command_type.strip():
+                return False
+            if "Command" in command:
+                return False
+            raw_name = command.get(PLUGIN_COMMAND)
+            if raw_name is None:
+                raw_name = command.get(str(PLUGIN_COMMAND))
+            if not isinstance(raw_name, str):
+                return False
+            normalized = (
+                normalize_name(raw_name)
+                if callable(normalize_name)
+                else raw_name.strip() or None
+            )
+            if normalized in known_names:
+                return False
+        return True
+
     def _mission_sync_response_to_lxmf(
         self, message: LXMF.LXMessage, response
     ) -> LXMF.LXMessage | None:
@@ -2047,8 +2095,14 @@ class ReticulumTelemetryHub:
                         attachment_replies.append(error_reply)
 
                 if commands:
-                    command_replies = self.command_handler(commands, message) or []
-                    adapter_commands = list(commands)
+                    if self._should_ignore_passive_command_payload(commands, message):
+                        RNS.log(
+                            "Ignored passive background command payload with unknown numeric command key.",
+                            getattr(RNS, "LOG_DEBUG", 6),
+                        )
+                    else:
+                        command_replies = self.command_handler(commands, message) or []
+                        adapter_commands = list(commands)
 
             responses = attachment_replies + command_replies
             text_only_replies: list[LXMF.LXMessage] = []

@@ -1712,6 +1712,67 @@ def test_delivery_callback_skips_extra_help_for_unjoined_command_messages():
     assert router_messages[0].content_as_string() == "command-ok"
 
 
+def test_delivery_callback_ignores_passive_unknown_numeric_command_payloads():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    router_messages: list[LXMF.LXMessage] = []
+
+    class DummyRouter:
+        def handle_outbound(self, message):
+            router_messages.append(message)
+
+    hub.lxm_router = DummyRouter()
+    hub.my_lxmf_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.IN, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    sender = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    sender_hash = sender.identity.hash.hex()
+    hub.connections = {sender.identity.hash: sender}
+    hub.identities = {sender_hash: "phone-client"}
+    hub.topic_subscribers = {}
+    hub.api = type(
+        "DummyAPI",
+        (),
+        {
+            "list_topics": lambda self: [],
+            "list_subscribers": lambda self: [],
+            "has_client": lambda self, identity: identity == sender_hash,
+        },
+    )()
+    hub.tel_controller = type(
+        "DummyController",
+        (),
+        {
+            "handle_message": lambda self, message: False,
+            "handle_command": lambda self, command, message, dest: None,
+        },
+    )()
+    hub.command_manager = CommandManager(
+        hub.connections,
+        hub.tel_controller,
+        hub.my_lxmf_dest,
+        hub.api,
+    )
+    hub.send_message = MethodType(ReticulumTelemetryHub.send_message, hub)
+
+    incoming = LXMF.LXMessage(
+        hub.my_lxmf_dest,
+        sender,
+        fields={LXMF.FIELD_COMMANDS: [{PLUGIN_COMMAND: "PassiveHeartbeat"}]},
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    incoming.signature_validated = True
+
+    hub.delivery_callback(incoming)
+    hub.wait_for_outbound_flush()
+
+    assert not router_messages
+
+
 def test_delivery_callback_skips_cot_chat_for_telemetry():
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
