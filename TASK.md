@@ -1,4 +1,5 @@
 # TASKS
+- 2026-04-04: DONE. Refactor outbound queue send timeout handling to use a shared dispatch executor/future monitoring path (no per-attempt sender/watcher threads) and expose timed-out/in-progress future counters in queue stats.
 - 2026-04-02: DONE. Bump project version to 2.6.1 across Python, UI, and Electron manifests.
 - 2026-04-02: DONE. Ignore passive background `FIELD_COMMANDS` payloads that misuse numeric key `0` so connected phone clients do not receive unsolicited command lists every 5 minutes.
 - 2026-04-02: DONE. Harden Reticulum discovery snapshots against missing runtime attributes, fix checklist CSV import to create online checklists without a template UID, and repair the announce persistence call signature.

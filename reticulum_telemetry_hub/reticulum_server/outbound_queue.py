@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import Future
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError
 from dataclasses import dataclass
 from dataclasses import field
 from queue import Empty
@@ -77,6 +80,12 @@ class _PendingReceipt(NamedTuple):
     deadline: float
 
 
+class _PendingDispatch(NamedTuple):
+    payload: OutboundPayload
+    attempt_id: int
+    future: Future[None]
+
+
 class OutboundMessageQueue:
     """Threaded dispatcher that delivers LXMF messages without blocking callers."""
 
@@ -142,6 +151,10 @@ class OutboundMessageQueue:
         self._sender = sender
         self._queue: Queue[OutboundPayload] = Queue(maxsize=max(queue_size, 1))
         self._worker_count = max(worker_count, 1)
+        self._send_executor = ThreadPoolExecutor(
+            max_workers=self._worker_count,
+            thread_name_prefix="lxmf-send",
+        )
         self._send_timeout = max(send_timeout, 0.1)
         self._delivery_receipt_timeout = (
             max(delivery_receipt_timeout, 0.01)
@@ -157,6 +170,12 @@ class OutboundMessageQueue:
         self._inflight_lock = threading.Lock()
         self._active_dispatches = 0
         self._active_dispatch_lock = threading.Lock()
+        self._in_progress_futures = 0
+        self._in_progress_futures_lock = threading.Lock()
+        self._timed_out_sends = 0
+        self._timed_out_sends_lock = threading.Lock()
+        self._pending_dispatches: dict[tuple[int, int], _PendingDispatch] = {}
+        self._pending_dispatches_lock = threading.Lock()
         self._pending_receipts: dict[tuple[int, int], _PendingReceipt] = {}
         self._pending_receipts_lock = threading.Lock()
         self._delivery_receipt_callback = delivery_receipt_callback
@@ -263,12 +282,18 @@ class OutboundMessageQueue:
                 inflight = self._inflight
             with self._active_dispatch_lock:
                 active_dispatches = self._active_dispatches
+            with self._in_progress_futures_lock:
+                in_progress_futures = self._in_progress_futures
+            with self._pending_dispatches_lock:
+                pending_dispatches = len(self._pending_dispatches)
             with self._pending_receipts_lock:
                 pending_receipts = len(self._pending_receipts)
             if (
                 self._queue.empty()
                 and inflight == 0
                 and active_dispatches == 0
+                and in_progress_futures == 0
+                and pending_dispatches == 0
                 and pending_receipts == 0
             ):
                 return True
@@ -282,13 +307,22 @@ class OutboundMessageQueue:
             inflight = self._inflight
         with self._active_dispatch_lock:
             active_dispatches = self._active_dispatches
+        with self._in_progress_futures_lock:
+            in_progress_futures = self._in_progress_futures
+        with self._timed_out_sends_lock:
+            timed_out_sends = self._timed_out_sends
+        with self._pending_dispatches_lock:
+            pending_dispatches = len(self._pending_dispatches)
         with self._pending_receipts_lock:
             pending_receipts = len(self._pending_receipts)
         return {
             "queue_depth": self._queue.qsize(),
             "inflight": inflight,
             "active_dispatches": active_dispatches,
+            "in_progress_futures": in_progress_futures,
+            "pending_dispatches": pending_dispatches,
             "pending_receipts": pending_receipts,
+            "timed_out_sends": timed_out_sends,
             "worker_count": self._worker_count,
         }
 
@@ -418,9 +452,10 @@ class OutboundMessageQueue:
             return self._pending_receipts.pop(key, None)
 
     def _receipt_monitor_loop(self) -> None:
-        """Fail pending attempts whose delivery callback never arrives."""
+        """Advance timed-out sends and fail missing delivery receipts."""
 
         while not self._stop_event.is_set():
+            self._drain_pending_dispatches()
             now = time.monotonic()
             expired: list[_PendingReceipt] = []
             with self._pending_receipts_lock:
@@ -430,6 +465,23 @@ class OutboundMessageQueue:
             for pending in expired:
                 self._handle_receipt_timeout(pending.payload, pending.attempt_id)
             self._stop_event.wait(0.05)
+
+        while True:
+            if not self._drain_pending_dispatches():
+                break
+
+    def _drain_pending_dispatches(self) -> bool:
+        """Handle completed dispatch futures tracked after send timeouts."""
+
+        pending: list[_PendingDispatch] = []
+        with self._pending_dispatches_lock:
+            for key, dispatch in list(self._pending_dispatches.items()):
+                if dispatch.future.done():
+                    pending.append(self._pending_dispatches.pop(key))
+        for dispatch in pending:
+            self._finalize_dispatch(dispatch.payload, dispatch.attempt_id, dispatch.future)
+        with self._pending_dispatches_lock:
+            return bool(self._pending_dispatches)
 
     def _handle_receipt_timeout(
         self,
@@ -473,8 +525,6 @@ class OutboundMessageQueue:
 
     def _send_with_timeout(self, payload: OutboundPayload) -> str | None:
         """Dispatch a payload and return a failure reason when dispatch fails."""
-
-        error: list[Exception | None] = [None]
         attempt_id = self._begin_attempt(payload)
 
         def _mark_receipt(
@@ -507,62 +557,60 @@ class OutboundMessageQueue:
                 message.register_delivery_callback(_mark_receipt)
                 message.register_failed_callback(_mark_failure)
                 self._lxm_router.handle_outbound(message)
-            except Exception as exc:
-                error[0] = exc
             finally:
                 with self._active_dispatch_lock:
                     self._active_dispatches -= 1
 
-        sender = threading.Thread(target=_send, name="lxmf-send", daemon=True)
-        sender.start()
-        sender.join(timeout=self._send_timeout)
-        if sender.is_alive():
-            def _await_sender_completion() -> None:
-                sender.join()
-                if error[0] is not None:
-                    if not self._claim_attempt(payload, attempt_id):
-                        return
-                    RNS.log(
-                        (
-                            "Failed to deliver outbound message to"
-                            f" {payload.destination_hex or 'unknown destination'}: {error[0]}"
-                        ),
-                        getattr(RNS, "LOG_WARNING", 2),
-                    )
-                    self._handle_delivery_attempt_failure(payload, reason="send_error")
-                    return
+        future = self._send_executor.submit(_send)
+        with self._in_progress_futures_lock:
+            self._in_progress_futures += 1
 
-                if self._delivery_receipt_timeout is None:
-                    return
-                if not self._attempt_is_active(payload, attempt_id):
-                    return
-                self._register_pending_receipt(payload, attempt_id)
-
-            completion_watcher = threading.Thread(
-                target=_await_sender_completion,
-                name="lxmf-send-complete",
-                daemon=True,
-            )
-            completion_watcher.start()
+        try:
+            future.result(timeout=self._send_timeout)
+        except TimeoutError:
+            with self._timed_out_sends_lock:
+                self._timed_out_sends += 1
+            key = (id(payload), attempt_id)
+            with self._pending_dispatches_lock:
+                self._pending_dispatches[key] = _PendingDispatch(payload, attempt_id, future)
             RNS.log(
                 (
                     "Timed out delivering outbound message to"
                     f" {payload.destination_hex or 'unknown destination'}; "
-                    "waiting for the sender thread to finish before retrying"
+                    "waiting for dispatch completion before retrying"
                 ),
                 getattr(RNS, "LOG_WARNING", 2),
             )
             return None
+        except Exception:
+            return self._finalize_dispatch(payload, attempt_id, future)
 
-        if error[0] is not None:
-            self._invalidate_attempt(payload, attempt_id)
+        return self._finalize_dispatch(payload, attempt_id, future)
+
+    def _finalize_dispatch(
+        self,
+        payload: OutboundPayload,
+        attempt_id: int,
+        future: Future[None],
+    ) -> str | None:
+        """Finalize a dispatch attempt after the router call completes."""
+
+        with self._in_progress_futures_lock:
+            self._in_progress_futures = max(self._in_progress_futures - 1, 0)
+        try:
+            future.result()
+        except Exception as exc:
             RNS.log(
                 (
                     "Failed to deliver outbound message to"
-                    f" {payload.destination_hex or 'unknown destination'}: {error[0]}"
+                    f" {payload.destination_hex or 'unknown destination'}: {exc}"
                 ),
                 getattr(RNS, "LOG_WARNING", 2),
             )
+            if self._claim_attempt(payload, attempt_id):
+                self._handle_delivery_attempt_failure(payload, reason="send_error")
+                return None
+            self._invalidate_attempt(payload, attempt_id)
             return "send_error"
 
         if self._delivery_receipt_timeout is None:

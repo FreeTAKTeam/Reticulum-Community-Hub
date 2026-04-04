@@ -328,7 +328,10 @@ def test_outbound_queue_reports_runtime_stats():
     assert stats["queue_depth"] == 1
     assert stats["worker_count"] == 3
     assert stats["active_dispatches"] == 0
+    assert stats["in_progress_futures"] == 0
+    assert stats["pending_dispatches"] == 0
     assert stats["pending_receipts"] == 0
+    assert stats["timed_out_sends"] == 0
 
 
 def test_outbound_queue_retries_failed_callbacks_before_terminal_failure():
@@ -663,9 +666,13 @@ def test_outbound_queue_waits_for_timed_out_sender_before_retrying():
     finally:
         queue.stop()
 
+    stats = queue.stats()
     assert router.calls == 2
     assert max_active_calls == 1
     assert attempts_started[1] > attempts_started[0]
+    assert stats["timed_out_sends"] >= 1
+    assert stats["in_progress_futures"] == 0
+    assert stats["pending_dispatches"] == 0
 
 
 def test_outbound_queue_flush_waits_for_timed_out_sender_completion():
