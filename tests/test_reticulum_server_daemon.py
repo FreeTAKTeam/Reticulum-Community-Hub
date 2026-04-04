@@ -1445,7 +1445,7 @@ def test_rem_registry_commands_and_connected_eam_fanout(tmp_path):
         )
 
         command_message = _InboundMessage(rem_dest)
-        mode_responses = hub.command_handler(
+        mode_responses = hub.command_handler(  # pylint: disable=assignment-from-no-return
             [
                 {
                     "command_id": "mode-1",
