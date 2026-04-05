@@ -5,6 +5,7 @@ import RNS
 
 from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
     OutboundMessageQueue,
+    OutboundPayload,
 )
 from reticulum_telemetry_hub.reticulum_server.propagation_selection import (
     PropagationNodeCandidate,
@@ -148,6 +149,54 @@ def test_outbound_queue_handles_multi_destination_fan_out():
         recipient_one.identity.hash,
         recipient_two.identity.hash,
     }
+
+
+def test_outbound_queue_queue_messages_batches_payloads():
+    sender = _make_destination(RNS.Destination.IN)
+    recipient_one = _make_destination()
+    recipient_two = _make_destination()
+    delivered: list[bytes] = []
+
+    class CollectingRouter:
+        def handle_outbound(self, message):
+            delivered.append(message.destination_hash)
+
+    queue = OutboundMessageQueue(
+        CollectingRouter(),
+        sender,
+        queue_size=4,
+        worker_count=1,
+        send_timeout=0.1,
+        backoff_seconds=0.01,
+        max_attempts=1,
+    )
+
+    payloads = [
+        OutboundPayload(
+            connection=recipient_one,
+            message_text="one",
+            destination_hash=recipient_one.identity.hash,
+            destination_hex=recipient_one.identity.hash.hex(),
+            sender=sender,
+        ),
+        OutboundPayload(
+            connection=recipient_two,
+            message_text="two",
+            destination_hash=recipient_two.identity.hash,
+            destination_hex=recipient_two.identity.hash.hex(),
+            sender=sender,
+        ),
+    ]
+
+    try:
+        queue.start()
+        outcomes = queue.queue_messages(payloads)
+        assert outcomes == [True, True]
+        assert queue.wait_for_flush(timeout=1.0)
+    finally:
+        queue.stop()
+
+    assert delivered == [recipient_one.identity.hash, recipient_two.identity.hash]
 
 
 def test_outbound_queue_reports_delivery_receipts():

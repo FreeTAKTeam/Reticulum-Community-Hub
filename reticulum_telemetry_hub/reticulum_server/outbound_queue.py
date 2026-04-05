@@ -265,6 +265,11 @@ class OutboundMessageQueue:
         )
         return self._enqueue_payload(payload)
 
+    def queue_messages(self, payloads: list[OutboundPayload]) -> list[bool]:
+        """Enqueue a batch of outbound payloads and return per-item outcomes."""
+
+        return [self._enqueue_payload(payload) for payload in payloads]
+
     def wait_for_flush(self, timeout: float = 1.0) -> bool:
         """
         Wait until the queue and inflight sends complete.
