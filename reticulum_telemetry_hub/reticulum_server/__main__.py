@@ -174,6 +174,7 @@ DEFAULT_OUTBOUND_SEND_TIMEOUT = 5.0
 DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT = 30.0
 DEFAULT_OUTBOUND_BACKOFF = 0.5
 DEFAULT_OUTBOUND_MAX_ATTEMPTS = 3
+DEFAULT_OUTBOUND_FANOUT_SOFT_MAX_RECIPIENTS = 256
 IDENTITY_CAPABILITY_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
@@ -814,6 +815,7 @@ class ReticulumTelemetryHub:
         outbound_delivery_receipt_timeout: float = DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT,
         outbound_backoff: float = DEFAULT_OUTBOUND_BACKOFF,
         outbound_max_attempts: int = DEFAULT_OUTBOUND_MAX_ATTEMPTS,
+        outbound_fanout_soft_max_recipients: int = DEFAULT_OUTBOUND_FANOUT_SOFT_MAX_RECIPIENTS,
     ):
         """Initialize the telemetry hub runtime container.
 
@@ -835,6 +837,7 @@ class ReticulumTelemetryHub:
                 LXMF delivery/failure callback before retrying or failing.
             outbound_backoff (float): Base number of seconds to wait between retry attempts.
             outbound_max_attempts (int): Number of attempts before an outbound message is dropped.
+            outbound_fanout_soft_max_recipients (int): Soft cap for fan-out recipients per send tick.
         """
         init_started = time.monotonic()
         # Normalize paths early so downstream helpers can rely on Path objects.
@@ -852,6 +855,7 @@ class ReticulumTelemetryHub:
         self.outbound_delivery_receipt_timeout = outbound_delivery_receipt_timeout
         self.outbound_backoff = outbound_backoff
         self.outbound_max_attempts = outbound_max_attempts
+        self.outbound_fanout_soft_max_recipients = max(outbound_fanout_soft_max_recipients, 0)
         self.config_manager: HubConfigurationManager | None = config_manager
         if self.config_manager is None:
             self.config_manager = HubConfigurationManager(
@@ -1242,6 +1246,7 @@ class ReticulumTelemetryHub:
         all_names = getattr(manager, "_all_command_names", None) if manager is not None else None
         if not callable(normalize_name) or not callable(all_names):
             return False
+        normalize_command_name = cast(Callable[[str], str | None], normalize_name)
         known_names = set(all_names())
 
         for command in commands:
@@ -1257,11 +1262,9 @@ class ReticulumTelemetryHub:
                 raw_name = command.get(str(PLUGIN_COMMAND))
             if not isinstance(raw_name, str):
                 return False
-            normalized = (
-                normalize_name(raw_name)
-                if callable(normalize_name)
-                else raw_name.strip() or None
-            )
+            normalized = normalize_command_name(raw_name)
+            if normalized is None:
+                normalized = raw_name.strip() or None
             if normalized in known_names:
                 return False
         return True
@@ -2335,67 +2338,49 @@ class ReticulumTelemetryHub:
             )
             return False
 
-        available = (
-            list(self.connections.values())
-            if hasattr(self.connections, "values")
-            else list(self.connections)
-        )
-        excluded = {value.lower() for value in exclude if value} if exclude else set()
         normalized_destination = normalize_hash(destination)
         normalized_topic_id = normalize_topic_id(topic)
-        if normalized_topic_id:
-            subscriber_hex = self._subscribers_for_topic(normalized_topic_id)
-            available = [
-                connection
-                for connection in available
-                if self._connection_hex(connection) in subscriber_hex
-            ]
         message_id = self._delivery_message_id(fields, chat_message_id=chat_message_id)
+        shared_fields = self._prepare_outbound_delivery_fields(
+            fields=fields,
+            topic_id=normalized_topic_id,
+            message_id=message_id,
+        )
+        payloads, metrics = self._build_outbound_payloads(
+            message=message,
+            route_type=route_type,
+            topic_id=normalized_topic_id,
+            destination=normalized_destination,
+            exclude=exclude,
+            fields=shared_fields,
+            sender=sender,
+            chat_message_id=chat_message_id,
+            message_id=message_id,
+        )
         enqueue_started = time.perf_counter()
-        recipient_count = 0
-        enqueued_any = False
-        for connection in available:
-            connection_hex = self._connection_hex(connection)
-            if normalized_destination and connection_hex != normalized_destination:
-                continue
-            if excluded and connection_hex and connection_hex in excluded:
-                continue
-            recipient_count += 1
-            identity = getattr(connection, "identity", None)
-            destination_hash = getattr(identity, "hash", None)
-            enqueued = queue.queue_message(
-                connection,
-                message,
-                (
-                    destination_hash
-                    if isinstance(destination_hash, (bytes, bytearray))
-                    else None
-                ),
-                connection_hex,
-                fields,
-                sender=sender,
-                chat_message_id=chat_message_id,
-                message_id=message_id,
-                topic_id=normalized_topic_id,
-                route_type=route_type,
-            )
-            if enqueued:
-                enqueued_any = True
+        enqueue_results = queue.queue_messages(payloads)
+        enqueued_count = sum(1 for enqueued in enqueue_results if enqueued)
+        for payload, enqueued in zip(payloads, enqueue_results):
             if not enqueued:
                 RNS.log(
                     (
                         "Failed to enqueue outbound LXMF message for"
-                        f" {connection_hex or 'unknown destination'}"
+                        f" {payload.destination_hex or 'unknown destination'}"
                     ),
                     getattr(RNS, "LOG_WARNING", 2),
                 )
         enqueue_duration_ms = round((time.perf_counter() - enqueue_started) * 1000, 3)
         queue_stats = queue.stats()
+        enqueued_any = enqueued_count > 0
         self._record_outbound_route_metrics(
             message_id=message_id,
             route_type=route_type,
-            fanout_count=recipient_count if route_type == "fanout" else 0,
-            targeted_recipient_count=recipient_count if route_type == "targeted" else 0,
+            fanout_count=enqueued_count if route_type == "fanout" else 0,
+            targeted_recipient_count=enqueued_count if route_type == "targeted" else 0,
+            eligible_recipient_count=metrics["eligible_recipient_count"],
+            selected_recipient_count=metrics["selected_recipient_count"],
+            dropped_by_fanout_cap=metrics["dropped_by_fanout_cap"],
+            deferred_by_fanout_cap=metrics["deferred_by_fanout_cap"],
             drop_reason=None if enqueued_any else "no_recipients",
             enqueue_duration_ms=enqueue_duration_ms,
             queue_depth=queue_stats["queue_depth"],
@@ -2403,6 +2388,155 @@ class ReticulumTelemetryHub:
             pending_receipts=queue_stats["pending_receipts"],
         )
         return enqueued_any
+
+    def _prepare_outbound_delivery_fields(
+        self,
+        *,
+        fields: dict | None,
+        topic_id: str | None,
+        message_id: str,
+    ) -> dict | None:
+        """Return shared outbound fields with a validated delivery envelope."""
+
+        normalized_fields = dict(fields) if isinstance(fields, dict) else {}
+        envelope = extract_delivery_envelope(normalized_fields)
+        if envelope is None:
+            outbound_envelope = build_delivery_envelope(
+                sender=self._origin_rch_hex() or "hub",
+                message_id=message_id,
+                topic_id=topic_id,
+                content_type="text/plain; schema=lxmf.chat.v1",
+                ttl_seconds=DEFAULT_TTL_SECONDS,
+                priority=DEFAULT_PRIORITY,
+                born_at_ms=utc_now_ms(),
+                created_at=utc_now_rfc3339(),
+            )
+            return attach_delivery_envelope(normalized_fields, outbound_envelope)
+        try:
+            validate_delivery_envelope(envelope)
+        except DeliveryContractError:
+            return normalized_fields
+        return normalized_fields
+
+    def _build_outbound_payloads(
+        self,
+        *,
+        message: str,
+        route_type: str,
+        topic_id: str | None,
+        destination: str | None,
+        exclude: set[str] | None,
+        fields: dict | None,
+        sender: RNS.Destination | None,
+        chat_message_id: str | None,
+        message_id: str,
+    ) -> tuple[list[OutboundPayload], dict[str, int]]:
+        """Build outbound payloads while precomputing fan-out metadata once."""
+
+        available = (
+            list(self.connections.values())
+            if hasattr(self.connections, "values")
+            else list(self.connections)
+        )
+        excluded = {value.lower() for value in exclude if value} if exclude else set()
+        subscribers = (
+            self._subscribers_for_topic(topic_id) if topic_id is not None else None
+        )
+        recipients: list[tuple[RNS.Destination, str | None, bytes | None]] = []
+        for connection in available:
+            connection_hex = self._connection_hex(connection)
+            if destination and connection_hex != destination:
+                continue
+            if excluded and connection_hex and connection_hex in excluded:
+                continue
+            if subscribers is not None and connection_hex not in subscribers:
+                continue
+            identity = getattr(connection, "identity", None)
+            destination_hash = getattr(identity, "hash", None)
+            recipients.append(
+                (
+                    connection,
+                    connection_hex,
+                    destination_hash if isinstance(destination_hash, (bytes, bytearray)) else None,
+                )
+            )
+
+        eligible_recipient_count = len(recipients)
+        deferred_by_fanout_cap = 0
+        fanout_soft_max = int(getattr(self, "outbound_fanout_soft_max_recipients", 0))
+        if route_type == "fanout" and fanout_soft_max > 0 and eligible_recipient_count > fanout_soft_max:
+            deferred_by_fanout_cap = eligible_recipient_count - fanout_soft_max
+            self._record_fanout_backpressure_warning(
+                message_id=message_id,
+                topic_id=topic_id,
+                selected_count=fanout_soft_max,
+                deferred_count=deferred_by_fanout_cap,
+            )
+
+        stagger_step_seconds = max(float(getattr(self, "outbound_backoff", 0.5)), 0.05)
+        payloads: list[OutboundPayload] = []
+        for index, (connection, connection_hex, destination_hash) in enumerate(recipients):
+            payload = OutboundPayload(
+                connection=connection,
+                message_text=message,
+                destination_hash=destination_hash,
+                destination_hex=connection_hex,
+                fields=fields,
+                sender=sender or self.my_lxmf_dest,
+                chat_message_id=chat_message_id,
+                message_id=message_id,
+                topic_id=topic_id,
+                route_type=route_type,
+            )
+            if (
+                route_type == "fanout"
+                and fanout_soft_max > 0
+                and eligible_recipient_count > fanout_soft_max
+                and index >= fanout_soft_max
+            ):
+                batch_index = index // fanout_soft_max
+                payload.next_attempt_at = time.monotonic() + (batch_index * stagger_step_seconds)
+            payloads.append(payload)
+        return payloads, {
+            "eligible_recipient_count": eligible_recipient_count,
+            "selected_recipient_count": len(payloads),
+            "dropped_by_fanout_cap": 0,
+            "deferred_by_fanout_cap": deferred_by_fanout_cap,
+        }
+
+    def _record_fanout_backpressure_warning(
+        self,
+        *,
+        message_id: str,
+        topic_id: str | None,
+        selected_count: int,
+        deferred_count: int,
+    ) -> None:
+        """Emit an explicit warning when fan-out soft caps defer recipients."""
+
+        RNS.log(
+            (
+                "Outbound fan-out soft cap exceeded; sending to"
+                f" {selected_count} recipients this tick and deferring {deferred_count}."
+            ),
+            getattr(RNS, "LOG_WARNING", 2),
+        )
+        event_log = getattr(self, "event_log", None)
+        if event_log is None:
+            return
+        event_log.add_event(
+            "message_fanout_capped",
+            "Outbound fan-out exceeded soft cap",
+            metadata={
+                "MessageID": message_id,
+                "topic_id": topic_id,
+                "selected_recipient_count": selected_count,
+                "deferred_recipient_count": deferred_count,
+                "fanout_soft_max_recipients": int(
+                    getattr(self, "outbound_fanout_soft_max_recipients", 0)
+                ),
+            },
+        )
 
     def dispatch_northbound_message(
         self,
@@ -2953,6 +3087,10 @@ class ReticulumTelemetryHub:
         route_type: str,
         fanout_count: int,
         targeted_recipient_count: int,
+        eligible_recipient_count: int,
+        selected_recipient_count: int,
+        dropped_by_fanout_cap: int,
+        deferred_by_fanout_cap: int,
         drop_reason: str | None,
         enqueue_duration_ms: float,
         queue_depth: int,
@@ -2972,6 +3110,10 @@ class ReticulumTelemetryHub:
                 "route_type": route_type,
                 "fanout_count": fanout_count,
                 "targeted_recipient_count": targeted_recipient_count,
+                "eligible_recipient_count": eligible_recipient_count,
+                "selected_recipient_count": selected_recipient_count,
+                "dropped_by_fanout_cap": dropped_by_fanout_cap,
+                "deferred_by_fanout_cap": deferred_by_fanout_cap,
                 "enqueue_duration_ms": enqueue_duration_ms,
                 "queue_depth": queue_depth,
                 "active_sends": active_sends,

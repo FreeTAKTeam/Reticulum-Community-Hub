@@ -979,6 +979,55 @@ def test_send_message_refreshes_topic_registry(tmp_path):
     assert sent[0].destination_hash == dest_two.identity.hash
 
 
+def test_send_message_applies_fanout_soft_cap_and_logs_warning(tmp_path):
+    hub = ReticulumTelemetryHub(
+        "TestHub",
+        str(tmp_path),
+        tmp_path / "identity",
+        outbound_fanout_soft_max_recipients=1,
+    )
+    sent: list[LXMF.LXMessage] = []
+    hub.lxm_router.handle_outbound = lambda m: sent.append(m)
+
+    destination_one = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    destination_two = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    hub.connections = {
+        destination_one.identity.hash: destination_one,
+        destination_two.identity.hash: destination_two,
+    }
+    topic_id = "topic-cap"
+    hub.topic_subscribers = {
+        topic_id: {
+            destination_one.identity.hash.hex().lower(),
+            destination_two.identity.hash.hex().lower(),
+        }
+    }
+    events: list[tuple[str, dict[str, object]]] = []
+
+    class DummyEventLog:
+        def add_event(self, event_type: str, _message: str, metadata=None):
+            events.append((event_type, metadata or {}))
+
+    hub.event_log = DummyEventLog()
+
+    hub.send_message("Hello", topic=topic_id)
+    hub.wait_for_outbound_flush()
+
+    assert len(sent) == 2
+    assert any(event[0] == "message_fanout_capped" for event in events)
+    fanout_event = next(event for event in events if event[0] == "message_fanout_capped")
+    assert fanout_event[1]["deferred_recipient_count"] == 1
+    route_event = next(event for event in events if event[0] == "message_routed")
+    assert route_event[1]["eligible_recipient_count"] == 2
+    assert route_event[1]["selected_recipient_count"] == 2
+    assert route_event[1]["dropped_by_fanout_cap"] == 0
+    assert route_event[1]["deferred_by_fanout_cap"] == 1
+
+
 def test_dispatch_northbound_message_prefixes_topic_payload():
     hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
     sent: dict[str, object] = {}
