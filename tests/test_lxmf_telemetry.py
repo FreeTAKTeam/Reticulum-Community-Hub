@@ -422,6 +422,71 @@ def test_handle_message_notifies_listener(telemetry_controller):
     assert isinstance(timestamp, datetime)
 
 
+def test_register_listener_returns_unsubscribe(telemetry_controller):
+    """Listener registration should return an unsubscribe callback."""
+
+    events: list[tuple[dict, bytes | str | None, datetime | None]] = []
+
+    def listener(payload: dict, peer_hash, timestamp: datetime | None) -> None:
+        events.append((payload, peer_hash, timestamp))
+
+    unsubscribe = telemetry_controller.register_listener(listener)
+
+    telemetry_controller._notify_listener({"time": {}}, "aabb", None)
+    assert len(events) == 1
+
+    unsubscribe()
+    telemetry_controller._notify_listener({"time": {}}, "aabb", None)
+    assert len(events) == 1
+
+
+def test_multiple_registered_listeners_receive_notifications(telemetry_controller):
+    """All registered listeners should be notified for the same payload."""
+
+    first: list[dict] = []
+    second: list[dict] = []
+
+    telemetry_controller.register_listener(
+        lambda payload, _peer_hash, _timestamp: first.append(payload)
+    )
+    telemetry_controller.register_listener(
+        lambda payload, _peer_hash, _timestamp: second.append(payload)
+    )
+
+    payload = {"time": {"timestamp": 1}}
+    telemetry_controller._notify_listener(payload, "aabb", None)
+
+    assert first == [payload]
+    assert second == [payload]
+
+
+def test_listener_failure_does_not_block_other_listeners(telemetry_db_engine):
+    """One failing listener should not prevent other listeners from running."""
+
+    event_log = EventLog()
+    controller = TelemetryController(engine=telemetry_db_engine, event_log=event_log)
+    received: list[dict] = []
+
+    def failing_listener(payload: dict, peer_hash, timestamp: datetime | None) -> None:
+        _ = payload, peer_hash, timestamp
+        raise RuntimeError("listener boom")
+
+    def healthy_listener(payload: dict, peer_hash, timestamp: datetime | None) -> None:
+        _ = peer_hash, timestamp
+        received.append(payload)
+
+    controller.register_listener(failing_listener)
+    controller.register_listener(healthy_listener)
+
+    controller._notify_listener({"time": {"timestamp": 1}}, "aabb", None)
+
+    assert received == [{"time": {"timestamp": 1}}]
+    errors = [
+        event for event in event_log.list_events() if event.get("type") == "telemetry_error"
+    ]
+    assert errors
+
+
 def test_handle_message_listener_failure_records_event(telemetry_db_engine):
     event_log = EventLog()
     controller = TelemetryController(engine=telemetry_db_engine, event_log=event_log)

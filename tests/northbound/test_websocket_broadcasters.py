@@ -43,23 +43,31 @@ class _FakeTelemetryController:
     def __init__(self) -> None:
         """Initialize the fake controller."""
 
-        self._listener: Optional[
+        self._listeners: list[
             Callable[[dict, str | bytes | None, Optional[object]], None]
-        ] = None
+        ] = []
 
     def register_listener(
         self,
         listener: Callable[[dict, str | bytes | None, Optional[object]], None],
-    ) -> None:
+    ) -> Callable[[], None]:
         """Register a telemetry listener."""
 
-        self._listener = listener
+        self._listeners.append(listener)
+
+        def _unsubscribe() -> None:
+            """Remove the telemetry listener."""
+
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return _unsubscribe
 
     def emit(self, telemetry: dict, peer_hash: str, timestamp: Optional[object]) -> None:
         """Emit telemetry to the registered listener."""
 
-        if self._listener is not None:
-            self._listener(telemetry, peer_hash, timestamp)
+        for listener in list(self._listeners):
+            listener(telemetry, peer_hash, timestamp)
 
 
 def test_topic_subscription_uses_frozenset() -> None:
@@ -94,6 +102,17 @@ def test_topic_subscription_requires_api() -> None:
 
     with pytest.raises(ValueError):
         broadcaster.subscribe(_callback, topic_id="topic")
+
+
+def test_telemetry_broadcaster_close_unsubscribes_source() -> None:
+    """Ensure close() detaches the telemetry source listener."""
+
+    controller = _FakeTelemetryController()
+    broadcaster = TelemetryBroadcaster(controller, None)
+
+    assert len(controller._listeners) == 1
+    broadcaster.close()
+    assert controller._listeners == []
 
 
 def _run_async(coro: Callable[[], Awaitable[None]]) -> None:
