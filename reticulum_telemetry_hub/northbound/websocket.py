@@ -257,7 +257,20 @@ class TelemetryBroadcaster:
         self._api = api
         self._subscribers: set[_TelemetrySubscriber] = set()
         self._delivery_queue_size = max(int(delivery_queue_size), 1)
-        self._controller.register_listener(self._handle_telemetry)
+        self._unsubscribe_source: Optional[Callable[[], None]] = None
+        self._unsubscribe_source = self._controller.register_listener(
+            self._handle_telemetry
+        )
+
+    def close(self) -> None:
+        """Unsubscribe from telemetry and close subscriber deliveries."""
+
+        if self._unsubscribe_source is not None:
+            self._unsubscribe_source()
+            self._unsubscribe_source = None
+        for subscriber in list(self._subscribers):
+            subscriber.delivery.close()
+            self._subscribers.discard(subscriber)
 
     def subscribe(
         self,

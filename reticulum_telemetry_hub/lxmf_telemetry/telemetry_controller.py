@@ -68,6 +68,8 @@ from sqlalchemy.pool import QueuePool
 from sqlalchemy.sql.functions import count as sa_count
 from sqlalchemy.sql.functions import max as sa_max
 
+TelemetryListener = Callable[[dict, str | bytes | None, Optional[datetime]], None]
+
 
 class TelemetryController:
     """This class is responsible for managing the telemetry data."""
@@ -129,9 +131,7 @@ class TelemetryController:
         Base.metadata.create_all(self._engine)
         self._ensure_indexes()
         self._session_cls = sessionmaker(bind=self._engine, expire_on_commit=False)
-        self._telemetry_listener: (
-            Callable[[dict, str | bytes | None, Optional[datetime]], None] | None
-        ) = None
+        self._telemetry_listeners: set[TelemetryListener] = set()
         self._api = api
         self._event_log = event_log
         self._ingest_count = 0
@@ -421,11 +421,22 @@ class TelemetryController:
 
     def register_listener(
         self,
-        listener: Callable[[dict, str | bytes | None, Optional[datetime]], None],
-    ) -> None:
-        """Register a callback invoked when telemetry is ingested."""
+        listener: TelemetryListener,
+    ) -> Callable[[], None]:
+        """Register a callback invoked when telemetry is ingested.
 
-        self._telemetry_listener = listener
+        Returns:
+            Callable[[], None]: Callback that unsubscribes the listener.
+        """
+
+        self._telemetry_listeners.add(listener)
+
+        def _unsubscribe() -> None:
+            """Remove the registered listener."""
+
+            self._telemetry_listeners.discard(listener)
+
+        return _unsubscribe
 
     def save_telemetry(
         self,
@@ -796,26 +807,27 @@ class TelemetryController:
         peer_hash: str | bytes | None,
         timestamp: Optional[datetime],
     ) -> None:
-        """Invoke the registered telemetry listener when present."""
+        """Invoke each registered telemetry listener when present."""
 
-        if self._telemetry_listener is None:
+        if not self._telemetry_listeners:
             return
-        try:
-            self._telemetry_listener(telemetry, peer_hash, timestamp)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            report_nonfatal_exception(
-                self._event_log,
-                "telemetry_error",
-                f"Telemetry listener raised an exception: {exc}",
-                exc,
-                metadata={
-                    "operation": "listener",
-                    "peer_hash": (
-                        peer_hash.hex() if isinstance(peer_hash, bytes) else peer_hash
-                    ),
-                },
-                log_level=RNS.LOG_WARNING,
-            )
+        for listener in list(self._telemetry_listeners):
+            try:
+                listener(telemetry, peer_hash, timestamp)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                report_nonfatal_exception(
+                    self._event_log,
+                    "telemetry_error",
+                    f"Telemetry listener raised an exception: {exc}",
+                    exc,
+                    metadata={
+                        "operation": "listener",
+                        "peer_hash": (
+                            peer_hash.hex() if isinstance(peer_hash, bytes) else peer_hash
+                        ),
+                    },
+                    log_level=RNS.LOG_WARNING,
+                )
 
     def _record_event(
         self,
