@@ -41,6 +41,7 @@ import subprocess
 import time
 import threading
 import uuid
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -137,6 +138,9 @@ from reticulum_telemetry_hub.reticulum_server.propagation_selection import (
 )
 from reticulum_telemetry_hub.reticulum_server.runtime_events import (
     report_nonfatal_exception,
+)
+from reticulum_telemetry_hub.reticulum_server.runtime_metrics_store import (
+    RuntimeMetricsStore,
 )
 from reticulum_telemetry_hub.reticulum_server.services import (
     SERVICE_FACTORIES,
@@ -239,6 +243,77 @@ def _dispatch_coroutine(coroutine) -> None:
         return
 
     loop.create_task(coroutine)
+
+
+class _AsyncTaskRunner:
+    """Dedicated async-loop runner for scheduling hub coroutines safely."""
+
+    def __init__(self, *, name: str) -> None:
+        self._name = name
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._started = threading.Event()
+        self._stopped = threading.Event()
+
+    def start(self) -> None:
+        """Start the runner thread and event loop once."""
+
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._started.clear()
+        self._stopped.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=self._name,
+            daemon=True,
+        )
+        self._thread.start()
+        self._started.wait(timeout=1.0)
+
+    def _run(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        self._started.set()
+        try:
+            loop.run_forever()
+        finally:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                with suppress(Exception):
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            loop.close()
+            self._stopped.set()
+
+    def submit(self, coroutine) -> None:
+        """Submit a coroutine to the runner loop when active."""
+
+        if coroutine is None:
+            return
+        if self._loop is None or self._thread is None or not self._thread.is_alive():
+            _dispatch_coroutine(coroutine)
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        except Exception:
+            _dispatch_coroutine(coroutine)
+
+    def stop(self, *, timeout: float = 1.0) -> None:
+        """Stop the runner loop and wait for thread exit."""
+
+        loop = self._loop
+        if loop is not None:
+            with suppress(Exception):
+                loop.call_soon_threadsafe(loop.stop)
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=timeout)
+        self._thread = None
+        self._loop = None
 
 
 class AnnounceHandler:
@@ -880,6 +955,7 @@ class ReticulumTelemetryHub:
         telemetry_db_path = self.storage_path / "telemetry.db"
         event_log_path = resolve_event_log_path(self.storage_path)
         self.event_log = EventLog(event_path=event_log_path)
+        self.runtime_metrics = RuntimeMetricsStore()
         self.tel_controller = TelemetryController(
             db_path=telemetry_db_path,
             event_log=self.event_log,
@@ -890,6 +966,8 @@ class ReticulumTelemetryHub:
         self.telemeter_manager: TelemeterManager | None = None
         self._shutdown = False
         self.connections: dict[bytes, RNS.Destination] = {}
+        self._destination_cache: dict[str, RNS.Destination] = {}
+        self._destination_cache_lock = threading.Lock()
         self._daemon_started = False
         self._active_services = {}
         self._outbound_queue: OutboundMessageQueue | None = None
@@ -913,6 +991,10 @@ class ReticulumTelemetryHub:
         self._rem_app_announce_handler: AnnounceHandler | None = None
         self._propagation_node_registry = PropagationNodeRegistry()
         self._propagation_announce_handler: PropagationNodeAnnounceHandler | None = None
+        self._tak_async_runner = _AsyncTaskRunner(name="rch-tak-async")
+        self._outbound_transition_log_window_seconds = 1.0
+        self._outbound_transition_log_last_emitted: dict[str, float] = {}
+        self._outbound_transition_log_lock = threading.Lock()
 
         identity = self.load_or_generate_identity(self.identity_path)
         destination_hash = self._delivery_destination_hash(identity)
@@ -1051,6 +1133,7 @@ class ReticulumTelemetryHub:
             self.api,
             config_manager=self.config_manager,
             event_log=self.event_log,
+            destination_removed_callback=self._evict_cached_destination,
         )
         self.mission_sync_router = MissionSyncRouter(
             api=self.api,
@@ -1102,6 +1185,7 @@ class ReticulumTelemetryHub:
                     self._handle_eam_status_update
                 )
             )
+        self._tak_async_runner.start()
         self._invoke_router_hook("register_delivery_callback", self.delivery_callback)
         init_elapsed = time.monotonic() - init_started
         RNS.log(
@@ -1498,6 +1582,7 @@ class ReticulumTelemetryHub:
             else list(self.connections)
         ):
             if self._connection_hex(connection) == normalized_identity:
+                self._cache_destination(connection)
                 return
         try:
             recalled = RNS.Identity.recall(bytes.fromhex(normalized_identity))
@@ -1513,6 +1598,7 @@ class ReticulumTelemetryHub:
         except Exception:
             return
         self.connections[destination.identity.hash] = destination
+        self._cache_destination(destination)
 
     def _prune_mission_change_fanout_cache(self) -> None:
         now = time.time()
@@ -1665,19 +1751,18 @@ class ReticulumTelemetryHub:
         if not recipients["rem"] and not recipients["generic"]:
             return
         concise_body = f"mission log update {log_entry.get('entry_uid') or ''}".strip()
-        for destination in recipients["rem"]:
-            self._ensure_reachable_identity_destination(destination)
-            self.send_message(
+        if recipients["rem"]:
+            self.send_many(
                 concise_body,
-                destination=destination,
+                recipients["rem"],
                 fields=self._build_rem_log_event_fields(log_entry),
             )
         generic_fields = {MARKDOWN_RENDERER_FIELD: MARKDOWN_RENDERER_VALUE}
         markdown_body = self._render_generic_log_update_markdown(log_entry)
-        for destination in recipients["generic"]:
-            self.send_message(
+        if recipients["generic"]:
+            self.send_many(
                 markdown_body,
-                destination=destination,
+                recipients["generic"],
                 fields=generic_fields,
             )
 
@@ -1692,19 +1777,18 @@ class ReticulumTelemetryHub:
         if not recipients["rem"] and not recipients["generic"]:
             return
         concise_body = f"eam update {snapshot.get('callsign') or ''}".strip()
-        for destination in recipients["rem"]:
-            self._ensure_reachable_identity_destination(destination)
-            self.send_message(
+        if recipients["rem"]:
+            self.send_many(
                 concise_body,
-                destination=destination,
+                recipients["rem"],
                 fields=self._build_rem_eam_command_fields(event_type, snapshot),
             )
         generic_fields = {MARKDOWN_RENDERER_FIELD: MARKDOWN_RENDERER_VALUE}
         generic_body = self._render_generic_eam_markdown(event_type, snapshot)
-        for destination in recipients["generic"]:
-            self.send_message(
+        if recipients["generic"]:
+            self.send_many(
                 generic_body,
-                destination=destination,
+                recipients["generic"],
                 fields=generic_fields,
             )
 
@@ -1772,24 +1856,31 @@ class ReticulumTelemetryHub:
         concise_body = (
             f"r3akt mission delta {mission_uid} {mission_change_uid}".strip()
         )
+        r3akt_destinations: list[str] = []
+        generic_destinations: list[str] = []
         for destination in deduped_destinations:
             if self._identity_supports_r3akt(destination):
-                custom_fields = self._build_r3akt_delta_custom_fields(
-                    mission_uid=mission_uid,
-                    mission_change=mission_change,
-                    delta=delta_payload,
-                )
-                merged_fields = self._merge_standard_fields(
-                    source_fields=None,
-                    extra_fields={**base_event_fields, **custom_fields},
-                )
-                self.send_message(
-                    concise_body,
-                    destination=destination,
-                    fields=merged_fields,
-                )
-                continue
+                r3akt_destinations.append(destination)
+            else:
+                generic_destinations.append(destination)
 
+        if r3akt_destinations:
+            custom_fields = self._build_r3akt_delta_custom_fields(
+                mission_uid=mission_uid,
+                mission_change=mission_change,
+                delta=delta_payload,
+            )
+            merged_fields = self._merge_standard_fields(
+                source_fields=None,
+                extra_fields={**base_event_fields, **custom_fields},
+            )
+            self.send_many(
+                concise_body,
+                r3akt_destinations,
+                fields=merged_fields,
+            )
+
+        if generic_destinations:
             merged_fields = self._merge_standard_fields(
                 source_fields=None,
                 extra_fields={
@@ -1797,9 +1888,9 @@ class ReticulumTelemetryHub:
                     MARKDOWN_RENDERER_FIELD: MARKDOWN_RENDERER_VALUE,
                 },
             )
-            self.send_message(
+            self.send_many(
                 markdown_body,
-                destination=destination,
+                generic_destinations,
                 fields=merged_fields,
             )
 
@@ -1838,12 +1929,15 @@ class ReticulumTelemetryHub:
                 extra_fields=extra_fields,
             )
             payload_text = f"r3akt mission event {event_field.get('event_type') or ''}".strip()
-            for destination in destinations:
-                if not destination:
-                    continue
-                self.send_message(
+            explicit_destinations = [
+                str(destination).strip().lower()
+                for destination in destinations
+                if destination
+            ]
+            if explicit_destinations:
+                self.send_many(
                     payload_text,
-                    destination=destination,
+                    explicit_destinations,
                     fields=outbound_fields,
                 )
 
@@ -2257,15 +2351,18 @@ class ReticulumTelemetryHub:
             tak_connector = getattr(self, "tak_connector", None)
             if tak_connector is not None and content_text:
                 try:
-                    asyncio.run(
-                        tak_connector.send_chat_event(
-                            content=content_text,
-                            sender_label=source_label,
-                            topic_id=topic_id,
-                            source_hash=source_hash,
-                            timestamp=message_time,
-                        )
+                    coroutine = tak_connector.send_chat_event(
+                        content=content_text,
+                        sender_label=source_label,
+                        topic_id=topic_id,
+                        source_hash=source_hash,
+                        timestamp=message_time,
                     )
+                    runner = getattr(self, "_tak_async_runner", None)
+                    if runner is not None:
+                        runner.submit(coroutine)
+                    else:
+                        _dispatch_coroutine(coroutine)
                 except Exception as exc:  # pragma: no cover - defensive log
                     RNS.log(
                         f"Failed to send CoT chat event: {exc}",
@@ -2388,6 +2485,97 @@ class ReticulumTelemetryHub:
         )
         return enqueued_any
 
+    def send_many(
+        self,
+        message: str,
+        destinations: list[str],
+        *,
+        fields: dict | None = None,
+        sender: RNS.Destination | None = None,
+        chat_message_id: str | None = None,
+    ) -> bool:
+        """Send one payload body to many explicit destination identities."""
+
+        queue = self._ensure_outbound_queue()
+        if queue is None:
+            return False
+        unique_destinations = [
+            value
+            for value in dict.fromkeys(
+                normalize_hash(identity) for identity in destinations if identity
+            )
+            if value
+        ]
+        if not unique_destinations:
+            return False
+        scanned = 0
+        resolved: list[tuple[RNS.Destination, str, bytes | None]] = []
+        for identity in unique_destinations:
+            scanned += 1
+            connection = self._cached_destination(identity)
+            if connection is None:
+                self._ensure_reachable_identity_destination(identity)
+                connection = self._cached_destination(identity)
+            if connection is None:
+                continue
+            identity_obj = getattr(connection, "identity", None)
+            destination_hash = getattr(identity_obj, "hash", None)
+            resolved.append(
+                (
+                    connection,
+                    identity,
+                    destination_hash if isinstance(destination_hash, (bytes, bytearray)) else None,
+                )
+            )
+        if not resolved:
+            return False
+
+        message_id = self._delivery_message_id(fields, chat_message_id=chat_message_id)
+        shared_fields = self._prepare_outbound_delivery_fields(
+            fields=fields,
+            topic_id=None,
+            message_id=message_id,
+        )
+        payloads = [
+            OutboundPayload(
+                connection=connection,
+                message_text=message,
+                destination_hash=destination_hash,
+                destination_hex=identity_hex,
+                fields=shared_fields,
+                sender=sender or self.my_lxmf_dest,
+                chat_message_id=chat_message_id,
+                message_id=message_id,
+                topic_id=None,
+                route_type="targeted",
+            )
+            for connection, identity_hex, destination_hash in resolved
+        ]
+        enqueue_started = time.perf_counter()
+        enqueue_results = queue.queue_messages(payloads)
+        enqueue_duration_ms = round((time.perf_counter() - enqueue_started) * 1000, 3)
+        enqueued_count = sum(1 for value in enqueue_results if value)
+        queue_stats = queue.stats()
+        metrics = self._runtime_metrics_store()
+        metrics.increment("fanout_recipients_scanned_total", scanned)
+        metrics.increment("fanout_recipients_resolved_total", len(resolved))
+        self._record_outbound_route_metrics(
+            message_id=message_id,
+            route_type="fanout",
+            fanout_count=enqueued_count,
+            targeted_recipient_count=0,
+            eligible_recipient_count=len(resolved),
+            selected_recipient_count=len(resolved),
+            dropped_by_fanout_cap=max(len(resolved) - enqueued_count, 0),
+            deferred_by_fanout_cap=0,
+            drop_reason=None if enqueued_count > 0 else "no_recipients",
+            enqueue_duration_ms=enqueue_duration_ms,
+            queue_depth=queue_stats["queue_depth"],
+            active_sends=queue_stats["active_dispatches"],
+            pending_receipts=queue_stats["pending_receipts"],
+        )
+        return enqueued_count > 0
+
     def _prepare_outbound_delivery_fields(
         self,
         *,
@@ -2442,7 +2630,23 @@ class ReticulumTelemetryHub:
             self._subscribers_for_topic(topic_id) if topic_id is not None else None
         )
         recipients: list[tuple[RNS.Destination, str | None, bytes | None]] = []
+        scanned_recipients = 0
+        if route_type == "targeted" and destination:
+            scanned_recipients = 1
+            targeted_connection = self._cached_destination(destination)
+            if targeted_connection is not None:
+                targeted_identity = getattr(targeted_connection, "identity", None)
+                targeted_hash = getattr(targeted_identity, "hash", None)
+                recipients.append(
+                    (
+                        targeted_connection,
+                        destination,
+                        targeted_hash if isinstance(targeted_hash, (bytes, bytearray)) else None,
+                    )
+                )
+                available = []
         for connection in available:
+            scanned_recipients += 1
             connection_hex = self._connection_hex(connection)
             if destination and connection_hex != destination:
                 continue
@@ -2496,6 +2700,9 @@ class ReticulumTelemetryHub:
                 batch_index = index // fanout_soft_max
                 payload.next_attempt_at = time.monotonic() + (batch_index * stagger_step_seconds)
             payloads.append(payload)
+        metrics = self._runtime_metrics_store()
+        metrics.increment("fanout_recipients_scanned_total", scanned_recipients)
+        metrics.increment("fanout_recipients_resolved_total", len(recipients))
         return payloads, {
             "eligible_recipient_count": eligible_recipient_count,
             "selected_recipient_count": len(payloads),
@@ -2836,16 +3043,41 @@ class ReticulumTelemetryHub:
             return None
         return registry.best_candidate()
 
+    def _should_emit_outbound_transition_event(
+        self,
+        event_type: str,
+        payload: OutboundPayload,
+    ) -> bool:
+        """Return whether an outbound transition event should be emitted now."""
+
+        if not hasattr(self, "_outbound_transition_log_lock"):
+            self._outbound_transition_log_lock = threading.Lock()
+        if not hasattr(self, "_outbound_transition_log_last_emitted"):
+            self._outbound_transition_log_last_emitted = {}
+        if not hasattr(self, "_outbound_transition_log_window_seconds"):
+            self._outbound_transition_log_window_seconds = 1.0
+
+        message_id = payload.chat_message_id or payload.message_id or "unknown"
+        destination = payload.destination_hex or "unknown"
+        key = f"{event_type}:{message_id}:{destination}"
+        now = time.monotonic()
+        with self._outbound_transition_log_lock:
+            last_emitted_at = self._outbound_transition_log_last_emitted.get(key, 0.0)
+            if now - last_emitted_at < self._outbound_transition_log_window_seconds:
+                return False
+            self._outbound_transition_log_last_emitted[key] = now
+        return True
+
     def _handle_outbound_retry_scheduled(self, payload: OutboundPayload) -> None:
         """Record a direct-delivery retry event."""
 
-        self._persist_outbound_delivery_metadata(
-            payload,
-            state="queued",
-            delivery_metadata={"retry_scheduled": True},
-        )
         event_log = getattr(self, "event_log", None)
         if event_log is None:
+            return
+        if not self._should_emit_outbound_transition_event(
+            "message_delivery_retrying",
+            payload,
+        ):
             return
         destination_label = (
             self._lookup_identity_label(payload.destination_hex)
@@ -2861,17 +3093,13 @@ class ReticulumTelemetryHub:
     def _handle_outbound_propagation_fallback(self, payload: OutboundPayload) -> None:
         """Record that direct delivery exhausted and propagation fallback is in use."""
 
-        self._persist_outbound_delivery_metadata(
-            payload,
-            state="queued",
-            delivery_metadata={
-                "delivery_mode": payload.delivery_mode,
-                "local_propagation_fallback": payload.local_propagation_fallback,
-                "propagation_node_hex": payload.propagation_node_hex,
-            },
-        )
         event_log = getattr(self, "event_log", None)
         if event_log is None:
+            return
+        if not self._should_emit_outbound_transition_event(
+            "message_propagation_queued",
+            payload,
+        ):
             return
         destination_label = (
             self._lookup_identity_label(payload.destination_hex)
@@ -2956,16 +3184,9 @@ class ReticulumTelemetryHub:
         }
 
     def _handle_outbound_attempt_started(self, payload: OutboundPayload) -> None:
-        """Persist attempt counters when a queue worker starts delivery."""
+        """Mark attempt activity in runtime metrics without DB churn."""
 
-        self._persist_outbound_delivery_metadata(
-            payload,
-            state="queued",
-            delivery_metadata={
-                "last_attempt_at": utc_now_rfc3339(),
-                "retry_scheduled": False,
-            },
-        )
+        self._runtime_metrics_store().increment("outbound_attempt_started_total")
 
     def _handle_outbound_payload_dropped(
         self,
@@ -3523,6 +3744,7 @@ class ReticulumTelemetryHub:
                 propagation_fallback_callback=self._handle_outbound_propagation_fallback,
                 attempt_started_callback=self._handle_outbound_attempt_started,
                 payload_dropped_callback=self._handle_outbound_payload_dropped,
+                runtime_metrics=self._runtime_metrics_store(),
             )
         self._outbound_queue.start()
         return self._outbound_queue
@@ -3543,11 +3765,35 @@ class ReticulumTelemetryHub:
             return True
         return queue.wait_for_flush(timeout=timeout)
 
+    def _runtime_metrics_store(self) -> RuntimeMetricsStore:
+        """Return the runtime metrics store, creating one for test stubs if missing."""
+
+        metrics = getattr(self, "runtime_metrics", None)
+        if metrics is None:
+            metrics = RuntimeMetricsStore()
+            self.runtime_metrics = metrics
+        return metrics
+
     @property
     def outbound_queue(self) -> OutboundMessageQueue | None:
         """Return the active outbound queue instance for diagnostics/testing."""
 
         return self._outbound_queue
+
+    def runtime_metrics_snapshot(self) -> dict[str, object]:
+        """Return runtime counters, gauges, timers, and queue state."""
+
+        snapshot = self._runtime_metrics_store().snapshot()
+        queue = getattr(self, "_outbound_queue", None)
+        if queue is not None:
+            try:
+                snapshot["queue"] = queue.stats()
+            except Exception as exc:  # pragma: no cover - defensive
+                RNS.log(
+                    f"Failed to collect outbound queue diagnostics: {exc}",
+                    getattr(RNS, "LOG_WARNING", 2),
+                )
+        return snapshot
 
     def log_delivery_details(self, message, time_string, signature_string):
         RNS.log("\t+--- LXMF Delivery ---------------------------------------------")
@@ -3687,6 +3933,7 @@ class ReticulumTelemetryHub:
             except Exception:
                 continue
             self.connections[dest.identity.hash] = dest
+            self._cache_destination(dest)
             loaded += 1
 
         if loaded:
@@ -3707,13 +3954,16 @@ class ReticulumTelemetryHub:
         if tak_connector is None:
             return
         try:
-            _dispatch_coroutine(
-                tak_connector.send_telemetry_event(
-                    telemetry,
-                    peer_hash=peer_hash,
-                    timestamp=timestamp,
-                )
+            coroutine = tak_connector.send_telemetry_event(
+                telemetry,
+                peer_hash=peer_hash,
+                timestamp=timestamp,
             )
+            runner = getattr(self, "_tak_async_runner", None)
+            if runner is not None:
+                runner.submit(coroutine)
+            else:
+                _dispatch_coroutine(coroutine)
         except Exception as exc:  # pragma: no cover - defensive logging
             RNS.log(
                 f"Failed to send telemetry CoT event: {exc}",
@@ -3975,6 +4225,44 @@ class ReticulumTelemetryHub:
         hash_bytes = getattr(identity, "hash", None)
         if isinstance(hash_bytes, (bytes, bytearray)) and hash_bytes:
             return hash_bytes.hex().lower()
+        return None
+
+    def _cache_destination(self, connection: RNS.Destination) -> None:
+        """Cache a connection by normalized identity hash for fast targeted routing."""
+
+        identity_hex = self._connection_hex(connection)
+        if not identity_hex:
+            return
+        with self._destination_cache_lock:
+            self._destination_cache[identity_hex] = connection
+
+    def _evict_cached_destination(self, identity: str | None) -> None:
+        """Remove a cached destination for ``identity`` if present."""
+
+        normalized_identity = normalize_hash(identity)
+        if not normalized_identity:
+            return
+        with self._destination_cache_lock:
+            self._destination_cache.pop(normalized_identity, None)
+
+    def _cached_destination(self, identity: str) -> RNS.Destination | None:
+        """Return a cached destination for ``identity`` when available."""
+
+        normalized_identity = normalize_hash(identity)
+        if not normalized_identity:
+            return None
+        with self._destination_cache_lock:
+            cached = self._destination_cache.get(normalized_identity)
+        if cached is not None:
+            return cached
+        for connection in (
+            list(self.connections.values())
+            if hasattr(self.connections, "values")
+            else list(self.connections)
+        ):
+            if self._connection_hex(connection) == normalized_identity:
+                self._cache_destination(connection)
+                return connection
         return None
 
     def _message_source_hex(self, message: LXMF.LXMessage) -> str | None:
@@ -5071,6 +5359,9 @@ class ReticulumTelemetryHub:
         if self.embedded_lxmd is not None:
             self.embedded_lxmd.stop()
             self.embedded_lxmd = None
+        tak_runner = getattr(self, "_tak_async_runner", None)
+        if tak_runner is not None:
+            tak_runner.stop(timeout=1.0)
         self.telemetry_sampler = None
 
 
