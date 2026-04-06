@@ -1604,7 +1604,12 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         }
 
     def upsert_team(self, payload: dict[str, Any]) -> dict[str, Any]:
+        requested_uid = str(payload.get("uid") or "").strip()
         canonical_team = canonical_team_from_payload(payload)
+        if canonical_team is not None and requested_uid and canonical_team["uid"] != requested_uid:
+            # Preserve explicitly provided non-canonical UIDs even if the color
+            # happens to match a canonical team color.
+            canonical_team = None
         if canonical_team is not None:
             uid = canonical_team["uid"]
         else:
@@ -3115,21 +3120,31 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
 
     def create_checklist_online(self, args: dict[str, Any]) -> dict[str, Any]:
         template_uid = str(args.get("template_uid") or "").strip()
-        if not template_uid:
-            raise ValueError("template_uid is required")
         name = str(args.get("name") or "").strip()
         if not name:
             raise ValueError("name is required")
+        raw_columns = args.get("columns")
+        columns = list(raw_columns) if isinstance(raw_columns, list) else None
+        if not template_uid and not columns:
+            raise ValueError("template_uid is required")
+        origin_type = str(args.get("origin_type") or "").strip()
+        if not origin_type:
+            origin_type = (
+                ChecklistOriginType.RCH_TEMPLATE.value
+                if template_uid
+                else ChecklistOriginType.BLANK_TEMPLATE.value
+            )
         return self._create_checklist(
             mode=CHECKLIST_MODE_ONLINE,
             sync_state=CHECKLIST_SYNC_SYNCED,
-            origin_type=ChecklistOriginType.RCH_TEMPLATE.value,
+            origin_type=origin_type,
             name=name,
             description=str(args.get("description") or ""),
             start_time=_as_datetime(args.get("start_time"), default=_utcnow()) or _utcnow(),
             created_by=str(args.get("source_identity") or args.get("created_by_team_member_rns_identity") or "unknown"),
             mission_uid=args.get("mission_uid"),
             template_uid=template_uid,
+            columns=columns,
         )
 
     def create_checklist_offline(self, args: dict[str, Any]) -> dict[str, Any]:
