@@ -1325,12 +1325,10 @@ class ReticulumTelemetryHub:
         if not has_non_command_signal:
             return False
 
-        manager = getattr(self, "command_manager", None)
-        normalize_name = getattr(manager, "_normalize_command_name", None)
-        all_names = getattr(manager, "_all_command_names", None) if manager is not None else None
-        if not callable(normalize_name) or not callable(all_names):
+        manager = self.command_manager
+        if not isinstance(manager, CommandManager):
             return False
-        known_names = set(all_names())
+        known_names = set(manager._all_command_names())  # pylint: disable=protected-access
 
         for command in commands:
             if not isinstance(command, dict):
@@ -1345,9 +1343,7 @@ class ReticulumTelemetryHub:
                 raw_name = command.get(str(PLUGIN_COMMAND))
             if not isinstance(raw_name, str):
                 return False
-            if not callable(normalize_name):
-                return False
-            normalized = normalize_name(raw_name)
+            normalized = manager._normalize_command_name(raw_name)  # pylint: disable=protected-access
             if normalized is None:
                 normalized = raw_name.strip() or None
             if normalized in known_names:
