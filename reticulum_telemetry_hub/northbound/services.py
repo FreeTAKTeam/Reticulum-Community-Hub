@@ -114,6 +114,7 @@ class NorthboundServices:
     marker_dispatcher: Optional[Callable[[Marker, str], bool]] = None
     zone_service: ZoneService | None = None
     origin_rch: str = ""
+    runtime_metrics_provider: Optional[Callable[[], Dict[str, object]]] = None
 
     def help_text(self) -> str:
         """Return the Help command text.
@@ -152,6 +153,7 @@ class NorthboundServices:
 
         uptime = datetime.now(timezone.utc) - self.started_at
         chat_stats = self.api.chat_message_stats()
+        runtime = self.runtime_diagnostics()
         return {
             "uptime_seconds": int(uptime.total_seconds()),
             "clients": len(self.api.list_clients()),
@@ -165,7 +167,19 @@ class NorthboundServices:
                 "received": chat_stats.get("delivered", 0),
             },
             "telemetry": self.telemetry.telemetry_stats(),
+            "runtime": runtime,
         }
+
+    def runtime_diagnostics(self) -> Dict[str, object]:
+        """Return the detailed runtime metrics snapshot when available."""
+
+        provider = self.runtime_metrics_provider
+        if provider is None:
+            return {}
+        diagnostics = provider()
+        if isinstance(diagnostics, dict):
+            return diagnostics
+        return {}
 
     def list_events(self, limit: Optional[int] = None) -> List[Dict[str, object]]:
         """Return recent events.

@@ -100,6 +100,13 @@ def register_core_routes(
 
         return services.status_snapshot()
 
+    @app.get("/diagnostics/runtime", dependencies=[Depends(require_protected)])
+    @app.get("/Diagnostics/Runtime", dependencies=[Depends(require_protected)])
+    def get_runtime_diagnostics() -> dict:
+        """Return runtime delivery and websocket diagnostics."""
+
+        return services.runtime_diagnostics()
+
     @app.get("/api/v1/auth/validate", dependencies=[Depends(require_protected)])
     def validate_auth(request: Request) -> dict:
         """Validate authentication and return minimal UI metadata.

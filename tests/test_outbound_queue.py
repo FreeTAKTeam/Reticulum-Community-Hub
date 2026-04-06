@@ -63,6 +63,101 @@ def test_outbound_queue_applies_backpressure():
     assert delivered == [recipient_two.identity.hash]
 
 
+def test_outbound_queue_rejects_delayed_enqueues_when_saturated():
+    sender = _make_destination(RNS.Destination.IN)
+    recipient = _make_destination()
+    dropped: list[tuple[str | None, str]] = []
+
+    class SilentRouter:
+        def handle_outbound(self, message):
+            _ = message
+
+    queue = OutboundMessageQueue(
+        SilentRouter(),
+        sender,
+        queue_size=1,
+        worker_count=1,
+        send_timeout=0.1,
+        backoff_seconds=0.01,
+        max_attempts=1,
+        payload_dropped_callback=lambda payload, reason: dropped.append(
+            (payload.destination_hex, reason)
+        ),
+    )
+
+    delayed_first = OutboundPayload(
+        connection=recipient,
+        message_text="first-delayed",
+        destination_hash=recipient.identity.hash,
+        destination_hex=recipient.identity.hash.hex(),
+        sender=sender,
+    )
+    delayed_first.next_attempt_at = time.monotonic() + 5.0
+    delayed_second = OutboundPayload(
+        connection=recipient,
+        message_text="second-delayed",
+        destination_hash=recipient.identity.hash,
+        destination_hex=recipient.identity.hash.hex(),
+        sender=sender,
+    )
+    delayed_second.next_attempt_at = time.monotonic() + 5.0
+
+    outcomes = queue.queue_messages([delayed_first, delayed_second])
+    stats = queue.stats()
+
+    assert outcomes == [True, False]
+    assert dropped == [(recipient.identity.hash.hex(), "queue_saturated")]
+    assert stats["delayed_depth"] == 1
+    assert stats["dropped_total"] == 1
+
+
+def test_outbound_queue_rejects_ready_enqueue_when_delayed_buffer_is_full():
+    sender = _make_destination(RNS.Destination.IN)
+    recipient = _make_destination()
+    dropped: list[tuple[str | None, str]] = []
+
+    class SilentRouter:
+        def handle_outbound(self, message):
+            _ = message
+
+    queue = OutboundMessageQueue(
+        SilentRouter(),
+        sender,
+        queue_size=1,
+        worker_count=1,
+        send_timeout=0.1,
+        backoff_seconds=0.01,
+        max_attempts=1,
+        payload_dropped_callback=lambda payload, reason: dropped.append(
+            (payload.destination_hex, reason)
+        ),
+    )
+
+    delayed = OutboundPayload(
+        connection=recipient,
+        message_text="delayed",
+        destination_hash=recipient.identity.hash,
+        destination_hex=recipient.identity.hash.hex(),
+        sender=sender,
+    )
+    delayed.next_attempt_at = time.monotonic() + 5.0
+    ready = OutboundPayload(
+        connection=recipient,
+        message_text="ready",
+        destination_hash=recipient.identity.hash,
+        destination_hex=recipient.identity.hash.hex(),
+        sender=sender,
+    )
+
+    outcomes = queue.queue_messages([delayed, ready])
+    stats = queue.stats()
+
+    assert outcomes == [True, False]
+    assert dropped == [(recipient.identity.hash.hex(), "queue_saturated")]
+    assert stats["delayed_depth"] == 1
+    assert stats["queue_depth"] == 0
+
+
 def test_outbound_queue_retries_after_failure():
     sender = _make_destination(RNS.Destination.IN)
     recipient = _make_destination()
