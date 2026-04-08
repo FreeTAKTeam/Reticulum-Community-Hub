@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 
+from .models import AttachmentTopicPayload
 from .services import NorthboundServices
 
 
@@ -58,6 +59,16 @@ def register_file_routes(
 
         try:
             attachment = api.retrieve_file(file_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        return attachment.to_dict()
+
+    @app.patch("/File/{file_id}", dependencies=[Depends(require_protected)])
+    def patch_file(file_id: int, payload: AttachmentTopicPayload) -> dict:
+        """Update the topic association for a stored file."""
+
+        try:
+            attachment = api.assign_file_to_topic(file_id, payload.topic_id)
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return attachment.to_dict()
@@ -114,6 +125,16 @@ def register_file_routes(
 
         try:
             attachment = api.retrieve_image(file_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        return attachment.to_dict()
+
+    @app.patch("/Image/{file_id}", dependencies=[Depends(require_protected)])
+    def patch_image(file_id: int, payload: AttachmentTopicPayload) -> dict:
+        """Update the topic association for a stored image."""
+
+        try:
+            attachment = api.assign_image_to_topic(file_id, payload.topic_id)
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return attachment.to_dict()

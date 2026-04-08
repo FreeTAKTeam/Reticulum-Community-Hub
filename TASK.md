@@ -1,4 +1,5 @@
 # TASKS
+- 2026-04-08: DONE. Add topic-level asset-library associations so existing files/images can be attached to topics and rendered on the Topics page.
 - 2026-04-08: DONE. Adjust generic mission-change LXMF markdown so mission logs and ADD_CONTENT fallbacks use concise type/content lines (e.g., `- Log: ...`) instead of update/detail change-type wording.
 - 2026-04-08: DONE. Fix mission member status UI/API schema drift by adding EAM snake_case mappers for load/save paths and regression tests for mapper behavior.
 - 2026-04-04: DONE. Refactor outbound queue send timeout handling to use a shared dispatch executor/future monitoring path (no per-attempt sender/watcher threads) and expose timed-out/in-progress future counters in queue stats.

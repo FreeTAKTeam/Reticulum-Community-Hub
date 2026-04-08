@@ -49,9 +49,11 @@ export interface Subscriber {
 export interface FileEntry {
   id?: string;
   name?: string;
+  category?: "file" | "image";
   content_type?: string;
   size?: number;
   created_at?: string;
+  topic_id?: string;
 }
 
 export interface IdentityEntry {

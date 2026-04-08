@@ -53,7 +53,7 @@
             </div>
           </div>
 
-          <LoadingSkeleton v-if="activeTab === 'topics' && topicsStore.loading" />
+          <LoadingSkeleton v-if="activeTab === 'topics' && (topicsStore.loading || filesStore.loading)" />
           <LoadingSkeleton v-else-if="activeTab === 'subscribers' && subscribersStore.loading" />
           <div v-else>
             <div v-if="activeTab === 'topics'" class="card-grid">
@@ -67,12 +67,51 @@
                 <div class="registry-card-meta">
                   <div><span>Topic ID</span><span class="mono">{{ topic.id || "Pending" }}</span></div>
                   <div><span>Subscribers</span><span>{{ subscriberCountForTopic(topic.id) }}</span></div>
+                  <div><span>Files</span><span>{{ associatedFilesForTopic(topic.id).length }}</span></div>
+                  <div><span>Images</span><span>{{ associatedImagesForTopic(topic.id).length }}</span></div>
                   <div class="registry-card-desc">
                     <span>Description</span>
                     <span>{{ topic.description || "No description on record." }}</span>
                   </div>
                 </div>
+                <div class="topic-assets-grid">
+                  <section class="topic-assets-block">
+                    <div class="topic-assets-heading">
+                      <span>Files</span>
+                      <span>{{ associatedFilesForTopic(topic.id).length }}</span>
+                    </div>
+                    <div v-if="associatedFilesForTopic(topic.id).length" class="topic-assets-list">
+                      <div
+                        v-for="file in associatedFilesForTopic(topic.id)"
+                        :key="`topic-file-${topic.id}-${file.id}`"
+                        class="topic-assets-row"
+                      >
+                        <span class="topic-assets-name">{{ assetDisplayName(file, "File") }}</span>
+                        <span class="topic-assets-meta mono">{{ file.id || "Pending" }}</span>
+                      </div>
+                    </div>
+                    <div v-else class="topic-assets-empty">No files linked.</div>
+                  </section>
+                  <section class="topic-assets-block">
+                    <div class="topic-assets-heading">
+                      <span>Images</span>
+                      <span>{{ associatedImagesForTopic(topic.id).length }}</span>
+                    </div>
+                    <div v-if="associatedImagesForTopic(topic.id).length" class="topic-assets-list">
+                      <div
+                        v-for="image in associatedImagesForTopic(topic.id)"
+                        :key="`topic-image-${topic.id}-${image.id}`"
+                        class="topic-assets-row"
+                      >
+                        <span class="topic-assets-name">{{ assetDisplayName(image, "Image") }}</span>
+                        <span class="topic-assets-meta mono">{{ image.id || "Pending" }}</span>
+                      </div>
+                    </div>
+                    <div v-else class="topic-assets-empty">No images linked.</div>
+                  </section>
+                </div>
                 <div class="registry-card-actions">
+                  <BaseButton variant="secondary" icon-left="link" @click="openAssetModal(topic)">Manage Assets</BaseButton>
                   <BaseButton variant="secondary" icon-left="edit" @click="openTopicModal(topic)">Edit</BaseButton>
                   <BaseButton variant="danger" icon-left="trash" @click="removeTopic(topic.id)">Delete</BaseButton>
                 </div>
@@ -124,7 +163,7 @@
             <BaseButton
               variant="secondary"
               icon-left="refresh"
-              @click="activeTab === 'topics' ? topicsStore.fetchTopics() : subscribersStore.fetchSubscribers()"
+              @click="activeTab === 'topics' ? refreshTopicsView() : subscribersStore.fetchSubscribers()"
             >
               Refresh
             </BaseButton>
@@ -139,6 +178,94 @@
         <BaseInput v-model="topicDraft.path" label="Path" />
         <BaseInput v-model="topicDraft.description" label="Description" />
         <BaseButton icon-left="check" variant="success" @click="saveTopic">Save Topic</BaseButton>
+      </div>
+    </BaseModal>
+
+    <BaseModal :open="assetModalOpen" :title="assetModalTitle" size="lg" @close="closeAssetModal">
+      <div v-if="selectedAssetTopic" class="topic-assets-modal-grid">
+        <section class="topic-assets-modal-panel">
+          <div class="topic-assets-modal-title">Associated Files</div>
+          <div class="topic-assets-modal-subtitle">Select a linked file to detach it from this topic.</div>
+          <BaseSelect v-model="linkedFileSelection" label="File" :options="selectedTopicFileOptions" />
+          <div v-if="selectedLinkedFile" class="topic-assets-selection-meta mono">
+            {{ selectedLinkedFile.id || "Pending" }} · {{ assetDisplayName(selectedLinkedFile, "File") }}
+          </div>
+          <div v-else class="topic-assets-empty">No files are linked to this topic.</div>
+          <div class="topic-assets-modal-actions">
+            <BaseButton
+              variant="ghost"
+              icon-left="undo"
+              :loading="selectedLinkedFile ? isAssetActionPending(selectedLinkedFile, 'file', 'detach') : false"
+              :disabled="assetActionInFlight || !selectedLinkedFile"
+              @click="detachSelectedAsset('file')"
+            >
+              Remove File
+            </BaseButton>
+          </div>
+        </section>
+
+        <section class="topic-assets-modal-panel">
+          <div class="topic-assets-modal-title">Associated Images</div>
+          <div class="topic-assets-modal-subtitle">Select a linked image to detach it from this topic.</div>
+          <BaseSelect v-model="linkedImageSelection" label="Image" :options="selectedTopicImageOptions" />
+          <div v-if="selectedLinkedImage" class="topic-assets-selection-meta mono">
+            {{ selectedLinkedImage.id || "Pending" }} · {{ assetDisplayName(selectedLinkedImage, "Image") }}
+          </div>
+          <div v-else class="topic-assets-empty">No images are linked to this topic.</div>
+          <div class="topic-assets-modal-actions">
+            <BaseButton
+              variant="ghost"
+              icon-left="undo"
+              :loading="selectedLinkedImage ? isAssetActionPending(selectedLinkedImage, 'image', 'detach') : false"
+              :disabled="assetActionInFlight || !selectedLinkedImage"
+              @click="detachSelectedAsset('image')"
+            >
+              Remove Image
+            </BaseButton>
+          </div>
+        </section>
+
+        <section class="topic-assets-modal-panel">
+          <div class="topic-assets-modal-title">Available Files In Asset Library</div>
+          <div class="topic-assets-modal-subtitle">Select an unassigned file from the asset library to link it.</div>
+          <BaseSelect v-model="availableFileSelection" label="Library File" :options="availableLibraryFileOptions" />
+          <div v-if="selectedAvailableFile" class="topic-assets-selection-meta mono">
+            {{ selectedAvailableFile.id || "Pending" }} · {{ assetDisplayName(selectedAvailableFile, "File") }}
+          </div>
+          <div v-else class="topic-assets-empty">No unassigned files are available.</div>
+          <div class="topic-assets-modal-actions">
+            <BaseButton
+              variant="secondary"
+              icon-left="link"
+              :loading="selectedAvailableFile ? isAssetActionPending(selectedAvailableFile, 'file', 'attach') : false"
+              :disabled="assetActionInFlight || !selectedAvailableFile"
+              @click="attachSelectedAsset('file')"
+            >
+              Attach File
+            </BaseButton>
+          </div>
+        </section>
+
+        <section class="topic-assets-modal-panel">
+          <div class="topic-assets-modal-title">Available Images In Asset Library</div>
+          <div class="topic-assets-modal-subtitle">Select an unassigned image from the asset library to link it.</div>
+          <BaseSelect v-model="availableImageSelection" label="Library Image" :options="availableLibraryImageOptions" />
+          <div v-if="selectedAvailableImage" class="topic-assets-selection-meta mono">
+            {{ selectedAvailableImage.id || "Pending" }} · {{ assetDisplayName(selectedAvailableImage, "Image") }}
+          </div>
+          <div v-else class="topic-assets-empty">No unassigned images are available.</div>
+          <div class="topic-assets-modal-actions">
+            <BaseButton
+              variant="secondary"
+              icon-left="link"
+              :loading="selectedAvailableImage ? isAssetActionPending(selectedAvailableImage, 'image', 'attach') : false"
+              :disabled="assetActionInFlight || !selectedAvailableImage"
+              @click="attachSelectedAsset('image')"
+            >
+              Attach Image
+            </BaseButton>
+          </div>
+        </section>
       </div>
     </BaseModal>
 
@@ -164,8 +291,10 @@ import BaseSelect from "../components/BaseSelect.vue";
 import BasePagination from "../components/BasePagination.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
 import type { ApiError } from "../api/client";
+import type { FileEntry } from "../api/types";
 import type { Subscriber } from "../api/types";
 import type { Topic } from "../api/types";
+import { useFilesStore } from "../stores/files";
 import { useSubscribersStore } from "../stores/subscribers";
 import { useTopicsStore } from "../stores/topics";
 import { useToastStore } from "../stores/toasts";
@@ -179,16 +308,33 @@ type TreeEntry = {
   count: number;
 };
 
+type AssetCategory = "file" | "image";
+
+type AssetMutationMode = "attach" | "detach";
+
+type TopicAssetGroup = {
+  files: FileEntry[];
+  images: FileEntry[];
+};
+
 const topicsStore = useTopicsStore();
+const filesStore = useFilesStore();
 const subscribersStore = useSubscribersStore();
 const usersStore = useUsersStore();
 const toastStore = useToastStore();
 
 const topicModalOpen = ref(false);
+const assetModalOpen = ref(false);
 const subscriberModalOpen = ref(false);
 const topicDraft = ref<Topic>({ name: "", path: "", description: "" });
 const subscriberDraft = ref<Subscriber>({ topic_id: "", destination: "", reject_tests: false });
 const subscriberRejectTestsDraft = ref("false");
+const assetModalTopicId = ref("");
+const assetActionKey = ref<string | null>(null);
+const linkedFileSelection = ref("");
+const linkedImageSelection = ref("");
+const availableFileSelection = ref("");
+const availableImageSelection = ref("");
 const activeTab = ref<"topics" | "subscribers">("topics");
 const topicsPage = ref(1);
 const subscribersPage = ref(1);
@@ -271,6 +417,37 @@ const subscriberCountForTopic = (topicId?: string) => {
   }
   return subscriberCountByTopicId.value.get(topicId) ?? 0;
 };
+
+const topicAssetsByTopicId = computed(() => {
+  const map = new Map<string, TopicAssetGroup>();
+  const registerEntry = (entry: FileEntry, category: AssetCategory) => {
+    const topicId = normalizeText(entry.topic_id);
+    if (!topicId) {
+      return;
+    }
+    const existing = map.get(topicId) ?? { files: [], images: [] };
+    if (category === "image") {
+      existing.images.push(entry);
+    } else {
+      existing.files.push(entry);
+    }
+    map.set(topicId, existing);
+  };
+  filesStore.files.forEach((entry) => registerEntry(entry, "file"));
+  filesStore.images.forEach((entry) => registerEntry(entry, "image"));
+  return map;
+});
+
+const topicAssetsFor = (topicId?: string): TopicAssetGroup => {
+  if (!topicId) {
+    return { files: [], images: [] };
+  }
+  return topicAssetsByTopicId.value.get(topicId) ?? { files: [], images: [] };
+};
+
+const associatedFilesForTopic = (topicId?: string) => topicAssetsFor(topicId).files;
+
+const associatedImagesForTopic = (topicId?: string) => topicAssetsFor(topicId).images;
 
 const treeEntries = computed<TreeEntry[]>(() => {
   const map = new Map<string, TreeEntry>();
@@ -442,6 +619,81 @@ const rejectTestsOptions = [
   { value: "true", label: "True" }
 ];
 
+const selectedAssetTopic = computed(() => {
+  return topicsStore.topics.find((topic) => topic.id === assetModalTopicId.value) ?? null;
+});
+
+const assetModalTitle = computed(() => {
+  return selectedAssetTopic.value ? `Topic Assets: ${topicTitle(selectedAssetTopic.value)}` : "Topic Assets";
+});
+
+const selectedTopicFiles = computed(() => associatedFilesForTopic(assetModalTopicId.value));
+const selectedTopicImages = computed(() => associatedImagesForTopic(assetModalTopicId.value));
+
+const availableLibraryFiles = computed(() => {
+  return filesStore.files.filter((entry) => !normalizeText(entry.topic_id));
+});
+
+const availableLibraryImages = computed(() => {
+  return filesStore.images.filter((entry) => !normalizeText(entry.topic_id));
+});
+
+const assetDisplayName = (entry: FileEntry, fallback: string) => {
+  return normalizeText(entry.name) ?? `${fallback} ${entry.id ?? "Pending"}`;
+};
+
+const assetSelectLabel = (entry: FileEntry, fallback: string) => {
+  const id = entry.id ?? "pending";
+  return `${assetDisplayName(entry, fallback)} (${id})`;
+};
+
+const buildAssetOptions = (entries: FileEntry[], placeholder: string, fallback: string) => {
+  return [
+    { value: "", label: placeholder },
+    ...entries
+      .filter((entry) => entry.id)
+      .map((entry) => ({
+        value: entry.id as string,
+        label: assetSelectLabel(entry, fallback)
+      }))
+  ];
+};
+
+const findAssetById = (entries: FileEntry[], entryId: string) => {
+  return entries.find((entry) => entry.id === entryId);
+};
+
+const selectedTopicFileOptions = computed(() => {
+  return buildAssetOptions(selectedTopicFiles.value, "Select linked file", "File");
+});
+
+const selectedTopicImageOptions = computed(() => {
+  return buildAssetOptions(selectedTopicImages.value, "Select linked image", "Image");
+});
+
+const availableLibraryFileOptions = computed(() => {
+  return buildAssetOptions(availableLibraryFiles.value, "Select library file", "File");
+});
+
+const availableLibraryImageOptions = computed(() => {
+  return buildAssetOptions(availableLibraryImages.value, "Select library image", "Image");
+});
+
+const selectedLinkedFile = computed(() => findAssetById(selectedTopicFiles.value, linkedFileSelection.value));
+const selectedLinkedImage = computed(() => findAssetById(selectedTopicImages.value, linkedImageSelection.value));
+const selectedAvailableFile = computed(() => findAssetById(availableLibraryFiles.value, availableFileSelection.value));
+const selectedAvailableImage = computed(() => findAssetById(availableLibraryImages.value, availableImageSelection.value));
+
+const buildAssetActionKey = (entry: FileEntry, category: AssetCategory, mode: AssetMutationMode) => {
+  return `${mode}:${category}:${entry.id ?? entry.name ?? "unknown"}`;
+};
+
+const assetActionInFlight = computed(() => assetActionKey.value !== null);
+
+const isAssetActionPending = (entry: FileEntry, category: AssetCategory, mode: AssetMutationMode) => {
+  return assetActionKey.value === buildAssetActionKey(entry, category, mode);
+};
+
 watch(treeEntries, (entries) => {
   if (!entries.length) {
     selectedBranch.value = "";
@@ -472,6 +724,28 @@ watch(subscriberPageCount, (count) => {
 const openTopicModal = (topic: Topic | null) => {
   topicDraft.value = topic ? { ...topic } : { name: "", path: "", description: "" };
   topicModalOpen.value = true;
+};
+
+const openAssetModal = (topic: Topic) => {
+  if (!topic.id) {
+    return;
+  }
+  assetModalTopicId.value = topic.id;
+  linkedFileSelection.value = "";
+  linkedImageSelection.value = "";
+  availableFileSelection.value = "";
+  availableImageSelection.value = "";
+  assetModalOpen.value = true;
+};
+
+const closeAssetModal = () => {
+  assetModalOpen.value = false;
+  assetModalTopicId.value = "";
+  assetActionKey.value = null;
+  linkedFileSelection.value = "";
+  linkedImageSelection.value = "";
+  availableFileSelection.value = "";
+  availableImageSelection.value = "";
 };
 
 const openSubscriberModal = (subscriber: Subscriber | null) => {
@@ -514,12 +788,78 @@ const saveSubscriber = async () => {
   }
 };
 
+const updateAssetTopic = async (entry: FileEntry, category: AssetCategory, topicId?: string) => {
+  if (!entry.id) {
+    return;
+  }
+  const mode: AssetMutationMode = topicId ? "attach" : "detach";
+  assetActionKey.value = buildAssetActionKey(entry, category, mode);
+  try {
+    await filesStore.updateAttachmentTopic({
+      category,
+      id: entry.id,
+      topic_id: topicId
+    });
+    toastStore.push(topicId ? "Asset linked to topic" : "Asset removed from topic", "success");
+  } catch (error) {
+    handleApiError(error, topicId ? "Unable to link asset to topic" : "Unable to remove asset from topic");
+  } finally {
+    assetActionKey.value = null;
+  }
+};
+
+const attachAssetToTopic = async (entry: FileEntry, category: AssetCategory) => {
+  const topicId = assetModalTopicId.value;
+  if (!topicId) {
+    return;
+  }
+  await updateAssetTopic(entry, category, topicId);
+};
+
+const detachAssetFromTopic = async (entry: FileEntry, category: AssetCategory) => {
+  await updateAssetTopic(entry, category, undefined);
+};
+
+const attachSelectedAsset = async (category: AssetCategory) => {
+  const entry = category === "image" ? selectedAvailableImage.value : selectedAvailableFile.value;
+  if (!entry) {
+    return;
+  }
+  await attachAssetToTopic(entry, category);
+  if (category === "image") {
+    availableImageSelection.value = "";
+  } else {
+    availableFileSelection.value = "";
+  }
+};
+
+const detachSelectedAsset = async (category: AssetCategory) => {
+  const entry = category === "image" ? selectedLinkedImage.value : selectedLinkedFile.value;
+  if (!entry) {
+    return;
+  }
+  await detachAssetFromTopic(entry, category);
+  if (category === "image") {
+    linkedImageSelection.value = "";
+  } else {
+    linkedFileSelection.value = "";
+  }
+};
+
+const refreshTopicsView = async () => {
+  await Promise.all([topicsStore.fetchTopics(), filesStore.fetchFiles()]);
+};
+
 const removeTopic = async (id?: string) => {
   if (!id || !confirm("Delete this topic?")) {
     return;
   }
   try {
     await topicsStore.removeTopic(id);
+    await filesStore.fetchFiles();
+    if (assetModalTopicId.value === id) {
+      closeAssetModal();
+    }
     toastStore.push("Topic removed", "warning");
   } catch (error) {
     handleApiError(error, "Unable to delete topic");
@@ -552,7 +892,7 @@ const handleApiError = (error: unknown, fallback: string) => {
 };
 
 onMounted(() => {
-  topicsStore.fetchTopics();
+  refreshTopicsView();
   subscribersStore.fetchSubscribers();
   usersStore.fetchUsers();
 });

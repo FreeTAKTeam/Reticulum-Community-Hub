@@ -394,6 +394,41 @@ class HubStorage(HubStorageBase):
             record = session.get(FileRecord, record_id)
             return self._file_from_record(record) if record else None
 
+    def update_file_record_topic(
+        self,
+        record_id: int,
+        *,
+        topic_id: str | None,
+    ) -> FileAttachment | None:
+        """Update the topic association for a stored file or image."""
+
+        with self._session_scope() as session:
+            record = session.get(FileRecord, record_id)
+            if not record:
+                return None
+            record.topic_id = normalize_topic_id(topic_id)
+            record.updated_at = _utcnow()
+            session.commit()
+            return self._file_from_record(record)
+
+    def clear_file_record_topic(self, topic_id: str) -> int:
+        """Remove a topic association from all linked file/image records."""
+
+        normalized_topic_id = normalize_topic_id(topic_id)
+        if not normalized_topic_id:
+            return 0
+        with self._session_scope() as session:
+            records = (
+                session.query(FileRecord)
+                .filter(FileRecord.topic_id == normalized_topic_id)
+                .all()
+            )
+            for record in records:
+                record.topic_id = None
+                record.updated_at = _utcnow()
+            session.commit()
+            return len(records)
+
     def delete_file_record(self, record_id: int) -> FileAttachment | None:
         """Delete a stored file by its database identifier."""
 

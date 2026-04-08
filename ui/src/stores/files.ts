@@ -2,23 +2,28 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { del as delRequest, get } from "../api/client";
+import { patch } from "../api/client";
 import { post } from "../api/client";
 import type { FileEntry } from "../api/types";
 
 type FileApiPayload = {
   FileID?: number | string;
   Name?: string;
+  Category?: "file" | "image";
   MediaType?: string;
   Size?: number;
   CreatedAt?: string;
+  TopicID?: string | null;
 };
 
 const fromApiFile = (payload: FileApiPayload): FileEntry => ({
   id: payload.FileID !== undefined && payload.FileID !== null ? String(payload.FileID) : undefined,
   name: payload.Name,
+  category: payload.Category,
   content_type: payload.MediaType,
   size: payload.Size,
-  created_at: payload.CreatedAt
+  created_at: payload.CreatedAt,
+  topic_id: payload.TopicID ?? undefined
 });
 
 export const useFilesStore = defineStore("files", () => {
@@ -47,6 +52,24 @@ export const useFilesStore = defineStore("files", () => {
   const removeImage = async (id: string) => {
     await delRequest(`${endpoints.images}/${id}`);
     images.value = images.value.filter((item) => item.id !== id);
+  };
+
+  const updateAttachmentTopic = async (payload: {
+    category: "file" | "image";
+    id: string;
+    topic_id?: string;
+  }) => {
+    const endpoint = payload.category === "image" ? endpoints.images : endpoints.files;
+    const response = await patch<FileApiPayload>(`${endpoint}/${payload.id}`, {
+      TopicID: payload.topic_id || null
+    });
+    const entry = fromApiFile(response);
+    if (payload.category === "image") {
+      images.value = images.value.map((item) => (item.id === payload.id ? entry : item));
+    } else {
+      files.value = files.value.map((item) => (item.id === payload.id ? entry : item));
+    }
+    return entry;
   };
 
   const uploadAttachment = async (payload: {
@@ -83,6 +106,7 @@ export const useFilesStore = defineStore("files", () => {
     imageRawUrl,
     removeFile,
     removeImage,
+    updateAttachmentTopic,
     uploadAttachment
   };
 });
