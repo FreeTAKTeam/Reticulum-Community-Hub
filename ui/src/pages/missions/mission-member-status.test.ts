@@ -4,6 +4,8 @@ import {
   cycleMissionMemberStatus,
   deriveMissionMemberOverallStatus,
   createUnknownMissionMemberStatus,
+  toEmergencyActionMessageRecord,
+  toEmergencyActionMessageUpsertPayload,
   toMissionMemberStatusSummary
 } from "./mission-member-status";
 
@@ -99,5 +101,71 @@ describe("toMissionMemberStatusSummary", () => {
     expect(deriveMissionMemberOverallStatus(["Unknown", "Green", "Green"])).toBe("Unknown");
     expect(deriveMissionMemberOverallStatus(["Green", "Yellow", "Green"])).toBe("Yellow");
     expect(deriveMissionMemberOverallStatus(["Green", "Red", "Green"])).toBe("Red");
+  });
+
+  it("maps snake_case API records to the UI EAM model", () => {
+    const mapped = toEmergencyActionMessageRecord({
+      callsign: "corvo",
+      team_member_uid: "member-7",
+      team_uid: "team-9",
+      reported_by: "c1d2e3",
+      reported_at: "2026-04-08T10:30:00Z",
+      ttl_seconds: 120,
+      notes: "ready",
+      confidence: 0.88,
+      source: { rns_identity: "cafebabe" },
+      overall_status: "Yellow",
+      security_status: "Green",
+      capability_status: "Red",
+      preparedness_status: "Yellow",
+      medical_status: "Green",
+      mobility_status: "Unknown",
+      comms_status: "Green"
+    });
+
+    expect(mapped.subjectType).toBe("member");
+    expect(mapped.subjectId).toBe("member-7");
+    expect(mapped.teamId).toBe("team-9");
+    expect(mapped.reportedBy).toBe("c1d2e3");
+    expect(mapped.reportedAt).toBe("2026-04-08T10:30:00Z");
+    expect(mapped.ttlSeconds).toBe(120);
+    expect(mapped.source).toBe("cafebabe");
+    expect(mapped.overallStatus).toBe("Yellow");
+    expect(mapped.capabilityStatus).toBe("Red");
+  });
+
+  it("maps UI EAM records to snake_case upsert payloads", () => {
+    const payload = toEmergencyActionMessageUpsertPayload({
+      callsign: "corvo",
+      subjectType: "member",
+      subjectId: "member-7",
+      teamId: "team-9",
+      reportedBy: "c1d2e3",
+      reportedAt: "2026-04-08T10:30:00Z",
+      securityStatus: "Green",
+      securityCapability: "Yellow",
+      preparednessStatus: "Red",
+      medicalStatus: "Unknown",
+      mobilityStatus: "Green",
+      commsStatus: "Yellow",
+      source: "cafebabe",
+      overallStatus: "Red"
+    });
+
+    expect(payload).toEqual({
+      callsign: "corvo",
+      team_member_uid: "member-7",
+      team_uid: "team-9",
+      reported_by: "c1d2e3",
+      reported_at: "2026-04-08T10:30:00Z",
+      source: { rns_identity: "cafebabe" },
+      security_status: "Green",
+      capability_status: "Yellow",
+      preparedness_status: "Red",
+      medical_status: "Unknown",
+      mobility_status: "Green",
+      comms_status: "Yellow"
+    });
+    expect(payload).not.toHaveProperty("overall_status");
   });
 });

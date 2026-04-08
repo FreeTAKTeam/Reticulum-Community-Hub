@@ -1,0 +1,15 @@
+Reminder: when user says "update RCH on DO", run this exact workflow:
+
+- SSH into 134.122.46.48 as root using key "C:\Users\broth\Documents\work\ATAK\Files\servers\digitalocean.ppk".
+- The installation is at /Reticulum-Telemetry-Hub/.
+- On the host, stop both services: `systemctl stop rch-gateway rch-ui`.
+- Pull latest source in `/root/Reticulum-Telemetry-Hub` from git.
+- Set API key: RTH_API_KEY="Altr3Alternativ3".
+- Install/update via virtual environment using:
+  `bash run_server_ui_remote.sh`.
+- Verify RCH processes start and run smoothly from the temporary run.
+- Kill this temporary run process.
+- Restart managed services: `systemctl restart rch-gateway rch-ui`.
+- Confirm both are active and listening on ports (`8000` and `5173`).
+
+Stored on: 2026-04-08 (user requested no GitHub commit).
