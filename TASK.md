@@ -1,4 +1,5 @@
 # TASKS
+- 2026-04-09: DONE. Preserve EAM source identity/display_name in UI status mappers so mission member status updates do not overwrite `source.rns_identity` with a display label.
 - 2026-04-08: DONE. Add topic-level asset-library associations so existing files/images can be attached to topics and rendered on the Topics page.
 - 2026-04-08: DONE. Adjust generic mission-change LXMF markdown so mission logs and ADD_CONTENT fallbacks use concise type/content lines (e.g., `- Log: ...`) instead of update/detail change-type wording.
 - 2026-04-08: DONE. Fix mission member status UI/API schema drift by adding EAM snake_case mappers for load/save paths and regression tests for mapper behavior.
