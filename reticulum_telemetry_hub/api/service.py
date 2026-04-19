@@ -24,6 +24,8 @@ from .models import Client
 from .models import FileAttachment
 from .models import IdentityStatus
 from .models import RemPeer
+from .pagination import PageRequest
+from .pagination import PaginatedResult
 from .rem_registry_service import DEFAULT_REM_MODE
 from .rem_registry_service import RemRegistryService
 from .models import ReticulumInfo
@@ -208,6 +210,13 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             self._rem_registry.annotate_client(client)
             for client in self._storage.list_clients()
         ]
+
+    def list_clients_paginated(self, page_request: PageRequest) -> PaginatedResult[Client]:
+        """Return a page of clients that have joined the hub."""
+
+        return self._storage.paginate_clients(page_request).map_items(
+            self._rem_registry.annotate_client
+        )
 
     def count_clients(self) -> int:
         """Return the number of clients that have joined the hub."""
@@ -617,8 +626,19 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         return self._storage.list_file_records(category=self._file_category)
 
+    def list_files_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[FileAttachment]:
+        """Return a page of stored file records."""
+
+        return self._storage.paginate_file_records(
+            page_request,
+            category=self._file_category,
+        )
+
     def count_files(self) -> int:
-        """Return the number of stored file attachments."""
+        """Return the number of stored file records."""
 
         return self._storage.count_file_records(category=self._file_category)
 
@@ -627,8 +647,19 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         return self._storage.list_file_records(category=self._image_category)
 
+    def list_images_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[FileAttachment]:
+        """Return a page of stored image records."""
+
+        return self._storage.paginate_file_records(
+            page_request,
+            category=self._image_category,
+        )
+
     def count_images(self) -> int:
-        """Return the number of stored image attachments."""
+        """Return the number of stored image records."""
 
         return self._storage.count_file_records(category=self._image_category)
 
@@ -651,6 +682,32 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """Delete a stored image from disk and metadata storage."""
 
         return self._delete_attachment(record_id, expected_category=self._image_category)
+
+    def assign_file_to_topic(
+        self,
+        record_id: int,
+        topic_id: Optional[str],
+    ) -> FileAttachment:
+        """Associate or detach a stored file from a topic."""
+
+        return self._update_attachment_topic(
+            record_id,
+            expected_category=self._file_category,
+            topic_id=topic_id,
+        )
+
+    def assign_image_to_topic(
+        self,
+        record_id: int,
+        topic_id: Optional[str],
+    ) -> FileAttachment:
+        """Associate or detach a stored image from a topic."""
+
+        return self._update_attachment_topic(
+            record_id,
+            expected_category=self._image_category,
+            topic_id=topic_id,
+        )
 
     def store_uploaded_attachment(
         self,
@@ -780,6 +837,11 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """
         return self._storage.list_topics()
 
+    def list_topics_paginated(self, page_request: PageRequest) -> PaginatedResult[Topic]:
+        """Return a page of topics known to the hub."""
+
+        return self._storage.paginate_topics(page_request)
+
     def count_topics(self) -> int:
         """Return the number of topics known to the hub."""
 
@@ -819,6 +881,7 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         topic = self._storage.delete_topic(normalized_topic_id)
         if not topic:
             raise KeyError(f"Topic '{normalized_topic_id}' not found")
+        self._storage.clear_file_record_topic(normalized_topic_id)
         self._notify_topic_registry_change()
         return topic
 
@@ -942,8 +1005,16 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """
         return self._storage.list_subscribers()
 
+    def list_subscribers_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[Subscriber]:
+        """Return a page of subscribers."""
+
+        return self._storage.paginate_subscribers(page_request)
+
     def count_subscribers(self) -> int:
-        """Return the number of subscribers currently stored in the hub."""
+        """Return the number of subscribers."""
 
         return self._storage.count_subscribers()
 
@@ -1586,3 +1657,21 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         if not record or record.category != expected_category:
             raise KeyError(f"File '{record_id}' not found")
         return record
+
+    def _update_attachment_topic(
+        self,
+        record_id: int,
+        *,
+        expected_category: str,
+        topic_id: Optional[str],
+    ) -> FileAttachment:
+        """Persist a topic association change for an existing attachment."""
+
+        self._retrieve_attachment(record_id, expected_category=expected_category)
+        updated = self._storage.update_file_record_topic(
+            record_id,
+            topic_id=normalize_topic_id(topic_id),
+        )
+        if updated is None or updated.category != expected_category:
+            raise KeyError(f"File '{record_id}' not found")
+        return updated

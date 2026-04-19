@@ -130,8 +130,23 @@ describe("toMissionMemberStatusSummary", () => {
     expect(mapped.reportedAt).toBe("2026-04-08T10:30:00Z");
     expect(mapped.ttlSeconds).toBe(120);
     expect(mapped.source).toBe("cafebabe");
+    expect(mapped.sourceIdentity).toBe("cafebabe");
+    expect(mapped.sourceDisplayName).toBeNull();
     expect(mapped.overallStatus).toBe("Yellow");
     expect(mapped.capabilityStatus).toBe("Red");
+  });
+
+  it("preserves source identity when the API record also includes a display name", () => {
+    const mapped = toEmergencyActionMessageRecord({
+      callsign: "corvo",
+      team_member_uid: "member-7",
+      team_uid: "team-9",
+      source: { rns_identity: "cafebabe", display_name: "Alpha Team" }
+    });
+
+    expect(mapped.source).toBe("Alpha Team");
+    expect(mapped.sourceIdentity).toBe("cafebabe");
+    expect(mapped.sourceDisplayName).toBe("Alpha Team");
   });
 
   it("maps UI EAM records to snake_case upsert payloads", () => {
@@ -167,5 +182,22 @@ describe("toMissionMemberStatusSummary", () => {
       comms_status: "Yellow"
     });
     expect(payload).not.toHaveProperty("overall_status");
+  });
+
+  it("writes preserved source identity and display name back to the API payload", () => {
+    const payload = toEmergencyActionMessageUpsertPayload({
+      callsign: "corvo",
+      subjectType: "member",
+      subjectId: "member-7",
+      teamId: "team-9",
+      source: "Alpha Team",
+      sourceIdentity: "cafebabe",
+      sourceDisplayName: "Alpha Team"
+    });
+
+    expect(payload.source).toEqual({
+      rns_identity: "cafebabe",
+      display_name: "Alpha Team"
+    });
   });
 });

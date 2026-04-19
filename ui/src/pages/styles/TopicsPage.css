@@ -161,6 +161,113 @@
   flex-wrap: wrap;
 }
 
+.topic-assets-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.topic-assets-block,
+.topic-assets-modal-panel {
+  border: 1px solid rgba(55, 242, 255, 0.18);
+  border-radius: 12px;
+  background: rgba(6, 18, 28, 0.72);
+  padding: 12px;
+}
+
+.topic-assets-heading,
+.topic-assets-modal-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  color: rgba(217, 251, 255, 0.86);
+}
+
+.topic-assets-modal-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.topic-assets-modal-subtitle {
+  font-family: "Rajdhani", "Barlow", sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(210, 251, 255, 0.72);
+}
+
+.topic-assets-list,
+.topic-assets-action-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.topic-assets-list {
+  max-height: 122px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.topic-assets-row,
+.topic-assets-action-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(55, 242, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(10, 26, 38, 0.82);
+  padding: 8px 10px;
+}
+
+.topic-assets-name,
+.topic-assets-action-name {
+  color: rgba(232, 254, 255, 0.92);
+  font-size: 12px;
+}
+
+.topic-assets-meta,
+.topic-assets-action-meta {
+  color: rgba(183, 243, 255, 0.68);
+  font-size: 10px;
+}
+
+.topic-assets-selection-meta {
+  min-height: 16px;
+  font-size: 10px;
+  color: rgba(183, 243, 255, 0.7);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.topic-assets-empty {
+  border: 1px dashed rgba(55, 242, 255, 0.2);
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(204, 251, 255, 0.55);
+  text-align: center;
+}
+
+.topic-assets-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.topic-assets-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .panel-actions {
   margin-top: 18px;
   display: flex;
@@ -208,5 +315,10 @@
 
   .panel-tabs {
     align-self: flex-start;
+  }
+
+  .topic-assets-grid,
+  .topic-assets-modal-grid {
+    grid-template-columns: 1fr;
   }
 }

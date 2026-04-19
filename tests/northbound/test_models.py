@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from reticulum_telemetry_hub.northbound.models import ChatSendPayload
+from reticulum_telemetry_hub.northbound.models import AttachmentTopicPayload
 from reticulum_telemetry_hub.northbound.models import MarkerCreatePayload
 from reticulum_telemetry_hub.northbound.models import MarkerPositionPayload
 from reticulum_telemetry_hub.northbound.models import MessagePayload
@@ -70,6 +71,14 @@ def test_chat_send_payload_rejects_invalid_scope() -> None:
 
     with pytest.raises(ValidationError):
         ChatSendPayload.model_validate({"Content": "hello", "Scope": "invalid"})
+
+
+def test_attachment_topic_payload_accepts_aliases() -> None:
+    """Ensure attachment topic updates accept canonical and alias keys."""
+
+    payload = AttachmentTopicPayload.model_validate({"topicId": "topic-1"})
+
+    assert payload.topic_id == "topic-1"
 
 
 def test_marker_payload_accepts_supported_symbols() -> None:

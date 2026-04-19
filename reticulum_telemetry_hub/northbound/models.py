@@ -131,6 +131,18 @@ class SubscribeTopicRequest(BaseModel):
     )
 
 
+class AttachmentTopicPayload(BaseModel):
+    """Payload for assigning or clearing an attachment topic association."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    topic_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("TopicID", "topic_id", "topicId"),
+        serialization_alias="TopicID",
+    )
+
+
 class ConfigRollbackPayload(BaseModel):
     """Payload for configuration rollbacks."""
 

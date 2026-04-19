@@ -15,6 +15,7 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 
 from .models import SubscribeTopicRequest
 from .models import TopicPayload
+from .pagination import list_or_paginated_payload
 from .serializers import build_topic
 from .serializers import serialize_subscriber
 from .serializers import serialize_topic
@@ -95,14 +96,25 @@ def register_topic_routes(
         return serialize_topic(topic)
 
     @app.get("/Topic", dependencies=[Depends(require_protected)])
-    def list_topics() -> list[dict]:
+    def list_topics(
+        page: int | None = Query(default=None, ge=1),
+        per_page: int | None = Query(default=None, ge=1),
+    ) -> list[dict] | dict:
         """List topics.
 
         Returns:
             list[dict]: Topic entries.
         """
 
-        return [serialize_topic(topic) for topic in services.list_topics()]
+        return list_or_paginated_payload(
+            page=page,
+            per_page=per_page,
+            default_per_page=services.pagination_default_page_size,
+            max_per_page=services.pagination_max_page_size,
+            paginated_items=services.list_topics_paginated,
+            legacy_items=services.list_topics,
+            serializer=serialize_topic,
+        )
 
     @app.patch("/Topic", dependencies=[Depends(require_protected)])
     def patch_topic(payload: TopicPayload) -> dict:

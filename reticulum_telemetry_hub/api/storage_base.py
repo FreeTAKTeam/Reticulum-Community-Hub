@@ -6,8 +6,10 @@ from contextlib import contextmanager
 import logging
 import time
 from typing import Any
+from typing import Iterable
 
 from sqlalchemy import case
+from sqlalchemy import or_
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
@@ -254,10 +256,28 @@ class HubStorageBase:
         return merged
 
     @staticmethod
-    def _identity_announce_map(session) -> dict[str, IdentityAnnounceRecord]:
+    def _identity_announce_map(
+        session,
+        identities: Iterable[str] | None = None,
+    ) -> dict[str, IdentityAnnounceRecord]:
         """Return a lookup table for announce metadata."""
 
-        records = session.query(IdentityAnnounceRecord).all()
+        query = session.query(IdentityAnnounceRecord)
+        if identities is not None:
+            identity_keys = {
+                str(identity or "").strip().lower()
+                for identity in identities
+                if str(identity or "").strip()
+            }
+            if not identity_keys:
+                return {}
+            query = query.filter(
+                or_(
+                    IdentityAnnounceRecord.destination_hash.in_(identity_keys),
+                    IdentityAnnounceRecord.announced_identity_hash.in_(identity_keys),
+                )
+            )
+        records = query.all()
         announce_map: dict[str, IdentityAnnounceRecord] = {}
         for record in records:
             identity_key = str(

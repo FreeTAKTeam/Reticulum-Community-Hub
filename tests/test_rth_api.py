@@ -76,6 +76,80 @@ def test_patch_topic_allows_clearing_description(tmp_path):
     assert updated.topic_description == ""
 
 
+def test_assign_attachment_to_topic_updates_existing_record(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
+    file_path = api._config_manager.config.file_storage_path / "linked.txt"  # pylint: disable=protected-access
+    file_path.write_text("linked")
+    image_path = api._config_manager.config.image_storage_path / "linked.jpg"  # pylint: disable=protected-access
+    image_path.write_bytes(b"image")
+
+    file_record = api.store_file(file_path, media_type="text/plain")
+    image_record = api.store_image(image_path, media_type="image/jpeg")
+
+    updated_file = api.assign_file_to_topic(file_record.file_id, topic.topic_id)
+    updated_image = api.assign_image_to_topic(image_record.file_id, topic.topic_id)
+
+    assert updated_file.topic_id == topic.topic_id
+    assert updated_image.topic_id == topic.topic_id
+    assert api.retrieve_file(file_record.file_id).topic_id == topic.topic_id
+    assert api.retrieve_image(image_record.file_id).topic_id == topic.topic_id
+
+
+def test_assign_attachment_to_topic_allows_clearing_association(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
+    file_path = api._config_manager.config.file_storage_path / "clear.txt"  # pylint: disable=protected-access
+    file_path.write_text("linked")
+    file_record = api.store_file(file_path, media_type="text/plain", topic_id=topic.topic_id)
+
+    updated_file = api.assign_file_to_topic(file_record.file_id, "")
+
+    assert updated_file.topic_id is None
+    assert api.retrieve_file(file_record.file_id).topic_id is None
+
+
+def test_delete_topic_clears_attachment_associations(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
+    file_path = api._config_manager.config.file_storage_path / "delete-linked.txt"  # pylint: disable=protected-access
+    file_path.write_text("linked")
+    file_record = api.store_file(file_path, media_type="text/plain", topic_id=topic.topic_id)
+
+    api.delete_topic(topic.topic_id)
+
+    assert api.retrieve_file(file_record.file_id).topic_id is None
+
+
+def test_delete_topic_clears_legacy_raw_attachment_associations(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
+    raw_topic_id = f" {str(uuid.UUID(topic.topic_id)).upper()} "
+    file_path = api._config_manager.config.file_storage_path / "delete-legacy-linked.txt"  # pylint: disable=protected-access
+    file_path.write_text("linked")
+    file_record = api.store_file(file_path, media_type="text/plain", topic_id=raw_topic_id)
+
+    assert api.retrieve_file(file_record.file_id).topic_id == raw_topic_id
+
+    api.delete_topic(topic.topic_id)
+
+    assert api.retrieve_file(file_record.file_id).topic_id is None
+
+
+def test_delete_topic_preserves_case_distinct_attachment_associations(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(
+        Topic(topic_id="Ops", topic_name="Operations", topic_path="/ops")
+    )
+    file_path = api._config_manager.config.file_storage_path / "case-linked.txt"  # pylint: disable=protected-access
+    file_path.write_text("linked")
+    file_record = api.store_file(file_path, media_type="text/plain", topic_id="ops")
+
+    api.delete_topic(topic.topic_id)
+
+    assert api.retrieve_file(file_record.file_id).topic_id == "ops"
+
+
 def test_subscriber_management(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     topic = api.create_topic(Topic(topic_name="Alerts", topic_path="/alerts"))

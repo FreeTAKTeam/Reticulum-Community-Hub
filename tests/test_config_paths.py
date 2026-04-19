@@ -48,6 +48,9 @@ def test_missing_config_is_bootstrapped_from_default_template(tmp_path):
     assert manager.config_parser.has_option("hub", "chat_attachment_max_bytes")
     assert manager.config_parser.has_section("announce.capabilities")
     assert manager.config_parser.has_option("announce.capabilities", "enabled")
+    assert manager.config_parser.has_section("api")
+    assert manager.config_parser.has_option("api", "pagination_default_page_size")
+    assert manager.config_parser.has_option("api", "pagination_max_page_size")
     assert manager.config_parser.has_section("TAK")
     assert manager.config_parser.has_option("TAK", "fts_compat")
     assert manager.config_parser.has_section("telemetry")
@@ -141,6 +144,45 @@ def test_chat_attachment_max_bytes_config_and_minimum(tmp_path):
     clamped_manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
 
     assert clamped_manager.runtime_config.chat_attachment_max_bytes == 1
+
+
+def test_api_pagination_config_and_minimums(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[api]\n"
+        "pagination_default_page_size = 25\n"
+        "pagination_max_page_size = 40\n"
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+
+    assert manager.runtime_config.api_pagination_page_size == 25
+    assert manager.runtime_config.api_pagination_max_page_size == 40
+
+    config_path.write_text(
+        "[api]\n"
+        "pagination_default_page_size = 0\n"
+        "pagination_max_page_size = 0\n"
+    )
+
+    clamped_manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+
+    assert clamped_manager.runtime_config.api_pagination_page_size == 1
+    assert clamped_manager.runtime_config.api_pagination_max_page_size == 1
+
+
+def test_api_pagination_max_is_not_below_default(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[api]\n"
+        "pagination_default_page_size = 20\n"
+        "pagination_max_page_size = 10\n"
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+
+    assert manager.runtime_config.api_pagination_page_size == 20
+    assert manager.runtime_config.api_pagination_max_page_size == 20
 
 
 def test_announce_capabilities_defaults(tmp_path):

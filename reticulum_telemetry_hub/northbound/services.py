@@ -13,6 +13,8 @@ from typing import Dict
 from typing import List
 from typing import Optional
 
+from reticulum_telemetry_hub.api.pagination import PageRequest
+from reticulum_telemetry_hub.api.pagination import PaginatedResult
 from reticulum_telemetry_hub.api.models import ChatMessage
 from reticulum_telemetry_hub.api.models import Client
 from reticulum_telemetry_hub.api.models import FileAttachment
@@ -34,6 +36,8 @@ from reticulum_telemetry_hub.api.reticulum_discovery import (
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.zone_service import ZoneService
 from reticulum_telemetry_hub.api.zone_service import ZoneUpdateResult
+from reticulum_telemetry_hub.config.constants import DEFAULT_API_PAGINATION_MAX_PAGE_SIZE
+from reticulum_telemetry_hub.config.constants import DEFAULT_API_PAGINATION_PAGE_SIZE
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
@@ -116,6 +120,8 @@ class NorthboundServices:
     zone_service: ZoneService | None = None
     origin_rch: str = ""
     runtime_metrics_provider: Optional[Callable[[], Dict[str, object]]] = None
+    pagination_default_page_size: int = DEFAULT_API_PAGINATION_PAGE_SIZE
+    pagination_max_page_size: int = DEFAULT_API_PAGINATION_MAX_PAGE_SIZE
     _status_cache_snapshot: Dict[str, object] | None = field(default=None, init=False)
     _status_cache_generated_at: float = field(default=0.0, init=False)
 
@@ -235,6 +241,11 @@ class NorthboundServices:
 
         return self.api.list_clients()
 
+    def list_clients_paginated(self, page_request: PageRequest) -> PaginatedResult[Client]:
+        """Return a page of connected clients."""
+
+        return self.api.list_clients_paginated(page_request)
+
     def list_topics(self) -> List[Topic]:
         """Return topics.
 
@@ -243,6 +254,11 @@ class NorthboundServices:
         """
 
         return self.api.list_topics()
+
+    def list_topics_paginated(self, page_request: PageRequest) -> PaginatedResult[Topic]:
+        """Return a page of topics."""
+
+        return self.api.list_topics_paginated(page_request)
 
     def list_subscribers(self) -> List[Subscriber]:
         """Return subscribers.
@@ -253,6 +269,14 @@ class NorthboundServices:
 
         return self.api.list_subscribers()
 
+    def list_subscribers_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[Subscriber]:
+        """Return a page of subscribers."""
+
+        return self.api.list_subscribers_paginated(page_request)
+
     def list_files(self) -> List[FileAttachment]:
         """Return file attachments.
 
@@ -262,6 +286,14 @@ class NorthboundServices:
 
         return self.api.list_files()
 
+    def list_files_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[FileAttachment]:
+        """Return a page of file attachments."""
+
+        return self.api.list_files_paginated(page_request)
+
     def list_images(self) -> List[FileAttachment]:
         """Return image attachments.
 
@@ -270,6 +302,14 @@ class NorthboundServices:
         """
 
         return self.api.list_images()
+
+    def list_images_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[FileAttachment]:
+        """Return a page of image attachments."""
+
+        return self.api.list_images_paginated(page_request)
 
     def delete_file(self, file_id: int) -> FileAttachment:
         """Delete a stored file."""
@@ -542,6 +582,28 @@ class NorthboundServices:
             return self.api.record_chat_message(message)
         return message
 
+    def refresh_runtime_config(self) -> None:
+        """Refresh service settings derived from the active runtime config."""
+
+        config_manager = getattr(self.api, "_config_manager", None)
+        runtime_config = getattr(config_manager, "runtime_config", None)
+        if runtime_config is None:
+            return
+        self.pagination_default_page_size = int(
+            getattr(
+                runtime_config,
+                "api_pagination_page_size",
+                self.pagination_default_page_size,
+            )
+        )
+        self.pagination_max_page_size = int(
+            getattr(
+                runtime_config,
+                "api_pagination_max_page_size",
+                self.pagination_max_page_size,
+            )
+        )
+
     def reload_config(self) -> ReticulumInfo:
         """Reload configuration from disk.
 
@@ -549,7 +611,9 @@ class NorthboundServices:
             ReticulumInfo: Updated configuration snapshot.
         """
 
-        return self.api.reload_config()
+        info = self.api.reload_config()
+        self.refresh_runtime_config()
+        return info
 
     def _record_marker_event(self, event_type: str, marker: Marker) -> None:
         """Record marker activity and dispatch telemetry events."""

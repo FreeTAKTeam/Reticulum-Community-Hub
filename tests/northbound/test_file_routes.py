@@ -9,6 +9,7 @@ from typing import Tuple
 from fastapi.testclient import TestClient
 
 from reticulum_telemetry_hub.api.models import FileAttachment
+from reticulum_telemetry_hub.api.models import Topic
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -73,6 +74,83 @@ def test_file_routes_return_metadata(tmp_path: Path) -> None:
     assert file_response.json()["MediaType"] == "text/plain"
     assert image_response.json()["FileID"] == image_record.file_id
     assert image_response.json()["MediaType"] == "image/jpeg"
+
+
+def test_file_and_image_routes_paginate_metadata(tmp_path: Path) -> None:
+    """Verify file and image list routes return paginated envelopes when requested."""
+
+    client, api = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    for index in range(3):
+        file_path = api._config_manager.config.file_storage_path / f"note-{index}.txt"  # pylint: disable=protected-access
+        file_path.write_text(f"hello {index}")
+        api.store_file(file_path, media_type="text/plain")
+    for index in range(2):
+        image_path = api._config_manager.config.image_storage_path / f"photo-{index}.jpg"  # pylint: disable=protected-access
+        image_path.write_bytes(b"img")
+        api.store_image(image_path, media_type="image/jpeg")
+
+    file_response = client.get(
+        "/File",
+        params={"page": 2, "per_page": 2},
+        headers=headers,
+    )
+    image_response = client.get(
+        "/Image",
+        params={"page": 1, "per_page": 1},
+        headers=headers,
+    )
+
+    assert file_response.status_code == 200
+    assert image_response.status_code == 200
+    file_payload = file_response.json()
+    image_payload = image_response.json()
+    assert len(file_payload["items"]) == 1
+    assert file_payload["total"] == 3
+    assert file_payload["has_previous"] is True
+    assert len(image_payload["items"]) == 1
+    assert image_payload["total"] == 2
+    assert image_payload["has_next"] is True
+
+
+def test_file_routes_patch_topic_association(tmp_path: Path) -> None:
+    """Verify file and image routes update attachment topic links."""
+
+    client, api = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    topic = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
+    file_path = api._config_manager.config.file_storage_path / "topic.txt"  # pylint: disable=protected-access
+    file_path.write_text("hello")
+    image_path = api._config_manager.config.image_storage_path / "topic.jpg"  # pylint: disable=protected-access
+    image_path.write_bytes(b"img")
+    file_record = api.store_file(file_path, media_type="text/plain")
+    image_record = api.store_image(image_path, media_type="image/jpeg")
+
+    file_response = client.patch(
+        f"/File/{file_record.file_id}",
+        json={"TopicID": topic.topic_id},
+        headers=headers,
+    )
+    image_response = client.patch(
+        f"/Image/{image_record.file_id}",
+        json={"TopicID": topic.topic_id},
+        headers=headers,
+    )
+
+    assert file_response.status_code == 200
+    assert image_response.status_code == 200
+    assert file_response.json()["TopicID"] == topic.topic_id
+    assert image_response.json()["TopicID"] == topic.topic_id
+
+
+def test_file_routes_patch_missing_entries_return_404(tmp_path: Path) -> None:
+    """Ensure attachment topic patch routes return 404 when records are missing."""
+
+    client, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+
+    assert client.patch("/File/999", json={"TopicID": "topic-1"}, headers=headers).status_code == 404
+    assert client.patch("/Image/999", json={"TopicID": "topic-1"}, headers=headers).status_code == 404
 
 
 def test_file_routes_return_raw_bytes(tmp_path: Path) -> None:

@@ -23,6 +23,8 @@ from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.zone_service import ZoneService
 from reticulum_telemetry_hub.api.zone_storage import ZoneStorage
+from reticulum_telemetry_hub.config.constants import DEFAULT_API_PAGINATION_MAX_PAGE_SIZE
+from reticulum_telemetry_hub.config.constants import DEFAULT_API_PAGINATION_PAGE_SIZE
 from reticulum_telemetry_hub.config.manager import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -191,12 +193,28 @@ def create_app(
         emergency_action_message_service = EmergencyActionMessageService(hub_db_path)
 
     chat_attachment_max_bytes = 8 * 1024 * 1024
+    pagination_default_page_size = DEFAULT_API_PAGINATION_PAGE_SIZE
+    pagination_max_page_size = DEFAULT_API_PAGINATION_MAX_PAGE_SIZE
     if config_manager is not None:
         chat_attachment_max_bytes = int(
             getattr(
                 config_manager.runtime_config,
                 "chat_attachment_max_bytes",
                 chat_attachment_max_bytes,
+            )
+        )
+        pagination_default_page_size = int(
+            getattr(
+                config_manager.runtime_config,
+                "api_pagination_page_size",
+                pagination_default_page_size,
+            )
+        )
+        pagination_max_page_size = int(
+            getattr(
+                config_manager.runtime_config,
+                "api_pagination_max_page_size",
+                pagination_max_page_size,
             )
         )
     services = NorthboundServices(
@@ -212,6 +230,8 @@ def create_app(
         zone_service=zone_service,
         origin_rch=origin_rch or "",
         runtime_metrics_provider=runtime_metrics_provider,
+        pagination_default_page_size=pagination_default_page_size,
+        pagination_max_page_size=pagination_max_page_size,
     )
     auth = auth or ApiAuth()
     require_protected = build_protected_dependency(auth)

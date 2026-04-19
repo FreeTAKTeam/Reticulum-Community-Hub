@@ -14,6 +14,7 @@ from fastapi import status
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 
 from .models import SubscriberPayload
+from .pagination import list_or_paginated_payload
 from .serializers import build_subscriber
 from .serializers import serialize_subscriber
 from .services import NorthboundServices
@@ -112,14 +113,25 @@ def register_subscriber_routes(
         return serialize_subscriber(subscriber)
 
     @app.get("/Subscriber", dependencies=[Depends(require_protected)])
-    def list_subscribers() -> list[dict]:
+    def list_subscribers(
+        page: int | None = Query(default=None, ge=1),
+        per_page: int | None = Query(default=None, ge=1),
+    ) -> list[dict] | dict:
         """List subscribers.
 
         Returns:
             list[dict]: Subscriber entries.
         """
 
-        return [serialize_subscriber(subscriber) for subscriber in services.list_subscribers()]
+        return list_or_paginated_payload(
+            page=page,
+            per_page=per_page,
+            default_per_page=services.pagination_default_page_size,
+            max_per_page=services.pagination_max_page_size,
+            paginated_items=services.list_subscribers_paginated,
+            legacy_items=services.list_subscribers,
+            serializer=serialize_subscriber,
+        )
 
     @app.patch("/Subscriber", dependencies=[Depends(require_protected)])
     def patch_subscriber(payload: SubscriberPayload) -> dict:

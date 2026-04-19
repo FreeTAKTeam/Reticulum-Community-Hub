@@ -30,8 +30,28 @@ const mockState = {
       IsBlackholed: false
     }
   ],
-  files: [{ FileID: 1, Name: "report.txt", MediaType: "text/plain", Size: 1240, CreatedAt: nowIso() }],
-  images: [{ FileID: 2, Name: "snapshot.svg", MediaType: "image/svg+xml", Size: 2048, CreatedAt: nowIso() }],
+  files: [
+    {
+      FileID: 1,
+      Name: "report.txt",
+      MediaType: "text/plain",
+      Category: "file",
+      TopicID: "topic-2",
+      Size: 1240,
+      CreatedAt: nowIso()
+    }
+  ],
+  images: [
+    {
+      FileID: 2,
+      Name: "snapshot.svg",
+      MediaType: "image/svg+xml",
+      Category: "image",
+      TopicID: "topic-1",
+      Size: 2048,
+      CreatedAt: nowIso()
+    }
+  ],
   chatMessages: [
     {
       MessageID: "msg-1",
@@ -434,6 +454,10 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     if (!target) {
       return jsonResponse({ detail: "File not found" }, 404);
     }
+    if (method === "PATCH") {
+      const body = (await parseBody(options.body)) as any;
+      target.TopicID = typeof body?.TopicID === "string" && body.TopicID.trim() ? body.TopicID.trim() : null;
+    }
     if (method === "DELETE") {
       mockState.files = mockState.files.filter((entry) => entry.FileID !== id);
     }
@@ -450,6 +474,10 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     const target = mockState.images.find((entry) => entry.FileID === id);
     if (!target) {
       return jsonResponse({ detail: "Image not found" }, 404);
+    }
+    if (method === "PATCH") {
+      const body = (await parseBody(options.body)) as any;
+      target.TopicID = typeof body?.TopicID === "string" && body.TopicID.trim() ? body.TopicID.trim() : null;
     }
     if (method === "DELETE") {
       mockState.images = mockState.images.filter((entry) => entry.FileID !== id);
@@ -491,6 +519,7 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
       MediaType: file?.type || (category === "image" ? "image/png" : "application/octet-stream"),
       Size: file?.size ?? 2048,
       Category: category,
+      TopicID: typeof form?.get("topic_id") === "string" && form.get("topic_id")?.trim() ? String(form.get("topic_id")).trim() : null,
       CreatedAt: nowIso()
     };
     if (category === "image") {

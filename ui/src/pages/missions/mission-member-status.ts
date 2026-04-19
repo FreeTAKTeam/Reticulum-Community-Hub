@@ -22,6 +22,8 @@ export interface EmergencyActionMessageRecord {
   notes?: string | null;
   confidence?: number | null;
   source?: string | null;
+  sourceIdentity?: string | null;
+  sourceDisplayName?: string | null;
   overallStatus?: string | null;
   securityStatus?: string | null;
   capabilityStatus?: string | null;
@@ -143,6 +145,41 @@ const resolveSourceText = (
   return asText(source.display_name) ?? asText(source.rns_identity);
 };
 
+const resolveSourceIdentity = (
+  source:
+    | string
+    | null
+    | undefined
+    | {
+        rns_identity?: string | null;
+        display_name?: string | null;
+      }
+): string | null => {
+  if (typeof source === "string") {
+    return asText(source);
+  }
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  return asText(source.rns_identity);
+};
+
+const resolveSourceDisplayName = (
+  source:
+    | string
+    | null
+    | undefined
+    | {
+        rns_identity?: string | null;
+        display_name?: string | null;
+      }
+): string | null => {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  return asText(source.display_name);
+};
+
 const normalizeStatus = (value: unknown): EamStatus => {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (normalized === "green") {
@@ -161,7 +198,10 @@ export const toEmergencyActionMessageRecord = (
   record: EmergencyActionMessageApiRecord | EmergencyActionMessageRecord
 ): EmergencyActionMessageRecord => {
   const raw = record as Record<string, unknown>;
-  const source = resolveSourceText(raw.source as string | { rns_identity?: string | null; display_name?: string | null } | null | undefined);
+  const rawSource = raw.source as string | { rns_identity?: string | null; display_name?: string | null } | null | undefined;
+  const source = resolveSourceText(rawSource);
+  const sourceIdentity = asText(raw.sourceIdentity) ?? resolveSourceIdentity(rawSource);
+  const sourceDisplayName = asText(raw.sourceDisplayName) ?? resolveSourceDisplayName(rawSource);
   const capabilityStatus =
     asText(raw.capabilityStatus) ??
     asText(raw.securityCapability) ??
@@ -178,6 +218,8 @@ export const toEmergencyActionMessageRecord = (
     notes: asText(raw.notes),
     confidence: asNumber(raw.confidence),
     source,
+    sourceIdentity,
+    sourceDisplayName,
     overallStatus: asText(raw.overallStatus) ?? asText(raw.overall_status),
     securityStatus: asText(raw.securityStatus) ?? asText(raw.security_status),
     capabilityStatus,
@@ -198,7 +240,8 @@ export const toEmergencyActionMessageUpsertPayload = (
   const reportedBy = asText(record.reportedBy);
   const reportedAt = asText(record.reportedAt);
   const notes = asText(record.notes);
-  const sourceIdentity = asText(record.source);
+  const sourceIdentity = asText(record.sourceIdentity) ?? asText(record.source);
+  const sourceDisplayName = asText(record.sourceDisplayName);
   const confidence = asNumber(record.confidence);
   const ttlSecondsValue = asNumber(record.ttlSeconds);
   const ttlSeconds = ttlSecondsValue === null ? null : Math.trunc(ttlSecondsValue);
@@ -234,8 +277,14 @@ export const toEmergencyActionMessageUpsertPayload = (
   if (ttlSeconds !== null && ttlSeconds >= 0) {
     payload.ttl_seconds = ttlSeconds;
   }
-  if (sourceIdentity) {
-    payload.source = { rns_identity: sourceIdentity };
+  if (sourceIdentity || sourceDisplayName) {
+    payload.source = {};
+    if (sourceIdentity) {
+      payload.source.rns_identity = sourceIdentity;
+    }
+    if (sourceDisplayName) {
+      payload.source.display_name = sourceDisplayName;
+    }
   }
 
   return payload;

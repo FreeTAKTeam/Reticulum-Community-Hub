@@ -9,6 +9,7 @@ Use this document for:
 - telemetry requests handled through the southbound LXMF path
 - R3AKT mission-sync `command_type` envelopes carried in `FIELD_COMMANDS`
 - R3AKT checklist `command_type` envelopes carried in `FIELD_COMMANDS`
+- REM registry `command_type` envelopes carried in `FIELD_COMMANDS`
 
 Do not use this document as a list of every northbound HTTP route. Some
 `/api/r3akt/*` routes are HTTP-only today and do not have an LXMF southbound
@@ -201,6 +202,16 @@ by `mission_sync/capabilities.py`.
 | `mission.registry.eam.delete` | `mission.registry.status.write` | `callsign` | Delete the current EAM snapshot for a callsign. |
 | `mission.registry.eam.team.summary` | `mission.registry.status.read` | `team_uid` | Compute the current team summary using worst-of semantics across member snapshots. |
 
+### REM peer registry and mode control
+
+These commands use the same mission-style envelope lifecycle (`accepted`, then
+terminal `result` or `rejected`) but are handled by the REM command router.
+
+| `command_type` | Required capability | Key args | Description |
+| --- | --- | --- | --- |
+| `rem.registry.mode.set` | REM announce capabilities (`r3akt` + `emergencymessages`) | `mode` (`autonomous`, `semi_autonomous`, `connected`) | Register or update the sender REM mode; returns identity mode state and `effective_connected_mode`. |
+| `rem.registry.peers.list` | REM announce capabilities (`r3akt` + `emergencymessages`) | none | Return active REM-capable peers with identity, destination hash, capabilities, mode, status, and `effective_connected_mode`. |
+
 ### Teams and memberships
 
 | `command_type` | Required capability | Key args | Description |
@@ -329,6 +340,8 @@ are not separate LXMF commands unless listed above.
   human-readable message text.
 - Mission-sync and checklist replies also use `FIELD_RESULTS` plus
   `FIELD_EVENT` when available.
+- REM registry replies use `FIELD_RESULTS` and may include `FIELD_EVENT`
+  (`rem.registry.mode.updated`, `rem.registry.peers.listed`).
 - Telemetry replies use `FIELD_TELEMETRY_STREAM` (`0x03`) instead of
   `FIELD_RESULTS` as the primary payload field, and successful telemetry
   replies intentionally leave the text body empty.
@@ -343,6 +356,10 @@ are not separate LXMF commands unless listed above.
 - Outbound delivery state uses `Message-ID` plus persisted `delivery_metadata`
   so retries, acks, propagation fallback, and drop reasons stay visible to the
   UI/API.
+- In REM connected mode, outbound EAM updates to REM peers are sent as
+  `FIELD_COMMANDS` using `mission.registry.eam.upsert` / `mission.registry.eam.delete`.
+  Mission log updates to REM peers are sent as structured `FIELD_EVENT` payloads.
+  Non-REM LXMF peers receive readable text/Markdown chat equivalents.
 - Help and Examples responses include `FIELD_RENDERER` (`0x0F`) set to
   `RENDERER_MARKDOWN` (`0x02`).
 - Command names are normalized across common casing variants.

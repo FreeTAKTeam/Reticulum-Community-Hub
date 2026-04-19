@@ -17,6 +17,7 @@ Read our full manifesto: [docs/Manifesto_Reticulum_Community_Hub.md](docs/Manife
 - Canonical TopicID normalization plus validated delivery metadata for hub-originated message sends.
 - Telemetry collection and on-demand telemetry responses.
 - File and image attachment storage with retrieval and deletion by ID.
+- Topic pages can associate existing asset-library files and images without duplicating stored attachments.
 - sci-fi themed admin UI.
 - Operator-managed map markers backed by Reticulum object identities and telemetry updates.
 - TAK bridge for chat and location updates (Optional).
@@ -117,6 +118,7 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 - Marker symbols load from `rch-symbols.yaml` (override with `RTH_SYMBOL_REGISTRY_PATH`).
 - `/api/v1/app/info` includes the hub Reticulum destination (`reticulum_destination`) for display on the About page.
 - File/image attachments support delete operations that remove both metadata and on-disk content (`DELETE /File/{id}`, `DELETE /Image/{id}`).
+- Existing file/image asset-library records can be linked or unlinked from topics, and the Topics page lists the files and images currently associated with each topic.
 - The UI lives in `ui/`:
 
   ```bash
