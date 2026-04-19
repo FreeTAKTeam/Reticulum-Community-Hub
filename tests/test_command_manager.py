@@ -46,6 +46,51 @@ def make_command_manager(api):
     return manager, server_dest
 
 
+def test_handle_leave_invokes_destination_removed_callback():
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    class DummyAPI:
+        def __init__(self) -> None:
+            self.left: list[str] = []
+
+        def leave(self, identity: str) -> bool:
+            self.left.append(identity)
+            return True
+
+    server_dest = RNS.Destination(
+        RNS.Identity(),
+        RNS.Destination.IN,
+        RNS.Destination.SINGLE,
+        "lxmf",
+        "delivery",
+    )
+    source_dest = RNS.Destination(
+        RNS.Identity(),
+        RNS.Destination.OUT,
+        RNS.Destination.SINGLE,
+        "lxmf",
+        "delivery",
+    )
+    removed: list[str] = []
+    manager = CommandManager(
+        {source_dest.identity.hash: source_dest},
+        type("DummyTelemetry", (), {"handle_command": lambda self, command, message, dest: None})(),
+        server_dest,
+        DummyAPI(),
+        destination_removed_callback=lambda identity: removed.append(identity),
+    )
+    message = LXMF.LXMessage(server_dest, source_dest, "leave")
+    message.pack()
+    message.signature_validated = True
+
+    reply = manager._handle_leave(message)
+
+    assert "Connection removed" in reply.content_as_string()
+    assert removed == [source_dest.identity.hash.hex().lower()]
+    assert manager.api.left == [source_dest.identity.hash.hex().lower()]
+
+
 def test_apply_lxmf_router_runtime_config_reads_allowed_and_ignored_sidecars(
     tmp_path,
 ):

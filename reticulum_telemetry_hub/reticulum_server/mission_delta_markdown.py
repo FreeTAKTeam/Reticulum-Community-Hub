@@ -389,19 +389,13 @@ def _ensure_within_budget(
         if _bytes_len(text) <= target_bytes:
             return text
 
-    generic = _join_lines(
-        [
-            header,
-            "- Update: Mission content updated",
-            "- Detail: Additional details unavailable on this link",
-        ]
-    )
+    generic = _join_lines([header, "- Content: Mission content updated"])
     if _bytes_len(generic) <= target_bytes:
         return generic
 
     mission_name = _clip_text(header.replace("### Mission ", ""), max_chars=64)
     shortened_header = f"### Mission {mission_name}" if mission_name else "### Mission"
-    shortened = _join_lines([shortened_header, "- Update: Mission content updated"])
+    shortened = _join_lines([shortened_header, "- Content: Mission content updated"])
     if _bytes_len(shortened) <= target_bytes:
         return shortened
 
@@ -425,22 +419,10 @@ def _render_log_delta(
     """
 
     header = f"### Mission {_clip_text(mission_name, 120)}"
-    client_time = _clip_text(log_delta.get("client_time"), 32)
     content = _clip_text(log_delta.get("content"), 180)
-    detail_components = [part for part in (client_time, content) if part]
-    detail_text = ", ".join(detail_components) if detail_components else "log update"
-    required_lines = [
-        "- Update: Log added",
-        f'- Detail: "{detail_text}"',
-    ]
-    keywords = log_delta.get("keywords")
-    tags = ""
-    if isinstance(keywords, list):
-        normalized = [_clip_text(item, 24) for item in keywords if _clean_text(item)]
-        normalized = [item for item in normalized if item]
-        if normalized:
-            tags = ", ".join(normalized[:4])
-    optional_lines = [f"- Tags: {tags}"] if tags else []
+    fallback = _clip_text(log_delta.get("client_time"), 32) or "Mission log updated"
+    required_lines = [f"- Log: {content or fallback}"]
+    optional_lines: list[str] = []
     return _ensure_within_budget(
         header=header,
         required_lines=required_lines,
@@ -643,12 +625,28 @@ def render_mission_delta_markdown(
         )
 
     change_type = _status_label(mission_change.get("change_type"))
+    source_event_name = _clean_text(mission_change.get("name")).lower()
+    notes = _clip_text(mission_change.get("notes"), 180)
+
+    if source_event_name == "mission.log_entry.upserted":
+        return _ensure_within_budget(
+            header=header,
+            required_lines=[f"- Log: {notes or 'Mission log updated'}"],
+            optional_lines=[],
+            max_bytes=max_payload_bytes,
+        )
+
+    if change_type == "ADD_CONTENT":
+        return _ensure_within_budget(
+            header=header,
+            required_lines=[f"- Content: {notes or 'Mission content updated'}"],
+            optional_lines=[],
+            max_bytes=max_payload_bytes,
+        )
+
     return _ensure_within_budget(
         header=header,
-        required_lines=[
-            "- Update: Mission content updated",
-            f"- Detail: Change type {change_type}",
-        ],
+        required_lines=[f"- Change: {change_type}"],
         optional_lines=[],
         max_bytes=max_payload_bytes,
     )

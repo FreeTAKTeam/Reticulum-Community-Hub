@@ -665,27 +665,46 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     }
     if (method === "POST") {
       const body = (await parseBody(options.body)) as Record<string, unknown>;
-      const subjectId = typeof body?.subjectId === "string" ? body.subjectId.trim() : "";
+      const subjectId =
+        typeof body?.subjectId === "string"
+          ? body.subjectId.trim()
+          : typeof body?.team_member_uid === "string"
+            ? body.team_member_uid.trim()
+            : "";
       const callsign = typeof body?.callsign === "string" ? body.callsign.trim() : "";
       if (!subjectId || !callsign) {
-        return jsonResponse({ detail: "subjectId and callsign are required" }, 400);
+        return jsonResponse({ detail: "team_member_uid/subjectId and callsign are required" }, 400);
       }
       const nextRecord = {
         ...body,
         subjectType: "member",
         subjectId,
         callsign,
-        teamId: typeof body?.teamId === "string" ? body.teamId.trim() : "",
-        reportedAt: typeof body?.reportedAt === "string" ? body.reportedAt : nowIso(),
+        teamId:
+          typeof body?.teamId === "string"
+            ? body.teamId.trim()
+            : typeof body?.team_uid === "string"
+              ? body.team_uid.trim()
+              : "",
+        reportedAt:
+          typeof body?.reportedAt === "string"
+            ? body.reportedAt
+            : typeof body?.reported_at === "string"
+              ? body.reported_at
+              : nowIso(),
         capabilityStatus:
           typeof body?.capabilityStatus === "string"
             ? body.capabilityStatus
+            : typeof body?.capability_status === "string"
+              ? body.capability_status
             : typeof body?.securityCapability === "string"
               ? body.securityCapability
               : "Unknown",
         securityCapability:
           typeof body?.capabilityStatus === "string"
             ? body.capabilityStatus
+            : typeof body?.capability_status === "string"
+              ? body.capability_status
             : typeof body?.securityCapability === "string"
               ? body.securityCapability
               : "Unknown"

@@ -1,0 +1,14 @@
+samples=45
+backend_pid=3672
+ui_pid=22964
+backend_cpu_avg_pct=0.82
+backend_cpu_peak_pct=1.64
+backend_rss_avg_mb=137.75
+backend_rss_peak_mb=139.71
+ui_cpu_avg_pct=0
+ui_cpu_peak_pct=0
+ui_rss_avg_mb=81
+ui_rss_peak_mb=81.19
+queue_depth_peak=0
+delayed_depth_peak=0
+metrics_path=C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\tmp\perf_monitor\perf_samples.csv

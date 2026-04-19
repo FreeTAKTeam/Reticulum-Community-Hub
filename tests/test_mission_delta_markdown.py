@@ -126,7 +126,7 @@ class _FakeDomainService:
 
 
 def test_render_log_delta_includes_client_time_and_content() -> None:
-    """Render log updates with client-time context and content excerpt."""
+    """Render log updates using the concise log line format."""
 
     resolver = MissionDeltaNameResolver(_FakeDomainService())
     message = render_mission_delta_markdown(
@@ -146,8 +146,7 @@ def test_render_log_delta_includes_client_time_and_content() -> None:
     )
 
     assert "### Mission Mission Alpha" in message
-    assert '- Detail: "2026-02-26T10:00:00Z, Patrol reached checkpoint 1"' in message
-    assert "- Tags: ops, checkpoint" in message
+    assert "- Log: Patrol reached checkpoint 1" in message
 
 
 def test_render_completed_status_includes_task_status_and_completer_name() -> None:
@@ -379,3 +378,19 @@ def test_render_unknown_operation_uses_generic_fallback() -> None:
 
     assert "- Update: Mission content updated" in message
     assert "- Detail: Additional details unavailable on this link" in message
+
+
+def test_render_add_content_fallback_uses_content_line() -> None:
+    """Render ADD_CONTENT fallback with concise content wording."""
+
+    resolver = MissionDeltaNameResolver(_FakeDomainService())
+    message = render_mission_delta_markdown(
+        mission_uid="mission-1",
+        mission_change={"change_type": "ADD_CONTENT"},
+        delta={},
+        resolver=resolver,
+    )
+
+    assert "### Mission Mission Alpha" in message
+    assert "- Content: Mission content updated" in message
+    assert "Change type ADD_CONTENT" not in message
