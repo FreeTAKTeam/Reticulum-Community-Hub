@@ -234,12 +234,16 @@ def test_telemetry_subscriptions_do_not_block_other_socket_pong(monkeypatch) -> 
             ]
         )
         broadcaster = _FakeTelemetryBroadcaster()
+        snapshot_started = asyncio.Event()
+        snapshot_finished = asyncio.Event()
 
         async def _fake_ping_loop(*_args, **_kwargs):
             await asyncio.sleep(999)
 
         async def _slow_snapshot(_since: int, _topic_id: str | None) -> list[dict[str, object]]:
-            await asyncio.to_thread(time.sleep, 0.05)
+            snapshot_started.set()
+            await asyncio.to_thread(time.sleep, 0.2)
+            snapshot_finished.set()
             return [{"peer_destination": "abc"}]
 
         monkeypatch.setattr(
@@ -251,7 +255,6 @@ def test_telemetry_subscriptions_do_not_block_other_socket_pong(monkeypatch) -> 
             _fake_ping_loop,
         )
 
-        start = time.perf_counter()
         slow_task = asyncio.create_task(
             handle_telemetry_socket(
                 slow_websocket,
@@ -268,11 +271,11 @@ def test_telemetry_subscriptions_do_not_block_other_socket_pong(monkeypatch) -> 
                 telemetry_snapshot=lambda *_args, **_kwargs: asyncio.sleep(0, result=[]),
             )
         )
-        await fast_task
-        fast_elapsed = time.perf_counter() - start
+        await snapshot_started.wait()
+        await asyncio.wait_for(fast_task, timeout=0.05)
+        assert snapshot_finished.is_set() is False
         await slow_task
 
-        assert fast_elapsed < 0.04
         assert slow_websocket.accepted is True
         assert fast_websocket.accepted is True
         assert any(item["type"] == "telemetry.snapshot" for item in slow_websocket.sent)
