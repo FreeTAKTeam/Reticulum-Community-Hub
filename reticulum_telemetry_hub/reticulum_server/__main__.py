@@ -1847,18 +1847,45 @@ class ReticulumTelemetryHub:
                     fields=outbound_fields,
                 )
 
+    def _message_events_service(self) -> MessageEventEmitter:
+        """Return the message event emitter, creating it for test-only hub stubs."""
+
+        service = getattr(self, "message_events", None)
+        if service is None:
+            service = MessageEventEmitter(self)
+            self.message_events = service
+        return service
+
+    def _delivery_service(self) -> DeliveryService:
+        """Return the delivery service, creating it for test-only hub stubs."""
+
+        service = getattr(self, "delivery_service", None)
+        if service is None:
+            service = DeliveryService(self)
+            self.delivery_service = service
+        return service
+
+    def _message_router_service(self) -> MessageRouter:
+        """Return the message router, creating it for test-only hub stubs."""
+
+        service = getattr(self, "message_router", None)
+        if service is None:
+            service = MessageRouter(self)
+            self.message_router = service
+        return service
+
     def register_message_listener(
         self, listener: Callable[[dict[str, object]], None]
     ) -> Callable[[], None]:
         """Register a callback invoked for inbound LXMF messages."""
 
-        return self.message_events.register_message_listener(listener)
+        return self._message_events_service().register_message_listener(listener)
 
 
     def _notify_message_listeners(self, entry: dict[str, object]) -> None:
         """Dispatch an inbound message entry to registered listeners."""
 
-        self.message_events.notify_message_listeners(entry)
+        self._message_events_service().notify_message_listeners(entry)
 
 
     def _record_message_event(
@@ -1877,7 +1904,7 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Emit a message event for northbound consumers."""
 
-        self.message_events.record_message_event(
+        self._message_events_service().record_message_event(
             content=content,
             source_label=source_label,
             source_hash=source_hash,
@@ -2242,7 +2269,7 @@ class ReticulumTelemetryHub:
     ) -> bool:
         """Sends a message to connected clients."""
 
-        return self.message_router.send_message(
+        return self._message_router_service().send_message(
             message,
             topic=topic,
             destination=destination,
@@ -2262,7 +2289,7 @@ class ReticulumTelemetryHub:
     ) -> dict | None:
         """Return shared outbound fields with a validated delivery envelope."""
 
-        return self.message_router.prepare_outbound_delivery_fields(
+        return self._message_router_service().prepare_outbound_delivery_fields(
             fields=fields,
             topic_id=topic_id,
             message_id=message_id,
@@ -2284,7 +2311,7 @@ class ReticulumTelemetryHub:
     ) -> tuple[list[OutboundPayload], dict[str, int]]:
         """Build outbound payloads while precomputing fan-out metadata once."""
 
-        return self.message_router.build_outbound_payloads(
+        return self._message_router_service().build_outbound_payloads(
             message=message,
             route_type=route_type,
             topic_id=topic_id,
@@ -2307,7 +2334,7 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Emit an explicit warning when fan-out soft caps defer recipients."""
 
-        self.message_router.record_fanout_backpressure_warning(
+        self._message_router_service().record_fanout_backpressure_warning(
             message_id=message_id,
             topic_id=topic_id,
             selected_count=selected_count,
@@ -2324,7 +2351,7 @@ class ReticulumTelemetryHub:
     ) -> ChatMessage | None:
         """Dispatch a message originating from the northbound interface."""
 
-        return self.message_router.dispatch_northbound_message(
+        return self._message_router_service().dispatch_northbound_message(
             message,
             topic_id=topic_id,
             destination=destination,
@@ -2339,7 +2366,7 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Persist and broadcast outbound delivery acknowledgements."""
 
-        self.delivery_service.handle_outbound_delivery_receipt(message, payload)
+        self._delivery_service().handle_outbound_delivery_receipt(message, payload)
 
 
     def _handle_outbound_delivery_failure(
@@ -2349,7 +2376,7 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Persist and broadcast outbound delivery failures."""
 
-        self.delivery_service.handle_outbound_delivery_failure(message, payload)
+        self._delivery_service().handle_outbound_delivery_failure(message, payload)
 
 
     def _augment_outbound_delivery_metadata(
@@ -2359,7 +2386,7 @@ class ReticulumTelemetryHub:
     ) -> dict[str, object]:
         """Add retry and propagation metadata to outbound event entries."""
 
-        return self.delivery_service.augment_outbound_delivery_metadata(entry, payload)
+        return self._delivery_service().augment_outbound_delivery_metadata(entry, payload)
 
 
     def _build_outbound_attempt_metadata(
@@ -2368,31 +2395,31 @@ class ReticulumTelemetryHub:
     ) -> dict[str, object]:
         """Build event metadata for retry and fallback transitions."""
 
-        return self.delivery_service.build_outbound_attempt_metadata(payload)
+        return self._delivery_service().build_outbound_attempt_metadata(payload)
 
 
     def _resolve_propagation_node_label(self, payload: OutboundPayload) -> str:
         """Return the most useful label for the selected propagation node."""
 
-        return self.delivery_service.resolve_propagation_node_label(payload)
+        return self._delivery_service().resolve_propagation_node_label(payload)
 
 
     def _select_best_propagation_node(self) -> PropagationNodeCandidate | None:
         """Return the current best remote propagation node and activate it."""
 
-        return self.delivery_service.select_best_propagation_node()
+        return self._delivery_service().select_best_propagation_node()
 
 
     def _handle_outbound_retry_scheduled(self, payload: OutboundPayload) -> None:
         """Record a direct-delivery retry event."""
 
-        self.delivery_service.handle_outbound_retry_scheduled(payload)
+        self._delivery_service().handle_outbound_retry_scheduled(payload)
 
 
     def _handle_outbound_propagation_fallback(self, payload: OutboundPayload) -> None:
         """Record that direct delivery exhausted and propagation fallback is in use."""
 
-        self.delivery_service.handle_outbound_propagation_fallback(payload)
+        self._delivery_service().handle_outbound_propagation_fallback(payload)
 
 
     def _update_outbound_chat_state(
@@ -2405,7 +2432,7 @@ class ReticulumTelemetryHub:
     ) -> dict[str, object]:
         """Return metadata for outbound delivery state transitions."""
 
-        return self.delivery_service.update_outbound_chat_state(
+        return self._delivery_service().update_outbound_chat_state(
             message=message,
             payload=payload,
             state=state,
@@ -2416,7 +2443,7 @@ class ReticulumTelemetryHub:
     def _handle_outbound_attempt_started(self, payload: OutboundPayload) -> None:
         """Persist attempt counters when a queue worker starts delivery."""
 
-        self.delivery_service.handle_outbound_attempt_started(payload)
+        self._delivery_service().handle_outbound_attempt_started(payload)
 
 
     def _handle_outbound_payload_dropped(
@@ -2426,7 +2453,7 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Record queue backpressure drops as terminal failures."""
 
-        self.delivery_service.handle_outbound_payload_dropped(payload, reason)
+        self._delivery_service().handle_outbound_payload_dropped(payload, reason)
 
 
     def _persist_outbound_delivery_metadata(
@@ -2438,7 +2465,7 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Persist the latest outbound delivery metadata when chat storage exists."""
 
-        self.delivery_service.persist_outbound_delivery_metadata(
+        self._delivery_service().persist_outbound_delivery_metadata(
             payload,
             state=state,
             delivery_metadata=delivery_metadata,
@@ -2448,7 +2475,7 @@ class ReticulumTelemetryHub:
     def _delivery_metadata_snapshot(self, payload: OutboundPayload) -> dict[str, object]:
         """Return a serializable snapshot of outbound delivery state."""
 
-        return self.delivery_service.delivery_metadata_snapshot(payload)
+        return self._delivery_service().delivery_metadata_snapshot(payload)
 
 
     def _delivery_message_id(
@@ -2459,7 +2486,7 @@ class ReticulumTelemetryHub:
     ) -> str:
         """Return the outbound Message-ID for a queued payload."""
 
-        return self.message_router.delivery_message_id(
+        return self._message_router_service().delivery_message_id(
             fields,
             chat_message_id=chat_message_id,
         )
@@ -2484,7 +2511,7 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Emit event-log metrics for routing selection outcomes."""
 
-        self.message_router.record_outbound_route_metrics(
+        self._message_router_service().record_outbound_route_metrics(
             message_id=message_id,
             route_type=route_type,
             fanout_count=fanout_count,
@@ -2857,7 +2884,7 @@ class ReticulumTelemetryHub:
     def _ensure_outbound_queue(self) -> OutboundMessageQueue | None:
         """Initialize and start the outbound worker queue."""
 
-        return self.delivery_service.ensure_outbound_queue()
+        return self._delivery_service().ensure_outbound_queue()
 
 
     def wait_for_outbound_flush(self, timeout: float = 1.0) -> bool:

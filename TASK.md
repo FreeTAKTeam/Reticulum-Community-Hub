@@ -250,3 +250,4 @@
 - 2026-01-05: ? Fix unknown command response typo and rename RetrieveTopic command.
 - 2026-01-12: ? Add multi-agent Codex issue workflow and bump version.
 - 2026-03-01: ✅ Add `/api/v1/auth/validate` REST endpoint with protected dependency, OpenAPI docs, and remote/local auth tests.
+- 2026-04-19: ✅ Restore compatibility for `ReticulumTelemetryHub.__new__` test stubs by lazily initializing extracted delivery/router/event services.
