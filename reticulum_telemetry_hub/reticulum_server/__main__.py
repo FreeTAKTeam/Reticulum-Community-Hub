@@ -1325,7 +1325,7 @@ class ReticulumTelemetryHub:
         if not has_non_command_signal:
             return False
 
-        manager = self.command_manager
+        manager = getattr(self, "command_manager", None)
         if not isinstance(manager, CommandManager):
             return False
         normalize_name_fn = cast(Callable[[str], str | None], normalize_name)
