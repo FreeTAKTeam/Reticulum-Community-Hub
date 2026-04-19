@@ -305,6 +305,7 @@ def create_app(
         event_broadcaster=event_broadcaster,
         telemetry_broadcaster=telemetry_broadcaster,
         message_broadcaster=message_broadcaster,
+        runtime_metrics=runtime_metrics,
     )
     if control is not None:
         register_control_routes(

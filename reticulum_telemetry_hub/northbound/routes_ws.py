@@ -24,6 +24,7 @@ def register_ws_routes(
     event_broadcaster: EventBroadcaster,
     telemetry_broadcaster: TelemetryBroadcaster,
     message_broadcaster: MessageBroadcaster,
+    runtime_metrics: object | None = None,
 ) -> None:
     """Register WebSocket routes on the FastAPI app.
 
@@ -34,6 +35,7 @@ def register_ws_routes(
         event_broadcaster (EventBroadcaster): Event broadcaster.
         telemetry_broadcaster (TelemetryBroadcaster): Telemetry broadcaster.
         message_broadcaster (MessageBroadcaster): Message broadcaster.
+        runtime_metrics (object | None): Optional runtime metrics sink.
 
     Returns:
         None: Routes are registered on the application.
@@ -75,7 +77,7 @@ def register_ws_routes(
             websocket (WebSocket): WebSocket connection.
         """
 
-        def _telemetry_snapshot(since: int, topic_id: str | None) -> list[dict]:
+        async def _telemetry_snapshot(since: int, topic_id: str | None) -> list[dict]:
             """Return telemetry snapshots for WebSocket clients.
 
             Args:
@@ -86,13 +88,17 @@ def register_ws_routes(
                 list[dict]: Telemetry entries.
             """
 
-            return services.telemetry_entries(since=since, topic_id=topic_id)
+            return await services.telemetry.list_telemetry_entries_async(
+                since=since,
+                topic_id=topic_id,
+            )
 
         await handle_telemetry_socket(
             websocket,
             auth=auth,
             telemetry_broadcaster=telemetry_broadcaster,
             telemetry_snapshot=_telemetry_snapshot,
+            runtime_metrics=runtime_metrics,
         )
 
     @app.websocket("/messages/stream")

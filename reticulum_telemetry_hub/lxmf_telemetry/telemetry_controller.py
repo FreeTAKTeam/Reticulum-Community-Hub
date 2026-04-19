@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime
 import json
@@ -418,6 +419,30 @@ class TelemetryController:
                     }
                 )
             return entries
+
+    async def list_telemetry_entries_async(
+        self, *, since: int, topic_id: str | None = None
+    ) -> list[dict[str, object]]:
+        """Return telemetry entries without blocking the event loop.
+
+        This method is intended for async callers (for example websocket
+        handlers) and offloads synchronous SQLAlchemy access to a thread.
+
+        Args:
+            since (int): Unix timestamp (seconds) for the earliest telemetry
+                records to include.
+            topic_id (str | None): Optional topic identifier for filtering.
+
+        Returns:
+            list[dict[str, object]]: Telemetry entries formatted for async
+                northbound consumers.
+        """
+
+        return await asyncio.to_thread(
+            self.list_telemetry_entries,
+            since=since,
+            topic_id=topic_id,
+        )
 
     def register_listener(
         self,
