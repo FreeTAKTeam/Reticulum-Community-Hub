@@ -1246,6 +1246,7 @@ class ReticulumTelemetryHub:
         all_names = getattr(manager, "_all_command_names", None) if manager is not None else None
         if not callable(normalize_name) or not callable(all_names):
             return False
+        normalize_name_fn = cast(Callable[[str], str | None], normalize_name)
         known_names = set(all_names())
 
         for command in commands:
@@ -1261,7 +1262,7 @@ class ReticulumTelemetryHub:
                 raw_name = command.get(str(PLUGIN_COMMAND))
             if not isinstance(raw_name, str):
                 return False
-            normalized = normalize_name(raw_name) if callable(normalize_name) else None
+            normalized = normalize_name_fn(raw_name)
             if normalized is None:
                 normalized = raw_name.strip() or None
             if normalized in known_names:
