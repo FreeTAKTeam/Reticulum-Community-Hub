@@ -5,6 +5,7 @@ from datetime import timezone
 from pathlib import Path
 
 import pytest
+from sqlalchemy import event
 
 from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.api.models import Topic
@@ -117,3 +118,41 @@ def test_list_telemetry_entries_unknown_topic(tmp_path) -> None:
 
     with pytest.raises(KeyError):
         controller.list_telemetry_entries(since=0, topic_id="missing")
+
+
+def test_list_telemetry_entries_bulk_resolves_display_names_in_single_query(tmp_path) -> None:
+    """Ensure telemetry listing performs one bulk display-name lookup query."""
+
+    api = _build_api(tmp_path)
+    controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
+    now = datetime.now(timezone.utc)
+    timestamp = int(now.timestamp())
+    payload = {
+        SID_TIME: timestamp,
+        SID_LOCATION: build_location_payload(timestamp),
+    }
+    api.record_identity_announce("peer-1", display_name="Alpha")
+    api.record_identity_announce("peer-2", display_name="Bravo")
+    controller.save_telemetry(payload, "peer-1", timestamp=now)
+    controller.save_telemetry(payload, "peer-2", timestamp=now)
+
+    query_count = 0
+
+    def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        nonlocal query_count
+        normalized_statement = str(statement).lower()
+        if "identity_announces" in normalized_statement and "select" in normalized_statement:
+            query_count += 1
+
+    event.listen(api._storage._engine, "before_cursor_execute", _before_cursor_execute)  # pylint: disable=protected-access
+    try:
+        entries = controller.list_telemetry_entries(since=timestamp - 10)
+    finally:
+        event.remove(
+            api._storage._engine,  # pylint: disable=protected-access
+            "before_cursor_execute",
+            _before_cursor_execute,
+        )
+
+    assert len(entries) == 2
+    assert query_count == 1
