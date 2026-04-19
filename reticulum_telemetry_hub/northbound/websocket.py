@@ -35,6 +35,9 @@ from .auth import ApiAuth
 DEFAULT_WS_PING_INTERVAL_SECONDS = 30.0
 DEFAULT_WS_INACTIVITY_TIMEOUT_SECONDS = 90.0
 DEFAULT_WS_DELIVERY_QUEUE_SIZE = 64
+DEFAULT_WS_STATUS_REFRESH_INTERVAL_SECONDS = 3.0
+DEFAULT_WS_STATUS_FANOUT_MODE = "event_only"
+_WS_STATUS_FANOUT_MODES = {"event_only", "periodic", "event_plus_periodic"}
 WS_INACTIVITY_CLOSE_CODE = 4004
 LOGGER = logging.getLogger(__name__)
 
@@ -789,7 +792,12 @@ def _auth_failure_detail(auth: ApiAuth, client_host: Optional[str]) -> str:
     return "Unauthorized"
 
 
-def _get_subscribe_flags(data: Dict[str, Any]) -> tuple[bool, bool, int]:
+def _get_subscribe_flags(
+    data: Dict[str, Any],
+    *,
+    default_include_status: bool,
+    default_include_events: bool,
+) -> tuple[bool, bool, int]:
     """Return subscription flags for system events.
 
     Args:
@@ -799,12 +807,23 @@ def _get_subscribe_flags(data: Dict[str, Any]) -> tuple[bool, bool, int]:
         tuple[bool, bool, int]: include_status, include_events, events_limit.
     """
 
-    include_status = bool(data.get("include_status", True))
-    include_events = bool(data.get("include_events", True))
+    include_status = data.get("include_status")
+    include_events = data.get("include_events")
+    include_status_flag = default_include_status if include_status is None else bool(include_status)
+    include_events_flag = default_include_events if include_events is None else bool(include_events)
     events_limit = data.get("events_limit")
     if not isinstance(events_limit, int) or events_limit <= 0:
         events_limit = 50
-    return include_status, include_events, events_limit
+    return include_status_flag, include_events_flag, events_limit
+
+
+def _normalize_status_fanout_mode(mode: str) -> str:
+    """Return a supported status fan-out mode."""
+
+    normalized = str(mode).strip().lower()
+    if normalized in _WS_STATUS_FANOUT_MODES:
+        return normalized
+    return DEFAULT_WS_STATUS_FANOUT_MODE
 
 
 def _get_telemetry_subscription(data: Dict[str, Any]) -> tuple[int, Optional[str], bool]:
@@ -1026,6 +1045,8 @@ async def handle_system_socket(
     event_broadcaster: EventBroadcaster,
     status_provider: Callable[[], Dict[str, object]],
     event_list_provider: Callable[[int], list[Dict[str, object]]],
+    status_refresh_interval_seconds: float = DEFAULT_WS_STATUS_REFRESH_INTERVAL_SECONDS,
+    status_fanout_mode: str = DEFAULT_WS_STATUS_FANOUT_MODE,
     ping_interval_seconds: float = DEFAULT_WS_PING_INTERVAL_SECONDS,
     inactivity_timeout_seconds: float = DEFAULT_WS_INACTIVITY_TIMEOUT_SECONDS,
 ) -> None:
@@ -1037,6 +1058,9 @@ async def handle_system_socket(
         event_broadcaster (EventBroadcaster): Event broadcaster.
         status_provider (Callable[[], Dict[str, object]]): Status snapshot provider.
         event_list_provider (Callable[[int], list[Dict[str, object]]]): Event list provider.
+        status_refresh_interval_seconds (float): Periodic status refresh cadence.
+        status_fanout_mode (str): Status fan-out mode. Supported values:
+            ``event_only``, ``periodic``, ``event_plus_periodic``.
         ping_interval_seconds (float): Interval between keepalive ping payloads.
         inactivity_timeout_seconds (float): Maximum idle time allowed before the
             socket is closed.
@@ -1046,10 +1070,13 @@ async def handle_system_socket(
     if not await authenticate_websocket(websocket, auth=auth):
         return
 
-    include_status = True
+    include_status = False
     include_events = True
     events_limit = 50
     last_activity_at = time.monotonic()
+    fanout_mode = _normalize_status_fanout_mode(status_fanout_mode)
+    include_status = fanout_mode != "event_only"
+    status_interval = max(float(status_refresh_interval_seconds), 2.0)
 
     async def _send_event(entry: Dict[str, object]) -> None:
         """Send event updates to the WebSocket client.
@@ -1063,13 +1090,24 @@ async def handle_system_socket(
 
         if include_events:
             await websocket.send_json(build_ws_message("system.event", entry))
-        if include_status:
+        if include_status and fanout_mode == "event_plus_periodic":
             await websocket.send_json(build_ws_message("system.status", status_provider()))
+
+    async def _periodic_status_loop() -> None:
+        """Send periodic status updates when enabled."""
+
+        if fanout_mode not in {"periodic", "event_plus_periodic"}:
+            return
+        while True:
+            await asyncio.sleep(status_interval)
+            if include_status:
+                await websocket.send_json(build_ws_message("system.status", status_provider()))
 
     unsubscribe = event_broadcaster.subscribe(_send_event)
     ping_task = asyncio.create_task(
         ping_loop(websocket, interval_seconds=ping_interval_seconds)
     )
+    status_task = asyncio.create_task(_periodic_status_loop())
 
     try:
         if include_status:
@@ -1098,7 +1136,11 @@ async def handle_system_socket(
             msg_type = _get_message_type(message)
             if msg_type == "system.subscribe":
                 data = _get_message_data(message)
-                include_status, include_events, events_limit = _get_subscribe_flags(data)
+                include_status, include_events, events_limit = _get_subscribe_flags(
+                    data,
+                    default_include_status=(fanout_mode != "event_only"),
+                    default_include_events=True,
+                )
                 if include_status:
                     await websocket.send_json(build_ws_message("system.status", status_provider()))
             elif msg_type == "pong":
@@ -1113,6 +1155,7 @@ async def handle_system_socket(
     finally:
         unsubscribe()
         await _cancel_task(ping_task)
+        await _cancel_task(status_task)
 
 
 async def handle_telemetry_socket(

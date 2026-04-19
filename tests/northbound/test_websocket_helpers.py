@@ -50,9 +50,13 @@ def test_parse_ws_message_requires_object() -> None:
 def test_get_subscribe_flags_defaults() -> None:
     """Ensure subscription flags default sensibly."""
 
-    include_status, include_events, events_limit = _get_subscribe_flags({})
+    include_status, include_events, events_limit = _get_subscribe_flags(
+        {},
+        default_include_status=False,
+        default_include_events=True,
+    )
 
-    assert include_status is True
+    assert include_status is False
     assert include_events is True
     assert events_limit == 50
 
