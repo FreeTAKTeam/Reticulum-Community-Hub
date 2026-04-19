@@ -55,6 +55,8 @@ from .services import NorthboundServices
 from .websocket import EventBroadcaster
 from .websocket import MessageBroadcaster
 from .websocket import TelemetryBroadcaster
+from .websocket import DEFAULT_WS_STATUS_FANOUT_MODE
+from .websocket import DEFAULT_WS_STATUS_REFRESH_INTERVAL_SECONDS
 
 
 def _resolve_openapi_spec() -> Optional[Path]:
@@ -306,6 +308,22 @@ def create_app(
         telemetry_broadcaster=telemetry_broadcaster,
         message_broadcaster=message_broadcaster,
         runtime_metrics=runtime_metrics,
+        status_fanout_mode=(
+            getattr(config_manager.runtime_config, "ws_status_fanout_mode", DEFAULT_WS_STATUS_FANOUT_MODE)
+            if config_manager is not None
+            else DEFAULT_WS_STATUS_FANOUT_MODE
+        ),
+        status_refresh_interval_seconds=(
+            float(
+                getattr(
+                    config_manager.runtime_config,
+                    "ws_status_refresh_interval_seconds",
+                    DEFAULT_WS_STATUS_REFRESH_INTERVAL_SECONDS,
+                )
+            )
+            if config_manager is not None
+            else DEFAULT_WS_STATUS_REFRESH_INTERVAL_SECONDS
+        ),
     )
     if control is not None:
         register_control_routes(

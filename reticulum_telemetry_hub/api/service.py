@@ -209,6 +209,11 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             for client in self._storage.list_clients()
         ]
 
+    def count_clients(self) -> int:
+        """Return the number of clients that have joined the hub."""
+
+        return self._storage.count_clients()
+
     def has_client(self, identity: str) -> bool:
         """Return ``True`` when the client is registered with the hub.
 
@@ -612,10 +617,20 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         return self._storage.list_file_records(category=self._file_category)
 
+    def count_files(self) -> int:
+        """Return the number of stored file attachments."""
+
+        return self._storage.count_file_records(category=self._file_category)
+
     def list_images(self) -> List[FileAttachment]:
         """Return stored image records."""
 
         return self._storage.list_file_records(category=self._image_category)
+
+    def count_images(self) -> int:
+        """Return the number of stored image attachments."""
+
+        return self._storage.count_file_records(category=self._image_category)
 
     def retrieve_file(self, record_id: int) -> FileAttachment:
         """Fetch stored file metadata by ID."""
@@ -764,6 +779,11 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             List[Topic]: Current topic catalog from storage.
         """
         return self._storage.list_topics()
+
+    def count_topics(self) -> int:
+        """Return the number of topics known to the hub."""
+
+        return self._storage.count_topics()
 
     def retrieve_topic(self, topic_id: str) -> Topic:
         """Fetch a topic by its identifier.
@@ -921,6 +941,11 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             List[Subscriber]: Subscribers currently stored in the hub.
         """
         return self._storage.list_subscribers()
+
+    def count_subscribers(self) -> int:
+        """Return the number of subscribers currently stored in the hub."""
+
+        return self._storage.count_subscribers()
 
     def list_subscribers_for_topic(self, topic_id: str) -> List[Subscriber]:
         """Return subscribers for a specific topic.

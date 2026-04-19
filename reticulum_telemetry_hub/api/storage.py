@@ -120,6 +120,13 @@ class HubStorage(HubStorageBase):
                 for r in records
             ]
 
+    def count_topics(self) -> int:
+        """Return the total number of topics."""
+
+        with self._session_scope() as session:
+            total = session.query(sa_count(TopicRecord.id)).scalar()
+            return int(total or 0)
+
     def get_topic(self, topic_id: str) -> Optional[Topic]:
         """Fetch a topic by identifier.
 
@@ -228,6 +235,13 @@ class HubStorage(HubStorageBase):
         with self._session_scope() as session:
             records = session.query(SubscriberRecord).all()
             return [self._subscriber_from_record(r) for r in records]
+
+    def count_subscribers(self) -> int:
+        """Return the total number of subscribers."""
+
+        with self._session_scope() as session:
+            total = session.query(sa_count(SubscriberRecord.id)).scalar()
+            return int(total or 0)
 
     def list_subscribers_for_topic(self, topic_id: str) -> List[Subscriber]:
         """Return subscribers stored for a topic identifier."""
@@ -345,6 +359,13 @@ class HubStorage(HubStorageBase):
                 for record in records
             ]
 
+    def count_clients(self) -> int:
+        """Return the total number of clients."""
+
+        with self._session_scope() as session:
+            total = session.query(sa_count(ClientRecord.identity)).scalar()
+            return int(total or 0)
+
     def get_client(self, identity: str) -> Client | None:
         """Return a client by identity when it exists.
 
@@ -387,6 +408,16 @@ class HubStorage(HubStorageBase):
                 query = query.filter(FileRecord.category == category)
             records = query.all()
             return [self._file_from_record(record) for record in records]
+
+    def count_file_records(self, category: str | None = None) -> int:
+        """Return the number of stored file records for an optional category."""
+
+        with self._session_scope() as session:
+            query = session.query(sa_count(FileRecord.id))
+            if category:
+                query = query.filter(FileRecord.category == category)
+            total = query.scalar()
+            return int(total or 0)
 
     def get_file_record(self, record_id: int) -> FileAttachment | None:
         """Return a stored file by its database identifier."""

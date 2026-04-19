@@ -174,6 +174,73 @@ def test_handle_system_socket_handles_subscribe_and_bad_request(monkeypatch) -> 
     asyncio.run(_exercise())
 
 
+def test_handle_system_socket_defaults_to_event_only_mode(monkeypatch) -> None:
+    """Ensure default system subscriptions do not emit status payloads."""
+
+    async def _exercise() -> None:
+        websocket = _FakeWebSocket([{"type": "unsupported"}])
+        broadcaster = _FakeEventBroadcaster()
+
+        async def _fake_ping_loop(*_args, **_kwargs):
+            await asyncio.sleep(999)
+
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.authenticate_websocket",
+            lambda *args, **kwargs: asyncio.sleep(0, result=True),
+        )
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.ping_loop",
+            _fake_ping_loop,
+        )
+
+        await handle_system_socket(
+            websocket,
+            auth=_FakeAuth(True),
+            event_broadcaster=broadcaster,
+            status_provider=lambda: {"ok": True},
+            event_list_provider=lambda limit: [{"n": limit}],
+        )
+
+        sent_types = [item["type"] for item in websocket.sent]
+        assert "system.event" in sent_types
+        assert "system.status" not in sent_types
+
+    asyncio.run(_exercise())
+
+
+def test_handle_system_socket_invalid_mode_falls_back_to_event_only(monkeypatch) -> None:
+    """Ensure unsupported status fan-out modes behave as event-only."""
+
+    async def _exercise() -> None:
+        websocket = _FakeWebSocket([{"type": "unsupported"}])
+        broadcaster = _FakeEventBroadcaster()
+
+        async def _fake_ping_loop(*_args, **_kwargs):
+            await asyncio.sleep(999)
+
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.authenticate_websocket",
+            lambda *args, **kwargs: asyncio.sleep(0, result=True),
+        )
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.ping_loop",
+            _fake_ping_loop,
+        )
+
+        await handle_system_socket(
+            websocket,
+            auth=_FakeAuth(True),
+            event_broadcaster=broadcaster,
+            status_provider=lambda: {"ok": True},
+            event_list_provider=lambda _limit: [],
+            status_fanout_mode="bogus_mode",
+        )
+
+        assert all(item["type"] != "system.status" for item in websocket.sent)
+
+    asyncio.run(_exercise())
+
+
 def test_handle_telemetry_socket_subscribe_variants(monkeypatch) -> None:
     """Exercise telemetry subscription validation and follow wiring."""
 

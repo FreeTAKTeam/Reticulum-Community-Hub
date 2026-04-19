@@ -22,6 +22,8 @@ from .models import (
     TakConnectionConfig,
 )
 
+_WS_STATUS_FANOUT_MODES = {"event_only", "periodic", "event_plus_periodic"}
+
 
 def _expand_user_path(value: Path | str) -> Path:
     """Expand user paths honoring HOME overrides on Windows."""
@@ -419,6 +421,15 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             hub_section.get("event_retention_days"),
             defaults.event_retention_days,
         )
+        ws_status_fanout_mode = self._normalize_status_fanout_mode(
+            hub_section.get("ws_status_fanout_mode"),
+            default=defaults.ws_status_fanout_mode,
+        )
+        ws_status_refresh_interval_seconds = self._coerce_min_float(
+            hub_section.get("ws_status_refresh_interval_seconds"),
+            default=defaults.ws_status_refresh_interval_seconds,
+            minimum=2.0,
+        )
         chat_attachment_max_bytes = self._coerce_optional_int_min(
             hub_section.get("chat_attachment_max_bytes"),
             minimum=1,
@@ -561,6 +572,8 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             ),
             telemetry_filename=telemetry_filename,
             event_retention_days=event_retention_days,
+            ws_status_fanout_mode=ws_status_fanout_mode,
+            ws_status_refresh_interval_seconds=ws_status_refresh_interval_seconds,
             chat_attachment_max_bytes=chat_attachment_max_bytes,
             file_storage_path=file_storage_path,
             image_storage_path=image_storage_path,
@@ -951,6 +964,17 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             return float(value)
         except ValueError:
             return default
+
+    @staticmethod
+    def _normalize_status_fanout_mode(value: str | None, *, default: str) -> str:
+        """Return a supported status fan-out mode."""
+
+        if value is None:
+            return default
+        normalized = str(value).strip().lower()
+        if normalized in _WS_STATUS_FANOUT_MODES:
+            return normalized
+        return default
 
     @staticmethod
     def _normalize_propagation_start_mode(value: str | None) -> str:

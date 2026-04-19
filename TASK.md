@@ -1,4 +1,5 @@
 # TASKS
+- 2026-04-19: DONE. Make northbound system websocket status fan-out configurable (`event_only` default with periodic/event-plus-periodic options), cache periodic status snapshots, and switch status counts to DB-backed count queries.
 - 2026-04-19: DONE. Replace single-identity announce map lookups with indexed queries, add bulk display-name resolution, and add telemetry listing query-count regression coverage.
 - 2026-04-19: DONE. Resolve __main__.py merge-conflict-style separator so conflict-marker scans no longer flag the module header.
 - 2026-04-19: DONE. Apply review follow-ups by switching __main__ to public service APIs and centralizing outbound default constants in shared delivery_defaults.py.
