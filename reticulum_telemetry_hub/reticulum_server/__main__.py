@@ -1,6 +1,6 @@
 """
 Reticulum Telemetry Hub (RTH)
-================================
+--------------------------------
 
 This module provides the CLI entry point that launches the Reticulum Telemetry
 Hub process. The hub brings together several components:
