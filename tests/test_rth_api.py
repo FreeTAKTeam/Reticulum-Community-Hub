@@ -136,6 +136,20 @@ def test_delete_topic_clears_legacy_raw_attachment_associations(tmp_path):
     assert api.retrieve_file(file_record.file_id).topic_id is None
 
 
+def test_delete_topic_preserves_case_distinct_attachment_associations(tmp_path):
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    topic = api.create_topic(
+        Topic(topic_id="Ops", topic_name="Operations", topic_path="/ops")
+    )
+    file_path = api._config_manager.config.file_storage_path / "case-linked.txt"  # pylint: disable=protected-access
+    file_path.write_text("linked")
+    file_record = api.store_file(file_path, media_type="text/plain", topic_id="ops")
+
+    api.delete_topic(topic.topic_id)
+
+    assert api.retrieve_file(file_record.file_id).topic_id == "ops"
+
+
 def test_subscriber_management(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     topic = api.create_topic(Topic(topic_name="Alerts", topic_path="/alerts"))

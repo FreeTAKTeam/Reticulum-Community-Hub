@@ -550,18 +550,20 @@ class HubStorage(HubStorageBase):
         normalized_topic_id = normalize_topic_id(topic_id)
         if not normalized_topic_id:
             return 0
-        topic_match_values = {normalized_topic_id.lower()}
+        topic_filter = func.trim(FileRecord.topic_id) == normalized_topic_id
         try:
             topic_uuid = uuid.UUID(normalized_topic_id)
         except (ValueError, AttributeError, TypeError):
             pass
         else:
+            topic_match_values = {normalized_topic_id.lower()}
             topic_match_values.add(topic_uuid.hex.lower())
             topic_match_values.add(str(topic_uuid).lower())
+            topic_filter = func.lower(func.trim(FileRecord.topic_id)).in_(topic_match_values)
         with self._session_scope() as session:
             records = (
                 session.query(FileRecord)
-                .filter(func.lower(func.trim(FileRecord.topic_id)).in_(topic_match_values))
+                .filter(topic_filter)
                 .all()
             )
             for record in records:
