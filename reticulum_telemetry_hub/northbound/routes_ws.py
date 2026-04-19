@@ -75,7 +75,7 @@ def register_ws_routes(
             websocket (WebSocket): WebSocket connection.
         """
 
-        def _telemetry_snapshot(since: int, topic_id: str | None) -> list[dict]:
+        async def _telemetry_snapshot(since: int, topic_id: str | None) -> list[dict]:
             """Return telemetry snapshots for WebSocket clients.
 
             Args:
@@ -86,7 +86,10 @@ def register_ws_routes(
                 list[dict]: Telemetry entries.
             """
 
-            return services.telemetry_entries(since=since, topic_id=topic_id)
+            return await services.telemetry.list_telemetry_entries_async(
+                since=since,
+                topic_id=topic_id,
+            )
 
         await handle_telemetry_socket(
             websocket,

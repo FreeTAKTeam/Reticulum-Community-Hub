@@ -18,6 +18,7 @@ from typing import Awaitable
 from typing import Callable
 from typing import Dict
 from typing import Optional
+from typing import TypeAlias
 
 from fastapi import WebSocketDisconnect
 from fastapi import WebSocket
@@ -56,6 +57,24 @@ def _metrics_set_gauge(metrics: object | None, key: str, value: float) -> None:
     setter = getattr(metrics, "set_gauge", None)
     if callable(setter):
         setter(key, value)
+
+
+def _metrics_observe_ms(metrics: object | None, key: str, value_ms: float) -> None:
+    """Record a runtime timer metric (in milliseconds) when supported."""
+
+    if metrics is None:
+        return
+    observer = getattr(metrics, "observe_ms", None)
+    if callable(observer):
+        observer(key, value_ms)
+
+
+# Contract: providers used by websocket handlers must be non-blocking
+# (async-native or internally offloaded with ``asyncio.to_thread``).
+TelemetrySnapshotProvider: TypeAlias = Callable[
+    [int, Optional[str]],
+    Awaitable[list[Dict[str, object]]],
+]
 
 
 @dataclass(eq=False)
@@ -986,6 +1005,20 @@ async def _cancel_task(task: asyncio.Task[Any] | None) -> None:
             return
 
 
+async def _send_json_timed(
+    websocket: WebSocket,
+    payload: Dict[str, Any],
+    *,
+    runtime_metrics: object | None = None,
+    metric_key: str,
+) -> None:
+    """Send websocket JSON while recording send latency."""
+
+    started = time.perf_counter()
+    await websocket.send_json(payload)
+    _metrics_observe_ms(runtime_metrics, metric_key, (time.perf_counter() - started) * 1000.0)
+
+
 async def handle_system_socket(
     websocket: WebSocket,
     *,
@@ -1087,7 +1120,8 @@ async def handle_telemetry_socket(
     *,
     auth: ApiAuth,
     telemetry_broadcaster: TelemetryBroadcaster,
-    telemetry_snapshot: Callable[[int, Optional[str]], list[Dict[str, object]]],
+    telemetry_snapshot: TelemetrySnapshotProvider,
+    runtime_metrics: object | None = None,
     ping_interval_seconds: float = DEFAULT_WS_PING_INTERVAL_SECONDS,
     inactivity_timeout_seconds: float = DEFAULT_WS_INACTIVITY_TIMEOUT_SECONDS,
 ) -> None:
@@ -1097,7 +1131,9 @@ async def handle_telemetry_socket(
         websocket (WebSocket): WebSocket connection.
         auth (ApiAuth): Auth validator.
         telemetry_broadcaster (TelemetryBroadcaster): Telemetry broadcaster.
-        telemetry_snapshot (Callable[[int, Optional[str]], list[Dict[str, object]]]): Snapshot provider.
+        telemetry_snapshot (TelemetrySnapshotProvider): Non-blocking snapshot
+            provider for initial history replies.
+        runtime_metrics (object | None): Optional runtime metrics sink.
         ping_interval_seconds (float): Interval between keepalive ping payloads.
         inactivity_timeout_seconds (float): Maximum idle time allowed before the
             socket is closed.
@@ -1139,9 +1175,18 @@ async def handle_telemetry_socket(
                 except ValueError as exc:
                     await websocket.send_json(build_error_message("bad_request", str(exc)))
                     continue
-                entries = telemetry_snapshot(since, topic_id)
-                await websocket.send_json(
-                    build_ws_message("telemetry.snapshot", {"entries": entries})
+                snapshot_started = time.perf_counter()
+                entries = await telemetry_snapshot(since, topic_id)
+                _metrics_observe_ms(
+                    runtime_metrics,
+                    "ws_telemetry_snapshot_generation_ms",
+                    (time.perf_counter() - snapshot_started) * 1000.0,
+                )
+                await _send_json_timed(
+                    websocket,
+                    build_ws_message("telemetry.snapshot", {"entries": entries}),
+                    runtime_metrics=runtime_metrics,
+                    metric_key="ws_telemetry_snapshot_send_latency_ms",
                 )
                 if follow:
                     if unsubscribe:
@@ -1157,8 +1202,11 @@ async def handle_telemetry_socket(
                                 None: Sends messages to the WebSocket client.
                             """
 
-                            await websocket.send_json(
-                                build_ws_message("telemetry.update", {"entry": entry})
+                            await _send_json_timed(
+                                websocket,
+                                build_ws_message("telemetry.update", {"entry": entry}),
+                                runtime_metrics=runtime_metrics,
+                                metric_key="ws_telemetry_update_send_latency_ms",
                             )
 
                         unsubscribe = telemetry_broadcaster.subscribe(

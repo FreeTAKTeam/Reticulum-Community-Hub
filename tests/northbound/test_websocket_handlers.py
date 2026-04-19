@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from reticulum_telemetry_hub.northbound.websocket import authenticate_websocket
@@ -201,7 +202,10 @@ def test_handle_telemetry_socket_subscribe_variants(monkeypatch) -> None:
             websocket,
             auth=_FakeAuth(True),
             telemetry_broadcaster=broadcaster,
-            telemetry_snapshot=lambda since, topic_id: [{"since": since, "topic": topic_id}],
+            telemetry_snapshot=lambda since, topic_id: asyncio.sleep(
+                0,
+                result=[{"since": since, "topic": topic_id}],
+            ),
         )
 
         assert websocket.accepted is True
@@ -209,6 +213,70 @@ def test_handle_telemetry_socket_subscribe_variants(monkeypatch) -> None:
         assert any(item["type"] == "error" for item in websocket.sent)
         assert broadcaster.calls == [("t1",)]
         assert broadcaster.unsubscribed is True
+
+    asyncio.run(_exercise())
+
+
+def test_telemetry_subscriptions_do_not_block_other_socket_pong(monkeypatch) -> None:
+    """Ensure a slow telemetry snapshot does not stall pong handling elsewhere."""
+
+    async def _exercise() -> None:
+        slow_websocket = _FakeWebSocket(
+            [
+                {"type": "telemetry.subscribe", "data": {"since": 1, "follow": False}},
+                {"type": "unsupported"},
+            ]
+        )
+        fast_websocket = _FakeWebSocket(
+            [
+                {"type": "pong"},
+                {"type": "unsupported"},
+            ]
+        )
+        broadcaster = _FakeTelemetryBroadcaster()
+
+        async def _fake_ping_loop(*_args, **_kwargs):
+            await asyncio.sleep(999)
+
+        async def _slow_snapshot(_since: int, _topic_id: str | None) -> list[dict[str, object]]:
+            await asyncio.to_thread(time.sleep, 0.05)
+            return [{"peer_destination": "abc"}]
+
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.authenticate_websocket",
+            lambda *args, **kwargs: asyncio.sleep(0, result=True),
+        )
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.ping_loop",
+            _fake_ping_loop,
+        )
+
+        start = time.perf_counter()
+        slow_task = asyncio.create_task(
+            handle_telemetry_socket(
+                slow_websocket,
+                auth=_FakeAuth(True),
+                telemetry_broadcaster=broadcaster,
+                telemetry_snapshot=_slow_snapshot,
+            )
+        )
+        fast_task = asyncio.create_task(
+            handle_telemetry_socket(
+                fast_websocket,
+                auth=_FakeAuth(True),
+                telemetry_broadcaster=broadcaster,
+                telemetry_snapshot=lambda *_args, **_kwargs: asyncio.sleep(0, result=[]),
+            )
+        )
+        await fast_task
+        fast_elapsed = time.perf_counter() - start
+        await slow_task
+
+        assert fast_elapsed < 0.04
+        assert slow_websocket.accepted is True
+        assert fast_websocket.accepted is True
+        assert any(item["type"] == "telemetry.snapshot" for item in slow_websocket.sent)
+        assert all(item["type"] != "error" or item["data"]["code"] != "timeout" for item in fast_websocket.sent)
 
     asyncio.run(_exercise())
 
