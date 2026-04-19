@@ -1,4 +1,8 @@
 # TASKS
+- 2026-04-19: DONE. Resolve __main__.py merge-conflict-style separator so conflict-marker scans no longer flag the module header.
+- 2026-04-19: DONE. Apply review follow-ups by switching __main__ to public service APIs and centralizing outbound default constants in shared delivery_defaults.py.
+- 2026-04-19: DONE. Rework the reticulum_server extraction to remove duplicated __main__ logic and delegate outbound routing/delivery/listener flows cleanly to service modules while keeping architecture guards.
+- 2026-04-06: DONE. Refactor reticulum_server outbound delivery/message routing/listener orchestration into delivery_service.py, message_router.py, and message_events.py with typed interfaces and architecture boundary tests.
 - 2026-04-08: DONE. Adjust generic mission-change LXMF markdown so mission logs and ADD_CONTENT fallbacks use concise type/content lines (e.g., `- Log: ...`) instead of update/detail change-type wording.
 - 2026-04-08: DONE. Fix mission member status UI/API schema drift by adding EAM snake_case mappers for load/save paths and regression tests for mapper behavior.
 - 2026-04-04: DONE. Refactor outbound queue send timeout handling to use a shared dispatch executor/future monitoring path (no per-attempt sender/watcher threads) and expose timed-out/in-progress future counters in queue stats.
@@ -248,3 +252,4 @@
 - 2026-01-05: ? Fix unknown command response typo and rename RetrieveTopic command.
 - 2026-01-12: ? Add multi-agent Codex issue workflow and bump version.
 - 2026-03-01: ✅ Add `/api/v1/auth/validate` REST endpoint with protected dependency, OpenAPI docs, and remote/local auth tests.
+- 2026-04-19: ✅ Restore compatibility for `ReticulumTelemetryHub.__new__` test stubs by lazily initializing extracted delivery/router/event services.
