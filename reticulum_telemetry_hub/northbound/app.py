@@ -105,6 +105,8 @@ def create_app(
     message_listener: Optional[
         Callable[[Callable[[dict[str, object]], None]], Callable[[], None]]
     ] = None,
+    runtime_metrics_provider: Optional[Callable[[], dict[str, object]]] = None,
+    runtime_metrics: Optional[object] = None,
     internal_adapter: Optional[InternalAdapter] = None,
     control: Optional[ControlService] = None,
 ) -> FastAPI:
@@ -124,6 +126,9 @@ def create_app(
         emergency_action_message_service (Optional[EmergencyActionMessageService]):
             Member-status service override.
         origin_rch (Optional[str]): Originating hub identity hash.
+        runtime_metrics_provider (Optional[Callable[[], dict[str, object]]]):
+            Provider returning runtime diagnostics snapshots for REST status/diagnostics.
+        runtime_metrics (Optional[object]): Optional runtime metrics sink shared with websocket broadcasters.
         control (Optional[ControlService]): Optional gateway control surface.
 
     Returns:
@@ -204,6 +209,7 @@ def create_app(
         marker_dispatcher=marker_dispatcher,
         zone_service=zone_service,
         origin_rch=origin_rch or "",
+        runtime_metrics_provider=runtime_metrics_provider,
     )
     auth = auth or ApiAuth()
     require_protected = build_protected_dependency(auth)
@@ -217,9 +223,16 @@ def create_app(
         allow_headers=["*"],
         max_age=86400,
     )
-    event_broadcaster = EventBroadcaster(event_log)
-    telemetry_broadcaster = TelemetryBroadcaster(telemetry_controller, api)
-    message_broadcaster = MessageBroadcaster(message_listener)
+    event_broadcaster = EventBroadcaster(event_log, runtime_metrics=runtime_metrics)
+    telemetry_broadcaster = TelemetryBroadcaster(
+        telemetry_controller,
+        api,
+        runtime_metrics=runtime_metrics,
+    )
+    message_broadcaster = MessageBroadcaster(
+        message_listener,
+        runtime_metrics=runtime_metrics,
+    )
 
     register_core_routes(
         app,

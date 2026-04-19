@@ -32,6 +32,52 @@ export interface EmergencyActionMessageRecord {
   commsStatus?: string | null;
 }
 
+export interface EmergencyActionMessageApiRecord {
+  callsign?: string | null;
+  subject_type?: string | null;
+  team_member_uid?: string | null;
+  team_uid?: string | null;
+  reported_by?: string | null;
+  reported_at?: string | null;
+  ttl_seconds?: number | null;
+  notes?: string | null;
+  confidence?: number | null;
+  source?:
+    | {
+        rns_identity?: string | null;
+        display_name?: string | null;
+      }
+    | null;
+  overall_status?: string | null;
+  security_status?: string | null;
+  capability_status?: string | null;
+  preparedness_status?: string | null;
+  medical_status?: string | null;
+  mobility_status?: string | null;
+  comms_status?: string | null;
+}
+
+export interface EmergencyActionMessageUpsertPayload {
+  callsign: string;
+  team_member_uid: string;
+  team_uid: string;
+  reported_by?: string;
+  reported_at?: string;
+  ttl_seconds?: number;
+  notes?: string;
+  confidence?: number;
+  source?: {
+    rns_identity?: string;
+    display_name?: string;
+  };
+  security_status?: string;
+  capability_status?: string;
+  preparedness_status?: string;
+  medical_status?: string;
+  mobility_status?: string;
+  comms_status?: string;
+}
+
 export interface MissionMemberStatusSummary {
   overallStatus: EamStatus;
   securityStatus: EamStatus;
@@ -62,6 +108,41 @@ const STATUS_SEVERITY: Record<EamStatus, number> = {
 
 const UNKNOWN_STATUS: EamStatus = "Unknown";
 
+const asText = (value: unknown): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const text = String(value).trim();
+  return text || null;
+};
+
+const asNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolveSourceText = (
+  source:
+    | string
+    | null
+    | undefined
+    | {
+        rns_identity?: string | null;
+        display_name?: string | null;
+      }
+): string | null => {
+  if (typeof source === "string") {
+    return asText(source);
+  }
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  return asText(source.display_name) ?? asText(source.rns_identity);
+};
+
 const normalizeStatus = (value: unknown): EamStatus => {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (normalized === "green") {
@@ -74,6 +155,90 @@ const normalizeStatus = (value: unknown): EamStatus => {
     return "Red";
   }
   return "Unknown";
+};
+
+export const toEmergencyActionMessageRecord = (
+  record: EmergencyActionMessageApiRecord | EmergencyActionMessageRecord
+): EmergencyActionMessageRecord => {
+  const raw = record as Record<string, unknown>;
+  const source = resolveSourceText(raw.source as string | { rns_identity?: string | null; display_name?: string | null } | null | undefined);
+  const capabilityStatus =
+    asText(raw.capabilityStatus) ??
+    asText(raw.securityCapability) ??
+    asText(raw.capability_status);
+
+  return {
+    callsign: asText(raw.callsign),
+    subjectType: asText(raw.subjectType) ?? asText(raw.subject_type) ?? "member",
+    subjectId: asText(raw.subjectId) ?? asText(raw.team_member_uid),
+    teamId: asText(raw.teamId) ?? asText(raw.team_uid),
+    reportedBy: asText(raw.reportedBy) ?? asText(raw.reported_by),
+    reportedAt: asText(raw.reportedAt) ?? asText(raw.reported_at),
+    ttlSeconds: asNumber(raw.ttlSeconds) ?? asNumber(raw.ttl_seconds),
+    notes: asText(raw.notes),
+    confidence: asNumber(raw.confidence),
+    source,
+    overallStatus: asText(raw.overallStatus) ?? asText(raw.overall_status),
+    securityStatus: asText(raw.securityStatus) ?? asText(raw.security_status),
+    capabilityStatus,
+    securityCapability: asText(raw.securityCapability),
+    preparednessStatus: asText(raw.preparednessStatus) ?? asText(raw.preparedness_status),
+    medicalStatus: asText(raw.medicalStatus) ?? asText(raw.medical_status),
+    mobilityStatus: asText(raw.mobilityStatus) ?? asText(raw.mobility_status),
+    commsStatus: asText(raw.commsStatus) ?? asText(raw.comms_status)
+  };
+};
+
+export const toEmergencyActionMessageUpsertPayload = (
+  record: EmergencyActionMessageRecord
+): EmergencyActionMessageUpsertPayload => {
+  const callsign = asText(record.callsign) ?? "";
+  const teamMemberUid = asText(record.subjectId) ?? "";
+  const teamUid = asText(record.teamId) ?? "";
+  const reportedBy = asText(record.reportedBy);
+  const reportedAt = asText(record.reportedAt);
+  const notes = asText(record.notes);
+  const sourceIdentity = asText(record.source);
+  const confidence = asNumber(record.confidence);
+  const ttlSecondsValue = asNumber(record.ttlSeconds);
+  const ttlSeconds = ttlSecondsValue === null ? null : Math.trunc(ttlSecondsValue);
+  const capabilityStatus =
+    asText(record.capabilityStatus) ??
+    asText(record.securityCapability) ??
+    "Unknown";
+
+  const payload: EmergencyActionMessageUpsertPayload = {
+    callsign,
+    team_member_uid: teamMemberUid,
+    team_uid: teamUid,
+    security_status: asText(record.securityStatus) ?? "Unknown",
+    capability_status: capabilityStatus,
+    preparedness_status: asText(record.preparednessStatus) ?? "Unknown",
+    medical_status: asText(record.medicalStatus) ?? "Unknown",
+    mobility_status: asText(record.mobilityStatus) ?? "Unknown",
+    comms_status: asText(record.commsStatus) ?? "Unknown"
+  };
+
+  if (reportedBy) {
+    payload.reported_by = reportedBy;
+  }
+  if (reportedAt) {
+    payload.reported_at = reportedAt;
+  }
+  if (notes) {
+    payload.notes = notes;
+  }
+  if (confidence !== null) {
+    payload.confidence = confidence;
+  }
+  if (ttlSeconds !== null && ttlSeconds >= 0) {
+    payload.ttl_seconds = ttlSeconds;
+  }
+  if (sourceIdentity) {
+    payload.source = { rns_identity: sourceIdentity };
+  }
+
+  return payload;
 };
 
 const getStatusFromRecord = (

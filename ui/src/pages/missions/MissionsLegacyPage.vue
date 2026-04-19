@@ -526,6 +526,7 @@ import MissionMemberAllocationModal from "./MissionMemberAllocationModal.vue";
 import MissionOperationsScreen from "./MissionOperationsScreen.vue";
 import MissionOverviewScreen from "./MissionOverviewScreen.vue";
 import MissionTeamAllocationModal from "./MissionTeamAllocationModal.vue";
+import type { EmergencyActionMessageApiRecord } from "./mission-member-status";
 import type { EmergencyActionMessageRecord } from "./mission-member-status";
 import type { MissionMemberStatusKey } from "./mission-member-status";
 import { cycleMissionMemberStatus } from "./mission-member-status";
@@ -534,7 +535,9 @@ import { getMissionStatusLabel } from "./mission-status";
 import { getMissionStatusTone } from "./mission-status";
 import { MISSION_STATUS_ENUM } from "./mission-status";
 import { normalizeMissionStatus } from "./mission-status";
+import { toEmergencyActionMessageRecord } from "./mission-member-status";
 import { toMissionMemberStatusSummary } from "./mission-member-status";
+import { toEmergencyActionMessageUpsertPayload } from "./mission-member-status";
 import { toMissionStatusValue } from "./mission-status";
 import { useChecklistTemplateDraft } from "../../composables/useChecklistTemplateDraft";
 import { useChecklistTemplateCrud } from "../../composables/useChecklistTemplateCrud";
@@ -2697,11 +2700,15 @@ const cycleMissionMemberStatusValue = async (memberUid: string, dimension: Missi
 
   updatePendingMemberStatusKey(pendingKey, true);
   try {
-    const saved = await post<EmergencyActionMessageRecord>(endpoints.emergencyActionMessages, payload);
+    const saved = await post<EmergencyActionMessageApiRecord>(
+      endpoints.emergencyActionMessages,
+      toEmergencyActionMessageUpsertPayload(payload)
+    );
+    const normalizedSaved = toEmergencyActionMessageRecord(saved);
     const nextRecords = emergencyActionMessageRecords.value.filter(
       (entry) => String(entry.subjectId ?? "").trim() !== memberUid
     );
-    emergencyActionMessageRecords.value = [...nextRecords, saved];
+    emergencyActionMessageRecords.value = [...nextRecords, normalizedSaved];
   } catch (error) {
     handleApiError(error, "Unable to update member status");
   } finally {
@@ -3407,8 +3414,10 @@ const loadWorkspace = async () => {
 
     let nextEmergencyActionMessageRecords: EmergencyActionMessageRecord[] = [];
     try {
-      const emergencyActionMessageData = await get<EmergencyActionMessageRecord[]>(endpoints.emergencyActionMessages);
-      nextEmergencyActionMessageRecords = toArray<EmergencyActionMessageRecord>(emergencyActionMessageData);
+      const emergencyActionMessageData = await get<EmergencyActionMessageApiRecord[]>(endpoints.emergencyActionMessages);
+      nextEmergencyActionMessageRecords = toArray<EmergencyActionMessageApiRecord>(emergencyActionMessageData).map((entry) =>
+        toEmergencyActionMessageRecord(entry)
+      );
     } catch (error) {
       const apiError = error as ApiError;
       if (apiError?.status !== 404) {

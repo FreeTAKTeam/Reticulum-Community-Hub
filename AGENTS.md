@@ -154,10 +154,10 @@ python -m reticulum_telemetry_hub.northbound.gateway --data-dir ./RCH_Store --po
 # Run only the API server (without hub runtime wiring)
 uvicorn reticulum_telemetry_hub.northbound.app:app --host 0.0.0.0 --port 8000
 
-# Or use the CLI
-rch start --data-dir ./RCH_Store --port 8000 --log-level info
-rch status --data-dir ./RCH_Store
-rch stop --data-dir ./RCH_Store
+# Or use the CLI (`rch` global options must come before the subcommand)
+rch --data-dir ./RCH_Store --port 8000 start --log-level info
+rch --data-dir ./RCH_Store --port 8000 status
+rch --data-dir ./RCH_Store --port 8000 stop
 
 # Combined backend + UI launchers
 ./run_server_ui.sh           # Linux/macOS local bind (127.0.0.1 defaults)
@@ -213,6 +213,10 @@ pytest -v
 
 # Update coverage report
 pytest --cov=reticulum_telemetry_hub --cov-report=html
+
+# Windows helpers (activate venv + run tests)
+test_hub.bat
+test_hu_ui.bat
 ```
 
 ### Linting
@@ -254,7 +258,7 @@ def example_function(param1: str, param2: int) -> dict[str, Any]:
 
 ### File Organization Rules
 
-1. **Maximum 500 lines per file** - split if approaching limit
+1. **Maximum 500 lines of code (LOC) per file** - split if approaching limit
 2. **Module naming**: `snake_case.py`
 3. **Class naming**: `PascalCase`
 4. **Function naming**: `snake_case`
