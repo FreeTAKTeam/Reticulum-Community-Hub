@@ -89,7 +89,7 @@ class DeliveryService:
     def ensure_outbound_queue(self) -> OutboundMessageQueue | None:
         """Initialize and start the outbound worker queue."""
 
-        if self._hub.my_lxmf_dest is None:
+        if getattr(self._hub, "my_lxmf_dest", None) is None:
             return None
 
         if not hasattr(self._hub, "_outbound_queue"):

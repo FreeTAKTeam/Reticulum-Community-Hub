@@ -245,7 +245,8 @@ class MessageRouter:
                 topic_id=normalized_topic_id,
                 destination=normalized_destination,
             )
-        enqueued = self.send_message(
+        send_message_fn = getattr(self._hub, "send_message", self.send_message)
+        enqueued = send_message_fn(
             outbound_message,
             topic=normalized_topic_id,
             destination=normalized_destination,
