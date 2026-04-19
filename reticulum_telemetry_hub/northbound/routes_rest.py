@@ -23,6 +23,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 
 from .models import ConfigRollbackPayload
 from .models import MessagePayload
+from .pagination import list_or_paginated_payload
 from .services import NorthboundServices
 from .auth import ApiAuth
 
@@ -189,6 +190,7 @@ def register_core_routes(
             result = api.apply_config_text(config_text)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        services.refresh_runtime_config()
         services.record_event("config_applied", "Configuration applied")
         return result
 
@@ -218,6 +220,7 @@ def register_core_routes(
 
         backup_path = payload.backup_path if payload else None
         result = api.rollback_config_text(backup_path=backup_path)
+        services.refresh_runtime_config()
         services.record_event("config_rolled_back", "Configuration rolled back")
         return result
 
@@ -246,6 +249,7 @@ def register_core_routes(
             result = api.apply_reticulum_config_text(config_text)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        services.refresh_runtime_config()
         services.record_event("reticulum_config_applied", "Reticulum configuration applied")
         return result
 
@@ -275,6 +279,7 @@ def register_core_routes(
 
         backup_path = payload.backup_path if payload else None
         result = api.rollback_reticulum_config_text(backup_path=backup_path)
+        services.refresh_runtime_config()
         services.record_event("reticulum_config_rolled_back", "Reticulum configuration rolled back")
         return result
 
@@ -448,14 +453,25 @@ def register_core_routes(
         return api.leave(identity)
 
     @app.get("/Client", dependencies=[Depends(require_protected)])
-    def list_clients() -> list[dict]:
+    def list_clients(
+        page: int | None = Query(default=None, ge=1),
+        per_page: int | None = Query(default=None, ge=1),
+    ) -> list[dict] | dict:
         """List clients.
 
         Returns:
             list[dict]: Client entries.
         """
 
-        return [client.to_dict() for client in services.list_clients()]
+        return list_or_paginated_payload(
+            page=page,
+            per_page=per_page,
+            default_per_page=services.pagination_default_page_size,
+            max_per_page=services.pagination_max_page_size,
+            paginated_items=services.list_clients_paginated,
+            legacy_items=services.list_clients,
+            serializer=lambda client: client.to_dict(),
+        )
 
     @app.get("/api/v1/app/info")
     def app_info() -> dict:

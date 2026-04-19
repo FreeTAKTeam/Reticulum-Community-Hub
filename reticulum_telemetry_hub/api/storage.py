@@ -23,6 +23,8 @@ from .models import Client
 from .models import FileAttachment
 from .models import Subscriber
 from .models import Topic
+from .pagination import PageRequest
+from .pagination import PaginatedResult
 from reticulum_telemetry_hub.message_delivery import normalize_topic_id
 from .rights_storage_models import MissionAccessAssignmentRecord
 from .rights_storage_models import SubjectOperationGrantRecord
@@ -126,6 +128,33 @@ class HubStorage(HubStorageBase):
         with self._session_scope() as session:
             total = session.query(sa_count(TopicRecord.id)).scalar()
             return int(total or 0)
+
+    def paginate_topics(self, page_request: PageRequest) -> PaginatedResult[Topic]:
+        """Return a page of topics ordered by insertion."""
+
+        with self._session_scope() as session:
+            total = session.query(sa_count(TopicRecord.id)).scalar() or 0
+            records = (
+                session.query(TopicRecord)
+                .order_by(TopicRecord.created_at, TopicRecord.id)
+                .offset(page_request.offset)
+                .limit(page_request.per_page)
+                .all()
+            )
+            items = [
+                Topic(
+                    topic_id=record.id,
+                    topic_name=record.name,
+                    topic_path=record.path,
+                    topic_description=record.description or "",
+                )
+                for record in records
+            ]
+            return PaginatedResult.from_request(
+                items=items,
+                request=page_request,
+                total=total,
+            )
 
     def get_topic(self, topic_id: str) -> Optional[Topic]:
         """Fetch a topic by identifier.
@@ -242,6 +271,24 @@ class HubStorage(HubStorageBase):
         with self._session_scope() as session:
             total = session.query(sa_count(SubscriberRecord.id)).scalar()
             return int(total or 0)
+
+    def paginate_subscribers(self, page_request: PageRequest) -> PaginatedResult[Subscriber]:
+        """Return a page of subscribers ordered by insertion."""
+
+        with self._session_scope() as session:
+            total = session.query(sa_count(SubscriberRecord.id)).scalar() or 0
+            records = (
+                session.query(SubscriberRecord)
+                .order_by(SubscriberRecord.created_at, SubscriberRecord.id)
+                .offset(page_request.offset)
+                .limit(page_request.per_page)
+                .all()
+            )
+            return PaginatedResult.from_request(
+                items=[self._subscriber_from_record(record) for record in records],
+                request=page_request,
+                total=total,
+            )
 
     def list_subscribers_for_topic(self, topic_id: str) -> List[Subscriber]:
         """Return subscribers stored for a topic identifier."""
@@ -366,6 +413,35 @@ class HubStorage(HubStorageBase):
             total = session.query(sa_count(ClientRecord.identity)).scalar()
             return int(total or 0)
 
+    def paginate_clients(self, page_request: PageRequest) -> PaginatedResult[Client]:
+        """Return a page of known clients ordered by recent activity."""
+
+        with self._session_scope() as session:
+            total = session.query(sa_count(ClientRecord.identity)).scalar() or 0
+            records = (
+                session.query(ClientRecord)
+                .order_by(ClientRecord.last_seen.desc(), ClientRecord.identity)
+                .offset(page_request.offset)
+                .limit(page_request.per_page)
+                .all()
+            )
+            announce_map = self._identity_announce_map(
+                session,
+                identities=[record.identity for record in records],
+            )
+            items = [
+                self._client_from_record(
+                    record,
+                    announce_map.get(record.identity.lower()),
+                )
+                for record in records
+            ]
+            return PaginatedResult.from_request(
+                items=items,
+                request=page_request,
+                total=total,
+            )
+
     def get_client(self, identity: str) -> Client | None:
         """Return a client by identity when it exists.
 
@@ -418,6 +494,32 @@ class HubStorage(HubStorageBase):
                 query = query.filter(FileRecord.category == category)
             total = query.scalar()
             return int(total or 0)
+
+    def paginate_file_records(
+        self,
+        page_request: PageRequest,
+        category: str | None = None,
+    ) -> PaginatedResult[FileAttachment]:
+        """Return a page of stored file records, optionally filtered by category."""
+
+        with self._session_scope() as session:
+            count_query = session.query(sa_count(FileRecord.id))
+            query = session.query(FileRecord)
+            if category:
+                count_query = count_query.filter(FileRecord.category == category)
+                query = query.filter(FileRecord.category == category)
+            total = count_query.scalar() or 0
+            records = (
+                query.order_by(FileRecord.created_at.desc(), FileRecord.id)
+                .offset(page_request.offset)
+                .limit(page_request.per_page)
+                .all()
+            )
+            return PaginatedResult.from_request(
+                items=[self._file_from_record(record) for record in records],
+                request=page_request,
+                total=total,
+            )
 
     def get_file_record(self, record_id: int) -> FileAttachment | None:
         """Return a stored file by its database identifier."""

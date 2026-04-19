@@ -517,6 +517,134 @@ Real-time events broadcast via WebSocket:
 
 ---
 
+## Performance and Throughput Rules
+
+Use these rules for backend, API, and worker code when making or reviewing
+changes that may affect throughput, latency, or memory behavior.
+
+### Profile Before Optimizing
+
+- Do not guess bottlenecks.
+- Profile first with `cProfile` or a sampling profiler.
+- Prove gains with a repeatable benchmark.
+- For whole-program regressions, prefer `pyperformance` or a small project
+  benchmark that represents real RCH traffic.
+
+### Async Boundary Is Strict
+
+- In `async def`, never call blocking disk, network, compression, or CPU-heavy
+  functions directly.
+- Offload blocking I/O via `asyncio.to_thread()` or an executor.
+- Route CPU-heavy work to a process pool or separate worker, not the event loop.
+- Treat blocking in coroutines as a global latency issue, because it delays all
+  tasks on the loop.
+
+### Database and ORM Performance
+
+- Avoid hidden database storms from lazy-loading in hot paths.
+- For collection/list endpoints, choose loading strategy explicitly; use eager
+  loading such as `selectinload()` or `joinedload()` when justified.
+- Create one SQLAlchemy `Engine` per database URL and reuse it for the process
+  lifetime; never recreate engines or pools per request.
+- For very large result sets, stream or batch fetches instead of materializing
+  full results in memory.
+- Treat SQLAlchemy compilation caching and batched fetching as primary tuning
+  levers.
+
+### Serialization Discipline
+
+- In FastAPI, prefer declared return types or `response_model`.
+- Avoid hand-building `JSONResponse` or `ORJSONResponse` in normal paths.
+- Only bypass framework serialization (for example raw `orjson` bytes) when
+  profiling proves serialization is the bottleneck.
+- `orjson` is a tool, not a blanket replacement for normal response flow.
+
+### Caching Rules
+
+- Cache only stable values: expensive pure computations, parsed schemas, static
+  config, immutable lookups.
+- Use `functools.lru_cache` or `cached_property` for these stable cases.
+- Do not cache request-scoped, user-scoped, or mutable data without explicit
+  invalidation.
+- `cached_property` can execute more than once under multi-threaded access; do
+  not use it for unsafe side effects.
+
+### Object Churn and Data Flow
+
+- Reuse clients, sessions, compiled regexes, and immutable config objects.
+- Prefer generators, iterators, and streaming over large temporary lists.
+- Use specialized built-ins (`deque`, etc.) when queue-like semantics are needed.
+- Avoid model-to-dict-to-model conversion chains.
+- Follow: parse once, validate once, serialize once.
+
+### Validation Boundaries for High-Rate Paths
+
+- Do not over-model telemetry/message hot paths with deep nested models.
+- Avoid repeated validation for already-trusted internal objects.
+- Minimize conversions among ORM objects, dicts, and DTOs in internal flow.
+- Use thin internal carriers where full validation is unnecessary.
+- Reserve full validation for ingress and egress boundaries.
+- Prefer Pydantic V2 for maintained performance paths.
+
+### Allocation and Copying
+
+- Avoid copying large payloads unless necessary.
+- For bytes-heavy paths (attachments, map tiles, telemetry snapshots), prefer
+  streaming responses, chunked reads, and buffer reuse.
+- Keep async socket write paths simple; rely on newer Python runtime copy
+  optimizations instead of layering redundant buffers.
+
+### Logging in Hot Paths
+
+- Keep hot-loop logging structured, sparse, and lazy.
+- Do not format large strings before log-level checks.
+- Do not log full payloads on successful paths.
+- Log IDs, counts, timings, queue depth, and failure cause.
+- Gate debug payload logging behind feature flags.
+
+### Observability and Merge Evidence
+
+- Hot endpoints/workers must expose timing, count, queue depth, and error
+  metrics.
+- Any merge that changes hot-path code must include before/after benchmark or
+  profiler evidence.
+- Reject optimization PRs that only change style without measured improvement.
+
+### Default Patterns for Generated Code
+
+- Async I/O for network-bound services
+- One shared DB engine/pool per process
+- Explicit eager loading for ORM relationships in list endpoints
+- Response models in FastAPI
+- Bounded queues and backpressure
+- Streaming for large payloads
+- Cache only immutable or slow-to-build values
+- Benchmark evidence in the PR
+
+### Patterns to Reject by Default
+
+- Blocking I/O inside `async def`
+- Recreating HTTP clients, DB engines, or serializers per request
+- Lazy ORM access in loops
+- Loading full tables into memory
+- Converting objects through multiple intermediate forms
+- Premature use of threads for CPU work
+- Micro-optimizations without profiling proof
+
+### Mandatory Review Gate for Generated Files
+
+Every generated or modified file must answer:
+
+1. What is the hot path?
+2. What blocks the event loop?
+3. How many DB queries does one request produce?
+4. Are large payloads streamed or copied?
+5. Is validation happening more than once?
+6. What object allocations repeat unnecessarily?
+7. What benchmark proves this change is faster?
+
+---
+
 ## Common Issues and Solutions
 
 ### LXMF Daemon Import Issues

@@ -4,6 +4,7 @@
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -40,6 +41,22 @@ def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
     return ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
 
 
+class CountOnlyStatusStorage(HubStorage):
+    """Storage test double that fails if status falls back to list scans."""
+
+    def list_clients(self) -> list[Any]:
+        raise AssertionError("status should use count_clients")
+
+    def list_topics(self) -> list[Any]:
+        raise AssertionError("status should use count_topics")
+
+    def list_subscribers(self) -> list[Any]:
+        raise AssertionError("status should use count_subscribers")
+
+    def list_file_records(self, _category: str | None = None) -> list[Any]:
+        raise AssertionError("status should use count_file_records")
+
+
 def test_status_endpoint_returns_counts(tmp_path) -> None:
     """Verify the status endpoint returns telemetry stats and counts."""
 
@@ -73,6 +90,32 @@ def test_status_endpoint_returns_counts(tmp_path) -> None:
     assert payload["topics"] == 1
     assert payload["subscribers"] == 1
     assert payload["telemetry"]["ingest_count"] == 1
+
+
+def test_status_endpoint_uses_count_queries(tmp_path: Path) -> None:
+    """Verify status counts do not materialize the full list endpoints."""
+
+    config_manager = HubConfigurationManager(storage_path=tmp_path)
+    storage = CountOnlyStatusStorage(tmp_path / "hub.sqlite")
+    api = ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
+    api.join("peer-1")
+    topic = api.create_topic(Topic(topic_name="Topic", topic_path="/topic"))
+    api.create_subscriber(Subscriber(destination="peer-1", topic_id=topic.topic_id))
+    app = create_app(
+        api=api,
+        telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),
+        event_log=EventLog(),
+        auth=ApiAuth(api_key="secret"),
+    )
+    client = TestClient(app)
+
+    response = client.get("/Status", headers={"X-API-Key": "secret"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["clients"] == 1
+    assert payload["topics"] == 1
+    assert payload["subscribers"] == 1
 
 
 def test_subscribe_requires_destination(tmp_path) -> None:

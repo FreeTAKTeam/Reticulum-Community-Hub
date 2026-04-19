@@ -105,6 +105,61 @@ def test_topic_crud_and_subscribe_flow(tmp_path: Path) -> None:
     assert missing_response.status_code == 404
 
 
+def test_topic_list_pagination_uses_configured_default_and_max(tmp_path: Path) -> None:
+    (tmp_path / "config.ini").write_text(
+        "[api]\n"
+        "pagination_default_page_size = 2\n"
+        "pagination_max_page_size = 3\n",
+        encoding="utf-8",
+    )
+    client, api = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    for index in range(5):
+        api.create_topic(Topic(topic_name=f"topic-{index}", topic_path=f"topic-{index}"))
+
+    response = client.get("/Topic", params={"page": 1}, headers=headers)
+    too_large_response = client.get(
+        "/Topic",
+        params={"page": 1, "per_page": 4},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 2
+    assert payload["per_page"] == 2
+    assert payload["total"] == 5
+    assert payload["total_pages"] == 3
+    assert too_large_response.status_code == 422
+
+
+def test_topic_list_pagination_uses_reloaded_config_default(tmp_path: Path) -> None:
+    (tmp_path / "config.ini").write_text(
+        "[api]\n"
+        "pagination_default_page_size = 2\n"
+        "pagination_max_page_size = 5\n",
+        encoding="utf-8",
+    )
+    client, api = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    for index in range(5):
+        api.create_topic(Topic(topic_name=f"topic-{index}", topic_path=f"topic-{index}"))
+
+    apply_response = client.put(
+        "/Config",
+        content="[api]\npagination_default_page_size = 3\npagination_max_page_size = 5\n",
+        headers={**headers, "Content-Type": "text/plain"},
+    )
+    response = client.get("/Topic", params={"page": 1}, headers=headers)
+
+    assert apply_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 3
+    assert payload["per_page"] == 3
+    assert payload["total"] == 5
+
+
 def test_topic_routes_require_auth_for_remote_clients(tmp_path: Path) -> None:
     client, api = _build_client(tmp_path)
     topic = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
@@ -181,3 +236,26 @@ def test_subscriber_crud_flow(tmp_path: Path) -> None:
         headers=headers,
     )
     assert delete_missing.status_code == 404
+
+
+def test_subscriber_list_pagination_returns_requested_page(tmp_path: Path) -> None:
+    client, api = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    topic = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
+    for index in range(3):
+        api.subscribe_topic(topic.topic_id, destination=f"dest-{index}")
+
+    response = client.get(
+        "/Subscriber",
+        params={"page": 2, "per_page": 2},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["page"] == 2
+    assert payload["per_page"] == 2
+    assert payload["total"] == 3
+    assert payload["has_next"] is False
+    assert payload["has_previous"] is True

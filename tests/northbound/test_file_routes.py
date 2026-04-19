@@ -76,6 +76,43 @@ def test_file_routes_return_metadata(tmp_path: Path) -> None:
     assert image_response.json()["MediaType"] == "image/jpeg"
 
 
+def test_file_and_image_routes_paginate_metadata(tmp_path: Path) -> None:
+    """Verify file and image list routes return paginated envelopes when requested."""
+
+    client, api = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    for index in range(3):
+        file_path = api._config_manager.config.file_storage_path / f"note-{index}.txt"  # pylint: disable=protected-access
+        file_path.write_text(f"hello {index}")
+        api.store_file(file_path, media_type="text/plain")
+    for index in range(2):
+        image_path = api._config_manager.config.image_storage_path / f"photo-{index}.jpg"  # pylint: disable=protected-access
+        image_path.write_bytes(b"img")
+        api.store_image(image_path, media_type="image/jpeg")
+
+    file_response = client.get(
+        "/File",
+        params={"page": 2, "per_page": 2},
+        headers=headers,
+    )
+    image_response = client.get(
+        "/Image",
+        params={"page": 1, "per_page": 1},
+        headers=headers,
+    )
+
+    assert file_response.status_code == 200
+    assert image_response.status_code == 200
+    file_payload = file_response.json()
+    image_payload = image_response.json()
+    assert len(file_payload["items"]) == 1
+    assert file_payload["total"] == 3
+    assert file_payload["has_previous"] is True
+    assert len(image_payload["items"]) == 1
+    assert image_payload["total"] == 2
+    assert image_payload["has_next"] is True
+
+
 def test_file_routes_patch_topic_association(tmp_path: Path) -> None:
     """Verify file and image routes update attachment topic links."""
 

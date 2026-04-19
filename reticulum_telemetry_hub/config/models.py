@@ -14,6 +14,8 @@ from reticulum_telemetry_hub.config.constants import (
     DEFAULT_ANNOUNCE_CAPABILITIES_INCLUDE_TIMESTAMP,
     DEFAULT_ANNOUNCE_CAPABILITIES_INCLUDE_VERSION,
     DEFAULT_ANNOUNCE_CAPABILITIES_MAX_BYTES,
+    DEFAULT_API_PAGINATION_MAX_PAGE_SIZE,
+    DEFAULT_API_PAGINATION_PAGE_SIZE,
     DEFAULT_HUB_TELEMETRY_INTERVAL,
     DEFAULT_LOG_LEVEL_NAME,
     DEFAULT_MARKER_ANNOUNCE_INTERVAL_MINUTES,
@@ -186,6 +188,8 @@ class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     ws_status_refresh_interval_seconds: float = 3.0
     file_storage_path: Path | None = None
     image_storage_path: Path | None = None
+    api_pagination_page_size: int = DEFAULT_API_PAGINATION_PAGE_SIZE
+    api_pagination_max_page_size: int = DEFAULT_API_PAGINATION_MAX_PAGE_SIZE
 
 
 @dataclass

@@ -97,6 +97,33 @@ def test_openapi_yaml_missing_returns_404(tmp_path: Path) -> None:
     assert response.status_code == 404
 
 
+def test_client_list_pagination_preserves_legacy_response(tmp_path: Path) -> None:
+    client, api, _, _ = _build_client(tmp_path)
+    headers = {"X-API-Key": "secret"}
+    for identity in ("client-1", "client-2", "client-3"):
+        api.join(identity)
+
+    legacy_response = client.get("/Client", headers=headers)
+    paged_response = client.get(
+        "/Client",
+        params={"page": 1, "per_page": 2},
+        headers=headers,
+    )
+
+    assert legacy_response.status_code == 200
+    assert isinstance(legacy_response.json(), list)
+    assert len(legacy_response.json()) == 3
+    assert paged_response.status_code == 200
+    payload = paged_response.json()
+    assert len(payload["items"]) == 2
+    assert payload["page"] == 1
+    assert payload["per_page"] == 2
+    assert payload["total"] == 3
+    assert payload["total_pages"] == 2
+    assert payload["has_next"] is True
+    assert payload["has_previous"] is False
+
+
 def test_core_routes_endpoints(tmp_path: Path) -> None:
     reticulum_path = tmp_path / "reticulum.conf"
     reticulum_path.write_text("[reticulum]\nshare_instance = yes\n", encoding="utf-8")

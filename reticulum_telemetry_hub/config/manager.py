@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import string
+import logging
 from configparser import ConfigParser
 from importlib import resources
 from pathlib import Path
@@ -443,6 +444,7 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
 
         file_section = self._get_section("files")
         image_section = self._get_section("images")
+        api_section = self._get_section("api")
 
         files_path_value = file_section.get("path") or file_section.get("directory")
         images_path_value = image_section.get("path") or image_section.get("directory")
@@ -456,6 +458,25 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
 
         file_storage_path = self._ensure_directory(file_storage_path)
         image_storage_path = self._ensure_directory(image_storage_path)
+
+        api_pagination_page_size = self._coerce_optional_int_min(
+            api_section.get("pagination_default_page_size"),
+            minimum=1,
+        )
+        if api_pagination_page_size is None:
+            api_pagination_page_size = defaults.api_pagination_page_size
+        api_pagination_max_page_size = self._coerce_optional_int_min(
+            api_section.get("pagination_max_page_size"),
+            minimum=1,
+        )
+        if api_pagination_max_page_size is None:
+            api_pagination_max_page_size = defaults.api_pagination_max_page_size
+        if api_pagination_max_page_size < api_pagination_page_size:
+            logging.warning(
+                "Configured API pagination max page size is below the default page size; using %s.",
+                api_pagination_page_size,
+            )
+            api_pagination_max_page_size = api_pagination_page_size
 
         announce_section = (
             self._get_section("announce.capabilities")
@@ -577,6 +598,8 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             chat_attachment_max_bytes=chat_attachment_max_bytes,
             file_storage_path=file_storage_path,
             image_storage_path=image_storage_path,
+            api_pagination_page_size=api_pagination_page_size,
+            api_pagination_max_page_size=api_pagination_max_page_size,
         )
 
     def _get_section(self, name: str) -> Mapping[str, str]:

@@ -994,6 +994,9 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/perPage'
       responses:
         '200':
           $ref: '#/components/responses/200Client_get'
@@ -2780,15 +2783,20 @@ paths:
        - File
       summary: List stored file attachments.
       operationId: ListFiles
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/perPage'
       responses:
         '200':
           description: Stored file metadata (includes TopicID when tagged via the upload command or AssociateTopicID).
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/FileAttachment'
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/FileAttachment'
+                  - $ref: '#/components/schemas/PaginatedFileAttachmentList'
   /File/{id}:
     get:
       x-scope: public
@@ -2849,15 +2857,20 @@ paths:
        - Image
       summary: List stored images.
       operationId: ListImages
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/perPage'
       responses:
         '200':
           description: Stored image metadata (includes TopicID when tagged via the upload command or AssociateTopicID).
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/FileAttachment'
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/FileAttachment'
+                  - $ref: '#/components/schemas/PaginatedFileAttachmentList'
   /Image/{id}:
     get:
       x-scope: public
@@ -2951,6 +2964,9 @@ paths:
       description: >-
       summary: Retrieves a list of all Topic
       operationId: ListTopic
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/perPage'
       responses:
         '200':
           $ref: '#/components/responses/200Topic_get'
@@ -3093,6 +3109,9 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/perPage'
       responses:
         '200':
           $ref: '#/components/responses/200Subscriber_get'
@@ -3896,6 +3915,118 @@ components:
           additionalProperties: true
       required:
         - identity
+    PaginatedClientList:
+      type: object
+      description: Paginated client list returned when page or per_page is supplied.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Client'
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+        has_next:
+          type: boolean
+        has_previous:
+          type: boolean
+      required:
+        - items
+        - page
+        - per_page
+        - total
+        - total_pages
+        - has_next
+        - has_previous
+    PaginatedTopicList:
+      type: object
+      description: Paginated topic list returned when page or per_page is supplied.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Topic'
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+        has_next:
+          type: boolean
+        has_previous:
+          type: boolean
+      required:
+        - items
+        - page
+        - per_page
+        - total
+        - total_pages
+        - has_next
+        - has_previous
+    PaginatedSubscriberList:
+      type: object
+      description: Paginated subscriber list returned when page or per_page is supplied.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subscriber'
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+        has_next:
+          type: boolean
+        has_previous:
+          type: boolean
+      required:
+        - items
+        - page
+        - per_page
+        - total
+        - total_pages
+        - has_next
+        - has_previous
+    PaginatedFileAttachmentList:
+      type: object
+      description: Paginated attachment list returned when page or per_page is supplied.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileAttachment'
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+        has_next:
+          type: boolean
+        has_previous:
+          type: boolean
+      required:
+        - items
+        - page
+        - per_page
+        - total
+        - total_pages
+        - has_next
+        - has_previous
     MarkerSymbol:
       type: object
       properties:
@@ -5642,6 +5773,26 @@ components:
       schema:
         type: string
       in: query
+    page:
+      name: page
+      required: false
+      description: >-
+        Optional page number for paginated list responses. When page and
+        per_page are both omitted, legacy array responses are returned.
+      schema:
+        type: integer
+        minimum: 1
+      in: query
+    perPage:
+      name: per_page
+      required: false
+      description: >-
+        Optional page size for paginated list responses. When omitted during
+        pagination, the configured API default is used.
+      schema:
+        type: integer
+        minimum: 1
+      in: query
     identityPath:
       name: id
       required: true
@@ -5655,17 +5806,21 @@ components:
       content:
         application/json:
           schema:
-            type: array
-            items:
-              $ref: '#/components/schemas/Topic'
+            oneOf:
+              - type: array
+                items:
+                  $ref: '#/components/schemas/Topic'
+              - $ref: '#/components/schemas/PaginatedTopicList'
     200Client_get:
       description: Client list.
       content:
         application/json:
           schema:
-            type: array
-            items:
-              $ref: '#/components/schemas/Client'
+            oneOf:
+              - type: array
+                items:
+                  $ref: '#/components/schemas/Client'
+              - $ref: '#/components/schemas/PaginatedClientList'
     200Topic_post:
       description: Success
       content:
@@ -5689,9 +5844,11 @@ components:
       content:
         application/json:
           schema:
-            type: array
-            items:
-              $ref: '#/components/schemas/Subscriber'
+            oneOf:
+              - type: array
+                items:
+                  $ref: '#/components/schemas/Subscriber'
+              - $ref: '#/components/schemas/PaginatedSubscriberList'
     200Subscriber_post:
       description: Success
       content:

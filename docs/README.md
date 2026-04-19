@@ -3,6 +3,7 @@
 ## Start here
 
 - `../README.md` (project overview and quickstart)
+- `users_manual.md` (screen-by-screen UI user manual)
 - `userManual.md` (user and operator guide)
 - `remoteAccess.md` (LAN/WAN connection guide)
 - `architecture/architecture.md` (system overview and references)

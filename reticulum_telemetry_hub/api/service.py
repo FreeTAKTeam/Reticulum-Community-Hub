@@ -24,6 +24,8 @@ from .models import Client
 from .models import FileAttachment
 from .models import IdentityStatus
 from .models import RemPeer
+from .pagination import PageRequest
+from .pagination import PaginatedResult
 from .rem_registry_service import DEFAULT_REM_MODE
 from .rem_registry_service import RemRegistryService
 from .models import ReticulumInfo
@@ -208,6 +210,13 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             self._rem_registry.annotate_client(client)
             for client in self._storage.list_clients()
         ]
+
+    def list_clients_paginated(self, page_request: PageRequest) -> PaginatedResult[Client]:
+        """Return a page of clients that have joined the hub."""
+
+        return self._storage.paginate_clients(page_request).map_items(
+            self._rem_registry.annotate_client
+        )
 
     def count_clients(self) -> int:
         """Return the number of clients that have joined the hub."""
@@ -617,8 +626,19 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         return self._storage.list_file_records(category=self._file_category)
 
+    def list_files_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[FileAttachment]:
+        """Return a page of stored file records."""
+
+        return self._storage.paginate_file_records(
+            page_request,
+            category=self._file_category,
+        )
+
     def count_files(self) -> int:
-        """Return the number of stored file attachments."""
+        """Return the number of stored file records."""
 
         return self._storage.count_file_records(category=self._file_category)
 
@@ -627,8 +647,19 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
 
         return self._storage.list_file_records(category=self._image_category)
 
+    def list_images_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[FileAttachment]:
+        """Return a page of stored image records."""
+
+        return self._storage.paginate_file_records(
+            page_request,
+            category=self._image_category,
+        )
+
     def count_images(self) -> int:
-        """Return the number of stored image attachments."""
+        """Return the number of stored image records."""
 
         return self._storage.count_file_records(category=self._image_category)
 
@@ -806,6 +837,11 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """
         return self._storage.list_topics()
 
+    def list_topics_paginated(self, page_request: PageRequest) -> PaginatedResult[Topic]:
+        """Return a page of topics known to the hub."""
+
+        return self._storage.paginate_topics(page_request)
+
     def count_topics(self) -> int:
         """Return the number of topics known to the hub."""
 
@@ -969,8 +1005,16 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
         """
         return self._storage.list_subscribers()
 
+    def list_subscribers_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[Subscriber]:
+        """Return a page of subscribers."""
+
+        return self._storage.paginate_subscribers(page_request)
+
     def count_subscribers(self) -> int:
-        """Return the number of subscribers currently stored in the hub."""
+        """Return the number of subscribers."""
 
         return self._storage.count_subscribers()
 

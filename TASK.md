@@ -5,6 +5,7 @@
 - 2026-04-19: DONE. Apply review follow-ups by switching __main__ to public service APIs and centralizing outbound default constants in shared delivery_defaults.py.
 - 2026-04-19: DONE. Rework the reticulum_server extraction to remove duplicated __main__ logic and delegate outbound routing/delivery/listener flows cleanly to service modules while keeping architecture guards.
 - 2026-04-06: DONE. Refactor reticulum_server outbound delivery/message routing/listener orchestration into delivery_service.py, message_router.py, and message_events.py with typed interfaces and architecture boundary tests.
+- 2026-04-10: DONE. Create `docs/users_manual.md` from the in-app help system and current UI routes with screen-by-screen operator usage guidance.
 - 2026-04-09: DONE. Preserve EAM source identity/display_name in UI status mappers so mission member status updates do not overwrite `source.rns_identity` with a display label.
 - 2026-04-08: DONE. Add topic-level asset-library associations so existing files/images can be attached to topics and rendered on the Topics page.
 - 2026-04-08: DONE. Adjust generic mission-change LXMF markdown so mission logs and ADD_CONTENT fallbacks use concise type/content lines (e.g., `- Log: ...`) instead of update/detail change-type wording.
