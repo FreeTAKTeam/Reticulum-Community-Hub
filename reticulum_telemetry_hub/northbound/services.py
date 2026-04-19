@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -115,6 +116,8 @@ class NorthboundServices:
     zone_service: ZoneService | None = None
     origin_rch: str = ""
     runtime_metrics_provider: Optional[Callable[[], Dict[str, object]]] = None
+    _status_cache_snapshot: Dict[str, object] | None = field(default=None, init=False)
+    _status_cache_generated_at: float = field(default=0.0, init=False)
 
     def help_text(self) -> str:
         """Return the Help command text.
@@ -156,11 +159,11 @@ class NorthboundServices:
         runtime = self.runtime_diagnostics()
         return {
             "uptime_seconds": int(uptime.total_seconds()),
-            "clients": len(self.api.list_clients()),
-            "topics": len(self.api.list_topics()),
-            "subscribers": len(self.api.list_subscribers()),
-            "files": len(self.api.list_files()),
-            "images": len(self.api.list_images()),
+            "clients": self.api.count_clients(),
+            "topics": self.api.count_topics(),
+            "subscribers": self.api.count_subscribers(),
+            "files": self.api.count_files(),
+            "images": self.api.count_images(),
             "chat": {
                 "sent": chat_stats.get("sent", 0),
                 "failed": chat_stats.get("failed", 0),
@@ -169,6 +172,20 @@ class NorthboundServices:
             "telemetry": self.telemetry.telemetry_stats(),
             "runtime": runtime,
         }
+
+    def status_snapshot_cached(self, *, max_age_seconds: float) -> Dict[str, object]:
+        """Return a cached status snapshot refreshed at most every ``max_age_seconds``."""
+
+        now = datetime.now(timezone.utc).timestamp()
+        should_refresh = (
+            self._status_cache_snapshot is None
+            or max_age_seconds <= 0
+            or (now - self._status_cache_generated_at) >= max_age_seconds
+        )
+        if should_refresh:
+            self._status_cache_snapshot = self.status_snapshot()
+            self._status_cache_generated_at = now
+        return dict(self._status_cache_snapshot)
 
     def runtime_diagnostics(self) -> Dict[str, object]:
         """Return the detailed runtime metrics snapshot when available."""

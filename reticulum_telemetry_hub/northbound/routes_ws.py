@@ -25,6 +25,8 @@ def register_ws_routes(
     telemetry_broadcaster: TelemetryBroadcaster,
     message_broadcaster: MessageBroadcaster,
     runtime_metrics: object | None = None,
+    status_fanout_mode: str = "event_only",
+    status_refresh_interval_seconds: float = 3.0,
 ) -> None:
     """Register WebSocket routes on the FastAPI app.
 
@@ -36,6 +38,8 @@ def register_ws_routes(
         telemetry_broadcaster (TelemetryBroadcaster): Telemetry broadcaster.
         message_broadcaster (MessageBroadcaster): Message broadcaster.
         runtime_metrics (object | None): Optional runtime metrics sink.
+        status_fanout_mode (str): System websocket status fan-out mode.
+        status_refresh_interval_seconds (float): Status refresh cadence.
 
     Returns:
         None: Routes are registered on the application.
@@ -65,8 +69,12 @@ def register_ws_routes(
             websocket,
             auth=auth,
             event_broadcaster=event_broadcaster,
-            status_provider=services.status_snapshot,
+            status_provider=lambda: services.status_snapshot_cached(
+                max_age_seconds=status_refresh_interval_seconds
+            ),
             event_list_provider=_event_list_provider,
+            status_fanout_mode=status_fanout_mode,
+            status_refresh_interval_seconds=status_refresh_interval_seconds,
         )
 
     @app.websocket("/telemetry/stream")

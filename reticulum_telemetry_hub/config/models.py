@@ -182,6 +182,8 @@ class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     telemetry_filename: str = "telemetry.ini"
     event_retention_days: int = 90
     chat_attachment_max_bytes: int = 8 * 1024 * 1024
+    ws_status_fanout_mode: str = "event_only"
+    ws_status_refresh_interval_seconds: float = 3.0
     file_storage_path: Path | None = None
     image_storage_path: Path | None = None
 
