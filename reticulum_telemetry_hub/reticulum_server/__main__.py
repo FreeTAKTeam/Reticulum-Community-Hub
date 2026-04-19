@@ -1328,8 +1328,13 @@ class ReticulumTelemetryHub:
         manager = getattr(self, "command_manager", None)
         if not isinstance(manager, CommandManager):
             return False
-        normalize_name_fn = cast(Callable[[str], str | None], manager._normalize_command_name)
-        known_names = set(manager._all_command_names())
+        normalize_name_fn = cast(
+            Callable[[str | None], str | None],
+            manager._normalize_command_name,  # pylint: disable=protected-access
+        )
+        known_names = set(
+            manager._all_command_names()  # pylint: disable=protected-access
+        )
 
         for command in commands:
             if not isinstance(command, dict):
