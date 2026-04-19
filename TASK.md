@@ -3,8 +3,6 @@
 - 2026-04-19: DONE. Apply review follow-ups by switching __main__ to public service APIs and centralizing outbound default constants in shared delivery_defaults.py.
 - 2026-04-19: DONE. Rework the reticulum_server extraction to remove duplicated __main__ logic and delegate outbound routing/delivery/listener flows cleanly to service modules while keeping architecture guards.
 - 2026-04-06: DONE. Refactor reticulum_server outbound delivery/message routing/listener orchestration into delivery_service.py, message_router.py, and message_events.py with typed interfaces and architecture boundary tests.
-- 2026-04-08: DONE. Adjust generic mission-change LXMF markdown so mission logs and ADD_CONTENT fallbacks use concise type/content lines (e.g., `- Log: ...`) instead of update/detail change-type wording.
-- 2026-04-08: DONE. Fix mission member status UI/API schema drift by adding EAM snake_case mappers for load/save paths and regression tests for mapper behavior.
 - 2026-04-04: DONE. Refactor outbound queue send timeout handling to use a shared dispatch executor/future monitoring path (no per-attempt sender/watcher threads) and expose timed-out/in-progress future counters in queue stats.
 - 2026-04-02: DONE. Bump project version to 2.6.1 across Python, UI, and Electron manifests.
 - 2026-04-02: DONE. Ignore passive background `FIELD_COMMANDS` payloads that misuse numeric key `0` so connected phone clients do not receive unsolicited command lists every 5 minutes.
