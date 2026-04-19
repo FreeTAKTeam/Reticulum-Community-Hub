@@ -70,15 +70,9 @@ from reticulum_telemetry_hub.config.manager import _expand_user_path
 from reticulum_telemetry_hub.config.models import HubAppConfig
 from reticulum_telemetry_hub.embedded_lxmd import EmbeddedLxmd
 from reticulum_telemetry_hub.lxmf_daemon.LXMF import display_name_from_app_data
-from reticulum_telemetry_hub.message_delivery import DEFAULT_PRIORITY
-from reticulum_telemetry_hub.message_delivery import DEFAULT_TTL_SECONDS
 from reticulum_telemetry_hub.message_delivery import DeliveryContractError
-from reticulum_telemetry_hub.message_delivery import attach_delivery_envelope
-from reticulum_telemetry_hub.message_delivery import build_delivery_envelope
-from reticulum_telemetry_hub.message_delivery import classify_delivery_mode
 from reticulum_telemetry_hub.message_delivery import extract_delivery_envelope
 from reticulum_telemetry_hub.message_delivery import normalize_hash
-from reticulum_telemetry_hub.message_delivery import normalize_message_id
 from reticulum_telemetry_hub.message_delivery import normalize_topic_id
 from reticulum_telemetry_hub.message_delivery import utc_now_ms
 from reticulum_telemetry_hub.message_delivery import utc_now_rfc3339
@@ -112,8 +106,18 @@ from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_sync import MissionSyncRouter
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
+from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_BACKOFF
+from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT
+from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_FANOUT_SOFT_MAX_RECIPIENTS
+from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_MAX_ATTEMPTS
+from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_QUEUE_SIZE
+from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_SEND_TIMEOUT
+from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_WORKERS
+from reticulum_telemetry_hub.reticulum_server.delivery_service import DeliveryService
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
+from reticulum_telemetry_hub.reticulum_server.message_events import MessageEventEmitter
+from reticulum_telemetry_hub.reticulum_server.message_router import MessageRouter
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import ReticulumInternalAdapter
 from reticulum_telemetry_hub.reticulum_server.marker_objects import MarkerObjectManager
@@ -168,13 +172,6 @@ R3AKT_CUSTOM_META_FIELD = int(getattr(LXMF, "FIELD_CUSTOM_META", 0xFD))
 MARKDOWN_RENDERER_FIELD = int(getattr(LXMF, "FIELD_RENDERER", 0x0F))
 MARKDOWN_RENDERER_VALUE = int(getattr(LXMF, "RENDERER_MARKDOWN", 0x02))
 ESCAPED_COMMAND_PREFIX = "\\\\\\"
-DEFAULT_OUTBOUND_QUEUE_SIZE = 64
-DEFAULT_OUTBOUND_WORKERS = 4
-DEFAULT_OUTBOUND_SEND_TIMEOUT = 5.0
-DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT = 30.0
-DEFAULT_OUTBOUND_BACKOFF = 0.5
-DEFAULT_OUTBOUND_MAX_ATTEMPTS = 3
-DEFAULT_OUTBOUND_FANOUT_SOFT_MAX_RECIPIENTS = 256
 IDENTITY_CAPABILITY_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
@@ -885,6 +882,9 @@ class ReticulumTelemetryHub:
             event_log=self.event_log,
         )
         self._message_listeners: list[Callable[[dict[str, object]], None]] = []
+        self.message_events = MessageEventEmitter(self)
+        self.delivery_service = DeliveryService(self)
+        self.message_router = MessageRouter(self)
         self.embedded_lxmd: EmbeddedLxmd | None = None
         self.telemetry_sampler: TelemetrySampler | None = None
         self.telemeter_manager: TelemeterManager | None = None
@@ -1852,28 +1852,14 @@ class ReticulumTelemetryHub:
     ) -> Callable[[], None]:
         """Register a callback invoked for inbound LXMF messages."""
 
-        self._message_listeners.append(listener)
+        return self.message_events.register_message_listener(listener)
 
-        def _remove_listener() -> None:
-            """Remove a previously registered message listener."""
-
-            if listener in self._message_listeners:
-                self._message_listeners.remove(listener)
-
-        return _remove_listener
 
     def _notify_message_listeners(self, entry: dict[str, object]) -> None:
         """Dispatch an inbound message entry to registered listeners."""
 
-        listeners = list(getattr(self, "_message_listeners", []))
-        for listener in listeners:
-            try:
-                listener(entry)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                RNS.log(
-                    f"Message listener raised an exception: {exc}",
-                    getattr(RNS, "LOG_WARNING", 2),
-                )
+        self.message_events.notify_message_listeners(entry)
+
 
     def _record_message_event(
         self,
@@ -1891,71 +1877,19 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Emit a message event for northbound consumers."""
 
-        topic_id = normalize_topic_id(topic_id)
-        scope = "topic" if topic_id else "dm"
-        if direction == "outbound" and not destination and not topic_id:
-            scope = "broadcast"
-        api = getattr(self, "api", None)
-        has_chat_support = api is not None and all(
-            hasattr(api, name) for name in ("record_chat_message", "chat_attachment_from_file")
+        self.message_events.record_message_event(
+            content=content,
+            source_label=source_label,
+            source_hash=source_hash,
+            topic_id=topic_id,
+            timestamp=timestamp,
+            direction=direction,
+            state=state,
+            destination=destination,
+            attachments=attachments,
+            message_id=message_id,
         )
-        attachment_payloads = []
-        if has_chat_support:
-            attachment_payloads = [
-                api.chat_attachment_from_file(item).to_dict()
-                for item in attachments
-            ]
-            chat_message = ChatMessage(
-                message_id=message_id,
-                direction=direction,
-                scope=scope,
-                state=state,
-                content=content,
-                source=source_hash or source_label,
-                destination=destination,
-                topic_id=topic_id,
-                attachments=[
-                    api.chat_attachment_from_file(item) for item in attachments
-                ],
-                created_at=timestamp,
-                updated_at=timestamp,
-            )
-            stored = api.record_chat_message(chat_message)
-            entry = stored.to_dict()
-            entry["SourceHash"] = source_hash or ""
-            entry["SourceLabel"] = source_label
-            entry["Timestamp"] = timestamp.isoformat()
-            entry["Attachments"] = attachment_payloads
-            self._notify_message_listeners(entry)
-        else:
-            entry = {
-                "MessageID": message_id,
-                "Direction": direction,
-                "Scope": scope,
-                "State": state,
-                "Content": content,
-                "Source": source_hash or source_label,
-                "Destination": destination,
-                "TopicID": topic_id,
-                "Attachments": attachment_payloads,
-                "CreatedAt": timestamp.isoformat(),
-                "UpdatedAt": timestamp.isoformat(),
-                "SourceHash": source_hash or "",
-                "SourceLabel": source_label,
-                "Timestamp": timestamp.isoformat(),
-            }
-            self._notify_message_listeners(entry)
-        event_log = getattr(self, "event_log", None)
-        if event_log is not None:
-            event_log.add_event(
-                "message_received" if direction == "inbound" else "message_sent",
-                (
-                    f"Message received from {source_label}"
-                    if direction == "inbound"
-                    else "Message sent from hub"
-                ),
-                metadata=entry,
-            )
+
 
     def _parse_escape_prefixed_commands(
         self, message: LXMF.LXMessage
@@ -2306,87 +2240,18 @@ class ReticulumTelemetryHub:
         sender: RNS.Destination | None = None,
         chat_message_id: str | None = None,
     ) -> bool:
-        """Sends a message to connected clients.
+        """Sends a message to connected clients."""
 
-        Args:
-            message (str): Text to broadcast.
-            topic (str | None): Topic filter limiting recipients.
-            destination (str | None): Optional destination hash for a targeted send.
-            exclude (set[str] | None): Optional set of lowercase destination
-                hashes that should not receive the broadcast.
-            fields (dict | None): Optional LXMF message fields.
-            sender (RNS.Destination | None): Optional sender identity override.
-            chat_message_id (str | None): Optional persisted chat message ID
-                used to track delivery acknowledgements.
-        """
-
-        queue = self._ensure_outbound_queue()
-        if queue is None:
-            RNS.log(
-                "Outbound queue unavailable; dropping message broadcast request.",
-                getattr(RNS, "LOG_WARNING", 2),
-            )
-            return False
-
-        try:
-            route_type = classify_delivery_mode(topic_id=topic, destination=destination)
-        except DeliveryContractError as exc:
-            RNS.log(
-                f"Rejected outbound message with mixed routing semantics: {exc}",
-                getattr(RNS, "LOG_WARNING", 2),
-            )
-            return False
-
-        normalized_destination = normalize_hash(destination)
-        normalized_topic_id = normalize_topic_id(topic)
-        message_id = self._delivery_message_id(fields, chat_message_id=chat_message_id)
-        shared_fields = self._prepare_outbound_delivery_fields(
-            fields=fields,
-            topic_id=normalized_topic_id,
-            message_id=message_id,
-        )
-        payloads, metrics = self._build_outbound_payloads(
-            message=message,
-            route_type=route_type,
-            topic_id=normalized_topic_id,
-            destination=normalized_destination,
+        return self.message_router.send_message(
+            message,
+            topic=topic,
+            destination=destination,
             exclude=exclude,
-            fields=shared_fields,
+            fields=fields,
             sender=sender,
             chat_message_id=chat_message_id,
-            message_id=message_id,
         )
-        enqueue_started = time.perf_counter()
-        enqueue_results = queue.queue_messages(payloads)
-        enqueued_count = sum(1 for enqueued in enqueue_results if enqueued)
-        for payload, enqueued in zip(payloads, enqueue_results):
-            if not enqueued:
-                RNS.log(
-                    (
-                        "Failed to enqueue outbound LXMF message for"
-                        f" {payload.destination_hex or 'unknown destination'}"
-                    ),
-                    getattr(RNS, "LOG_WARNING", 2),
-                )
-        enqueue_duration_ms = round((time.perf_counter() - enqueue_started) * 1000, 3)
-        queue_stats = queue.stats()
-        enqueued_any = enqueued_count > 0
-        self._record_outbound_route_metrics(
-            message_id=message_id,
-            route_type=route_type,
-            fanout_count=enqueued_count if route_type == "fanout" else 0,
-            targeted_recipient_count=enqueued_count if route_type == "targeted" else 0,
-            eligible_recipient_count=metrics["eligible_recipient_count"],
-            selected_recipient_count=metrics["selected_recipient_count"],
-            dropped_by_fanout_cap=metrics["dropped_by_fanout_cap"],
-            deferred_by_fanout_cap=metrics["deferred_by_fanout_cap"],
-            drop_reason=None if enqueued_any else "no_recipients",
-            enqueue_duration_ms=enqueue_duration_ms,
-            queue_depth=queue_stats["queue_depth"],
-            active_sends=queue_stats["active_dispatches"],
-            pending_receipts=queue_stats["pending_receipts"],
-        )
-        return enqueued_any
+
 
     def _prepare_outbound_delivery_fields(
         self,
@@ -2397,25 +2262,12 @@ class ReticulumTelemetryHub:
     ) -> dict | None:
         """Return shared outbound fields with a validated delivery envelope."""
 
-        normalized_fields = dict(fields) if isinstance(fields, dict) else {}
-        envelope = extract_delivery_envelope(normalized_fields)
-        if envelope is None:
-            outbound_envelope = build_delivery_envelope(
-                sender=self._origin_rch_hex() or "hub",
-                message_id=message_id,
-                topic_id=topic_id,
-                content_type="text/plain; schema=lxmf.chat.v1",
-                ttl_seconds=DEFAULT_TTL_SECONDS,
-                priority=DEFAULT_PRIORITY,
-                born_at_ms=utc_now_ms(),
-                created_at=utc_now_rfc3339(),
-            )
-            return attach_delivery_envelope(normalized_fields, outbound_envelope)
-        try:
-            validate_delivery_envelope(envelope)
-        except DeliveryContractError:
-            return normalized_fields
-        return normalized_fields
+        return self.message_router.prepare_outbound_delivery_fields(
+            fields=fields,
+            topic_id=topic_id,
+            message_id=message_id,
+        )
+
 
     def _build_outbound_payloads(
         self,
@@ -2432,76 +2284,18 @@ class ReticulumTelemetryHub:
     ) -> tuple[list[OutboundPayload], dict[str, int]]:
         """Build outbound payloads while precomputing fan-out metadata once."""
 
-        available = (
-            list(self.connections.values())
-            if hasattr(self.connections, "values")
-            else list(self.connections)
+        return self.message_router.build_outbound_payloads(
+            message=message,
+            route_type=route_type,
+            topic_id=topic_id,
+            destination=destination,
+            exclude=exclude,
+            fields=fields,
+            sender=sender,
+            chat_message_id=chat_message_id,
+            message_id=message_id,
         )
-        excluded = {value.lower() for value in exclude if value} if exclude else set()
-        subscribers = (
-            self._subscribers_for_topic(topic_id) if topic_id is not None else None
-        )
-        recipients: list[tuple[RNS.Destination, str | None, bytes | None]] = []
-        for connection in available:
-            connection_hex = self._connection_hex(connection)
-            if destination and connection_hex != destination:
-                continue
-            if excluded and connection_hex and connection_hex in excluded:
-                continue
-            if subscribers is not None and connection_hex not in subscribers:
-                continue
-            identity = getattr(connection, "identity", None)
-            destination_hash = getattr(identity, "hash", None)
-            recipients.append(
-                (
-                    connection,
-                    connection_hex,
-                    destination_hash if isinstance(destination_hash, (bytes, bytearray)) else None,
-                )
-            )
 
-        eligible_recipient_count = len(recipients)
-        deferred_by_fanout_cap = 0
-        fanout_soft_max = int(getattr(self, "outbound_fanout_soft_max_recipients", 0))
-        if route_type == "fanout" and fanout_soft_max > 0 and eligible_recipient_count > fanout_soft_max:
-            deferred_by_fanout_cap = eligible_recipient_count - fanout_soft_max
-            self._record_fanout_backpressure_warning(
-                message_id=message_id,
-                topic_id=topic_id,
-                selected_count=fanout_soft_max,
-                deferred_count=deferred_by_fanout_cap,
-            )
-
-        stagger_step_seconds = max(float(getattr(self, "outbound_backoff", 0.5)), 0.05)
-        payloads: list[OutboundPayload] = []
-        for index, (connection, connection_hex, destination_hash) in enumerate(recipients):
-            payload = OutboundPayload(
-                connection=connection,
-                message_text=message,
-                destination_hash=destination_hash,
-                destination_hex=connection_hex,
-                fields=fields,
-                sender=sender or self.my_lxmf_dest,
-                chat_message_id=chat_message_id,
-                message_id=message_id,
-                topic_id=topic_id,
-                route_type=route_type,
-            )
-            if (
-                route_type == "fanout"
-                and fanout_soft_max > 0
-                and eligible_recipient_count > fanout_soft_max
-                and index >= fanout_soft_max
-            ):
-                batch_index = index // fanout_soft_max
-                payload.next_attempt_at = time.monotonic() + (batch_index * stagger_step_seconds)
-            payloads.append(payload)
-        return payloads, {
-            "eligible_recipient_count": eligible_recipient_count,
-            "selected_recipient_count": len(payloads),
-            "dropped_by_fanout_cap": 0,
-            "deferred_by_fanout_cap": deferred_by_fanout_cap,
-        }
 
     def _record_fanout_backpressure_warning(
         self,
@@ -2513,29 +2307,13 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Emit an explicit warning when fan-out soft caps defer recipients."""
 
-        RNS.log(
-            (
-                "Outbound fan-out soft cap exceeded; sending to"
-                f" {selected_count} recipients this tick and deferring {deferred_count}."
-            ),
-            getattr(RNS, "LOG_WARNING", 2),
+        self.message_router.record_fanout_backpressure_warning(
+            message_id=message_id,
+            topic_id=topic_id,
+            selected_count=selected_count,
+            deferred_count=deferred_count,
         )
-        event_log = getattr(self, "event_log", None)
-        if event_log is None:
-            return
-        event_log.add_event(
-            "message_fanout_capped",
-            "Outbound fan-out exceeded soft cap",
-            metadata={
-                "MessageID": message_id,
-                "topic_id": topic_id,
-                "selected_recipient_count": selected_count,
-                "deferred_recipient_count": deferred_count,
-                "fanout_soft_max_recipients": int(
-                    getattr(self, "outbound_fanout_soft_max_recipients", 0)
-                ),
-            },
-        )
+
 
     def dispatch_northbound_message(
         self,
@@ -2546,148 +2324,13 @@ class ReticulumTelemetryHub:
     ) -> ChatMessage | None:
         """Dispatch a message originating from the northbound interface."""
 
-        api = getattr(self, "api", None)
-        normalized_topic_id = normalize_topic_id(topic_id)
-        normalized_destination = normalize_hash(destination)
-        route_type = classify_delivery_mode(
-            topic_id=normalized_topic_id,
-            destination=normalized_destination,
+        return self.message_router.dispatch_northbound_message(
+            message,
+            topic_id=topic_id,
+            destination=destination,
+            fields=fields,
         )
-        attachments: list[FileAttachment] = []
-        scope = "broadcast"
-        if route_type == "targeted":
-            scope = "dm"
-        elif route_type == "fanout":
-            scope = "topic"
-        if isinstance(fields, dict):
-            raw_attachments = fields.get("attachments")
-            if isinstance(raw_attachments, list):
-                attachments = [item for item in raw_attachments if isinstance(item, FileAttachment)]
-            override_scope = fields.get("scope")
-            if isinstance(override_scope, str) and override_scope.strip():
-                scope = override_scope.strip()
-        outbound_message = message
-        if normalized_topic_id and message:
-            topic_path = self._resolve_topic_path(normalized_topic_id)
-            if self._has_sender_prefix(message):
-                outbound_message = f"{topic_path}: {message}"
-            else:
-                outbound_message = self._format_chat_broadcast_text(
-                    source_label=self._hub_sender_label(),
-                    content_text=message,
-                    topic_id=normalized_topic_id,
-                )
-        sender_hash = self._origin_rch_hex() or "hub"
-        envelope = build_delivery_envelope(
-            sender=sender_hash,
-            message_id=None,
-            topic_id=normalized_topic_id,
-            content_type="text/plain; schema=lxmf.chat.v1",
-            ttl_seconds=DEFAULT_TTL_SECONDS,
-            priority=DEFAULT_PRIORITY,
-            born_at_ms=utc_now_ms(),
-            created_at=utc_now_rfc3339(),
-        )
-        queued = None
-        now = _utcnow()
-        if api is not None:
-            queued = api.record_chat_message(
-                ChatMessage(
-                    direction="outbound",
-                    scope=scope,
-                    state="queued",
-                    content=outbound_message,
-                    source=None,
-                    destination=normalized_destination,
-                    topic_id=normalized_topic_id,
-                    attachments=[api.chat_attachment_from_file(item) for item in attachments],
-                    delivery_metadata={
-                        "message_id": envelope.message_id,
-                        "route_type": route_type,
-                        "content_type": envelope.content_type,
-                        "schema_version": envelope.schema_version,
-                        "ttl_seconds": envelope.ttl_seconds,
-                        "priority": envelope.priority,
-                        "sender": envelope.sender,
-                        "born_at_ms": envelope.born_at_ms,
-                        "created_at": envelope.created_at,
-                        "attempts": 0,
-                        "acked": False,
-                        "fanout_count": 0,
-                        "targeted_recipient_count": 0,
-                        "drop_reason": None,
-                    },
-                    created_at=now,
-                    updated_at=now,
-                    message_id=envelope.message_id,
-                )
-            )
-            self._notify_message_listeners(queued.to_dict())
-            if getattr(self, "event_log", None) is not None:
-                self.event_log.add_event(
-                    "message_queued",
-                    "Message queued for delivery",
-                    metadata=queued.to_dict(),
-                )
-        lxmf_fields = None
-        if attachments:
-            try:
-                lxmf_fields = self._build_lxmf_attachment_fields(attachments)
-            except Exception as exc:  # pragma: no cover - defensive log
-                report_nonfatal_exception(
-                    getattr(self, "event_log", None),
-                    "lxmf_runtime_error",
-                    f"Failed to build attachment fields: {exc}",
-                    exc,
-                    metadata={
-                        "operation": "build_attachment_fields",
-                        "attachment_count": len(attachments),
-                    },
-                    log_level=getattr(RNS, "LOG_WARNING", 2),
-                )
-        lxmf_fields = self._merge_standard_fields(
-            source_fields=fields,
-            extra_fields=lxmf_fields,
-        )
-        if lxmf_fields is None:
-            lxmf_fields = {}
-        lxmf_fields = attach_delivery_envelope(lxmf_fields, envelope)
-        if LXMF.FIELD_EVENT not in lxmf_fields:
-            lxmf_fields[LXMF.FIELD_EVENT] = self._build_event_field(
-                event_type="rch.message.outbound",
-                direction="outbound",
-                topic_id=normalized_topic_id,
-                destination=normalized_destination,
-            )
-        enqueued = self.send_message(
-            outbound_message,
-            topic=normalized_topic_id,
-            destination=normalized_destination,
-            fields=lxmf_fields,
-            chat_message_id=queued.message_id if queued is not None else envelope.message_id,
-        )
-        if api is not None and queued is not None and not enqueued:
-            updated = api.update_chat_message_state(
-                queued.message_id or "",
-                "failed",
-                delivery_metadata={
-                    "drop_reason": "no_recipients",
-                    "acked": False,
-                    "fanout_count": 0,
-                    "targeted_recipient_count": 0,
-                },
-            )
-            if updated is not None:
-                self._notify_message_listeners(updated.to_dict())
-                if getattr(self, "event_log", None) is not None:
-                    self.event_log.add_event(
-                        "message_failed",
-                        "Message failed",
-                        metadata=updated.to_dict(),
-                    )
-                return updated
-            return queued
-        return queued
+
 
     def _handle_outbound_delivery_receipt(
         self,
@@ -2696,42 +2339,8 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Persist and broadcast outbound delivery acknowledgements."""
 
-        destination = payload.destination_hex or self._message_destination_hex(message)
-        is_propagated = payload.delivery_mode == "propagated"
-        entry = self._update_outbound_chat_state(
-            message=message,
-            payload=payload,
-            state="propagated" if is_propagated else "delivered",
-            destination=destination,
-        )
-        entry = self._augment_outbound_delivery_metadata(entry, payload)
-        entry["acknowledgement_type"] = (
-            "propagation_acceptance" if is_propagated else "delivery_receipt"
-        )
-        event_log = getattr(self, "event_log", None)
-        if event_log is None:
-            return
-        destination_label = self._lookup_identity_label(destination) if destination else "unknown"
-        if is_propagated:
-            if payload.local_propagation_fallback:
-                event_log.add_event(
-                    "message_propagated",
-                    f"Message stored for local propagation to {destination_label}",
-                    metadata=entry,
-                )
-                return
-            node_label = self._resolve_propagation_node_label(payload)
-            event_log.add_event(
-                "message_propagated",
-                f"Message accepted for propagation to {destination_label} via {node_label}",
-                metadata=entry,
-            )
-            return
-        event_log.add_event(
-            "message_delivered",
-            f"Message delivered to {destination_label}",
-            metadata=entry,
-        )
+        self.delivery_service.handle_outbound_delivery_receipt(message, payload)
+
 
     def _handle_outbound_delivery_failure(
         self,
@@ -2740,23 +2349,8 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Persist and broadcast outbound delivery failures."""
 
-        destination = payload.destination_hex or self._message_destination_hex(message)
-        entry = self._update_outbound_chat_state(
-            message=message,
-            payload=payload,
-            state="failed",
-            destination=destination,
-        )
-        entry = self._augment_outbound_delivery_metadata(entry, payload)
-        event_log = getattr(self, "event_log", None)
-        if event_log is None:
-            return
-        destination_label = self._lookup_identity_label(destination) if destination else "unknown"
-        event_log.add_event(
-            "message_delivery_failed",
-            f"Message delivery failed for {destination_label}",
-            metadata=entry,
-        )
+        self.delivery_service.handle_outbound_delivery_failure(message, payload)
+
 
     def _augment_outbound_delivery_metadata(
         self,
@@ -2765,30 +2359,8 @@ class ReticulumTelemetryHub:
     ) -> dict[str, object]:
         """Add retry and propagation metadata to outbound event entries."""
 
-        augmented = dict(entry)
-        delivery_metadata = self._delivery_metadata_snapshot(payload)
-        augmented["DeliveryMetadata"] = delivery_metadata
-        if payload.attempts > 0:
-            augmented["direct_attempts"] = payload.attempts
-        augmented["delivery_method"] = "direct"
-        augmented["route_type"] = payload.route_type
-        augmented["fanout_count"] = (
-            1 if payload.route_type == "fanout" else 0
-        )
-        augmented["targeted_recipient_count"] = (
-            1 if payload.route_type == "targeted" else 0
-        )
-        if payload.delivery_mode != "propagated":
-            return augmented
-        augmented["fallback_reason"] = "direct_delivery_failed"
-        augmented["delivery_method"] = (
-            "local_propagation_store"
-            if payload.local_propagation_fallback
-            else "propagated"
-        )
-        if payload.propagation_node_hex:
-            augmented["propagation_node"] = payload.propagation_node_hex
-        return augmented
+        return self.delivery_service.augment_outbound_delivery_metadata(entry, payload)
+
 
     def _build_outbound_attempt_metadata(
         self,
@@ -2796,101 +2368,32 @@ class ReticulumTelemetryHub:
     ) -> dict[str, object]:
         """Build event metadata for retry and fallback transitions."""
 
-        timestamp = _utcnow().isoformat()
-        topic_id = normalize_topic_id(payload.topic_id or self._extract_target_topic(payload.fields))
-        scope = "topic" if topic_id else "dm"
-        if payload.route_type == "broadcast":
-            scope = "broadcast"
-        entry: dict[str, object] = {
-            "MessageID": payload.message_id or payload.chat_message_id,
-            "Direction": "outbound",
-            "Scope": scope,
-            "State": "queued",
-            "Content": payload.message_text,
-            "Source": self._origin_rch_hex() or self._hub_sender_label(),
-            "Destination": payload.destination_hex,
-            "TopicID": topic_id,
-            "Attachments": [],
-            "CreatedAt": timestamp,
-            "UpdatedAt": timestamp,
-            "SourceHash": self._origin_rch_hex(),
-            "SourceLabel": self._hub_sender_label(),
-            "Timestamp": timestamp,
-        }
-        return self._augment_outbound_delivery_metadata(entry, payload)
+        return self.delivery_service.build_outbound_attempt_metadata(payload)
+
 
     def _resolve_propagation_node_label(self, payload: OutboundPayload) -> str:
         """Return the most useful label for the selected propagation node."""
 
-        if payload.local_propagation_fallback:
-            return self._hub_sender_label()
-        if payload.propagation_node_hex:
-            return self._lookup_identity_label(payload.propagation_node_hex)
-        return "unknown"
+        return self.delivery_service.resolve_propagation_node_label(payload)
+
 
     def _select_best_propagation_node(self) -> PropagationNodeCandidate | None:
         """Return the current best remote propagation node and activate it."""
 
-        registry = getattr(self, "_propagation_node_registry", None)
-        if registry is None:
-            return None
-        return registry.best_candidate()
+        return self.delivery_service.select_best_propagation_node()
+
 
     def _handle_outbound_retry_scheduled(self, payload: OutboundPayload) -> None:
         """Record a direct-delivery retry event."""
 
-        self._persist_outbound_delivery_metadata(
-            payload,
-            state="queued",
-            delivery_metadata={"retry_scheduled": True},
-        )
-        event_log = getattr(self, "event_log", None)
-        if event_log is None:
-            return
-        destination_label = (
-            self._lookup_identity_label(payload.destination_hex)
-            if payload.destination_hex
-            else "unknown"
-        )
-        event_log.add_event(
-            "message_delivery_retrying",
-            f"Retrying message delivery to {destination_label}",
-            metadata=self._build_outbound_attempt_metadata(payload),
-        )
+        self.delivery_service.handle_outbound_retry_scheduled(payload)
+
 
     def _handle_outbound_propagation_fallback(self, payload: OutboundPayload) -> None:
         """Record that direct delivery exhausted and propagation fallback is in use."""
 
-        self._persist_outbound_delivery_metadata(
-            payload,
-            state="queued",
-            delivery_metadata={
-                "delivery_mode": payload.delivery_mode,
-                "local_propagation_fallback": payload.local_propagation_fallback,
-                "propagation_node_hex": payload.propagation_node_hex,
-            },
-        )
-        event_log = getattr(self, "event_log", None)
-        if event_log is None:
-            return
-        destination_label = (
-            self._lookup_identity_label(payload.destination_hex)
-            if payload.destination_hex
-            else "unknown"
-        )
-        if payload.local_propagation_fallback:
-            message = f"Direct delivery exhausted; stored message for local propagation to {destination_label}"
-        else:
-            node_label = self._resolve_propagation_node_label(payload)
-            message = (
-                "Direct delivery exhausted; queued message for propagation to"
-                f" {destination_label} via {node_label}"
-            )
-        event_log.add_event(
-            "message_propagation_queued",
-            message,
-            metadata=self._build_outbound_attempt_metadata(payload),
-        )
+        self.delivery_service.handle_outbound_propagation_fallback(payload)
+
 
     def _update_outbound_chat_state(
         self,
@@ -2902,70 +2405,19 @@ class ReticulumTelemetryHub:
     ) -> dict[str, object]:
         """Return metadata for outbound delivery state transitions."""
 
-        timestamp = _utcnow()
-        source_hash = self._origin_rch_hex()
-        source_label = self._hub_sender_label()
-        topic_id = normalize_topic_id(
-            payload.topic_id or self._extract_target_topic(getattr(message, "fields", None))
+        return self.delivery_service.update_outbound_chat_state(
+            message=message,
+            payload=payload,
+            state=state,
+            destination=destination,
         )
-        chat_message_id = payload.chat_message_id or payload.message_id
-        api = getattr(self, "api", None)
-        delivery_metadata = self._delivery_metadata_snapshot(payload)
-        delivery_metadata["acked"] = state in {"delivered", "propagated"}
 
-        if api is not None and chat_message_id and hasattr(api, "update_chat_message_state"):
-            try:
-                updated = api.update_chat_message_state(
-                    chat_message_id,
-                    state,
-                    delivery_metadata=delivery_metadata,
-                )
-            except Exception as exc:  # pragma: no cover - defensive log
-                RNS.log(
-                    f"Failed to update chat message state for '{chat_message_id}': {exc}",
-                    getattr(RNS, "LOG_WARNING", 2),
-                )
-            else:
-                if updated is not None:
-                    entry = updated.to_dict()
-                    entry["SourceHash"] = source_hash
-                    entry["SourceLabel"] = source_label
-                    entry["Timestamp"] = timestamp.isoformat()
-                    self._notify_message_listeners(entry)
-                    return entry
-
-        scope = "topic" if topic_id else "dm"
-        if payload.route_type == "broadcast":
-            scope = "broadcast"
-        return {
-            "MessageID": chat_message_id or self._message_id_hex(message),
-            "Direction": "outbound",
-            "Scope": scope,
-            "State": state,
-            "Content": payload.message_text,
-            "Source": source_hash or source_label,
-            "Destination": destination,
-            "TopicID": topic_id,
-            "Attachments": [],
-            "CreatedAt": timestamp.isoformat(),
-            "UpdatedAt": timestamp.isoformat(),
-            "SourceHash": source_hash,
-            "SourceLabel": source_label,
-            "Timestamp": timestamp.isoformat(),
-            "DeliveryMetadata": delivery_metadata,
-        }
 
     def _handle_outbound_attempt_started(self, payload: OutboundPayload) -> None:
         """Persist attempt counters when a queue worker starts delivery."""
 
-        self._persist_outbound_delivery_metadata(
-            payload,
-            state="queued",
-            delivery_metadata={
-                "last_attempt_at": utc_now_rfc3339(),
-                "retry_scheduled": False,
-            },
-        )
+        self.delivery_service.handle_outbound_attempt_started(payload)
+
 
     def _handle_outbound_payload_dropped(
         self,
@@ -2974,19 +2426,8 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Record queue backpressure drops as terminal failures."""
 
-        self._persist_outbound_delivery_metadata(
-            payload,
-            state="failed",
-            delivery_metadata={"drop_reason": reason, "acked": False},
-        )
-        event_log = getattr(self, "event_log", None)
-        if event_log is None:
-            return
-        event_log.add_event(
-            "message_delivery_failed",
-            "Outbound payload dropped before delivery",
-            metadata=self._build_outbound_attempt_metadata(payload),
-        )
+        self.delivery_service.handle_outbound_payload_dropped(payload, reason)
+
 
     def _persist_outbound_delivery_metadata(
         self,
@@ -2997,69 +2438,18 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Persist the latest outbound delivery metadata when chat storage exists."""
 
-        api = getattr(self, "api", None)
-        message_id = payload.chat_message_id or payload.message_id
-        if api is None or not message_id or not hasattr(api, "update_chat_message_state"):
-            return
-        merged_metadata = self._delivery_metadata_snapshot(payload)
-        if delivery_metadata:
-            merged_metadata.update(delivery_metadata)
-        try:
-            updated = api.update_chat_message_state(
-                message_id,
-                state,
-                delivery_metadata=merged_metadata,
-            )
-        except Exception as exc:  # pragma: no cover - defensive log
-            RNS.log(
-                f"Failed to persist outbound delivery metadata for '{message_id}': {exc}",
-                getattr(RNS, "LOG_WARNING", 2),
-            )
-            return
-        if updated is not None:
-            entry = updated.to_dict()
-            entry["SourceHash"] = self._origin_rch_hex()
-            entry["SourceLabel"] = self._hub_sender_label()
-            entry["Timestamp"] = _utcnow().isoformat()
-            self._notify_message_listeners(entry)
+        self.delivery_service.persist_outbound_delivery_metadata(
+            payload,
+            state=state,
+            delivery_metadata=delivery_metadata,
+        )
+
 
     def _delivery_metadata_snapshot(self, payload: OutboundPayload) -> dict[str, object]:
         """Return a serializable snapshot of outbound delivery state."""
 
-        envelope = extract_delivery_envelope(payload.fields)
-        validated = None
-        if envelope is not None:
-            try:
-                validated = validate_delivery_envelope(envelope)
-            except DeliveryContractError:
-                validated = None
-        metadata: dict[str, object] = {
-            "message_id": payload.message_id or payload.chat_message_id,
-            "route_type": payload.route_type,
-            "topic_id": payload.topic_id,
-            "attempts": payload.attempts,
-            "delivery_mode": payload.delivery_mode,
-            "enqueue_age_ms": round((time.monotonic() - payload.enqueued_at) * 1000, 3),
-            "propagation_node_hex": payload.propagation_node_hex,
-            "local_propagation_fallback": payload.local_propagation_fallback,
-            "destination": payload.destination_hex,
-            "fanout_count": 1 if payload.route_type == "fanout" else 0,
-            "targeted_recipient_count": 1 if payload.route_type == "targeted" else 0,
-            "acked": False,
-        }
-        if validated is not None:
-            metadata.update(
-                {
-                    "content_type": validated.content_type,
-                    "schema_version": validated.schema_version,
-                    "ttl_seconds": validated.ttl_seconds,
-                    "priority": validated.priority,
-                    "sender": validated.sender,
-                    "born_at_ms": validated.born_at_ms,
-                    "created_at": validated.created_at,
-                }
-            )
-        return metadata
+        return self.delivery_service.delivery_metadata_snapshot(payload)
+
 
     def _delivery_message_id(
         self,
@@ -3069,15 +2459,11 @@ class ReticulumTelemetryHub:
     ) -> str:
         """Return the outbound Message-ID for a queued payload."""
 
-        envelope = extract_delivery_envelope(fields)
-        if envelope is not None:
-            try:
-                validated = validate_delivery_envelope(envelope)
-            except DeliveryContractError:
-                pass
-            else:
-                return validated.message_id
-        return normalize_message_id(chat_message_id)
+        return self.message_router.delivery_message_id(
+            fields,
+            chat_message_id=chat_message_id,
+        )
+
 
     def _record_outbound_route_metrics(
         self,
@@ -3098,28 +2484,22 @@ class ReticulumTelemetryHub:
     ) -> None:
         """Emit event-log metrics for routing selection outcomes."""
 
-        event_log = getattr(self, "event_log", None)
-        if event_log is None:
-            return
-        event_log.add_event(
-            "message_routed",
-            "Outbound message routing selected",
-            metadata={
-                "MessageID": message_id,
-                "route_type": route_type,
-                "fanout_count": fanout_count,
-                "targeted_recipient_count": targeted_recipient_count,
-                "eligible_recipient_count": eligible_recipient_count,
-                "selected_recipient_count": selected_recipient_count,
-                "dropped_by_fanout_cap": dropped_by_fanout_cap,
-                "deferred_by_fanout_cap": deferred_by_fanout_cap,
-                "enqueue_duration_ms": enqueue_duration_ms,
-                "queue_depth": queue_depth,
-                "active_sends": active_sends,
-                "pending_receipts": pending_receipts,
-                "drop_reason": drop_reason,
-            },
+        self.message_router.record_outbound_route_metrics(
+            message_id=message_id,
+            route_type=route_type,
+            fanout_count=fanout_count,
+            targeted_recipient_count=targeted_recipient_count,
+            eligible_recipient_count=eligible_recipient_count,
+            selected_recipient_count=selected_recipient_count,
+            dropped_by_fanout_cap=dropped_by_fanout_cap,
+            deferred_by_fanout_cap=deferred_by_fanout_cap,
+            drop_reason=drop_reason,
+            enqueue_duration_ms=enqueue_duration_ms,
+            queue_depth=queue_depth,
+            active_sends=active_sends,
+            pending_receipts=pending_receipts,
         )
+
 
     def dispatch_marker_event(self, marker: Marker, event_type: str) -> bool:
         """Dispatch marker announcements and telemetry events.
@@ -3475,57 +2855,10 @@ class ReticulumTelemetryHub:
         return ""
 
     def _ensure_outbound_queue(self) -> OutboundMessageQueue | None:
-        """
-        Initialize and start the outbound worker queue.
+        """Initialize and start the outbound worker queue."""
 
-        Returns:
-            OutboundMessageQueue | None: Active outbound queue instance when available.
-        """
+        return self.delivery_service.ensure_outbound_queue()
 
-        if self.my_lxmf_dest is None:
-            return None
-
-        if not hasattr(self, "_outbound_queue"):
-            self._outbound_queue = None
-
-        if self._outbound_queue is None:
-            self._outbound_queue = OutboundMessageQueue(
-                self.lxm_router,
-                self.my_lxmf_dest,
-                queue_size=getattr(
-                    self, "outbound_queue_size", DEFAULT_OUTBOUND_QUEUE_SIZE
-                )
-                or DEFAULT_OUTBOUND_QUEUE_SIZE,
-                worker_count=getattr(self, "outbound_workers", DEFAULT_OUTBOUND_WORKERS)
-                or DEFAULT_OUTBOUND_WORKERS,
-                send_timeout=getattr(
-                    self, "outbound_send_timeout", DEFAULT_OUTBOUND_SEND_TIMEOUT
-                )
-                or DEFAULT_OUTBOUND_SEND_TIMEOUT,
-                delivery_receipt_timeout=getattr(
-                    self,
-                    "outbound_delivery_receipt_timeout",
-                    DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT,
-                )
-                or DEFAULT_OUTBOUND_DELIVERY_RECEIPT_TIMEOUT,
-                backoff_seconds=getattr(
-                    self, "outbound_backoff", DEFAULT_OUTBOUND_BACKOFF
-                )
-                or DEFAULT_OUTBOUND_BACKOFF,
-                max_attempts=getattr(
-                    self, "outbound_max_attempts", DEFAULT_OUTBOUND_MAX_ATTEMPTS
-                )
-                or DEFAULT_OUTBOUND_MAX_ATTEMPTS,
-                delivery_receipt_callback=self._handle_outbound_delivery_receipt,
-                delivery_failure_callback=self._handle_outbound_delivery_failure,
-                propagation_selector=self._select_best_propagation_node,
-                retry_scheduled_callback=self._handle_outbound_retry_scheduled,
-                propagation_fallback_callback=self._handle_outbound_propagation_fallback,
-                attempt_started_callback=self._handle_outbound_attempt_started,
-                payload_dropped_callback=self._handle_outbound_payload_dropped,
-            )
-        self._outbound_queue.start()
-        return self._outbound_queue
 
     def wait_for_outbound_flush(self, timeout: float = 1.0) -> bool:
         """
