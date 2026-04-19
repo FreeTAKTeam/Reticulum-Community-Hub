@@ -1,4 +1,5 @@
 # TASKS
+- 2026-04-19: DONE. Replace single-identity announce map lookups with indexed queries, add bulk display-name resolution, and add telemetry listing query-count regression coverage.
 - 2026-04-19: DONE. Resolve __main__.py merge-conflict-style separator so conflict-marker scans no longer flag the module header.
 - 2026-04-19: DONE. Apply review follow-ups by switching __main__ to public service APIs and centralizing outbound default constants in shared delivery_defaults.py.
 - 2026-04-19: DONE. Rework the reticulum_server extraction to remove duplicated __main__ logic and delegate outbound routing/delivery/listener flows cleanly to service modules while keeping architecture guards.

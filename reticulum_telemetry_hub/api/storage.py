@@ -358,7 +358,7 @@ class HubStorage(HubStorageBase):
             record = session.get(ClientRecord, identity)
             if not record:
                 return None
-            announce = self._identity_announce_map(session).get(identity.lower())
+            announce = self._identity_announce_for_identity(session, identity)
             return self._client_from_record(record, announce)
 
     def create_file_record(self, attachment: FileAttachment) -> FileAttachment:
@@ -487,7 +487,57 @@ class HubStorage(HubStorageBase):
         """Return announce metadata for an identity when present."""
 
         with self._session_scope() as session:
-            return self._identity_announce_map(session).get(identity.lower())
+            return self._identity_announce_for_identity(session, identity)
+
+    def resolve_identity_display_names_bulk(
+        self,
+        identities: list[str],
+    ) -> dict[str, str | None]:
+        """Resolve display names for many identities with one database roundtrip."""
+
+        normalized_identities = [
+            str(identity).strip().lower()
+            for identity in identities
+            if str(identity).strip()
+        ]
+        if not normalized_identities:
+            return {}
+        requested = set(normalized_identities)
+        canonical_announces: dict[str, IdentityAnnounceRecord] = {}
+        keys_by_canonical: dict[str, set[str]] = {}
+        with self._session_scope() as session:
+            records = (
+                session.query(IdentityAnnounceRecord)
+                .filter(
+                    or_(
+                        IdentityAnnounceRecord.destination_hash.in_(requested),
+                        IdentityAnnounceRecord.announced_identity_hash.in_(requested),
+                    )
+                )
+                .all()
+            )
+            for record in records:
+                destination_hash = str(record.destination_hash or "").strip().lower()
+                announced_identity_hash = str(record.announced_identity_hash or "").strip().lower()
+                canonical_key = announced_identity_hash or destination_hash
+                if not canonical_key:
+                    continue
+                canonical_announces[canonical_key] = self._merge_identity_announce_records(
+                    canonical_announces.get(canonical_key),
+                    record,
+                )
+                keys = keys_by_canonical.setdefault(canonical_key, set())
+                if destination_hash in requested:
+                    keys.add(destination_hash)
+                if announced_identity_hash in requested:
+                    keys.add(announced_identity_hash)
+        resolved_display_names: dict[str, str | None] = {}
+        for canonical_key, keys in keys_by_canonical.items():
+            display_name = canonical_announces.get(canonical_key).display_name
+            for key in keys:
+                resolved_display_names[key] = display_name
+
+        return {identity: resolved_display_names.get(identity) for identity in normalized_identities}
 
     def list_identity_announces(self) -> List[IdentityAnnounceRecord]:
         """Return all announce metadata records."""
@@ -1112,6 +1162,10 @@ class HubStorage(HubStorageBase):
             (
                 "CREATE INDEX IF NOT EXISTS ix_chat_messages_source_created_at "
                 "ON chat_messages(source, created_at DESC);"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_identity_announces_announced_identity_hash "
+                "ON identity_announces(announced_identity_hash);"
             ),
         )
         try:

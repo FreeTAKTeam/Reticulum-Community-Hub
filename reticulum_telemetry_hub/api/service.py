@@ -260,6 +260,16 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             return None
         return record.display_name
 
+    def resolve_identity_display_names_bulk(
+        self,
+        identities: list[str],
+    ) -> dict[str, str | None]:
+        """Return display names for a batch of identity hashes."""
+
+        if not identities:
+            return {}
+        return self._storage.resolve_identity_display_names_bulk(identities)
+
     def list_identity_capabilities(self, identity: str) -> List[str]:
         """Return active capabilities for an identity."""
 
