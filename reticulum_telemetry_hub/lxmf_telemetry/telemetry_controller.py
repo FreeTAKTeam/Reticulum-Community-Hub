@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime
 import json
@@ -392,14 +393,24 @@ class TelemetryController:
                 start_time=timebase_dt,
                 peer_destinations=allowed_destinations,
             )
+            display_name_by_peer: dict[str, str | None] = {}
+            peer_destinations = [telemeter.peer_dest for telemeter in telemeters if telemeter.peer_dest]
+            if self._api is not None and hasattr(
+                self._api, "resolve_identity_display_names_bulk"
+            ):
+                try:
+                    resolver = getattr(self._api, "resolve_identity_display_names_bulk")
+                    display_name_by_peer = resolver(peer_destinations) or {}
+                except Exception:  # pragma: no cover - defensive
+                    display_name_by_peer = {}
 
             entries: list[dict[str, object]] = []
             for telemeter in telemeters:
                 timestamp = int(telemeter.time.timestamp()) if telemeter.time else 0
                 payload = self._serialize_telemeter(telemeter)
                 readable_payload = self._humanize_telemetry(payload)
-                display_name = None
-                if self._api is not None and hasattr(
+                display_name = display_name_by_peer.get(telemeter.peer_dest)
+                if display_name is None and self._api is not None and hasattr(
                     self._api, "resolve_identity_display_name"
                 ):
                     try:
@@ -418,6 +429,30 @@ class TelemetryController:
                     }
                 )
             return entries
+
+    async def list_telemetry_entries_async(
+        self, *, since: int, topic_id: str | None = None
+    ) -> list[dict[str, object]]:
+        """Return telemetry entries without blocking the event loop.
+
+        This method is intended for async callers (for example websocket
+        handlers) and offloads synchronous SQLAlchemy access to a thread.
+
+        Args:
+            since (int): Unix timestamp (seconds) for the earliest telemetry
+                records to include.
+            topic_id (str | None): Optional topic identifier for filtering.
+
+        Returns:
+            list[dict[str, object]]: Telemetry entries formatted for async
+                northbound consumers.
+        """
+
+        return await asyncio.to_thread(
+            self.list_telemetry_entries,
+            since=since,
+            topic_id=topic_id,
+        )
 
     def register_listener(
         self,

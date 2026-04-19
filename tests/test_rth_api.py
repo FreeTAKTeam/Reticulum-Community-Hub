@@ -472,6 +472,22 @@ def test_identity_announce_ignores_missing_name(tmp_path):
     assert api.resolve_identity_display_name("deadbeef") == "Sideband-Alice"
 
 
+def test_resolve_identity_display_names_bulk(tmp_path):
+    """Ensure bulk identity display-name resolution returns merged announce view."""
+
+    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api.record_identity_announce("deadbeef-destination", announced_identity_hash="deadbeef")
+    api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
+
+    resolved = api.resolve_identity_display_names_bulk(
+        ["deadbeef", "deadbeef-destination", "missing"]
+    )
+
+    assert resolved["deadbeef"] == "Sideband-Alice"
+    assert resolved["deadbeef-destination"] == "Sideband-Alice"
+    assert resolved["missing"] is None
+
+
 def test_identity_announce_concurrent_upserts_do_not_duplicate_records(tmp_path):
     api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
     errors: list[Exception] = []

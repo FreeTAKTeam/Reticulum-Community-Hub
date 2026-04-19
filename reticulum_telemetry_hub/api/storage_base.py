@@ -7,6 +7,7 @@ import logging
 import time
 from typing import Any
 
+from sqlalchemy import case
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
@@ -269,3 +270,30 @@ class HubStorageBase:
                 record,
             )
         return announce_map
+
+    @staticmethod
+    def _identity_announce_for_identity(
+        session,
+        identity: str,
+    ) -> IdentityAnnounceRecord | None:
+        """Return announce metadata for ``identity`` using indexed point lookups."""
+
+        normalized_identity = str(identity or "").strip().lower()
+        if not normalized_identity:
+            return None
+        direct = session.get(IdentityAnnounceRecord, normalized_identity)
+        if direct is not None:
+            return direct
+        return (
+            session.query(IdentityAnnounceRecord)
+            .filter(IdentityAnnounceRecord.announced_identity_hash == normalized_identity)
+            .order_by(
+                case(
+                    (IdentityAnnounceRecord.source_interface == "identity", 0),
+                    (IdentityAnnounceRecord.display_name.is_not(None), 1),
+                    else_=2,
+                ),
+                IdentityAnnounceRecord.last_seen.desc(),
+            )
+            .first()
+        )
