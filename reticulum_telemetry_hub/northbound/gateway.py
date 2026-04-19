@@ -358,6 +358,8 @@ def build_gateway_app(
         mission_domain_service=getattr(hub, "mission_domain_service", None),
         origin_rch=getattr(hub, "_origin_rch_hex", lambda: "")(),
         message_listener=hub.register_message_listener,
+        runtime_metrics_provider=getattr(hub, "runtime_metrics_snapshot", None),
+        runtime_metrics=getattr(hub, "runtime_metrics", None),
         started_at=started_at or datetime.now(timezone.utc),
         auth=auth,
         control=control,

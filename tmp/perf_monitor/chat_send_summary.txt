@@ -1,0 +1,12 @@
+backend_pid=3672
+ui_pid=22964
+send_status=ok
+send_code=200
+send_latency_ms=1487.4
+backend_cpu_avg_pct=1.4
+backend_cpu_peak_pct=30.58
+queue_depth_peak=0
+enqueued_total_min=0
+enqueued_total_max=0
+csv_path=C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\tmp\perf_monitor\chat_send_monitor.csv
+send_response={"MessageID":"9eabeb8b38c0451aacc133d63076c5ff","Direction":"outbound","Scope":"broadcast","State":"failed","Content":"Perf monitor probe 2026-04-07T08:41:50.6574492-03:00","Source":null,"Destination":null,"TopicID":null,"Attachments":[],"DeliveryMetadata":{"message_id":"9eabeb8b38c0451aacc133d63076c5ff","route_type":"broadcast","content_type":"text/plain; schema=lxmf.chat.v1","schema_version":"1","ttl_seconds":300,"priority":0,"sender":"4fa9359ec3ea68185d4dd03b23073244","born_at_ms":1775562110673,"created_at":"2026-04-07T11:41:50Z","attempts":0,"acked":false,"fanout_count":0,"targeted_recipient_count":0,"drop_reason":"no_recipients"},"CreatedAt":"2026-04-07T11:41:50.673702","UpdatedAt":"2026-04-07T11:41:50.681575+00:00"}

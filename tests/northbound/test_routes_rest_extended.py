@@ -119,6 +119,11 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
 
     status_response = client.get("/Status", headers=headers)
     assert status_response.status_code == 200
+    diagnostics_response = client.get("/diagnostics/runtime", headers=headers)
+    assert diagnostics_response.status_code == 200
+    assert isinstance(diagnostics_response.json(), dict)
+    diagnostics_alias_response = client.get("/Diagnostics/Runtime", headers=headers)
+    assert diagnostics_alias_response.status_code == 200
 
     event_log.add_event("test_event", "Event recorded")
     events_response = client.get("/Events", headers=headers)

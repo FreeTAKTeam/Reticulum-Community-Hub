@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from contextlib import suppress
@@ -18,6 +19,7 @@ from typing import Callable
 from typing import Dict
 from typing import Optional
 
+from fastapi import WebSocketDisconnect
 from fastapi import WebSocket
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
@@ -33,6 +35,27 @@ DEFAULT_WS_PING_INTERVAL_SECONDS = 30.0
 DEFAULT_WS_INACTIVITY_TIMEOUT_SECONDS = 90.0
 DEFAULT_WS_DELIVERY_QUEUE_SIZE = 64
 WS_INACTIVITY_CLOSE_CODE = 4004
+LOGGER = logging.getLogger(__name__)
+
+
+def _metrics_increment(metrics: object | None, key: str, value: int = 1) -> None:
+    """Increment a runtime metric counter when supported by ``metrics``."""
+
+    if metrics is None:
+        return
+    increment = getattr(metrics, "increment", None)
+    if callable(increment):
+        increment(key, value)
+
+
+def _metrics_set_gauge(metrics: object | None, key: str, value: float) -> None:
+    """Set a runtime metric gauge when supported by ``metrics``."""
+
+    if metrics is None:
+        return
+    setter = getattr(metrics, "set_gauge", None)
+    if callable(setter):
+        setter(key, value)
 
 
 @dataclass(eq=False)
@@ -42,6 +65,8 @@ class _QueuedDelivery:
     callback: Callable[[Dict[str, object]], Awaitable[None]]
     loop: Optional[asyncio.AbstractEventLoop]
     queue_size: int = DEFAULT_WS_DELIVERY_QUEUE_SIZE
+    on_terminal_failure: Optional[Callable[["_QueuedDelivery", Exception], None]] = None
+    on_drop_oldest: Optional[Callable[[], None]] = None
     _queue: asyncio.Queue[object] | None = field(
         init=False, default=None, repr=False, compare=False
     )
@@ -49,6 +74,7 @@ class _QueuedDelivery:
         init=False, default=None, repr=False, compare=False
     )
     _closed: bool = field(init=False, default=False, repr=False, compare=False)
+    _failed: bool = field(init=False, default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Initialize the worker queue when a loop is available."""
@@ -69,8 +95,9 @@ class _QueuedDelivery:
                 if item is None:
                     return
                 await self.callback(item)
-            except Exception:
-                continue
+            except Exception as exc:
+                self._handle_terminal_failure(exc)
+                return
             finally:
                 self._queue.task_done()
 
@@ -100,6 +127,9 @@ class _QueuedDelivery:
             with suppress(asyncio.QueueEmpty):
                 self._queue.get_nowait()
                 self._queue.task_done()
+                callback = self.on_drop_oldest
+                if callback is not None:
+                    callback()
         with suppress(asyncio.QueueFull):
             self._queue.put_nowait(entry)
 
@@ -110,7 +140,26 @@ class _QueuedDelivery:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self.callback(entry))
+        task = loop.create_task(self.callback(entry))
+
+        def _on_done(completed: asyncio.Task[None]) -> None:
+            with suppress(asyncio.CancelledError):
+                exc = completed.exception()
+                if exc is not None:
+                    self._handle_terminal_failure(exc)
+
+        task.add_done_callback(_on_done)
+
+    def _handle_terminal_failure(self, exc: Exception) -> None:
+        """Signal terminal callback failure once for this subscriber."""
+
+        if self._failed:
+            return
+        self._failed = True
+        callback = self.on_terminal_failure
+        if callback is None:
+            return
+        callback(self, exc)
 
     def close(self) -> None:
         """Stop the worker queue for this subscriber."""
@@ -171,6 +220,7 @@ class EventBroadcaster:
         event_log: EventLog,
         *,
         delivery_queue_size: int = DEFAULT_WS_DELIVERY_QUEUE_SIZE,
+        runtime_metrics: object | None = None,
     ) -> None:
         """Initialize the event broadcaster.
 
@@ -181,7 +231,9 @@ class EventBroadcaster:
         self._event_log = event_log
         self._subscribers: set[_QueuedDelivery] = set()
         self._delivery_queue_size = max(int(delivery_queue_size), 1)
+        self._runtime_metrics = runtime_metrics
         self._event_log.add_listener(self._handle_event)
+        self._publish_subscriber_gauge()
 
     def subscribe(
         self, callback: Callable[[Dict[str, object]], Awaitable[None]]
@@ -200,8 +252,11 @@ class EventBroadcaster:
             callback=callback,
             loop=self._running_loop(),
             queue_size=self._delivery_queue_size,
+            on_terminal_failure=self._on_delivery_failure,
+            on_drop_oldest=self._record_drop_oldest,
         )
         self._subscribers.add(delivery)
+        self._publish_subscriber_gauge()
 
         def _unsubscribe() -> None:
             """Remove the event callback subscription.
@@ -210,10 +265,36 @@ class EventBroadcaster:
                 None: Removes the callback.
             """
 
-            self._subscribers.discard(delivery)
-            delivery.close()
+            self._remove_delivery(delivery)
 
         return _unsubscribe
+
+    def _publish_subscriber_gauge(self) -> None:
+        """Publish current websocket subscriber counts to runtime metrics."""
+
+        count = float(len(self._subscribers))
+        _metrics_set_gauge(self._runtime_metrics, "ws_event_subscribers", count)
+
+    def _record_drop_oldest(self) -> None:
+        """Track bounded-queue oldest-drop events."""
+
+        _metrics_increment(self._runtime_metrics, "ws_dropped_oldest_total")
+        _metrics_increment(self._runtime_metrics, "ws_event_dropped_oldest_total")
+
+    def _remove_delivery(self, delivery: _QueuedDelivery) -> None:
+        """Remove and close a queued delivery subscription."""
+
+        self._subscribers.discard(delivery)
+        delivery.close()
+        self._publish_subscriber_gauge()
+
+    def _on_delivery_failure(self, delivery: _QueuedDelivery, exc: Exception) -> None:
+        """Handle terminal subscriber callback failures."""
+
+        LOGGER.warning("WebSocket event subscriber callback failed: %s", exc)
+        _metrics_increment(self._runtime_metrics, "ws_callback_failures_total")
+        _metrics_increment(self._runtime_metrics, "ws_event_callback_failures_total")
+        self._remove_delivery(delivery)
 
     @staticmethod
     def _running_loop() -> Optional[asyncio.AbstractEventLoop]:
@@ -232,6 +313,7 @@ class EventBroadcaster:
         """
 
         for delivery in list(self._subscribers):
+            _metrics_increment(self._runtime_metrics, "ws_event_enqueued_total")
             delivery.enqueue(entry)
 
 
@@ -244,6 +326,7 @@ class TelemetryBroadcaster:
         api: Optional[ReticulumTelemetryHubAPI],
         *,
         delivery_queue_size: int = DEFAULT_WS_DELIVERY_QUEUE_SIZE,
+        runtime_metrics: object | None = None,
     ) -> None:
         """Initialize the telemetry broadcaster.
 
@@ -258,9 +341,11 @@ class TelemetryBroadcaster:
         self._subscribers: set[_TelemetrySubscriber] = set()
         self._delivery_queue_size = max(int(delivery_queue_size), 1)
         self._unsubscribe_source: Optional[Callable[[], None]] = None
+        self._runtime_metrics = runtime_metrics
         self._unsubscribe_source = self._controller.register_listener(
             self._handle_telemetry
         )
+        self._publish_subscriber_gauge()
 
     def close(self) -> None:
         """Unsubscribe from telemetry and close subscriber deliveries."""
@@ -269,8 +354,7 @@ class TelemetryBroadcaster:
             self._unsubscribe_source()
             self._unsubscribe_source = None
         for subscriber in list(self._subscribers):
-            subscriber.delivery.close()
-            self._subscribers.discard(subscriber)
+            self._remove_subscriber(subscriber)
 
     def subscribe(
         self,
@@ -302,10 +386,16 @@ class TelemetryBroadcaster:
                 callback=callback,
                 loop=EventBroadcaster._running_loop(),
                 queue_size=self._delivery_queue_size,
+                on_terminal_failure=lambda delivery, exc: self._on_delivery_failure(
+                    delivery,
+                    exc,
+                ),
+                on_drop_oldest=self._record_drop_oldest,
             ),
             allowed_destinations=allowed,
         )
         self._subscribers.add(subscriber)
+        self._publish_subscriber_gauge()
 
         def _unsubscribe() -> None:
             """Remove the telemetry callback subscription.
@@ -314,10 +404,42 @@ class TelemetryBroadcaster:
                 None: Removes the callback.
             """
 
-            self._subscribers.discard(subscriber)
-            subscriber.delivery.close()
+            self._remove_subscriber(subscriber)
 
         return _unsubscribe
+
+    def _publish_subscriber_gauge(self) -> None:
+        """Publish telemetry websocket subscriber count."""
+
+        _metrics_set_gauge(
+            self._runtime_metrics,
+            "ws_telemetry_subscribers",
+            float(len(self._subscribers)),
+        )
+
+    def _remove_subscriber(self, subscriber: _TelemetrySubscriber) -> None:
+        """Remove and close a telemetry subscriber."""
+
+        self._subscribers.discard(subscriber)
+        subscriber.delivery.close()
+        self._publish_subscriber_gauge()
+
+    def _record_drop_oldest(self) -> None:
+        """Track dropped-oldest events for telemetry websocket queues."""
+
+        _metrics_increment(self._runtime_metrics, "ws_dropped_oldest_total")
+        _metrics_increment(self._runtime_metrics, "ws_telemetry_dropped_oldest_total")
+
+    def _on_delivery_failure(self, delivery: _QueuedDelivery, exc: Exception) -> None:
+        """Handle terminal telemetry subscriber callback failures."""
+
+        LOGGER.warning("WebSocket telemetry subscriber callback failed: %s", exc)
+        _metrics_increment(self._runtime_metrics, "ws_callback_failures_total")
+        _metrics_increment(self._runtime_metrics, "ws_telemetry_callback_failures_total")
+        for subscriber in list(self._subscribers):
+            if subscriber.delivery is delivery:
+                self._remove_subscriber(subscriber)
+                break
 
     def _handle_telemetry(
         self,
@@ -353,6 +475,7 @@ class TelemetryBroadcaster:
             if subscriber.allowed_destinations is not None:
                 if peer_dest not in subscriber.allowed_destinations:
                     continue
+            _metrics_increment(self._runtime_metrics, "ws_telemetry_enqueued_total")
             subscriber.delivery.enqueue(entry)
 
 
@@ -366,14 +489,17 @@ class MessageBroadcaster:
         ] = None,
         *,
         delivery_queue_size: int = DEFAULT_WS_DELIVERY_QUEUE_SIZE,
+        runtime_metrics: object | None = None,
     ) -> None:
         """Initialize the message broadcaster."""
 
         self._subscribers: set[_MessageSubscriber] = set()
         self._delivery_queue_size = max(int(delivery_queue_size), 1)
         self._unsubscribe_source: Optional[Callable[[], None]] = None
+        self._runtime_metrics = runtime_metrics
         if register_listener is not None:
             self._unsubscribe_source = register_listener(self._handle_message)
+        self._publish_subscriber_gauge()
 
     def subscribe(
         self,
@@ -389,19 +515,57 @@ class MessageBroadcaster:
                 callback=callback,
                 loop=EventBroadcaster._running_loop(),
                 queue_size=self._delivery_queue_size,
+                on_terminal_failure=lambda delivery, exc: self._on_delivery_failure(
+                    delivery,
+                    exc,
+                ),
+                on_drop_oldest=self._record_drop_oldest,
             ),
             topic_id=topic_id,
             source_hash=_normalize_peer(source_hash) if source_hash else None,
         )
         self._subscribers.add(subscriber)
+        self._publish_subscriber_gauge()
 
         def _unsubscribe() -> None:
             """Remove the message callback subscription."""
 
-            self._subscribers.discard(subscriber)
-            subscriber.delivery.close()
+            self._remove_subscriber(subscriber)
 
         return _unsubscribe
+
+    def _publish_subscriber_gauge(self) -> None:
+        """Publish message websocket subscriber count."""
+
+        _metrics_set_gauge(
+            self._runtime_metrics,
+            "ws_message_subscribers",
+            float(len(self._subscribers)),
+        )
+
+    def _remove_subscriber(self, subscriber: _MessageSubscriber) -> None:
+        """Remove and close a message subscriber."""
+
+        self._subscribers.discard(subscriber)
+        subscriber.delivery.close()
+        self._publish_subscriber_gauge()
+
+    def _record_drop_oldest(self) -> None:
+        """Track dropped-oldest events for message websocket queues."""
+
+        _metrics_increment(self._runtime_metrics, "ws_dropped_oldest_total")
+        _metrics_increment(self._runtime_metrics, "ws_message_dropped_oldest_total")
+
+    def _on_delivery_failure(self, delivery: _QueuedDelivery, exc: Exception) -> None:
+        """Handle terminal message subscriber callback failures."""
+
+        LOGGER.warning("WebSocket message subscriber callback failed: %s", exc)
+        _metrics_increment(self._runtime_metrics, "ws_callback_failures_total")
+        _metrics_increment(self._runtime_metrics, "ws_message_callback_failures_total")
+        for subscriber in list(self._subscribers):
+            if subscriber.delivery is delivery:
+                self._remove_subscriber(subscriber)
+                break
 
     def _handle_message(self, entry: Dict[str, object]) -> None:
         """Dispatch inbound messages to subscribers."""
@@ -413,6 +577,7 @@ class MessageBroadcaster:
                 continue
             if subscriber.source_hash and subscriber.source_hash != entry_source:
                 continue
+            _metrics_increment(self._runtime_metrics, "ws_message_enqueued_total")
             subscriber.delivery.enqueue(entry)
 
 
@@ -892,7 +1057,11 @@ async def handle_system_socket(
                 return
 
             last_activity_at = time.monotonic()
-            message = parse_ws_message(payload)
+            try:
+                message = parse_ws_message(payload)
+            except ValueError as exc:
+                await websocket.send_json(build_error_message("bad_request", str(exc)))
+                continue
             msg_type = _get_message_type(message)
             if msg_type == "system.subscribe":
                 data = _get_message_data(message)
@@ -903,7 +1072,10 @@ async def handle_system_socket(
                 continue
             else:
                 await websocket.send_json(build_error_message("bad_request", "Unsupported message"))
-    except Exception:  # pragma: no cover - websocket disconnects vary
+    except (WebSocketDisconnect, RuntimeError):  # pragma: no cover - websocket disconnects vary
+        return
+    except Exception as exc:  # pragma: no cover - defensive logging
+        LOGGER.warning("System websocket loop terminated with error: %s", exc)
         return
     finally:
         unsubscribe()
@@ -954,7 +1126,11 @@ async def handle_telemetry_socket(
                 return
 
             last_activity_at = time.monotonic()
-            message = parse_ws_message(payload)
+            try:
+                message = parse_ws_message(payload)
+            except ValueError as exc:
+                await websocket.send_json(build_error_message("bad_request", str(exc)))
+                continue
             msg_type = _get_message_type(message)
             if msg_type == "telemetry.subscribe":
                 data = _get_message_data(message)
@@ -999,7 +1175,10 @@ async def handle_telemetry_socket(
                 continue
             else:
                 await websocket.send_json(build_error_message("bad_request", "Unsupported message"))
-    except Exception:  # pragma: no cover - websocket disconnects vary
+    except (WebSocketDisconnect, RuntimeError):  # pragma: no cover - websocket disconnects vary
+        return
+    except Exception as exc:  # pragma: no cover - defensive logging
+        LOGGER.warning("Telemetry websocket loop terminated with error: %s", exc)
         return
     finally:
         if unsubscribe:
@@ -1041,7 +1220,11 @@ async def handle_message_socket(
                 return
 
             last_activity_at = time.monotonic()
-            message = parse_ws_message(payload)
+            try:
+                message = parse_ws_message(payload)
+            except ValueError as exc:
+                await websocket.send_json(build_error_message("bad_request", str(exc)))
+                continue
             msg_type = _get_message_type(message)
             if msg_type == "message.subscribe":
                 data = _get_message_data(message)
@@ -1076,7 +1259,12 @@ async def handle_message_socket(
                 data = _get_message_data(message)
                 try:
                     content, topic_id, destination = _get_message_send_payload(data)
-                    message_sender(content, topic_id=topic_id, destination=destination)
+                    await asyncio.to_thread(
+                        message_sender,
+                        content,
+                        topic_id=topic_id,
+                        destination=destination,
+                    )
                 except RuntimeError as exc:
                     await websocket.send_json(
                         build_error_message("service_unavailable", str(exc))
@@ -1093,7 +1281,10 @@ async def handle_message_socket(
                 await websocket.send_json(
                     build_error_message("bad_request", "Unsupported message")
                 )
-    except Exception:  # pragma: no cover - websocket disconnects vary
+    except (WebSocketDisconnect, RuntimeError):  # pragma: no cover - websocket disconnects vary
+        return
+    except Exception as exc:  # pragma: no cover - defensive logging
+        LOGGER.warning("Message websocket loop terminated with error: %s", exc)
         return
     finally:
         if unsubscribe:

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import json
 from pathlib import Path
 import re
@@ -103,6 +103,7 @@ class CommandManager:
         *,
         config_manager: HubConfigurationManager | None = None,
         event_log: EventLog | None = None,
+        destination_removed_callback: Callable[[str], None] | None = None,
     ):
         self.connections = connections
         self.tel_controller = tel_controller
@@ -110,6 +111,7 @@ class CommandManager:
         self.api = api
         self.config_manager = config_manager
         self.event_log = event_log
+        self._destination_removed_callback = destination_removed_callback
         self.pending_field_requests: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._command_aliases_cache: Dict[str, str] = {}
         self._start_time = time.time()
@@ -606,6 +608,9 @@ class CommandManager:
         dest = self._create_dest(message.source.identity)
         self.connections.pop(dest.identity.hash, None)
         identity_hex = self._identity_hex(dest.identity)
+        callback = self._destination_removed_callback
+        if callback is not None:
+            callback(identity_hex)
         self.api.leave(identity_hex)
         RNS.log(f"Connection removed: {message.source}")
         display_name, label = self._resolve_identity_label(identity_hex)

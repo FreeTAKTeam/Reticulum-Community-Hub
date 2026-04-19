@@ -1304,6 +1304,17 @@ def test_mission_registry_event_fanout_is_capability_aware(tmp_path):
         return True
 
     hub.send_message = _capture_send  # type: ignore[assignment]
+    hub.send_many = (  # type: ignore[assignment]
+        lambda message, destinations, **kwargs: all(
+            _capture_send(
+                message,
+                destination=destination,
+                fields=kwargs.get("fields"),
+                sender=kwargs.get("sender"),
+            )
+            for destination in destinations
+        )
+    )
 
     try:
         hub.api.record_identity_announce(
@@ -1431,6 +1442,17 @@ def test_rem_registry_commands_and_connected_eam_fanout(tmp_path):
             return self.source
 
     hub.send_message = _capture_send  # type: ignore[assignment]
+    hub.send_many = (  # type: ignore[assignment]
+        lambda message, destinations, **kwargs: all(
+            _capture_send(
+                message,
+                destination=destination,
+                fields=kwargs.get("fields"),
+                sender=kwargs.get("sender"),
+            )
+            for destination in destinations
+        )
+    )
 
     try:
         hub.api.record_identity_announce(
@@ -1557,6 +1579,17 @@ def test_mission_change_fanout_de_duplicates_by_change_uid(tmp_path):
         return True
 
     hub.send_message = _capture_send  # type: ignore[assignment]
+    hub.send_many = (  # type: ignore[assignment]
+        lambda message, destinations, **kwargs: all(
+            _capture_send(
+                message,
+                destination=destination,
+                fields=kwargs.get("fields"),
+                sender=kwargs.get("sender"),
+            )
+            for destination in destinations
+        )
+    )
     try:
         assert hub.mission_domain_service is not None
         domain = hub.mission_domain_service

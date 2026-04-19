@@ -299,3 +299,64 @@ def test_handle_message_socket_subscribe_send_and_errors(monkeypatch) -> None:
         assert "error" in response_types
 
     asyncio.run(_exercise())
+
+
+def test_handle_message_socket_send_supports_keyword_only_sender(monkeypatch) -> None:
+    """Ensure message.send supports keyword-only sender signatures."""
+
+    async def _exercise() -> None:
+        websocket = _FakeWebSocket(
+            [
+                {
+                    "type": "message.send",
+                    "data": {
+                        "content": "hello",
+                        "topic_id": "chat",
+                        "destination": "abcd",
+                    },
+                }
+            ]
+        )
+        broadcaster = _FakeMessageBroadcaster()
+        sent_payloads: list[dict[str, str | None]] = []
+
+        async def _fake_ping_loop(*_args, **_kwargs):
+            await asyncio.sleep(999)
+
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.authenticate_websocket",
+            lambda *args, **kwargs: asyncio.sleep(0, result=True),
+        )
+        monkeypatch.setattr(
+            "reticulum_telemetry_hub.northbound.websocket.ping_loop",
+            _fake_ping_loop,
+        )
+
+        def _message_sender(
+            content: str,
+            *,
+            topic_id: str | None = None,
+            destination: str | None = None,
+        ) -> None:
+            sent_payloads.append(
+                {
+                    "content": content,
+                    "topic_id": topic_id,
+                    "destination": destination,
+                }
+            )
+
+        await handle_message_socket(
+            websocket,
+            auth=_FakeAuth(True),
+            message_broadcaster=broadcaster,
+            message_sender=_message_sender,
+        )
+
+        assert sent_payloads == [
+            {"content": "hello", "topic_id": "chat", "destination": "abcd"}
+        ]
+        response_types = [item["type"] for item in websocket.sent]
+        assert "message.sent" in response_types
+
+    asyncio.run(_exercise())

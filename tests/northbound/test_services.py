@@ -49,6 +49,29 @@ def test_status_snapshot_includes_counts(tmp_path: Path) -> None:
 
     assert snapshot["topics"] == 1
     assert snapshot["clients"] == 0
+    assert "runtime" in snapshot
+
+
+def test_status_snapshot_includes_runtime_provider_payload(tmp_path: Path) -> None:
+    """Ensure runtime diagnostics are surfaced in status snapshots."""
+
+    api = _build_api(tmp_path)
+    event_log = EventLog()
+    telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
+    runtime_snapshot = {"counters": {"outbound_enqueued_total": 5}}
+    services = NorthboundServices(
+        api=api,
+        telemetry=telemetry,
+        event_log=event_log,
+        started_at=datetime.now(timezone.utc),
+        runtime_metrics_provider=lambda: runtime_snapshot,
+    )
+
+    snapshot = services.status_snapshot()
+    diagnostics = services.runtime_diagnostics()
+
+    assert snapshot["runtime"] == runtime_snapshot
+    assert diagnostics == runtime_snapshot
 
 
 def test_dump_routing_defaults_to_clients(tmp_path: Path) -> None:
