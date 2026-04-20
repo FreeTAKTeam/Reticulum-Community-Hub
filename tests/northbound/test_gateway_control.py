@@ -34,6 +34,20 @@ class DummyHub:
         }
 
 
+class SyncHub(DummyHub):
+    """Hub stub that records propagation sync calls."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sync_called = False
+
+    def request_propagation_sync(self) -> dict[str, object]:
+        """Record propagation sync requests."""
+
+        self.sync_called = True
+        return {"status": "sync_requested", "propagation_node": "aa"}
+
+
 def test_gateway_control_reports_running_status() -> None:
     """Report running status when the hub thread is alive."""
 
@@ -122,3 +136,40 @@ def test_gateway_control_attach_and_start() -> None:
     control.request_start()
 
     assert control.server is server
+
+
+def test_gateway_control_sync_delegates_to_hub() -> None:
+    """Delegate sync requests to the hub."""
+
+    hub = SyncHub()
+    hub_thread = threading.Thread(target=lambda: None)
+    control = GatewayControl(
+        hub=hub,
+        hub_thread=hub_thread,
+        host="127.0.0.1",
+        port=8000,
+        started_at=datetime.now(timezone.utc),
+    )
+
+    response = control.request_sync()
+
+    assert response["status"] == "sync_requested"
+    assert hub.sync_called is True
+
+
+def test_gateway_control_sync_reports_unavailable_without_hub_hook() -> None:
+    """Report unavailable sync when the hub does not expose a sync hook."""
+
+    hub = DummyHub()
+    hub_thread = threading.Thread(target=lambda: None)
+    control = GatewayControl(
+        hub=hub,
+        hub_thread=hub_thread,
+        host="127.0.0.1",
+        port=8000,
+        started_at=datetime.now(timezone.utc),
+    )
+
+    response = control.request_sync()
+
+    assert response["status"] == "unavailable"

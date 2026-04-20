@@ -93,6 +93,7 @@ class LXMFRouterConfig:
     message_storage_limit_megabytes: float = 5.0
     propagation_transfer_max_accepted_size_kb: float = 256.0
     propagation_sync_max_accepted_size_kb: float = 10240.0
+    propagation_sync_interval_minutes: int = 10
     propagation_stamp_cost_target: int | None = None
     propagation_stamp_cost_flexibility: int | None = None
     peering_cost: int | None = None
@@ -137,6 +138,9 @@ class LXMFRouterConfig:
             ),
             "propagation_sync_max_accepted_size_kb": (
                 self.propagation_sync_max_accepted_size_kb
+            ),
+            "propagation_sync_interval_minutes": (
+                self.propagation_sync_interval_minutes
             ),
             "propagation_stamp_cost_target": self.propagation_stamp_cost_target,
             "propagation_stamp_cost_flexibility": (

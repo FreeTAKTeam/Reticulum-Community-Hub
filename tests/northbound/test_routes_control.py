@@ -21,6 +21,7 @@ class DummyControl:
     def __init__(self) -> None:
         self.shutdown_called = False
         self.start_called = False
+        self.sync_called = False
 
     def status(self) -> dict[str, object]:
         """Return a fixed status payload."""
@@ -36,6 +37,12 @@ class DummyControl:
         """Record start requests."""
 
         self.start_called = True
+
+    def request_sync(self) -> dict[str, object]:
+        """Record sync requests."""
+
+        self.sync_called = True
+        return {"status": "sync_requested", "propagation_node": "aa"}
 
 
 class DummyControlNoStart:
@@ -95,6 +102,31 @@ def test_control_start_without_start_hook(tmp_path) -> None:
     response = client.post("/Control/Start", headers={"X-API-Key": "secret"})
     assert response.status_code == 200
     assert response.json()["status"] == "running"
+
+
+def test_control_sync_calls_control_hook(tmp_path) -> None:
+    """Trigger propagation sync through the control endpoint."""
+
+    control = DummyControl()
+    client = _build_app(tmp_path, control)
+
+    response = client.post("/Control/Sync", headers={"X-API-Key": "secret"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "sync_requested"
+    assert control.sync_called is True
+
+
+def test_control_sync_unavailable_without_hook(tmp_path) -> None:
+    """Return unavailable when the control surface cannot sync."""
+
+    control = DummyControlNoStart()
+    client = _build_app(tmp_path, control)
+
+    response = client.post("/Control/Sync", headers={"X-API-Key": "secret"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Sync unavailable"
 
 
 def test_control_routes_missing_when_disabled(tmp_path) -> None:

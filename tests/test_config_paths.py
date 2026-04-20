@@ -225,6 +225,7 @@ def test_lxmf_startup_options_loaded_from_propagation_section(tmp_path):
         "message_storage_limit = 12.5\n"
         "propagation_transfer_max_accepted_size = 640\n"
         "propagation_sync_max_accepted_size = 4096\n"
+        "propagation_sync_interval_minutes = 22\n"
         "propagation_stamp_cost_target = 15\n"
         "propagation_stamp_cost_flexibility = 2\n"
         "peering_cost = 9\n"
@@ -264,6 +265,7 @@ def test_lxmf_startup_options_loaded_from_propagation_section(tmp_path):
     assert lxmf.message_storage_limit_megabytes == 12.5
     assert lxmf.propagation_transfer_max_accepted_size_kb == 640
     assert lxmf.propagation_sync_max_accepted_size_kb == 4096
+    assert lxmf.propagation_sync_interval_minutes == 22
     assert lxmf.propagation_stamp_cost_target == 15
     assert lxmf.propagation_stamp_cost_flexibility == 2
     assert lxmf.peering_cost == 9
@@ -277,6 +279,19 @@ def test_lxmf_startup_options_loaded_from_propagation_section(tmp_path):
     assert lxmf.propagation_startup_prune_enabled is True
     assert lxmf.propagation_startup_max_messages == 20000
     assert lxmf.propagation_startup_max_age_days == 30
+
+
+def test_lxmf_sync_interval_defaults_when_invalid(tmp_path):
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[propagation]\n"
+        "propagation_sync_interval_minutes = invalid\n",
+        encoding="utf-8",
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path, config_path=config_path)
+
+    assert manager.config.lxmf_router.propagation_sync_interval_minutes == 10
 
 
 def test_resolve_hub_display_name_prefers_configured_value(tmp_path):

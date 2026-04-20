@@ -386,6 +386,44 @@ def test_apply_lxmf_router_runtime_config_records_nonfatal_events(tmp_path) -> N
     assert hooks == {"allow", "prioritise", "ignore_destination"}
 
 
+def test_request_propagation_sync_uses_best_candidate() -> None:
+    hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
+    candidate_hash = b"\x01" * 16
+    candidate = SimpleNamespace(
+        destination_hash=candidate_hash,
+        destination_hex=candidate_hash.hex(),
+    )
+    identity = object()
+
+    class DummyRouter:
+        def __init__(self) -> None:
+            self.active_node = None
+            self.requested_identity = None
+            self.propagation_transfer_state = 0
+            self.propagation_transfer_progress = 0.0
+            self.propagation_transfer_last_result = None
+            self.propagation_transfer_last_duplicates = 0
+
+        def set_active_propagation_node(self, destination_hash):
+            self.active_node = destination_hash
+
+        def request_messages_from_propagation_node(self, requested_identity):
+            self.requested_identity = requested_identity
+
+    router = DummyRouter()
+    hub.lxm_router = router
+    hub.my_lxmf_dest = SimpleNamespace(identity=identity)
+    hub._propagation_sync_lock = threading.Lock()
+    hub._select_best_propagation_node = lambda: candidate
+
+    response = hub.request_propagation_sync()
+
+    assert response["status"] == "sync_requested"
+    assert response["propagation_node"] == candidate_hash.hex()
+    assert router.active_node == candidate_hash
+    assert router.requested_identity is identity
+
+
 def test_handle_lxmf_on_inbound_persist_failure_records_event(tmp_path) -> None:
     hub = ReticulumTelemetryHub.__new__(ReticulumTelemetryHub)
     hub.event_log = EventLog()

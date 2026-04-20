@@ -53,5 +53,6 @@ export const endpoints = {
   controlStart: "/Control/Start",
   controlStop: "/Control/Stop",
   controlStatus: "/Control/Status",
-  controlAnnounce: "/Control/Announce"
+  controlAnnounce: "/Control/Announce",
+  controlSync: "/Control/Sync"
 };

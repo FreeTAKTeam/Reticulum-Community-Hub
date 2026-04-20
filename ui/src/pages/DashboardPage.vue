@@ -122,6 +122,15 @@
             </BaseButton>
             <BaseButton
               :disabled="controlBusy"
+              class="hud-control-btn hud-control-btn--sync"
+              icon-left="refresh"
+              variant="secondary"
+              @click="syncBackend"
+            >
+              Sync
+            </BaseButton>
+            <BaseButton
+              :disabled="controlBusy"
               class="hud-control-btn hud-control-btn--announce"
               icon-left="send"
               variant="secondary"
@@ -776,6 +785,19 @@ const sendAnnounce = async () => {
     toastStore.push(message, "success");
   } catch (error) {
     toastStore.push("Announce failed", "danger");
+  } finally {
+    controlBusy.value = false;
+  }
+};
+
+const syncBackend = async () => {
+  controlBusy.value = true;
+  try {
+    const response = await post<{ status?: string }>(endpoints.controlSync);
+    const message = response?.status === "sync_requested" ? "Propagation sync requested" : response?.status;
+    toastStore.push(message ?? "Propagation sync requested", "success");
+  } catch (error) {
+    toastStore.push("Propagation sync failed", "danger");
   } finally {
     controlBusy.value = false;
   }

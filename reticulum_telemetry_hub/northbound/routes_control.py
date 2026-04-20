@@ -23,6 +23,9 @@ class ControlService(Protocol):
     def request_announce(self) -> bool:
         """Trigger a Reticulum announce."""
 
+    def request_sync(self) -> dict[str, object]:
+        """Trigger an LXMF propagation sync."""
+
 
 def register_control_routes(
     app: FastAPI,
@@ -70,3 +73,16 @@ def register_control_routes(
         if not control.request_announce():
             raise HTTPException(status_code=503, detail="Announce unavailable")
         return {"status": "announce sent"}
+
+    @app.post("/Control/Sync", dependencies=[Depends(require_protected)])
+    def control_sync() -> dict[str, object]:
+        """Request an immediate LXMF propagation sync."""
+
+        request_sync = getattr(control, "request_sync", None)
+        if not callable(request_sync):
+            raise HTTPException(status_code=503, detail="Sync unavailable")
+        result = request_sync()
+        if not result or result.get("status") in {"unavailable", "error"}:
+            detail = str(result.get("detail") or "Sync unavailable")
+            raise HTTPException(status_code=503, detail=detail)
+        return result

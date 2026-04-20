@@ -41,6 +41,7 @@ def test_lxmf_router_config_to_dict_includes_all_fields(tmp_path):
         message_storage_limit_megabytes=42.5,
         propagation_transfer_max_accepted_size_kb=512.0,
         propagation_sync_max_accepted_size_kb=4096.0,
+        propagation_sync_interval_minutes=13,
         propagation_stamp_cost_target=12,
         propagation_stamp_cost_flexibility=2,
         peering_cost=7,
@@ -79,6 +80,7 @@ def test_lxmf_router_config_to_dict_includes_all_fields(tmp_path):
     assert serialized["propagation_sync_max_accepted_size_kb"] == pytest.approx(
         4096.0
     )
+    assert serialized["propagation_sync_interval_minutes"] == 13
     assert serialized["propagation_stamp_cost_target"] == 12
     assert serialized["propagation_stamp_cost_flexibility"] == 2
     assert serialized["peering_cost"] == 7

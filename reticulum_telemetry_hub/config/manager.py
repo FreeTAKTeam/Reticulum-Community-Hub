@@ -765,6 +765,11 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             default=256.0 * 40,
             minimum=0.38,
         )
+        propagation_sync_interval = self._coerce_optional_positive_int(
+            propagation_section.get("propagation_sync_interval_minutes")
+        )
+        if propagation_sync_interval is None:
+            propagation_sync_interval = 10
         propagation_stamp_cost_target = self._coerce_optional_positive_int(
             propagation_section.get("propagation_stamp_cost_target")
         )
@@ -838,6 +843,7 @@ class HubConfigurationManager:  # pylint: disable=too-many-instance-attributes
             message_storage_limit_megabytes=message_storage_limit,
             propagation_transfer_max_accepted_size_kb=propagation_transfer_limit,
             propagation_sync_max_accepted_size_kb=propagation_sync_limit,
+            propagation_sync_interval_minutes=propagation_sync_interval,
             propagation_stamp_cost_target=propagation_stamp_cost_target,
             propagation_stamp_cost_flexibility=propagation_stamp_cost_flexibility,
             peering_cost=peering_cost,

@@ -297,6 +297,18 @@ class GatewayControl:
             return bool(announce())
         return False
 
+    def request_sync(self) -> dict[str, object]:
+        """Request an immediate LXMF propagation sync."""
+
+        sync = getattr(self.hub, "request_propagation_sync", None)
+        if callable(sync):
+            result = sync()
+            if isinstance(result, dict):
+                return result
+            if result:
+                return {"status": "sync_requested"}
+        return {"status": "unavailable", "detail": "Sync unavailable"}
+
     def status(self) -> dict[str, object]:
         """Return a snapshot of the gateway status."""
 
