@@ -7,6 +7,7 @@ from pathlib import Path
 from reticulum_telemetry_hub.api.models import Topic
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
+from reticulum_telemetry_hub.api.storage_models import IdentityAnnounceRecord
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
@@ -72,6 +73,36 @@ def test_status_snapshot_includes_runtime_provider_payload(tmp_path: Path) -> No
 
     assert snapshot["runtime"] == runtime_snapshot
     assert diagnostics == runtime_snapshot
+
+
+def test_resolve_identity_announce_last_seen_prefers_fresh_canonical_record(
+    tmp_path: Path,
+) -> None:
+    """Ensure announce freshness uses the merged canonical identity view."""
+
+    api = _build_api(tmp_path)
+    identity = "aa" * 16
+    destination = "bb" * 16
+    stale_seen = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    fresh_seen = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    api.record_identity_announce(
+        identity,
+        display_name="Alpha",
+        source_interface="identity",
+    )
+    api.record_identity_announce(
+        destination,
+        announced_identity_hash=identity,
+        display_name="Alpha",
+        source_interface="destination",
+    )
+
+    with api._storage._Session() as session:  # pylint: disable=protected-access
+        session.get(IdentityAnnounceRecord, identity).last_seen = stale_seen
+        session.get(IdentityAnnounceRecord, destination).last_seen = fresh_seen
+        session.commit()
+
+    assert api.resolve_identity_announce_last_seen(identity) == fresh_seen
 
 
 def test_dump_routing_defaults_to_clients(tmp_path: Path) -> None:

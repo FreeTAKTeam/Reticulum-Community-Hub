@@ -70,6 +70,9 @@ class DeliveryMonitoringHooks(Protocol):
     def handle_outbound_retry_scheduled(self, payload: OutboundPayload) -> None:
         """Observe direct retry scheduling."""
 
+    def handle_outbound_direct_failure(self, payload: OutboundPayload, reason: str) -> None:
+        """Observe direct-attempt failures before retry or fallback."""
+
     def handle_outbound_propagation_fallback(self, payload: OutboundPayload) -> None:
         """Observe propagation fallback transitions."""
 
@@ -127,6 +130,7 @@ class DeliveryService:
                 delivery_failure_callback=self.handle_outbound_delivery_failure,
                 propagation_selector=self.select_best_propagation_node,
                 retry_scheduled_callback=self.handle_outbound_retry_scheduled,
+                direct_failure_callback=self.handle_outbound_direct_failure,
                 propagation_fallback_callback=self.handle_outbound_propagation_fallback,
                 attempt_started_callback=self.handle_outbound_attempt_started,
                 payload_dropped_callback=self.handle_outbound_payload_dropped,
@@ -232,6 +236,14 @@ class DeliveryService:
             f"Retrying message delivery to {destination_label}",
             metadata=self.build_outbound_attempt_metadata(payload),
         )
+
+    def handle_outbound_direct_failure(self, payload: OutboundPayload, reason: str) -> None:
+        """Track direct-delivery cooldown state after a failed attempt."""
+
+        policy = getattr(self._hub, "outbound_delivery_policy", None)
+        if policy is None or not payload.destination_hex:
+            return
+        policy.mark_direct_failure(payload.destination_hex)
 
     def handle_outbound_propagation_fallback(self, payload: OutboundPayload) -> None:
         """Record that direct delivery exhausted and propagation fallback is in use."""
@@ -470,6 +482,7 @@ class DeliveryService:
             "topic_id": payload.topic_id,
             "attempts": payload.attempts,
             "delivery_mode": payload.delivery_mode,
+            "delivery_policy_reason": payload.delivery_policy_reason,
             "enqueue_age_ms": round((time.monotonic() - payload.enqueued_at) * 1000, 3),
             "propagation_node_hex": payload.propagation_node_hex,
             "local_propagation_fallback": payload.local_propagation_fallback,

@@ -48,6 +48,7 @@ class OutboundPayload:
         attempts (int): Number of direct-delivery failures observed so far.
         next_attempt_at (float): Monotonic timestamp before the next attempt.
         delivery_mode (str): ``"direct"`` or ``"propagated"``.
+        delivery_policy_reason (str | None): Policy reason for the selected mode.
         propagation_node_hash (bytes | None): Selected propagation-node hash.
         propagation_node_hex (str | None): Selected propagation-node hash as hex.
     """
@@ -66,6 +67,7 @@ class OutboundPayload:
     next_attempt_at: float = field(default_factory=time.monotonic)
     enqueued_at: float = field(default_factory=time.monotonic)
     delivery_mode: str = "direct"
+    delivery_policy_reason: str | None = None
     propagation_node_hash: bytes | None = None
     propagation_node_hex: str | None = None
     local_propagation_fallback: bool = False
@@ -117,6 +119,9 @@ class OutboundMessageQueue:
             Callable[[], PropagationNodeCandidate | None] | None
         ) = None,
         retry_scheduled_callback: Callable[[OutboundPayload], None] | None = None,
+        direct_failure_callback: (
+            Callable[[OutboundPayload, str], None] | None
+        ) = None,
         propagation_fallback_callback: (
             Callable[[OutboundPayload], None] | None
         ) = None,
@@ -147,6 +152,8 @@ class OutboundMessageQueue:
                 Optional callback returning the best remote propagation node.
             retry_scheduled_callback (Callable[[OutboundPayload], None] | None):
                 Optional callback invoked when direct delivery is requeued.
+            direct_failure_callback (Callable[[OutboundPayload, str], None] | None):
+                Optional callback invoked when a direct attempt fails.
             propagation_fallback_callback (Callable[[OutboundPayload], None] | None):
                 Optional callback invoked when propagation fallback is selected.
             attempt_started_callback (Callable[[OutboundPayload], None] | None):
@@ -199,6 +206,7 @@ class OutboundMessageQueue:
         self._delivery_failure_callback = delivery_failure_callback
         self._propagation_selector = propagation_selector
         self._retry_scheduled_callback = retry_scheduled_callback
+        self._direct_failure_callback = direct_failure_callback
         self._propagation_fallback_callback = propagation_fallback_callback
         self._attempt_started_callback = attempt_started_callback
         self._payload_dropped_callback = payload_dropped_callback
@@ -757,6 +765,8 @@ class OutboundMessageQueue:
             with self._stats_lock:
                 self._timeout_total += 1
             self._record_counter("outbound_timeout_total")
+            if payload.delivery_mode != "propagated":
+                self._notify_direct_failure(payload, "send_timeout")
             key = (id(payload), attempt_id)
             pending = _PendingDispatch(payload, attempt_id, future, time.monotonic())
             with self._pending_dispatches_lock:
@@ -898,6 +908,20 @@ class OutboundMessageQueue:
                 getattr(RNS, "LOG_WARNING", 2),
             )
 
+    def _notify_direct_failure(self, payload: OutboundPayload, reason: str) -> None:
+        """Emit the optional direct-failure callback."""
+
+        callback = self._direct_failure_callback
+        if callback is None:
+            return
+        try:
+            callback(payload, reason)
+        except Exception as exc:
+            RNS.log(
+                f"Outbound direct-failure callback failed: {exc}",
+                getattr(RNS, "LOG_WARNING", 2),
+            )
+
     def _notify_propagation_fallback(self, payload: OutboundPayload) -> None:
         """Emit the optional propagation fallback callback."""
 
@@ -1029,6 +1053,7 @@ class OutboundMessageQueue:
             self._finalize_terminal_failure(payload, callback_message=callback_message)
             return
 
+        self._notify_direct_failure(payload, reason)
         payload.attempts += 1
         if payload.attempts < self._max_attempts:
             payload.next_attempt_at = (

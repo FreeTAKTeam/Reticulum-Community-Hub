@@ -7,6 +7,7 @@ from typing import List
 from typing import Optional
 import uuid
 
+from sqlalchemy import case
 from sqlalchemy import create_engine
 from sqlalchemy import func
 from sqlalchemy import or_
@@ -666,6 +667,47 @@ class HubStorage(HubStorageBase):
 
         with self._session_scope() as session:
             return self._identity_announce_for_identity(session, identity)
+
+    def get_canonical_identity_announce(self, identity: str) -> IdentityAnnounceRecord | None:
+        """Return merged announce metadata keyed by canonical identity."""
+
+        normalized_identity = str(identity or "").strip().lower()
+        if not normalized_identity:
+            return None
+        with self._session_scope() as session:
+            return self._identity_announce_map(
+                session,
+                identities=[normalized_identity],
+            ).get(normalized_identity)
+
+    def resolve_identity_destination_hash(self, identity: str) -> str | None:
+        """Return the best-known LXMF destination hash for an identity."""
+
+        normalized_identity = str(identity or "").strip().lower()
+        if not normalized_identity:
+            return None
+        with self._session_scope() as session:
+            record = (
+                session.query(IdentityAnnounceRecord)
+                .filter(
+                    or_(
+                        IdentityAnnounceRecord.destination_hash == normalized_identity,
+                        IdentityAnnounceRecord.announced_identity_hash == normalized_identity,
+                    )
+                )
+                .order_by(
+                    case(
+                        (IdentityAnnounceRecord.source_interface == "destination", 0),
+                        (IdentityAnnounceRecord.destination_hash == normalized_identity, 1),
+                        else_=2,
+                    ),
+                    IdentityAnnounceRecord.last_seen.desc(),
+                )
+                .first()
+            )
+        if record is None or not record.destination_hash:
+            return None
+        return str(record.destination_hash).strip().lower() or None
 
     def resolve_identity_display_names_bulk(
         self,

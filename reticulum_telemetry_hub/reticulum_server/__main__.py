@@ -119,6 +119,9 @@ from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.event_log import resolve_event_log_path
 from reticulum_telemetry_hub.reticulum_server.message_events import MessageEventEmitter
 from reticulum_telemetry_hub.reticulum_server.message_router import MessageRouter
+from reticulum_telemetry_hub.reticulum_server.delivery_policy import (
+    OutboundDeliveryPolicy,
+)
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import LxmfInbound
 from reticulum_telemetry_hub.reticulum_server.internal_adapter import ReticulumInternalAdapter
 from reticulum_telemetry_hub.reticulum_server.marker_objects import MarkerObjectManager
@@ -326,6 +329,7 @@ class AnnounceHandler:
         *,
         persist_queue_size: int = _DEFAULT_PERSIST_QUEUE_SIZE,
         capability_callback: Callable[[str, set[str]], None] | None = None,
+        presence_callback: Callable[[str], None] | None = None,
         aspect_filter: str = APP_NAME,
         decode_display_name: bool = True,
     ):
@@ -333,6 +337,7 @@ class AnnounceHandler:
         self.identities = identities
         self._api = api
         self._capability_callback = capability_callback
+        self._presence_callback = presence_callback
         self._decode_display_name_enabled = decode_display_name
         self._persist_queue: queue.Queue[
             tuple[str, str | None, str | None, str | None, list[str] | None]
@@ -422,6 +427,10 @@ class AnnounceHandler:
             if callback is not None:
                 for key in hash_keys:
                     callback(key, set(capabilities))
+        presence_callback = self._presence_callback
+        if presence_callback is not None:
+            for key in hash_keys:
+                presence_callback(key)
         if destination_key:
             self._persist_announce_async(
                 destination_key,
@@ -953,6 +962,7 @@ class ReticulumTelemetryHub:
         event_log_path = resolve_event_log_path(self.storage_path)
         self.event_log = EventLog(event_path=event_log_path)
         self.runtime_metrics = RuntimeMetricsStore()
+        self.outbound_delivery_policy = OutboundDeliveryPolicy(self)
         self.tel_controller = TelemetryController(
             db_path=telemetry_db_path,
             event_log=self.event_log,
@@ -1093,11 +1103,13 @@ class ReticulumTelemetryHub:
             self.identities,
             api=self.api,
             capability_callback=self._update_identity_capability_cache,
+            presence_callback=self._mark_presence_evidence,
         )
         self._rem_app_announce_handler = AnnounceHandler(
             self.identities,
             api=self.api,
             capability_callback=self._update_identity_capability_cache,
+            presence_callback=self._mark_presence_evidence,
             aspect_filter=REM_APP_NAME,
             decode_display_name=False,
         )
@@ -1591,18 +1603,33 @@ class ReticulumTelemetryHub:
             if self._connection_hex(connection) == normalized_identity:
                 self._cache_destination(connection)
                 return
-        try:
-            recalled = RNS.Identity.recall(bytes.fromhex(normalized_identity))
-            if recalled is None:
-                return
-            destination = RNS.Destination(
-                recalled,
-                RNS.Destination.OUT,
-                RNS.Destination.SINGLE,
-                "lxmf",
-                "delivery",
-            )
-        except Exception:
+        recall_candidates = [normalized_identity]
+        api = getattr(self, "api", None)
+        if api is not None and hasattr(api, "resolve_identity_destination_hash"):
+            try:
+                destination_hash = api.resolve_identity_destination_hash(normalized_identity)
+            except Exception:
+                destination_hash = None
+            normalized_destination_hash = normalize_hash(destination_hash)
+            if normalized_destination_hash and normalized_destination_hash not in recall_candidates:
+                recall_candidates.insert(0, normalized_destination_hash)
+        destination = None
+        for recall_hash in recall_candidates:
+            try:
+                recalled = RNS.Identity.recall(bytes.fromhex(recall_hash))
+                if recalled is None:
+                    continue
+                destination = RNS.Destination(
+                    recalled,
+                    RNS.Destination.OUT,
+                    RNS.Destination.SINGLE,
+                    "lxmf",
+                    "delivery",
+                )
+                break
+            except Exception:
+                continue
+        if destination is None:
             return
         self.connections[destination.identity.hash] = destination
         self._cache_destination(destination)
@@ -2134,6 +2161,7 @@ class ReticulumTelemetryHub:
 
             # Log the delivery details
             self.log_delivery_details(message, time_string, signature_string)
+            self._mark_presence_evidence(self._message_source_hex(message))
             self._handle_lxmf_on_inbound(message)
             envelope_error = self._validate_inbound_delivery_contract(message)
             if envelope_error is not None:
@@ -2417,8 +2445,10 @@ class ReticulumTelemetryHub:
                 connection = self._cached_destination(identity)
             if connection is None:
                 continue
-            identity_obj = getattr(connection, "identity", None)
-            destination_hash = getattr(identity_obj, "hash", None)
+            destination_hash = getattr(connection, "hash", None)
+            if not isinstance(destination_hash, (bytes, bytearray)):
+                identity_obj = getattr(connection, "identity", None)
+                destination_hash = getattr(identity_obj, "hash", None)
             resolved.append(
                 (
                     connection,
@@ -2446,10 +2476,36 @@ class ReticulumTelemetryHub:
                 chat_message_id=chat_message_id,
                 message_id=message_id,
                 topic_id=None,
-                route_type="targeted",
+                route_type="fanout",
+                delivery_mode=(
+                    getattr(self, "outbound_delivery_policy", None).delivery_decision(
+                        "fanout",
+                        identity_hex,
+                    )[0]
+                    if getattr(self, "outbound_delivery_policy", None) is not None
+                    else "direct"
+                ),
+                delivery_policy_reason=(
+                    getattr(self, "outbound_delivery_policy", None).delivery_decision(
+                        "fanout",
+                        identity_hex,
+                    )[1]
+                    if getattr(self, "outbound_delivery_policy", None) is not None
+                    else "default_direct"
+                ),
             )
             for connection, identity_hex, destination_hash in resolved
         ]
+        selected_direct_recipient_count = sum(
+            1 for payload in payloads if payload.delivery_mode != "propagated"
+        )
+        selected_propagated_recipient_count = len(payloads) - selected_direct_recipient_count
+        delivery_policy_reason_counts: dict[str, int] = {}
+        for payload in payloads:
+            reason = payload.delivery_policy_reason or "default_direct"
+            delivery_policy_reason_counts[reason] = (
+                delivery_policy_reason_counts.get(reason, 0) + 1
+            )
         enqueue_started = time.perf_counter()
         enqueue_results = queue.queue_messages(payloads)
         enqueue_duration_ms = round((time.perf_counter() - enqueue_started) * 1000, 3)
@@ -2465,6 +2521,9 @@ class ReticulumTelemetryHub:
             targeted_recipient_count=0,
             eligible_recipient_count=len(resolved),
             selected_recipient_count=len(resolved),
+            selected_direct_recipient_count=selected_direct_recipient_count,
+            selected_propagated_recipient_count=selected_propagated_recipient_count,
+            delivery_policy_reason_counts=delivery_policy_reason_counts,
             dropped_by_fanout_cap=max(len(resolved) - enqueued_count, 0),
             deferred_by_fanout_cap=0,
             drop_reason=None if enqueued_count > 0 else "no_recipients",
@@ -2635,6 +2694,11 @@ class ReticulumTelemetryHub:
 
         self._delivery_service().handle_outbound_retry_scheduled(payload)
 
+    def _handle_outbound_direct_failure(self, payload: OutboundPayload, reason: str) -> None:
+        """Track direct-delivery cooldown state after a failed attempt."""
+
+        self._delivery_service().handle_outbound_direct_failure(payload, reason)
+
 
     def _handle_outbound_propagation_fallback(self, payload: OutboundPayload) -> None:
         """Record that direct delivery exhausted and propagation fallback is in use."""
@@ -2691,6 +2755,14 @@ class ReticulumTelemetryHub:
             delivery_metadata=delivery_metadata,
         )
 
+    def _mark_presence_evidence(self, identity: str | None) -> None:
+        """Record fresh presence evidence for outbound delivery policy decisions."""
+
+        policy = getattr(self, "outbound_delivery_policy", None)
+        if policy is None:
+            return
+        policy.mark_presence(identity)
+
 
     def _delivery_metadata_snapshot(self, payload: OutboundPayload) -> dict[str, object]:
         """Return a serializable snapshot of outbound delivery state."""
@@ -2721,6 +2793,9 @@ class ReticulumTelemetryHub:
         targeted_recipient_count: int,
         eligible_recipient_count: int,
         selected_recipient_count: int,
+        selected_direct_recipient_count: int,
+        selected_propagated_recipient_count: int,
+        delivery_policy_reason_counts: dict[str, int],
         dropped_by_fanout_cap: int,
         deferred_by_fanout_cap: int,
         drop_reason: str | None,
@@ -2738,6 +2813,9 @@ class ReticulumTelemetryHub:
             targeted_recipient_count=targeted_recipient_count,
             eligible_recipient_count=eligible_recipient_count,
             selected_recipient_count=selected_recipient_count,
+            selected_direct_recipient_count=selected_direct_recipient_count,
+            selected_propagated_recipient_count=selected_propagated_recipient_count,
+            delivery_policy_reason_counts=delivery_policy_reason_counts,
             dropped_by_fanout_cap=dropped_by_fanout_cap,
             deferred_by_fanout_cap=deferred_by_fanout_cap,
             drop_reason=drop_reason,

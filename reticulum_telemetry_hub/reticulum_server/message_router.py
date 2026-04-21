@@ -42,6 +42,52 @@ class MessageRouter:
     def __init__(self, hub: Any) -> None:
         self._hub = hub
 
+    def _delivery_policy(self) -> Any:
+        """Return the hub's outbound delivery policy helper when available."""
+
+        return getattr(self._hub, "outbound_delivery_policy", None)
+
+    @staticmethod
+    def _payload_destination_hash(connection: RNS.Destination) -> bytes | None:
+        """Return the best available LXMF delivery hash for one connection."""
+
+        destination_hash = getattr(connection, "hash", None)
+        if isinstance(destination_hash, (bytes, bytearray)):
+            return bytes(destination_hash)
+        identity = getattr(connection, "identity", None)
+        identity_hash = getattr(identity, "hash", None)
+        if isinstance(identity_hash, (bytes, bytearray)):
+            return bytes(identity_hash)
+        return None
+
+    def _resolve_identity_recipient(
+        self,
+        identity: str | None,
+        excluded: set[str],
+    ) -> tuple[RNS.Destination, str, bytes | None] | None:
+        """Resolve one recipient identity through the cached recall path."""
+
+        if not identity or identity in excluded:
+            return None
+        lookup = getattr(self._hub, "_cached_destination", None)
+        if not callable(lookup):
+            return None
+
+        connection = lookup(identity)
+        if connection is None:
+            ensure = getattr(self._hub, "_ensure_reachable_identity_destination", None)
+            if callable(ensure):
+                ensure(identity)
+                connection = lookup(identity)
+        if connection is None:
+            return None
+
+        return (
+            connection,
+            identity,
+            self._payload_destination_hash(connection),
+        )
+
     def send_message(
         self,
         message: str,
@@ -113,6 +159,9 @@ class MessageRouter:
             targeted_recipient_count=enqueued_count if route_type == "targeted" else 0,
             eligible_recipient_count=metrics["eligible_recipient_count"],
             selected_recipient_count=metrics["selected_recipient_count"],
+            selected_direct_recipient_count=metrics["selected_direct_recipient_count"],
+            selected_propagated_recipient_count=metrics["selected_propagated_recipient_count"],
+            delivery_policy_reason_counts=metrics["delivery_policy_reason_counts"],
             dropped_by_fanout_cap=metrics["dropped_by_fanout_cap"],
             deferred_by_fanout_cap=metrics["deferred_by_fanout_cap"],
             drop_reason=None if enqueued_any else "no_recipients",
@@ -303,6 +352,9 @@ class MessageRouter:
         targeted_recipient_count: int,
         eligible_recipient_count: int,
         selected_recipient_count: int,
+        selected_direct_recipient_count: int,
+        selected_propagated_recipient_count: int,
+        delivery_policy_reason_counts: dict[str, int],
         dropped_by_fanout_cap: int,
         deferred_by_fanout_cap: int,
         drop_reason: str | None,
@@ -326,6 +378,9 @@ class MessageRouter:
                 "targeted_recipient_count": targeted_recipient_count,
                 "eligible_recipient_count": eligible_recipient_count,
                 "selected_recipient_count": selected_recipient_count,
+                "selected_direct_recipient_count": selected_direct_recipient_count,
+                "selected_propagated_recipient_count": selected_propagated_recipient_count,
+                "delivery_policy_reason_counts": delivery_policy_reason_counts,
                 "dropped_by_fanout_cap": dropped_by_fanout_cap,
                 "deferred_by_fanout_cap": deferred_by_fanout_cap,
                 "enqueue_duration_ms": enqueue_duration_ms,
@@ -392,18 +447,33 @@ class MessageRouter:
                 continue
             if subscribers is not None and connection_hex not in subscribers:
                 continue
-            identity = getattr(connection, "identity", None)
-            destination_hash = getattr(identity, "hash", None)
             recipients.append(
                 (
                     connection,
                     connection_hex,
-                    destination_hash if isinstance(destination_hash, (bytes, bytearray)) else None,
+                    self._payload_destination_hash(connection),
                 )
             )
+        seen_recipients = {connection_hex for _, connection_hex, _ in recipients if connection_hex}
+        if route_type == "targeted" and destination and not recipients:
+            resolved = self._resolve_identity_recipient(destination, excluded)
+            if resolved is not None:
+                recipients.append(resolved)
+        elif route_type == "fanout" and subscribers is not None:
+            for subscriber_identity in subscribers:
+                if not subscriber_identity or subscriber_identity in seen_recipients:
+                    continue
+                resolved = self._resolve_identity_recipient(subscriber_identity, excluded)
+                if resolved is None:
+                    continue
+                recipients.append(resolved)
+                seen_recipients.add(subscriber_identity)
 
         eligible_recipient_count = len(recipients)
         deferred_by_fanout_cap = 0
+        selected_direct_recipient_count = 0
+        selected_propagated_recipient_count = 0
+        delivery_policy_reason_counts: dict[str, int] = {}
         fanout_soft_max = int(getattr(self._hub, "outbound_fanout_soft_max_recipients", 0))
         if route_type == "fanout" and fanout_soft_max > 0 and eligible_recipient_count > fanout_soft_max:
             deferred_by_fanout_cap = eligible_recipient_count - fanout_soft_max
@@ -416,7 +486,15 @@ class MessageRouter:
 
         stagger_step_seconds = max(float(getattr(self._hub, "outbound_backoff", 0.5)), 0.05)
         payloads: list[OutboundPayload] = []
+        delivery_policy = self._delivery_policy()
         for index, (connection, connection_hex, destination_hash) in enumerate(recipients):
+            delivery_mode = "direct"
+            delivery_policy_reason = "default_direct"
+            if delivery_policy is not None:
+                delivery_mode, delivery_policy_reason = delivery_policy.delivery_decision(
+                    route_type,
+                    connection_hex,
+                )
             payload = OutboundPayload(
                 connection=connection,
                 message_text=message,
@@ -428,6 +506,15 @@ class MessageRouter:
                 message_id=message_id,
                 topic_id=topic_id,
                 route_type=route_type,
+                delivery_mode=delivery_mode,
+                delivery_policy_reason=delivery_policy_reason,
+            )
+            if delivery_mode == "propagated":
+                selected_propagated_recipient_count += 1
+            else:
+                selected_direct_recipient_count += 1
+            delivery_policy_reason_counts[delivery_policy_reason] = (
+                delivery_policy_reason_counts.get(delivery_policy_reason, 0) + 1
             )
             if (
                 route_type == "fanout"
@@ -441,6 +528,9 @@ class MessageRouter:
         return payloads, {
             "eligible_recipient_count": eligible_recipient_count,
             "selected_recipient_count": len(payloads),
+            "selected_direct_recipient_count": selected_direct_recipient_count,
+            "selected_propagated_recipient_count": selected_propagated_recipient_count,
+            "delivery_policy_reason_counts": delivery_policy_reason_counts,
             "dropped_by_fanout_cap": 0,
             "deferred_by_fanout_cap": deferred_by_fanout_cap,
         }

@@ -112,6 +112,7 @@ The northbound FastAPI service exposes REST + WebSocket endpoints used by the ad
 - Marker identity encryption is derived from the hub identity (no extra key configuration required).
 - Northbound message dispatch applies exactly one routing mode per send: broadcast, topic fan-out, or targeted destination.
 - Hub-originated outbound chat attaches an `RTHDelivery` envelope carrying `Message-ID`, `Content-Type`, `Schema-Version`, `TTL`, `Priority`, `Sender`, `Born`, and optional `Created-At`, and persists retry/ack state in chat history metadata.
+- The hub now uses a propagation-first outbound policy: broadcast/topic fan-out sends are queued as propagated immediately, while targeted sends get one direct attempt only when the recipient has fresh presence evidence from current runtime activity or an announce seen within the last hour.
 - The admin UI sidebar can be collapsed and pinned (stored per-browser).
 - Telemetry map markers render MDI icons when telemetry payloads include `telemetry_type`, `symbol`, `category`, or `type`.
 - The WebMap shows a live latitude/longitude readout for the map cursor.

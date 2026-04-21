@@ -274,6 +274,25 @@ class ReticulumTelemetryHubAPI:  # pylint: disable=too-many-public-methods
             return None
         return record.display_name
 
+    def resolve_identity_announce_last_seen(self, identity: str) -> datetime | None:
+        """Return the most recent announce timestamp for an identity when available."""
+
+        if not identity:
+            return None
+        record = self._storage.get_canonical_identity_announce(identity.lower())
+        if record is None or record.last_seen is None:
+            return None
+        if record.last_seen.tzinfo is None:
+            return record.last_seen.replace(tzinfo=timezone.utc)
+        return record.last_seen.astimezone(timezone.utc)
+
+    def resolve_identity_destination_hash(self, identity: str) -> str | None:
+        """Return the best-known LXMF delivery destination hash for an identity."""
+
+        if not identity:
+            return None
+        return self._storage.resolve_identity_destination_hash(identity.lower())
+
     def resolve_identity_display_names_bulk(
         self,
         identities: list[str],

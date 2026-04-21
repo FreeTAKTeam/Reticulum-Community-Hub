@@ -150,8 +150,12 @@ is the stable identifier exposed for tracking and downstream dedupe.
 
 Current queue behavior:
 
+- broadcast and topic fan-out messages are queued as propagated immediately
+- targeted messages get one direct attempt only when the recipient has fresh
+  presence evidence from current runtime activity or an announce seen within
+  the last hour
 - direct delivery attempts use bounded worker queues
-- attempts are retried with backoff and a finite max-attempt budget
+- direct failures enter cooldown until new presence evidence is observed
 - after direct delivery is exhausted, the queue may fall back to propagation
   storage when a propagation node is available
 - queue backpressure drops are persisted as terminal failures
@@ -162,6 +166,8 @@ Persisted delivery state for northbound-originated chat records includes:
 - `route_type`
 - `attempts`
 - `acked`
+- `delivery_mode`
+- `delivery_policy_reason`
 - `last_attempt_at`
 - `retry_scheduled`
 - `drop_reason`
@@ -171,7 +177,9 @@ Persisted delivery state for northbound-originated chat records includes:
 
 This state is stored in chat-message `delivery_metadata` so UI/API consumers can
 see the latest delivery outcome after restarts. The queue itself is not
-currently rehydrated from storage on startup.
+currently rehydrated from storage on startup. Clients using the propagation-
+first path must be syncing from the hub or another propagation node to receive
+queued messages reliably.
 
 ## Receive pipeline
 
