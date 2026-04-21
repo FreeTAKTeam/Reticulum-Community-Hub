@@ -51,7 +51,7 @@ class MessageRouter:
     def _payload_destination_hash(connection: RNS.Destination) -> bytes | None:
         """Return the best available LXMF delivery hash for one connection."""
 
-        destination_hash = getattr(connection, "hash", None)
+        destination_hash = getattr(connection, "_rch_delivery_destination_hash", None)
         if isinstance(destination_hash, (bytes, bytearray)):
             return bytes(destination_hash)
         identity = getattr(connection, "identity", None)

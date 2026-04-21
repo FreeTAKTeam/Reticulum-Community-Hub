@@ -18,11 +18,22 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _connection(identity_hex: str, destination_hex: str | None = None) -> SimpleNamespace:
-    return SimpleNamespace(
+def _connection(
+    identity_hex: str,
+    destination_hex: str | None = None,
+    *,
+    cold_cache: bool = False,
+    delivery_hash_override: bool = False,
+) -> SimpleNamespace:
+    connection = SimpleNamespace(
         hash=bytes.fromhex(destination_hex or identity_hex),
         identity=SimpleNamespace(hash=bytes.fromhex(identity_hex)),
     )
+    if cold_cache:
+        connection._rch_cold_cache = True
+    if delivery_hash_override and destination_hex is not None:
+        connection._rch_delivery_destination_hash = bytes.fromhex(destination_hex)
+    return connection
 
 
 class _ApiStub:
@@ -114,6 +125,9 @@ def test_targeted_payload_uses_direct_when_recent_announce_exists() -> None:
 def test_targeted_payload_uses_propagated_for_startup_loaded_cold_recipient() -> None:
     identity = "33" * 16
     hub = _HubStub([identity])
+    hub.connections = {
+        bytes.fromhex(identity): _connection(identity, cold_cache=True),
+    }
     router = MessageRouter(hub)
 
     payloads, metrics = router.build_outbound_payloads(
@@ -144,7 +158,12 @@ def test_targeted_payload_queues_recalled_cold_recipient_as_propagated() -> None
         return cached.get(key)
 
     def _ensure_reachable_identity_destination(key: str) -> None:
-        cached[key] = _connection(key, destination_hash)
+        cached[key] = _connection(
+            key,
+            destination_hash,
+            cold_cache=True,
+            delivery_hash_override=True,
+        )
 
     hub._cached_destination = _cached_destination
     hub._ensure_reachable_identity_destination = _ensure_reachable_identity_destination
@@ -213,6 +232,9 @@ def test_stale_presence_callback_evidence_expires_back_to_propagated() -> None:
     identity = "45" * 16
     stale = _utcnow() - timedelta(hours=2)
     hub = _HubStub([identity])
+    hub.connections = {
+        bytes.fromhex(identity): _connection(identity, cold_cache=True),
+    }
     hub.api.announce_last_seen[identity] = stale
     hub.outbound_delivery_policy.mark_presence(identity, observed_at=stale)
     router = MessageRouter(hub)
@@ -244,7 +266,12 @@ def test_fanout_payload_queues_recalled_cold_topic_subscriber_as_propagated() ->
         return cached.get(key)
 
     def _ensure_reachable_identity_destination(key: str) -> None:
-        cached[key] = _connection(key, destination_hash)
+        cached[key] = _connection(
+            key,
+            destination_hash,
+            cold_cache=True,
+            delivery_hash_override=True,
+        )
 
     hub._cached_destination = _cached_destination
     hub._ensure_reachable_identity_destination = _ensure_reachable_identity_destination

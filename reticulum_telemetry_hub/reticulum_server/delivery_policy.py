@@ -78,11 +78,15 @@ class OutboundDeliveryPolicy:
             return "propagated", "missing_identity"
 
         latest_presence = self._latest_presence_evidence(normalized_identity)
-        if latest_presence is None:
-            return "propagated", "no_fresh_presence"
-
         with self._lock:
             cooldown_started_at = self._direct_failure_cooldowns.get(normalized_identity)
+        if latest_presence is None:
+            if self._has_live_connection(normalized_identity):
+                if cooldown_started_at is not None:
+                    return "propagated", "direct_cooldown"
+                return "direct", "live_connection"
+            return "propagated", "no_fresh_presence"
+
         if cooldown_started_at is not None and latest_presence <= cooldown_started_at:
             return "propagated", "direct_cooldown"
 
@@ -127,3 +131,21 @@ class OutboundDeliveryPolicy:
                 self._presence_observed_at.pop(identity, None)
                 return None
             return runtime_presence
+
+    def _has_live_connection(self, identity: str) -> bool:
+        """Return True when ``identity`` is present as a non-cold live connection."""
+
+        hub = self._hub
+        lookup = getattr(hub, "_cached_destination", None)
+        connection = lookup(identity) if callable(lookup) else None
+        if connection is None:
+            connections = getattr(hub, "connections", {}) or {}
+            available = list(connections.values()) if hasattr(connections, "values") else list(connections)
+            connection_hex = getattr(hub, "_connection_hex", None)
+            for candidate in available:
+                if callable(connection_hex) and connection_hex(candidate) == identity:
+                    connection = candidate
+                    break
+        if connection is None:
+            return False
+        return not bool(getattr(connection, "_rch_cold_cache", False))

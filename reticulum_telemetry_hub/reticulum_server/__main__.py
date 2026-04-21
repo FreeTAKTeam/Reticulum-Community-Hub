@@ -1614,6 +1614,7 @@ class ReticulumTelemetryHub:
             if normalized_destination_hash and normalized_destination_hash not in recall_candidates:
                 recall_candidates.insert(0, normalized_destination_hash)
         destination = None
+        resolved_recall_hash = None
         for recall_hash in recall_candidates:
             try:
                 recalled = RNS.Identity.recall(bytes.fromhex(recall_hash))
@@ -1626,11 +1627,18 @@ class ReticulumTelemetryHub:
                     "lxmf",
                     "delivery",
                 )
+                resolved_recall_hash = recall_hash
                 break
             except Exception:
                 continue
         if destination is None:
             return
+        setattr(destination, "_rch_cold_cache", True)
+        if resolved_recall_hash and resolved_recall_hash != normalized_identity:
+            try:
+                setattr(destination, "_rch_delivery_destination_hash", bytes.fromhex(resolved_recall_hash))
+            except ValueError:
+                pass
         self.connections[destination.identity.hash] = destination
         self._cache_destination(destination)
 
@@ -3482,6 +3490,7 @@ class ReticulumTelemetryHub:
                 )
             except Exception:
                 continue
+            setattr(dest, "_rch_cold_cache", True)
             self.connections[dest.identity.hash] = dest
             self._cache_destination(dest)
             loaded += 1
