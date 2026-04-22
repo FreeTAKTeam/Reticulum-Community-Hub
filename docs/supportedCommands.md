@@ -259,31 +259,36 @@ their `command_type` starts with `checklist.`.
 The `Required capability` column reflects the current capability gate enforced
 by `checklist_sync/capabilities.py`.
 
+For the checklist tables below, the `Payload example` column shows the
+contents of `args` only. Wrap the example in the standard checklist envelope
+from the `Mission-sync and checklist envelopes` section and set `command_type`
+to the corresponding checklist command.
+
 ### Template commands
 
-| `command_type` | Required capability | Key args | Description |
-| --- | --- | --- | --- |
-| `checklist.template.list` | `checklist.template.read` | optional `search`, `sort_by` | List checklist templates. |
-| `checklist.template.get` | `checklist.template.read` | `template_uid` | Return one checklist template. |
-| `checklist.template.create` | `checklist.template.write` | `template` | Create a checklist template. |
-| `checklist.template.update` | `checklist.template.write` | `template_uid`, `patch` | Update a checklist template. |
-| `checklist.template.clone` | `checklist.template.write` | `source_template_uid`, `template_name`; optional `description` | Clone a checklist template. |
-| `checklist.template.delete` | `checklist.template.delete` | `template_uid` | Delete a checklist template. |
+| `command_type` | Required capability | Key args | Payload example (`args`) | Description |
+| --- | --- | --- | --- | --- |
+| `checklist.template.list` | `checklist.template.read` | optional `search`, `sort_by` | `{"search":"evac","sort_by":"name_desc"}` | List checklist templates. |
+| `checklist.template.get` | `checklist.template.read` | `template_uid` | `{"template_uid":"tmpl-evac-001"}` | Return one checklist template. |
+| `checklist.template.create` | `checklist.template.write` | `template` | `{"template":{"template_name":"Evacuation Checklist","description":"Shared evac template","created_by_team_member_rns_identity":"abcd1234","columns":[{"column_name":"Due","column_type":"RELATIVE_TIME","column_editable":false,"is_removable":false,"system_key":"DUE_RELATIVE_DTG"},{"column_name":"Task","column_type":"SHORT_STRING","column_editable":true,"is_removable":true}]}}` | Create a checklist template. |
+| `checklist.template.update` | `checklist.template.write` | `template_uid`, `patch` | `{"template_uid":"tmpl-evac-001","patch":{"description":"Updated shared evac template"}}` | Update a checklist template. |
+| `checklist.template.clone` | `checklist.template.write` | `source_template_uid`, `template_name`; optional `description` | `{"source_template_uid":"tmpl-evac-001","template_name":"Evacuation Checklist Copy","description":"Variant for sector bravo"}` | Clone a checklist template. |
+| `checklist.template.delete` | `checklist.template.delete` | `template_uid` | `{"template_uid":"tmpl-evac-001"}` | Delete a checklist template. |
 
 ### Checklist lifecycle commands
 
-| `command_type` | Required capability | Key args | Description |
-| --- | --- | --- | --- |
-| `checklist.list.active` | `checklist.read` | optional `search`, `sort_by` | List active checklists. |
-| `checklist.create.online` | `checklist.write` | checklist payload | Create an online checklist. |
-| `checklist.create.offline` | `checklist.write` | checklist payload | Create an offline checklist. |
-| `checklist.update` | `checklist.write` | `checklist_uid`, `patch` | Update a checklist. |
-| `checklist.delete` | `checklist.write` | `checklist_uid` | Delete a checklist. |
-| `checklist.import.csv` | `checklist.write` | import payload | Import a checklist from CSV-shaped payload data. |
-| `checklist.join` | `checklist.join` | `checklist_uid` | Join a checklist as the sending identity. |
-| `checklist.get` | `checklist.read` | `checklist_uid` | Return one checklist. |
-| `checklist.upload` | `checklist.upload` | `checklist_uid` | Upload a checklist state snapshot. |
-| `checklist.feed.publish` | `checklist.feed.publish` | `checklist_uid`, `mission_feed_uid` | Publish a checklist feed update. |
+| `command_type` | Required capability | Key args | Payload example (`args`) | Description |
+| --- | --- | --- | --- | --- |
+| `checklist.list.active` | `checklist.read` | optional `search`, `sort_by` | `{"search":"evac","sort_by":"created_at_desc"}` | List active checklists. |
+| `checklist.create.online` | `checklist.write` | checklist payload | `{"name":"Mission Alpha Evac","template_uid":"tmpl-evac-001","mission_uid":"mission-alpha","description":"Shared run for Alpha","start_time":"2026-04-22T12:00:00Z"}` | Create an online checklist. |
+| `checklist.create.offline` | `checklist.write` | checklist payload | `{"name":"Local Draft Excheck","mission_uid":"mission-alpha","sync_state":"LOCAL_ONLY","origin_type":"BLANK_TEMPLATE","columns":[{"column_name":"Due","column_type":"RELATIVE_TIME","column_editable":false,"is_removable":false,"system_key":"DUE_RELATIVE_DTG"},{"column_name":"Task","column_type":"SHORT_STRING","column_editable":true,"is_removable":true}]}` | Create an offline checklist. |
+| `checklist.update` | `checklist.write` | `checklist_uid`, `patch` | `{"checklist_uid":"chk-001","patch":{"description":"Updated after briefing","mission_uid":"mission-bravo"}}` | Update a checklist. |
+| `checklist.delete` | `checklist.write` | `checklist_uid` | `{"checklist_uid":"chk-001"}` | Delete a checklist. |
+| `checklist.import.csv` | `checklist.write` | import payload | `{"csv_filename":"evac.csv","csv_base64":"VGFzayxEdWUKQ2hlY2sgaW4sMAo=","mission_uid":"mission-alpha"}` | Import a checklist from CSV-shaped payload data. |
+| `checklist.join` | `checklist.join` | `checklist_uid` | `{"checklist_uid":"chk-001"}` | Join a checklist as the sending identity. |
+| `checklist.get` | `checklist.read` | `checklist_uid` | `{"checklist_uid":"chk-001"}` | Return one checklist. |
+| `checklist.upload` | `checklist.upload` | `checklist_uid` | `{"checklist_uid":"chk-001"}` | Upload a checklist state snapshot. |
+| `checklist.feed.publish` | `checklist.feed.publish` | `checklist_uid`, `mission_feed_uid` | `{"checklist_uid":"chk-001","mission_feed_uid":"feed-mission-alpha"}` | Publish a checklist feed update. |
 
 ### Shared Excheck/task workflow
 
@@ -300,13 +305,13 @@ Use `checklist.create.offline` only for explicit local drafts that should stay
 
 ### Checklist task editing commands
 
-| `command_type` | Required capability | Key args | Description |
-| --- | --- | --- | --- |
-| `checklist.task.status.set` | `checklist.write` | `checklist_uid`, `task_uid`, status payload | Update task status. |
-| `checklist.task.row.add` | `checklist.write` | `checklist_uid`, row payload | Add a checklist task row. |
-| `checklist.task.row.delete` | `checklist.write` | `checklist_uid`, `task_uid` | Delete a checklist task row. |
-| `checklist.task.row.style.set` | `checklist.write` | `checklist_uid`, `task_uid`, style payload | Update row styling. |
-| `checklist.task.cell.set` | `checklist.write` | `checklist_uid`, `task_uid`, `column_uid`, cell payload | Update a single checklist task cell. |
+| `command_type` | Required capability | Key args | Payload example (`args`) | Description |
+| --- | --- | --- | --- | --- |
+| `checklist.task.status.set` | `checklist.write` | `checklist_uid`, `task_uid`, status payload | `{"checklist_uid":"chk-001","task_uid":"task-001","user_status":"COMPLETE","changed_by_team_member_rns_identity":"abcd1234"}` | Update task status. |
+| `checklist.task.row.add` | `checklist.write` | `checklist_uid`, row payload | `{"checklist_uid":"chk-001","number":4,"due_relative_minutes":30,"legacy_value":"Confirm rally point"}` | Add a checklist task row. |
+| `checklist.task.row.delete` | `checklist.write` | `checklist_uid`, `task_uid` | `{"checklist_uid":"chk-001","task_uid":"task-004"}` | Delete a checklist task row. |
+| `checklist.task.row.style.set` | `checklist.write` | `checklist_uid`, `task_uid`, style payload | `{"checklist_uid":"chk-001","task_uid":"task-002","row_background_color":"#402020","line_break_enabled":true}` | Update row styling. |
+| `checklist.task.cell.set` | `checklist.write` | `checklist_uid`, `task_uid`, `column_uid`, cell payload | `{"checklist_uid":"chk-001","task_uid":"task-002","column_uid":"col-task","value":"Move to alternate pickup","updated_by_team_member_rns_identity":"abcd1234"}` | Update a single checklist task cell. |
 
 ## R3AKT northbound routes that are not LXMF commands
 

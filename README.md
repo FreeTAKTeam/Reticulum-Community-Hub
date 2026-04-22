@@ -72,10 +72,11 @@ For configuration, services, and client usage details, see `docs/userManual.md`.
 
 ## Transport runtime notes
 
-- RCH 2.9.0 targets `RNS 1.1.7` and `LXMF 0.9.5`.
+- RCH 2.9.1 targets `RNS 1.1.9` and `LXMF 0.9.6`.
+- Security note: `RNS 1.1.9` includes the upstream fix for the BZ2 decompression-bomb issue affecting resource transfers and stream messages.
 - Capability announces now preserve upstream announce extension slots, so RCH can append its own capability payload without overwriting LXMF functionality signaling when peers start advertising it.
-- Compatibility warning: the 2.9.0 announce capability layout is not backward-compatible with older RCH nodes that only read slot `2` for the RCH capability payload. Mixed-version deployments can lose capability discovery until all participating RCH nodes are upgraded.
-- RCH still keeps two local LXMF runtime guards for `LXMPeer.offer_response()` integer error responses and zero-duration stamp-speed calculation because those failure paths remain present in upstream LXMF 0.9.5.
+- Compatibility warning: the 2.9.1 announce capability layout is not backward-compatible with older RCH nodes that only read slot `2` for the RCH capability payload. Mixed-version deployments can lose capability discovery until all participating RCH nodes are upgraded.
+- RCH still keeps two local LXMF runtime guards for `LXMPeer.offer_response()` integer error responses and zero-duration stamp-speed calculation because those failure paths remain present in upstream LXMF 0.9.6.
 
 ## Install from PyPI
 
