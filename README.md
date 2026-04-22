@@ -22,6 +22,7 @@ Read our full manifesto: [docs/Manifesto_Reticulum_Community_Hub.md](docs/Manife
 - Operator-managed map markers backed by Reticulum object identities and telemetry updates.
 - TAK bridge for chat and location updates (Optional).
 - Capability announces embedded in Reticulum announces for feature discovery.
+- RNS 1.1.7 and LXMF 0.9.5 support, including announce-slot compatibility with LXMF functionality signaling.
 
 ## What it looks like
 
@@ -68,6 +69,13 @@ Read our full manifesto: [docs/Manifesto_Reticulum_Community_Hub.md](docs/Manife
    ```
 
 For configuration, services, and client usage details, see `docs/userManual.md`.
+
+## Transport runtime notes
+
+- RCH 2.9.0 targets `RNS 1.1.7` and `LXMF 0.9.5`.
+- Capability announces now preserve upstream announce extension slots, so RCH can append its own capability payload without overwriting LXMF functionality signaling when peers start advertising it.
+- Compatibility warning: the 2.9.0 announce capability layout is not backward-compatible with older RCH nodes that only read slot `2` for the RCH capability payload. Mixed-version deployments can lose capability discovery until all participating RCH nodes are upgraded.
+- RCH still keeps two local LXMF runtime guards for `LXMPeer.offer_response()` integer error responses and zero-duration stamp-speed calculation because those failure paths remain present in upstream LXMF 0.9.5.
 
 ## Install from PyPI
 

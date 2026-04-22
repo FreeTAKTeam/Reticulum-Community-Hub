@@ -332,11 +332,21 @@ def append_capabilities_to_announce_app_data(
     """
 
     base_list = _decode_announce_list(app_data)
-    base_list = list(base_list[:2])
-    if len(base_list) < 2:
-        base_list.extend([None] * (2 - len(base_list)))
-    base_list.append(capability_payload)
-    return msgpack.packb(base_list, use_bin_type=True)
+    base_slots = list(base_list[:2])
+    if len(base_slots) < 2:
+        base_slots.extend([None] * (2 - len(base_slots)))
+
+    # Reason: LXMF 0.9.5 introduced functionality-slot handling for announce
+    # metadata. Preserve any non-RCH extension slots so RCH does not overwrite
+    # upstream data, while still replacing any older embedded RCH payload.
+    preserved_extension_slots: list[object] = []
+    for slot in base_list[2:]:
+        if decode_inbound_capability_payload(slot) is not None:
+            continue
+        preserved_extension_slots.append(slot)
+
+    combined_slots = [*base_slots, *preserved_extension_slots, capability_payload]
+    return msgpack.packb(combined_slots, use_bin_type=True)
 
 
 def _decode_announce_list(

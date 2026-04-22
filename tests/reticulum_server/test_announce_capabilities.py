@@ -112,6 +112,26 @@ def test_append_capabilities_to_announce_app_data():
     assert decoded[2] == result.encoded
 
 
+def test_append_capabilities_preserves_upstream_extension_slots():
+    encoder = select_capability_encoder()
+    payload = build_capability_payload(
+        rch_version="1.2.3",
+        caps=["telemetry_relay"],
+        roles=None,
+        include_timestamp=False,
+    )
+    result = encode_capability_payload(payload, encoder=encoder, max_bytes=512)
+    base = msgpack.packb([b"Name", 3, [0]], use_bin_type=True)
+
+    combined = append_capabilities_to_announce_app_data(base, result.encoded)
+    decoded = msgpack.unpackb(combined, raw=False)
+
+    assert decoded[0] == b"Name"
+    assert decoded[1] == 3
+    assert decoded[2] == [0]
+    assert decoded[3] == result.encoded
+
+
 def test_append_capabilities_handles_legacy_app_data():
     encoder = select_capability_encoder()
     payload = build_capability_payload(
@@ -128,6 +148,30 @@ def test_append_capabilities_handles_legacy_app_data():
     assert decoded[0] == b"LegacyName"
     assert decoded[1] is None
     assert decoded[2] == result.encoded
+
+
+def test_append_capabilities_replaces_existing_rch_extension_slot():
+    encoder = select_capability_encoder()
+    original = build_capability_payload(
+        rch_version="1.2.3",
+        caps=["telemetry_relay"],
+        roles=None,
+        include_timestamp=False,
+    )
+    updated = build_capability_payload(
+        rch_version="1.2.4",
+        caps=["r3akt"],
+        roles=None,
+        include_timestamp=False,
+    )
+    original_encoded = encode_capability_payload(original, encoder=encoder, max_bytes=512)
+    updated_encoded = encode_capability_payload(updated, encoder=encoder, max_bytes=512)
+    base = msgpack.packb([b"Name", 3, [0], original_encoded.encoded], use_bin_type=True)
+
+    combined = append_capabilities_to_announce_app_data(base, updated_encoded.encoded)
+    decoded = msgpack.unpackb(combined, raw=False)
+
+    assert decoded == [b"Name", 3, [0], updated_encoded.encoded]
 
 
 def test_decode_inbound_capability_payload_normalizes_caps() -> None:

@@ -517,10 +517,12 @@ class AnnounceHandler:
             )
         if not isinstance(decoded, list) or len(decoded) < 3:
             return set()
-        payload = decode_inbound_capability_payload(decoded[2])
-        if not isinstance(payload, dict):
-            return set()
-        return set(RemRegistryService.normalize_capabilities(payload.get("caps")))
+        for slot in decoded[2:]:
+            payload = decode_inbound_capability_payload(slot)
+            if not isinstance(payload, dict):
+                continue
+            return set(RemRegistryService.normalize_capabilities(payload.get("caps")))
+        return set()
 
     def _persist_announce_async(
         self,

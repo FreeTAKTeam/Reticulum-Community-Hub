@@ -82,6 +82,30 @@ def test_announce_handler_extracts_capabilities_from_app_data() -> None:
     assert "r3akt" in flattened_caps
 
 
+def test_announce_handler_extracts_capabilities_from_post_functionality_slot() -> None:
+    captured: list[tuple[str, set[str]]] = []
+    handler = AnnounceHandler(
+        {},
+        capability_callback=lambda identity, caps: captured.append((identity, set(caps))),
+    )
+    capability_payload = msgpack.packb(
+        {"app": "rch", "schema": 1, "caps": ["R3AKT", "telemetry_relay"]},
+        use_bin_type=True,
+    )
+    announce_data = msgpack.packb([b"Name", 1, [0], capability_payload], use_bin_type=True)
+
+    handler.received_announce(
+        b"\x01\x02",
+        announced_identity=b"\x0a\x0b",
+        app_data=announce_data,
+    )
+
+    assert captured
+    flattened_caps = {cap for _, caps in captured for cap in caps}
+    assert "r3akt" in flattened_caps
+    assert "telemetry_relay" in flattened_caps
+
+
 def test_announce_handler_extracts_plain_string_rem_capabilities() -> None:
     captured: list[tuple[str, set[str]]] = []
     handler = AnnounceHandler(
