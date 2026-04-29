@@ -1,20 +1,20 @@
-# Release 2.9.1
+# Release 2.9.2
 
 ## Overview
-This release rolls the in-progress 2.9.0 transport work forward into a 2.9.1 security patch using Reticulum 1.1.9 and LXMF 0.9.6, keeps the current RCH announce-slot behavior, and preserves the minimum local runtime guards still required after the upstream 0.9.6 audit.
+This release upgrades the 2.9.1 transport baseline to Reticulum 1.2.0 while keeping LXMF 0.9.6, preserves the current RCH announce-slot behavior, and keeps the minimum local runtime guards still required after re-auditing the installed upstream code.
 
 ## Compatibility warning
-- RCH 2.9.1 keeps the announce capability slot layout introduced in the in-progress 2.9.0 transport work when upstream LXMF extension slots are present.
-- Older RCH nodes that only inspect announce app-data slot `2` for the RCH capability payload will not discover capabilities from upgraded 2.9.1 peers in mixed-version deployments.
+- RCH 2.9.2 keeps the announce capability slot layout introduced in the in-progress 2.9.0 transport work when upstream LXMF extension slots are present.
+- Older RCH nodes that only inspect announce app-data slot `2` for the RCH capability payload will not discover capabilities from upgraded 2.9.2 peers in mixed-version deployments.
 - Upgrade participating RCH nodes together if capability discovery continuity matters.
 
 ## Detailed improvements
 
-### 1) Transport dependency security upgrade
-- Upgraded Python package pins and lock state to `rns ^1.1.9` and `lxmf ^0.9.6`.
-- Updated packaged app versions to `2.9.1` across Python, UI, and Electron metadata.
+### 1) Transport dependency upgrade
+- Upgraded Python package pins and lock state to `rns ^1.2.0`; `lxmf` remains `^0.9.6`.
+- Updated packaged app versions to `2.9.2` across Python, UI, and Electron metadata.
 - Verified that existing Reticulum info surfaces continue to report installed `RNS` and `LXMF` versions without introducing a new API contract.
-- `RNS 1.1.9` includes the upstream fix for the BZ2 decompression-bomb issue affecting resource transfers and stream messages.
+- `RNS 1.2.0` adds native Git-over-Reticulum support, the `rnsh` utility, and upstream transport/runtime cleanup and optimizations.
 
 ### 2) Announce compatibility with evolving LXMF metadata
 - Hardened RCH announce app-data composition so it preserves non-RCH extension slots instead of truncating announce payloads back to `[display_name, stamp_cost, ...]`.

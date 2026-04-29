@@ -1,4 +1,5 @@
 # TASKS
+- 2026-04-29: DONE. Upgraded the 2.9.1 transport baseline to RNS 1.2.0 while keeping LXMF 0.9.6, retained the documented mixed-version announce warning, and refreshed validation/docs for the 2.9.2 patch release.
 - 2026-04-22: DONE. Rolled the in-progress 2.9.0 transport upgrade forward to 2.9.1 with RNS 1.1.9/LXMF 0.9.6, retained the documented mixed-version announce warning, and refreshed validation/docs for the security patch.
 - 2026-04-22: DONE. Update `docs/supportedCommands.md` checklist command tables to add a payload-example column showing representative southbound `args` payloads.
 - 2026-04-21: DONE. Upgraded RNS/LXMF to 1.1.7/0.9.5, preserved the still-needed LXMF runtime guards, hardened announce-slot compatibility, and documented the transport/runtime impact.

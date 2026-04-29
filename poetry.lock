@@ -1756,14 +1756,14 @@ test = ["coverage", "pytest"]
 
 [[package]]
 name = "rns"
-version = "1.1.9"
+version = "1.2.0"
 description = "Self-configuring, encrypted and resilient mesh networking stack for LoRa, packet radio, WiFi and everything in between"
 optional = false
 python-versions = ">=3.7"
 groups = ["main"]
 files = [
-    {file = "rns-1.1.9-py3-none-any.whl", hash = "sha256:39a131aeb5d76fd73bfc67f68135f49ab0cf8628af154e04096a05c208ce77b6"},
-    {file = "rns-1.1.9.tar.gz", hash = "sha256:f15ab1336e6cf494666f836dfdc42d1ea5c41b917341626e5e6c9ecec9ce32f7"},
+    {file = "rns-1.2.0-py3-none-any.whl", hash = "sha256:b58e97332241755ed32e309d46e09615a123490430ae85fcbdec9318c9e26154"},
+    {file = "rns-1.2.0.tar.gz", hash = "sha256:b34f1fc0339cfff2c53a3bc5a2420d79dbc6cd09077901828c0bc030f8da7b48"},
 ]
 
 [package.dependencies]
@@ -2221,4 +2221,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "7d957e14f2e03dbfb31403a22623dc9c6b125a7300f999844d3e043e53353873"
+content-hash = "6bad131a494db1cdb14137e48dfbb919b87c329691ac170db1ae0a0b6f0bc1af"
