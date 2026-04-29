@@ -23,6 +23,7 @@ from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.__main__ import APP_NAME
 from reticulum_telemetry_hub.reticulum_server.__main__ import REM_APP_NAME
+from reticulum_telemetry_hub.reticulum_server.__main__ import R3AKT_CUSTOM_DATA_FIELD
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 from reticulum_telemetry_hub.reticulum_server.__main__ import _dispatch_coroutine
 
@@ -1583,6 +1584,238 @@ def test_rem_registry_commands_and_connected_eam_fanout(tmp_path):
         assert command_payload["command_type"] == "mission.registry.eam.upsert"
         assert command_payload["args"]["eam_uid"] == "eam-1"
         assert generic_messages
+    finally:
+        hub.shutdown()
+
+
+def test_connected_rem_checklist_changes_fan_out_as_field_commands(tmp_path):
+    hub = ReticulumTelemetryHub("Daemon", str(tmp_path), tmp_path / "identity")
+
+    rem_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    generic_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    r3akt_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    rem_identity = rem_dest.identity.hash.hex().lower()
+    generic_identity = generic_dest.identity.hash.hex().lower()
+    r3akt_identity = r3akt_dest.identity.hash.hex().lower()
+    hub.connections = {
+        rem_dest.identity.hash: rem_dest,
+        generic_dest.identity.hash: generic_dest,
+        r3akt_dest.identity.hash: r3akt_dest,
+    }
+    outbound: list[dict[str, object]] = []
+
+    def _capture_send(
+        message: str,
+        *,
+        topic: str | None = None,
+        destination: str | None = None,
+        exclude: set[str] | None = None,
+        fields: dict | None = None,
+        sender: RNS.Destination | None = None,
+    ) -> bool:
+        outbound.append(
+            {
+                "message": message,
+                "topic": topic,
+                "destination": destination,
+                "exclude": exclude,
+                "fields": fields,
+                "sender": sender,
+            }
+        )
+        return True
+
+    class _InboundMessage:
+        def __init__(self, source_destination: RNS.Destination) -> None:
+            self.source = source_destination
+            self.fields: dict = {}
+
+        def get_source(self):
+            return self.source
+
+    hub.send_message = _capture_send  # type: ignore[assignment]
+    hub.send_many = (  # type: ignore[assignment]
+        lambda message, destinations, **kwargs: all(
+            _capture_send(
+                message,
+                destination=destination,
+                fields=kwargs.get("fields"),
+                sender=kwargs.get("sender"),
+            )
+            for destination in destinations
+        )
+    )
+
+    try:
+        hub.api.record_identity_announce(
+            rem_identity,
+            display_name="REM Alpha",
+            announce_capabilities="R3AKT,EMergencyMessages",
+        )
+        hub.api.record_identity_announce(
+            generic_identity,
+            display_name="Generic Bravo",
+            announce_capabilities=["telemetry"],
+        )
+        hub.api.record_identity_announce(
+            r3akt_identity,
+            display_name="R3AKT Charlie",
+            announce_capabilities=["R3AKT"],
+        )
+        hub.command_handler(
+            [
+                {
+                    "command_id": "mode-1",
+                    "source": {"rns_identity": rem_identity},
+                    "timestamp": "2026-04-02T12:00:00Z",
+                    "command_type": "rem.registry.mode.set",
+                    "args": {"mode": "connected"},
+                }
+            ],
+            _InboundMessage(rem_dest),
+        )
+
+        assert hub.mission_domain_service is not None
+        domain = hub.mission_domain_service
+        domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission"})
+        domain.upsert_team(
+            {"uid": "team-1", "team_name": "Ops", "mission_uids": ["mission-1"]}
+        )
+        domain.upsert_team_member(
+            {
+                "uid": "member-rem",
+                "team_uid": "team-1",
+                "rns_identity": rem_identity,
+                "display_name": "REM Alpha",
+            }
+        )
+        domain.upsert_team_member(
+            {
+                "uid": "member-generic",
+                "team_uid": "team-1",
+                "rns_identity": generic_identity,
+                "display_name": "Generic Bravo",
+            }
+        )
+        domain.upsert_team_member(
+            {
+                "uid": "member-r3akt",
+                "team_uid": "team-1",
+                "rns_identity": r3akt_identity,
+                "display_name": "R3AKT Charlie",
+            }
+        )
+
+        checklist = domain.create_checklist_online(
+            {
+                "mission_uid": "mission-1",
+                "name": "Shared ExCheck",
+                "description": "Shared to REM",
+                "start_time": "2026-04-02T12:00:00Z",
+                "columns": [
+                    {
+                        "column_name": "Due",
+                        "display_order": 1,
+                        "column_type": "RELATIVE_TIME",
+                        "column_editable": False,
+                        "is_removable": False,
+                        "system_key": "DUE_RELATIVE_DTG",
+                    },
+                    {
+                        "column_name": "Task",
+                        "display_order": 2,
+                        "column_type": "SHORT_STRING",
+                        "column_editable": True,
+                        "is_removable": True,
+                    },
+                ],
+                "source_identity": "hub-test",
+            }
+        )
+        checklist_uid = str(checklist["uid"])
+        updated = domain.add_checklist_task_row(
+            checklist_uid,
+            {
+                "number": 1,
+                "due_relative_minutes": 10,
+                "legacy_value": "Inspect area",
+            },
+        )
+        task_uid = str(updated["tasks"][0]["task_uid"])
+        task_column_uid = str(
+            next(
+                column["column_uid"]
+                for column in updated["columns"]
+                if column["column_type"] == "SHORT_STRING"
+            )
+        )
+        domain.set_checklist_task_cell(
+            checklist_uid,
+            task_uid,
+            task_column_uid,
+            {"value": "Inspect alternate route"},
+        )
+
+        rem_commands = [
+            item
+            for item in outbound
+            if item.get("destination") == rem_identity
+            and isinstance(item.get("fields"), dict)
+            and LXMF.FIELD_COMMANDS in item["fields"]
+        ]
+        generic_messages = [
+            item for item in outbound if item.get("destination") == generic_identity
+        ]
+        r3akt_messages = [
+            item for item in outbound if item.get("destination") == r3akt_identity
+        ]
+
+        command_types = [
+            item["fields"][LXMF.FIELD_COMMANDS][0]["command_type"]
+            for item in rem_commands
+        ]
+        assert "checklist.create.online" in command_types
+        assert "checklist.task.row.add" in command_types
+        assert "checklist.task.cell.set" in command_types
+        create_command = next(
+            item["fields"][LXMF.FIELD_COMMANDS][0]
+            for item in rem_commands
+            if item["fields"][LXMF.FIELD_COMMANDS][0]["command_type"]
+            == "checklist.create.online"
+        )
+        assert create_command["args"]["checklist_uid"] == checklist_uid
+        assert create_command["args"]["mission_uid"] == "mission-1"
+        assert create_command["args"]["columns"]
+        assert create_command["args"]["total_tasks"] == 0
+        participants = set(create_command["args"]["participant_rns_identities"])
+        assert rem_identity in participants
+        assert generic_identity in participants
+        assert r3akt_identity in participants
+        assert r3akt_messages
+        assert all(
+            LXMF.FIELD_COMMANDS not in (item.get("fields") or {})
+            for item in r3akt_messages
+        )
+        assert any(
+            R3AKT_CUSTOM_DATA_FIELD in (item.get("fields") or {})
+            for item in r3akt_messages
+        )
+        assert any(
+            "r3akt mission delta" in str(item.get("message") or "")
+            for item in r3akt_messages
+        )
+        assert generic_messages
+        assert all(
+            LXMF.FIELD_COMMANDS not in (item.get("fields") or {})
+            for item in generic_messages
+        )
+        assert any("Mission" in str(item.get("message") or "") for item in generic_messages)
     finally:
         hub.shutdown()
 

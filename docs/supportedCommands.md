@@ -300,6 +300,15 @@ RCH Exchecks are shared by default through the checklist command family:
 - change completion state with `checklist.task.status.set`
 - publish to a mission feed only when needed with `checklist.feed.publish`
 
+Successful checklist commands are silent over LXMF by default. Invalid,
+unauthorized, or unsupported checklist commands may return one compact
+`rejected` payload in `FIELD_RESULTS` for diagnostics.
+
+In REM connected mode, outbound shared ExCheck updates to REM mission members
+are sent as `FIELD_COMMANDS` (`0x09`) checklist command envelopes. R3AKT
+non-REM peers keep the existing mission-change custom fields, and generic peers
+keep the readable text/Markdown fallback.
+
 Use `checklist.create.offline` only for explicit local drafts that should stay
 `OFFLINE` / `LOCAL_ONLY` until they are uploaded.
 
@@ -339,12 +348,14 @@ are not separate LXMF commands unless listed above.
 
 ## Notes
 
-- `FIELD_COMMANDS` (`0x09`) is ingress-only. RCH does not wrap replies in a
-  second `FIELD_COMMANDS` envelope.
+- `FIELD_COMMANDS` (`0x09`) is the ingress command field. REM connected-mode
+  checklist fanout also uses it outbound so REM can process ExCheck row updates
+  as commands.
 - Legacy/plugin command replies include `FIELD_RESULTS` (`0x0A`) in addition to
   human-readable message text.
-- Mission-sync and checklist replies also use `FIELD_RESULTS` plus
-  `FIELD_EVENT` when available.
+- Mission-sync replies also use `FIELD_RESULTS` plus `FIELD_EVENT` when
+  available. Checklist-sync success replies are silent by default; diagnostic
+  checklist rejections use `FIELD_RESULTS`.
 - REM registry replies use `FIELD_RESULTS` and may include `FIELD_EVENT`
   (`rem.registry.mode.updated`, `rem.registry.peers.listed`).
 - Telemetry replies use `FIELD_TELEMETRY_STREAM` (`0x03`) instead of
@@ -363,8 +374,10 @@ are not separate LXMF commands unless listed above.
   UI/API.
 - In REM connected mode, outbound EAM updates to REM peers are sent as
   `FIELD_COMMANDS` using `mission.registry.eam.upsert` / `mission.registry.eam.delete`.
-  Mission log updates to REM peers are sent as structured `FIELD_EVENT` payloads.
-  Non-REM LXMF peers receive readable text/Markdown chat equivalents.
+  Mission log updates to REM peers are sent as structured `FIELD_EVENT` payloads,
+  and outbound checklist updates are sent as `checklist.*` command envelopes in
+  `FIELD_COMMANDS`. Non-REM LXMF peers receive the existing R3AKT custom-field
+  or readable text/Markdown equivalents.
 - Help and Examples responses include `FIELD_RENDERER` (`0x0F`) set to
   `RENDERER_MARKDOWN` (`0x02`).
 - Command names are normalized across common casing variants.

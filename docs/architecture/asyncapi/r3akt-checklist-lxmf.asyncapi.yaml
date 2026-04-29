@@ -64,7 +64,7 @@ channels:
           - $ref: "#/components/messages/ChecklistTaskRowStyleSetCommand"
           - $ref: "#/components/messages/ChecklistTaskCellSetCommand"
   r3akt.checklist.replies:
-    description: Command acknowledgement and result envelopes (`FIELD_RESULTS` / `0x0A`).
+    description: Diagnostic rejection envelopes (`FIELD_RESULTS` / `0x0A`). Successful checklist commands are silent by default.
     x-lxmf-fields:
       required:
         - FIELD_RESULTS
@@ -75,9 +75,7 @@ channels:
       summary: Receive command execution replies from checklist service.
       message:
         oneOf:
-          - $ref: "#/components/messages/CommandAccepted"
           - $ref: "#/components/messages/CommandRejected"
-          - $ref: "#/components/messages/CommandResult"
   r3akt.checklist.events:
     description: Checklist event stream and snapshots (`FIELD_EVENT` / `0x0D`).
     x-lxmf-fields:
@@ -451,26 +449,6 @@ components:
               args:
                 $ref: "#/components/schemas/ChecklistTaskCellSetArgs"
             required: [command_type, args]
-    CommandAccepted:
-      name: CommandAccepted
-      title: Command accepted
-      x-lxmf-field: FIELD_RESULTS
-      payload:
-        type: object
-        required: [command_id, status, accepted_at]
-        properties:
-          command_id:
-            type: string
-          correlation_id:
-            type: string
-          status:
-            type: string
-            const: accepted
-          accepted_at:
-            type: string
-            format: date-time
-          by_identity:
-            type: string
     CommandRejected:
       name: CommandRejected
       title: Command rejected
@@ -495,24 +473,6 @@ components:
             type: array
             items:
               type: string
-    CommandResult:
-      name: CommandResult
-      title: Command result
-      x-lxmf-field: FIELD_RESULTS
-      payload:
-        type: object
-        required: [command_id, status, result]
-        properties:
-          command_id:
-            type: string
-          correlation_id:
-            type: string
-          status:
-            type: string
-            const: result
-          result:
-            type: object
-            additionalProperties: true
     ChecklistEvent:
       name: ChecklistEvent
       title: Checklist event envelope

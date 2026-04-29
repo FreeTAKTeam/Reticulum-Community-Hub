@@ -14,10 +14,8 @@ from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.checklist_sync.capabilities import CHECKLIST_COMMAND_CAPABILITIES
 from reticulum_telemetry_hub.mission_domain.service import MissionDomainService
 from reticulum_telemetry_hub.mission_sync.router import MissionSyncResponse
-from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandAccepted
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandRejected
-from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandResult
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 
 
@@ -144,18 +142,8 @@ class ChecklistSyncRouter:
             )
             return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
 
-        accepted = MissionCommandAccepted(
-            command_id=envelope.command_id,
-            accepted_at=_utcnow(),
-            correlation_id=envelope.correlation_id,
-            by_identity=self._hub_identity_resolver(),
-        )
-        responses: list[MissionSyncResponse] = [
-            self._response_from_results(accepted.model_dump(mode="json"), group=group)
-        ]
-
         try:
-            result_payload, event_type, event_payload = self._execute_command(
+            _result_payload, event_type, _event_payload = self._execute_command(
                 envelope, source_identity=source_identity
             )
         except ChecklistCommandError as exc:
@@ -165,9 +153,6 @@ class ChecklistSyncRouter:
                 reason=exc.reason,
                 correlation_id=envelope.correlation_id,
                 required_capabilities=[required_capability],
-            )
-            responses.append(
-                self._response_from_results(rejected.model_dump(mode="json"), group=group)
             )
             self._record_event(
                 "checklist_command_rejected",
@@ -179,25 +164,8 @@ class ChecklistSyncRouter:
                     "identity": source_identity,
                 },
             )
-            return responses
+            return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
 
-        result = MissionCommandResult(
-            command_id=envelope.command_id,
-            correlation_id=envelope.correlation_id,
-            result=result_payload,
-        )
-        responses.append(
-            self._response_from_results(
-                result.model_dump(mode="json"),
-                group=group,
-                event=self._build_event_envelope(
-                    event_type=event_type,
-                    payload=event_payload,
-                    source_identity=source_identity,
-                    topics=envelope.topics,
-                ),
-            )
-        )
         self._record_event(
             "checklist_command_processed",
             {
@@ -207,7 +175,7 @@ class ChecklistSyncRouter:
                 "event_type": event_type,
             },
         )
-        return responses
+        return []
 
     def _execute_command(
         self, envelope: MissionCommandEnvelope, *, source_identity: str

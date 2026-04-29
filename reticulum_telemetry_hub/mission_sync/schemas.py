@@ -17,6 +17,7 @@ class MissionCommandSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rns_identity: str
+    display_name: Optional[str] = None
 
 
 class MissionCommandEnvelope(BaseModel):

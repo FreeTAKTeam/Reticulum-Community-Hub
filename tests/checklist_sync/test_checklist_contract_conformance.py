@@ -51,28 +51,28 @@ def test_checklist_asyncapi_commands_match_router_capabilities() -> None:
         assert commands[command_type] == [capability]
 
 
-def test_checklist_asyncapi_result_status_constants() -> None:
+def test_checklist_asyncapi_documents_rejection_only_replies() -> None:
     spec = yaml.safe_load(
         Path("docs/architecture/asyncapi/r3akt-checklist-lxmf.asyncapi.yaml").read_text(
             encoding="utf-8"
         )
     )
     messages = spec["components"]["messages"]
+    reply_options = spec["channels"]["r3akt.checklist.replies"]["subscribe"]["message"]["oneOf"]
 
-    accepted_status = messages["CommandAccepted"]["payload"]["properties"]["status"]["const"]
     rejected_status = messages["CommandRejected"]["payload"]["properties"]["status"]["const"]
-    result_status = messages["CommandResult"]["payload"]["properties"]["status"]["const"]
 
-    assert accepted_status == "accepted"
+    assert reply_options == [{"$ref": "#/components/messages/CommandRejected"}]
     assert rejected_status == "rejected"
-    assert result_status == "result"
+    assert "CommandAccepted" not in messages
+    assert "CommandResult" not in messages
 
 
 def test_checklist_envelope_model_aligns_with_contract_shape() -> None:
     envelope = MissionCommandEnvelope.model_validate(
         {
             "command_id": "cmd-1",
-            "source": {"rns_identity": "peer-a"},
+            "source": {"rns_identity": "peer-a", "display_name": "REM Alpha"},
             "timestamp": "2026-01-01T00:00:00Z",
             "command_type": "checklist.create.offline",
             "args": {"name": "Checklist", "origin_type": "BLANK_TEMPLATE"},
@@ -83,4 +83,5 @@ def test_checklist_envelope_model_aligns_with_contract_shape() -> None:
 
     assert envelope.command_type == "checklist.create.offline"
     assert envelope.source.rns_identity == "peer-a"
+    assert envelope.source.display_name == "REM Alpha"
     assert envelope.command_id == "cmd-1"

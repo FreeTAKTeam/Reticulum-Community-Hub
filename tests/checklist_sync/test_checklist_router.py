@@ -73,13 +73,88 @@ def _command(
     return payload
 
 
+def _rem_command(
+    command_type: str,
+    args: dict,
+    *,
+    command_id: str,
+) -> dict:
+    payload = _command(command_type, args, command_id=command_id)
+    payload["source"]["display_name"] = "REM Alpha"
+    return payload
+
+
 def _grant_all_checklist_capabilities(api: ReticulumTelemetryHubAPI, identity: str) -> None:
     for capability in sorted(set(CHECKLIST_COMMAND_CAPABILITIES.values())):
         api.grant_identity_capability(identity, capability)
 
 
-def _result(responses: list) -> dict:
-    return responses[1].fields[FIELD_RESULTS]["result"]
+def _checklist_by_name(domain: MissionDomainService, name: str) -> dict:
+    matches = [item for item in domain.list_active_checklists() if item["name"] == name]
+    assert len(matches) == 1
+    return domain.get_checklist(matches[0]["uid"])
+
+
+def _template_by_name(domain: MissionDomainService, name: str) -> dict:
+    matches = [
+        item
+        for item in domain.list_checklist_templates()
+        if item["template_name"] == name
+    ]
+    assert len(matches) == 1
+    return domain.get_checklist_template(matches[0]["uid"])
+
+
+def test_successful_checklist_command_accepts_rem_source_without_reply(tmp_path) -> None:
+    api, domain, router, _log = _router(tmp_path)
+    api.grant_identity_capability("peer-a", "checklist.write")
+
+    responses = router.handle_commands(
+        [
+            _rem_command(
+                "checklist.create.offline",
+                {
+                    "origin_type": "BLANK_TEMPLATE",
+                    "name": "REM Offline",
+                    "description": "created by REM",
+                    "start_time": datetime.now(timezone.utc).isoformat(),
+                    "columns": _columns(),
+                },
+                command_id="cmd-rem-offline",
+            )
+        ],
+        source_identity="peer-a",
+    )
+
+    assert responses == []
+    stored = domain.list_active_checklists()
+    assert len(stored) == 1
+    assert stored[0]["name"] == "REM Offline"
+
+
+def test_invalid_checklist_command_returns_single_rejection_without_acceptance(tmp_path) -> None:
+    api, _domain, router, _log = _router(tmp_path)
+    api.grant_identity_capability("peer-a", "checklist.write")
+
+    responses = router.handle_commands(
+        [
+            _command(
+                "checklist.create.online",
+                {
+                    "name": "Missing template",
+                    "description": "invalid",
+                },
+                command_id="cmd-invalid-online",
+            )
+        ],
+        source_identity="peer-a",
+    )
+
+    assert len(responses) == 1
+    payload = responses[0].fields[FIELD_RESULTS]
+    assert payload["status"] == "rejected"
+    assert payload["reason_code"] == "invalid_payload"
+    assert payload["command_id"] == "cmd-invalid-online"
 
 
 def test_checklist_command_rejects_without_capability(tmp_path) -> None:
@@ -108,7 +183,7 @@ def test_checklist_command_rejects_without_capability(tmp_path) -> None:
 
 
 def test_checklist_command_accepts_with_capability(tmp_path) -> None:
-    api, _domain, router, _log = _router(tmp_path)
+    api, domain, router, _log = _router(tmp_path)
     api.grant_identity_capability("peer-a", "checklist.write")
 
     responses = router.handle_commands(
@@ -128,20 +203,14 @@ def test_checklist_command_accepts_with_capability(tmp_path) -> None:
         source_identity="peer-a",
     )
 
-    assert len(responses) == 2
-    accepted = responses[0].fields[FIELD_RESULTS]
-    result = responses[1].fields[FIELD_RESULTS]
-    event = responses[1].fields[FIELD_EVENT]
-    assert accepted["status"] == "accepted"
-    assert result["status"] == "result"
-    assert result["result"]["uid"]
-    assert event["event_type"] == "checklist.created"
-    assert result["result"]["mode"] == "OFFLINE"
-    assert result["result"]["sync_state"] == "LOCAL_ONLY"
+    assert responses == []
+    stored = _checklist_by_name(domain, "offline")
+    assert stored["mode"] == "OFFLINE"
+    assert stored["sync_state"] == "LOCAL_ONLY"
 
 
 def test_checklist_create_online_direct_columns_creates_shared_checklist(tmp_path) -> None:
-    api, _domain, router, _log = _router(tmp_path)
+    api, domain, router, _log = _router(tmp_path)
     api.grant_identity_capability("peer-a", "checklist.write")
 
     responses = router.handle_commands(
@@ -160,12 +229,10 @@ def test_checklist_create_online_direct_columns_creates_shared_checklist(tmp_pat
         source_identity="peer-a",
     )
 
-    assert len(responses) == 2
-    result = responses[1].fields[FIELD_RESULTS]
-    assert result["status"] == "result"
-    assert result["result"]["mode"] == "ONLINE"
-    assert result["result"]["sync_state"] == "SYNCED"
-    assert responses[1].fields[FIELD_EVENT]["event_type"] == "checklist.created"
+    assert responses == []
+    stored = _checklist_by_name(domain, "Shared Excheck")
+    assert stored["mode"] == "ONLINE"
+    assert stored["sync_state"] == "SYNCED"
 
 
 def test_checklist_command_accepts_linked_client_mission_access(tmp_path) -> None:
@@ -208,12 +275,11 @@ def test_checklist_command_accepts_linked_client_mission_access(tmp_path) -> Non
         source_identity="peer-a",
     )
 
-    assert len(responses) == 2
-    assert _result(responses)["uid"] == checklist["uid"]
+    assert responses == []
 
 
 def test_checklist_command_matrix_success_paths(tmp_path) -> None:
-    api, _domain, router, event_log = _router(tmp_path, include_event_log=True)
+    api, domain, router, event_log = _router(tmp_path, include_event_log=True)
     _grant_all_checklist_capabilities(api, "peer-a")
     assert event_log is not None
     event_log.add_event("seed", "seed event")
@@ -252,15 +318,15 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         source_identity="peer-a",
         group="checklist-group",
     )
-    assert create_template[0].fields[FIELD_RESULTS]["status"] == "accepted"
-    assert create_template[1].fields[FIELD_GROUP] == "checklist-group"
-    template_uid = _result(create_template)["uid"]
+    assert create_template == []
+    template_uid = _template_by_name(domain, "Template Alpha")["uid"]
 
     template_list = router.handle_commands(
         [_command("checklist.template.list", {}, command_id="cmd-template-list")],
         source_identity="peer-a",
     )
-    assert _result(template_list)["templates"]
+    assert template_list == []
+    assert domain.list_checklist_templates()
 
     template_get = router.handle_commands(
         [
@@ -272,7 +338,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(template_get)["uid"] == template_uid
+    assert template_get == []
+    assert domain.get_checklist_template(template_uid)["uid"] == template_uid
 
     template_update = router.handle_commands(
         [
@@ -290,7 +357,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(template_update)["template_name"] == "Template Beta"
+    assert template_update == []
+    assert domain.get_checklist_template(template_uid)["template_name"] == "Template Beta"
 
     template_clone = router.handle_commands(
         [
@@ -306,7 +374,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    clone_uid = _result(template_clone)["uid"]
+    assert template_clone == []
+    clone_uid = _template_by_name(domain, "Template Clone")["uid"]
 
     create_online = router.handle_commands(
         [
@@ -323,9 +392,11 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(create_online)["mode"] == "ONLINE"
-    assert _result(create_online)["sync_state"] == "SYNCED"
-    checklist_uid = _result(create_online)["uid"]
+    assert create_online == []
+    online_checklist = _checklist_by_name(domain, "Checklist Online")
+    assert online_checklist["mode"] == "ONLINE"
+    assert online_checklist["sync_state"] == "SYNCED"
+    checklist_uid = online_checklist["uid"]
 
     create_offline = router.handle_commands(
         [
@@ -341,7 +412,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    offline_uid = _result(create_offline)["uid"]
+    assert create_offline == []
+    offline_uid = _checklist_by_name(domain, "Checklist Offline")["uid"]
 
     checklist_update = router.handle_commands(
         [
@@ -359,13 +431,15 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(checklist_update)["name"] == "Checklist Offline Updated"
+    assert checklist_update == []
+    assert domain.get_checklist(offline_uid)["name"] == "Checklist Offline Updated"
 
     list_active = router.handle_commands(
         [_command("checklist.list.active", {}, command_id="cmd-checklist-list")],
         source_identity="peer-a",
     )
-    assert _result(list_active)["checklists"]
+    assert list_active == []
+    assert domain.list_active_checklists()
 
     add_row = router.handle_commands(
         [
@@ -381,9 +455,11 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    task_uid = _result(add_row)["tasks"][0]["task_uid"]
+    assert add_row == []
+    updated_checklist = domain.get_checklist(checklist_uid)
+    task_uid = updated_checklist["tasks"][0]["task_uid"]
     short_text_column = next(
-        col for col in _result(add_row)["columns"] if col["column_type"] == "SHORT_STRING"
+        col for col in updated_checklist["columns"] if col["column_type"] == "SHORT_STRING"
     )
 
     cell_set = router.handle_commands(
@@ -402,7 +478,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    cells = _result(cell_set)["tasks"][0]["cells"]
+    assert cell_set == []
+    cells = domain.get_checklist(checklist_uid)["tasks"][0]["cells"]
     value = next(
         item["value"] for item in cells if item["column_uid"] == short_text_column["column_uid"]
     )
@@ -423,7 +500,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(row_style)["tasks"][0]["line_break_enabled"] is True
+    assert row_style == []
+    assert domain.get_checklist(checklist_uid)["tasks"][0]["line_break_enabled"] is True
 
     status_set = router.handle_commands(
         [
@@ -440,7 +518,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(status_set)["counts"]["complete_count"] == 1
+    assert status_set == []
+    assert domain.get_checklist(checklist_uid)["counts"]["complete_count"] == 1
 
     checklist_get = router.handle_commands(
         [
@@ -454,7 +533,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(checklist_get)["uid"] == checklist_uid
+    assert checklist_get == []
+    assert domain.get_checklist(checklist_uid)["uid"] == checklist_uid
 
     checklist_join = router.handle_commands(
         [
@@ -468,7 +548,7 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert checklist_join[1].fields[FIELD_EVENT]["event_type"] == "checklist.joined"
+    assert checklist_join == []
 
     checklist_upload = router.handle_commands(
         [
@@ -482,7 +562,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(checklist_upload)["sync_state"] == "SYNCED"
+    assert checklist_upload == []
+    assert domain.get_checklist(offline_uid)["sync_state"] == "SYNCED"
 
     feed_publish = router.handle_commands(
         [
@@ -497,7 +578,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(feed_publish)["mission_feed_uid"] == "feed-1"
+    assert feed_publish == []
+    assert domain.get_checklist(offline_uid)["feed_publications"][0]["mission_feed_uid"] == "feed-1"
 
     checklist_delete = router.handle_commands(
         [
@@ -509,7 +591,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(checklist_delete)["uid"] == offline_uid
+    assert checklist_delete == []
+    assert offline_uid not in {item["uid"] for item in domain.list_active_checklists()}
 
     delete_row = router.handle_commands(
         [
@@ -524,7 +607,8 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(delete_row)["tasks"] == []
+    assert delete_row == []
+    assert domain.get_checklist(checklist_uid)["tasks"] == []
 
     csv_payload = base64.b64encode(b"10,Task 1\n20,Task 2\n").decode("ascii")
     import_csv = router.handle_commands(
@@ -540,9 +624,14 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(import_csv)["origin_type"] == "CSV_IMPORT"
-    assert _result(import_csv)["mode"] == "ONLINE"
-    assert _result(import_csv)["sync_state"] == "SYNCED"
+    assert import_csv == []
+    imported = next(
+        item
+        for item in domain.list_active_checklists()
+        if item["origin_type"] == "CSV_IMPORT"
+    )
+    assert imported["mode"] == "ONLINE"
+    assert imported["sync_state"] == "SYNCED"
 
     template_delete = router.handle_commands(
         [
@@ -556,7 +645,10 @@ def test_checklist_command_matrix_success_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert _result(template_delete)["uid"] == clone_uid
+    assert template_delete == []
+    assert clone_uid not in {
+        item["uid"] for item in domain.list_checklist_templates()
+    }
 
 
 def test_checklist_command_error_paths(tmp_path) -> None:
@@ -591,7 +683,7 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         [_command("checklist.template.create", {}, command_id="cmd-template-missing")],
         source_identity="peer-a",
     )
-    assert missing_template[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert missing_template[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     missing_template_uid = router.handle_commands(
         [
@@ -603,7 +695,7 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert missing_template_uid[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert missing_template_uid[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     missing_template_get = router.handle_commands(
         [
@@ -615,7 +707,7 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert missing_template_get[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert missing_template_get[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     unknown_template_get = router.handle_commands(
         [
@@ -627,7 +719,7 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert unknown_template_get[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert unknown_template_get[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     missing_clone_name = router.handle_commands(
         [
@@ -639,13 +731,13 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert missing_clone_name[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert missing_clone_name[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     missing_checklist_id = router.handle_commands(
         [_command("checklist.get", {}, command_id="cmd-checklist-get-missing")],
         source_identity="peer-a",
     )
-    assert missing_checklist_id[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert missing_checklist_id[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     unknown_checklist_id = router.handle_commands(
         [
@@ -657,7 +749,7 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert unknown_checklist_id[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert unknown_checklist_id[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     missing_publish_fields = router.handle_commands(
         [
@@ -669,7 +761,7 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert missing_publish_fields[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert missing_publish_fields[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     missing_task_fields = router.handle_commands(
         [
@@ -681,7 +773,7 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert missing_task_fields[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert missing_task_fields[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     missing_row_add = router.handle_commands(
         [
@@ -693,7 +785,7 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert missing_row_add[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert missing_row_add[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
     missing_update_fields = router.handle_commands(
         [
@@ -705,7 +797,7 @@ def test_checklist_command_error_paths(tmp_path) -> None:
         ],
         source_identity="peer-a",
     )
-    assert missing_update_fields[1].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
+    assert missing_update_fields[0].fields[FIELD_RESULTS]["reason_code"] == "invalid_payload"
 
 
 def test_checklist_command_rejects_source_identity_mismatch(tmp_path) -> None:

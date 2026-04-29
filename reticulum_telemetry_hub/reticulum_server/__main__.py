@@ -129,6 +129,9 @@ from reticulum_telemetry_hub.reticulum_server.mission_delta_markdown import (
     MissionDeltaNameResolver,
     render_mission_delta_markdown,
 )
+from reticulum_telemetry_hub.reticulum_server.rem_checklist_commands import (
+    checklist_command_messages_for_mission_change,
+)
 from reticulum_telemetry_hub.reticulum_server.rem_command_router import RemCommandRouter
 from reticulum_telemetry_hub.reticulum_server.outbound_queue import (
     OutboundPayload,
@@ -1900,13 +1903,45 @@ class ReticulumTelemetryHub:
         concise_body = (
             f"r3akt mission delta {mission_uid} {mission_change_uid}".strip()
         )
+        rem_checklist_messages = checklist_command_messages_for_mission_change(
+            mission_change,
+            source_identity=self._origin_rch_hex(),
+            source_display_name=getattr(self, "display_name", None),
+            participant_rns_identities=deduped_destinations,
+        )
+        rem_connected_mode = False
+        api = getattr(self, "api", None)
+        if rem_checklist_messages and api is not None:
+            try:
+                rem_connected_mode = bool(api.effective_rem_connected_mode())
+            except Exception as exc:  # pragma: no cover - defensive logging
+                RNS.log(
+                    f"Unable to resolve REM connected mode for checklist fanout: {exc}",
+                    RNS.LOG_WARNING,
+                )
+                rem_connected_mode = False
+        rem_checklist_destinations: list[str] = []
         r3akt_destinations: list[str] = []
         generic_destinations: list[str] = []
         for destination in deduped_destinations:
-            if self._identity_supports_r3akt(destination):
+            if (
+                rem_checklist_messages
+                and rem_connected_mode
+                and self._identity_is_rem(destination)
+            ):
+                rem_checklist_destinations.append(destination)
+            elif self._identity_supports_r3akt(destination):
                 r3akt_destinations.append(destination)
             else:
                 generic_destinations.append(destination)
+
+        if rem_checklist_destinations:
+            for rem_message in rem_checklist_messages:
+                self.send_many(
+                    rem_message.body,
+                    rem_checklist_destinations,
+                    fields=rem_message.fields,
+                )
 
         if r3akt_destinations:
             custom_fields = self._build_r3akt_delta_custom_fields(

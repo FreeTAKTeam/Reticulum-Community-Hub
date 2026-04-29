@@ -1369,6 +1369,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         logs: list[dict[str, Any]] | None = None,
         assets: list[dict[str, Any]] | None = None,
         tasks: list[dict[str, Any]] | None = None,
+        checklists: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return {
             "version": 1,
@@ -1378,6 +1379,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             "logs": list(logs or []),
             "assets": list(assets or []),
             "tasks": list(tasks or []),
+            "checklists": list(checklists or []),
         }
 
     def _emit_auto_mission_change(
@@ -3018,6 +3020,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
         mission_uid: str | None = None,
         template_uid: str | None = None,
         columns: list[dict[str, Any]] | None = None,
+        checklist_uid: str | None = None,
     ) -> dict[str, Any]:
         mode = normalize_enum_value(
             mode,
@@ -3038,14 +3041,23 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             default=ChecklistOriginType.BLANK_TEMPLATE.value,
         )
         with self._session() as session:
+            requested_checklist_uid = str(checklist_uid or "").strip()
+            if requested_checklist_uid:
+                existing = session.get(R3aktChecklistRecord, requested_checklist_uid)
+                if existing is not None:
+                    return self._serialize_checklist(session, existing)
             if mission_uid:
                 self._ensure_mission_exists(session, str(mission_uid))
             if template_uid:
                 template = session.get(R3aktChecklistTemplateRecord, template_uid)
-                if template is None:
+                if template is None and not columns:
                     raise KeyError(f"Checklist template '{template_uid}' not found")
-                cols = [self._serialize_column(col) for col in self._template_columns(session, template_uid)]
-                template_name = template.template_name
+                if template is None:
+                    cols = [self._normalize_column(item, order=index) for index, item in enumerate(columns or [], start=1)]
+                    template_name = None
+                else:
+                    cols = [self._serialize_column(col) for col in self._template_columns(session, template_uid)]
+                    template_name = template.template_name
             elif columns:
                 cols = [self._normalize_column(item, order=index) for index, item in enumerate(columns, start=1)]
                 template_name = None
@@ -3054,7 +3066,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 template_name = None
             self._validate_columns(cols)
             now = _utcnow()
-            checklist_uid = uuid.uuid4().hex
+            checklist_uid = requested_checklist_uid or uuid.uuid4().hex
             row = R3aktChecklistRecord(
                 uid=checklist_uid,
                 mission_uid=mission_uid,
@@ -3101,6 +3113,18 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             data = self._serialize_checklist(session, row)
             self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.created", payload=data)
             self._record_snapshot(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, state=data)
+            if mode == CHECKLIST_MODE_ONLINE and mission_uid:
+                self._emit_auto_mission_change(
+                    session,
+                    mission_uid=mission_uid,
+                    source_event_type="mission.checklist.created",
+                    change_type=MissionChangeType.ADD_CONTENT.value,
+                    delta=self._build_delta_envelope(
+                        source_event_type="mission.checklist.created",
+                        checklists=[data],
+                    ),
+                    team_member_rns_identity=created_by,
+                )
             return data
 
     def list_active_checklists(self, *, search: str | None = None, sort_by: str | None = None) -> list[dict[str, Any]]:
@@ -3145,6 +3169,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             mission_uid=args.get("mission_uid"),
             template_uid=template_uid,
             columns=columns,
+            checklist_uid=args.get("checklist_uid"),
         )
 
     def create_checklist_offline(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -3167,6 +3192,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             mission_uid=args.get("mission_uid"),
             template_uid=args.get("template_uid"),
             columns=columns,
+            checklist_uid=args.get("checklist_uid"),
         )
 
     def get_checklist(self, checklist_uid: str) -> dict[str, Any]:
@@ -3343,6 +3369,18 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             data = self._serialize_checklist(session, row)
             self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.uploaded", payload={"checklist": data, "uploaded_by_team_member_rns_identity": source_identity})
             self._record_snapshot(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, state=data)
+            mission_uid = str(row.mission_uid or "").strip() or None
+            self._emit_auto_mission_change(
+                session,
+                mission_uid=mission_uid,
+                source_event_type="mission.checklist.uploaded",
+                change_type=MissionChangeType.ADD_CONTENT.value,
+                delta=self._build_delta_envelope(
+                    source_event_type="mission.checklist.uploaded",
+                    checklists=[data],
+                ),
+                team_member_rns_identity=source_identity,
+            )
             return data
 
     def publish_checklist_feed(self, checklist_uid: str, mission_feed_uid: str, *, source_identity: str | None = None) -> dict[str, Any]:
@@ -3585,8 +3623,30 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
             if legacy_value_raw is not None:
                 legacy_value_text = str(legacy_value_raw).strip()
                 legacy_value = legacy_value_text or None
+            notes_raw = args.get("notes")
+            notes = None
+            if notes_raw is not None:
+                notes_text = str(notes_raw).strip()
+                notes = notes_text or None
             status, is_late = self._derive_task_status(user_status=CHECKLIST_USER_PENDING, due_dtg=due_dtg, completed_at=None)
-            task_uid = uuid.uuid4().hex
+            requested_task_uid = str(args.get("task_uid") or "").strip()
+            if requested_task_uid:
+                existing_task = session.get(R3aktChecklistTaskRecord, requested_task_uid)
+                if existing_task is not None:
+                    if existing_task.checklist_uid != checklist_uid:
+                        raise KeyError(f"Checklist task '{requested_task_uid}' not found")
+                    existing_task.number = task_number
+                    existing_task.due_relative_minutes = due_relative_minutes
+                    existing_task.due_dtg = due_dtg
+                    existing_task.legacy_value = legacy_value
+                    existing_task.notes = notes
+                    existing_task.updated_at = _utcnow()
+                    session.flush()
+                    self._recompute_checklist_status(session, checklist)
+                    data = self._serialize_checklist(session, checklist)
+                    self._record_event(session, domain="checklist", aggregate_type="checklist", aggregate_uid=checklist_uid, event_type="checklist.progress.changed", payload=data)
+                    return data
+            task_uid = requested_task_uid or uuid.uuid4().hex
             task = R3aktChecklistTaskRecord(
                 task_uid=task_uid,
                 checklist_uid=checklist_uid,
@@ -3597,7 +3657,7 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 custom_status=None,
                 due_relative_minutes=due_relative_minutes,
                 due_dtg=due_dtg,
-                notes=None,
+                notes=notes,
                 row_background_color=None,
                 line_break_enabled=False,
                 completed_at=None,
@@ -3632,6 +3692,8 @@ class MissionDomainService:  # pylint: disable=too-many-public-methods
                 "user_status": task.user_status,
                 "due_dtg": _dt(task.due_dtg),
                 "due_relative_minutes": task.due_relative_minutes,
+                "notes": task.notes,
+                "legacy_value": task.legacy_value,
             }
             self._emit_auto_mission_change(
                 session,

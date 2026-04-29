@@ -16,6 +16,9 @@ def test_southbound_doc_describes_shared_excheck_workflow() -> None:
     assert "Excheck/task sharing uses the existing checklist southbound command family" in content
     assert "`checklist.create.online` -> `checklist.task.row.add` /" in content
     assert "`checklist.task.cell.set` / `checklist.task.status.set`" in content
+    assert "successful checklist commands are silent by default" in content
+    assert "connected REM" in content
+    assert "mission members receive a `FIELD_COMMANDS`" in content
 
 
 def test_supported_commands_doc_calls_out_shared_excheck_commands() -> None:
@@ -26,3 +29,5 @@ def test_supported_commands_doc_calls_out_shared_excheck_commands() -> None:
     assert "`checklist.task.row.add`" in content
     assert "`checklist.task.cell.set`" in content
     assert "`checklist.task.status.set`" in content
+    assert "Successful checklist commands are silent over LXMF by default" in content
+    assert "outbound shared ExCheck updates to REM mission members" in content

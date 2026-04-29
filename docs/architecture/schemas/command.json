@@ -14,7 +14,7 @@
   "properties": {
     "command_id": {
       "type": "string",
-      "description": "Unique command identifier used to correlate FIELD_RESULTS (0x0A) replies."
+      "description": "Unique command identifier used to correlate replies when the command family emits them."
     },
     "source": {
       "type": "object",
@@ -24,6 +24,10 @@
       "properties": {
         "rns_identity": {
           "type": "string"
+        },
+        "display_name": {
+          "type": "string",
+          "description": "Optional sender label accepted for REM compatibility; authorization still uses rns_identity."
         }
       }
     },
@@ -46,7 +50,7 @@
     },
     "correlation_id": {
       "type": "string",
-      "description": "Client-supplied correlation token preserved in command outcome messages."
+      "description": "Client-supplied correlation token preserved in command outcome messages when emitted."
     }
   }
 }

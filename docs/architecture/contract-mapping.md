@@ -10,8 +10,8 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 
 ## LXMF Envelope Mapping
 
-- `FIELD_COMMANDS (0x09)`: command envelopes with `command_type`, `args`, `command_id`, `source`, `timestamp`, optional `correlation_id`.
-- `FIELD_RESULTS (0x0A)`: standard `{status: accepted|rejected|result}` payloads.
+- `FIELD_COMMANDS (0x09)`: command envelopes with `command_type`, `args`, `command_id`, `source`, `timestamp`, optional `correlation_id`. RCH also uses this outbound for REM connected-mode checklist fanout.
+- `FIELD_RESULTS (0x0A)`: standard mission `{status: accepted|rejected|result}` payloads plus compact checklist diagnostic rejections. Successful checklist commands are silent by default.
 - `FIELD_EVENT (0x0D)`: mission/checklist event envelopes with `event_type` and `payload`.
 - `FIELD_CUSTOM_TYPE (0xFB)`: set to `r3akt.mission.change.v1` for mission-team fanout.
 - `FIELD_CUSTOM_DATA (0xFC)`: mission delta payload object (`mission_uid`, `mission_change`, `delta`).
@@ -29,6 +29,8 @@ This document maps imported R3AKT AsyncAPI contracts to implemented backend hand
 - Recipient set is all identities associated with team members of
   mission-assigned teams (member identities + linked client identities).
 - R3AKT-capable recipients receive mission delta in custom fields.
+- REM recipients in connected mode receive checklist deltas as `FIELD_COMMANDS`
+  using `checklist.*` command envelopes.
 - Non-R3AKT recipients receive a markdown mission-update summary body with
   heading `### Mission {mission_name}`, no raw UID fields in text, and
   `FIELD_RENDERER=RENDERER_MARKDOWN`.

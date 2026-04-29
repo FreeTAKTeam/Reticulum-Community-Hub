@@ -35,8 +35,10 @@ transport-agnostic integrations.
   `FIELD_THREAD` and `FIELD_GROUP` are echoed into replies when present.
 - **Mission/checklist sync envelopes**: inbound `FIELD_COMMANDS` payloads with
   `command_type` are routed through `mission_sync` and `checklist_sync` with
-  persisted capability ACL checks and standardized accepted/rejected/result
-  envelopes in `FIELD_RESULTS`.
+  persisted capability ACL checks. Mission commands still return standardized
+  accepted/rejected/result envelopes in `FIELD_RESULTS`; checklist command
+  successes are silent by default, while invalid or unauthorized checklist
+  commands may return one compact `rejected` diagnostic.
 - **Telemetry**: telemetry fields are decoded and stored in `telemetry.db`.
   Telemetry requests return a `FIELD_TELEMETRY_STREAM` payload, optionally
   filtered by topic.

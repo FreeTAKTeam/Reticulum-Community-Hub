@@ -10,7 +10,8 @@ In short:
   LXMF command fields.
 - Clients without `FIELD_COMMANDS` support can send an escape-prefixed body
   starting with `\\\`.
-- Replies do not use `FIELD_COMMANDS`.
+- Ordinary replies do not use `FIELD_COMMANDS`; the REM connected-mode
+  checklist fanout path is the outbound command-envelope exception.
 - Standard command replies come back as a direct LXMF message with a text body,
   `FIELD_RESULTS` (`0x0A`), and `FIELD_EVENT` (`0x0D`).
 - Specialized replies use their own fields:
@@ -291,7 +292,8 @@ Properties:
   present
 
 Important: RCH does not place responses inside `FIELD_COMMANDS`. `FIELD_COMMANDS`
-is ingress-only in the current implementation.
+is the command envelope field, and RCH uses it outbound only for REM
+connected-mode checklist fanout.
 
 ### Result payload shape
 
@@ -394,16 +396,21 @@ contains attachment fields.
 Mission-sync and checklist-sync commands still enter through `FIELD_COMMANDS`,
 but they are detected by `command_type`.
 
-Replies:
+Mission-sync replies:
 
 - do not use `FIELD_COMMANDS`
 - use `FIELD_RESULTS` as the structured envelope
 - preserve `FIELD_GROUP` when present
 - optionally include `FIELD_EVENT`
-- use text bodies of `mission-sync` or `checklist-sync`
+- use the text body `mission-sync`
 
-This keeps the southbound response shape aligned with the rest of the hub:
-commands in through `FIELD_COMMANDS`, results out through `FIELD_RESULTS`.
+Checklist-sync replies are REM-compatible:
+
+- successful checklist commands are silent by default and do not emit
+  `accepted` / `result` reply pairs
+- invalid, unauthorized, or unsupported checklist commands may emit one compact
+  `rejected` payload in `FIELD_RESULTS` for diagnostics
+- `FIELD_GROUP` is preserved on diagnostic rejection replies when present
 
 Excheck/task sharing uses the existing checklist southbound command family.
 The canonical shared workflow is:
@@ -412,6 +419,13 @@ The canonical shared workflow is:
 `checklist.feed.publish` used only when a mission feed publication is needed.
 `checklist.create.offline` remains the explicit local-draft path and will
 surface as `OFFLINE` / `LOCAL_ONLY` until uploaded.
+
+When an online checklist is created or uploaded for a mission, connected REM
+mission members receive a `FIELD_COMMANDS` (`0x09`) checklist command envelope.
+RCH emits `checklist.create.online` first, then row/cell/status/style commands
+as needed so REM operators can update individual task rows. R3AKT non-REM peers
+continue to receive mission-change custom fields, and generic peers receive the
+readable Markdown/text fallback.
 
 ## Mission command specification
 
@@ -427,6 +441,7 @@ objects matching this schema:
 | --- | --- | --- | --- |
 | `command_id` | yes | string | Client-generated command identifier. If omitted or blank, the hub synthesizes one for rejection/error paths. |
 | `source.rns_identity` | yes | string | Must match the LXMF transport sender identity or the command is rejected as `unauthorized`. |
+| `source.display_name` | no | string | Optional sender label accepted for REM compatibility. Authorization still uses `source.rns_identity`. |
 | `timestamp` | yes | ISO-8601 datetime | Client-side command creation time. |
 | `command_type` | yes | string | Selects the mission operation. Values not starting with `checklist.` route to the mission-sync router. |
 | `args` | yes | object | Command-specific arguments. |
@@ -910,10 +925,12 @@ If you need to integrate with the hub southbound interface, use this mental
 model:
 
 - send commands in `FIELD_COMMANDS`
-- expect ordinary command replies in `FIELD_RESULTS`
+- expect ordinary mission/legacy command replies in `FIELD_RESULTS`
+- expect successful checklist commands to be silent by default
 - expect telemetry in `FIELD_TELEMETRY_STREAM`
 - expect attachments in `FIELD_FILE_ATTACHMENTS` / `FIELD_IMAGE`
 - treat `topic_id` and `destination` as mutually exclusive routing coordinates
 - validate `RTHDelivery` when you choose to send it, and expect it on
   hub-originated outbound chat/messages
-- do not expect the hub to answer with `FIELD_COMMANDS`
+- do not expect ordinary replies in `FIELD_COMMANDS`; only REM connected-mode
+  checklist fanout uses outbound checklist command envelopes
