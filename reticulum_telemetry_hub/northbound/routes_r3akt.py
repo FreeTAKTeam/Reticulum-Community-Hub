@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Callable
 
 from fastapi import Body
@@ -15,6 +14,10 @@ from fastapi import status
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 
+from .routes_r3akt_assignments import register_r3akt_assignment_routes
+from .routes_r3akt_utils import expand_tokens
+from .routes_r3akt_utils import parse_iso_datetime
+
 
 def register_r3akt_routes(
     app: FastAPI,
@@ -24,29 +27,6 @@ def register_r3akt_routes(
     require_protected: Callable[[], None],
 ) -> None:
     """Register R3AKT registry/capability routes."""
-
-    def _expand_tokens(value: str | None) -> set[str]:
-        if not value:
-            return set()
-        return {
-            item.strip().lower()
-            for item in value.split(",")
-            if item and item.strip()
-        }
-
-    def _parse_iso_datetime(value: object) -> datetime | None:
-        if value is None:
-            return None
-        text = str(value).strip()
-        if not text:
-            return None
-        try:
-            return datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="expires_at must be ISO-8601",
-            ) from exc
 
     @app.get("/api/r3akt/capabilities/{identity}", dependencies=[Depends(require_protected)])
     def get_identity_capabilities(identity: str) -> dict:
@@ -66,7 +46,7 @@ def register_r3akt_routes(
         expires_at = None
         if isinstance(payload, dict):
             granted_by = payload.get("granted_by")
-            expires_at = _parse_iso_datetime(payload.get("expires_at"))
+            expires_at = parse_iso_datetime(payload.get("expires_at"))
         try:
             return api.grant_identity_capability(
                 identity,
@@ -132,7 +112,7 @@ def register_r3akt_routes(
                 scope_type=payload.get("scope_type"),
                 scope_id=payload.get("scope_id"),
                 granted_by=payload.get("granted_by"),
-                expires_at=_parse_iso_datetime(payload.get("expires_at")),
+                expires_at=parse_iso_datetime(payload.get("expires_at")),
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -205,7 +185,7 @@ def register_r3akt_routes(
         expand: str | None = Query(default=None),
         limit: int = Query(default=200, ge=1, le=2000),
     ) -> list[dict]:
-        expand_values = _expand_tokens(expand)
+        expand_values = expand_tokens(expand)
         expand_topic = "topic" in expand_values or "all" in expand_values
         return domain.list_missions(
             expand_topic=expand_topic,
@@ -228,7 +208,7 @@ def register_r3akt_routes(
         mission_uid: str,
         expand: str | None = Query(default=None),
     ) -> dict:
-        expand_values = _expand_tokens(expand)
+        expand_values = expand_tokens(expand)
         expand_topic = "topic" in expand_values or "all" in expand_values
         try:
             return domain.get_mission(
@@ -477,108 +457,8 @@ def register_r3akt_routes(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    @app.get("/api/r3akt/assets", dependencies=[Depends(require_protected)])
-    def list_assets(team_member_uid: str | None = Query(default=None)) -> list[dict]:
-        return domain.list_assets(team_member_uid=team_member_uid)
-
-    @app.post("/api/r3akt/assets", dependencies=[Depends(require_protected)])
-    def upsert_asset(payload: dict = Body(default_factory=dict)) -> dict:
-        try:
-            return domain.upsert_asset(payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.get("/api/r3akt/assets/{asset_uid}", dependencies=[Depends(require_protected)])
-    def get_asset(asset_uid: str) -> dict:
-        try:
-            return domain.get_asset(asset_uid)
-        except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-    @app.delete("/api/r3akt/assets/{asset_uid}", dependencies=[Depends(require_protected)])
-    def delete_asset(asset_uid: str) -> dict:
-        try:
-            return domain.delete_asset(asset_uid)
-        except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-    @app.get("/api/r3akt/skills", dependencies=[Depends(require_protected)])
-    def list_skills() -> list[dict]:
-        return domain.list_skills()
-
-    @app.post("/api/r3akt/skills", dependencies=[Depends(require_protected)])
-    def upsert_skill(payload: dict = Body(default_factory=dict)) -> dict:
-        return domain.upsert_skill(payload)
-
-    @app.get("/api/r3akt/team-member-skills", dependencies=[Depends(require_protected)])
-    def list_team_member_skills(
-        team_member_rns_identity: str | None = Query(default=None),
-    ) -> list[dict]:
-        return domain.list_team_member_skills(
-            team_member_rns_identity=team_member_rns_identity
-        )
-
-    @app.post("/api/r3akt/team-member-skills", dependencies=[Depends(require_protected)])
-    def upsert_team_member_skill(payload: dict = Body(default_factory=dict)) -> dict:
-        try:
-            return domain.upsert_team_member_skill(payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.get("/api/r3akt/task-skill-requirements", dependencies=[Depends(require_protected)])
-    def list_task_skill_requirements(task_uid: str | None = Query(default=None)) -> list[dict]:
-        return domain.list_task_skill_requirements(task_uid=task_uid)
-
-    @app.post("/api/r3akt/task-skill-requirements", dependencies=[Depends(require_protected)])
-    def upsert_task_skill_requirement(payload: dict = Body(default_factory=dict)) -> dict:
-        try:
-            return domain.upsert_task_skill_requirement(payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.get("/api/r3akt/assignments", dependencies=[Depends(require_protected)])
-    def list_assignments(
-        mission_uid: str | None = Query(default=None),
-        task_uid: str | None = Query(default=None),
-    ) -> list[dict]:
-        return domain.list_assignments(mission_uid=mission_uid, task_uid=task_uid)
-
-    @app.post("/api/r3akt/assignments", dependencies=[Depends(require_protected)])
-    def upsert_assignment(payload: dict = Body(default_factory=dict)) -> dict:
-        try:
-            return domain.upsert_assignment(payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.put("/api/r3akt/assignments/{assignment_uid}/assets", dependencies=[Depends(require_protected)])
-    def set_assignment_assets(assignment_uid: str, payload: dict = Body(default_factory=dict)) -> dict:
-        assets = payload.get("assets")
-        if not isinstance(assets, list):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="assets must be a list",
-            )
-        try:
-            return domain.set_assignment_assets(assignment_uid, [str(item) for item in assets])
-        except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.put("/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}", dependencies=[Depends(require_protected)])
-    def link_assignment_asset(assignment_uid: str, asset_uid: str) -> dict:
-        try:
-            return domain.link_assignment_asset(assignment_uid, asset_uid)
-        except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.delete("/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}", dependencies=[Depends(require_protected)])
-    def unlink_assignment_asset(assignment_uid: str, asset_uid: str) -> dict:
-        try:
-            return domain.unlink_assignment_asset(assignment_uid, asset_uid)
-        except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    register_r3akt_assignment_routes(
+        app,
+        domain=domain,
+        require_protected=require_protected,
+    )
