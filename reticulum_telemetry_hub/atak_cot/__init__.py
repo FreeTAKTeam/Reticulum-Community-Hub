@@ -14,10 +14,10 @@ from reticulum_telemetry_hub.atak_cot.chat import ChatGroup
 from reticulum_telemetry_hub.atak_cot.chat import ChatHierarchy
 from reticulum_telemetry_hub.atak_cot.chat import ChatHierarchyContact
 from reticulum_telemetry_hub.atak_cot.chat import ChatHierarchyGroup
-from reticulum_telemetry_hub.atak_cot.chat import Link
 from reticulum_telemetry_hub.atak_cot.chat import Marti
 from reticulum_telemetry_hub.atak_cot.chat import MartiDest
 from reticulum_telemetry_hub.atak_cot.chat import Remarks
+from reticulum_telemetry_hub.atak_cot.chat_link import Link
 from reticulum_telemetry_hub.atak_cot.detail import Detail
 from reticulum_telemetry_hub.atak_cot.event import Event
 from reticulum_telemetry_hub.atak_cot.event import Packable

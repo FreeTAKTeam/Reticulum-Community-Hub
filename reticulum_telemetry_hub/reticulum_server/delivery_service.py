@@ -6,8 +6,6 @@ from datetime import datetime
 from datetime import timezone
 import time
 from typing import Any
-from typing import Protocol
-from typing import TypedDict
 
 import LXMF
 import RNS
@@ -23,6 +21,8 @@ from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_O
 from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_QUEUE_SIZE
 from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_SEND_TIMEOUT
 from reticulum_telemetry_hub.reticulum_server.delivery_defaults import DEFAULT_OUTBOUND_WORKERS
+from reticulum_telemetry_hub.reticulum_server.delivery_types import DeliveryTransition
+from reticulum_telemetry_hub.reticulum_server.delivery_types import QueueStats
 from reticulum_telemetry_hub.reticulum_server.outbound_queue import OutboundMessageQueue
 from reticulum_telemetry_hub.reticulum_server.outbound_queue import OutboundPayload
 from reticulum_telemetry_hub.reticulum_server.propagation_selection import PropagationNodeCandidate
@@ -32,55 +32,6 @@ def _utcnow() -> datetime:
     """Return a UTC timestamp for persisted chat event records."""
 
     return datetime.now(timezone.utc)
-
-
-class QueueStats(TypedDict):
-    """Typed snapshot of outbound queue counters for diagnostics."""
-
-    queue_depth: int
-    inflight: int
-    active_dispatches: int
-    in_progress_futures: int
-    pending_dispatches: int
-    pending_receipts: int
-    timed_out_sends: int
-    worker_count: int
-
-
-class DeliveryTransition(TypedDict, total=False):
-    """Typed event payload emitted during delivery state transitions."""
-
-    MessageID: str | None
-    Direction: str
-    Scope: str
-    State: str
-    Content: str
-    Source: str | None
-    Destination: str | None
-    TopicID: str | None
-    SourceHash: str
-    SourceLabel: str
-    Timestamp: str
-    DeliveryMetadata: dict[str, object]
-
-
-class DeliveryMonitoringHooks(Protocol):
-    """Hook interface used by outbound queue callbacks."""
-
-    def handle_outbound_retry_scheduled(self, payload: OutboundPayload) -> None:
-        """Observe direct retry scheduling."""
-
-    def handle_outbound_direct_failure(self, payload: OutboundPayload, reason: str) -> None:
-        """Observe direct-attempt failures before retry or fallback."""
-
-    def handle_outbound_propagation_fallback(self, payload: OutboundPayload) -> None:
-        """Observe propagation fallback transitions."""
-
-    def handle_outbound_attempt_started(self, payload: OutboundPayload) -> None:
-        """Observe attempt start transitions."""
-
-    def handle_outbound_payload_dropped(self, payload: OutboundPayload, reason: str) -> None:
-        """Observe terminal queue drop transitions."""
 
 
 class DeliveryService:

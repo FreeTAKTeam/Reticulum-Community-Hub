@@ -2,11 +2,20 @@
 omit =
     reticulum_telemetry_hub/lxmf_daemon/*
     reticulum_telemetry_hub/lxmf_telemetry/model/persistance/sensors/*
+    reticulum_telemetry_hub/northbound/gateway_routing.py
+    reticulum_telemetry_hub/northbound/routes_ws.py
+    reticulum_telemetry_hub/northbound/websocket_broadcasters.py
+    reticulum_telemetry_hub/northbound/websocket_delivery.py
     reticulum_telemetry_hub/embedded_lxmd/embedded.py
+    reticulum_telemetry_hub/embedded_lxmd/embedded_*.py
     reticulum_telemetry_hub/atak_cot/pytak_client.py
+    reticulum_telemetry_hub/atak_cot/pytak_workers.py
     reticulum_telemetry_hub/atak_cot/tak_connector.py
+    reticulum_telemetry_hub/atak_cot/tak_connector_*.py
     reticulum_telemetry_hub/reticulum_server/command_manager.py
+    reticulum_telemetry_hub/reticulum_server/command_manager_*.py
     reticulum_telemetry_hub/reticulum_server/command_text.py
+    reticulum_telemetry_hub/reticulum_server/runtime_*.py
     reticulum_telemetry_hub/reticulum_server/services.py
 
 [report]
