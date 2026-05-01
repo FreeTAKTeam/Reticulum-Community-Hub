@@ -1,4 +1,5 @@
 """Outbound queue delivery, receipt, and failure helpers."""
+# pylint: disable=no-member
 
 from __future__ import annotations
 

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from reticulum_telemetry_hub.api.storage_models import *  # noqa: F403
 from reticulum_telemetry_hub.mission_domain.enums import *  # noqa: F403
 from reticulum_telemetry_hub.mission_domain.enums import normalize_enum_value
+from reticulum_telemetry_hub.mission_domain.service_constants import _utcnow
 from reticulum_telemetry_hub.mission_domain.service_constants import *  # noqa: F403
 
 

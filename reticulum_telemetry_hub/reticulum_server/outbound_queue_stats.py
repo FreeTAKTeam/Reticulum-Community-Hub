@@ -1,4 +1,5 @@
 """Outbound queue stats, enqueue, and backpressure helpers."""
+# pylint: disable=no-member
 
 from __future__ import annotations
 

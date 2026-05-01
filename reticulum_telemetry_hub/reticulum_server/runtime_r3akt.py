@@ -25,6 +25,7 @@ from reticulum_telemetry_hub.reticulum_server.runtime_support import *  # noqa: 
 class RuntimeR3aktMixin:
     """R3AKT capability and identity helpers."""
 
+    @staticmethod
     def _build_r3akt_custom_fields(
         *,
         mission_uid: str,

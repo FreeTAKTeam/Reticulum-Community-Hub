@@ -1,8 +1,12 @@
 """TAK, field, topic, and destination helper methods."""
+# pylint: disable=not-callable
 # ruff: noqa: F403,F405
 
 from __future__ import annotations
 
+from typing import Any
+from typing import Callable
+from typing import cast
 
 import LXMF
 import RNS
@@ -23,6 +27,7 @@ from reticulum_telemetry_hub.reticulum_server.propagation_selection import *  # 
 from reticulum_telemetry_hub.reticulum_server.runtime_events import report_nonfatal_exception
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.runtime_constants import *  # noqa: F403
+from reticulum_telemetry_hub.reticulum_server.runtime_support import _dispatch_coroutine
 from reticulum_telemetry_hub.reticulum_server.runtime_support import *  # noqa: F403
 
 
@@ -214,9 +219,10 @@ class RuntimeTakFieldMixin:
         if api is None:
             return fallback
 
-        resolver = getattr(api, "retrieve_topic", None)
-        if not callable(resolver):
+        raw_resolver = getattr(api, "retrieve_topic", None)
+        if not callable(raw_resolver):
             return fallback
+        resolver = cast(Callable[[str], Any], raw_resolver)
 
         try:
             topic = resolver(topic_id)

@@ -1,5 +1,5 @@
 """WebSocket helpers for the northbound API."""
-# pylint: disable=import-error
+# pylint: disable=import-error,missing-kwoa
 
 from __future__ import annotations
 

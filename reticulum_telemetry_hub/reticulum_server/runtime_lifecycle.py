@@ -166,19 +166,22 @@ class RuntimeLifecycleMixin:
         self._shutdown = True
         self._stop_propagation_sync_worker()
         self.stop_daemon_workers()
-        if self._remove_mission_change_listener is not None:
+        remove_mission_change_listener = self._remove_mission_change_listener
+        if remove_mission_change_listener is not None:
             try:
-                self._remove_mission_change_listener()
+                remove_mission_change_listener()
             finally:
                 self._remove_mission_change_listener = None
-        if self._remove_eam_status_listener is not None:
+        remove_eam_status_listener = self._remove_eam_status_listener
+        if remove_eam_status_listener is not None:
             try:
-                self._remove_eam_status_listener()
+                remove_eam_status_listener()
             finally:
                 self._remove_eam_status_listener = None
-        if self._remove_topic_registry_change_listener is not None:
+        remove_topic_registry_change_listener = self._remove_topic_registry_change_listener
+        if remove_topic_registry_change_listener is not None:
             try:
-                self._remove_topic_registry_change_listener()
+                remove_topic_registry_change_listener()
             finally:
                 self._remove_topic_registry_change_listener = None
         if self._announce_handler is not None:

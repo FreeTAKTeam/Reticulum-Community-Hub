@@ -1,4 +1,5 @@
 """Telemetry serialization, event, and reply helpers."""
+# pylint: disable=no-member
 
 from __future__ import annotations
 
@@ -22,6 +23,9 @@ from reticulum_telemetry_hub.reticulum_server.runtime_events import report_nonfa
 
 class TelemetrySerializationMixin:
     """Serialize telemetry and build LXMF response fields."""
+
+    _ingest_count: int
+    _last_ingest_at: datetime | None
 
     def _serialize_telemeter(self, telemeter: Telemeter) -> dict:
         """Serialize the telemeter data."""
