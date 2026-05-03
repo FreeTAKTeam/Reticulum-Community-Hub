@@ -711,6 +711,96 @@ def test_backend_replays_checklist_rejection_flow(backend) -> None:  # type: ign
     assert _rejection(missing_checklist)["reason_code"] == "invalid_payload"
 
 
+def test_backend_replays_mission_scoped_checklist_authorization(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(
+        backend,
+        "mission.registry.mission.write",
+        "mission.registry.team.write",
+        "mission.registry.team_member.write",
+        "checklist.write",
+    )
+
+    assert _terminal_result(
+        backend.handle_command(
+            _command(
+                "mission.registry.mission.upsert",
+                {"uid": "mission-checklist-auth", "mission_name": "Checklist Auth"},
+                command_id="cmd-shared-checklist-auth-mission",
+            )
+        )
+    )["uid"] == "mission-checklist-auth"
+    assert _terminal_result(
+        backend.handle_command(
+            _command(
+                "mission.registry.team.upsert",
+                {
+                    "uid": "team-checklist-auth",
+                    "team_name": "Checklist Team",
+                    "mission_uid": "mission-checklist-auth",
+                },
+                command_id="cmd-shared-checklist-auth-team",
+            )
+        )
+    )["uid"] == "team-checklist-auth"
+    assert _terminal_result(
+        backend.handle_command(
+            _command(
+                "mission.registry.team_member.upsert",
+                {
+                    "uid": "member-checklist-auth",
+                    "team_uid": "team-checklist-auth",
+                    "rns_identity": "peer-member",
+                    "display_name": "Peer Member",
+                },
+                command_id="cmd-shared-checklist-auth-member",
+            )
+        )
+    )["uid"] == "member-checklist-auth"
+    assert _terminal_result(
+        backend.handle_command(
+            _command(
+                "mission.registry.team_member.client.link",
+                {
+                    "team_member_uid": "member-checklist-auth",
+                    "client_identity": "peer-a",
+                },
+                command_id="cmd-shared-checklist-auth-client-link",
+            )
+        )
+    )["client_identities"] == ["peer-a"]
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.create.offline",
+            {
+                "checklist_uid": "checklist-auth",
+                "name": "Mission Checklist",
+                "origin_type": "BLANK_TEMPLATE",
+                "mission_uid": "mission-checklist-auth",
+            },
+            command_id="cmd-shared-checklist-auth-create",
+        )
+    ) == []
+
+    backend.assign_mission_access_role(
+        "mission-checklist-auth",
+        "team_member",
+        "member-checklist-auth",
+        "MISSION_READONLY_SUBSCRIBER",
+    )
+    backend.set_authorization_required(True)
+
+    authorized = backend.handle_checklist_command(
+        _command(
+            "checklist.get",
+            {"checklist_uid": "checklist-auth"},
+            command_id="cmd-shared-checklist-mission-scoped",
+        )
+    )
+
+    assert authorized == []
+
+
 def test_backend_replays_checklist_template_and_progress_flow(backend) -> None:  # type: ignore[no-untyped-def]
     _grant(
         backend,
