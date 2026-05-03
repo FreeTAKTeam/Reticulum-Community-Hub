@@ -194,6 +194,9 @@ class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     image_storage_path: Path | None = None
     api_pagination_page_size: int = DEFAULT_API_PAGINATION_PAGE_SIZE
     api_pagination_max_page_size: int = DEFAULT_API_PAGINATION_MAX_PAGE_SIZE
+    rust_runtime_enabled: bool = False
+    rust_runtime_bridge_path: Path | None = None
+    rust_runtime_db_path: Path | None = None
 
 
 @dataclass

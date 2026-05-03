@@ -59,6 +59,7 @@ class RuntimeConfigMixin:
         file_section = self._get_section("files")
         image_section = self._get_section("images")
         api_section = self._get_section("api")
+        rust_runtime_section = self._get_section("rust_runtime")
 
         files_path_value = file_section.get("path") or file_section.get("directory")
         images_path_value = image_section.get("path") or image_section.get("directory")
@@ -91,6 +92,17 @@ class RuntimeConfigMixin:
                 api_pagination_page_size,
             )
             api_pagination_max_page_size = api_pagination_page_size
+        rust_runtime_enabled = self._get_bool(
+            rust_runtime_section,
+            "enabled",
+            defaults.rust_runtime_enabled,
+        )
+        rust_runtime_bridge_value = self._normalize_optional_text(
+            rust_runtime_section.get("bridge_path")
+        )
+        rust_runtime_db_value = self._normalize_optional_text(
+            rust_runtime_section.get("db_path")
+        )
 
         announce_section = (
             self._get_section("announce.capabilities")
@@ -214,5 +226,16 @@ class RuntimeConfigMixin:
             image_storage_path=image_storage_path,
             api_pagination_page_size=api_pagination_page_size,
             api_pagination_max_page_size=api_pagination_max_page_size,
+            rust_runtime_enabled=rust_runtime_enabled,
+            rust_runtime_bridge_path=(
+                _expand_user_path(rust_runtime_bridge_value)
+                if rust_runtime_bridge_value
+                else None
+            ),
+            rust_runtime_db_path=(
+                _expand_user_path(rust_runtime_db_value)
+                if rust_runtime_db_value
+                else None
+            ),
         )
 

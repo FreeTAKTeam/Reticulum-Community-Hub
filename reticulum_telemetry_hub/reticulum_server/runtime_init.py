@@ -31,6 +31,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemeter_manager import TelemeterMa
 from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_sync import MissionSyncRouter
+from reticulum_telemetry_hub.mission_sync.rust_bridge import build_rust_bridge_from_runtime_config
 from reticulum_telemetry_hub.reticulum_server.delivery_defaults import *  # noqa: F403
 from reticulum_telemetry_hub.reticulum_server.delivery_service import DeliveryService
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
@@ -327,6 +328,18 @@ class RuntimeInitMixin:
             event_log=self.event_log,
             destination_removed_callback=self._evict_cached_destination,
         )
+        mission_sync_rust_bridge = build_rust_bridge_from_runtime_config(
+            runtime_config,
+            storage_path=self.storage_path,
+            field_results=LXMF.FIELD_RESULTS,
+            field_event=LXMF.FIELD_EVENT,
+            field_group=LXMF.FIELD_GROUP,
+        )
+        if mission_sync_rust_bridge is not None:
+            RNS.log(
+                "Rust R3AKT mission-sync bridge enabled",
+                getattr(RNS, "LOG_NOTICE", 3),
+            )
         self.mission_sync_router = MissionSyncRouter(
             api=self.api,
             send_message=lambda content, topic_id, destination: self.send_message(
@@ -343,6 +356,7 @@ class RuntimeInitMixin:
             field_results=LXMF.FIELD_RESULTS,
             field_event=LXMF.FIELD_EVENT,
             field_group=LXMF.FIELD_GROUP,
+            rust_bridge=mission_sync_rust_bridge,
         )
         self.rem_command_router = RemCommandRouter(
             api=self.api,
@@ -360,6 +374,7 @@ class RuntimeInitMixin:
             field_results=LXMF.FIELD_RESULTS,
             field_event=LXMF.FIELD_EVENT,
             field_group=LXMF.FIELD_GROUP,
+            rust_bridge=mission_sync_rust_bridge,
         )
         self.internal_adapter = ReticulumInternalAdapter(send_message=self.send_message)
         self.topic_subscribers: dict[str, set[str]] = {}

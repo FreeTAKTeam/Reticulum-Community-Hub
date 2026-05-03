@@ -51,6 +51,10 @@ def test_missing_config_is_bootstrapped_from_default_template(tmp_path):
     assert manager.config_parser.has_section("api")
     assert manager.config_parser.has_option("api", "pagination_default_page_size")
     assert manager.config_parser.has_option("api", "pagination_max_page_size")
+    assert manager.config_parser.has_section("rust_runtime")
+    assert manager.config_parser.has_option("rust_runtime", "enabled")
+    assert manager.config_parser.has_option("rust_runtime", "bridge_path")
+    assert manager.config_parser.has_option("rust_runtime", "db_path")
     assert manager.config_parser.has_section("TAK")
     assert manager.config_parser.has_option("TAK", "fts_compat")
     assert manager.config_parser.has_section("telemetry")
@@ -183,6 +187,33 @@ def test_api_pagination_max_is_not_below_default(tmp_path):
 
     assert manager.runtime_config.api_pagination_page_size == 20
     assert manager.runtime_config.api_pagination_max_page_size == 20
+
+
+def test_rust_runtime_config_defaults_disabled(tmp_path):
+    manager = HubConfigurationManager(storage_path=tmp_path)
+    runtime = manager.runtime_config
+
+    assert runtime.rust_runtime_enabled is False
+    assert runtime.rust_runtime_bridge_path is None
+    assert runtime.rust_runtime_db_path is None
+
+
+def test_rust_runtime_config_loads_paths(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        "[rust_runtime]\n"
+        "enabled = true\n"
+        "bridge_path = ~/runtime/r3akt-rch-bridge.exe\n"
+        "db_path = ~/runtime/r3akt.sqlite\n"
+    )
+
+    manager = HubConfigurationManager(storage_path=tmp_path / "store", config_path=config_path)
+    runtime = manager.runtime_config
+
+    assert runtime.rust_runtime_enabled is True
+    assert runtime.rust_runtime_bridge_path == tmp_path / "runtime/r3akt-rch-bridge.exe"
+    assert runtime.rust_runtime_db_path == tmp_path / "runtime/r3akt.sqlite"
 
 
 def test_announce_capabilities_defaults(tmp_path):

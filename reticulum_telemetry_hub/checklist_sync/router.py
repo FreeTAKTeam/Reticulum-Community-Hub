@@ -13,6 +13,8 @@ from pydantic import ValidationError
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.checklist_sync.capabilities import CHECKLIST_COMMAND_CAPABILITIES
 from reticulum_telemetry_hub.mission_domain.service import MissionDomainService
+from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionBridgeError
+from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
 from reticulum_telemetry_hub.mission_sync.router import MissionSyncResponse
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandRejected
@@ -45,6 +47,7 @@ class ChecklistSyncRouter:
         field_results: int,
         field_event: int,
         field_group: int,
+        rust_bridge: RustMissionSyncBridge | None = None,
     ) -> None:
         self._api = api
         self._domain = domain_service
@@ -53,6 +56,7 @@ class ChecklistSyncRouter:
         self._field_results = field_results
         self._field_event = field_event
         self._field_group = field_group
+        self._rust_bridge = rust_bridge
 
     def handle_commands(
         self,
@@ -141,6 +145,38 @@ class ChecklistSyncRouter:
                 },
             )
             return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
+
+        if self._rust_bridge is not None:
+            try:
+                return [
+                    MissionSyncResponse(content=response.content, fields=response.fields)
+                    for response in self._rust_bridge.handle_checklist_command(
+                        envelope, group=group
+                    )
+                ]
+            except RustMissionBridgeError as exc:
+                rejected = MissionCommandRejected(
+                    command_id=envelope.command_id,
+                    reason_code="internal_error",
+                    reason=str(exc),
+                    correlation_id=envelope.correlation_id,
+                    required_capabilities=[required_capability],
+                )
+                self._record_event(
+                    "checklist_command_rejected",
+                    {
+                        "command_id": envelope.command_id,
+                        "command_type": envelope.command_type,
+                        "reason_code": "internal_error",
+                        "reason": str(exc),
+                        "identity": source_identity,
+                    },
+                )
+                return [
+                    self._response_from_results(
+                        rejected.model_dump(mode="json"), group=group
+                    )
+                ]
 
         try:
             _result_payload, event_type, _event_payload = self._execute_command(

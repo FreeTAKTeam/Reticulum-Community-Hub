@@ -37,7 +37,7 @@ def _columns() -> list[dict[str, object]]:
     ]
 
 
-def _router(tmp_path, *, include_event_log: bool = False):
+def _router(tmp_path, *, include_event_log: bool = False, rust_bridge=None):
     cfg = make_config_manager(tmp_path)
     api = ReticulumTelemetryHubAPI(config_manager=cfg)
     domain = MissionDomainService(cfg.config.hub_database_path)
@@ -50,6 +50,7 @@ def _router(tmp_path, *, include_event_log: bool = False):
         field_results=FIELD_RESULTS,
         field_event=FIELD_EVENT,
         field_group=FIELD_GROUP,
+        rust_bridge=rust_bridge,
     )
     return api, domain, router, event_log
 
@@ -103,6 +104,42 @@ def _template_by_name(domain: MissionDomainService, name: str) -> dict:
     ]
     assert len(matches) == 1
     return domain.get_checklist_template(matches[0]["uid"])
+
+
+def test_checklist_router_can_delegate_authorized_command_to_rust_bridge(tmp_path) -> None:
+    class Bridge:
+        def __init__(self) -> None:
+            self.commands = []
+
+        def handle_checklist_command(self, envelope, *, group=None):  # type: ignore[no-untyped-def]
+            self.commands.append((envelope, group))
+            return []
+
+    bridge = Bridge()
+    api, domain, router, _log = _router(tmp_path, rust_bridge=bridge)
+    api.grant_identity_capability("peer-a", "checklist.write")
+
+    responses = router.handle_commands(
+        [
+            _command(
+                "checklist.create.offline",
+                {
+                    "origin_type": "BLANK_TEMPLATE",
+                    "name": "Rust Delegated",
+                    "columns": _columns(),
+                },
+                command_id="cmd-rust-checklist",
+            )
+        ],
+        source_identity="peer-a",
+        group="grp-1",
+    )
+
+    assert responses == []
+    assert len(bridge.commands) == 1
+    assert bridge.commands[0][0].command_id == "cmd-rust-checklist"
+    assert bridge.commands[0][1] == "grp-1"
+    assert domain.list_active_checklists() == []
 
 
 def test_successful_checklist_command_accepts_rem_source_without_reply(tmp_path) -> None:

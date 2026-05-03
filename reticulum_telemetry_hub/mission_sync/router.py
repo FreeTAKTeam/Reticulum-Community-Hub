@@ -20,6 +20,8 @@ from reticulum_telemetry_hub.mission_sync.capabilities import MISSION_COMMAND_CA
 from reticulum_telemetry_hub.mission_sync.router_errors import MissionCommandError
 from reticulum_telemetry_hub.mission_sync.router_execution import MissionCommandExecutionMixin
 from reticulum_telemetry_hub.mission_sync.router_helpers import MissionRouterHelperMixin
+from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionBridgeError
+from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandAccepted
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandRejected
@@ -58,6 +60,7 @@ class MissionSyncRouter(MissionCommandExecutionMixin, MissionRouterHelperMixin):
         field_results: int,
         field_event: int,
         field_group: int,
+        rust_bridge: RustMissionSyncBridge | None = None,
     ) -> None:
         self._api = api
         self._send_message = send_message
@@ -70,6 +73,7 @@ class MissionSyncRouter(MissionCommandExecutionMixin, MissionRouterHelperMixin):
         self._field_results = field_results
         self._field_event = field_event
         self._field_group = field_group
+        self._rust_bridge = rust_bridge
 
     def handle_commands(
         self,
@@ -167,6 +171,30 @@ class MissionSyncRouter(MissionCommandExecutionMixin, MissionRouterHelperMixin):
                 },
             )
             return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
+
+        if self._rust_bridge is not None:
+            try:
+                return [
+                    MissionSyncResponse(content=response.content, fields=response.fields)
+                    for response in self._rust_bridge.handle_command(envelope, group=group)
+                ]
+            except RustMissionBridgeError as exc:
+                rejected = MissionCommandRejected(
+                    command_id=envelope.command_id,
+                    reason_code="internal_error",
+                    reason=str(exc),
+                    correlation_id=envelope.correlation_id,
+                )
+                self._record_event(
+                    "mission_command_rejected",
+                    {
+                        "command_id": envelope.command_id,
+                        "command_type": envelope.command_type,
+                        "reason_code": "internal_error",
+                        "identity": source_identity,
+                    },
+                )
+                return [self._response_from_results(rejected.model_dump(mode="json"), group=group)]
 
         accepted = MissionCommandAccepted(
             command_id=envelope.command_id,
