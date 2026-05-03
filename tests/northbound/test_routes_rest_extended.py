@@ -6,9 +6,11 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import subprocess
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
@@ -20,6 +22,8 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
+from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.northbound.routes_rest import register_core_routes
@@ -31,8 +35,110 @@ from reticulum_telemetry_hub.reticulum_server.runtime_events import (
 from tests.factories import build_location_payload
 
 
+FIELD_RESULTS = 10
+FIELD_GROUP = 11
+FIELD_EVENT = 13
+
+
+class RustR3aktDomain:
+    """R3AKT route domain subset backed by the Rust RCH bridge."""
+
+    def __init__(self, bridge: RustMissionSyncBridge) -> None:
+        self._bridge = bridge
+
+    def upsert_mission(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.upsert",
+            payload,
+        )
+
+    def list_missions(
+        self,
+        *,
+        expand_topic: bool = False,
+        expand: set[str] | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, object]]:
+        _ = expand_topic, expand
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.list",
+            {"limit": limit},
+        )["missions"]
+
+
+def _runtime_root() -> Path:
+    candidates = [
+        Path(__file__).resolve().parents[4] / "New project" / "R3AKT-Runtime",
+        Path(r"C:\Users\broth\Documents\New project\R3AKT-Runtime"),
+    ]
+    for candidate in candidates:
+        if (candidate / "Cargo.toml").exists():
+            return candidate
+    pytest.fail("R3AKT-Runtime workspace not found for Rust R3AKT route parity tests")
+
+
+def _bridge(db_path: Path) -> RustMissionSyncBridge:
+    runtime_root = _runtime_root()
+
+    def runner(args, **kwargs):  # type: ignore[no-untyped-def]
+        request_db_path = args[args.index("--db") + 1]
+        return subprocess.run(
+            ["cargo", "run", "-q", "-p", "r3akt-rch-bridge", "--", "--db", request_db_path],
+            cwd=runtime_root,
+            input=kwargs["input"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    return RustMissionSyncBridge(
+        binary_path="cargo-run-r3akt-rch-bridge",
+        db_path=str(db_path),
+        field_results=FIELD_RESULTS,
+        field_event=FIELD_EVENT,
+        field_group=FIELD_GROUP,
+        runner=runner,
+    )
+
+
+def _run_rust_command(
+    bridge: RustMissionSyncBridge,
+    command_type: str,
+    args: dict[str, object],
+) -> dict[str, object]:
+    responses = bridge.handle_command(
+        MissionCommandEnvelope.model_validate(
+            {
+                "command_id": f"cmd-rust-r3akt-route-{command_type}",
+                "source": {"rns_identity": "peer-a"},
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "command_type": command_type,
+                "args": args,
+            }
+        ),
+        source_identity="peer-a",
+    )
+    payload = responses[-1].fields[FIELD_RESULTS]
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Rust R3AKT command returned malformed payload: {command_type}")
+    if payload.get("status") == "rejected":
+        reason_code = str(payload.get("reason_code") or "")
+        reason = str(payload.get("reason") or payload.get("detail") or command_type)
+        if reason_code in {"not_found", "not_found_error"} or "not found" in reason.lower():
+            raise KeyError(reason)
+        raise ValueError(reason)
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError(f"Rust R3AKT command returned non-object result: {command_type}")
+    return result
+
+
 def _build_client(
     tmp_path: Path,
+    *,
+    backend: str = "python",
 ) -> tuple[TestClient, ReticulumTelemetryHubAPI, EventLog, TelemetryController]:
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "hub.sqlite")
@@ -43,6 +149,7 @@ def _build_client(
         api=api,
         event_log=event_log,
     )
+    rust_bridge = _bridge(tmp_path / "r3akt-routes.sqlite") if backend == "rust" else None
     app = create_app(
         api=api,
         telemetry_controller=telemetry,
@@ -50,6 +157,7 @@ def _build_client(
         auth=ApiAuth(api_key="secret"),
         routing_provider=lambda: ["dest-1"],
         message_dispatcher=lambda content, topic_id=None, destination=None, fields=None: None,
+        mission_domain_service=RustR3aktDomain(rust_bridge) if rust_bridge is not None else None,
     )
     return TestClient(app), api, event_log, telemetry
 
@@ -1133,8 +1241,9 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     assert events.json()
 
 
-def test_r3akt_missions_route_applies_limit(tmp_path: Path) -> None:
-    client, _, _, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_r3akt_missions_route_applies_limit(tmp_path: Path, backend: str) -> None:
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     for mission_uid in ("mission-1", "mission-2", "mission-3"):
