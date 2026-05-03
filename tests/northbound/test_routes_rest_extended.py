@@ -53,6 +53,20 @@ class RustR3aktDomain:
             payload,
         )
 
+    def get_mission(
+        self,
+        mission_uid: str,
+        *,
+        expand_topic: bool = False,
+        expand: set[str] | None = None,
+    ) -> dict[str, object]:
+        _ = expand_topic, expand
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.get",
+            {"mission_uid": mission_uid},
+        )
+
     def list_missions(
         self,
         *,
@@ -66,6 +80,198 @@ class RustR3aktDomain:
             "mission.registry.mission.list",
             {"limit": limit},
         )["missions"]
+
+    def patch_mission(
+        self,
+        mission_uid: str,
+        patch: dict[str, object],
+    ) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.patch",
+            {"mission_uid": mission_uid, "patch": patch},
+        )
+
+    def delete_mission(self, mission_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.delete",
+            {"mission_uid": mission_uid},
+        )
+
+    def set_mission_parent(
+        self,
+        mission_uid: str,
+        *,
+        parent_uid: str | None = None,
+    ) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.parent.set",
+            {"mission_uid": mission_uid, "parent_uid": parent_uid},
+        )
+
+    def upsert_mission_rde(self, mission_uid: str, role: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.rde.set",
+            {"mission_uid": mission_uid, "role": role},
+        )
+
+    def get_mission_rde(self, mission_uid: str) -> dict[str, object]:
+        mission = self.get_mission(mission_uid)
+        role = mission.get("mission_rde_role")
+        if role is None:
+            raise KeyError(f"Mission RDE for '{mission_uid}' not found")
+        return {"mission_uid": mission_uid, "role": role}
+
+    def upsert_team(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team.upsert",
+            payload,
+        )
+
+    def list_teams(self, mission_uid: str | None = None) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team.list",
+            {"mission_uid": mission_uid},
+        )["teams"]
+
+    def get_team(self, team_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team.get",
+            {"team_uid": team_uid},
+        )
+
+    def delete_team(self, team_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team.delete",
+            {"team_uid": team_uid},
+        )
+
+    def list_team_missions(self, team_uid: str) -> list[str]:
+        team = self.get_team(team_uid)
+        return [str(uid) for uid in team.get("mission_uids", [])]
+
+    def link_team_mission(self, team_uid: str, mission_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team.mission.link",
+            {"team_uid": team_uid, "mission_uid": mission_uid},
+        )
+
+    def unlink_team_mission(self, team_uid: str, mission_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team.mission.unlink",
+            {"team_uid": team_uid, "mission_uid": mission_uid},
+        )
+
+    def upsert_team_member(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member.upsert",
+            payload,
+        )
+
+    def list_team_members(
+        self,
+        team_uid: str | None = None,
+    ) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member.list",
+            {"team_uid": team_uid},
+        )["team_members"]
+
+    def get_team_member(self, team_member_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member.get",
+            {"team_member_uid": team_member_uid},
+        )
+
+    def delete_team_member(self, team_member_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member.delete",
+            {"team_member_uid": team_member_uid},
+        )
+
+    def list_team_member_clients(self, team_member_uid: str) -> list[str]:
+        member = self.get_team_member(team_member_uid)
+        return [str(identity) for identity in member.get("client_identities", [])]
+
+    def link_team_member_client(
+        self,
+        team_member_uid: str,
+        client_identity: str,
+    ) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member.client.link",
+            {"team_member_uid": team_member_uid, "client_identity": client_identity},
+        )
+
+    def unlink_team_member_client(
+        self,
+        team_member_uid: str,
+        client_identity: str,
+    ) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member.client.unlink",
+            {"team_member_uid": team_member_uid, "client_identity": client_identity},
+        )
+
+    def upsert_asset(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.asset.upsert",
+            payload,
+        )
+
+    def list_assets(
+        self,
+        team_member_uid: str | None = None,
+    ) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.asset.list",
+            {"team_member_uid": team_member_uid},
+        )["assets"]
+
+    def get_asset(self, asset_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.asset.get",
+            {"asset_uid": asset_uid},
+        )
+
+    def delete_asset(self, asset_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.asset.delete",
+            {"asset_uid": asset_uid},
+        )
+
+    def upsert_skill(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.skill.upsert",
+            payload,
+        )
+
+    def list_skills(self) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.skill.list",
+            {},
+        )["skills"]
 
 
 def _runtime_root() -> Path:
@@ -1239,6 +1445,138 @@ def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
     assert events.status_code == 200
     assert snapshots.status_code == 200
     assert events.json()
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_r3akt_core_registry_routes_use_selected_backend(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
+    headers = {"X-API-Key": "secret"}
+
+    mission = client.post(
+        "/api/r3akt/missions",
+        json={"uid": "mission-core", "mission_name": "Mission Core"},
+        headers=headers,
+    )
+    parent = client.post(
+        "/api/r3akt/missions",
+        json={"uid": "mission-parent", "mission_name": "Parent"},
+        headers=headers,
+    )
+    assert mission.status_code == 200
+    assert parent.status_code == 200
+
+    patched = client.patch(
+        "/api/r3akt/missions/mission-core",
+        json={"mission_priority": 7, "default_role": "MISSION_SUBSCRIBER"},
+        headers=headers,
+    )
+    assert patched.status_code == 200
+    assert patched.json()["mission_priority"] == 7
+
+    parent_link = client.put(
+        "/api/r3akt/missions/mission-core/parent",
+        json={"parent_uid": "mission-parent"},
+        headers=headers,
+    )
+    assert parent_link.status_code == 200
+    assert parent_link.json()["parent_uid"] == "mission-parent"
+
+    rde = client.put(
+        "/api/r3akt/missions/mission-core/rde",
+        json={"role": "MISSION_OWNER"},
+        headers=headers,
+    )
+    assert rde.status_code == 200
+    assert client.get("/api/r3akt/missions/mission-core/rde", headers=headers).json()[
+        "role"
+    ] == "MISSION_OWNER"
+
+    team = client.post(
+        "/api/r3akt/teams",
+        json={
+            "uid": "team-core",
+            "mission_uid": "mission-core",
+            "team_name": "Core Team",
+        },
+        headers=headers,
+    )
+    assert team.status_code == 200
+    assert team.json()["mission_uids"] == ["mission-core"]
+
+    team_link = client.put(
+        "/api/r3akt/teams/team-core/missions/mission-parent",
+        headers=headers,
+    )
+    assert team_link.status_code == 200
+    assert set(team_link.json()["mission_uids"]) == {"mission-core", "mission-parent"}
+    team_missions = client.get("/api/r3akt/teams/team-core/missions", headers=headers)
+    assert team_missions.status_code == 200
+    assert set(team_missions.json()["mission_uids"]) == {"mission-core", "mission-parent"}
+
+    member = client.post(
+        "/api/r3akt/team-members",
+        json={
+            "uid": "member-core",
+            "team_uid": "team-core",
+            "rns_identity": "peer-core",
+            "display_name": "Peer Core",
+        },
+        headers=headers,
+    )
+    assert member.status_code == 200
+    member_link = client.put(
+        "/api/r3akt/team-members/member-core/clients/peer-core",
+        headers=headers,
+    )
+    assert member_link.status_code == 200
+    member_clients = client.get(
+        "/api/r3akt/team-members/member-core/clients",
+        headers=headers,
+    )
+    assert member_clients.status_code == 200
+    assert member_clients.json()["client_identities"] == ["peer-core"]
+
+    asset = client.post(
+        "/api/r3akt/assets",
+        json={
+            "asset_uid": "asset-core",
+            "team_member_uid": "member-core",
+            "name": "Radio",
+            "asset_type": "COMM",
+        },
+        headers=headers,
+    )
+    assert asset.status_code == 200
+    assert client.get("/api/r3akt/assets/asset-core", headers=headers).status_code == 200
+    assert client.get(
+        "/api/r3akt/assets",
+        params={"team_member_uid": "member-core"},
+        headers=headers,
+    ).json()[0]["asset_uid"] == "asset-core"
+
+    skill = client.post(
+        "/api/r3akt/skills",
+        json={"skill_uid": "skill-core", "name": "Navigation"},
+        headers=headers,
+    )
+    assert skill.status_code == 200
+    assert client.get("/api/r3akt/skills", headers=headers).json()[0]["skill_uid"] == "skill-core"
+
+    assert client.delete("/api/r3akt/assets/asset-core", headers=headers).status_code == 200
+    assert client.delete(
+        "/api/r3akt/team-members/member-core/clients/peer-core",
+        headers=headers,
+    ).status_code == 200
+    assert client.delete("/api/r3akt/team-members/member-core", headers=headers).status_code == 200
+    assert client.delete(
+        "/api/r3akt/teams/team-core/missions/mission-parent",
+        headers=headers,
+    ).status_code == 200
+    assert client.delete("/api/r3akt/teams/team-core", headers=headers).status_code == 200
+    assert client.delete("/api/r3akt/missions/mission-parent", headers=headers).status_code == 200
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
