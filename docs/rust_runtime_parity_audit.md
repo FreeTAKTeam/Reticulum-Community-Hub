@@ -73,7 +73,8 @@ It covers:
 The full collected Python suite is broader than the Rust runtime bridge. It also
 tests Python-specific or not-yet-Rust-backed surfaces including:
 
-- FastAPI northbound routes beyond the topic CRUD/subscribe flow and OpenAPI contracts
+- FastAPI northbound routes beyond the current topic, marker, and zone
+  Rust-backed flows, plus OpenAPI contracts
 - CLI process-control behavior
 - Python storage/migration helpers
 - Reticulum daemon lifecycle and outbound queue behavior
