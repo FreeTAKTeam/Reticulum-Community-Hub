@@ -136,6 +136,27 @@ class RustMissionSyncBridge:
             )
         )
 
+    def assign_mission_access_role(
+        self,
+        mission_uid: str,
+        subject_type: str,
+        subject_id: str,
+        role: str,
+    ) -> None:
+        """Assign one Rust-side mission access role."""
+
+        self._expect_state_updated(
+            self._request(
+                {
+                    "type": "assign_mission_access_role",
+                    "mission_uid": mission_uid,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "role": role,
+                }
+            )
+        )
+
     def set_authorization_required(self, required: bool) -> None:
         """Enable or disable Rust-side capability enforcement."""
 

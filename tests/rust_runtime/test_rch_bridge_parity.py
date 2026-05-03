@@ -82,6 +82,20 @@ class PythonRchBackend:
     def grant_capability(self, identity: str, capability: str) -> None:
         self.api.grant_identity_capability(identity, capability)
 
+    def assign_mission_access_role(
+        self,
+        mission_uid: str,
+        subject_type: str,
+        subject_id: str,
+        role: str,
+    ) -> None:
+        self.api.assign_mission_access_role(
+            mission_uid,
+            subject_type,
+            subject_id,
+            role=role,
+        )
+
     @staticmethod
     def set_authorization_required(_required: bool) -> None:
         return None
@@ -163,6 +177,20 @@ class RustRchBackend:
 
     def grant_capability(self, identity: str, capability: str) -> None:
         self.bridge.grant_capability(identity, capability)
+
+    def assign_mission_access_role(
+        self,
+        mission_uid: str,
+        subject_type: str,
+        subject_id: str,
+        role: str,
+    ) -> None:
+        self.bridge.assign_mission_access_role(
+            mission_uid,
+            subject_type,
+            subject_id,
+            role,
+        )
 
     def set_authorization_required(self, required: bool) -> None:
         self.bridge.set_authorization_required(required)
@@ -1167,6 +1195,78 @@ def test_backend_replays_eam_team_and_callsign_rejections(backend) -> None:  # t
     )
     assert _accepted(duplicate_callsign)["status"] == "accepted"
     assert _rejection(duplicate_callsign)["status"] == "rejected"
+
+
+def test_backend_replays_mission_scoped_eam_authorization(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(
+        backend,
+        "mission.registry.mission.write",
+        "mission.registry.team.write",
+        "mission.registry.team_member.write",
+    )
+
+    assert _terminal_result(
+        backend.handle_command(
+            _command(
+                "mission.registry.mission.upsert",
+                {"uid": "mission-auth", "mission_name": "Mission Auth"},
+                command_id="cmd-shared-eam-auth-mission",
+            )
+        )
+    )["uid"] == "mission-auth"
+    assert _terminal_result(
+        backend.handle_command(
+            _command(
+                "mission.registry.team.upsert",
+                {
+                    "uid": "team-auth",
+                    "team_name": "Ops",
+                    "mission_uid": "mission-auth",
+                },
+                command_id="cmd-shared-eam-auth-team",
+            )
+        )
+    )["uid"] == "team-auth"
+    assert _terminal_result(
+        backend.handle_command(
+            _command(
+                "mission.registry.team_member.upsert",
+                {
+                    "uid": "member-auth",
+                    "team_uid": "team-auth",
+                    "rns_identity": "peer-a",
+                    "display_name": "Peer A",
+                    "callsign": "OPS-1",
+                },
+                command_id="cmd-shared-eam-auth-member",
+            )
+        )
+    )["uid"] == "member-auth"
+
+    backend.assign_mission_access_role(
+        "mission-auth",
+        "team_member",
+        "member-auth",
+        "MISSION_SUBSCRIBER",
+    )
+    backend.set_authorization_required(True)
+
+    authorized = backend.handle_command(
+        _command(
+            "mission.registry.eam.upsert",
+            {
+                "callsign": "OPS-1",
+                "team_member_uid": "member-auth",
+                "team_uid": "team-auth",
+                "source": {"rns_identity": "peer-a", "display_name": "Peer A"},
+            },
+            command_id="cmd-shared-eam-mission-scoped",
+        )
+    )
+
+    assert _accepted(authorized)["status"] == "accepted"
+    assert _terminal_result(authorized)["eam"]["team_member_uid"] == "member-auth"
+    assert _terminal_result(authorized)["eam"]["group_name"] == "Ops"
 
 
 def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # type: ignore[no-untyped-def]
