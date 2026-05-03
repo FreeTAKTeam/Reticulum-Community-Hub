@@ -17,6 +17,10 @@ import msgpack
 import pytest
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.api.marker_service import MarkerService
+from reticulum_telemetry_hub.api.marker_storage import MarkerStorage
+from reticulum_telemetry_hub.api.zone_service import ZoneService
+from reticulum_telemetry_hub.api.zone_storage import ZoneStorage
 from reticulum_telemetry_hub.checklist_sync.router import ChecklistSyncRouter
 from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
@@ -40,11 +44,16 @@ class PythonRchBackend:
         self.api = ReticulumTelemetryHubAPI(config_manager=cfg)
         self.domain = MissionDomainService(cfg.config.hub_database_path)
         status = EmergencyActionMessageService(cfg.config.hub_database_path)
+        marker_service = MarkerService(
+            MarkerStorage(cfg.config.hub_database_path),
+            identity_key_provider=lambda: b"\x11" * 32,
+        )
+        zone_service = ZoneService(ZoneStorage(cfg.config.hub_database_path))
         self.mission_router = MissionSyncRouter(
             api=self.api,
             send_message=lambda _content, _topic_id, _destination: True,
-            marker_service=None,
-            zone_service=None,
+            marker_service=marker_service,
+            zone_service=zone_service,
             domain_service=self.domain,
             emergency_action_message_service=status,
             event_log=None,
@@ -571,3 +580,162 @@ def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # t
         )
     )
     assert _terminal_result(assignment_asset)["assets"] == ["asset-2"]
+
+
+def test_backend_replays_topic_marker_zone_flow(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(
+        backend,
+        "topic.create",
+        "topic.read",
+        "topic.write",
+        "topic.subscribe",
+        "topic.delete",
+        "mission.content.write",
+        "mission.content.read",
+        "mission.zone.write",
+        "mission.zone.read",
+        "mission.zone.delete",
+    )
+
+    topic = backend.handle_command(
+        _command(
+            "topic.create",
+            {
+                "topic_id": "topic-1",
+                "topic_name": "Ops",
+                "topic_path": "/ops",
+                "topic_description": "Operations topic",
+            },
+            command_id="cmd-shared-topic-create",
+        ),
+        group="grp-1",
+    )
+    assert _accepted(topic)["status"] == "accepted"
+    assert topic[1].fields[FIELD_GROUP] == "grp-1"
+    topic_id = _terminal_result(topic)["TopicID"]
+
+    listed_topics = backend.handle_command(
+        _command("topic.list", {}, command_id="cmd-shared-topic-list")
+    )
+    assert _terminal_result(listed_topics)["topics"]
+
+    patched_topic = backend.handle_command(
+        _command(
+            "topic.patch",
+            {
+                "topic_id": topic_id,
+                "topic_name": "Ops Renamed",
+                "topic_path": "/ops-renamed",
+                "topic_description": "Updated",
+            },
+            command_id="cmd-shared-topic-patch",
+        )
+    )
+    assert _terminal_result(patched_topic)["TopicName"] == "Ops Renamed"
+
+    subscribed = backend.handle_command(
+        _command(
+            "topic.subscribe",
+            {
+                "topic_id": topic_id,
+                "destination": "dest-2",
+                "reject_tests": "not-int",
+                "metadata": {"kind": "operator"},
+            },
+            command_id="cmd-shared-topic-subscribe",
+        )
+    )
+    assert _terminal_result(subscribed)["Destination"] == "dest-2"
+
+    marker = backend.handle_command(
+        _command(
+            "mission.marker.create",
+            {
+                "name": "Marker One",
+                "marker_type": "marker",
+                "symbol": "marker",
+                "category": "marker",
+                "lat": 45.0,
+                "lon": -93.0,
+                "notes": "hello",
+                "ttl_seconds": 120,
+            },
+            command_id="cmd-shared-marker-create",
+        )
+    )
+    marker_hash = _terminal_result(marker)["object_destination_hash"]
+
+    listed_markers = backend.handle_command(
+        _command("mission.marker.list", {}, command_id="cmd-shared-marker-list")
+    )
+    assert _terminal_event(listed_markers)["event_type"] == "mission.marker.listed"
+    assert _terminal_result(listed_markers)["markers"]
+
+    patched_marker = backend.handle_command(
+        _command(
+            "mission.marker.position.patch",
+            {
+                "object_destination_hash": marker_hash,
+                "lat": 45.1,
+                "lon": -93.1,
+            },
+            command_id="cmd-shared-marker-patch",
+        )
+    )
+    assert _terminal_result(patched_marker)["object_destination_hash"] == marker_hash
+
+    zone = backend.handle_command(
+        _command(
+            "mission.zone.create",
+            {
+                "name": "Zone One",
+                "points": [
+                    {"lat": 10.0, "lon": 10.0},
+                    {"lat": 10.0, "lon": 11.0},
+                    {"lat": 11.0, "lon": 10.0},
+                ],
+            },
+            command_id="cmd-shared-zone-create",
+        )
+    )
+    zone_id = _terminal_result(zone)["zone_id"]
+
+    listed_zones = backend.handle_command(
+        _command("mission.zone.list", {}, command_id="cmd-shared-zone-list")
+    )
+    assert _terminal_result(listed_zones)["zones"]
+
+    patched_zone = backend.handle_command(
+        _command(
+            "mission.zone.patch",
+            {
+                "zone_id": zone_id,
+                "name": "Zone Two",
+                "points": [
+                    {"lat": 20.0, "lon": 20.0},
+                    {"lat": 20.0, "lon": 21.0},
+                    {"lat": 21.0, "lon": 20.0},
+                ],
+            },
+            command_id="cmd-shared-zone-patch",
+        )
+    )
+    assert _terminal_result(patched_zone)["name"] == "Zone Two"
+
+    deleted_zone = backend.handle_command(
+        _command(
+            "mission.zone.delete",
+            {"zone_id": zone_id},
+            command_id="cmd-shared-zone-delete",
+        )
+    )
+    assert _terminal_result(deleted_zone)["zone_id"] == zone_id
+
+    deleted_topic = backend.handle_command(
+        _command(
+            "topic.delete",
+            {"topic_id": topic_id},
+            command_id="cmd-shared-topic-delete",
+        )
+    )
+    assert _terminal_result(deleted_topic)["TopicID"] == topic_id
