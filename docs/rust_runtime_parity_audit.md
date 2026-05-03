@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `853 passed, 365 warnings`
+  - Result: `855 passed, 373 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -46,7 +46,8 @@ It covers:
 - checklist/template/task/cell/feed state observed through the Rust bridge
   `state_snapshot` request instead of direct SQLite table decoding
 - FastAPI northbound topic CRUD/subscribe route flow parameterized across
-  Python storage and a Rust bridge-backed API adapter
+  Python storage and a Rust bridge-backed API adapter, including topic and
+  subscriber pagination route checks
 - mission registry CRUD, patch, parent, zone link/unlink, RDE
 - mission change and log entry upsert/list
 - team, team member, client link/unlink, asset, skill, assignment, and assignment asset flows

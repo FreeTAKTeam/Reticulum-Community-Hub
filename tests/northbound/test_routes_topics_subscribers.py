@@ -13,6 +13,8 @@ import pytest
 
 from reticulum_telemetry_hub.api.models import Topic
 from reticulum_telemetry_hub.api.models import Subscriber
+from reticulum_telemetry_hub.api.pagination import PageRequest
+from reticulum_telemetry_hub.api.pagination import PaginatedResult
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
 from reticulum_telemetry_hub.config import HubConfigurationManager
@@ -59,6 +61,10 @@ class RustTopicApi:
 
     def list_topics(self) -> list[Topic]:
         return [Topic.from_dict(topic) for topic in self._snapshot_rows("topics")]
+
+    def list_topics_paginated(self, page_request: PageRequest) -> PaginatedResult[Topic]:
+        topics = self.list_topics()
+        return _page(topics, page_request)
 
     def patch_topic(self, topic_id: str, **updates: object) -> Topic:
         args = {
@@ -110,6 +116,13 @@ class RustTopicApi:
             )
             for subscriber in self._snapshot_rows("subscribers")
         ]
+
+    def list_subscribers_paginated(
+        self,
+        page_request: PageRequest,
+    ) -> PaginatedResult[Subscriber]:
+        subscribers = self.list_subscribers()
+        return _page(subscribers, page_request)
 
     def _snapshot_rows(self, key: str) -> list[dict[str, object]]:
         rows = self._bridge.state_snapshot().get(key)
@@ -178,6 +191,14 @@ def _bridge(db_path: Path) -> RustMissionSyncBridge:
         field_event=FIELD_EVENT,
         field_group=FIELD_GROUP,
         runner=runner,
+    )
+
+
+def _page(items: list, page_request: PageRequest) -> PaginatedResult:
+    return PaginatedResult.from_request(
+        items=items[page_request.offset : page_request.offset + page_request.per_page],
+        request=page_request,
+        total=len(items),
     )
 
 
@@ -276,14 +297,18 @@ def test_topic_crud_and_subscribe_flow(tmp_path: Path, backend: str) -> None:
     assert missing_response.status_code == 404
 
 
-def test_topic_list_pagination_uses_configured_default_and_max(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_topic_list_pagination_uses_configured_default_and_max(
+    tmp_path: Path,
+    backend: str,
+) -> None:
     (tmp_path / "config.ini").write_text(
         "[api]\n"
         "pagination_default_page_size = 2\n"
         "pagination_max_page_size = 3\n",
         encoding="utf-8",
     )
-    client, api = _build_client(tmp_path)
+    client, api = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
     for index in range(5):
         api.create_topic(Topic(topic_name=f"topic-{index}", topic_path=f"topic-{index}"))
@@ -409,8 +434,12 @@ def test_subscriber_crud_flow(tmp_path: Path) -> None:
     assert delete_missing.status_code == 404
 
 
-def test_subscriber_list_pagination_returns_requested_page(tmp_path: Path) -> None:
-    client, api = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_subscriber_list_pagination_returns_requested_page(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, api = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
     topic = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
     for index in range(3):
