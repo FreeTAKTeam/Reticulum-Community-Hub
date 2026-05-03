@@ -339,6 +339,34 @@ components:
                 const: mission.marker.position.patch
               args: { $ref: "#/components/schemas/MarkerPositionArgs" }
             required: [command_type, args]
+    MarkerUpdateCommand:
+      name: MarkerUpdateCommand
+      x-http-operation: "PATCH /api/markers/{object_destination_hash}"
+      x-capability-required:
+        - mission.content.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.marker.patch
+              args: { $ref: "#/components/schemas/MarkerPatchArgs" }
+            required: [command_type, args]
+    MarkerDeleteCommand:
+      name: MarkerDeleteCommand
+      x-http-operation: "DELETE /api/markers/{object_destination_hash}"
+      x-capability-required:
+        - mission.content.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.marker.delete
+              args: { $ref: "#/components/schemas/MarkerDeleteArgs" }
+            required: [command_type, args]
     ZoneListCommand:
       name: ZoneListCommand
       x-http-operation: "GET /api/zones"
@@ -1344,6 +1372,8 @@ components:
                   - mission.marker.listed
                   - mission.marker.created
                   - mission.marker.position.updated
+                  - mission.marker.updated
+                  - mission.marker.deleted
                   - mission.zone.listed
                   - mission.zone.created
                   - mission.zone.updated
@@ -1638,6 +1668,19 @@ components:
         object_destination_hash: { type: string }
         lat: { type: number }
         lon: { type: number }
+    MarkerPatchArgs:
+      type: object
+      additionalProperties: false
+      required: [object_destination_hash, name]
+      properties:
+        object_destination_hash: { type: string }
+        name: { type: string }
+    MarkerDeleteArgs:
+      type: object
+      additionalProperties: false
+      required: [object_destination_hash]
+      properties:
+        object_destination_hash: { type: string }
     ZoneWriteArgs:
       type: object
       additionalProperties: false

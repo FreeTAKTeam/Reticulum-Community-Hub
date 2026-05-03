@@ -16,6 +16,8 @@ MISSION_COMMAND_CAPABILITIES: dict[str, str] = {
     "mission.marker.list": "mission.content.read",
     "mission.marker.create": "mission.content.write",
     "mission.marker.position.patch": "mission.content.write",
+    "mission.marker.patch": "mission.content.write",
+    "mission.marker.delete": "mission.content.write",
     "mission.zone.list": "mission.zone.read",
     "mission.zone.create": "mission.zone.write",
     "mission.zone.patch": "mission.zone.write",

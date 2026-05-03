@@ -116,6 +116,29 @@ class MissionCommandExecutionMixin:
                 updated = service.update_marker_position(marker_hash, lat=lat, lon=lon)
                 payload = updated.marker.to_dict()
                 return payload, "mission.marker.position.updated", payload
+            if command_type == "mission.marker.patch":
+                service = self._require_marker_service()
+                marker_hash = self._value_as_str(args.get("object_destination_hash"))
+                if not marker_hash:
+                    raise MissionCommandError(
+                        "invalid_payload", "object_destination_hash is required"
+                    )
+                name = self._value_as_str(args.get("name"))
+                if not name:
+                    raise MissionCommandError("invalid_payload", "name is required")
+                updated = service.update_marker_name(marker_hash, name=name)
+                payload = updated.marker.to_dict()
+                return payload, "mission.marker.updated", payload
+            if command_type == "mission.marker.delete":
+                service = self._require_marker_service()
+                marker_hash = self._value_as_str(args.get("object_destination_hash"))
+                if not marker_hash:
+                    raise MissionCommandError(
+                        "invalid_payload", "object_destination_hash is required"
+                    )
+                marker = service.delete_marker(marker_hash)
+                payload = marker.to_dict()
+                return payload, "mission.marker.deleted", payload
             if command_type == "mission.zone.list":
                 service = self._require_zone_service()
                 zones = [zone.to_dict() for zone in service.list_zones()]

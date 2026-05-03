@@ -11,14 +11,14 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `855 passed, 373 warnings`
+  - Result: `856 passed, 377 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
     commands from:
     - `reticulum_telemetry_hub.mission_sync.capabilities.MISSION_COMMAND_CAPABILITIES`
     - `reticulum_telemetry_hub.checklist_sync.capabilities.CHECKLIST_COMMAND_CAPABILITIES`
-  - Current command coverage: `83 / 83`
+  - Current command coverage: `85 / 85`
   - Current shared backend result: `33 passed`
 - Rust workspace:
   - Command: `cargo test --workspace`
@@ -40,6 +40,8 @@ It covers:
 - topic subscriber state observed through the Rust bridge `list_subscribers`
   request, matching Python API subscriber state in the shared parity harness
 - marker create/list/patch
+- marker rename/delete southbound commands and the FastAPI marker
+  create/update/delete route flow parameterized across Python and Rust
 - zone create/list/patch/delete
 - marker and zone state observed through Rust bridge snapshot requests,
   matching Python service state in the shared parity harness

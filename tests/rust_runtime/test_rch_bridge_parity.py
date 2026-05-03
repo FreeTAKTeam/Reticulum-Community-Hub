@@ -1902,6 +1902,27 @@ def test_backend_replays_topic_marker_zone_flow(backend) -> None:  # type: ignor
     )
     assert _terminal_result(patched_marker)["object_destination_hash"] == marker_hash
 
+    renamed_marker = backend.handle_command(
+        _command(
+            "mission.marker.patch",
+            {
+                "object_destination_hash": marker_hash,
+                "name": "Marker Renamed",
+            },
+            command_id="cmd-shared-marker-rename",
+        )
+    )
+    assert _terminal_result(renamed_marker)["name"] == "Marker Renamed"
+
+    deleted_marker = backend.handle_command(
+        _command(
+            "mission.marker.delete",
+            {"object_destination_hash": marker_hash},
+            command_id="cmd-shared-marker-delete",
+        )
+    )
+    assert _terminal_result(deleted_marker)["object_destination_hash"] == marker_hash
+
     zone = backend.handle_command(
         _command(
             "mission.zone.create",
