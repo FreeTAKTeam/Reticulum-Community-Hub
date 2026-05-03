@@ -126,6 +126,41 @@ class RustR3aktDomain:
             raise KeyError(f"Mission RDE for '{mission_uid}' not found")
         return {"mission_uid": mission_uid, "role": role}
 
+    def upsert_mission_change(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission_change.upsert",
+            payload,
+        )
+
+    def list_mission_changes(
+        self,
+        mission_uid: str | None = None,
+    ) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission_change.list",
+            {"mission_uid": mission_uid},
+        )["mission_changes"]
+
+    def upsert_log_entry(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.log_entry.upsert",
+            payload,
+        )
+
+    def list_log_entries(
+        self,
+        mission_uid: str | None = None,
+        marker_ref: str | None = None,
+    ) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.log_entry.list",
+            {"mission_uid": mission_uid, "marker_ref": marker_ref},
+        )["log_entries"]
+
     def upsert_team(self, payload: dict[str, object]) -> dict[str, object]:
         return _run_rust_command(
             self._bridge,
@@ -1666,6 +1701,63 @@ def test_r3akt_core_registry_routes_use_selected_backend(
     ).status_code == 200
     assert client.delete("/api/r3akt/teams/team-core", headers=headers).status_code == 200
     assert client.delete("/api/r3akt/missions/mission-parent", headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_r3akt_log_routes_use_selected_backend(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
+    headers = {"X-API-Key": "secret"}
+
+    mission = client.post(
+        "/api/r3akt/missions",
+        json={"uid": "mission-log", "mission_name": "Mission Log"},
+        headers=headers,
+    )
+    assert mission.status_code == 200
+
+    change = client.post(
+        "/api/r3akt/mission-changes",
+        json={"uid": "change-log", "mission_uid": "mission-log", "name": "Updated"},
+        headers=headers,
+    )
+    assert change.status_code == 200
+    changes = client.get(
+        "/api/r3akt/mission-changes",
+        params={"mission_uid": "mission-log"},
+        headers=headers,
+    )
+    assert changes.status_code == 200
+    assert changes.json()[0]["uid"] == "change-log"
+
+    default_log = client.post(
+        "/api/r3akt/log-entries",
+        json={"entry_uid": "log-default", "content": "No mission"},
+        headers=headers,
+    )
+    assert default_log.status_code == 200
+    assert default_log.json()["mission_uid"] == "mission-default"
+
+    log_entry = client.post(
+        "/api/r3akt/log-entries",
+        json={
+            "entry_uid": "log-entry",
+            "mission_uid": "mission-log",
+            "content": "Mission observed",
+            "keywords": ["observation"],
+        },
+        headers=headers,
+    )
+    assert log_entry.status_code == 200
+    logs = client.get(
+        "/api/r3akt/log-entries",
+        params={"mission_uid": "mission-log"},
+        headers=headers,
+    )
+    assert logs.status_code == 200
+    assert logs.json()[0]["entry_uid"] == "log-entry"
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
