@@ -111,8 +111,14 @@ def test_checklist_router_can_delegate_authorized_command_to_rust_bridge(tmp_pat
         def __init__(self) -> None:
             self.commands = []
 
-        def handle_checklist_command(self, envelope, *, group=None):  # type: ignore[no-untyped-def]
-            self.commands.append((envelope, group))
+        def handle_checklist_command(  # type: ignore[no-untyped-def]
+            self,
+            envelope,
+            *,
+            group=None,
+            source_identity=None,
+        ):
+            self.commands.append((envelope, group, source_identity))
             return []
 
     bridge = Bridge()
@@ -139,6 +145,7 @@ def test_checklist_router_can_delegate_authorized_command_to_rust_bridge(tmp_pat
     assert len(bridge.commands) == 1
     assert bridge.commands[0][0].command_id == "cmd-rust-checklist"
     assert bridge.commands[0][1] == "grp-1"
+    assert bridge.commands[0][2] == "peer-a"
     assert domain.list_active_checklists() == []
 
 

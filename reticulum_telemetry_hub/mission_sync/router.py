@@ -176,7 +176,11 @@ class MissionSyncRouter(MissionCommandExecutionMixin, MissionRouterHelperMixin):
             try:
                 return [
                     MissionSyncResponse(content=response.content, fields=response.fields)
-                    for response in self._rust_bridge.handle_command(envelope, group=group)
+                    for response in self._rust_bridge.handle_command(
+                        envelope,
+                        group=group,
+                        source_identity=source_identity,
+                    )
                 ]
             except RustMissionBridgeError as exc:
                 rejected = MissionCommandRejected(

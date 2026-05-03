@@ -54,6 +54,7 @@ class RustMissionSyncBridge:
         envelope: MissionCommandEnvelope,
         *,
         group: object | None = None,
+        source_identity: str | None = None,
     ) -> list[RustMissionSyncBridgeResponse]:
         """Execute one mission command through the Rust RCH bridge."""
 
@@ -61,6 +62,8 @@ class RustMissionSyncBridge:
             "type": "mission_command",
             "command": envelope.model_dump(mode="json"),
         }
+        if source_identity is not None:
+            request["source_identity"] = source_identity
         payload = self._request(request)
         if payload.get("type") != "mission_command":
             raise RustMissionBridgeError("Rust bridge returned an unexpected response type")
@@ -81,6 +84,7 @@ class RustMissionSyncBridge:
         envelope: MissionCommandEnvelope,
         *,
         group: object | None = None,
+        source_identity: str | None = None,
     ) -> list[RustMissionSyncBridgeResponse]:
         """Execute one checklist-sync command through the Rust RCH bridge."""
 
@@ -88,6 +92,8 @@ class RustMissionSyncBridge:
             "type": "checklist_command",
             "command": envelope.model_dump(mode="json"),
         }
+        if source_identity is not None:
+            request["source_identity"] = source_identity
         payload = self._request(request)
         if payload.get("type") != "checklist_command":
             raise RustMissionBridgeError("Rust bridge returned an unexpected response type")

@@ -19,7 +19,7 @@ the Python implementation and the Rust implementation, and both pass.
     - `reticulum_telemetry_hub.mission_sync.capabilities.MISSION_COMMAND_CAPABILITIES`
     - `reticulum_telemetry_hub.checklist_sync.capabilities.CHECKLIST_COMMAND_CAPABILITIES`
   - Current command coverage: `83 / 83`
-  - Current shared backend result: `25 passed`
+  - Current shared backend result: `29 passed`
 - Rust workspace:
   - Command: `cargo test --workspace`
   - Result: passed
@@ -51,6 +51,8 @@ It covers:
 - checklist CSV import
 - checklist read authorization through mission-scoped team-member roles and
   linked client identities
+- mission and checklist source-identity mismatch rejection at the transport
+  bridge boundary
 - unauthorized, unknown command, invalid payload, and not-found rejection shapes
 
 ## Remaining Gap To Full-Suite Parity

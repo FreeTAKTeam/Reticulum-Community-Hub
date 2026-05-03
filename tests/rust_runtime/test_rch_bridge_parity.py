@@ -100,10 +100,16 @@ class PythonRchBackend:
     def set_authorization_required(_required: bool) -> None:
         return None
 
-    def handle_command(self, envelope: MissionCommandEnvelope, *, group: object | None = None):
+    def handle_command(
+        self,
+        envelope: MissionCommandEnvelope,
+        *,
+        group: object | None = None,
+        source_identity: str | None = "peer-a",
+    ):
         return self.mission_router.handle_commands(
             [envelope.model_dump(mode="json")],
-            source_identity="peer-a",
+            source_identity=source_identity,
             group=group,
         )
 
@@ -112,10 +118,11 @@ class PythonRchBackend:
         envelope: MissionCommandEnvelope,
         *,
         group: object | None = None,
+        source_identity: str | None = "peer-a",
     ):
         return self.checklist_router.handle_commands(
             [envelope.model_dump(mode="json")],
-            source_identity="peer-a",
+            source_identity=source_identity,
             group=group,
         )
 
@@ -195,16 +202,31 @@ class RustRchBackend:
     def set_authorization_required(self, required: bool) -> None:
         self.bridge.set_authorization_required(required)
 
-    def handle_command(self, envelope: MissionCommandEnvelope, *, group: object | None = None):
-        return self.bridge.handle_command(envelope, group=group)
+    def handle_command(
+        self,
+        envelope: MissionCommandEnvelope,
+        *,
+        group: object | None = None,
+        source_identity: str | None = "peer-a",
+    ):
+        return self.bridge.handle_command(
+            envelope,
+            group=group,
+            source_identity=source_identity,
+        )
 
     def handle_checklist_command(
         self,
         envelope: MissionCommandEnvelope,
         *,
         group: object | None = None,
+        source_identity: str | None = "peer-a",
     ):
-        return self.bridge.handle_checklist_command(envelope, group=group)
+        return self.bridge.handle_checklist_command(
+            envelope,
+            group=group,
+            source_identity=source_identity,
+        )
 
     def checklist_snapshot(self) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         return (
@@ -587,6 +609,23 @@ def test_backend_replays_mission_rejection_flow(backend) -> None:  # type: ignor
     assert _rejection(missing_eam)["reason_code"] == "not_found"
 
 
+def test_backend_replays_mission_source_identity_mismatch(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(backend, "topic.create")
+
+    responses = backend.handle_command(
+        _command(
+            "topic.create",
+            {"topic_path": "source-mismatch", "topic_name": "Source Mismatch"},
+            command_id="cmd-shared-mission-source-mismatch",
+        ),
+        source_identity="peer-b",
+    )
+
+    assert len(responses) == 1
+    assert _rejection(responses)["status"] == "rejected"
+    assert _rejection(responses)["reason_code"] == "unauthorized"
+
+
 def test_backend_replays_checklist_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
     _grant(
         backend,
@@ -709,6 +748,23 @@ def test_backend_replays_checklist_rejection_flow(backend) -> None:  # type: ign
         )
     )
     assert _rejection(missing_checklist)["reason_code"] == "invalid_payload"
+
+
+def test_backend_replays_checklist_source_identity_mismatch(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(backend, "checklist.template.read")
+
+    responses = backend.handle_checklist_command(
+        _command(
+            "checklist.template.list",
+            {},
+            command_id="cmd-shared-checklist-source-mismatch",
+        ),
+        source_identity="peer-b",
+    )
+
+    assert len(responses) == 1
+    assert _rejection(responses)["status"] == "rejected"
+    assert _rejection(responses)["reason_code"] == "unauthorized"
 
 
 def test_backend_replays_mission_scoped_checklist_authorization(backend) -> None:  # type: ignore[no-untyped-def]
