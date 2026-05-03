@@ -275,6 +275,13 @@ def _terminal_event(responses: list) -> dict[str, object]:
     return responses[1].fields[FIELD_EVENT]  # type: ignore[return-value]
 
 
+def _rejection(responses: list) -> dict[str, object]:
+    assert responses
+    if len(responses) > 1:
+        return responses[1].fields[FIELD_RESULTS]  # type: ignore[return-value]
+    return responses[0].fields[FIELD_RESULTS]  # type: ignore[return-value]
+
+
 def _by_key(rows: list[dict[str, object]], key: str, value: object) -> dict[str, object]:
     matches = [row for row in rows if row.get(key) == value]
     assert len(matches) == 1
@@ -512,6 +519,46 @@ def test_backend_replays_mission_lifecycle_and_message_flow(backend) -> None:  #
     assert _terminal_event(left)["event_type"] == "mission.left"
 
 
+def test_backend_replays_mission_rejection_flow(backend) -> None:  # type: ignore[no-untyped-def]
+    backend.set_authorization_required(True)
+
+    unauthorized = backend.handle_command(
+        _command(
+            "mission.join",
+            {"identity": "peer-a"},
+            command_id="cmd-shared-mission-unauthorized",
+        )
+    )
+    assert _rejection(unauthorized)["reason_code"] == "unauthorized"
+
+    unknown = backend.handle_command(
+        _command("mission.unknown", {}, command_id="cmd-shared-mission-unknown")
+    )
+    assert _rejection(unknown)["reason_code"] == "unknown_command"
+
+    backend.grant_capability("peer-a", "topic.create")
+    invalid_topic = backend.handle_command(
+        _command(
+            "topic.create",
+            {"topic_name": "Missing Path"},
+            command_id="cmd-shared-topic-invalid",
+        )
+    )
+    assert _accepted(invalid_topic)["status"] == "accepted"
+    assert _rejection(invalid_topic)["reason_code"] == "invalid_payload"
+
+    backend.grant_capability("peer-a", "mission.registry.status.read")
+    missing_eam = backend.handle_command(
+        _command(
+            "mission.registry.eam.get",
+            {"callsign": "MISSING"},
+            command_id="cmd-shared-eam-missing",
+        )
+    )
+    assert _accepted(missing_eam)["status"] == "accepted"
+    assert _rejection(missing_eam)["reason_code"] == "not_found"
+
+
 def test_backend_replays_checklist_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
     _grant(
         backend,
@@ -596,6 +643,44 @@ def test_backend_replays_checklist_command_flow(backend) -> None:  # type: ignor
         )
     )
     assert published == []
+
+
+def test_backend_replays_checklist_rejection_flow(backend) -> None:  # type: ignore[no-untyped-def]
+    backend.set_authorization_required(True)
+
+    unauthorized = backend.handle_checklist_command(
+        _command(
+            "checklist.template.list",
+            {},
+            command_id="cmd-shared-checklist-unauthorized",
+        )
+    )
+    assert _rejection(unauthorized)["reason_code"] == "unauthorized"
+
+    unknown = backend.handle_checklist_command(
+        _command("checklist.unknown", {}, command_id="cmd-shared-checklist-unknown")
+    )
+    assert _rejection(unknown)["reason_code"] == "unknown_command"
+
+    backend.grant_capability("peer-a", "checklist.template.write")
+    invalid_template = backend.handle_checklist_command(
+        _command(
+            "checklist.template.create",
+            {},
+            command_id="cmd-shared-template-invalid",
+        )
+    )
+    assert _rejection(invalid_template)["reason_code"] == "invalid_payload"
+
+    backend.grant_capability("peer-a", "checklist.read")
+    missing_checklist = backend.handle_checklist_command(
+        _command(
+            "checklist.get",
+            {"checklist_uid": "missing"},
+            command_id="cmd-shared-checklist-missing",
+        )
+    )
+    assert _rejection(missing_checklist)["reason_code"] == "invalid_payload"
 
 
 def test_backend_replays_checklist_template_and_progress_flow(backend) -> None:  # type: ignore[no-untyped-def]
