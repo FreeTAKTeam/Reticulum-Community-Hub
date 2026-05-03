@@ -7,6 +7,7 @@ southbound command envelope shapes against the Python routers and the Rust
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -100,8 +101,48 @@ class PythonRchBackend:
 
     def checklist_snapshot(self) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         checklists = [self.domain.get_checklist(item["uid"]) for item in self.domain.list_active_checklists()]
-        tasks = [task for checklist in checklists for task in checklist.get("tasks", [])]
+        tasks = [
+            {**task, "checklist_uid": checklist["uid"]}
+            for checklist in checklists
+            for task in checklist.get("tasks", [])
+        ]
         return checklists, tasks
+
+    def checklist_template_snapshot(self) -> list[dict[str, object]]:
+        return [
+            self.domain.get_checklist_template(item["uid"])
+            for item in self.domain.list_checklist_templates()
+        ]
+
+    def checklist_column_snapshot(self) -> list[dict[str, object]]:
+        checklists, _tasks = self.checklist_snapshot()
+        templates = self.checklist_template_snapshot()
+        return [
+            {
+                **column,
+                "checklist_uid": owner.get("uid") if "mode" in owner else None,
+                "template_uid": owner.get("uid") if "template_name" in owner else None,
+            }
+            for owner in [*checklists, *templates]
+            for column in owner.get("columns", [])
+        ]
+
+    def checklist_cell_snapshot(self) -> list[dict[str, object]]:
+        checklists, _tasks = self.checklist_snapshot()
+        return [
+            cell
+            for checklist in checklists
+            for task in checklist.get("tasks", [])
+            for cell in task.get("cells", [])
+        ]
+
+    def checklist_feed_snapshot(self) -> list[dict[str, object]]:
+        checklists, _tasks = self.checklist_snapshot()
+        return [
+            publication
+            for checklist in checklists
+            for publication in checklist.get("feed_publications", [])
+        ]
 
 
 class RustRchBackend:
@@ -136,6 +177,18 @@ class RustRchBackend:
             _sqlite_msgpack_rows(self.db_path, "rch_checklists"),
             _sqlite_msgpack_rows(self.db_path, "rch_checklist_tasks"),
         )
+
+    def checklist_template_snapshot(self) -> list[dict[str, object]]:
+        return _sqlite_msgpack_rows(self.db_path, "rch_checklist_templates")
+
+    def checklist_column_snapshot(self) -> list[dict[str, object]]:
+        return _sqlite_msgpack_rows(self.db_path, "rch_checklist_columns")
+
+    def checklist_cell_snapshot(self) -> list[dict[str, object]]:
+        return _sqlite_msgpack_rows(self.db_path, "rch_checklist_cells")
+
+    def checklist_feed_snapshot(self) -> list[dict[str, object]]:
+        return _sqlite_msgpack_rows(self.db_path, "rch_checklist_feed_publications")
 
 
 @pytest.fixture(params=["python", "rust"])
@@ -214,6 +267,12 @@ def _terminal_result(responses: list) -> dict[str, object]:
 
 def _terminal_event(responses: list) -> dict[str, object]:
     return responses[1].fields[FIELD_EVENT]  # type: ignore[return-value]
+
+
+def _by_key(rows: list[dict[str, object]], key: str, value: object) -> dict[str, object]:
+    matches = [row for row in rows if row.get(key) == value]
+    assert len(matches) == 1
+    return matches[0]
 
 
 def test_backend_replays_mission_registry_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
@@ -341,6 +400,304 @@ def test_backend_replays_checklist_command_flow(backend) -> None:  # type: ignor
         )
     )
     assert published == []
+
+
+def test_backend_replays_checklist_template_and_progress_flow(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(
+        backend,
+        "checklist.template.write",
+        "checklist.template.read",
+        "checklist.template.delete",
+        "checklist.write",
+        "checklist.read",
+        "checklist.upload",
+        "checklist.feed.publish",
+    )
+
+    template = {
+        "template_name": "Template Alpha",
+        "description": "Template description",
+        "created_by_team_member_rns_identity": "peer-a",
+        "columns": [
+            {
+                "column_name": "Due",
+                "display_order": 1,
+                "column_type": "RELATIVE_TIME",
+                "column_editable": False,
+                "is_removable": False,
+                "system_key": "DUE_RELATIVE_DTG",
+            },
+            {
+                "column_name": "Task",
+                "display_order": 2,
+                "column_type": "SHORT_STRING",
+                "column_editable": True,
+                "is_removable": True,
+            },
+        ],
+    }
+    created_template = backend.handle_checklist_command(
+        _command(
+            "checklist.template.create",
+            {"template": template},
+            command_id="cmd-shared-template-create",
+        ),
+        group="checklist-group",
+    )
+    assert created_template == []
+    template_alpha = _by_key(
+        backend.checklist_template_snapshot(),
+        "template_name",
+        "Template Alpha",
+    )
+    template_uid = template_alpha["uid"]
+
+    assert backend.handle_checklist_command(
+        _command("checklist.template.list", {}, command_id="cmd-shared-template-list")
+    ) == []
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.template.get",
+            {"template_uid": template_uid},
+            command_id="cmd-shared-template-get",
+        )
+    ) == []
+
+    updated_template = backend.handle_checklist_command(
+        _command(
+            "checklist.template.update",
+            {
+                "template_uid": template_uid,
+                "patch": {
+                    "template_name": "Template Beta",
+                    "description": "Updated template",
+                },
+            },
+            command_id="cmd-shared-template-update",
+        )
+    )
+    assert updated_template == []
+    template_beta = _by_key(
+        backend.checklist_template_snapshot(),
+        "template_name",
+        "Template Beta",
+    )
+    assert template_beta["description"] == "Updated template"
+
+    cloned_template = backend.handle_checklist_command(
+        _command(
+            "checklist.template.clone",
+            {
+                "source_template_uid": template_uid,
+                "template_name": "Template Clone",
+                "description": "Clone",
+            },
+            command_id="cmd-shared-template-clone",
+        )
+    )
+    assert cloned_template == []
+    clone_uid = _by_key(
+        backend.checklist_template_snapshot(),
+        "template_name",
+        "Template Clone",
+    )["uid"]
+
+    online = backend.handle_checklist_command(
+        _command(
+            "checklist.create.online",
+            {
+                "template_uid": template_uid,
+                "name": "Checklist Online",
+                "description": "Online checklist",
+                "start_time": datetime.now(timezone.utc).isoformat(),
+            },
+            command_id="cmd-shared-checklist-online",
+        )
+    )
+    assert online == []
+    online_checklist = _by_key(
+        backend.checklist_snapshot()[0],
+        "name",
+        "Checklist Online",
+    )
+    assert online_checklist["mode"] == "ONLINE"
+    assert online_checklist["sync_state"] == "SYNCED"
+    checklist_uid = online_checklist["uid"]
+
+    offline = backend.handle_checklist_command(
+        _command(
+            "checklist.create.offline",
+            {
+                "origin_type": "BLANK_TEMPLATE",
+                "name": "Checklist Offline",
+                "description": "Offline checklist",
+            },
+            command_id="cmd-shared-checklist-offline",
+        )
+    )
+    assert offline == []
+    offline_uid = _by_key(
+        backend.checklist_snapshot()[0],
+        "name",
+        "Checklist Offline",
+    )["uid"]
+
+    updated_checklist = backend.handle_checklist_command(
+        _command(
+            "checklist.update",
+            {
+                "checklist_uid": offline_uid,
+                "patch": {
+                    "name": "Checklist Offline Updated",
+                    "description": "Updated offline checklist",
+                },
+            },
+            command_id="cmd-shared-checklist-update",
+        )
+    )
+    assert updated_checklist == []
+    assert _by_key(
+        backend.checklist_snapshot()[0],
+        "uid",
+        offline_uid,
+    )["name"] == "Checklist Offline Updated"
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.task.row.add",
+            {
+                "checklist_uid": checklist_uid,
+                "number": 1,
+                "due_relative_minutes": 10,
+            },
+            command_id="cmd-shared-task-add",
+        )
+    ) == []
+    _checklists, tasks = backend.checklist_snapshot()
+    task = _by_key(tasks, "checklist_uid", checklist_uid)
+    task_uid = task["task_uid"]
+    short_text_column = next(
+        column
+        for column in backend.checklist_column_snapshot()
+        if column.get("checklist_uid") == checklist_uid
+        and column.get("column_type") == "SHORT_STRING"
+    )
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.task.cell.set",
+            {
+                "checklist_uid": checklist_uid,
+                "task_uid": task_uid,
+                "column_uid": short_text_column["column_uid"],
+                "value": "Inspect area",
+                "updated_by_team_member_rns_identity": "peer-a",
+            },
+            command_id="cmd-shared-task-cell-set",
+        )
+    ) == []
+    cell = _by_key(
+        backend.checklist_cell_snapshot(),
+        "column_uid",
+        short_text_column["column_uid"],
+    )
+    assert cell["value"] == "Inspect area"
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.task.row.style.set",
+            {
+                "checklist_uid": checklist_uid,
+                "task_uid": task_uid,
+                "row_background_color": "#abc123",
+                "line_break_enabled": True,
+            },
+            command_id="cmd-shared-task-style",
+        )
+    ) == []
+    styled_task = _by_key(backend.checklist_snapshot()[1], "task_uid", task_uid)
+    assert styled_task["line_break_enabled"] is True
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.task.status.set",
+            {
+                "checklist_uid": checklist_uid,
+                "task_uid": task_uid,
+                "user_status": "COMPLETE",
+                "changed_by_team_member_rns_identity": "peer-a",
+            },
+            command_id="cmd-shared-task-status",
+        )
+    ) == []
+    status_task = _by_key(backend.checklist_snapshot()[1], "task_uid", task_uid)
+    assert status_task["user_status"] == "COMPLETE"
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.upload",
+            {"checklist_uid": offline_uid},
+            command_id="cmd-shared-checklist-upload",
+        )
+    ) == []
+    uploaded_checklist = _by_key(backend.checklist_snapshot()[0], "uid", offline_uid)
+    assert uploaded_checklist["sync_state"] == "SYNCED"
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.feed.publish",
+            {"checklist_uid": offline_uid, "mission_feed_uid": "feed-1"},
+            command_id="cmd-shared-feed-publish",
+        )
+    ) == []
+    assert _by_key(
+        backend.checklist_feed_snapshot(),
+        "checklist_uid",
+        offline_uid,
+    )["mission_feed_uid"] == "feed-1"
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.delete",
+            {"checklist_uid": offline_uid},
+            command_id="cmd-shared-checklist-delete",
+        )
+    ) == []
+    assert offline_uid not in {item["uid"] for item in backend.checklist_snapshot()[0]}
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.task.row.delete",
+            {"checklist_uid": checklist_uid, "task_uid": task_uid},
+            command_id="cmd-shared-task-delete",
+        )
+    ) == []
+    assert task_uid not in {item["task_uid"] for item in backend.checklist_snapshot()[1]}
+
+    csv_payload = base64.b64encode(b"10,Task 1\n20,Task 2\n").decode("ascii")
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.import.csv",
+            {"csv_filename": "import.csv", "csv_base64": csv_payload},
+            command_id="cmd-shared-import-csv",
+        )
+    ) == []
+    imported = _by_key(
+        backend.checklist_snapshot()[0],
+        "origin_type",
+        "CSV_IMPORT",
+    )
+    assert imported["mode"] == "ONLINE"
+    assert imported["sync_state"] == "SYNCED"
+
+    assert backend.handle_checklist_command(
+        _command(
+            "checklist.template.delete",
+            {"template_uid": clone_uid},
+            command_id="cmd-shared-template-delete",
+        )
+    ) == []
+    assert clone_uid not in {item["uid"] for item in backend.checklist_template_snapshot()}
 
 
 def test_backend_replays_eam_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
