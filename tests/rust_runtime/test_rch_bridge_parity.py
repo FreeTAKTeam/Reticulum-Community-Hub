@@ -1068,6 +1068,107 @@ def test_backend_replays_eam_command_flow(backend) -> None:  # type: ignore[no-u
     assert _terminal_result(deleted)["eam"]["group_name"] == "ORANGE"
 
 
+def test_backend_replays_eam_team_and_callsign_rejections(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(
+        backend,
+        "mission.registry.status.write",
+        "mission.registry.team.write",
+        "mission.registry.team_member.write",
+    )
+
+    unknown_team = backend.handle_command(
+        _command(
+            "mission.registry.eam.upsert",
+            {
+                "callsign": "NOVEMBER-1",
+                "team_member_uid": "member-unknown",
+                "team_uid": "team-unknown",
+                "group_name": "NOVEMBER",
+                "source": {"rns_identity": "peer-unknown", "display_name": "Peer Unknown"},
+            },
+            command_id="cmd-shared-eam-unknown-team",
+        )
+    )
+    assert _accepted(unknown_team)["status"] == "accepted"
+    assert _rejection(unknown_team)["status"] == "rejected"
+
+    for team_uid, member_uid, callsign in (
+        ("team-a", "member-a", "ALPHA-1"),
+        ("team-b", "member-b", "BRAVO-1"),
+    ):
+        assert _terminal_result(
+            backend.handle_command(
+                _command(
+                    "mission.registry.team.upsert",
+                    {"uid": team_uid, "team_name": team_uid},
+                    command_id=f"cmd-shared-eam-seed-{team_uid}",
+                )
+            )
+        )["uid"] == team_uid
+        assert _terminal_result(
+            backend.handle_command(
+                _command(
+                    "mission.registry.team_member.upsert",
+                    {
+                        "uid": member_uid,
+                        "team_uid": team_uid,
+                        "rns_identity": f"peer-{member_uid}",
+                        "display_name": member_uid,
+                        "callsign": callsign,
+                    },
+                    command_id=f"cmd-shared-eam-seed-{member_uid}",
+                )
+            )
+        )["uid"] == member_uid
+
+    wrong_team = backend.handle_command(
+        _command(
+            "mission.registry.eam.upsert",
+            {
+                "callsign": "ALPHA-1",
+                "team_member_uid": "member-a",
+                "team_uid": "team-b",
+                "group_name": "team-b",
+                "source": {"rns_identity": "peer-member-a", "display_name": "Member A"},
+            },
+            command_id="cmd-shared-eam-wrong-team",
+        )
+    )
+    assert _accepted(wrong_team)["status"] == "accepted"
+    assert _rejection(wrong_team)["status"] == "rejected"
+
+    first_snapshot = backend.handle_command(
+        _command(
+            "mission.registry.eam.upsert",
+            {
+                "callsign": "ALPHA-1",
+                "team_member_uid": "member-a",
+                "team_uid": "team-a",
+                "group_name": "team-a",
+                "source": {"rns_identity": "peer-member-a", "display_name": "Member A"},
+            },
+            command_id="cmd-shared-eam-first-callsign",
+        )
+    )
+    assert _terminal_result(first_snapshot)["eam"]["callsign"] == "ALPHA-1"
+
+    duplicate_callsign = backend.handle_command(
+        _command(
+            "mission.registry.eam.upsert",
+            {
+                "callsign": "ALPHA-1",
+                "team_member_uid": "member-b",
+                "team_uid": "team-b",
+                "group_name": "team-b",
+                "source": {"rns_identity": "peer-member-b", "display_name": "Member B"},
+            },
+            command_id="cmd-shared-eam-duplicate-callsign",
+        )
+    )
+    assert _accepted(duplicate_callsign)["status"] == "accepted"
+    assert _rejection(duplicate_callsign)["status"] == "rejected"
+
+
 def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # type: ignore[no-untyped-def]
     _grant(
         backend,
