@@ -37,6 +37,8 @@ It covers:
 
 - mission lifecycle: join, message send, event list, leave
 - topic create/list/patch/subscribe/delete
+- topic subscriber state observed through the Rust bridge `list_subscribers`
+  request, matching Python API subscriber state in the shared parity harness
 - marker create/list/patch
 - zone create/list/patch/delete
 - mission registry CRUD, patch, parent, zone link/unlink, RDE

@@ -39,6 +39,15 @@ class RustMissionSyncTopic:
 
 
 @dataclass(frozen=True)
+class RustMissionSyncSubscriber:
+    """Subscriber state returned by the Rust RCH bridge."""
+
+    node_id: str
+    topic_id: str
+    payload: dict[str, object]
+
+
+@dataclass(frozen=True)
 class RustMissionSyncBridge:
     """Invoke ``r3akt-rch-bridge`` for selected mission-sync commands."""
 
@@ -127,6 +136,25 @@ class RustMissionSyncBridge:
             )
             for topic in topics
             if isinstance(topic, dict)
+        ]
+
+    def list_subscribers(self) -> list[RustMissionSyncSubscriber]:
+        """Return subscribers currently persisted in the Rust RCH bridge state."""
+
+        payload = self._request({"type": "list_subscribers"})
+        if payload.get("type") != "list_subscribers":
+            raise RustMissionBridgeError("Rust bridge returned an unexpected response type")
+        subscribers = payload.get("subscribers")
+        if not isinstance(subscribers, list):
+            raise RustMissionBridgeError("Rust bridge response is missing subscribers[]")
+        return [
+            RustMissionSyncSubscriber(
+                node_id=str(subscriber.get("node_id") or ""),
+                topic_id=str(subscriber.get("topic_id") or ""),
+                payload=dict(subscriber),
+            )
+            for subscriber in subscribers
+            if isinstance(subscriber, dict)
         ]
 
     def grant_capability(self, identity: str, capability: str) -> None:

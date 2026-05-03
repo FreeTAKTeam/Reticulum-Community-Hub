@@ -171,6 +171,16 @@ class PythonRchBackend:
             for publication in checklist.get("feed_publications", [])
         ]
 
+    def subscriber_snapshot(self) -> list[dict[str, object]]:
+        return [
+            {
+                **subscriber.to_dict(),
+                "topic_id": subscriber.topic_id,
+                "node_id": subscriber.destination,
+            }
+            for subscriber in self.api.list_subscribers()
+        ]
+
 
 class RustRchBackend:
     """Rust bridge backend for shared parity assertions."""
@@ -245,6 +255,9 @@ class RustRchBackend:
 
     def checklist_feed_snapshot(self) -> list[dict[str, object]]:
         return _sqlite_msgpack_rows(self.db_path, "rch_checklist_feed_publications")
+
+    def subscriber_snapshot(self) -> list[dict[str, object]]:
+        return [subscriber.payload for subscriber in self.bridge.list_subscribers()]
 
 
 @pytest.fixture(params=["python", "rust"])
@@ -1832,6 +1845,8 @@ def test_backend_replays_topic_marker_zone_flow(backend) -> None:  # type: ignor
         )
     )
     assert _terminal_result(subscribed)["Destination"] == "dest-2"
+    subscriber = _by_key(backend.subscriber_snapshot(), "topic_id", topic_id)
+    assert subscriber["node_id"] == "dest-2"
 
     marker = backend.handle_command(
         _command(

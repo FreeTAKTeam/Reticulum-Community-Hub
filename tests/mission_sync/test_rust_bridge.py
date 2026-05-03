@@ -184,6 +184,45 @@ def test_rust_bridge_lists_persisted_topics() -> None:
     assert topics[0].payload["visibility"] == "public"
 
 
+def test_rust_bridge_lists_persisted_subscribers() -> None:
+    def runner(*args, **kwargs):  # type: ignore[no-untyped-def]
+        request = json.loads(kwargs["input"])
+        assert request == {"type": "list_subscribers"}
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "type": "list_subscribers",
+                    "subscribers": [
+                        {
+                            "node_id": "dest-1",
+                            "topic_id": "mission-1",
+                            "metadata": {"role": "watcher"},
+                        }
+                    ],
+                }
+            ),
+            stderr="",
+        )
+
+    bridge = RustMissionSyncBridge(
+        binary_path="r3akt-rch-bridge",
+        db_path="runtime.sqlite",
+        field_results=10,
+        field_event=13,
+        field_group=4,
+        runner=runner,
+    )
+
+    subscribers = bridge.list_subscribers()
+
+    assert len(subscribers) == 1
+    assert subscribers[0].node_id == "dest-1"
+    assert subscribers[0].topic_id == "mission-1"
+    assert subscribers[0].payload["metadata"] == {"role": "watcher"}
+
+
 def test_rust_bridge_builder_returns_none_when_disabled(tmp_path: Path) -> None:
     bridge = build_rust_bridge_from_runtime_config(
         HubRuntimeConfig(rust_runtime_enabled=False),
