@@ -1,8 +1,8 @@
-"""Rust-backed RCH command parity smoke tests.
+"""Python-vs-Rust RCH command parity smoke tests.
 
-These tests intentionally live in the Python RCH suite. They replay the same
-southbound command envelope shapes used by the Python router tests, but execute
-them through the Rust ``r3akt-rch-bridge`` binary and its SQLite state.
+These tests intentionally live in the Python RCH suite. They replay identical
+southbound command envelope shapes against the Python routers and the Rust
+``r3akt-rch-bridge`` binary, then assert the same observable contract.
 """
 
 from __future__ import annotations
@@ -16,14 +16,124 @@ import sqlite3
 import msgpack
 import pytest
 
+from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.checklist_sync.router import ChecklistSyncRouter
+from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
+from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_domain.canonical_teams import CANONICAL_COLOR_TEAM_UIDS
 from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
+from reticulum_telemetry_hub.mission_sync.router import MissionSyncRouter
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
+from tests.test_rth_api import make_config_manager
 
 
 FIELD_RESULTS = 10
 FIELD_GROUP = 11
 FIELD_EVENT = 13
+
+
+class PythonRchBackend:
+    """Python RCH reference backend for shared parity assertions."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        cfg = make_config_manager(tmp_path)
+        self.api = ReticulumTelemetryHubAPI(config_manager=cfg)
+        self.domain = MissionDomainService(cfg.config.hub_database_path)
+        status = EmergencyActionMessageService(cfg.config.hub_database_path)
+        self.mission_router = MissionSyncRouter(
+            api=self.api,
+            send_message=lambda _content, _topic_id, _destination: True,
+            marker_service=None,
+            zone_service=None,
+            domain_service=self.domain,
+            emergency_action_message_service=status,
+            event_log=None,
+            hub_identity_resolver=lambda: "hub-1",
+            field_results=FIELD_RESULTS,
+            field_event=FIELD_EVENT,
+            field_group=FIELD_GROUP,
+        )
+        self.checklist_router = ChecklistSyncRouter(
+            api=self.api,
+            domain_service=self.domain,
+            event_log=None,
+            hub_identity_resolver=lambda: "hub-1",
+            field_results=FIELD_RESULTS,
+            field_event=FIELD_EVENT,
+            field_group=FIELD_GROUP,
+        )
+
+    def grant_capability(self, identity: str, capability: str) -> None:
+        self.api.grant_identity_capability(identity, capability)
+
+    @staticmethod
+    def set_authorization_required(_required: bool) -> None:
+        return None
+
+    def handle_command(self, envelope: MissionCommandEnvelope, *, group: object | None = None):
+        return self.mission_router.handle_commands(
+            [envelope.model_dump(mode="json")],
+            source_identity="peer-a",
+            group=group,
+        )
+
+    def handle_checklist_command(
+        self,
+        envelope: MissionCommandEnvelope,
+        *,
+        group: object | None = None,
+    ):
+        return self.checklist_router.handle_commands(
+            [envelope.model_dump(mode="json")],
+            source_identity="peer-a",
+            group=group,
+        )
+
+    def checklist_snapshot(self) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        checklists = [self.domain.get_checklist(item["uid"]) for item in self.domain.list_active_checklists()]
+        tasks = [task for checklist in checklists for task in checklist.get("tasks", [])]
+        return checklists, tasks
+
+
+class RustRchBackend:
+    """Rust bridge backend for shared parity assertions."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.bridge = _bridge(tmp_path)
+
+    @property
+    def db_path(self) -> str:
+        return self.bridge.db_path
+
+    def grant_capability(self, identity: str, capability: str) -> None:
+        self.bridge.grant_capability(identity, capability)
+
+    def set_authorization_required(self, required: bool) -> None:
+        self.bridge.set_authorization_required(required)
+
+    def handle_command(self, envelope: MissionCommandEnvelope, *, group: object | None = None):
+        return self.bridge.handle_command(envelope, group=group)
+
+    def handle_checklist_command(
+        self,
+        envelope: MissionCommandEnvelope,
+        *,
+        group: object | None = None,
+    ):
+        return self.bridge.handle_checklist_command(envelope, group=group)
+
+    def checklist_snapshot(self) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        return (
+            _sqlite_msgpack_rows(self.db_path, "rch_checklists"),
+            _sqlite_msgpack_rows(self.db_path, "rch_checklist_tasks"),
+        )
+
+
+@pytest.fixture(params=["python", "rust"])
+def backend(request, tmp_path: Path):  # type: ignore[no-untyped-def]
+    if request.param == "python":
+        return PythonRchBackend(tmp_path)
+    return RustRchBackend(tmp_path)
 
 
 def _runtime_root() -> Path:
@@ -73,10 +183,10 @@ def _command(command_type: str, args: dict[str, object], *, command_id: str) -> 
     )
 
 
-def _grant(bridge: RustMissionSyncBridge, *capabilities: str) -> None:
-    bridge.set_authorization_required(True)
+def _grant(backend, *capabilities: str) -> None:  # type: ignore[no-untyped-def]
+    backend.set_authorization_required(True)
     for capability in capabilities:
-        bridge.grant_capability("peer-a", capability)
+        backend.grant_capability("peer-a", capability)
 
 
 def _sqlite_msgpack_rows(db_path: str, table: str) -> list[dict[str, object]]:
@@ -97,17 +207,16 @@ def _terminal_event(responses: list) -> dict[str, object]:
     return responses[1].fields[FIELD_EVENT]  # type: ignore[return-value]
 
 
-def test_rust_bridge_replays_python_mission_registry_command_flow(tmp_path: Path) -> None:
-    bridge = _bridge(tmp_path)
+def test_backend_replays_mission_registry_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
     _grant(
-        bridge,
+        backend,
         "mission.registry.mission.write",
         "mission.registry.mission.read",
         "mission.registry.log.write",
         "mission.registry.log.read",
     )
 
-    upsert = bridge.handle_command(
+    upsert = backend.handle_command(
         _command(
             "mission.registry.mission.upsert",
             {
@@ -124,7 +233,7 @@ def test_rust_bridge_replays_python_mission_registry_command_flow(tmp_path: Path
     assert _terminal_event(upsert)["event_type"] == "mission.registry.mission.upserted"
     assert _terminal_result(upsert)["uid"] == "mission-1"
 
-    fetched = bridge.handle_command(
+    fetched = backend.handle_command(
         _command(
             "mission.registry.mission.get",
             {"mission_uid": "mission-1"},
@@ -134,7 +243,7 @@ def test_rust_bridge_replays_python_mission_registry_command_flow(tmp_path: Path
     assert _terminal_event(fetched)["event_type"] == "mission.registry.mission.retrieved"
     assert _terminal_result(fetched)["mission_name"] == "Mission One"
 
-    log_entry = bridge.handle_command(
+    log_entry = backend.handle_command(
         _command(
             "mission.registry.log_entry.upsert",
             {
@@ -149,7 +258,7 @@ def test_rust_bridge_replays_python_mission_registry_command_flow(tmp_path: Path
     assert _terminal_event(log_entry)["event_type"] == "mission.registry.log_entry.upserted"
     assert _terminal_result(log_entry)["entry_uid"] == "log-1"
 
-    listed = bridge.handle_command(
+    listed = backend.handle_command(
         _command(
             "mission.registry.log_entry.list",
             {"mission_uid": "mission-1"},
@@ -160,11 +269,10 @@ def test_rust_bridge_replays_python_mission_registry_command_flow(tmp_path: Path
     assert _terminal_result(listed)["log_entries"][0]["entry_uid"] == "log-1"
 
 
-def test_rust_bridge_replays_python_checklist_command_flow(tmp_path: Path) -> None:
-    bridge = _bridge(tmp_path)
-    _grant(bridge, "checklist.write", "checklist.read", "checklist.upload", "checklist.feed.publish")
+def test_backend_replays_checklist_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(backend, "checklist.write", "checklist.read", "checklist.upload", "checklist.feed.publish")
 
-    created = bridge.handle_checklist_command(
+    created = backend.handle_checklist_command(
         _command(
             "checklist.create.offline",
             {
@@ -178,7 +286,7 @@ def test_rust_bridge_replays_python_checklist_command_flow(tmp_path: Path) -> No
     )
     assert created == []
 
-    row_added = bridge.handle_checklist_command(
+    row_added = backend.handle_checklist_command(
         _command(
             "checklist.task.row.add",
             {
@@ -191,7 +299,7 @@ def test_rust_bridge_replays_python_checklist_command_flow(tmp_path: Path) -> No
     )
     assert row_added == []
 
-    fetched = bridge.handle_checklist_command(
+    fetched = backend.handle_checklist_command(
         _command(
             "checklist.get",
             {"checklist_uid": "checklist-1"},
@@ -199,12 +307,11 @@ def test_rust_bridge_replays_python_checklist_command_flow(tmp_path: Path) -> No
         )
     )
     assert fetched == []
-    checklists = _sqlite_msgpack_rows(bridge.db_path, "rch_checklists")
-    tasks = _sqlite_msgpack_rows(bridge.db_path, "rch_checklist_tasks")
+    checklists, tasks = backend.checklist_snapshot()
     assert checklists[0]["name"] == "Rust Parity Checklist"
     assert tasks[0]["number"] == 1
 
-    uploaded = bridge.handle_checklist_command(
+    uploaded = backend.handle_checklist_command(
         _command(
             "checklist.upload",
             {"checklist_uid": "checklist-1", "uploaded_by_team_member_rns_identity": "peer-a"},
@@ -213,7 +320,7 @@ def test_rust_bridge_replays_python_checklist_command_flow(tmp_path: Path) -> No
     )
     assert uploaded == []
 
-    published = bridge.handle_checklist_command(
+    published = backend.handle_checklist_command(
         _command(
             "checklist.feed.publish",
             {
@@ -227,12 +334,11 @@ def test_rust_bridge_replays_python_checklist_command_flow(tmp_path: Path) -> No
     assert published == []
 
 
-def test_rust_bridge_replays_python_eam_command_flow(tmp_path: Path) -> None:
-    bridge = _bridge(tmp_path)
-    _grant(bridge, "mission.registry.status.write", "mission.registry.status.read")
+def test_backend_replays_eam_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(backend, "mission.registry.status.write", "mission.registry.status.read")
 
     team_uid = CANONICAL_COLOR_TEAM_UIDS["ORANGE"]
-    upsert = bridge.handle_command(
+    upsert = backend.handle_command(
         _command(
             "mission.registry.eam.upsert",
             {
@@ -262,7 +368,7 @@ def test_rust_bridge_replays_python_eam_command_flow(tmp_path: Path) -> None:
     assert snapshot["group_name"] == "ORANGE"
     assert snapshot["overall_status"] == "Red"
 
-    listed = bridge.handle_command(
+    listed = backend.handle_command(
         _command(
             "mission.registry.eam.list",
             {"team_uid": team_uid},
@@ -272,7 +378,7 @@ def test_rust_bridge_replays_python_eam_command_flow(tmp_path: Path) -> None:
     assert _terminal_event(listed)["event_type"] == "mission.registry.eam.listed"
     assert _terminal_result(listed)["eams"][0]["callsign"] == "ORANGE-1"
 
-    summary = bridge.handle_command(
+    summary = backend.handle_command(
         _command(
             "mission.registry.eam.team.summary",
             {"team_uid": team_uid},
@@ -285,7 +391,7 @@ def test_rust_bridge_replays_python_eam_command_flow(tmp_path: Path) -> None:
     assert summary_payload["active_total"] == 1
     assert summary_payload["overall_status"] == "Red"
 
-    deleted = bridge.handle_command(
+    deleted = backend.handle_command(
         _command(
             "mission.registry.eam.delete",
             {"callsign": "ORANGE-1"},
