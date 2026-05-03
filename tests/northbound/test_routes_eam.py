@@ -62,7 +62,7 @@ class RustEamDomain:
         return _run_rust_command(
             self._bridge,
             "mission.registry.team_member.get",
-            {"member_uid": member_uid},
+            {"team_member_uid": member_uid},
         )
 
 
@@ -315,8 +315,12 @@ def test_eam_routes_require_auth_and_support_crud(
     assert missing.status_code == 404
 
 
-def test_eam_routes_auto_provision_canonical_team_and_member(tmp_path: Path) -> None:
-    client, _, domain = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_eam_routes_auto_provision_canonical_team_and_member(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, _, domain = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
     team_uid = CANONICAL_COLOR_TEAM_UIDS["ORANGE"]
 
@@ -375,8 +379,12 @@ def test_eam_routes_reject_legacy_http_fields(tmp_path: Path) -> None:
     assert response.status_code == 422
 
 
-def test_eam_team_summary_route_handles_missing_and_expired_reports(tmp_path: Path) -> None:
-    client, _, domain = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_eam_team_summary_route_handles_missing_and_expired_reports(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, _, domain = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     domain.upsert_team({"uid": "team-1", "team_name": "Ops"})
@@ -434,8 +442,12 @@ def test_eam_team_summary_route_handles_missing_and_expired_reports(tmp_path: Pa
     assert missing_team.status_code == 404
 
 
-def test_eam_routes_hide_expired_snapshots_from_list_and_latest(tmp_path: Path) -> None:
-    client, _, domain = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_eam_routes_hide_expired_snapshots_from_list_and_latest(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, _, domain = _build_client(tmp_path, backend=backend)
     _seed_team(domain)
     headers = {"X-API-Key": "secret"}
 
@@ -471,8 +483,12 @@ def test_eam_routes_hide_expired_snapshots_from_list_and_latest(tmp_path: Path) 
     assert latest.status_code == 404
 
 
-def test_eam_routes_allow_recreate_after_delete(tmp_path: Path) -> None:
-    client, _, domain = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_eam_routes_allow_recreate_after_delete(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, _, domain = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     domain.upsert_team({"uid": "team-1", "team_name": "Ops"})
@@ -527,8 +543,12 @@ def test_eam_routes_allow_recreate_after_delete(tmp_path: Path) -> None:
     assert recreated.json()["callsign"] == "OPS-1"
 
 
-def test_eam_team_summary_route_matches_team_orange_example(tmp_path: Path) -> None:
-    client, _, domain = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_eam_team_summary_route_matches_team_orange_example(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, _, domain = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     domain.upsert_team({"uid": "team-orange", "team_name": "Ops"})
