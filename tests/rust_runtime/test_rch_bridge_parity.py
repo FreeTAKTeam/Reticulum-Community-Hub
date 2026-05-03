@@ -29,6 +29,7 @@ from reticulum_telemetry_hub.mission_domain.canonical_teams import CANONICAL_COL
 from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
 from reticulum_telemetry_hub.mission_sync.router import MissionSyncRouter
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
+from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from tests.test_rth_api import make_config_manager
 
 
@@ -50,6 +51,8 @@ class PythonRchBackend:
             identity_key_provider=lambda: b"\x11" * 32,
         )
         zone_service = ZoneService(ZoneStorage(cfg.config.hub_database_path))
+        self.event_log = EventLog()
+        self.event_log.add_event("seed", "seed event")
         self.mission_router = MissionSyncRouter(
             api=self.api,
             send_message=lambda _content, _topic_id, _destination: True,
@@ -57,7 +60,7 @@ class PythonRchBackend:
             zone_service=zone_service,
             domain_service=self.domain,
             emergency_action_message_service=status,
-            event_log=None,
+            event_log=self.event_log,
             hub_identity_resolver=lambda: "hub-1",
             field_results=FIELD_RESULTS,
             field_event=FIELD_EVENT,
@@ -335,6 +338,64 @@ def test_backend_replays_mission_registry_command_flow(backend) -> None:  # type
     )
     assert _terminal_event(listed)["event_type"] == "mission.registry.log_entry.listed"
     assert _terminal_result(listed)["log_entries"][0]["entry_uid"] == "log-1"
+
+
+def test_backend_replays_mission_lifecycle_and_message_flow(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(
+        backend,
+        "mission.join",
+        "mission.leave",
+        "mission.audit.read",
+        "mission.message.send",
+        "topic.create",
+    )
+
+    joined = backend.handle_command(
+        _command(
+            "mission.join",
+            {"identity": "peer-a"},
+            command_id="cmd-shared-mission-join",
+        )
+    )
+    assert _accepted(joined)["status"] == "accepted"
+    assert _terminal_result(joined)["joined"] is True
+    assert _terminal_event(joined)["event_type"] == "mission.joined"
+
+    topic = backend.handle_command(
+        _command(
+            "topic.create",
+            {"topic_id": "mission-lifecycle", "topic_name": "Mission Lifecycle"},
+            command_id="cmd-shared-lifecycle-topic-create",
+        )
+    )
+    topic_id = _terminal_result(topic)["TopicID"]
+
+    sent = backend.handle_command(
+        _command(
+            "mission.message.send",
+            {"content": "hello", "topic_id": topic_id, "destination": "dest-1"},
+            command_id="cmd-shared-message-send",
+        )
+    )
+    assert _accepted(sent)["status"] == "accepted"
+    assert _terminal_result(sent)["sent"] is True
+
+    events = backend.handle_command(
+        _command("mission.events.list", {}, command_id="cmd-shared-events-list")
+    )
+    assert _accepted(events)["status"] == "accepted"
+    assert _terminal_result(events)["events"]
+
+    left = backend.handle_command(
+        _command(
+            "mission.leave",
+            {"identity": "peer-a"},
+            command_id="cmd-shared-mission-leave",
+        )
+    )
+    assert _accepted(left)["status"] == "accepted"
+    assert _terminal_result(left)["left"] is True
+    assert _terminal_event(left)["event_type"] == "mission.left"
 
 
 def test_backend_replays_checklist_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
