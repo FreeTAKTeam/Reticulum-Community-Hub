@@ -6,8 +6,10 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 from pathlib import Path
+import subprocess
 
 from fastapi.testclient import TestClient
+import pytest
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
@@ -17,16 +19,188 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_domain.canonical_teams import CANONICAL_COLOR_TEAM_UIDS
+from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
+from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+
+
+FIELD_RESULTS = 10
+FIELD_GROUP = 11
+FIELD_EVENT = 13
+
+
+class RustEamDomain:
+    """Mission-domain seeding subset backed by the Rust RCH bridge."""
+
+    def __init__(self, bridge: RustMissionSyncBridge) -> None:
+        self._bridge = bridge
+
+    def upsert_team(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team.upsert",
+            payload,
+        )
+
+    def upsert_team_member(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member.upsert",
+            payload,
+        )
+
+    def get_team(self, team_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team.get",
+            {"team_uid": team_uid},
+        )
+
+    def get_team_member(self, member_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member.get",
+            {"member_uid": member_uid},
+        )
+
+
+class RustEamStatusService:
+    """EAM route service subset backed by the Rust RCH bridge."""
+
+    def __init__(self, bridge: RustMissionSyncBridge) -> None:
+        self._bridge = bridge
+
+    def list_messages(
+        self,
+        *,
+        team_uid: str | None = None,
+        overall_status: str | None = None,
+    ) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.eam.list",
+            {"team_uid": team_uid, "overall_status": overall_status},
+        )["eams"]
+
+    def upsert_message(
+        self,
+        payload: dict[str, object],
+        *,
+        expected_callsign: str | None = None,
+    ) -> dict[str, object]:
+        callsign = str(payload.get("callsign") or "")
+        if expected_callsign is not None and callsign != expected_callsign:
+            raise ValueError("callsign path parameter does not match payload")
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.eam.upsert",
+            payload,
+        )["eam"]
+
+    def get_message_by_callsign(self, callsign: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.eam.get",
+            {"callsign": callsign},
+        )["eam"]
+
+    def get_latest_message(self, team_member_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.eam.latest",
+            {"team_member_uid": team_member_uid},
+        )["eam"]
+
+    def get_team_summary(self, team_uid: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.eam.team.summary",
+            {"team_uid": team_uid},
+        )["summary"]
+
+    def delete_message(self, callsign: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.eam.delete",
+            {"callsign": callsign},
+        )["eam"]
+
+
+def _runtime_root() -> Path:
+    candidates = [
+        Path(__file__).resolve().parents[4] / "New project" / "R3AKT-Runtime",
+        Path(r"C:\Users\broth\Documents\New project\R3AKT-Runtime"),
+    ]
+    for candidate in candidates:
+        if (candidate / "Cargo.toml").exists():
+            return candidate
+    pytest.fail("R3AKT-Runtime workspace not found for Rust EAM route parity tests")
+
+
+def _bridge(db_path: Path) -> RustMissionSyncBridge:
+    runtime_root = _runtime_root()
+
+    def runner(args, **kwargs):  # type: ignore[no-untyped-def]
+        request_db_path = args[args.index("--db") + 1]
+        return subprocess.run(
+            ["cargo", "run", "-q", "-p", "r3akt-rch-bridge", "--", "--db", request_db_path],
+            cwd=runtime_root,
+            input=kwargs["input"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    return RustMissionSyncBridge(
+        binary_path="cargo-run-r3akt-rch-bridge",
+        db_path=str(db_path),
+        field_results=FIELD_RESULTS,
+        field_event=FIELD_EVENT,
+        field_group=FIELD_GROUP,
+        runner=runner,
+    )
+
+
+def _run_rust_command(
+    bridge: RustMissionSyncBridge,
+    command_type: str,
+    args: dict[str, object],
+) -> dict[str, object]:
+    responses = bridge.handle_command(
+        MissionCommandEnvelope.model_validate(
+            {
+                "command_id": f"cmd-rust-eam-route-{command_type}",
+                "source": {"rns_identity": "peer-a"},
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "command_type": command_type,
+                "args": args,
+            }
+        ),
+        source_identity="peer-a",
+    )
+    payload = responses[-1].fields[FIELD_RESULTS]
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Rust EAM command returned malformed payload: {command_type}")
+    if payload.get("status") == "rejected":
+        reason_code = str(payload.get("reason_code") or "")
+        reason = str(payload.get("reason") or payload.get("detail") or command_type)
+        if reason_code in {"not_found", "not_found_error"} or "not found" in reason.lower():
+            raise KeyError(reason)
+        raise ValueError(reason)
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError(f"Rust EAM command returned non-object result: {command_type}")
+    return result
 
 
 def _build_client(
     tmp_path: Path,
     *,
     client_host: tuple[str, int] = ("testclient", 50000),
-) -> tuple[TestClient, ReticulumTelemetryHubAPI, MissionDomainService]:
+    backend: str = "python",
+) -> tuple[TestClient, ReticulumTelemetryHubAPI, MissionDomainService | RustEamDomain]:
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "hub.sqlite")
     api = ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
@@ -36,6 +210,7 @@ def _build_client(
         api=api,
         event_log=event_log,
     )
+    rust_bridge = _bridge(tmp_path / "r3akt-eam-routes.sqlite") if backend == "rust" else None
     app = create_app(
         api=api,
         telemetry_controller=telemetry,
@@ -43,8 +218,15 @@ def _build_client(
         auth=ApiAuth(api_key="secret"),
         routing_provider=lambda: ["dest-1"],
         message_dispatcher=lambda content, topic_id=None, destination=None, fields=None: None,
+        emergency_action_message_service=(
+            RustEamStatusService(rust_bridge) if rust_bridge is not None else None
+        ),
     )
-    domain = MissionDomainService(config_manager.config.hub_database_path)
+    domain = (
+        RustEamDomain(rust_bridge)
+        if rust_bridge is not None
+        else MissionDomainService(config_manager.config.hub_database_path)
+    )
     return TestClient(app, client=client_host), api, domain
 
 
@@ -61,8 +243,16 @@ def _seed_team(domain: MissionDomainService, *, team_uid: str = "team-1") -> Non
     )
 
 
-def test_eam_routes_require_auth_and_support_crud(tmp_path: Path) -> None:
-    client, _, domain = _build_client(tmp_path, client_host=("198.51.100.10", 50000))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_eam_routes_require_auth_and_support_crud(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, _, domain = _build_client(
+        tmp_path,
+        client_host=("198.51.100.10", 50000),
+        backend=backend,
+    )
     _seed_team(domain)
     headers = {"X-API-Key": "secret"}
     payload = {
