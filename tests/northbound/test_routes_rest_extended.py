@@ -22,6 +22,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enu
 from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
+from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
 from reticulum_telemetry_hub.northbound.app import create_app
@@ -272,6 +273,94 @@ class RustR3aktDomain:
             "mission.registry.skill.list",
             {},
         )["skills"]
+
+    def upsert_team_member_skill(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member_skill.upsert",
+            payload,
+        )
+
+    def list_team_member_skills(
+        self,
+        team_member_rns_identity: str | None = None,
+    ) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.team_member_skill.list",
+            {"team_member_rns_identity": team_member_rns_identity},
+        )["team_member_skills"]
+
+    def upsert_task_skill_requirement(
+        self,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.task_skill_requirement.upsert",
+            payload,
+        )
+
+    def list_task_skill_requirements(
+        self,
+        task_uid: str | None = None,
+    ) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.task_skill_requirement.list",
+            {"task_uid": task_uid},
+        )["task_skill_requirements"]
+
+    def upsert_assignment(self, payload: dict[str, object]) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.assignment.upsert",
+            payload,
+        )
+
+    def list_assignments(
+        self,
+        mission_uid: str | None = None,
+        task_uid: str | None = None,
+    ) -> list[dict[str, object]]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.assignment.list",
+            {"mission_uid": mission_uid, "task_uid": task_uid},
+        )["assignments"]
+
+    def set_assignment_assets(
+        self,
+        assignment_uid: str,
+        assets: list[str],
+    ) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.assignment.asset.set",
+            {"assignment_uid": assignment_uid, "assets": assets},
+        )
+
+    def link_assignment_asset(
+        self,
+        assignment_uid: str,
+        asset_uid: str,
+    ) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.assignment.asset.link",
+            {"assignment_uid": assignment_uid, "asset_uid": asset_uid},
+        )
+
+    def unlink_assignment_asset(
+        self,
+        assignment_uid: str,
+        asset_uid: str,
+    ) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.assignment.asset.unlink",
+            {"assignment_uid": assignment_uid, "asset_uid": asset_uid},
+        )
 
 
 def _runtime_root() -> Path:
@@ -1577,6 +1666,147 @@ def test_r3akt_core_registry_routes_use_selected_backend(
     ).status_code == 200
     assert client.delete("/api/r3akt/teams/team-core", headers=headers).status_code == 200
     assert client.delete("/api/r3akt/missions/mission-parent", headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_r3akt_assignment_skill_routes_use_selected_backend(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
+    headers = {"X-API-Key": "secret"}
+
+    assert client.post(
+        "/api/r3akt/missions",
+        json={"uid": "mission-assign", "mission_name": "Mission Assign"},
+        headers=headers,
+    ).status_code == 200
+    assert client.post(
+        "/api/r3akt/teams",
+        json={
+            "uid": "team-assign",
+            "mission_uid": "mission-assign",
+            "team_name": "Assign Team",
+        },
+        headers=headers,
+    ).status_code == 200
+    assert client.post(
+        "/api/r3akt/team-members",
+        json={
+            "uid": "member-assign",
+            "team_uid": "team-assign",
+            "rns_identity": "peer-assign",
+            "display_name": "Peer Assign",
+        },
+        headers=headers,
+    ).status_code == 200
+    assert client.post(
+        "/api/r3akt/assets",
+        json={
+            "asset_uid": "asset-assign",
+            "team_member_uid": "member-assign",
+            "name": "Radio",
+            "asset_type": "COMM",
+        },
+        headers=headers,
+    ).status_code == 200
+    assert client.post(
+        "/api/r3akt/skills",
+        json={"skill_uid": "skill-assign", "name": "Navigation"},
+        headers=headers,
+    ).status_code == 200
+
+    task_uid = "task-assign"
+    if backend == "python":
+        domain = MissionDomainService(
+            HubConfigurationManager(storage_path=tmp_path).config.hub_database_path
+        )
+        template = domain.create_checklist_template(
+            {
+                "uid": "template-assign",
+                "template_name": "Assignment Template",
+                "created_by_team_member_rns_identity": "peer-assign",
+            }
+        )
+        checklist = domain.create_checklist_online(
+            {
+                "checklist_uid": "checklist-assign",
+                "template_uid": template["uid"],
+                "name": "Assignment Checklist",
+                "mission_uid": "mission-assign",
+            }
+        )
+        domain.add_checklist_task_row(
+            str(checklist["uid"]),
+            {"task_uid": task_uid, "number": 1},
+        )
+
+    member_skill = client.post(
+        "/api/r3akt/team-member-skills",
+        json={
+            "uid": "member-skill-assign",
+            "team_member_rns_identity": "peer-assign",
+            "skill_uid": "skill-assign",
+            "level": 3,
+        },
+        headers=headers,
+    )
+    assert member_skill.status_code == 200
+    assert client.get(
+        "/api/r3akt/team-member-skills",
+        params={"team_member_rns_identity": "peer-assign"},
+        headers=headers,
+    ).json()[0]["skill_uid"] == "skill-assign"
+
+    requirement = client.post(
+        "/api/r3akt/task-skill-requirements",
+        json={
+            "uid": "req-assign",
+            "task_uid": task_uid,
+            "skill_uid": "skill-assign",
+            "minimum_level": 2,
+        },
+        headers=headers,
+    )
+    assert requirement.status_code == 200
+    assert client.get(
+        "/api/r3akt/task-skill-requirements",
+        params={"task_uid": task_uid},
+        headers=headers,
+    ).json()[0]["skill_uid"] == "skill-assign"
+
+    assignment = client.post(
+        "/api/r3akt/assignments",
+        json={
+            "assignment_uid": "assignment-assign",
+            "mission_uid": "mission-assign",
+            "task_uid": task_uid,
+            "team_member_rns_identity": "peer-assign",
+            "assets": ["asset-assign"],
+        },
+        headers=headers,
+    )
+    assert assignment.status_code == 200
+    assert assignment.json()["assets"] == ["asset-assign"]
+
+    assert client.put(
+        "/api/r3akt/assignments/assignment-assign/assets/asset-assign",
+        headers=headers,
+    ).status_code == 200
+    assert client.put(
+        "/api/r3akt/assignments/assignment-assign/assets",
+        json={"assets": ["asset-assign"]},
+        headers=headers,
+    ).status_code == 200
+    assert client.get(
+        "/api/r3akt/assignments",
+        params={"mission_uid": "mission-assign", "task_uid": task_uid},
+        headers=headers,
+    ).json()[0]["assignment_uid"] == "assignment-assign"
+    assert client.delete(
+        "/api/r3akt/assignments/assignment-assign/assets/asset-assign",
+        headers=headers,
+    ).status_code == 200
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
