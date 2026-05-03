@@ -285,6 +285,7 @@ def test_backend_replays_mission_registry_command_flow(backend) -> None:  # type
         "mission.registry.mission.read",
         "mission.registry.log.write",
         "mission.registry.log.read",
+        "mission.zone.write",
     )
 
     upsert = backend.handle_command(
@@ -314,6 +315,107 @@ def test_backend_replays_mission_registry_command_flow(backend) -> None:  # type
     assert _terminal_event(fetched)["event_type"] == "mission.registry.mission.retrieved"
     assert _terminal_result(fetched)["mission_name"] == "Mission One"
 
+    listed_missions = backend.handle_command(
+        _command(
+            "mission.registry.mission.list",
+            {"expand_topic": False},
+            command_id="cmd-rust-mission-list",
+        )
+    )
+    assert any(item["uid"] == "mission-1" for item in _terminal_result(listed_missions)["missions"])
+
+    patched_mission = backend.handle_command(
+        _command(
+            "mission.registry.mission.patch",
+            {"mission_uid": "mission-1", "mission_priority": 5},
+            command_id="cmd-rust-mission-patch",
+        )
+    )
+    assert _terminal_result(patched_mission)["mission_priority"] == 5
+
+    second_mission = backend.handle_command(
+        _command(
+            "mission.registry.mission.upsert",
+            {"uid": "mission-2", "mission_name": "Mission Two"},
+            command_id="cmd-rust-second-mission-upsert",
+        )
+    )
+    assert _terminal_result(second_mission)["uid"] == "mission-2"
+
+    parent = backend.handle_command(
+        _command(
+            "mission.registry.mission.parent.set",
+            {"mission_uid": "mission-2", "parent_uid": "mission-1"},
+            command_id="cmd-rust-mission-parent",
+        )
+    )
+    assert _terminal_result(parent)["parent_uid"] == "mission-1"
+
+    zone = backend.handle_command(
+        _command(
+            "mission.zone.create",
+            {
+                "name": "Registry Zone",
+                "points": [
+                    {"lat": 10.0, "lon": 10.0},
+                    {"lat": 10.0, "lon": 11.0},
+                    {"lat": 11.0, "lon": 10.0},
+                ],
+            },
+            command_id="cmd-rust-registry-zone-create",
+        )
+    )
+    zone_id = _terminal_result(zone)["zone_id"]
+    zone_link = backend.handle_command(
+        _command(
+            "mission.registry.mission.zone.link",
+            {"mission_uid": "mission-1", "zone_id": zone_id},
+            command_id="cmd-rust-mission-zone-link",
+        )
+    )
+    assert zone_id in _terminal_result(zone_link)["zones"]
+
+    zone_unlink = backend.handle_command(
+        _command(
+            "mission.registry.mission.zone.unlink",
+            {"mission_uid": "mission-1", "zone_id": zone_id},
+            command_id="cmd-rust-mission-zone-unlink",
+        )
+    )
+    assert zone_id not in _terminal_result(zone_unlink)["zones"]
+
+    rde = backend.handle_command(
+        _command(
+            "mission.registry.mission.rde.set",
+            {"mission_uid": "mission-1", "role": "MISSION_OWNER"},
+            command_id="cmd-rust-mission-rde",
+        )
+    )
+    assert _terminal_result(rde)["role"] == "MISSION_OWNER"
+
+    mission_change = backend.handle_command(
+        _command(
+            "mission.registry.mission_change.upsert",
+            {
+                "uid": "change-1",
+                "mission_uid": "mission-1",
+                "name": "Updated objective",
+                "change_type": "ADD_CONTENT",
+            },
+            command_id="cmd-rust-change-upsert",
+        )
+    )
+    assert _terminal_result(mission_change)["uid"] == "change-1"
+
+    mission_changes = backend.handle_command(
+        _command(
+            "mission.registry.mission_change.list",
+            {"mission_uid": "mission-1"},
+            command_id="cmd-rust-change-list",
+        )
+    )
+    assert _terminal_result(mission_changes)["mission_changes"]
+
     log_entry = backend.handle_command(
         _command(
             "mission.registry.log_entry.upsert",
@@ -338,6 +440,15 @@ def test_backend_replays_mission_registry_command_flow(backend) -> None:  # type
     )
     assert _terminal_event(listed)["event_type"] == "mission.registry.log_entry.listed"
     assert _terminal_result(listed)["log_entries"][0]["entry_uid"] == "log-1"
+
+    deleted_mission = backend.handle_command(
+        _command(
+            "mission.registry.mission.delete",
+            {"mission_uid": "mission-2"},
+            command_id="cmd-rust-mission-delete",
+        )
+    )
+    assert _terminal_result(deleted_mission)["uid"] == "mission-2"
 
 
 def test_backend_replays_mission_lifecycle_and_message_flow(backend) -> None:  # type: ignore[no-untyped-def]
@@ -399,7 +510,14 @@ def test_backend_replays_mission_lifecycle_and_message_flow(backend) -> None:  #
 
 
 def test_backend_replays_checklist_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
-    _grant(backend, "checklist.write", "checklist.read", "checklist.upload", "checklist.feed.publish")
+    _grant(
+        backend,
+        "checklist.write",
+        "checklist.read",
+        "checklist.upload",
+        "checklist.feed.publish",
+        "checklist.join",
+    )
 
     created = backend.handle_checklist_command(
         _command(
@@ -439,6 +557,20 @@ def test_backend_replays_checklist_command_flow(backend) -> None:  # type: ignor
     checklists, tasks = backend.checklist_snapshot()
     assert checklists[0]["name"] == "Rust Parity Checklist"
     assert tasks[0]["number"] == 1
+
+    listed = backend.handle_checklist_command(
+        _command("checklist.list.active", {}, command_id="cmd-rust-checklist-list")
+    )
+    assert listed == []
+
+    joined = backend.handle_checklist_command(
+        _command(
+            "checklist.join",
+            {"checklist_uid": "checklist-1"},
+            command_id="cmd-rust-checklist-join",
+        )
+    )
+    assert joined == []
 
     uploaded = backend.handle_checklist_command(
         _command(
@@ -805,6 +937,24 @@ def test_backend_replays_eam_command_flow(backend) -> None:  # type: ignore[no-u
     assert _terminal_event(listed)["event_type"] == "mission.registry.eam.listed"
     assert _terminal_result(listed)["eams"][0]["callsign"] == "ORANGE-1"
 
+    fetched = backend.handle_command(
+        _command(
+            "mission.registry.eam.get",
+            {"callsign": "ORANGE-1"},
+            command_id="cmd-rust-eam-get",
+        )
+    )
+    assert _terminal_result(fetched)["eam"]["group_name"] == "ORANGE"
+
+    latest = backend.handle_command(
+        _command(
+            "mission.registry.eam.latest",
+            {"team_member_uid": "member-1"},
+            command_id="cmd-rust-eam-latest",
+        )
+    )
+    assert _terminal_result(latest)["eam"]["callsign"] == "ORANGE-1"
+
     summary = backend.handle_command(
         _command(
             "mission.registry.eam.team.summary",
@@ -879,6 +1029,24 @@ def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # t
     )
     assert _terminal_result(member)["uid"] == "member-2"
 
+    member_get = backend.handle_command(
+        _command(
+            "mission.registry.team_member.get",
+            {"team_member_uid": "member-2"},
+            command_id="cmd-rust-shared-member-get",
+        )
+    )
+    assert _terminal_result(member_get)["uid"] == "member-2"
+
+    member_list = backend.handle_command(
+        _command(
+            "mission.registry.team_member.list",
+            {"team_uid": "team-2"},
+            command_id="cmd-rust-shared-member-list",
+        )
+    )
+    assert _terminal_result(member_list)["team_members"]
+
     member_link = backend.handle_command(
         _command(
             "mission.registry.team_member.client.link",
@@ -887,6 +1055,15 @@ def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # t
         )
     )
     assert "peer-a" in _terminal_result(member_link)["client_identities"]
+
+    member_unlink = backend.handle_command(
+        _command(
+            "mission.registry.team_member.client.unlink",
+            {"team_member_uid": "member-2", "client_identity": "peer-a"},
+            command_id="cmd-rust-shared-member-unlink",
+        )
+    )
+    assert "peer-a" not in _terminal_result(member_unlink)["client_identities"]
 
     asset = backend.handle_command(
         _command(
@@ -901,6 +1078,15 @@ def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # t
         )
     )
     assert _terminal_result(asset)["asset_uid"] == "asset-2"
+
+    asset_get = backend.handle_command(
+        _command(
+            "mission.registry.asset.get",
+            {"asset_uid": "asset-2"},
+            command_id="cmd-rust-shared-asset-get",
+        )
+    )
+    assert _terminal_result(asset_get)["asset_uid"] == "asset-2"
 
     asset_list = backend.handle_command(
         _command(
@@ -920,6 +1106,11 @@ def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # t
     )
     assert _terminal_result(skill)["skill_uid"] == "skill-2"
 
+    skill_list = backend.handle_command(
+        _command("mission.registry.skill.list", {}, command_id="cmd-rust-shared-skill-list")
+    )
+    assert _terminal_result(skill_list)["skills"]
+
     member_skill = backend.handle_command(
         _command(
             "mission.registry.team_member_skill.upsert",
@@ -933,6 +1124,15 @@ def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # t
         )
     )
     assert _terminal_result(member_skill)["uid"] == "member-skill-2"
+
+    member_skill_list = backend.handle_command(
+        _command(
+            "mission.registry.team_member_skill.list",
+            {"team_member_rns_identity": "peer-a"},
+            command_id="cmd-rust-shared-member-skill-list",
+        )
+    )
+    assert _terminal_result(member_skill_list)["team_member_skills"]
 
     created = backend.handle_checklist_command(
         _command(
@@ -976,6 +1176,15 @@ def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # t
     )
     assert _terminal_result(requirement)["uid"] == "requirement-2"
 
+    requirement_list = backend.handle_command(
+        _command(
+            "mission.registry.task_skill_requirement.list",
+            {"task_uid": task_uid},
+            command_id="cmd-rust-shared-requirement-list",
+        )
+    )
+    assert _terminal_result(requirement_list)["task_skill_requirements"]
+
     assignment = backend.handle_command(
         _command(
             "mission.registry.assignment.upsert",
@@ -990,6 +1199,24 @@ def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # t
     )
     assert _terminal_result(assignment)["assignment_uid"] == "assignment-2"
 
+    assignment_list = backend.handle_command(
+        _command(
+            "mission.registry.assignment.list",
+            {"mission_uid": "mission-2"},
+            command_id="cmd-rust-shared-assignment-list",
+        )
+    )
+    assert _terminal_result(assignment_list)["assignments"]
+
+    assignment_set = backend.handle_command(
+        _command(
+            "mission.registry.assignment.asset.set",
+            {"assignment_uid": "assignment-2", "assets": ["asset-2"]},
+            command_id="cmd-rust-shared-assignment-asset-set",
+        )
+    )
+    assert _terminal_result(assignment_set)["assets"] == ["asset-2"]
+
     assignment_asset = backend.handle_command(
         _command(
             "mission.registry.assignment.asset.link",
@@ -998,6 +1225,78 @@ def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # t
         )
     )
     assert _terminal_result(assignment_asset)["assets"] == ["asset-2"]
+
+    assignment_unlink = backend.handle_command(
+        _command(
+            "mission.registry.assignment.asset.unlink",
+            {"assignment_uid": "assignment-2", "asset_uid": "asset-2"},
+            command_id="cmd-rust-shared-assignment-asset-unlink",
+        )
+    )
+    assert _terminal_result(assignment_unlink)["assets"] == []
+
+    asset_delete = backend.handle_command(
+        _command(
+            "mission.registry.asset.delete",
+            {"asset_uid": "asset-2"},
+            command_id="cmd-rust-shared-asset-delete",
+        )
+    )
+    assert _terminal_result(asset_delete)["asset_uid"] == "asset-2"
+
+    member_delete = backend.handle_command(
+        _command(
+            "mission.registry.team_member.delete",
+            {"team_member_uid": "member-2"},
+            command_id="cmd-rust-shared-member-delete",
+        )
+    )
+    assert _terminal_result(member_delete)["uid"] == "member-2"
+
+    team_get = backend.handle_command(
+        _command(
+            "mission.registry.team.get",
+            {"team_uid": "team-2"},
+            command_id="cmd-rust-shared-team-get",
+        )
+    )
+    assert _terminal_result(team_get)["uid"] == "team-2"
+
+    team_list = backend.handle_command(
+        _command(
+            "mission.registry.team.list",
+            {"mission_uid": "mission-2"},
+            command_id="cmd-rust-shared-team-list",
+        )
+    )
+    assert _terminal_result(team_list)["teams"]
+
+    team_link = backend.handle_command(
+        _command(
+            "mission.registry.team.mission.link",
+            {"team_uid": "team-2", "mission_uid": "mission-2"},
+            command_id="cmd-rust-shared-team-link",
+        )
+    )
+    assert "mission-2" in _terminal_result(team_link)["mission_uids"]
+
+    team_unlink = backend.handle_command(
+        _command(
+            "mission.registry.team.mission.unlink",
+            {"team_uid": "team-2", "mission_uid": "mission-2"},
+            command_id="cmd-rust-shared-team-unlink",
+        )
+    )
+    assert "mission-2" not in _terminal_result(team_unlink)["mission_uids"]
+
+    team_delete = backend.handle_command(
+        _command(
+            "mission.registry.team.delete",
+            {"team_uid": "team-2"},
+            command_id="cmd-rust-shared-team-delete",
+        )
+    )
+    assert _terminal_result(team_delete)["uid"] == "team-2"
 
 
 def test_backend_replays_topic_marker_zone_flow(backend) -> None:  # type: ignore[no-untyped-def]
