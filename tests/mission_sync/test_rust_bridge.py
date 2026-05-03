@@ -279,6 +279,41 @@ def test_rust_bridge_lists_persisted_markers_and_zones() -> None:
     assert zones[0].payload["points"] == [{"lat": 45.0, "lon": -93.0}]
 
 
+def test_rust_bridge_returns_state_snapshot() -> None:
+    def runner(*args, **kwargs):  # type: ignore[no-untyped-def]
+        request = json.loads(kwargs["input"])
+        assert request == {"type": "state_snapshot"}
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "type": "state_snapshot",
+                    "snapshot": {
+                        "topics": [{"topic_id": "topic-1"}],
+                        "subscribers": [],
+                        "checklists": [],
+                    },
+                }
+            ),
+            stderr="",
+        )
+
+    bridge = RustMissionSyncBridge(
+        binary_path="r3akt-rch-bridge",
+        db_path="runtime.sqlite",
+        field_results=10,
+        field_event=13,
+        field_group=4,
+        runner=runner,
+    )
+
+    snapshot = bridge.state_snapshot()
+
+    assert snapshot["topics"] == [{"topic_id": "topic-1"}]
+    assert snapshot["checklists"] == []
+
+
 def test_rust_bridge_builder_returns_none_when_disabled(tmp_path: Path) -> None:
     bridge = build_rust_bridge_from_runtime_config(
         HubRuntimeConfig(rust_runtime_enabled=False),

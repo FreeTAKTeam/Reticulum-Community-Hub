@@ -213,6 +213,17 @@ class RustMissionSyncBridge:
             if isinstance(zone, dict)
         ]
 
+    def state_snapshot(self) -> dict[str, object]:
+        """Return the full Rust RCH bridge state snapshot."""
+
+        payload = self._request({"type": "state_snapshot"})
+        if payload.get("type") != "state_snapshot":
+            raise RustMissionBridgeError("Rust bridge returned an unexpected response type")
+        snapshot = payload.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise RustMissionBridgeError("Rust bridge response is missing snapshot{}")
+        return snapshot
+
     def grant_capability(self, identity: str, capability: str) -> None:
         """Grant one Rust-side mission-sync capability to an identity."""
 

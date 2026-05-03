@@ -43,6 +43,8 @@ It covers:
 - zone create/list/patch/delete
 - marker and zone state observed through Rust bridge snapshot requests,
   matching Python service state in the shared parity harness
+- checklist/template/task/cell/feed state observed through the Rust bridge
+  `state_snapshot` request instead of direct SQLite table decoding
 - mission registry CRUD, patch, parent, zone link/unlink, RDE
 - mission change and log entry upsert/list
 - team, team member, client link/unlink, asset, skill, assignment, and assignment asset flows

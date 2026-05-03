@@ -13,9 +13,7 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 import subprocess
-import sqlite3
 
-import msgpack
 import pytest
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
@@ -245,22 +243,23 @@ class RustRchBackend:
         )
 
     def checklist_snapshot(self) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        snapshot = self.bridge.state_snapshot()
         return (
-            _sqlite_msgpack_rows(self.db_path, "rch_checklists"),
-            _sqlite_msgpack_rows(self.db_path, "rch_checklist_tasks"),
+            _snapshot_rows(snapshot, "checklists"),
+            _snapshot_rows(snapshot, "checklist_tasks"),
         )
 
     def checklist_template_snapshot(self) -> list[dict[str, object]]:
-        return _sqlite_msgpack_rows(self.db_path, "rch_checklist_templates")
+        return _snapshot_rows(self.bridge.state_snapshot(), "checklist_templates")
 
     def checklist_column_snapshot(self) -> list[dict[str, object]]:
-        return _sqlite_msgpack_rows(self.db_path, "rch_checklist_columns")
+        return _snapshot_rows(self.bridge.state_snapshot(), "checklist_columns")
 
     def checklist_cell_snapshot(self) -> list[dict[str, object]]:
-        return _sqlite_msgpack_rows(self.db_path, "rch_checklist_cells")
+        return _snapshot_rows(self.bridge.state_snapshot(), "checklist_cells")
 
     def checklist_feed_snapshot(self) -> list[dict[str, object]]:
-        return _sqlite_msgpack_rows(self.db_path, "rch_checklist_feed_publications")
+        return _snapshot_rows(self.bridge.state_snapshot(), "checklist_feed_publications")
 
     def subscriber_snapshot(self) -> list[dict[str, object]]:
         return [subscriber.payload for subscriber in self.bridge.list_subscribers()]
@@ -332,10 +331,10 @@ def _grant(backend, *capabilities: str) -> None:  # type: ignore[no-untyped-def]
         backend.grant_capability("peer-a", capability)
 
 
-def _sqlite_msgpack_rows(db_path: str, table: str) -> list[dict[str, object]]:
-    with sqlite3.connect(db_path) as conn:
-        rows = conn.execute(f"SELECT payload FROM {table} ORDER BY rowid").fetchall()
-    return [msgpack.unpackb(row[0], raw=False) for row in rows]
+def _snapshot_rows(snapshot: dict[str, object], key: str) -> list[dict[str, object]]:
+    rows = snapshot.get(key)
+    assert isinstance(rows, list)
+    return [dict(row) for row in rows if isinstance(row, dict)]
 
 
 def _accepted(responses: list) -> dict[str, object]:
