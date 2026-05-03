@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `835 passed, 357 warnings`
+  - Result: `841 passed, 357 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -19,7 +19,7 @@ the Python implementation and the Rust implementation, and both pass.
     - `reticulum_telemetry_hub.mission_sync.capabilities.MISSION_COMMAND_CAPABILITIES`
     - `reticulum_telemetry_hub.checklist_sync.capabilities.CHECKLIST_COMMAND_CAPABILITIES`
   - Current command coverage: `83 / 83`
-  - Current shared backend result: `19 passed`
+  - Current shared backend result: `25 passed`
 - Rust workspace:
   - Command: `cargo test --workspace`
   - Result: passed
@@ -42,11 +42,15 @@ It covers:
 - mission registry CRUD, patch, parent, zone link/unlink, RDE
 - mission change and log entry upsert/list
 - team, team member, client link/unlink, asset, skill, assignment, and assignment asset flows
-- EAM upsert/list/get/latest/summary/delete
+- EAM upsert/list/get/latest/summary/delete, including canonical team validation,
+  member/team mismatch rejection, active callsign conflict rejection, and
+  mission-scoped status-write authorization
 - checklist create/get/list/join/upload/feed/delete
 - checklist template create/list/get/update/clone/delete
 - checklist task row add/delete/style/status/cell set
 - checklist CSV import
+- checklist read authorization through mission-scoped team-member roles and
+  linked client identities
 - unauthorized, unknown command, invalid payload, and not-found rejection shapes
 
 ## Remaining Gap To Full-Suite Parity
