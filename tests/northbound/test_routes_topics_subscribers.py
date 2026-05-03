@@ -3,11 +3,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import timezone
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 
 from reticulum_telemetry_hub.api.models import Topic
+from reticulum_telemetry_hub.api.models import Subscriber
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
 from reticulum_telemetry_hub.config import HubConfigurationManager
@@ -16,17 +21,178 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.northbound.auth import ApiAuth
+from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
+from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+
+
+FIELD_RESULTS = 10
+FIELD_GROUP = 11
+FIELD_EVENT = 13
+
+
+class RustTopicApi:
+    """Topic/subscriber API subset backed by the Rust RCH bridge."""
+
+    def __init__(self, config_manager: HubConfigurationManager, db_path: Path) -> None:
+        self._config_manager = config_manager
+        self._bridge = _bridge(db_path)
+
+    def create_topic(self, topic: Topic) -> Topic:
+        result = self._result(
+            "topic.create",
+            {
+                "topic_id": topic.topic_id,
+                "topic_name": topic.topic_name,
+                "topic_path": topic.topic_path,
+                "topic_description": topic.topic_description,
+            },
+            command_id="cmd-northbound-topic-create",
+        )
+        return Topic.from_dict(result)
+
+    def retrieve_topic(self, topic_id: str) -> Topic:
+        for topic in self.list_topics():
+            if topic.topic_id == topic_id:
+                return topic
+        raise KeyError(topic_id)
+
+    def list_topics(self) -> list[Topic]:
+        return [Topic.from_dict(topic) for topic in self._snapshot_rows("topics")]
+
+    def patch_topic(self, topic_id: str, **updates: object) -> Topic:
+        args = {
+            "topic_id": topic_id,
+            "topic_name": updates.get("TopicName") or updates.get("topic_name"),
+            "topic_path": updates.get("TopicPath") or updates.get("topic_path"),
+            "topic_description": updates.get("TopicDescription")
+            or updates.get("topic_description"),
+        }
+        result = self._result("topic.patch", args, command_id="cmd-northbound-topic-patch")
+        return Topic.from_dict(result)
+
+    def delete_topic(self, topic_id: str) -> Topic:
+        topic = self.retrieve_topic(topic_id)
+        self._result(
+            "topic.delete",
+            {"topic_id": topic_id},
+            command_id="cmd-northbound-topic-delete",
+        )
+        return topic
+
+    def subscribe_topic(
+        self,
+        topic_id: str | None,
+        destination: str,
+        *,
+        reject_tests: object | None = None,
+        metadata: dict | None = None,
+    ) -> Subscriber:
+        result = self._result(
+            "topic.subscribe",
+            {
+                "topic_id": topic_id,
+                "destination": destination,
+                "reject_tests": reject_tests,
+                "metadata": metadata or {},
+            },
+            command_id="cmd-northbound-topic-subscribe",
+        )
+        return Subscriber.from_dict(result)
+
+    def list_subscribers(self) -> list[Subscriber]:
+        return [
+            Subscriber(
+                destination=str(subscriber.get("node_id") or ""),
+                topic_id=str(subscriber.get("topic_id") or ""),
+                metadata=dict(subscriber.get("metadata") or {}),
+                subscriber_id=str(subscriber.get("node_id") or ""),
+            )
+            for subscriber in self._snapshot_rows("subscribers")
+        ]
+
+    def _snapshot_rows(self, key: str) -> list[dict[str, object]]:
+        rows = self._bridge.state_snapshot().get(key)
+        assert isinstance(rows, list)
+        return [dict(row) for row in rows if isinstance(row, dict)]
+
+    def _result(
+        self,
+        command_type: str,
+        args: dict[str, object],
+        *,
+        command_id: str,
+    ) -> dict[str, object]:
+        responses = self._bridge.handle_command(
+            MissionCommandEnvelope.model_validate(
+                {
+                    "command_id": command_id,
+                    "source": {"rns_identity": "peer-a"},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "command_type": command_type,
+                    "args": args,
+                }
+            ),
+            source_identity="peer-a",
+        )
+        if not responses:
+            raise RuntimeError(f"Rust bridge returned no response for {command_type}")
+        payload = responses[-1].fields[FIELD_RESULTS]
+        if not isinstance(payload, dict) or payload.get("status") != "result":
+            raise RuntimeError(f"Rust bridge rejected {command_type}: {payload}")
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Rust bridge returned non-object result for {command_type}")
+        return result
+
+
+def _runtime_root() -> Path:
+    candidates = [
+        Path(__file__).resolve().parents[4] / "New project" / "R3AKT-Runtime",
+        Path(r"C:\Users\broth\Documents\New project\R3AKT-Runtime"),
+    ]
+    for candidate in candidates:
+        if (candidate / "Cargo.toml").exists():
+            return candidate
+    pytest.fail("R3AKT-Runtime workspace not found for Rust northbound parity tests")
+
+
+def _bridge(db_path: Path) -> RustMissionSyncBridge:
+    runtime_root = _runtime_root()
+
+    def runner(args, **kwargs):  # type: ignore[no-untyped-def]
+        request_db_path = args[args.index("--db") + 1]
+        return subprocess.run(
+            ["cargo", "run", "-q", "-p", "r3akt-rch-bridge", "--", "--db", request_db_path],
+            cwd=runtime_root,
+            input=kwargs["input"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    return RustMissionSyncBridge(
+        binary_path="cargo-run-r3akt-rch-bridge",
+        db_path=str(db_path),
+        field_results=FIELD_RESULTS,
+        field_event=FIELD_EVENT,
+        field_group=FIELD_GROUP,
+        runner=runner,
+    )
 
 
 def _build_client(
     tmp_path: Path,
     *,
     client_address: tuple[str, int] = ("testclient", 50000),
-) -> tuple[TestClient, ReticulumTelemetryHubAPI]:
+    backend: str = "python",
+) -> tuple[TestClient, ReticulumTelemetryHubAPI | RustTopicApi]:
     config_manager = HubConfigurationManager(storage_path=tmp_path)
-    storage = HubStorage(tmp_path / "hub.sqlite")
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
+    if backend == "rust":
+        api = RustTopicApi(config_manager, tmp_path / "r3akt-topic-routes.sqlite")
+    else:
+        storage = HubStorage(tmp_path / "hub.sqlite")
+        api = ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
     event_log = EventLog()
     telemetry = TelemetryController(
         db_path=tmp_path / "telemetry.db",
@@ -42,8 +208,9 @@ def _build_client(
     return TestClient(app, client=client_address), api
 
 
-def test_topic_crud_and_subscribe_flow(tmp_path: Path) -> None:
-    client, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_topic_crud_and_subscribe_flow(tmp_path: Path, backend: str) -> None:
+    client, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     create_response = client.post(
@@ -68,7 +235,11 @@ def test_topic_crud_and_subscribe_flow(tmp_path: Path) -> None:
     )
     assert patch_response.status_code == 200
 
-    remote_client, _ = _build_client(tmp_path, client_address=("198.51.100.10", 50000))
+    remote_client, _ = _build_client(
+        tmp_path,
+        client_address=("198.51.100.10", 50000),
+        backend=backend,
+    )
     assoc_missing = remote_client.post("/Topic/Associate", json={})
     assert assoc_missing.status_code == 401
 
