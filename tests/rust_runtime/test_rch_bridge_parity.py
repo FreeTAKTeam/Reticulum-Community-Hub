@@ -401,3 +401,173 @@ def test_backend_replays_eam_command_flow(backend) -> None:  # type: ignore[no-u
     assert _terminal_event(deleted)["event_type"] == "mission.registry.eam.deleted"
     assert _terminal_result(deleted)["eam"]["callsign"] == "ORANGE-1"
     assert _terminal_result(deleted)["eam"]["group_name"] == "ORANGE"
+
+
+def test_backend_replays_team_asset_skill_assignment_flow(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(
+        backend,
+        "mission.registry.mission.write",
+        "mission.registry.team.write",
+        "mission.registry.team.read",
+        "mission.registry.team_member.write",
+        "mission.registry.team_member.read",
+        "mission.registry.asset.write",
+        "mission.registry.asset.read",
+        "mission.registry.skill.write",
+        "mission.registry.skill.read",
+        "mission.registry.assignment.write",
+        "mission.registry.assignment.read",
+        "checklist.write",
+    )
+
+    mission = backend.handle_command(
+        _command(
+            "mission.registry.mission.upsert",
+            {"uid": "mission-2", "mission_name": "Mission Two"},
+            command_id="cmd-rust-shared-mission-upsert",
+        )
+    )
+    assert _terminal_result(mission)["uid"] == "mission-2"
+
+    team = backend.handle_command(
+        _command(
+            "mission.registry.team.upsert",
+            {"uid": "team-2", "team_name": "Bravo", "mission_uid": "mission-2"},
+            command_id="cmd-rust-shared-team-upsert",
+        )
+    )
+    assert _terminal_result(team)["uid"] == "team-2"
+
+    member = backend.handle_command(
+        _command(
+            "mission.registry.team_member.upsert",
+            {
+                "uid": "member-2",
+                "team_uid": "team-2",
+                "rns_identity": "peer-a",
+                "display_name": "Peer A",
+            },
+            command_id="cmd-rust-shared-member-upsert",
+        )
+    )
+    assert _terminal_result(member)["uid"] == "member-2"
+
+    member_link = backend.handle_command(
+        _command(
+            "mission.registry.team_member.client.link",
+            {"team_member_uid": "member-2", "client_identity": "peer-a"},
+            command_id="cmd-rust-shared-member-link",
+        )
+    )
+    assert "peer-a" in _terminal_result(member_link)["client_identities"]
+
+    asset = backend.handle_command(
+        _command(
+            "mission.registry.asset.upsert",
+            {
+                "asset_uid": "asset-2",
+                "team_member_uid": "member-2",
+                "name": "Battery Pack",
+                "asset_type": "POWER",
+            },
+            command_id="cmd-rust-shared-asset-upsert",
+        )
+    )
+    assert _terminal_result(asset)["asset_uid"] == "asset-2"
+
+    asset_list = backend.handle_command(
+        _command(
+            "mission.registry.asset.list",
+            {"team_member_uid": "member-2"},
+            command_id="cmd-rust-shared-asset-list",
+        )
+    )
+    assert _terminal_result(asset_list)["assets"][0]["asset_uid"] == "asset-2"
+
+    skill = backend.handle_command(
+        _command(
+            "mission.registry.skill.upsert",
+            {"skill_uid": "skill-2", "name": "Navigation"},
+            command_id="cmd-rust-shared-skill-upsert",
+        )
+    )
+    assert _terminal_result(skill)["skill_uid"] == "skill-2"
+
+    member_skill = backend.handle_command(
+        _command(
+            "mission.registry.team_member_skill.upsert",
+            {
+                "uid": "member-skill-2",
+                "team_member_rns_identity": "peer-a",
+                "skill_uid": "skill-2",
+                "level": 3,
+            },
+            command_id="cmd-rust-shared-member-skill-upsert",
+        )
+    )
+    assert _terminal_result(member_skill)["uid"] == "member-skill-2"
+
+    created = backend.handle_checklist_command(
+        _command(
+            "checklist.create.offline",
+            {
+                "checklist_uid": "checklist-assignment-2",
+                "origin_type": "BLANK_TEMPLATE",
+                "name": "Assignment Checklist",
+                "mission_uid": "mission-2",
+            },
+            command_id="cmd-rust-shared-checklist-create",
+        )
+    )
+    assert created == []
+    row_added = backend.handle_checklist_command(
+        _command(
+            "checklist.task.row.add",
+            {
+                "checklist_uid": "checklist-assignment-2",
+                "number": 1,
+                "due_relative_minutes": 15,
+            },
+            command_id="cmd-rust-shared-checklist-row",
+        )
+    )
+    assert row_added == []
+    _checklists, tasks = backend.checklist_snapshot()
+    task_uid = tasks[0]["task_uid"]
+
+    requirement = backend.handle_command(
+        _command(
+            "mission.registry.task_skill_requirement.upsert",
+            {
+                "uid": "requirement-2",
+                "task_uid": task_uid,
+                "skill_uid": "skill-2",
+                "minimum_level": 2,
+            },
+            command_id="cmd-rust-shared-requirement-upsert",
+        )
+    )
+    assert _terminal_result(requirement)["uid"] == "requirement-2"
+
+    assignment = backend.handle_command(
+        _command(
+            "mission.registry.assignment.upsert",
+            {
+                "assignment_uid": "assignment-2",
+                "mission_uid": "mission-2",
+                "task_uid": task_uid,
+                "team_member_rns_identity": "peer-a",
+            },
+            command_id="cmd-rust-shared-assignment-upsert",
+        )
+    )
+    assert _terminal_result(assignment)["assignment_uid"] == "assignment-2"
+
+    assignment_asset = backend.handle_command(
+        _command(
+            "mission.registry.assignment.asset.link",
+            {"assignment_uid": "assignment-2", "asset_uid": "asset-2"},
+            command_id="cmd-rust-shared-assignment-asset-link",
+        )
+    )
+    assert _terminal_result(assignment_asset)["assets"] == ["asset-2"]
