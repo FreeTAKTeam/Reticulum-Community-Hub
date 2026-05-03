@@ -49,18 +49,18 @@ class PythonRchBackend:
         self.api = ReticulumTelemetryHubAPI(config_manager=cfg)
         self.domain = MissionDomainService(cfg.config.hub_database_path)
         status = EmergencyActionMessageService(cfg.config.hub_database_path)
-        marker_service = MarkerService(
+        self.marker_service = MarkerService(
             MarkerStorage(cfg.config.hub_database_path),
             identity_key_provider=lambda: b"\x11" * 32,
         )
-        zone_service = ZoneService(ZoneStorage(cfg.config.hub_database_path))
+        self.zone_service = ZoneService(ZoneStorage(cfg.config.hub_database_path))
         self.event_log = EventLog()
         self.event_log.add_event("seed", "seed event")
         self.mission_router = MissionSyncRouter(
             api=self.api,
             send_message=lambda _content, _topic_id, _destination: True,
-            marker_service=marker_service,
-            zone_service=zone_service,
+            marker_service=self.marker_service,
+            zone_service=self.zone_service,
             domain_service=self.domain,
             emergency_action_message_service=status,
             event_log=self.event_log,
@@ -181,6 +181,12 @@ class PythonRchBackend:
             for subscriber in self.api.list_subscribers()
         ]
 
+    def marker_snapshot(self) -> list[dict[str, object]]:
+        return [marker.to_dict() for marker in self.marker_service.list_markers()]
+
+    def zone_snapshot(self) -> list[dict[str, object]]:
+        return [zone.to_dict() for zone in self.zone_service.list_zones()]
+
 
 class RustRchBackend:
     """Rust bridge backend for shared parity assertions."""
@@ -258,6 +264,12 @@ class RustRchBackend:
 
     def subscriber_snapshot(self) -> list[dict[str, object]]:
         return [subscriber.payload for subscriber in self.bridge.list_subscribers()]
+
+    def marker_snapshot(self) -> list[dict[str, object]]:
+        return [marker.payload for marker in self.bridge.list_markers()]
+
+    def zone_snapshot(self) -> list[dict[str, object]]:
+        return [zone.payload for zone in self.bridge.list_zones()]
 
 
 @pytest.fixture(params=["python", "rust"])
@@ -1865,6 +1877,12 @@ def test_backend_replays_topic_marker_zone_flow(backend) -> None:  # type: ignor
         )
     )
     marker_hash = _terminal_result(marker)["object_destination_hash"]
+    marker_record = _by_key(
+        backend.marker_snapshot(),
+        "object_destination_hash",
+        marker_hash,
+    )
+    assert marker_record["name"] == "Marker One"
 
     listed_markers = backend.handle_command(
         _command("mission.marker.list", {}, command_id="cmd-shared-marker-list")
@@ -1900,6 +1918,8 @@ def test_backend_replays_topic_marker_zone_flow(backend) -> None:  # type: ignor
         )
     )
     zone_id = _terminal_result(zone)["zone_id"]
+    zone_record = _by_key(backend.zone_snapshot(), "zone_id", zone_id)
+    assert zone_record["name"] == "Zone One"
 
     listed_zones = backend.handle_command(
         _command("mission.zone.list", {}, command_id="cmd-shared-zone-list")

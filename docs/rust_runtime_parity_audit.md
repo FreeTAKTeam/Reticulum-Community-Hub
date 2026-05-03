@@ -41,6 +41,8 @@ It covers:
   request, matching Python API subscriber state in the shared parity harness
 - marker create/list/patch
 - zone create/list/patch/delete
+- marker and zone state observed through Rust bridge snapshot requests,
+  matching Python service state in the shared parity harness
 - mission registry CRUD, patch, parent, zone link/unlink, RDE
 - mission change and log entry upsert/list
 - team, team member, client link/unlink, asset, skill, assignment, and assignment asset flows

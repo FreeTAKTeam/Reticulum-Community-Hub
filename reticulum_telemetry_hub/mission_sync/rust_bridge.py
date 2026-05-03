@@ -48,6 +48,24 @@ class RustMissionSyncSubscriber:
 
 
 @dataclass(frozen=True)
+class RustMissionSyncMarker:
+    """Marker state returned by the Rust RCH bridge."""
+
+    object_destination_hash: str
+    name: str
+    payload: dict[str, object]
+
+
+@dataclass(frozen=True)
+class RustMissionSyncZone:
+    """Zone state returned by the Rust RCH bridge."""
+
+    zone_id: str
+    name: str
+    payload: dict[str, object]
+
+
+@dataclass(frozen=True)
 class RustMissionSyncBridge:
     """Invoke ``r3akt-rch-bridge`` for selected mission-sync commands."""
 
@@ -155,6 +173,44 @@ class RustMissionSyncBridge:
             )
             for subscriber in subscribers
             if isinstance(subscriber, dict)
+        ]
+
+    def list_markers(self) -> list[RustMissionSyncMarker]:
+        """Return markers currently persisted in the Rust RCH bridge state."""
+
+        payload = self._request({"type": "list_markers"})
+        if payload.get("type") != "list_markers":
+            raise RustMissionBridgeError("Rust bridge returned an unexpected response type")
+        markers = payload.get("markers")
+        if not isinstance(markers, list):
+            raise RustMissionBridgeError("Rust bridge response is missing markers[]")
+        return [
+            RustMissionSyncMarker(
+                object_destination_hash=str(marker.get("object_destination_hash") or ""),
+                name=str(marker.get("name") or ""),
+                payload=dict(marker),
+            )
+            for marker in markers
+            if isinstance(marker, dict)
+        ]
+
+    def list_zones(self) -> list[RustMissionSyncZone]:
+        """Return zones currently persisted in the Rust RCH bridge state."""
+
+        payload = self._request({"type": "list_zones"})
+        if payload.get("type") != "list_zones":
+            raise RustMissionBridgeError("Rust bridge returned an unexpected response type")
+        zones = payload.get("zones")
+        if not isinstance(zones, list):
+            raise RustMissionBridgeError("Rust bridge response is missing zones[]")
+        return [
+            RustMissionSyncZone(
+                zone_id=str(zone.get("zone_id") or ""),
+                name=str(zone.get("name") or ""),
+                payload=dict(zone),
+            )
+            for zone in zones
+            if isinstance(zone, dict)
         ]
 
     def grant_capability(self, identity: str, capability: str) -> None:

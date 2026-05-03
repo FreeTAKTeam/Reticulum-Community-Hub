@@ -223,6 +223,62 @@ def test_rust_bridge_lists_persisted_subscribers() -> None:
     assert subscribers[0].payload["metadata"] == {"role": "watcher"}
 
 
+def test_rust_bridge_lists_persisted_markers_and_zones() -> None:
+    seen_requests: list[dict[str, object]] = []
+
+    def runner(*args, **kwargs):  # type: ignore[no-untyped-def]
+        request = json.loads(kwargs["input"])
+        seen_requests.append(request)
+        if request == {"type": "list_markers"}:
+            payload = {
+                "type": "list_markers",
+                "markers": [
+                    {
+                        "object_destination_hash": "marker-1",
+                        "name": "Marker One",
+                        "lat": 45.0,
+                        "lon": -93.0,
+                    }
+                ],
+            }
+        else:
+            assert request == {"type": "list_zones"}
+            payload = {
+                "type": "list_zones",
+                "zones": [
+                    {
+                        "zone_id": "zone-1",
+                        "name": "Zone One",
+                        "points": [{"lat": 45.0, "lon": -93.0}],
+                    }
+                ],
+            }
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(payload),
+            stderr="",
+        )
+
+    bridge = RustMissionSyncBridge(
+        binary_path="r3akt-rch-bridge",
+        db_path="runtime.sqlite",
+        field_results=10,
+        field_event=13,
+        field_group=4,
+        runner=runner,
+    )
+
+    markers = bridge.list_markers()
+    zones = bridge.list_zones()
+
+    assert seen_requests == [{"type": "list_markers"}, {"type": "list_zones"}]
+    assert markers[0].object_destination_hash == "marker-1"
+    assert markers[0].name == "Marker One"
+    assert zones[0].zone_id == "zone-1"
+    assert zones[0].payload["points"] == [{"lat": 45.0, "lon": -93.0}]
+
+
 def test_rust_bridge_builder_returns_none_when_disabled(tmp_path: Path) -> None:
     bridge = build_rust_bridge_from_runtime_config(
         HubRuntimeConfig(rust_runtime_enabled=False),
