@@ -8,6 +8,7 @@ southbound command envelope shapes against the Python routers and the Rust
 from __future__ import annotations
 
 import base64
+import ast
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -26,6 +27,8 @@ from reticulum_telemetry_hub.checklist_sync.router import ChecklistSyncRouter
 from reticulum_telemetry_hub.mission_domain import EmergencyActionMessageService
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_domain.canonical_teams import CANONICAL_COLOR_TEAM_UIDS
+from reticulum_telemetry_hub.checklist_sync.capabilities import CHECKLIST_COMMAND_CAPABILITIES
+from reticulum_telemetry_hub.mission_sync.capabilities import MISSION_COMMAND_CAPABILITIES
 from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
 from reticulum_telemetry_hub.mission_sync.router import MissionSyncRouter
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
@@ -1456,3 +1459,21 @@ def test_backend_replays_topic_marker_zone_flow(backend) -> None:  # type: ignor
         )
     )
     assert _terminal_result(deleted_topic)["TopicID"] == topic_id
+
+
+def test_shared_parity_harness_covers_all_southbound_commands() -> None:
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    covered = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_command"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            covered.add(node.args[0].value)
+
+    expected = set(MISSION_COMMAND_CAPABILITIES) | set(CHECKLIST_COMMAND_CAPABILITIES)
+    assert sorted(expected - covered) == []
