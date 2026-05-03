@@ -626,6 +626,23 @@ def test_backend_replays_mission_source_identity_mismatch(backend) -> None:  # t
     assert _rejection(responses)["reason_code"] == "unauthorized"
 
 
+def test_backend_replays_mission_missing_source_identity(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(backend, "topic.create")
+
+    responses = backend.handle_command(
+        _command(
+            "topic.create",
+            {"topic_path": "missing-source", "topic_name": "Missing Source"},
+            command_id="cmd-shared-mission-missing-source",
+        ),
+        source_identity="",
+    )
+
+    assert len(responses) == 1
+    assert _rejection(responses)["status"] == "rejected"
+    assert _rejection(responses)["reason_code"] == "unauthorized"
+
+
 def test_backend_replays_checklist_command_flow(backend) -> None:  # type: ignore[no-untyped-def]
     _grant(
         backend,
@@ -760,6 +777,23 @@ def test_backend_replays_checklist_source_identity_mismatch(backend) -> None:  #
             command_id="cmd-shared-checklist-source-mismatch",
         ),
         source_identity="peer-b",
+    )
+
+    assert len(responses) == 1
+    assert _rejection(responses)["status"] == "rejected"
+    assert _rejection(responses)["reason_code"] == "unauthorized"
+
+
+def test_backend_replays_checklist_missing_source_identity(backend) -> None:  # type: ignore[no-untyped-def]
+    _grant(backend, "checklist.template.read")
+
+    responses = backend.handle_checklist_command(
+        _command(
+            "checklist.template.list",
+            {},
+            command_id="cmd-shared-checklist-missing-source",
+        ),
+        source_identity="",
     )
 
     assert len(responses) == 1

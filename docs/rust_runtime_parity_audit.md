@@ -19,7 +19,7 @@ the Python implementation and the Rust implementation, and both pass.
     - `reticulum_telemetry_hub.mission_sync.capabilities.MISSION_COMMAND_CAPABILITIES`
     - `reticulum_telemetry_hub.checklist_sync.capabilities.CHECKLIST_COMMAND_CAPABILITIES`
   - Current command coverage: `83 / 83`
-  - Current shared backend result: `29 passed`
+  - Current shared backend result: `33 passed`
 - Rust workspace:
   - Command: `cargo test --workspace`
   - Result: passed
