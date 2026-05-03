@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `856 passed, 377 warnings`
+  - Result: `857 passed, 381 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -43,6 +43,8 @@ It covers:
 - marker rename/delete southbound commands and the FastAPI marker
   create/update/delete route flow parameterized across Python and Rust
 - zone create/list/patch/delete
+- FastAPI northbound zone create/list/update/delete route flow
+  parameterized across Python and Rust
 - marker and zone state observed through Rust bridge snapshot requests,
   matching Python service state in the shared parity harness
 - checklist/template/task/cell/feed state observed through the Rust bridge
