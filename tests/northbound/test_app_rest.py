@@ -216,14 +216,15 @@ def test_auth_validate_remote_with_bearer_token_allowed(tmp_path, backend: str) 
     assert payload["app"]["name"] == "ReticulumCommunityHub"
 
 
-def test_app_info_prefers_hub_display_name(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_app_info_prefers_hub_display_name(tmp_path, backend: str) -> None:
     """Expose the configured hub display name as the primary app-info name."""
 
     (tmp_path / "config.ini").write_text(
         "[hub]\ndisplay_name = RCH - Altre Alternative\n",
         encoding="utf-8",
     )
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     app = create_app(
         api=api,
         telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),

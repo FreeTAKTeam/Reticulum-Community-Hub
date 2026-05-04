@@ -1,3 +1,4 @@
+import configparser
 import threading
 from datetime import datetime
 from datetime import timezone
@@ -83,6 +84,18 @@ def make_config_manager(tmp_path):
     )
 
 
+def _read_hub_display_name(config_path: Path) -> str | None:
+    if not config_path.exists():
+        return None
+    parser = configparser.ConfigParser()
+    parser.read(config_path, encoding="utf-8")
+    display_name = parser.get("hub", "display_name", fallback=None)
+    if display_name is None:
+        return None
+    stripped = display_name.strip()
+    return stripped or None
+
+
 class RustTopicSubscriberApi:
     """Minimal ReticulumTelemetryHubAPI topic/subscriber subset backed by Rust."""
 
@@ -93,6 +106,8 @@ class RustTopicSubscriberApi:
         self._reticulum_destination: str | None = None
         self._config_text = "[app]\nname = TestHub\nversion = 9.9.9\n"
         self._previous_config_text: str | None = None
+        self._hub_display_name = _read_hub_display_name(tmp_path / "config.ini")
+        self._app_name = "ReticulumTelemetryHub" if self._hub_display_name else "TestHub"
         self._bridge = _bridge(tmp_path / "r3akt-api.sqlite")
         self._bridge_lock = threading.Lock()
         self._attachments: dict[int, FileAttachment] = {}
@@ -121,11 +136,12 @@ class RustTopicSubscriberApi:
             storage_path=str(self._storage_path),
             file_storage_path=str(self._storage_path / "files"),
             image_storage_path=str(self._storage_path / "images"),
-            app_name="TestHub",
+            app_name=self._app_name,
             rns_version="test-rns",
             lxmf_version="test-lxmf",
             app_version="9.9.9",
             app_description="Test hub instance",
+            hub_display_name=self._hub_display_name,
             reticulum_destination=self._reticulum_destination,
         )
 
