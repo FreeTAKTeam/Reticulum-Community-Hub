@@ -189,23 +189,13 @@ COMMAND_HANDLER_MAP = [
 ]
 
 
-def test_handle_commands_parses_string_entries():
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.created_topics: list[Topic] = []
-
-        def create_topic(self, topic: Topic) -> Topic:
-            topic.topic_id = "topic-from-string"
-            self.created_topics.append(topic)
-            return topic
-
-        def list_topics(self):
-            return []
-
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_handle_commands_parses_string_entries(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -229,8 +219,7 @@ def test_handle_commands_parses_string_entries():
     assert responses
     reply_text = responses[0].content_as_string()
     assert "Topic created" in reply_text
-    assert manager.api.created_topics
-    created_topic = manager.api.created_topics[0]
+    created_topic = api.list_topics()[0]
     assert created_topic.topic_name == "Alpha"
     assert created_topic.topic_path == "alpha/path"
 
