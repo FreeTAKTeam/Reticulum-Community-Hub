@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `987 passed, 569 warnings`
+  - Result: `989 passed, 569 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -136,6 +136,8 @@ It covers:
 - Core command-manager topic listing, topic creation, source-identity
   subscription, and zero-reject subscription behavior parameterized across
   Python storage and the Rust bridge-backed API adapter
+- Standalone command-manager subscriber create/retrieve behavior parameterized
+  across Python storage and the Rust bridge-backed API adapter
 - Core command-manager help reply renderer hint behavior parameterized across
   Python storage and the Rust bridge-backed API adapter
 - LXMF telemetry request topic filtering, unsubscribed-sender denial, and
