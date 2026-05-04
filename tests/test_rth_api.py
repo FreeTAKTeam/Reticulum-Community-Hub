@@ -145,8 +145,11 @@ class RustTopicSubscriberApi:
         topic_id: str | None = None,
         reject_tests: int | None = None,
         metadata: dict | None = None,
+        **extra: object,
     ) -> Subscriber:
         _ = reject_tests
+        if metadata is None and isinstance(extra.get("Metadata"), dict):
+            metadata = extra["Metadata"]
         result = self._command(
             "topic.subscriber.patch",
             {
@@ -1019,8 +1022,9 @@ def test_subscriber_operations_raise_when_missing(tmp_path, backend):
         api.delete_subscriber("unknown")
 
 
-def test_patch_subscriber_accepts_metadata_with_title_case(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_patch_subscriber_accepts_metadata_with_title_case(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(Topic(topic_name="Alerts", topic_path="/alerts"))
     subscriber = api.subscribe_topic(topic.topic_id, destination="dest")
 
