@@ -1,10 +1,15 @@
+from pathlib import Path
+from typing import Any
+
 import LXMF
 import RNS
+import pytest
 
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.test_rth_api import RustTopicSubscriberApi
 from tests.test_rth_api import make_config_manager
 
 
@@ -14,7 +19,7 @@ def ensure_reticulum() -> None:
 
 
 def build_manager(
-    api: ReticulumTelemetryHubAPI,
+    api: Any,
     *,
     event_log: EventLog | None = None,
 ) -> tuple[CommandManager, RNS.Destination]:
@@ -37,6 +42,28 @@ def build_manager(
         event_log=event_log,
     )
     return manager, server_dest
+
+
+def _api_for_backend(
+    tmp_path: Path, backend: str
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
+    return ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+
+def _attachment_path(
+    api: ReticulumTelemetryHubAPI | RustTopicSubscriberApi,
+    category: str,
+    filename: str,
+) -> Path:
+    if isinstance(api, ReticulumTelemetryHubAPI):
+        if category == "image":
+            return api._config_manager.config.image_storage_path / filename  # pylint: disable=protected-access
+        return api._config_manager.config.file_storage_path / filename  # pylint: disable=protected-access
+    base_path = api._storage_path / ("images" if category == "image" else "files")  # pylint: disable=protected-access
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path / filename
 
 
 def make_message(
@@ -63,9 +90,10 @@ def make_client_destination() -> RNS.Destination:
     )
 
 
-def test_list_files_and_images_when_empty(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_list_files_and_images_when_empty(tmp_path, backend: str):
     ensure_reticulum()
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api = _api_for_backend(tmp_path, backend)
 
     manager, server_dest = build_manager(api)
     client_dest = make_client_destination()
@@ -90,9 +118,10 @@ def test_list_files_and_images_when_empty(tmp_path):
     assert images_response.content_as_string() == "No images stored yet."
 
 
-def test_retrieve_file_prompts_for_missing_id(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_file_prompts_for_missing_id(tmp_path, backend: str):
     ensure_reticulum()
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api = _api_for_backend(tmp_path, backend)
     manager, server_dest = build_manager(api)
     client_dest = make_client_destination()
 
@@ -111,10 +140,11 @@ def test_retrieve_file_prompts_for_missing_id(tmp_path):
     assert "FileID" in content
 
 
-def test_retrieve_file_supports_camel_case_id(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_file_supports_camel_case_id(tmp_path, backend: str):
     ensure_reticulum()
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    file_path = api._config_manager.config.file_storage_path / "camel.bin"  # pylint: disable=protected-access
+    api = _api_for_backend(tmp_path, backend)
+    file_path = _attachment_path(api, "file", "camel.bin")
     file_bytes = b"camel"
     file_path.write_bytes(file_bytes)
     file_record = api.store_file(file_path)
@@ -140,10 +170,11 @@ def test_retrieve_file_supports_camel_case_id(tmp_path):
     assert str(file_record.file_id) in response.content_as_string()
 
 
-def test_retrieve_image_supports_camel_case_id(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_image_supports_camel_case_id(tmp_path, backend: str):
     ensure_reticulum()
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    image_path = api._config_manager.config.image_storage_path / "camel.jpg"  # pylint: disable=protected-access
+    api = _api_for_backend(tmp_path, backend)
+    image_path = _attachment_path(api, "image", "camel.jpg")
     image_bytes = b"camel-img"
     image_path.write_bytes(image_bytes)
     image_record = api.store_image(image_path)
@@ -176,9 +207,10 @@ def test_retrieve_image_supports_camel_case_id(tmp_path):
         assert attachment_payload[1] == image_bytes
 
 
-def test_retrieve_file_missing_record_returns_error(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_file_missing_record_returns_error(tmp_path, backend: str):
     ensure_reticulum()
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api = _api_for_backend(tmp_path, backend)
     manager, server_dest = build_manager(api)
     client_dest = make_client_destination()
 
@@ -197,10 +229,11 @@ def test_retrieve_file_missing_record_returns_error(tmp_path):
     assert LXMF.FIELD_RESULTS in response.fields
 
 
-def test_retrieve_file_missing_from_disk_returns_helpful_message(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_file_missing_from_disk_returns_helpful_message(tmp_path, backend: str):
     ensure_reticulum()
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    file_path = api._config_manager.config.file_storage_path / "ghost.bin"  # pylint: disable=protected-access
+    api = _api_for_backend(tmp_path, backend)
+    file_path = _attachment_path(api, "file", "ghost.bin")
     file_path.write_text("ghost")
     file_record = api.store_file(file_path)
     file_path.unlink()
@@ -221,10 +254,13 @@ def test_retrieve_file_missing_from_disk_returns_helpful_message(tmp_path):
     assert LXMF.FIELD_FILE_ATTACHMENTS not in response.fields
 
 
-def test_retrieve_image_missing_from_disk_returns_helpful_message(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_image_missing_from_disk_returns_helpful_message(
+    tmp_path, backend: str
+):
     ensure_reticulum()
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    image_path = api._config_manager.config.image_storage_path / "ghost.jpg"  # pylint: disable=protected-access
+    api = _api_for_backend(tmp_path, backend)
+    image_path = _attachment_path(api, "image", "ghost.jpg")
     image_path.write_text("ghost-image")
     image_record = api.store_image(image_path)
     image_path.unlink()

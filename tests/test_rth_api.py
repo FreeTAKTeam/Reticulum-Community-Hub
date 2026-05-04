@@ -375,7 +375,8 @@ class RustTopicSubscriberApi:
     def _retrieve_attachment(self, record_id: int, category: str) -> FileAttachment:
         record = self._attachments.get(record_id)
         if record is None or record.category != category:
-            raise KeyError(f"Attachment '{record_id}' not found")
+            label = "Image" if category == "image" else "File"
+            raise KeyError(f"{label} '{record_id}' not found")
         return record
 
     def _list_attachments(self, category: str) -> list[FileAttachment]:
