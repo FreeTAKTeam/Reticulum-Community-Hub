@@ -15,6 +15,8 @@ from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api import ReticulumInfo
 from reticulum_telemetry_hub.api import Subscriber
 from reticulum_telemetry_hub.api import Topic
+from reticulum_telemetry_hub.api.pagination import PageRequest
+from reticulum_telemetry_hub.api.pagination import PaginatedResult
 from reticulum_telemetry_hub.api.storage import TopicRecord
 from reticulum_telemetry_hub.api.storage_models import IdentityAnnounceRecord
 from reticulum_telemetry_hub.api.storage_models import IdentityCapabilityGrantRecord
@@ -230,6 +232,28 @@ class RustTopicSubscriberApi:
     def retrieve_image(self, record_id: int) -> FileAttachment:
         return self._retrieve_attachment(record_id, "image")
 
+    def list_files(self) -> list[FileAttachment]:
+        return self._list_attachments("file")
+
+    def list_images(self) -> list[FileAttachment]:
+        return self._list_attachments("image")
+
+    def list_files_paginated(
+        self, page_request: PageRequest
+    ) -> PaginatedResult[FileAttachment]:
+        return self._list_attachments_paginated("file", page_request)
+
+    def list_images_paginated(
+        self, page_request: PageRequest
+    ) -> PaginatedResult[FileAttachment]:
+        return self._list_attachments_paginated("image", page_request)
+
+    def count_files(self) -> int:
+        return len(self.list_files())
+
+    def count_images(self) -> int:
+        return len(self.list_images())
+
     def assign_file_to_topic(
         self, record_id: int, topic_id: str | None
     ) -> FileAttachment:
@@ -239,6 +263,12 @@ class RustTopicSubscriberApi:
         self, record_id: int, topic_id: str | None
     ) -> FileAttachment:
         return self._assign_attachment_to_topic(record_id, "image", topic_id)
+
+    def delete_file(self, record_id: int) -> FileAttachment:
+        return self._delete_attachment(record_id, "file")
+
+    def delete_image(self, record_id: int) -> FileAttachment:
+        return self._delete_attachment(record_id, "image")
 
     def _store_attachment(
         self,
@@ -269,6 +299,26 @@ class RustTopicSubscriberApi:
             raise KeyError(f"Attachment '{record_id}' not found")
         return record
 
+    def _list_attachments(self, category: str) -> list[FileAttachment]:
+        return sorted(
+            (
+                attachment
+                for attachment in self._attachments.values()
+                if attachment.category == category
+            ),
+            key=lambda attachment: attachment.file_id or 0,
+        )
+
+    def _list_attachments_paginated(
+        self, category: str, page_request: PageRequest
+    ) -> PaginatedResult[FileAttachment]:
+        records = self._list_attachments(category)
+        return PaginatedResult.from_request(
+            items=records[page_request.offset : page_request.offset + page_request.per_page],
+            request=page_request,
+            total=len(records),
+        )
+
     def _assign_attachment_to_topic(
         self, record_id: int, category: str, topic_id: str | None
     ) -> FileAttachment:
@@ -278,6 +328,12 @@ class RustTopicSubscriberApi:
             if isinstance(topic_id, str) and topic_id.strip()
             else None
         )
+        return record
+
+    def _delete_attachment(self, record_id: int, category: str) -> FileAttachment:
+        record = self._retrieve_attachment(record_id, category)
+        self._attachments.pop(record_id, None)
+        Path(record.path).unlink(missing_ok=True)
         return record
 
     def subscribe_topic(

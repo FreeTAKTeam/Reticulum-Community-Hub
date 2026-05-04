@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `923 passed, 465 warnings`
+  - Result: `933 passed, 505 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -118,6 +118,10 @@ It covers:
 - FastAPI northbound checklist template, checklist lifecycle, task row, task
   status/style/cell, upload/feed, delete, and CSV import route matrix
   parameterized across Python storage and the Rust bridge-backed domain adapter
+- FastAPI northbound file/image metadata list, pagination, retrieve, topic
+  patch, raw-byte retrieval, delete, missing-record, and remote-auth route
+  behavior parameterized across Python storage and the Rust bridge-backed API
+  adapter; legacy direct-SQLAlchemy image path deletion remains Python-only
 - mission and checklist source-identity mismatch rejection at the transport
   bridge boundary
 - unauthorized, unknown command, invalid payload, and not-found rejection shapes
@@ -140,7 +144,9 @@ tests Python-specific or not-yet-Rust-backed surfaces including:
 - Reticulum daemon lifecycle and outbound queue behavior
 - telemetry sampling and serialization
 - gateway runtime/control wiring
-- file/image route behavior
+- file/image route behavior beyond API-backed metadata/raw/delete/auth flows,
+  including legacy direct-SQLAlchemy image deletion paths outside the API
+  abstraction
 - auth helpers and config editing behavior
 - internal API bus/query/event abstractions
 - documentation conformance tests
