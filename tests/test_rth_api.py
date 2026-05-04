@@ -11,6 +11,7 @@ from sqlalchemy.exc import OperationalError
 from reticulum_telemetry_hub.api import Client
 from reticulum_telemetry_hub.api import IdentityStatus
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.api import ReticulumInfo
 from reticulum_telemetry_hub.api import Subscriber
 from reticulum_telemetry_hub.api import Topic
 from reticulum_telemetry_hub.api.storage import TopicRecord
@@ -64,6 +65,10 @@ class RustTopicSubscriberApi:
     """Minimal ReticulumTelemetryHubAPI topic/subscriber subset backed by Rust."""
 
     def __init__(self, tmp_path: Path) -> None:
+        self._tmp_path = tmp_path
+        self._storage_path = tmp_path / "storage"
+        self._storage_path.mkdir(exist_ok=True)
+        self._reticulum_destination: str | None = None
         self._bridge = _bridge(tmp_path / "r3akt-api.sqlite")
 
     def create_topic(self, topic: Topic) -> Topic:
@@ -76,6 +81,37 @@ class RustTopicSubscriberApi:
             },
         )
         return self.retrieve_topic(topic.topic_path)
+
+    def get_app_info(self) -> ReticulumInfo:
+        return ReticulumInfo(
+            is_transport_enabled=True,
+            is_connected_to_shared_instance=True,
+            reticulum_config_path=str(self._tmp_path / "reticulum.ini"),
+            database_path=str(self._storage_path / "hub.sqlite"),
+            storage_path=str(self._storage_path),
+            file_storage_path=str(self._storage_path / "files"),
+            image_storage_path=str(self._storage_path / "images"),
+            app_name="TestHub",
+            rns_version="test-rns",
+            lxmf_version="test-lxmf",
+            app_version="9.9.9",
+            app_description="Test hub instance",
+            reticulum_destination=self._reticulum_destination,
+        )
+
+    def set_reticulum_destination(self, destination: str | None) -> None:
+        if destination is None:
+            self._reticulum_destination = None
+            return
+        cleaned = destination.strip()
+        if not cleaned:
+            self._reticulum_destination = None
+            return
+        if any(char not in "0123456789abcdefABCDEF" for char in cleaned):
+            raise ValueError("destination must be a hex string")
+        if len(cleaned) % 2 != 0:
+            raise ValueError("destination must contain an even number of hex characters")
+        self._reticulum_destination = cleaned.lower()
 
     def retrieve_topic(self, topic_id: str | None) -> Topic:
         for topic in self.list_topics():
@@ -839,8 +875,9 @@ def test_storage_session_retries_close_failed_sessions(tmp_path, monkeypatch):
     assert len(closed_sessions) == storage._session_retries
 
 
-def test_get_app_info(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_get_app_info(tmp_path, backend):
+    api = _api(tmp_path, backend)
     info = api.get_app_info()
     assert info.storage_path.endswith("storage")
     assert info.file_storage_path.endswith("files")
@@ -851,8 +888,9 @@ def test_get_app_info(tmp_path):
     assert info.reticulum_destination is None
 
 
-def test_get_app_info_includes_reticulum_destination(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_get_app_info_includes_reticulum_destination(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     api.set_reticulum_destination("DeAdBeEf")
 
@@ -861,8 +899,9 @@ def test_get_app_info_includes_reticulum_destination(tmp_path):
     assert info.reticulum_destination == "deadbeef"
 
 
-def test_reticulum_destination_clears_on_blank_value(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_reticulum_destination_clears_on_blank_value(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     api.set_reticulum_destination("deadbeef")
     api.set_reticulum_destination(" ")
@@ -872,8 +911,9 @@ def test_reticulum_destination_clears_on_blank_value(tmp_path):
     assert info.reticulum_destination is None
 
 
-def test_reticulum_destination_clears_on_none(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_reticulum_destination_clears_on_none(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     api.set_reticulum_destination("deadbeef")
     api.set_reticulum_destination(None)
@@ -883,8 +923,9 @@ def test_reticulum_destination_clears_on_none(tmp_path):
     assert info.reticulum_destination is None
 
 
-def test_reticulum_destination_rejects_non_hex(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_reticulum_destination_rejects_non_hex(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     with pytest.raises(ValueError):
         api.set_reticulum_destination("not-hex")
