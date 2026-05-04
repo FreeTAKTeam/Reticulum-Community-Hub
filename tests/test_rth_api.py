@@ -349,13 +349,14 @@ class RustTopicSubscriberApi:
         clients = {client.identity.lower(): client for client in self.list_clients()}
         announces = _identity_announces_by_identity(snapshot)
         identities = sorted(set(states) | set(clients) | set(announces))
-        return [
+        statuses = [
             self._identity_status(
                 clients[identity].identity if identity in clients else identity,
                 snapshot=snapshot,
             )
             for identity in identities
         ]
+        return _dedupe_identity_statuses(statuses, client_keys=set(clients))
 
     def _identity_status(
         self, identity: str, *, snapshot: dict[str, object] | None = None
@@ -617,6 +618,26 @@ def _announce_capabilities(announce: dict[str, object] | None) -> list[str]:
     if not isinstance(capabilities, list):
         return []
     return [str(capability) for capability in capabilities]
+
+
+def _dedupe_identity_statuses(
+    statuses: list[IdentityStatus],
+    *,
+    client_keys: set[str],
+) -> list[IdentityStatus]:
+    results: dict[tuple[str, str], IdentityStatus] = {}
+    for status in statuses:
+        key = (
+            "display",
+            status.display_name.lower(),
+        ) if status.display_name else ("identity", status.identity.lower())
+        existing = results.get(key)
+        if existing is None or (
+            status.identity.lower() in client_keys
+            and existing.identity.lower() not in client_keys
+        ):
+            results[key] = status
+    return list(results.values())
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
@@ -1191,17 +1212,19 @@ def test_identity_statuses_dedupe_preserves_blackhole(tmp_path, backend):
     assert match.status == "blackholed"
 
 
-def test_identity_statuses_dedupe_display_name_collapses_duplicates(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_statuses_dedupe_display_name_collapses_duplicates(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
     api.record_identity_announce("cafebabe", display_name="Sideband-Alice")
 
-    now = datetime.now(timezone.utc)
-    with api._storage._Session() as session:
-        records = session.query(IdentityAnnounceRecord).all()
-        for record in records:
-            record.last_seen = now
-        session.commit()
+    if backend == "python":
+        now = datetime.now(timezone.utc)
+        with api._storage._Session() as session:
+            records = session.query(IdentityAnnounceRecord).all()
+            for record in records:
+                record.last_seen = now
+            session.commit()
 
     statuses = api.list_identity_statuses()
 
@@ -1209,18 +1232,20 @@ def test_identity_statuses_dedupe_display_name_collapses_duplicates(tmp_path):
     assert len(matches) == 1
 
 
-def test_identity_statuses_dedupe_prefers_joined_identity(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_statuses_dedupe_prefers_joined_identity(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
     api.record_identity_announce("cafebabe", display_name="Sideband-Alice")
     api.join("deadbeef")
 
-    now = datetime.now(timezone.utc)
-    with api._storage._Session() as session:
-        records = session.query(IdentityAnnounceRecord).all()
-        for record in records:
-            record.last_seen = now
-        session.commit()
+    if backend == "python":
+        now = datetime.now(timezone.utc)
+        with api._storage._Session() as session:
+            records = session.query(IdentityAnnounceRecord).all()
+            for record in records:
+                record.last_seen = now
+            session.commit()
 
     statuses = api.list_identity_statuses()
 
