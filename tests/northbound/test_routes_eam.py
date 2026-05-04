@@ -360,8 +360,9 @@ def test_eam_routes_auto_provision_canonical_team_and_member(
     assert member["callsign"] == "ORANGE-1"
 
 
-def test_eam_routes_reject_legacy_http_fields(tmp_path: Path) -> None:
-    client, _, _domain = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_eam_routes_reject_legacy_http_fields(tmp_path: Path, backend: str) -> None:
+    client, _, _domain = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     response = client.post(

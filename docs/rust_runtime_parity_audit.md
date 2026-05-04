@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `870 passed, 433 warnings`
+  - Result: `871 passed, 437 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -46,9 +46,9 @@ It covers:
 - FastAPI northbound zone create/list/update/delete route flow
   parameterized across Python and Rust
 - FastAPI northbound EAM authenticated CRUD, canonical auto-provisioning,
-  expired snapshot filtering, recreate-after-delete, and team-summary route
-  flows parameterized across Python storage and a Rust bridge-backed EAM
-  service/domain adapter
+  legacy field rejection, expired snapshot filtering, recreate-after-delete,
+  and team-summary route flows parameterized across Python storage and a Rust
+  bridge-backed EAM service/domain adapter
 - FastAPI northbound R3AKT mission list limit route flow parameterized across
   Python storage and a Rust bridge-backed mission domain adapter
 - FastAPI northbound R3AKT core mission, parent, RDE, team, team-member,
