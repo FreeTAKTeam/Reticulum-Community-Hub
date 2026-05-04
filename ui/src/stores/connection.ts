@@ -67,8 +67,19 @@ const deriveWsBaseUrl = (origin: string): string => {
   return `${scheme}://${host}`;
 };
 
+const envValue = (...keys: string[]): string => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  for (const key of keys) {
+    const value = env[key]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+};
+
 const resolveDefaultBaseUrl = (): string => {
-  const envBaseUrl = import.meta.env.VITE_RTH_BASE_URL;
+  const envBaseUrl = envValue("VITE_RCH_BASE_URL", "VITE_RTH_BASE_URL");
   if (envBaseUrl) {
     return envBaseUrl;
   }
@@ -79,7 +90,7 @@ const resolveDefaultBaseUrl = (): string => {
 };
 
 const resolveDefaultWsBaseUrl = (): string => {
-  const envWsBaseUrl = import.meta.env.VITE_RTH_WS_BASE_URL;
+  const envWsBaseUrl = envValue("VITE_RCH_WS_BASE_URL", "VITE_RTH_WS_BASE_URL");
   if (envWsBaseUrl) {
     return envWsBaseUrl;
   }
@@ -89,9 +100,10 @@ const resolveDefaultWsBaseUrl = (): string => {
   return "";
 };
 
-const resolveConfiguredBaseUrl = (): string => normalizeOrigin(import.meta.env.VITE_RTH_BASE_URL ?? "");
+const resolveConfiguredBaseUrl = (): string => normalizeOrigin(envValue("VITE_RCH_BASE_URL", "VITE_RTH_BASE_URL"));
 
-const resolveConfiguredWsBaseUrl = (): string => normalizeOrigin(import.meta.env.VITE_RTH_WS_BASE_URL ?? "");
+const resolveConfiguredWsBaseUrl = (): string =>
+  normalizeOrigin(envValue("VITE_RCH_WS_BASE_URL", "VITE_RTH_WS_BASE_URL"));
 
 export const useConnectionStore = defineStore("connection", () => {
   const configuredBaseUrl = resolveConfiguredBaseUrl();

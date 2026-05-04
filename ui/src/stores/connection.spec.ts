@@ -8,6 +8,8 @@ describe("connection store target and auth validation", () => {
   beforeEach(() => {
     window.localStorage.clear();
     const env = import.meta.env as Record<string, string | undefined>;
+    delete env.VITE_RCH_BASE_URL;
+    delete env.VITE_RCH_WS_BASE_URL;
     delete env.VITE_RTH_BASE_URL;
     delete env.VITE_RTH_WS_BASE_URL;
     setActivePinia(createPinia());
@@ -71,7 +73,7 @@ describe("connection store target and auth validation", () => {
 
   it("prefers configured env targets over stale saved browser targets", () => {
     const env = import.meta.env as Record<string, string | undefined>;
-    env.VITE_RTH_BASE_URL = "http://134.122.46.48:8000";
+    env.VITE_RCH_BASE_URL = "http://134.122.46.48:8000";
 
     window.localStorage.setItem(
       "rth-ui-connection",
@@ -88,5 +90,17 @@ describe("connection store target and auth validation", () => {
     expect(connectionStore.baseUrl).toBe("http://134.122.46.48:8000");
     expect(connectionStore.wsBaseUrl).toBe("");
     expect(connectionStore.resolveWsUrl("/events/system")).toBe("ws://134.122.46.48:8000/events/system");
+  });
+
+  it("keeps legacy VITE_RTH env targets as fallback aliases", () => {
+    const env = import.meta.env as Record<string, string | undefined>;
+    env.VITE_RTH_BASE_URL = "http://127.0.0.1:8080";
+    env.VITE_RTH_WS_BASE_URL = "ws://127.0.0.1:8080";
+
+    const connectionStore = useConnectionStore();
+
+    expect(connectionStore.baseUrl).toBe("http://127.0.0.1:8080");
+    expect(connectionStore.wsBaseUrl).toBe("");
+    expect(connectionStore.resolveWsUrl("/events/system")).toBe("ws://127.0.0.1:8080/events/system");
   });
 });
