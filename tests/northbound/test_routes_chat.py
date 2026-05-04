@@ -160,12 +160,15 @@ def test_chat_message_requires_dispatcher(tmp_path: Path, backend: str) -> None:
     assert response.status_code == 503
 
 
-def test_chat_attachment_honors_configured_size_limit(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_chat_attachment_honors_configured_size_limit(
+    tmp_path: Path, backend: str
+) -> None:
     """Ensure attachment uploads respect the configured byte limit."""
 
     config_path = tmp_path / "config.ini"
     config_path.write_text("[hub]\nchat_attachment_max_bytes = 4\n")
-    client, _hub = _build_gateway_client(tmp_path)
+    client, _hub = _build_gateway_client(tmp_path, backend=backend)
 
     within_limit = client.post(
         "/Chat/Attachment",
