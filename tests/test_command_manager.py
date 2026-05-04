@@ -2002,22 +2002,23 @@ def test_delivery_callback_skips_cot_chat_for_telemetry():
     assert not client.sent
 
 
-def test_list_topics_includes_hint():
-    topics = [
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_list_topics_includes_hint(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    api = _api_for_backend(tmp_path, backend)
+    api.create_topic(
         Topic(
             topic_name="Alerts",
             topic_path="/alerts",
             topic_description="Status",
             topic_id="abc",
-        ),
-        Topic(topic_name="Updates", topic_path="/updates", topic_id="def"),
-    ]
+        )
+    )
+    api.create_topic(Topic(topic_name="Updates", topic_path="/updates", topic_id="def"))
 
-    class DummyAPI:
-        def list_topics(self):
-            return topics
-
-    manager, server_dest = make_command_manager(DummyAPI())
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -2031,16 +2032,13 @@ def test_list_topics_includes_hint():
     assert "TopicID" in payload
 
 
-def test_create_topic_uses_api_payload():
-    captured = {}
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_create_topic_uses_api_payload(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
 
-    class DummyAPI:
-        def create_topic(self, topic):
-            captured["topic"] = topic
-            topic.topic_id = "topic-1"
-            return topic
-
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -2055,32 +2053,22 @@ def test_create_topic_uses_api_payload():
     command = message.fields[LXMF.FIELD_COMMANDS][0]
 
     reply = manager.handle_command(command, message)
-    assert captured["topic"].topic_name == "News"
-    assert captured["topic"].topic_path == "/news"
+    created = next(topic for topic in api.list_topics() if topic.topic_name == "News")
+    assert created.topic_path == "/news"
+    assert created.topic_description == "Latest"
     payload = reply.content_as_string()
     assert "Topic created" in payload
-    assert "topic-1" in payload
+    assert str(created.topic_id) in payload
 
 
-def test_subscribe_topic_uses_source_identity():
-    captured = {}
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_subscribe_topic_uses_source_identity(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
 
-    class DummyAPI:
-        def subscribe_topic(
-            self, topic_id, destination, reject_tests=None, metadata=None
-        ):
-            captured["topic_id"] = topic_id
-            captured["destination"] = destination
-            captured["reject_tests"] = reject_tests
-            captured["metadata"] = metadata
-            return Subscriber(
-                destination=destination,
-                topic_id=topic_id,
-                subscriber_id="sub-1",
-                metadata=metadata or {},
-            )
-
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    api.create_topic(Topic(topic_name="Ops", topic_path="/ops", topic_id="topic-9"))
+    manager, server_dest = make_command_manager(api)
     client_identity = RNS.Identity()
     client_dest = RNS.Destination(
         client_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
@@ -2097,35 +2085,22 @@ def test_subscribe_topic_uses_source_identity():
 
     reply = manager.handle_command(command, message)
     expected_destination = CommandManager._identity_hex(client_identity)
-    assert captured["topic_id"] == "topic-9"
-    assert captured["destination"] == expected_destination
-    assert captured["reject_tests"] == 5
-    assert captured["metadata"] == {"app": "demo"}
+    subscriber = api.list_subscribers()[0]
+    assert subscriber.topic_id == "topic-9"
+    assert subscriber.destination == expected_destination
+    assert subscriber.reject_tests == 5
+    assert subscriber.metadata == {"app": "demo"}
     assert "Subscribed" in reply.content_as_string()
 
 
-def test_subscribe_topic_allows_zero_reject_tests():
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.latest_reject = None
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_subscribe_topic_allows_zero_reject_tests(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
 
-        def subscribe_topic(
-            self,
-            topic_id,
-            destination,
-            reject_tests=None,
-            metadata=None,
-        ):
-            self.latest_reject = reject_tests
-            return Subscriber(
-                destination=destination,
-                topic_id=topic_id,
-                subscriber_id="sub-2",
-                reject_tests=reject_tests,
-                metadata=metadata or {},
-            )
-
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    api.create_topic(Topic(topic_name="Ops", topic_path="/ops", topic_id="topic-10"))
+    manager, server_dest = make_command_manager(api)
     client_identity = RNS.Identity()
     client_dest = RNS.Destination(
         client_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
@@ -2141,7 +2116,7 @@ def test_subscribe_topic_allows_zero_reject_tests():
 
     reply = manager.handle_command(command, message)
 
-    assert manager.api.latest_reject == 0
+    assert api.list_subscribers()[0].reject_tests == 0
     assert "Subscribed" in reply.content_as_string()
 
 
