@@ -122,6 +122,43 @@ class RustTopicApi:
             for subscriber in self._snapshot_rows("subscribers")
         ]
 
+    def retrieve_subscriber(self, subscriber_id: str) -> Subscriber:
+        for subscriber in self.list_subscribers():
+            if subscriber.subscriber_id == subscriber_id:
+                return subscriber
+        raise KeyError(subscriber_id)
+
+    def delete_subscriber(self, subscriber_id: str) -> Subscriber:
+        result = self._result(
+            "topic.subscriber.delete",
+            {"subscriber_id": subscriber_id},
+            command_id="cmd-northbound-subscriber-delete",
+        )
+        return Subscriber.from_dict(result)
+
+    def patch_subscriber(self, subscriber_id: str, **updates: object) -> Subscriber:
+        result = self._result(
+            "topic.subscriber.patch",
+            {
+                "subscriber_id": subscriber_id,
+                "destination": updates.get("Destination") or updates.get("destination"),
+                "topic_id": updates.get("TopicID") or updates.get("topic_id"),
+                "metadata": updates.get("Metadata") or updates.get("metadata") or {},
+            },
+            command_id="cmd-northbound-subscriber-patch",
+        )
+        return Subscriber.from_dict(result)
+
+    def add_subscriber(self, subscriber: Subscriber) -> Subscriber:
+        return self.create_subscriber(subscriber)
+
+    def create_subscriber(self, subscriber: Subscriber) -> Subscriber:
+        return self.subscribe_topic(
+            subscriber.topic_id,
+            subscriber.destination,
+            metadata=subscriber.metadata,
+        )
+
     def list_subscribers_paginated(
         self,
         page_request: PageRequest,
@@ -156,7 +193,13 @@ class RustTopicApi:
         if not responses:
             raise RuntimeError(f"Rust bridge returned no response for {command_type}")
         payload = responses[-1].fields[FIELD_RESULTS]
-        if not isinstance(payload, dict) or payload.get("status") != "result":
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Rust bridge returned malformed payload for {command_type}")
+        if payload.get("status") == "rejected" and payload.get("reason_code") == "not_found":
+            raise KeyError(command_type)
+        if payload.get("status") == "rejected" and payload.get("reason_code") == "invalid_payload":
+            raise ValueError(payload.get("reason") or payload.get("detail") or command_type)
+        if payload.get("status") != "result":
             raise RuntimeError(f"Rust bridge rejected {command_type}: {payload}")
         result = payload.get("result")
         if not isinstance(result, dict):
@@ -387,8 +430,9 @@ def test_topic_patch_requires_id(tmp_path: Path) -> None:
     assert response.status_code == 400
 
 
-def test_subscriber_crud_flow(tmp_path: Path) -> None:
-    client, api = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_subscriber_crud_flow(tmp_path: Path, backend: str) -> None:
+    client, api = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
     topic = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
 
