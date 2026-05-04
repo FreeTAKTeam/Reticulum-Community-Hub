@@ -118,6 +118,420 @@ class RustR3aktDomain:
         mission = self.get_mission(mission_uid)
         return [str(marker_id) for marker_id in mission.get("markers", [])]
 
+    def list_checklist_templates(
+        self,
+        *,
+        search: str | None = None,
+        sort_by: str | None = None,
+    ) -> list[dict[str, object]]:
+        _run_rust_checklist_command(self._bridge, "checklist.template.list", {})
+        templates = [self._checklist_template_value(row) for row in self._snapshot_rows("checklist_templates")]
+        if search:
+            lowered = search.lower()
+            templates = [
+                template
+                for template in templates
+                if lowered in str(template.get("template_name") or "").lower()
+            ]
+        if sort_by:
+            templates.sort(key=lambda item: str(item.get(sort_by) or ""))
+        return templates
+
+    def get_checklist_template(self, template_uid: str) -> dict[str, object]:
+        row = self._find_snapshot_row("checklist_templates", "uid", template_uid)
+        if row is None:
+            raise KeyError(f"Checklist template '{template_uid}' not found")
+        return self._checklist_template_value(row)
+
+    def create_checklist_template(self, template: dict[str, object]) -> dict[str, object]:
+        before = self._snapshot_ids("checklist_templates", "uid")
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.template.create",
+            {"template": template},
+        )
+        return self._new_or_named_template(before, str(template.get("uid") or ""))
+
+    def update_checklist_template(
+        self,
+        template_uid: str,
+        patch: dict[str, object],
+    ) -> dict[str, object]:
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.template.update",
+            {"template_uid": template_uid, "patch": patch},
+        )
+        return self.get_checklist_template(template_uid)
+
+    def clone_checklist_template(
+        self,
+        template_uid: str,
+        *,
+        template_name: str,
+        description: str | None = None,
+        created_by_team_member_rns_identity: str | None = None,
+    ) -> dict[str, object]:
+        before = self._snapshot_ids("checklist_templates", "uid")
+        args: dict[str, object] = {
+            "source_template_uid": template_uid,
+            "template_name": template_name,
+        }
+        if description is not None:
+            args["description"] = description
+        if created_by_team_member_rns_identity is not None:
+            args["created_by_team_member_rns_identity"] = (
+                created_by_team_member_rns_identity
+            )
+        _run_rust_checklist_command(self._bridge, "checklist.template.clone", args)
+        return self._new_or_named_template(before, "")
+
+    def delete_checklist_template(self, template_uid: str) -> dict[str, object]:
+        template = self.get_checklist_template(template_uid)
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.template.delete",
+            {"template_uid": template_uid},
+        )
+        return template
+
+    def list_active_checklists(
+        self,
+        *,
+        search: str | None = None,
+        sort_by: str | None = None,
+    ) -> list[dict[str, object]]:
+        _run_rust_checklist_command(self._bridge, "checklist.list.active", {})
+        checklists = [self._checklist_value(row) for row in self._snapshot_rows("checklists")]
+        if search:
+            lowered = search.lower()
+            checklists = [
+                checklist
+                for checklist in checklists
+                if lowered in str(checklist.get("name") or "").lower()
+            ]
+        if sort_by:
+            checklists.sort(key=lambda item: str(item.get(sort_by) or ""))
+        return checklists
+
+    def create_checklist_online(self, payload: dict[str, object]) -> dict[str, object]:
+        before = self._snapshot_ids("checklists", "uid")
+        _run_rust_checklist_command(self._bridge, "checklist.create.online", payload)
+        return self._new_or_named_checklist(before, str(payload.get("checklist_uid") or payload.get("uid") or ""))
+
+    def create_checklist_offline(self, payload: dict[str, object]) -> dict[str, object]:
+        before = self._snapshot_ids("checklists", "uid")
+        _run_rust_checklist_command(self._bridge, "checklist.create.offline", payload)
+        return self._new_or_named_checklist(before, str(payload.get("checklist_uid") or payload.get("uid") or ""))
+
+    def import_checklist_csv(self, payload: dict[str, object]) -> dict[str, object]:
+        before = self._snapshot_ids("checklists", "uid")
+        _run_rust_checklist_command(self._bridge, "checklist.import.csv", payload)
+        return self._new_or_named_checklist(before, "")
+
+    def join_checklist(
+        self,
+        checklist_uid: str,
+        *,
+        source_identity: str | None = None,
+    ) -> dict[str, object]:
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.join",
+            {"checklist_uid": checklist_uid, "source_identity": source_identity},
+        )
+        return self.get_checklist(checklist_uid)
+
+    def get_checklist(self, checklist_uid: str) -> dict[str, object]:
+        row = self._find_snapshot_row("checklists", "uid", checklist_uid)
+        if row is None:
+            raise KeyError(f"Checklist '{checklist_uid}' not found")
+        return self._checklist_value(row)
+
+    def update_checklist(
+        self,
+        checklist_uid: str,
+        patch: dict[str, object],
+    ) -> dict[str, object]:
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.update",
+            {"checklist_uid": checklist_uid, "patch": patch},
+        )
+        return self.get_checklist(checklist_uid)
+
+    def delete_checklist(self, checklist_uid: str) -> dict[str, object]:
+        checklist = self.get_checklist(checklist_uid)
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.delete",
+            {"checklist_uid": checklist_uid},
+        )
+        return checklist
+
+    def upload_checklist(
+        self,
+        checklist_uid: str,
+        *,
+        source_identity: str | None = None,
+    ) -> dict[str, object]:
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.upload",
+            {"checklist_uid": checklist_uid, "source_identity": source_identity},
+        )
+        return self.get_checklist(checklist_uid)
+
+    def publish_checklist_feed(
+        self,
+        checklist_uid: str,
+        mission_feed_uid: str,
+        *,
+        source_identity: str | None = None,
+    ) -> dict[str, object]:
+        before = self._snapshot_ids("checklist_feed_publications", "publication_uid")
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.feed.publish",
+            {
+                "checklist_uid": checklist_uid,
+                "mission_feed_uid": mission_feed_uid,
+                "source_identity": source_identity,
+            },
+        )
+        publications = self._snapshot_rows("checklist_feed_publications")
+        for row in publications:
+            if str(row.get("publication_uid") or "") not in before:
+                return self._checklist_feed_value(row)
+        if publications:
+            return self._checklist_feed_value(publications[-1])
+        raise KeyError(f"Checklist '{checklist_uid}' feed publication not found")
+
+    def add_checklist_task_row(
+        self,
+        checklist_uid: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        args = {"checklist_uid": checklist_uid, **payload}
+        _run_rust_checklist_command(self._bridge, "checklist.task.row.add", args)
+        return self.get_checklist(checklist_uid)
+
+    def delete_checklist_task_row(
+        self,
+        checklist_uid: str,
+        task_uid: str,
+    ) -> dict[str, object]:
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.task.row.delete",
+            {"checklist_uid": checklist_uid, "task_uid": task_uid},
+        )
+        return self.get_checklist(checklist_uid)
+
+    def set_checklist_task_row_style(
+        self,
+        checklist_uid: str,
+        task_uid: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.task.row.style.set",
+            {"checklist_uid": checklist_uid, "task_uid": task_uid, **payload},
+        )
+        return self.get_checklist(checklist_uid)
+
+    def set_checklist_task_cell(
+        self,
+        checklist_uid: str,
+        task_uid: str,
+        column_uid: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.task.cell.set",
+            {
+                "checklist_uid": checklist_uid,
+                "task_uid": task_uid,
+                "column_uid": column_uid,
+                **payload,
+            },
+        )
+        return self.get_checklist(checklist_uid)
+
+    def set_checklist_task_status(
+        self,
+        checklist_uid: str,
+        task_uid: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        _run_rust_checklist_command(
+            self._bridge,
+            "checklist.task.status.set",
+            {"checklist_uid": checklist_uid, "task_uid": task_uid, **payload},
+        )
+        return self.get_checklist(checklist_uid)
+
+    def _new_or_named_template(
+        self,
+        before: set[str],
+        requested_uid: str,
+    ) -> dict[str, object]:
+        if requested_uid:
+            return self.get_checklist_template(requested_uid)
+        for row in self._snapshot_rows("checklist_templates"):
+            if str(row.get("uid") or "") not in before:
+                return self._checklist_template_value(row)
+        raise KeyError("Checklist template was not created")
+
+    def _new_or_named_checklist(
+        self,
+        before: set[str],
+        requested_uid: str,
+    ) -> dict[str, object]:
+        if requested_uid:
+            return self.get_checklist(requested_uid)
+        for row in self._snapshot_rows("checklists"):
+            if str(row.get("uid") or "") not in before:
+                return self._checklist_value(row)
+        raise KeyError("Checklist was not created")
+
+    def _snapshot_rows(self, key: str) -> list[dict[str, object]]:
+        rows = self._bridge.state_snapshot().get(key)
+        assert isinstance(rows, list)
+        return [dict(row) for row in rows if isinstance(row, dict)]
+
+    def _snapshot_ids(self, key: str, field: str) -> set[str]:
+        return {str(row.get(field) or "") for row in self._snapshot_rows(key)}
+
+    def _find_snapshot_row(
+        self,
+        key: str,
+        field: str,
+        value: str,
+    ) -> dict[str, object] | None:
+        for row in self._snapshot_rows(key):
+            if str(row.get(field) or "") == value:
+                return row
+        return None
+
+    def _checklist_template_value(self, row: dict[str, object]) -> dict[str, object]:
+        uid = str(row.get("uid") or "")
+        return {
+            "uid": uid,
+            "template_name": row.get("template_name"),
+            "description": row.get("description") or "",
+            "created_by_team_member_rns_identity": row.get(
+                "created_by_team_member_rns_identity"
+            ),
+            "source_template_uid": row.get("source_template_uid"),
+            "server_only": row.get("server_only") or False,
+            "columns": [
+                self._checklist_column_value(column)
+                for column in self._snapshot_rows("checklist_columns")
+                if str(column.get("template_uid") or "") == uid
+            ],
+        }
+
+    def _checklist_value(self, row: dict[str, object]) -> dict[str, object]:
+        uid = str(row.get("uid") or "")
+        return {
+            "uid": uid,
+            "mission_id": row.get("mission_uid"),
+            "template_uid": row.get("template_uid"),
+            "template_version": row.get("template_version"),
+            "template_name": row.get("template_name"),
+            "name": row.get("name"),
+            "description": row.get("description") or "",
+            "mode": row.get("mode"),
+            "sync_state": row.get("sync_state"),
+            "origin_type": row.get("origin_type"),
+            "checklist_status": row.get("checklist_status"),
+            "progress_percent": row.get("progress_percent") or 0,
+            "counts": {
+                "pending_count": row.get("pending_count") or 0,
+                "late_count": row.get("late_count") or 0,
+                "complete_count": row.get("complete_count") or 0,
+            },
+            "columns": [
+                self._checklist_column_value(column)
+                for column in self._snapshot_rows("checklist_columns")
+                if str(column.get("checklist_uid") or "") == uid
+            ],
+            "tasks": [
+                self._checklist_task_value(task)
+                for task in self._snapshot_rows("checklist_tasks")
+                if str(task.get("checklist_uid") or "") == uid
+            ],
+            "feed_publications": [
+                self._checklist_feed_value(publication)
+                for publication in self._snapshot_rows("checklist_feed_publications")
+                if str(publication.get("checklist_uid") or "") == uid
+            ],
+        }
+
+    @staticmethod
+    def _checklist_column_value(row: dict[str, object]) -> dict[str, object]:
+        return {
+            "column_uid": row.get("column_uid"),
+            "column_name": row.get("column_name"),
+            "display_order": row.get("display_order"),
+            "column_type": row.get("column_type"),
+            "column_editable": row.get("column_editable"),
+            "background_color": row.get("background_color"),
+            "text_color": row.get("text_color"),
+            "is_removable": row.get("is_removable"),
+            "system_key": row.get("system_key"),
+        }
+
+    def _checklist_task_value(self, row: dict[str, object]) -> dict[str, object]:
+        task_uid = str(row.get("task_uid") or "")
+        return {
+            "task_uid": task_uid,
+            "number": row.get("number"),
+            "user_status": row.get("user_status"),
+            "task_status": row.get("task_status"),
+            "is_late": row.get("is_late") or False,
+            "custom_status": row.get("custom_status"),
+            "due_relative_minutes": row.get("due_relative_minutes"),
+            "notes": row.get("notes"),
+            "row_background_color": row.get("row_background_color"),
+            "line_break_enabled": row.get("line_break_enabled") or False,
+            "completed_by_team_member_rns_identity": row.get(
+                "completed_by_team_member_rns_identity"
+            ),
+            "legacy_value": row.get("legacy_value"),
+            "cells": [
+                self._checklist_cell_value(cell)
+                for cell in self._snapshot_rows("checklist_cells")
+                if str(cell.get("task_uid") or "") == task_uid
+            ],
+        }
+
+    @staticmethod
+    def _checklist_cell_value(row: dict[str, object]) -> dict[str, object]:
+        return {
+            "cell_uid": row.get("cell_uid"),
+            "task_uid": row.get("task_uid"),
+            "column_uid": row.get("column_uid"),
+            "value": row.get("value"),
+            "updated_by_team_member_rns_identity": row.get(
+                "updated_by_team_member_rns_identity"
+            ),
+        }
+
+    @staticmethod
+    def _checklist_feed_value(row: dict[str, object]) -> dict[str, object]:
+        return {
+            "publication_uid": row.get("publication_uid"),
+            "checklist_uid": row.get("checklist_uid"),
+            "mission_feed_uid": row.get("mission_feed_uid"),
+            "published_by_team_member_rns_identity": row.get(
+                "published_by_team_member_rns_identity"
+            ),
+        }
+
     def link_mission_marker(self, mission_uid: str, marker_id: str) -> dict[str, object]:
         return _run_rust_command(
             self._bridge,
@@ -610,6 +1024,8 @@ def _run_rust_command(
     if payload.get("status") == "rejected":
         reason_code = str(payload.get("reason_code") or "")
         reason = str(payload.get("reason") or payload.get("detail") or command_type)
+        if reason.lower() == "mission not found":
+            raise ValueError(reason)
         if reason_code in {"not_found", "not_found_error"} or "not found" in reason.lower():
             raise KeyError(reason)
         raise ValueError(reason)
@@ -617,6 +1033,38 @@ def _run_rust_command(
     if not isinstance(result, dict):
         raise RuntimeError(f"Rust R3AKT command returned non-object result: {command_type}")
     return result
+
+
+def _run_rust_checklist_command(
+    bridge: RustMissionSyncBridge,
+    command_type: str,
+    args: dict[str, object],
+) -> None:
+    responses = bridge.handle_checklist_command(
+        MissionCommandEnvelope.model_validate(
+            {
+                "command_id": f"cmd-rust-checklist-route-{command_type}",
+                "source": {"rns_identity": "peer-a"},
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "command_type": command_type,
+                "args": args,
+            }
+        ),
+        source_identity="peer-a",
+    )
+    if not responses:
+        return
+    payload = responses[-1].fields[FIELD_RESULTS]
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Rust checklist command returned malformed payload: {command_type}")
+    if payload.get("status") == "rejected":
+        reason_code = str(payload.get("reason_code") or "")
+        reason = str(payload.get("reason") or payload.get("detail") or command_type)
+        if reason.lower() == "mission not found":
+            raise ValueError(reason)
+        if reason_code in {"not_found", "not_found_error"} or "not found" in reason.lower():
+            raise KeyError(reason)
+        raise ValueError(reason)
 
 
 def _build_client(
@@ -2120,8 +2568,9 @@ def test_sensitive_core_routes_require_auth_for_remote_clients(tmp_path: Path) -
     assert remote_client.put("/RCH", params={"identity": "dest-1"}).status_code == 401
 
 
-def test_checklist_routes_matrix_and_errors(tmp_path: Path) -> None:
-    client, _, _, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_checklist_routes_matrix_and_errors(tmp_path: Path, backend: str) -> None:
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     template_bad_payload = client.post(
