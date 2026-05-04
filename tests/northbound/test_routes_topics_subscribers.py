@@ -408,10 +408,17 @@ def test_topic_list_pagination_uses_reloaded_config_default(
     assert payload["total"] == 5
 
 
-def test_topic_routes_require_auth_for_remote_clients(tmp_path: Path) -> None:
-    client, api = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_topic_routes_require_auth_for_remote_clients(
+    tmp_path: Path, backend: str
+) -> None:
+    client, api = _build_client(tmp_path, backend=backend)
     topic = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
-    remote_client, _ = _build_client(tmp_path, client_address=("198.51.100.10", 50000))
+    remote_client, _ = _build_client(
+        tmp_path,
+        backend=backend,
+        client_address=("198.51.100.10", 50000),
+    )
 
     assert remote_client.get("/Topic").status_code == 401
     assert remote_client.get(f"/Topic/{topic.topic_id}").status_code == 401
@@ -421,8 +428,9 @@ def test_topic_routes_require_auth_for_remote_clients(tmp_path: Path) -> None:
     ).status_code == 401
 
 
-def test_topic_patch_requires_id(tmp_path: Path) -> None:
-    client, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_topic_patch_requires_id(tmp_path: Path, backend: str) -> None:
+    client, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     response = client.patch("/Topic", json={"TopicName": "x"}, headers=headers)
