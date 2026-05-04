@@ -12,6 +12,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
+from reticulum_telemetry_hub.api.marker_service import MarkerUpdateResult
+from reticulum_telemetry_hub.api.models import Marker
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
 from reticulum_telemetry_hub.config import HubConfigurationManager
@@ -110,6 +112,24 @@ class RustR3aktDomain:
             self._bridge,
             "mission.registry.mission.parent.set",
             {"mission_uid": mission_uid, "parent_uid": parent_uid},
+        )
+
+    def list_mission_markers(self, mission_uid: str) -> list[str]:
+        mission = self.get_mission(mission_uid)
+        return [str(marker_id) for marker_id in mission.get("markers", [])]
+
+    def link_mission_marker(self, mission_uid: str, marker_id: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.marker.link",
+            {"mission_uid": mission_uid, "marker_id": marker_id},
+        )
+
+    def unlink_mission_marker(self, mission_uid: str, marker_id: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.marker.unlink",
+            {"mission_uid": mission_uid, "marker_id": marker_id},
         )
 
     def upsert_mission_rde(self, mission_uid: str, role: str) -> dict[str, object]:
@@ -398,6 +418,140 @@ class RustR3aktDomain:
         )
 
 
+class RustMarkerService:
+    """Marker service subset backed by the same Rust RCH bridge as R3AKT routes."""
+
+    def __init__(self, bridge: RustMissionSyncBridge) -> None:
+        self._bridge = bridge
+
+    def create_marker(
+        self,
+        *,
+        name: str | None,
+        marker_type: str,
+        symbol: str,
+        category: str,
+        lat: float,
+        lon: float,
+        origin_rch: str,
+        notes: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> Marker:
+        return _marker_from_payload(
+            _run_rust_command(
+                self._bridge,
+                "mission.marker.create",
+                {
+                    "name": name,
+                    "marker_type": marker_type,
+                    "symbol": symbol,
+                    "category": category,
+                    "lat": lat,
+                    "lon": lon,
+                    "origin_rch": origin_rch,
+                    "notes": notes,
+                    "ttl_seconds": ttl_seconds,
+                },
+            )
+        )
+
+    def list_markers(self) -> list[Marker]:
+        markers = _run_rust_command(self._bridge, "mission.marker.list", {})["markers"]
+        return [_marker_from_payload(dict(marker)) for marker in markers if isinstance(marker, dict)]
+
+    def update_marker_position(
+        self,
+        object_destination_hash: str,
+        *,
+        lat: float,
+        lon: float,
+    ) -> MarkerUpdateResult:
+        current = self._get_marker(object_destination_hash)
+        if current.lat == float(lat) and current.lon == float(lon):
+            return MarkerUpdateResult(marker=current, changed=False)
+        marker = _marker_from_payload(
+            _run_rust_command(
+                self._bridge,
+                "mission.marker.position.patch",
+                {
+                    "object_destination_hash": object_destination_hash,
+                    "lat": lat,
+                    "lon": lon,
+                },
+            )
+        )
+        return MarkerUpdateResult(marker=marker, changed=True)
+
+    def update_marker_name(
+        self,
+        object_destination_hash: str,
+        *,
+        name: str,
+    ) -> MarkerUpdateResult:
+        current = self._get_marker(object_destination_hash)
+        if current.name == name.strip():
+            return MarkerUpdateResult(marker=current, changed=False)
+        marker = _marker_from_payload(
+            _run_rust_command(
+                self._bridge,
+                "mission.marker.patch",
+                {"object_destination_hash": object_destination_hash, "name": name},
+            )
+        )
+        return MarkerUpdateResult(marker=marker, changed=True)
+
+    def delete_marker(self, object_destination_hash: str) -> Marker:
+        return _marker_from_payload(
+            _run_rust_command(
+                self._bridge,
+                "mission.marker.delete",
+                {"object_destination_hash": object_destination_hash},
+            )
+        )
+
+    def _get_marker(self, object_destination_hash: str) -> Marker:
+        for marker in self.list_markers():
+            if marker.object_destination_hash == object_destination_hash:
+                return marker
+        raise KeyError(f"Marker '{object_destination_hash}' not found")
+
+
+def _marker_from_payload(payload: dict[str, object]) -> Marker:
+    position = payload.get("position")
+    if not isinstance(position, dict):
+        position = {"lat": payload.get("lat"), "lon": payload.get("lon")}
+    updated_at = _parse_datetime(payload.get("updated_at") or payload.get("time"))
+    created_at = _parse_datetime(payload.get("created_at") or updated_at)
+    stale_at = _parse_datetime(payload.get("stale_at") or updated_at)
+    if stale_at <= datetime.now(timezone.utc):
+        stale_at = updated_at + timedelta(hours=24)
+    return Marker(
+        local_id=str(payload.get("local_id") or payload.get("object_destination_hash") or ""),
+        object_destination_hash=str(payload.get("object_destination_hash") or ""),
+        origin_rch=str(payload.get("origin_rch") or ""),
+        object_identity_storage_key=None,
+        marker_type=str(payload.get("type") or payload.get("marker_type") or "marker"),
+        symbol=str(payload.get("symbol") or "marker"),
+        name=str(payload.get("name") or "Marker"),
+        category=str(payload.get("category") or "marker"),
+        lat=float(position.get("lat") or 0.0),
+        lon=float(position.get("lon") or 0.0),
+        notes=payload.get("notes") if isinstance(payload.get("notes"), str) else None,
+        time=_parse_datetime(payload.get("time") or updated_at),
+        stale_at=stale_at,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+
+
+def _parse_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.now(timezone.utc)
+
+
 def _runtime_root() -> Path:
     candidates = [
         Path(__file__).resolve().parents[4] / "New project" / "R3AKT-Runtime",
@@ -488,6 +642,7 @@ def _build_client(
         routing_provider=lambda: ["dest-1"],
         message_dispatcher=lambda content, topic_id=None, destination=None, fields=None: None,
         mission_domain_service=RustR3aktDomain(rust_bridge) if rust_bridge is not None else None,
+        marker_service=RustMarkerService(rust_bridge) if rust_bridge is not None else None,
     )
     return TestClient(app), api, event_log, telemetry
 
@@ -1640,6 +1795,32 @@ def test_r3akt_core_registry_routes_use_selected_backend(
     assert team_missions.status_code == 200
     assert set(team_missions.json()["mission_uids"]) == {"mission-core", "mission-parent"}
 
+    marker = client.post(
+        "/api/markers",
+        json={
+            "name": "Core Marker",
+            "type": "marker",
+            "symbol": "marker",
+            "category": "test",
+            "lat": 35.0,
+            "lon": -120.0,
+        },
+        headers=headers,
+    )
+    assert marker.status_code == 201
+    marker_ref = marker.json()["object_destination_hash"]
+    marker_link = client.put(
+        f"/api/r3akt/missions/mission-core/markers/{marker_ref}",
+        headers=headers,
+    )
+    assert marker_link.status_code == 200
+    mission_markers = client.get(
+        "/api/r3akt/missions/mission-core/markers",
+        headers=headers,
+    )
+    assert mission_markers.status_code == 200
+    assert mission_markers.json()["marker_ids"] == [marker_ref]
+
     member = client.post(
         "/api/r3akt/team-members",
         json={
@@ -1697,6 +1878,10 @@ def test_r3akt_core_registry_routes_use_selected_backend(
     assert client.delete("/api/r3akt/team-members/member-core", headers=headers).status_code == 200
     assert client.delete(
         "/api/r3akt/teams/team-core/missions/mission-parent",
+        headers=headers,
+    ).status_code == 200
+    assert client.delete(
+        f"/api/r3akt/missions/mission-core/markers/{marker_ref}",
         headers=headers,
     ).status_code == 200
     assert client.delete("/api/r3akt/teams/team-core", headers=headers).status_code == 200

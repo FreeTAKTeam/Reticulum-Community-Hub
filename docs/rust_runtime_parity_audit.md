@@ -52,8 +52,9 @@ It covers:
 - FastAPI northbound R3AKT mission list limit route flow parameterized across
   Python storage and a Rust bridge-backed mission domain adapter
 - FastAPI northbound R3AKT core mission, parent, RDE, team, team-member,
-  member-client, asset, and skill route flow parameterized across Python
-  storage and a Rust bridge-backed mission domain adapter
+  mission-marker link/list/unlink, member-client, asset, and skill route flow
+  parameterized across Python storage and a Rust bridge-backed mission domain
+  adapter
 - FastAPI northbound R3AKT team-member-skill, task-skill-requirement,
   assignment, and assignment-asset route flow parameterized across Python
   storage and a Rust bridge-backed mission domain adapter
