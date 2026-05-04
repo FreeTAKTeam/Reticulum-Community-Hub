@@ -349,6 +349,13 @@ class RustTopicSubscriberApi:
         category: str,
     ) -> FileAttachment:
         path = Path(file_path)
+        base_path = self._attachment_base_path(category)
+        try:
+            path.resolve().relative_to(base_path.resolve())
+        except ValueError as exc:
+            raise ValueError("attachment path must be inside configured storage") from exc
+        if not path.exists():
+            raise ValueError(f"Attachment path does not exist: {path}")
         record = FileAttachment(
             name=name or path.name,
             path=str(path),
@@ -361,6 +368,9 @@ class RustTopicSubscriberApi:
         self._attachments[self._next_attachment_id] = record
         self._next_attachment_id += 1
         return record
+
+    def _attachment_base_path(self, category: str) -> Path:
+        return self._storage_path / ("images" if category == "image" else "files")
 
     def _retrieve_attachment(self, record_id: int, category: str) -> FileAttachment:
         record = self._attachments.get(record_id)
@@ -905,7 +915,9 @@ def _attachment_test_path(
         if category == "image":
             return api._config_manager.config.image_storage_path / filename  # pylint: disable=protected-access
         return api._config_manager.config.file_storage_path / filename  # pylint: disable=protected-access
-    return tmp_path / filename
+    base_path = api._storage_path / ("images" if category == "image" else "files")  # pylint: disable=protected-access
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path / filename
 
 
 def _runtime_root() -> Path:

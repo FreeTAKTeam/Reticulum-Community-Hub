@@ -3,16 +3,40 @@ from pathlib import Path
 import pytest
 
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
+from tests.test_rth_api import RustTopicSubscriberApi
 from tests.test_rth_api import make_config_manager
 
 
-def test_store_and_list_files(tmp_path: Path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    file_path = api._config_manager.config.file_storage_path / "note.txt"  # pylint: disable=protected-access
+def _api_for_backend(
+    tmp_path: Path, backend: str
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
+    return ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+
+def _attachment_path(
+    api: ReticulumTelemetryHubAPI | RustTopicSubscriberApi,
+    category: str,
+    filename: str,
+) -> Path:
+    if isinstance(api, ReticulumTelemetryHubAPI):
+        if category == "image":
+            return api._config_manager.config.image_storage_path / filename  # pylint: disable=protected-access
+        return api._config_manager.config.file_storage_path / filename  # pylint: disable=protected-access
+    base_path = api._storage_path / ("images" if category == "image" else "files")  # pylint: disable=protected-access
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path / filename
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_store_and_list_files(tmp_path: Path, backend: str):
+    api = _api_for_backend(tmp_path, backend)
+    file_path = _attachment_path(api, "file", "note.txt")
     file_path.write_text("hello file")
 
     file_record = api.store_file(file_path, media_type="text/plain")
-    image_path = api._config_manager.config.image_storage_path / "photo.jpg"  # pylint: disable=protected-access
+    image_path = _attachment_path(api, "image", "photo.jpg")
     image_path.write_bytes(b"binary-data")
     image_record = api.store_image(image_path, media_type="image/jpeg")
 
@@ -29,15 +53,17 @@ def test_store_and_list_files(tmp_path: Path):
     assert api.retrieve_image(image_record.file_id).path == str(image_path)
 
 
-def test_store_file_validates_path(tmp_path: Path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_store_file_validates_path(tmp_path: Path, backend: str):
+    api = _api_for_backend(tmp_path, backend)
 
     with pytest.raises(ValueError):
         api.store_file(tmp_path / "missing.bin")
 
 
-def test_store_file_rejects_outside_base_path(tmp_path: Path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_store_file_rejects_outside_base_path(tmp_path: Path, backend: str):
+    api = _api_for_backend(tmp_path, backend)
     outside_path = tmp_path / "outside.bin"
     outside_path.write_text("outside")
 
@@ -45,9 +71,10 @@ def test_store_file_rejects_outside_base_path(tmp_path: Path):
         api.store_file(outside_path)
 
 
-def test_retrieve_image_rejects_file_category(tmp_path: Path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    file_path = api._config_manager.config.file_storage_path / "not-image.txt"  # pylint: disable=protected-access
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_image_rejects_file_category(tmp_path: Path, backend: str):
+    api = _api_for_backend(tmp_path, backend)
+    file_path = _attachment_path(api, "file", "not-image.txt")
     file_path.write_text("content")
     file_record = api.store_file(file_path)
 
@@ -55,12 +82,13 @@ def test_retrieve_image_rejects_file_category(tmp_path: Path):
         api.retrieve_image(file_record.file_id)
 
 
-def test_delete_file_and_image_removes_db_and_disk(tmp_path: Path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    file_path = api._config_manager.config.file_storage_path / "delete-note.txt"  # pylint: disable=protected-access
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_delete_file_and_image_removes_db_and_disk(tmp_path: Path, backend: str):
+    api = _api_for_backend(tmp_path, backend)
+    file_path = _attachment_path(api, "file", "delete-note.txt")
     file_path.write_text("hello")
     file_record = api.store_file(file_path, media_type="text/plain")
-    image_path = api._config_manager.config.image_storage_path / "delete-photo.jpg"  # pylint: disable=protected-access
+    image_path = _attachment_path(api, "image", "delete-photo.jpg")
     image_path.write_bytes(b"image-data")
     image_record = api.store_image(image_path, media_type="image/jpeg")
 
@@ -78,8 +106,9 @@ def test_delete_file_and_image_removes_db_and_disk(tmp_path: Path):
         api.retrieve_image(image_record.file_id)
 
 
-def test_delete_file_missing_raises_key_error(tmp_path: Path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_delete_file_missing_raises_key_error(tmp_path: Path, backend: str):
+    api = _api_for_backend(tmp_path, backend)
 
     with pytest.raises(KeyError):
         api.delete_file(999)
