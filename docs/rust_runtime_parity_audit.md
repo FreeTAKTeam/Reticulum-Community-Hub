@@ -181,25 +181,21 @@ It covers:
 The full collected Python suite is broader than the Rust runtime bridge. It also
 tests Python-specific or not-yet-Rust-backed surfaces including:
 
-- FastAPI northbound routes beyond the current topic, marker, zone, EAM,
-  R3AKT core registry, full registry matrix, assignment/skill registry,
-  mission-list-limit, and mission-change/log Rust-backed flows, plus OpenAPI
-  contracts
-- Direct `ReticulumTelemetryHubAPI` tests beyond current topic/subscriber CRUD,
-  client, identity-capability, identity-announce, REM-mode, and subject-rights
-  parity, limited to private Python storage edge cases such as SQLAlchemy
-  session retry and monkeypatched storage-return handling
+- Static OpenAPI contract checks and route-schema documentation conformance.
+- Direct `ReticulumTelemetryHubAPI` private Python storage edge cases, including
+  SQLAlchemy session retry and monkeypatched storage-return handling.
 - CLI process-control behavior
 - Python storage/migration helpers
 - Reticulum daemon lifecycle and outbound queue behavior
-- telemetry sampling and serialization
-- gateway runtime/control wiring
-- file/image route behavior beyond API-backed metadata/raw/delete/auth flows,
-  including legacy direct-SQLAlchemy image deletion paths outside the API
-  abstraction
+- telemetry sampling, serialization, and SQL query-count optimization checks
+- gateway runtime process boot/main-loop behavior
+- file/image legacy direct-SQLAlchemy deletion paths outside the API abstraction
 - auth helpers and config editing behavior
 - internal API bus/query/event abstractions
-- documentation conformance tests
+- low-level mission/checklist router unit tests that target Python services
+  directly; the shared Rust bridge parity suite covers their command behavior
+  through the bridge, but these Python-unit tests are not themselves backend
+  selectable.
 
 Those tests do not currently have a Rust backend selector. Passing the shared
 southbound parity suite is therefore necessary evidence for the hot message path,
@@ -216,3 +212,14 @@ To mark full parity complete, one of these must exist and pass:
 
 Until then, the current state is best described as full southbound command parity
 coverage for the shared RCH runtime path, not full RCH application parity.
+
+## Completion Audit Checklist
+
+| Requirement | Current evidence | Status |
+| --- | --- | --- |
+| Same suite can run against Python backend | `.\.venv\Scripts\python.exe -m pytest --no-cov -q` passes with `995 passed, 581 warnings` | Done for Python |
+| Same suite can run against Rust backend | Many runtime-facing tests are parameterized with `backend in ["python", "rust"]`, but there is no global Rust backend mode for the full suite | Missing |
+| Rust southbound command behavior matches Python | `tests/rust_runtime/test_rch_bridge_parity.py` covers `87 / 87` declared mission/checklist commands and passes | Done for scoped southbound path |
+| Northbound API/runtime surfaces use Rust bridge where practical | Topic, subscriber, client, identity, REM, subject-rights, file/image, chat, telemetry, gateway, service, websocket, EAM, marker, zone, checklist, and R3AKT route slices are parameterized | Partial |
+| Python-only application internals are either ported or formally excluded | Remaining Python-specific surfaces are listed above, but no accepted reduced full-parity scope exists | Missing |
+| Completion can be marked | Requires a passing full Rust backend suite or an accepted reduced parity suite | Not complete |
