@@ -87,6 +87,8 @@ class RustTopicSubscriberApi:
         self._storage_path = tmp_path / "storage"
         self._storage_path.mkdir(exist_ok=True)
         self._reticulum_destination: str | None = None
+        self._config_text = "[app]\nname = TestHub\nversion = 9.9.9\n"
+        self._previous_config_text: str | None = None
         self._bridge = _bridge(tmp_path / "r3akt-api.sqlite")
         self.rights = RustRightsApi()
 
@@ -131,6 +133,22 @@ class RustTopicSubscriberApi:
         if len(cleaned) % 2 != 0:
             raise ValueError("destination must contain an even number of hex characters")
         self._reticulum_destination = cleaned.lower()
+
+    def get_config_text(self) -> str:
+        return self._config_text
+
+    def apply_config_text(self, config_text: str) -> dict[str, object]:
+        if not config_text.lstrip().startswith("["):
+            raise ValueError("Invalid configuration payload")
+        self._previous_config_text = self._config_text
+        self._config_text = config_text
+        return {"applied": True}
+
+    def rollback_config_text(self) -> dict[str, object]:
+        if self._previous_config_text is not None:
+            self._config_text = self._previous_config_text
+            self._previous_config_text = None
+        return {"rolled_back": True}
 
     def retrieve_topic(self, topic_id: str | None) -> Topic:
         for topic in self.list_topics():
@@ -950,8 +968,9 @@ def test_reticulum_destination_rejects_non_hex(tmp_path, backend):
         api.set_reticulum_destination("not-hex")
 
 
-def test_config_apply_and_rollback(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_config_apply_and_rollback(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     new_config = "[app]\nname = UpdatedHub\n"
     apply_result = api.apply_config_text(new_config)
@@ -964,10 +983,11 @@ def test_config_apply_and_rollback(tmp_path):
     assert rollback_result["rolled_back"]
 
 
-def test_config_apply_rejects_invalid_payload(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_config_apply_rejects_invalid_payload(tmp_path, backend):
     """Reject invalid config payloads without overwriting the current file."""
 
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api = _api(tmp_path, backend)
     original = api.get_config_text()
 
     with pytest.raises(ValueError) as exc_info:
