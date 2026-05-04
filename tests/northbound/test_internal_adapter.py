@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
+import pytest
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
@@ -27,6 +28,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 from reticulum_telemetry_hub.northbound.internal_adapter import handle_internal_event_socket
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
 class _FakeEventBus:
@@ -92,9 +94,13 @@ class _DisconnectingWebSocket:
         self._disconnect.set()
 
 
-def _build_api(tmp_path) -> ReticulumTelemetryHubAPI:
+def _build_api(
+    tmp_path, backend: str = "python"
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
     """Create an API instance backed by a temp database."""
 
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "hub.sqlite")
     return ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
@@ -128,10 +134,11 @@ def _send_command(client: TestClient, command: CommandEnvelope):
     return client.portal.call(adapter.command_bus.send, command)
 
 
-def test_internal_topics_empty(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_internal_topics_empty(tmp_path, backend: str) -> None:
     """Ensure internal topics endpoint returns an empty list initially."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
 
@@ -142,10 +149,11 @@ def test_internal_topics_empty(tmp_path) -> None:
     assert response.json() == []
 
 
-def test_internal_topics_returns_ids(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_internal_topics_returns_ids(tmp_path, backend: str) -> None:
     """Ensure internal topics endpoint flattens topic identifiers."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
 
@@ -169,10 +177,11 @@ def test_internal_topics_returns_ids(tmp_path) -> None:
     assert response.json() == ["ops.alpha"]
 
 
-def test_internal_subscribers_returns_ids(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_internal_subscribers_returns_ids(tmp_path, backend: str) -> None:
     """Ensure internal subscribers endpoint returns node identifiers only."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
 
@@ -215,10 +224,11 @@ def test_internal_subscribers_returns_ids(tmp_path) -> None:
     assert response.json() == ["node-1"]
 
 
-def test_internal_subscribers_missing_topic(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_internal_subscribers_missing_topic(tmp_path, backend: str) -> None:
     """Ensure missing topics return a 404 from internal subscribers."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
 
@@ -228,10 +238,11 @@ def test_internal_subscribers_missing_topic(tmp_path) -> None:
     assert response.status_code == 404
 
 
-def test_internal_node_status_unknown(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_internal_node_status_unknown(tmp_path, backend: str) -> None:
     """Ensure unknown nodes return online false."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
 
@@ -244,10 +255,11 @@ def test_internal_node_status_unknown(tmp_path) -> None:
     assert payload["topics"] == []
 
 
-def test_internal_node_status_online(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_internal_node_status_online(tmp_path, backend: str) -> None:
     """Ensure registered nodes map to online true."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
 
@@ -268,10 +280,11 @@ def test_internal_node_status_online(tmp_path) -> None:
     assert payload["online"] is True
 
 
-def test_internal_message_requires_topic(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_internal_message_requires_topic(tmp_path, backend: str) -> None:
     """Ensure PublishMessage rejections map to 404s."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
 
@@ -284,10 +297,11 @@ def test_internal_message_requires_topic(tmp_path) -> None:
     assert response.status_code == 404
 
 
-def test_internal_message_accepts_text(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_internal_message_accepts_text(tmp_path, backend: str) -> None:
     """Ensure PublishMessage accepts text payloads."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
 
@@ -314,10 +328,11 @@ def test_internal_message_accepts_text(tmp_path) -> None:
     assert response.json()["accepted"] is True
 
 
-def test_internal_events_stream(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_internal_events_stream(tmp_path, backend: str) -> None:
     """Ensure the internal event stream emits published events."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
 
