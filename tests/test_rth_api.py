@@ -493,6 +493,14 @@ class RustTopicSubscriberApi:
             for subscriber in self._bridge.list_subscribers()
         ]
 
+    def list_subscribers_for_topic(self, topic_id: str | None) -> list[Subscriber]:
+        self.retrieve_topic(topic_id)
+        return [
+            subscriber
+            for subscriber in self.list_subscribers()
+            if subscriber.topic_id == topic_id
+        ]
+
     def count_subscribers(self) -> int:
         return len(self.list_subscribers())
 

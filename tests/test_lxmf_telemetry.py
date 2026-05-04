@@ -46,6 +46,7 @@ from tests.factories import (
     create_lxmf_propagation_sensor,
     create_rns_transport_sensor,
 )
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
 def _make_config_manager(tmp_path: Path) -> HubConfigurationManager:
@@ -55,6 +56,14 @@ def _make_config_manager(tmp_path: Path) -> HubConfigurationManager:
     storage.mkdir()
     (storage / "config.ini").write_text("[app]\nname = TelemetryTest\n")
     return HubConfigurationManager(storage_path=storage)
+
+
+def _api_for_backend(
+    tmp_path: Path, backend: str
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
+    return ReticulumTelemetryHubAPI(config_manager=_make_config_manager(tmp_path))
 
 
 def _decode_stream_entries(stream_field):
@@ -216,8 +225,9 @@ def test_telemetry_session_retries_close_failed_sessions(
     assert len(closed_sessions) == telemetry_controller._SESSION_RETRIES
 
 
-def test_telemetry_request_filters_by_topic(tmp_path, telemetry_db_engine):
-    api = ReticulumTelemetryHubAPI(config_manager=_make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_telemetry_request_filters_by_topic(tmp_path, telemetry_db_engine, backend: str):
+    api = _api_for_backend(tmp_path, backend)
     controller = TelemetryController(engine=telemetry_db_engine, api=api)
 
     topic = api.create_topic(Topic(topic_name="Ops", topic_path="/ops"))
@@ -255,8 +265,11 @@ def test_telemetry_request_filters_by_topic(tmp_path, telemetry_db_engine):
     assert unpacked[0][0] == bytes.fromhex(peer_dest)
 
 
-def test_telemetry_request_denies_unsubscribed_sender(tmp_path, telemetry_db_engine):
-    api = ReticulumTelemetryHubAPI(config_manager=_make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_telemetry_request_denies_unsubscribed_sender(
+    tmp_path, telemetry_db_engine, backend: str
+):
+    api = _api_for_backend(tmp_path, backend)
     controller = TelemetryController(engine=telemetry_db_engine, api=api)
 
     topic = api.create_topic(Topic(topic_name="Ops", topic_path="/ops"))
@@ -284,10 +297,11 @@ def test_telemetry_request_denies_unsubscribed_sender(tmp_path, telemetry_db_eng
     assert reply.content_as_string().startswith("Telemetry request denied")
 
 
+@pytest.mark.parametrize("backend", ["python", "rust"])
 def test_telemetry_request_unknown_topic_returns_empty_snapshot(
-    tmp_path, telemetry_db_engine
+    tmp_path, telemetry_db_engine, backend: str
 ):
-    api = ReticulumTelemetryHubAPI(config_manager=_make_config_manager(tmp_path))
+    api = _api_for_backend(tmp_path, backend)
     controller = TelemetryController(engine=telemetry_db_engine, api=api)
 
     peer_identity = RNS.Identity()
