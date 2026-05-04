@@ -12,6 +12,9 @@ the Python implementation and the Rust implementation, and both pass.
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
   - Result: `1026 passed, 690 warnings`
+- Named Rust bridge parity suite:
+  - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -m rust_bridge -q`
+  - Result: `375 passed, 651 deselected, 646 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -228,6 +231,9 @@ To mark full parity complete, one of these must exist and pass:
 
 Until then, the current state is best described as full southbound command parity
 coverage for the shared RCH runtime path, not full RCH application parity.
+The selectable `rust_bridge` marker is now available for the currently
+backend-selected parity surface, but it is not an accepted substitute for the
+full-suite completion criteria above.
 
 ## Completion Audit Checklist
 
@@ -235,7 +241,7 @@ coverage for the shared RCH runtime path, not full RCH application parity.
 | --- | --- | --- |
 | Same suite can run against Python backend | `.\.venv\Scripts\python.exe -m pytest --no-cov -q` passes with `1026 passed, 690 warnings` | Done for Python |
 | Same suite can run against Rust backend | Many runtime-facing tests are parameterized with `backend in ["python", "rust"]`, but there is no global Rust backend mode for the full suite | Missing |
-| Rust southbound command behavior matches Python | `tests/rust_runtime/test_rch_bridge_parity.py` covers `87 / 87` declared mission/checklist commands and passes | Done for scoped southbound path |
+| Rust southbound command behavior matches Python | `tests/rust_runtime/test_rch_bridge_parity.py` covers `87 / 87` declared mission/checklist commands and passes; `pytest --no-cov -m rust_bridge -q` passes with `375 passed, 651 deselected, 646 warnings` | Done for scoped southbound path |
 | Northbound API/runtime surfaces use Rust bridge where practical | Topic, subscriber, client, identity, REM, subject-rights, file/image, chat, telemetry, gateway, service, websocket, EAM, marker, zone, checklist, and R3AKT route slices are parameterized | Partial |
 | Python-only application internals are either ported or formally excluded | Remaining Python-specific surfaces are listed above, but no accepted reduced full-parity scope exists | Missing |
 | Completion can be marked | Requires a passing full Rust backend suite or an accepted reduced parity suite | Not complete |

@@ -31,6 +31,16 @@ def reset_shared_router():
     ReticulumTelemetryHub._shared_lxm_router = None
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Tag backend-selected parity tests with a single selectable marker."""
+
+    for item in items:
+        callspec = getattr(item, "callspec", None)
+        backend = getattr(callspec, "params", {}).get("backend") if callspec else None
+        if backend in {"python", "rust"} or "tests/rust_runtime/" in item.nodeid:
+            item.add_marker(pytest.mark.rust_bridge)
+
+
 @pytest.fixture
 def telemetry_db_engine():
     """Return an isolated in-memory SQLite engine per test."""
