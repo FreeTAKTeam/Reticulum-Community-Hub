@@ -305,6 +305,19 @@ class RustMissionSyncBridge:
             )
         )
 
+    def set_rem_mode(self, identity: str, mode: str) -> None:
+        """Persist one Rust-side REM operating mode."""
+
+        self._expect_state_updated(
+            self._request(
+                {
+                    "type": "set_rem_mode",
+                    "identity": identity,
+                    "mode": mode,
+                }
+            )
+        )
+
     def assign_mission_access_role(
         self,
         mission_uid: str,

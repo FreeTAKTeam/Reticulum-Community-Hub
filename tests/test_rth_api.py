@@ -220,6 +220,9 @@ class RustTopicSubscriberApi:
                         (announce or {}).get("client_type") or "generic_lxmf"
                     ),
                     announce_capabilities=_announce_capabilities(announce),
+                    rem_mode=_rem_mode_for_identity(snapshot, identity)
+                    if str((announce or {}).get("client_type") or "generic_lxmf") == "rem"
+                    else None,
                     is_rem_capable=str(
                         (announce or {}).get("client_type") or "generic_lxmf"
                     )
@@ -276,6 +279,65 @@ class RustTopicSubscriberApi:
         )
         return self._identity_status(identity)
 
+    def get_rem_mode(self, identity: str) -> str:
+        return _rem_mode_for_identity(self._bridge.state_snapshot(), identity)
+
+    def set_rem_mode(self, identity: str, mode: str) -> dict[str, object]:
+        self._bridge.set_rem_mode(identity, mode)
+        snapshot = self._bridge.state_snapshot()
+        return {
+            "identity": identity.lower(),
+            "mode": _rem_mode_for_identity(snapshot, identity),
+            "effective_connected_mode": self.effective_rem_connected_mode(),
+        }
+
+    def effective_rem_connected_mode(self) -> bool:
+        return any(
+            str(mode.get("mode") or "").lower() == "connected"
+            for mode in _identity_rem_modes(self._bridge.state_snapshot()).values()
+        )
+
+    def rem_peer_registry(self) -> dict[str, object]:
+        snapshot = self._bridge.state_snapshot()
+        states = _identity_states_by_identity(snapshot)
+        candidates: dict[str, dict[str, object]] = {}
+        for announce in _raw_identity_announces(snapshot):
+            identity = str(
+                announce.get("announced_identity_hash")
+                or announce.get("destination_hash")
+                or ""
+            ).lower()
+            if not identity or str(announce.get("client_type") or "") != "rem":
+                continue
+            existing = candidates.get(identity)
+            if existing is None or str(announce.get("source_interface") or "") == "destination":
+                candidates[identity] = _merge_announce_records(
+                    announce,
+                    _identity_announces_by_identity(snapshot).get(identity),
+                )
+        peers: list[dict[str, object]] = []
+        for identity, announce in sorted(candidates.items()):
+            state = states.get(identity, {})
+            if state.get("is_banned") or state.get("is_blackholed"):
+                continue
+            peers.append(
+                {
+                    "identity": identity,
+                    "destination_hash": str(
+                        announce.get("destination_hash") or identity
+                    ),
+                    "display_name": _announce_display_name(announce),
+                    "announce_capabilities": _announce_capabilities(announce),
+                    "client_type": "rem",
+                    "registered_mode": _rem_mode_for_identity(snapshot, identity),
+                    "status": "active",
+                }
+            )
+        return {
+            "effective_connected_mode": self.effective_rem_connected_mode(),
+            "items": peers,
+        }
+
     def list_identity_statuses(self) -> list[IdentityStatus]:
         snapshot = self._bridge.state_snapshot()
         states = _identity_states_by_identity(snapshot)
@@ -304,6 +366,9 @@ class RustTopicSubscriberApi:
             is_blackholed=is_blackholed,
             client_type=str((announce or {}).get("client_type") or "generic_lxmf"),
             announce_capabilities=_announce_capabilities(announce),
+            rem_mode=_rem_mode_for_identity(snapshot, identity)
+            if str((announce or {}).get("client_type") or "generic_lxmf") == "rem"
+            else None,
             is_rem_capable=str((announce or {}).get("client_type") or "generic_lxmf")
             == "rem",
         )
@@ -447,9 +512,7 @@ def _subscriber_from_payload(payload: dict[str, object]) -> Subscriber:
 def _identity_announces_by_identity(
     snapshot: dict[str, object],
 ) -> dict[str, dict[str, object]]:
-    announces = snapshot.get("identity_announces")
-    assert isinstance(announces, list)
-    records = [dict(record) for record in announces if isinstance(record, dict)]
+    records = _raw_identity_announces(snapshot)
     by_destination = {
         str(record.get("destination_hash") or "").lower(): record
         for record in records
@@ -460,14 +523,48 @@ def _identity_announces_by_identity(
         destination = str(record.get("destination_hash") or "").lower()
         announced = str(record.get("announced_identity_hash") or "").lower()
         canonical = by_destination.get(announced)
-        display_record = canonical if _announce_display_name(canonical) else record
+        display_record = _merge_announce_records(record, canonical)
         if destination:
             result[destination] = display_record
         if announced:
             existing = result.get(announced)
-            if existing is None or not _announce_display_name(existing):
+            if existing is None or _announce_prefer(display_record, existing):
                 result[announced] = display_record
     return result
+
+
+def _raw_identity_announces(snapshot: dict[str, object]) -> list[dict[str, object]]:
+    announces = snapshot.get("identity_announces")
+    assert isinstance(announces, list)
+    return [dict(record) for record in announces if isinstance(record, dict)]
+
+
+def _merge_announce_records(
+    record: dict[str, object],
+    canonical: dict[str, object] | None,
+) -> dict[str, object]:
+    if not canonical:
+        return record
+    merged = dict(record)
+    if not _announce_display_name(merged) and _announce_display_name(canonical):
+        merged["display_name"] = canonical["display_name"]
+    if str(merged.get("client_type") or "generic_lxmf") != "rem" and str(
+        canonical.get("client_type") or "generic_lxmf"
+    ) == "rem":
+        merged["client_type"] = "rem"
+        merged["announce_capabilities"] = canonical.get("announce_capabilities") or []
+    return merged
+
+
+def _announce_prefer(
+    candidate: dict[str, object],
+    existing: dict[str, object],
+) -> bool:
+    if str(candidate.get("client_type") or "") == "rem" and str(
+        existing.get("client_type") or ""
+    ) != "rem":
+        return True
+    return bool(_announce_display_name(candidate)) and not _announce_display_name(existing)
 
 
 def _identity_states_by_identity(snapshot: dict[str, object]) -> dict[str, dict[str, object]]:
@@ -478,6 +575,21 @@ def _identity_states_by_identity(snapshot: dict[str, object]) -> dict[str, dict[
         for state in states
         if isinstance(state, dict) and state.get("identity")
     }
+
+
+def _identity_rem_modes(snapshot: dict[str, object]) -> dict[str, dict[str, object]]:
+    modes = snapshot.get("identity_rem_modes")
+    assert isinstance(modes, list)
+    return {
+        str(mode.get("identity") or "").lower(): dict(mode)
+        for mode in modes
+        if isinstance(mode, dict) and mode.get("identity")
+    }
+
+
+def _rem_mode_for_identity(snapshot: dict[str, object], identity: str) -> str:
+    mode = _identity_rem_modes(snapshot).get(identity.lower(), {}).get("mode")
+    return str(mode or "autonomous").lower()
 
 
 def _announce_display_name(announce: dict[str, object] | None) -> str | None:
@@ -840,8 +952,9 @@ def test_join_and_leave_require_identity(tmp_path, backend):
         api.leave("")
 
 
-def test_identity_announce_merges_display_name(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_announce_merges_display_name(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.record_identity_announce(
         "deadbeef",
         display_name="Sideband-Alice",
@@ -869,9 +982,14 @@ def test_identity_announce_merges_display_name(tmp_path):
     assert status.is_rem_capable is True
 
 
-def test_rem_mode_and_peer_registry_persist_between_instances(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_rem_mode_and_peer_registry_persist_between_instances(tmp_path, backend):
     cfg = make_config_manager(tmp_path)
-    api1 = ReticulumTelemetryHubAPI(config_manager=cfg)
+    api1 = (
+        RustTopicSubscriberApi(tmp_path)
+        if backend == "rust"
+        else ReticulumTelemetryHubAPI(config_manager=cfg)
+    )
     api1.record_identity_announce(
         "deadbeef-destination",
         announced_identity_hash="deadbeef",
@@ -894,7 +1012,11 @@ def test_rem_mode_and_peer_registry_persist_between_instances(tmp_path):
     )
     api1.set_rem_mode("deadbeef", "connected")
 
-    api2 = ReticulumTelemetryHubAPI(config_manager=cfg)
+    api2 = (
+        RustTopicSubscriberApi(tmp_path)
+        if backend == "rust"
+        else ReticulumTelemetryHubAPI(config_manager=cfg)
+    )
     payload = api2.rem_peer_registry()
 
     assert api2.get_rem_mode("deadbeef") == "connected"
@@ -907,8 +1029,9 @@ def test_rem_mode_and_peer_registry_persist_between_instances(tmp_path):
     assert payload["items"][0]["registered_mode"] == "connected"
 
 
-def test_generic_clients_do_not_report_rem_mode(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_generic_clients_do_not_report_rem_mode(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.record_identity_announce(
         "cafebabe",
         display_name="Generic Bravo",
@@ -928,8 +1051,9 @@ def test_generic_clients_do_not_report_rem_mode(tmp_path):
     assert status.is_rem_capable is False
 
 
-def test_delivery_announce_display_name_does_not_strip_rem_classification(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_delivery_announce_display_name_does_not_strip_rem_classification(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.record_identity_announce(
         "pixel-app-destination",
         announced_identity_hash="0a92e053b7e6ba49f0a045e9cc55eaa2",
