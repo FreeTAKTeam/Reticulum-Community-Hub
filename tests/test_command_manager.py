@@ -345,6 +345,78 @@ def test_status_command_uses_backend_counts(tmp_path, backend: str):
     assert payload["telemetry"] == {"entries": 3}
 
 
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_moderation_commands_use_backend_state(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    identity = "aa" * 16
+
+    def _status():
+        return next(
+            status
+            for status in api.list_identity_statuses()
+            if status.identity == identity
+        )
+
+    ban_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_BAN_IDENTITY,
+        Identity=identity,
+    )
+    ban_reply = manager.handle_command(
+        ban_message.fields[LXMF.FIELD_COMMANDS][0], ban_message
+    )
+
+    assert ban_reply is not None
+    assert identity in ban_reply.content_as_string()
+    assert _status().is_banned is True
+
+    blackhole_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_BLACKHOLE_IDENTITY,
+        Identity=identity,
+    )
+    blackhole_reply = manager.handle_command(
+        blackhole_message.fields[LXMF.FIELD_COMMANDS][0], blackhole_message
+    )
+
+    assert blackhole_reply is not None
+    assert _status().is_blackholed is True
+
+    list_message = make_message(
+        server_dest, client_dest, CommandManager.CMD_LIST_IDENTITIES
+    )
+    list_reply = manager.handle_command(
+        list_message.fields[LXMF.FIELD_COMMANDS][0], list_message
+    )
+
+    assert list_reply is not None
+    assert identity in list_reply.content_as_string()
+
+    unban_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_UNBAN_IDENTITY,
+        Identity=identity,
+    )
+    unban_reply = manager.handle_command(
+        unban_message.fields[LXMF.FIELD_COMMANDS][0], unban_message
+    )
+
+    assert unban_reply is not None
+    status = _status()
+    assert status.is_banned is False
+    assert status.is_blackholed is False
+
+
 def test_apply_lxmf_router_runtime_config_reads_allowed_and_ignored_sidecars(
     tmp_path,
 ):

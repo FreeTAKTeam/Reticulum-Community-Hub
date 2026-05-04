@@ -678,11 +678,19 @@ class RustTopicSubscriberApi:
         return self._identity_status(identity)
 
     def unban_identity(self, identity: str) -> IdentityStatus:
-        state = _identity_states_by_identity(self._bridge.state_snapshot()).get(
-            identity.lower(), {}
-        )
-        if state.get("is_blackholed"):
-            return self._identity_status(identity)
+        normalized = identity.lower()
+        states = self._bridge.state_snapshot().get("identity_states")
+        assert isinstance(states, list)
+        for state in states:
+            if not isinstance(state, dict):
+                continue
+            state_identity = str(state.get("identity") or "")
+            if (
+                state_identity.lower() == normalized
+                and state_identity != identity
+                and state.get("is_blackholed")
+            ):
+                return self._identity_status(identity)
         self._bridge.set_identity_state(
             identity, is_banned=False, is_blackholed=False
         )
