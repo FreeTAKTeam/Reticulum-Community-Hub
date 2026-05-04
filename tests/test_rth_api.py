@@ -231,7 +231,14 @@ class RustTopicSubscriberApi:
         topic_name: str | None = None,
         topic_path: str | None = None,
         topic_description: str | None = None,
+        **extra: object,
     ) -> Topic:
+        def _optional(value: object) -> str | None:
+            return str(value) if value is not None else None
+
+        topic_name = topic_name or _optional(extra.get("TopicName"))
+        topic_path = topic_path or _optional(extra.get("TopicPath"))
+        topic_description = topic_description or _optional(extra.get("TopicDescription"))
         result = self._command(
             "topic.patch",
             {

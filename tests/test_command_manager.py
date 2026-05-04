@@ -184,6 +184,62 @@ def test_handle_list_clients_reads_backend_state(tmp_path, backend: str):
     assert "{}" in reply_text
 
 
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_topic_command_retrieve_patch_delete_round_trip(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    api = _api_for_backend(tmp_path, backend)
+    topic = api.create_topic(Topic(topic_name="Ops", topic_path="/ops"))
+    manager, server_dest = make_command_manager(api)
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+
+    retrieve_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_RETRIEVE_TOPIC,
+        TopicID=topic.topic_id,
+    )
+    retrieve_reply = manager.handle_command(
+        retrieve_message.fields[LXMF.FIELD_COMMANDS][0], retrieve_message
+    )
+
+    assert retrieve_reply is not None
+    assert '"TopicName": "Ops"' in retrieve_reply.content_as_string()
+
+    patch_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_PATCH_TOPIC,
+        TopicID=topic.topic_id,
+        TopicDescription="Operations",
+    )
+    patch_reply = manager.handle_command(
+        patch_message.fields[LXMF.FIELD_COMMANDS][0], patch_message
+    )
+
+    assert patch_reply is not None
+    assert "Topic updated" in patch_reply.content_as_string()
+    assert api.retrieve_topic(topic.topic_id).topic_description == "Operations"
+
+    delete_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_DELETE_TOPIC,
+        TopicID=topic.topic_id,
+    )
+    delete_reply = manager.handle_command(
+        delete_message.fields[LXMF.FIELD_COMMANDS][0], delete_message
+    )
+
+    assert delete_reply is not None
+    assert "Topic deleted" in delete_reply.content_as_string()
+    with pytest.raises(KeyError):
+        api.retrieve_topic(topic.topic_id)
+
+
 def test_apply_lxmf_router_runtime_config_reads_allowed_and_ignored_sidecars(
     tmp_path,
 ):
