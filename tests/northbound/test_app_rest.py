@@ -6,6 +6,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from reticulum_telemetry_hub.api.models import Subscriber
@@ -24,9 +25,12 @@ from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from tests.factories import build_location_payload
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
-def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
+def _build_api(
+    tmp_path: Path, *, backend: str = "python"
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
     """Create an API instance backed by a temp database.
 
     Args:
@@ -36,6 +40,8 @@ def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
         ReticulumTelemetryHubAPI: Configured API service.
     """
 
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "hub.sqlite")
     return ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
@@ -57,10 +63,11 @@ class CountOnlyStatusStorage(HubStorage):
         raise AssertionError("status should use count_file_records")
 
 
-def test_status_endpoint_returns_counts(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_status_endpoint_returns_counts(tmp_path, backend: str) -> None:
     """Verify the status endpoint returns telemetry stats and counts."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     topic = api.create_topic(Topic(topic_name="Topic", topic_path="/topic"))
     api.create_subscriber(Subscriber(destination="peer-1", topic_id=topic.topic_id))
 
@@ -118,10 +125,11 @@ def test_status_endpoint_uses_count_queries(tmp_path: Path) -> None:
     assert payload["subscribers"] == 1
 
 
-def test_subscribe_requires_destination(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_subscribe_requires_destination(tmp_path, backend: str) -> None:
     """Ensure public topic subscribe requires a destination in this context."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     topic = api.create_topic(Topic(topic_name="Topic", topic_path="/topic"))
     app = create_app(api=api, telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api))
     client = TestClient(app)
@@ -131,10 +139,11 @@ def test_subscribe_requires_destination(tmp_path) -> None:
     assert response.status_code == 400
 
 
-def test_protected_endpoint_requires_api_key(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_protected_endpoint_requires_api_key(tmp_path, backend: str) -> None:
     """Ensure protected endpoints enforce API keys when configured."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     app = create_app(
         api=api,
         telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),
@@ -147,10 +156,11 @@ def test_protected_endpoint_requires_api_key(tmp_path) -> None:
     assert response.status_code == 401
 
 
-def test_auth_validate_localhost_without_key_allowed(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_auth_validate_localhost_without_key_allowed(tmp_path, backend: str) -> None:
     """Allow localhost access to auth validation without configured API keys."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     app = create_app(
         api=api,
         telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),
@@ -165,10 +175,11 @@ def test_auth_validate_localhost_without_key_allowed(tmp_path) -> None:
     assert response.json()["auth_mode"] == "local_only"
 
 
-def test_auth_validate_remote_without_key_rejected(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_auth_validate_remote_without_key_rejected(tmp_path, backend: str) -> None:
     """Reject remote auth validation requests without an API key."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     app = create_app(
         api=api,
         telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),
@@ -181,10 +192,11 @@ def test_auth_validate_remote_without_key_rejected(tmp_path) -> None:
     assert response.status_code == 401
 
 
-def test_auth_validate_remote_with_bearer_token_allowed(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_auth_validate_remote_with_bearer_token_allowed(tmp_path, backend: str) -> None:
     """Allow remote auth validation requests with a valid bearer token."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     app = create_app(
         api=api,
         telemetry_controller=TelemetryController(db_path=tmp_path / "telemetry.db", api=api),

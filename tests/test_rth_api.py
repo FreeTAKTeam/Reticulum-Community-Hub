@@ -184,6 +184,9 @@ class RustTopicSubscriberApi:
     def list_topics(self) -> list[Topic]:
         return [_topic_from_payload(topic.payload) for topic in self._bridge.list_topics()]
 
+    def count_topics(self) -> int:
+        return len(self.list_topics())
+
     def delete_topic(self, topic_id: str | None) -> Topic:
         result = self._command("topic.delete", {"topic_id": topic_id})
         deleted_topic_id = str(result.get("topic_id") or result.get("TopicID") or "")
@@ -253,6 +256,9 @@ class RustTopicSubscriberApi:
 
     def count_images(self) -> int:
         return len(self.list_images())
+
+    def chat_message_stats(self) -> dict[str, int]:
+        return {"sent": 0, "failed": 0, "delivered": 0}
 
     def assign_file_to_topic(
         self, record_id: int, topic_id: str | None
@@ -413,6 +419,9 @@ class RustTopicSubscriberApi:
             for subscriber in self._bridge.list_subscribers()
         ]
 
+    def count_subscribers(self) -> int:
+        return len(self.list_subscribers())
+
     def delete_subscriber(self, subscriber_id: str | None) -> Subscriber:
         result = self._command("topic.subscriber.delete", {"subscriber_id": subscriber_id})
         return _subscriber_from_payload(result)
@@ -459,6 +468,9 @@ class RustTopicSubscriberApi:
                 )
             )
         return records
+
+    def count_clients(self) -> int:
+        return len(self.list_clients())
 
     def record_identity_announce(
         self,
