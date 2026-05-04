@@ -46,6 +46,8 @@ MISSION_COMMAND_CAPABILITIES: dict[str, str] = {
     "mission.registry.team.mission.unlink": "mission.registry.team.write",
     "mission.registry.mission.zone.link": "mission.zone.write",
     "mission.registry.mission.zone.unlink": "mission.zone.write",
+    "mission.registry.mission.marker.link": "mission.content.write",
+    "mission.registry.mission.marker.unlink": "mission.content.write",
     "mission.registry.mission.rde.set": "mission.registry.mission.write",
     "mission.registry.team_member.upsert": "mission.registry.team.write",
     "mission.registry.team_member.get": "mission.registry.team.read",

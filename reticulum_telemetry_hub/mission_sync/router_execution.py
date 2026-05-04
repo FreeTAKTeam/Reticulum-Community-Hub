@@ -326,6 +326,30 @@ class MissionCommandExecutionMixin:
                     )
                 updated = domain.unlink_mission_zone(mission_uid, zone_id)
                 return updated, "mission.registry.mission.zone.unlinked", updated
+            if command_type == "mission.registry.mission.marker.link":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                marker_id = self._value_as_str(args.get("marker_id")) or self._value_as_str(
+                    args.get("marker_ref")
+                )
+                if not mission_uid or not marker_id:
+                    raise MissionCommandError(
+                        "invalid_payload", "mission_uid and marker_id are required"
+                    )
+                updated = domain.link_mission_marker(mission_uid, marker_id)
+                return updated, "mission.registry.mission.marker.linked", updated
+            if command_type == "mission.registry.mission.marker.unlink":
+                domain = self._require_domain_service()
+                mission_uid = self._value_as_str(args.get("mission_uid"))
+                marker_id = self._value_as_str(args.get("marker_id")) or self._value_as_str(
+                    args.get("marker_ref")
+                )
+                if not mission_uid or not marker_id:
+                    raise MissionCommandError(
+                        "invalid_payload", "mission_uid and marker_id are required"
+                    )
+                updated = domain.unlink_mission_marker(mission_uid, marker_id)
+                return updated, "mission.registry.mission.marker.unlinked", updated
             if command_type == "mission.registry.mission.rde.set":
                 domain = self._require_domain_service()
                 mission_uid = self._value_as_str(args.get("mission_uid"))

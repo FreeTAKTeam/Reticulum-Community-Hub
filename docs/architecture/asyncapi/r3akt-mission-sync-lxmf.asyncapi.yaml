@@ -906,6 +906,46 @@ components:
                   mission_uid: { type: string }
                   zone_id: { type: string }
             required: [command_type, args]
+    MissionRegistryMarkerLinkCommand:
+      name: MissionRegistryMarkerLinkCommand
+      x-http-operation: "PUT /api/r3akt/missions/{mission_uid}/markers/{marker_id}"
+      x-capability-required:
+        - mission.content.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.marker.link
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid, marker_id]
+                properties:
+                  mission_uid: { type: string }
+                  marker_id: { type: string }
+            required: [command_type, args]
+    MissionRegistryMarkerUnlinkCommand:
+      name: MissionRegistryMarkerUnlinkCommand
+      x-http-operation: "DELETE /api/r3akt/missions/{mission_uid}/markers/{marker_id}"
+      x-capability-required:
+        - mission.content.write
+      payload:
+        allOf:
+          - $ref: "../schemas/command.json"
+          - type: object
+            properties:
+              command_type:
+                const: mission.registry.mission.marker.unlink
+              args:
+                type: object
+                additionalProperties: false
+                required: [mission_uid, marker_id]
+                properties:
+                  mission_uid: { type: string }
+                  marker_id: { type: string }
+            required: [command_type, args]
     MissionRegistryRdeSetCommand:
       name: MissionRegistryRdeSetCommand
       x-http-operation: "PUT /api/r3akt/missions/{mission_uid}/rde"
@@ -1402,6 +1442,8 @@ components:
                   - mission.registry.team.mission.unlinked
                   - mission.registry.mission.zone.linked
                   - mission.registry.mission.zone.unlinked
+                  - mission.registry.mission.marker.linked
+                  - mission.registry.mission.marker.unlinked
                   - mission.registry.mission.rde.updated
                   - mission.registry.team_member.upserted
                   - mission.registry.team_member.retrieved

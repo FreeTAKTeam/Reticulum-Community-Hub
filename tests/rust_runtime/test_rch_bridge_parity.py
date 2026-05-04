@@ -370,6 +370,7 @@ def test_backend_replays_mission_registry_command_flow(backend) -> None:  # type
         "mission.registry.log.write",
         "mission.registry.log.read",
         "mission.zone.write",
+        "mission.content.write",
     )
 
     upsert = backend.handle_command(
@@ -467,6 +468,36 @@ def test_backend_replays_mission_registry_command_flow(backend) -> None:  # type
         )
     )
     assert zone_id not in _terminal_result(zone_unlink)["zones"]
+
+    marker = backend.handle_command(
+        _command(
+            "mission.marker.create",
+            {
+                "name": "Registry Marker",
+                "lat": 10.0,
+                "lon": 11.0,
+            },
+            command_id="cmd-rust-registry-marker-create",
+        )
+    )
+    marker_id = _terminal_result(marker)["object_destination_hash"]
+    marker_link = backend.handle_command(
+        _command(
+            "mission.registry.mission.marker.link",
+            {"mission_uid": "mission-1", "marker_id": marker_id},
+            command_id="cmd-rust-mission-marker-link",
+        )
+    )
+    assert marker_id in _terminal_result(marker_link)["markers"]
+
+    marker_unlink = backend.handle_command(
+        _command(
+            "mission.registry.mission.marker.unlink",
+            {"mission_uid": "mission-1", "marker_id": marker_id},
+            command_id="cmd-rust-mission-marker-unlink",
+        )
+    )
+    assert marker_id not in _terminal_result(marker_unlink)["markers"]
 
     rde = backend.handle_command(
         _command(

@@ -18,7 +18,7 @@ the Python implementation and the Rust implementation, and both pass.
     commands from:
     - `reticulum_telemetry_hub.mission_sync.capabilities.MISSION_COMMAND_CAPABILITIES`
     - `reticulum_telemetry_hub.checklist_sync.capabilities.CHECKLIST_COMMAND_CAPABILITIES`
-  - Current command coverage: `85 / 85`
+  - Current command coverage: `87 / 87`
   - Current shared backend result: `33 passed`
 - Rust workspace:
   - Command: `cargo test --workspace`
@@ -43,6 +43,8 @@ It covers:
 - marker rename/delete southbound commands and the FastAPI marker
   create/update/delete route flow parameterized across Python and Rust
 - zone create/list/patch/delete
+- mission marker link/unlink southbound commands, with marker link state
+  persisted in Rust and exposed through mission registry route parity
 - FastAPI northbound zone create/list/update/delete route flow
   parameterized across Python and Rust
 - FastAPI northbound EAM authenticated CRUD, canonical auto-provisioning,
