@@ -1,5 +1,6 @@
 import LXMF
 import json
+from pathlib import Path
 import RNS
 import pytest
 from msgpack import packb
@@ -13,6 +14,7 @@ from reticulum_telemetry_hub.api.models import Subscriber, Topic
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 from reticulum_telemetry_hub.reticulum_server.command_manager import CommandManager
 from reticulum_telemetry_hub.reticulum_server.constants import PLUGIN_COMMAND
+from tests.test_rth_api import RustTopicSubscriberApi
 from tests.test_rth_api import make_config_manager
 
 
@@ -44,6 +46,28 @@ def make_command_manager(api):
     )
     manager = CommandManager({}, DummyTelemetryController(), server_dest, api)
     return manager, server_dest
+
+
+def _api_for_backend(
+    tmp_path: Path, backend: str
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
+    return ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+
+def _attachment_path(
+    api: ReticulumTelemetryHubAPI | RustTopicSubscriberApi,
+    category: str,
+    filename: str,
+) -> Path:
+    if isinstance(api, ReticulumTelemetryHubAPI):
+        if category == "image":
+            return api._config_manager.config.image_storage_path / filename  # pylint: disable=protected-access
+        return api._config_manager.config.file_storage_path / filename  # pylint: disable=protected-access
+    base_path = api._storage_path / ("images" if category == "image" else "files")  # pylint: disable=protected-access
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path / filename
 
 
 def test_handle_leave_invokes_destination_removed_callback():
@@ -623,11 +647,12 @@ def test_handle_command_routes_telemetry_request_name_with_leading_zero():
     assert telemetry_controller.calls
 
 
-def test_command_reply_sets_results_and_preserves_context_fields(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_command_reply_sets_results_and_preserves_context_fields(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api = _api_for_backend(tmp_path, backend)
     manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
@@ -722,18 +747,18 @@ def test_create_topic_accepts_snake_case_fields():
     assert created_topic.topic_path == "alpha/path"
 
 
-def test_list_files_and_images_commands(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_list_files_and_images_commands(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    config_manager = make_config_manager(tmp_path)
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
-    file_path = config_manager.config.file_storage_path / "note.txt"
+    api = _api_for_backend(tmp_path, backend)
+    file_path = _attachment_path(api, "file", "note.txt")
     file_path.write_text("hello attachment")
     file_record = api.store_file(
         file_path, media_type="text/plain", topic_id="topic-file-123"
     )
-    image_path = config_manager.config.image_storage_path / "photo.jpg"
+    image_path = _attachment_path(api, "image", "photo.jpg")
     image_bytes = b"img-bytes"
     image_path.write_bytes(image_bytes)
     image_record = api.store_image(
@@ -768,14 +793,14 @@ def test_list_files_and_images_commands(tmp_path):
     assert "TopicID=topic-image-456" in images_response.content_as_string()
 
 
-def test_retrieve_file_includes_attachment_field(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_file_includes_attachment_field(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    config_manager = make_config_manager(tmp_path)
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    api = _api_for_backend(tmp_path, backend)
     file_bytes = b"binary-data"
-    file_path = config_manager.config.file_storage_path / "sample.bin"
+    file_path = _attachment_path(api, "file", "sample.bin")
     file_path.write_bytes(file_bytes)
     file_record = api.store_file(file_path, media_type="application/octet-stream")
 
@@ -800,14 +825,14 @@ def test_retrieve_file_includes_attachment_field(tmp_path):
     assert str(file_record.file_id) in response.content_as_string()
 
 
-def test_retrieve_image_includes_image_field(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_image_includes_image_field(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    config_manager = make_config_manager(tmp_path)
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    api = _api_for_backend(tmp_path, backend)
     image_bytes = b"image-bytes"
-    image_path = config_manager.config.image_storage_path / "snapshot.jpg"
+    image_path = _attachment_path(api, "image", "snapshot.jpg")
     image_path.write_bytes(image_bytes)
     image_record = api.store_image(image_path, media_type="image/jpeg")
 
@@ -842,11 +867,12 @@ def test_retrieve_image_includes_image_field(tmp_path):
         assert attachment_payload[1] == image_bytes
 
 
-def test_retrieve_file_rejects_non_integer_id(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_retrieve_file_rejects_non_integer_id(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api = _api_for_backend(tmp_path, backend)
     manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
