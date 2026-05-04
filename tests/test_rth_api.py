@@ -21,11 +21,29 @@ from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
+from reticulum_telemetry_hub.api.rights_policy import MISSION_ROLE_BUNDLES
+from reticulum_telemetry_hub.api.rights_policy import SUPPORTED_OPERATIONS
 
 
 FIELD_RESULTS = 10
 FIELD_GROUP = 11
 FIELD_EVENT = 13
+
+
+class RustRightsApi:
+    """Static rights metadata exposed through the Rust-backed API adapter."""
+
+    @staticmethod
+    def operation_definitions() -> dict[str, object]:
+        return {
+            "subject_types": ["identity", "team_member"],
+            "scope_types": ["global", "mission"],
+            "operations": list(SUPPORTED_OPERATIONS),
+            "mission_role_bundles": {
+                role: sorted(operations)
+                for role, operations in sorted(MISSION_ROLE_BUNDLES.items())
+            },
+        }
 
 
 def make_config_manager(tmp_path):
@@ -70,6 +88,7 @@ class RustTopicSubscriberApi:
         self._storage_path.mkdir(exist_ok=True)
         self._reticulum_destination: str | None = None
         self._bridge = _bridge(tmp_path / "r3akt-api.sqlite")
+        self.rights = RustRightsApi()
 
     def create_topic(self, topic: Topic) -> Topic:
         self._command(
@@ -1362,8 +1381,9 @@ def test_mission_access_roles_grant_effective_operations(tmp_path):
     assert api.authorize("peer-a", "topic.delete", mission_uid="mission-1") is False
 
 
-def test_operation_definitions_include_status_rights_and_bundles(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_operation_definitions_include_status_rights_and_bundles(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     definitions = api.rights.operation_definitions()
 
