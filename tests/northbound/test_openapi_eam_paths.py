@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
@@ -15,13 +16,18 @@ from reticulum_telemetry_hub.mission_domain import MissionDomainService
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
-def _spec(tmp_path: Path) -> dict:
+def _spec(tmp_path: Path, *, backend: str = "python") -> dict:
     config_manager = HubConfigurationManager(storage_path=tmp_path)
-    api = ReticulumTelemetryHubAPI(
-        config_manager=config_manager,
-        storage=HubStorage(tmp_path / "hub.sqlite"),
+    api = (
+        RustTopicSubscriberApi(tmp_path)
+        if backend == "rust"
+        else ReticulumTelemetryHubAPI(
+            config_manager=config_manager,
+            storage=HubStorage(tmp_path / "hub.sqlite"),
+        )
     )
     event_log = EventLog()
     telemetry = TelemetryController(
@@ -44,8 +50,9 @@ def _spec(tmp_path: Path) -> dict:
     return app.openapi()
 
 
-def test_openapi_includes_rem_eam_paths(tmp_path: Path) -> None:
-    paths = _spec(tmp_path)["paths"]
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_openapi_includes_rem_eam_paths(tmp_path: Path, backend: str) -> None:
+    paths = _spec(tmp_path, backend=backend)["paths"]
 
     required = {
         "/api/EmergencyActionMessage": {"get", "post"},
@@ -63,8 +70,11 @@ def test_openapi_includes_rem_eam_paths(tmp_path: Path) -> None:
     assert "/api/EmergencyActionMessage/team/{teamId}/summary" not in paths
 
 
-def test_openapi_exposes_rem_query_and_path_params(tmp_path: Path) -> None:
-    paths = _spec(tmp_path)["paths"]
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_openapi_exposes_rem_query_and_path_params(
+    tmp_path: Path, backend: str
+) -> None:
+    paths = _spec(tmp_path, backend=backend)["paths"]
 
     list_params = {item["name"] for item in paths["/api/EmergencyActionMessage"]["get"]["parameters"]}
     latest_params = {
@@ -84,8 +94,11 @@ def test_openapi_exposes_rem_query_and_path_params(tmp_path: Path) -> None:
     assert summary_params >= {"team_uid"}
 
 
-def test_openapi_exposes_generic_object_and_array_contracts(tmp_path: Path) -> None:
-    spec = _spec(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_openapi_exposes_generic_object_and_array_contracts(
+    tmp_path: Path, backend: str
+) -> None:
+    spec = _spec(tmp_path, backend=backend)
     paths = spec["paths"]
     schemas = spec["components"]["schemas"]
 

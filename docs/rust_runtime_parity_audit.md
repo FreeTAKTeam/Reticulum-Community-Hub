@@ -11,10 +11,10 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `1026 passed, 690 warnings`
+  - Result: `1029 passed, 702 warnings`
 - Named Rust bridge parity suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -m rust_bridge -q`
-  - Result: `375 passed, 651 deselected, 646 warnings`
+  - Result: `381 passed, 648 deselected, 670 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -87,6 +87,8 @@ It covers:
   across Python storage and the Rust-backed facade
 - Internal API adapter topic, subscriber, node-status, message, and event-stream
   routes parameterized across Python storage and the Rust-backed facade
+- Generated OpenAPI EAM path, parameter, response, and schema checks
+  parameterized across Python storage and the Rust-backed facade
 - marker and zone state observed through Rust bridge snapshot requests,
   matching Python service state in the shared parity harness
 - checklist/template/task/cell/feed state observed through the Rust bridge
@@ -201,7 +203,7 @@ It covers:
 The full collected Python suite is broader than the Rust runtime bridge. It also
 tests Python-specific or not-yet-Rust-backed surfaces including:
 
-- Static OpenAPI contract checks and route-schema documentation conformance.
+- Checked-in static OpenAPI documentation conformance.
 - Direct `ReticulumTelemetryHubAPI` private Python storage edge cases, including
   SQLAlchemy session retry and monkeypatched storage-return handling.
 - CLI process-control behavior
@@ -239,9 +241,9 @@ full-suite completion criteria above.
 
 | Requirement | Current evidence | Status |
 | --- | --- | --- |
-| Same suite can run against Python backend | `.\.venv\Scripts\python.exe -m pytest --no-cov -q` passes with `1026 passed, 690 warnings` | Done for Python |
+| Same suite can run against Python backend | `.\.venv\Scripts\python.exe -m pytest --no-cov -q` passes with `1029 passed, 702 warnings` | Done for Python |
 | Same suite can run against Rust backend | Many runtime-facing tests are parameterized with `backend in ["python", "rust"]`, but there is no global Rust backend mode for the full suite | Missing |
-| Rust southbound command behavior matches Python | `tests/rust_runtime/test_rch_bridge_parity.py` covers `87 / 87` declared mission/checklist commands and passes; `pytest --no-cov -m rust_bridge -q` passes with `375 passed, 651 deselected, 646 warnings` | Done for scoped southbound path |
+| Rust southbound command behavior matches Python | `tests/rust_runtime/test_rch_bridge_parity.py` covers `87 / 87` declared mission/checklist commands and passes; `pytest --no-cov -m rust_bridge -q` passes with `381 passed, 648 deselected, 670 warnings` | Done for scoped southbound path |
 | Northbound API/runtime surfaces use Rust bridge where practical | Topic, subscriber, client, identity, REM, subject-rights, file/image, chat, telemetry, gateway, service, websocket, EAM, marker, zone, checklist, and R3AKT route slices are parameterized | Partial |
 | Python-only application internals are either ported or formally excluded | Remaining Python-specific surfaces are listed above, but no accepted reduced full-parity scope exists | Missing |
 | Completion can be marked | Requires a passing full Rust backend suite or an accepted reduced parity suite | Not complete |
