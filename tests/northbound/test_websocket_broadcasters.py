@@ -5,15 +5,21 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import threading
+from pathlib import Path
 from typing import Awaitable
 from typing import Callable
 from typing import Optional
 
 import pytest
 
+from reticulum_telemetry_hub.api.models import Subscriber
+from reticulum_telemetry_hub.api.models import Topic
+from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
+from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.northbound.websocket import EventBroadcaster
 from reticulum_telemetry_hub.northbound.websocket import TelemetryBroadcaster
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
 @dataclass(frozen=True)
@@ -70,11 +76,25 @@ class _FakeTelemetryController:
             listener(telemetry, peer_hash, timestamp)
 
 
-def test_topic_subscription_uses_frozenset() -> None:
+def _api_for_backend(
+    tmp_path: Path, backend: str
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
+    return ReticulumTelemetryHubAPI(
+        config_manager=HubConfigurationManager(storage_path=tmp_path)
+    )
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_topic_subscription_uses_frozenset(tmp_path: Path, backend: str) -> None:
     """Ensure topic-filtered subscriptions store hashable filters."""
 
     controller = _FakeTelemetryController()
-    api = _FakeApi(["abc", "def"])
+    api = _api_for_backend(tmp_path, backend)
+    topic = api.create_topic(Topic(topic_name="Topic", topic_path="topic"))
+    api.create_subscriber(Subscriber(destination="abc", topic_id=topic.topic_id))
+    api.create_subscriber(Subscriber(destination="def", topic_id=topic.topic_id))
     broadcaster = TelemetryBroadcaster(controller, api)
 
     async def _callback(_: dict) -> None:
@@ -82,7 +102,7 @@ def test_topic_subscription_uses_frozenset() -> None:
 
         return None
 
-    broadcaster.subscribe(_callback, topic_id="topic")
+    broadcaster.subscribe(_callback, topic_id=topic.topic_id)
 
     subscriber = next(iter(broadcaster._subscribers))
 
@@ -187,12 +207,17 @@ def test_telemetry_broadcaster_dispatches_without_loop() -> None:
     _run_async(_exercise)
 
 
-def test_telemetry_subscription_filters_peer_destinations() -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_telemetry_subscription_filters_peer_destinations(
+    tmp_path: Path, backend: str
+) -> None:
     """Ensure telemetry filters respect allowed destinations."""
 
     async def _exercise() -> None:
         controller = _FakeTelemetryController()
-        api = _FakeApi(["peer-1"])
+        api = _api_for_backend(tmp_path, backend)
+        topic = api.create_topic(Topic(topic_name="Topic", topic_path="topic"))
+        api.create_subscriber(Subscriber(destination="peer-1", topic_id=topic.topic_id))
         broadcaster = TelemetryBroadcaster(controller, api)
         received: list[str] = []
 
@@ -201,7 +226,7 @@ def test_telemetry_subscription_filters_peer_destinations() -> None:
 
             received.append(str(entry["peer_destination"]))
 
-        broadcaster.subscribe(_callback, topic_id="topic")
+        broadcaster.subscribe(_callback, topic_id=topic.topic_id)
 
         controller.emit({"foo": "bar"}, "peer-1", None)
         controller.emit({"foo": "bar"}, "peer-2", None)
