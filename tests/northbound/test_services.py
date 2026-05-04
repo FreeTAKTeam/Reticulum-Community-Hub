@@ -4,6 +4,8 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
+import pytest
+
 from reticulum_telemetry_hub.api.models import Topic
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
@@ -14,9 +16,12 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 )
 from reticulum_telemetry_hub.northbound.services import NorthboundServices
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
-def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
+def _build_api(
+    tmp_path: Path, backend: str = "python"
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
     """Create an API instance backed by a temp database.
 
     Args:
@@ -26,15 +31,18 @@ def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
         ReticulumTelemetryHubAPI: Configured API service.
     """
 
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "hub.sqlite")
     return ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
 
 
-def test_status_snapshot_includes_counts(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_status_snapshot_includes_counts(tmp_path: Path, backend: str) -> None:
     """Ensure status snapshots reflect topic counts."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     api.create_topic(Topic(topic_name="Topic", topic_path="/topic"))
     event_log = EventLog()
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
@@ -53,10 +61,13 @@ def test_status_snapshot_includes_counts(tmp_path: Path) -> None:
     assert "runtime" in snapshot
 
 
-def test_status_snapshot_includes_runtime_provider_payload(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_status_snapshot_includes_runtime_provider_payload(
+    tmp_path: Path, backend: str
+) -> None:
     """Ensure runtime diagnostics are surfaced in status snapshots."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     event_log = EventLog()
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     runtime_snapshot = {"counters": {"outbound_enqueued_total": 5}}
@@ -105,10 +116,11 @@ def test_resolve_identity_announce_last_seen_prefers_fresh_canonical_record(
     assert api.resolve_identity_announce_last_seen(identity) == fresh_seen
 
 
-def test_dump_routing_defaults_to_clients(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_dump_routing_defaults_to_clients(tmp_path: Path, backend: str) -> None:
     """Ensure routing summaries fall back to clients when no provider."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     api.join("abc")
     event_log = EventLog()
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)

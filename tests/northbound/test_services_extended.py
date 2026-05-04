@@ -22,17 +22,28 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 from reticulum_telemetry_hub.northbound.services import NorthboundServices
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from tests.factories import build_location_payload
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
 def _build_services(
     tmp_path: Path,
     *,
+    backend: str = "python",
     message_dispatcher=None,
     routing_provider=None,
-) -> tuple[NorthboundServices, ReticulumTelemetryHubAPI, TelemetryController, EventLog]:
+) -> tuple[
+    NorthboundServices,
+    ReticulumTelemetryHubAPI | RustTopicSubscriberApi,
+    TelemetryController,
+    EventLog,
+]:
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "hub.sqlite")
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
+    api = (
+        RustTopicSubscriberApi(tmp_path)
+        if backend == "rust"
+        else ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
+    )
     event_log = EventLog()
     telemetry = TelemetryController(
         db_path=tmp_path / "telemetry.db",
@@ -50,6 +61,20 @@ def _build_services(
     return services, api, telemetry, event_log
 
 
+def _attachment_path(
+    api: ReticulumTelemetryHubAPI | RustTopicSubscriberApi,
+    category: str,
+    filename: str,
+) -> Path:
+    if isinstance(api, ReticulumTelemetryHubAPI):
+        if category == "image":
+            return api._config_manager.config.image_storage_path / filename  # pylint: disable=protected-access
+        return api._config_manager.config.file_storage_path / filename  # pylint: disable=protected-access
+    base_path = api._storage_path / ("images" if category == "image" else "files")  # pylint: disable=protected-access
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path / filename
+
+
 def test_help_and_examples_fallback(tmp_path: Path) -> None:
     services, _, _, _ = _build_services(tmp_path)
 
@@ -60,15 +85,16 @@ def test_help_and_examples_fallback(tmp_path: Path) -> None:
     assert "Command" in examples
 
 
-def test_status_snapshot_counts(tmp_path: Path) -> None:
-    services, api, telemetry, _ = _build_services(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_status_snapshot_counts(tmp_path: Path, backend: str) -> None:
+    services, api, telemetry, _ = _build_services(tmp_path, backend=backend)
     topic = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
     api.create_subscriber(Subscriber(destination="dest-1", topic_id=topic.topic_id))
 
-    file_path = api._config_manager.config.file_storage_path / "note.txt"  # pylint: disable=protected-access
+    file_path = _attachment_path(api, "file", "note.txt")
     file_path.write_text("payload", encoding="utf-8")
     api.store_file(file_path, media_type="text/plain")
-    image_path = api._config_manager.config.image_storage_path / "photo.jpg"  # pylint: disable=protected-access
+    image_path = _attachment_path(api, "image", "photo.jpg")
     image_path.write_bytes(b"img")
     api.store_image(image_path, media_type="image/jpeg")
 
@@ -132,16 +158,20 @@ def test_event_log_truncates_to_recent_tail(tmp_path: Path) -> None:
     assert "event-0" not in messages
 
 
-def test_dump_routing_uses_provider(tmp_path: Path) -> None:
-    services, _, _, _ = _build_services(tmp_path, routing_provider=lambda: ["a", "b"])
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_dump_routing_uses_provider(tmp_path: Path, backend: str) -> None:
+    services, _, _, _ = _build_services(
+        tmp_path, backend=backend, routing_provider=lambda: ["a", "b"]
+    )
 
     result = services.dump_routing()
 
     assert result["destinations"] == ["a", "b"]
 
 
-def test_dump_routing_falls_back_to_clients(tmp_path: Path) -> None:
-    services, api, _, _ = _build_services(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_dump_routing_falls_back_to_clients(tmp_path: Path, backend: str) -> None:
+    services, api, _, _ = _build_services(tmp_path, backend=backend)
     api.join("dest-1")
 
     result = services.dump_routing()
@@ -149,10 +179,11 @@ def test_dump_routing_falls_back_to_clients(tmp_path: Path) -> None:
     assert result["destinations"] == ["dest-1"]
 
 
-def test_db_backed_topic_subscriber_lookups(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_db_backed_topic_subscriber_lookups(tmp_path: Path, backend: str) -> None:
     """Return topic and subscriber lookups without Python-side full scans."""
 
-    _, api, _, _ = _build_services(tmp_path)
+    _, api, _, _ = _build_services(tmp_path, backend=backend)
     alerts = api.create_topic(Topic(topic_name="alerts", topic_path="alerts"))
     ops = api.create_topic(Topic(topic_name="ops", topic_path="ops"))
     api.create_subscriber(Subscriber(destination="dest-1", topic_id=alerts.topic_id))
@@ -220,8 +251,9 @@ def test_telemetry_entries_proxy(tmp_path: Path) -> None:
     assert entries
 
 
-def test_app_info_round_trip(tmp_path: Path) -> None:
-    services, _, _, _ = _build_services(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_app_info_round_trip(tmp_path: Path, backend: str) -> None:
+    services, _, _, _ = _build_services(tmp_path, backend=backend)
 
     info = services.app_info().to_dict()
 

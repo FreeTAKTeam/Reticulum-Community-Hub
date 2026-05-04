@@ -501,6 +501,14 @@ class RustTopicSubscriberApi:
             if subscriber.topic_id == topic_id
         ]
 
+    def list_topics_for_destination(self, destination: str) -> list[Topic]:
+        topic_ids = {
+            subscriber.topic_id
+            for subscriber in self.list_subscribers()
+            if subscriber.destination == destination and subscriber.topic_id is not None
+        }
+        return [topic for topic in self.list_topics() if topic.topic_id in topic_ids]
+
     def count_subscribers(self) -> int:
         return len(self.list_subscribers())
 
