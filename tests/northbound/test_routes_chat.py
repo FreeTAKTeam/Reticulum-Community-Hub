@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from reticulum_telemetry_hub.api.models import ChatMessage
@@ -16,6 +17,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.northbound.gateway import build_gateway_app
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
 class _StubHub:
@@ -24,7 +26,7 @@ class _StubHub:
     def __init__(
         self,
         *,
-        api: ReticulumTelemetryHubAPI,
+        api: ReticulumTelemetryHubAPI | RustTopicSubscriberApi,
         telemetry: TelemetryController,
         event_log: EventLog,
     ) -> None:
@@ -78,28 +80,35 @@ class _StubHub:
         return lambda: None
 
 
-def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
+def _build_api(
+    tmp_path: Path, *, backend: str = "python"
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
     """Create an API instance backed by a temp database."""
 
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "hub.sqlite")
     return ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
 
 
-def _build_gateway_client(tmp_path: Path) -> tuple[TestClient, _StubHub]:
+def _build_gateway_client(
+    tmp_path: Path, *, backend: str = "python"
+) -> tuple[TestClient, _StubHub]:
     """Create a TestClient wired to a stubbed gateway hub."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     hub = _StubHub(api=api, telemetry=telemetry, event_log=EventLog())
     app = build_gateway_app(hub)
     return TestClient(app), hub
 
 
-def test_chat_message_send_success(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_chat_message_send_success(tmp_path: Path, backend: str) -> None:
     """Ensure chat messages dispatch through the gateway."""
 
-    client, hub = _build_gateway_client(tmp_path)
+    client, hub = _build_gateway_client(tmp_path, backend=backend)
 
     response = client.post(
         "/Chat/Message",
@@ -119,10 +128,11 @@ def test_chat_message_send_success(tmp_path: Path) -> None:
     assert dispatch["fields"]["attachments"] == []
 
 
-def test_chat_message_accepts_scope_variants(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_chat_message_accepts_scope_variants(tmp_path: Path, backend: str) -> None:
     """Ensure scope validation accepts trimmed variants."""
 
-    client, hub = _build_gateway_client(tmp_path)
+    client, hub = _build_gateway_client(tmp_path, backend=backend)
 
     response = client.post(
         "/Chat/Message",
@@ -133,10 +143,11 @@ def test_chat_message_accepts_scope_variants(tmp_path: Path) -> None:
     assert hub.dispatch_calls[-1]["fields"]["scope"] == " BROADCAST "
 
 
-def test_chat_message_requires_dispatcher(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_chat_message_requires_dispatcher(tmp_path: Path, backend: str) -> None:
     """Ensure missing dispatchers return a 503."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(api=api, telemetry_controller=telemetry, event_log=EventLog())
     client = TestClient(app)
