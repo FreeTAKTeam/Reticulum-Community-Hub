@@ -20,9 +20,12 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
     TelemetryController,
 )
 from tests.factories import build_location_payload
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
-def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
+def _build_api(
+    tmp_path: Path, backend: str = "python"
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
     """Create an API instance backed by a temp database.
 
     Args:
@@ -32,15 +35,18 @@ def _build_api(tmp_path: Path) -> ReticulumTelemetryHubAPI:
         ReticulumTelemetryHubAPI: Configured API service.
     """
 
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
     config_manager = HubConfigurationManager(storage_path=tmp_path)
     storage = HubStorage(tmp_path / "hub.sqlite")
     return ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
 
 
-def test_list_telemetry_entries_returns_latest(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_list_telemetry_entries_returns_latest(tmp_path, backend: str) -> None:
     """Ensure telemetry entries are returned for recent data."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     now = datetime.now(timezone.utc)
     payload = {
@@ -55,10 +61,13 @@ def test_list_telemetry_entries_returns_latest(tmp_path) -> None:
     assert entries[0]["peer_destination"] == "peer-1"
 
 
-def test_list_telemetry_entries_collapses_history_per_peer(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_list_telemetry_entries_collapses_history_per_peer(
+    tmp_path, backend: str
+) -> None:
     """Ensure only the most recent telemetry entry per peer is returned."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     now = datetime.now(timezone.utc)
 
@@ -85,10 +94,11 @@ def test_list_telemetry_entries_collapses_history_per_peer(tmp_path) -> None:
     assert by_peer["peer-2"]["timestamp"] == newer
 
 
-def test_list_telemetry_entries_filters_by_topic(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_list_telemetry_entries_filters_by_topic(tmp_path, backend: str) -> None:
     """Ensure telemetry entries respect topic filtering."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     topic = api.create_topic(Topic(topic_name="Topic", topic_path="/topic"))
     api.create_subscriber(Subscriber(destination="peer-1", topic_id=topic.topic_id))
@@ -110,10 +120,11 @@ def test_list_telemetry_entries_filters_by_topic(tmp_path) -> None:
     assert entries[0]["peer_destination"] == "peer-1"
 
 
-def test_list_telemetry_entries_unknown_topic(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_list_telemetry_entries_unknown_topic(tmp_path, backend: str) -> None:
     """Ensure missing topics raise errors."""
 
-    api = _build_api(tmp_path)
+    api = _build_api(tmp_path, backend=backend)
     controller = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
 
     with pytest.raises(KeyError):

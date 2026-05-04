@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `983 passed, 563 warnings`
+  - Result: `987 passed, 569 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -146,6 +146,9 @@ It covers:
   telemetry status counts, file/image status counts, and app-info round trip
   behavior parameterized across Python storage and the Rust bridge-backed API
   adapter
+- Northbound telemetry entry latest/collapse, topic filtering, and unknown-topic
+  behavior parameterized across Python storage and the Rust bridge-backed API
+  adapter; SQLAlchemy query-count optimization remains Python-only
 - FastAPI northbound status counts, subscribe destination validation, protected
   endpoint auth, auth validation, and bearer-token app/auth payload behavior
   parameterized across Python storage and the Rust bridge-backed API adapter
