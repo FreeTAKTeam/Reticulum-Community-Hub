@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `992 passed, 573 warnings`
+  - Result: `995 passed, 581 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -169,6 +169,9 @@ It covers:
 - FastAPI northbound gateway control status/start/stop/sync and
   disabled-control 404 behavior parameterized across Python storage and the
   Rust bridge-backed API adapter
+- Gateway app state, mission-domain-service handoff, and routing snapshot
+  display-name behavior parameterized across Python storage and the Rust
+  bridge-backed API adapter
 - mission and checklist source-identity mismatch rejection at the transport
   bridge boundary
 - unauthorized, unknown command, invalid payload, and not-found rejection shapes

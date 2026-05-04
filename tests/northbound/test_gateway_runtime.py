@@ -30,6 +30,7 @@ from reticulum_telemetry_hub.northbound.gateway import _start_hub_thread
 from reticulum_telemetry_hub.northbound.gateway import build_gateway_app
 from reticulum_telemetry_hub.northbound.gateway import GatewayConfig
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
 class DummyHub:
@@ -59,6 +60,13 @@ class DummyHub:
         """Return a no-op unsubscribe."""
 
         return lambda: None
+
+
+def _api_for_backend(tmp_path, backend: str):
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
+    config_manager = HubConfigurationManager(storage_path=tmp_path)
+    return ReticulumTelemetryHubAPI(config_manager=config_manager)
 
 
 def test_resolve_interval_prefers_value() -> None:
@@ -164,11 +172,11 @@ def test_start_hub_thread_invokes_run() -> None:
     assert called.is_set()
 
 
-def test_build_gateway_app_sets_state(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_build_gateway_app_sets_state(tmp_path, backend: str) -> None:
     """Attach the hub to app state."""
 
-    config_manager = HubConfigurationManager(storage_path=tmp_path)
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    api = _api_for_backend(tmp_path, backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     hub = DummyHub(api, telemetry, EventLog())
 
@@ -178,12 +186,14 @@ def test_build_gateway_app_sets_state(tmp_path) -> None:
     assert app.state.hub is hub
 
 
-def test_build_gateway_app_passes_hub_domain_service(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_build_gateway_app_passes_hub_domain_service(
+    monkeypatch, tmp_path, backend: str
+) -> None:
     """Pass the hub mission-domain service instance into create_app."""
 
     captured: dict[str, object] = {}
-    config_manager = HubConfigurationManager(storage_path=tmp_path)
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    api = _api_for_backend(tmp_path, backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     hub = DummyHub(api, telemetry, EventLog())
 
@@ -198,11 +208,13 @@ def test_build_gateway_app_passes_hub_domain_service(monkeypatch, tmp_path) -> N
     assert captured.get("mission_domain_service") is hub.mission_domain_service
 
 
-def test_build_gateway_app_routes_include_destination_identity_and_name(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_build_gateway_app_routes_include_destination_identity_and_name(
+    tmp_path, backend: str
+) -> None:
     """Expose destination hash, identity hash, and display names in routing snapshots."""
 
-    config_manager = HubConfigurationManager(storage_path=tmp_path)
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    api = _api_for_backend(tmp_path, backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     hub = DummyHub(api, telemetry, EventLog())
 
