@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from reticulum_telemetry_hub.api import Client
+from reticulum_telemetry_hub.api import IdentityStatus
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api import Subscriber
 from reticulum_telemetry_hub.api import Topic
@@ -257,6 +258,56 @@ class RustTopicSubscriberApi:
             for identity in identities
         }
 
+    def ban_identity(self, identity: str) -> IdentityStatus:
+        self._bridge.set_identity_state(
+            identity, is_banned=True, is_blackholed=False
+        )
+        return self._identity_status(identity)
+
+    def unban_identity(self, identity: str) -> IdentityStatus:
+        self._bridge.set_identity_state(
+            identity, is_banned=False, is_blackholed=False
+        )
+        return self._identity_status(identity)
+
+    def blackhole_identity(self, identity: str) -> IdentityStatus:
+        self._bridge.set_identity_state(
+            identity, is_banned=False, is_blackholed=True
+        )
+        return self._identity_status(identity)
+
+    def list_identity_statuses(self) -> list[IdentityStatus]:
+        snapshot = self._bridge.state_snapshot()
+        states = _identity_states_by_identity(snapshot)
+        clients = {client.identity.lower(): client for client in self.list_clients()}
+        announces = _identity_announces_by_identity(snapshot)
+        identities = sorted(set(states) | set(clients) | set(announces))
+        return [self._identity_status(identity, snapshot=snapshot) for identity in identities]
+
+    def _identity_status(
+        self, identity: str, *, snapshot: dict[str, object] | None = None
+    ) -> IdentityStatus:
+        snapshot = snapshot or self._bridge.state_snapshot()
+        normalized = identity.lower()
+        state = _identity_states_by_identity(snapshot).get(normalized, {})
+        announce = _identity_announces_by_identity(snapshot).get(normalized)
+        display_name = _announce_display_name(announce)
+        is_banned = bool(state.get("is_banned"))
+        is_blackholed = bool(state.get("is_blackholed"))
+        status = "blackholed" if is_blackholed else "banned" if is_banned else "inactive"
+        return IdentityStatus(
+            identity=identity,
+            status=status,
+            display_name=display_name,
+            metadata={"display_name": display_name} if display_name else {},
+            is_banned=is_banned,
+            is_blackholed=is_blackholed,
+            client_type=str((announce or {}).get("client_type") or "generic_lxmf"),
+            announce_capabilities=_announce_capabilities(announce),
+            is_rem_capable=str((announce or {}).get("client_type") or "generic_lxmf")
+            == "rem",
+        )
+
     def list_identity_capabilities(self, identity: str) -> list[str]:
         normalized = identity.lower()
         grants = self._bridge.state_snapshot().get("identity_capabilities")
@@ -417,6 +468,16 @@ def _identity_announces_by_identity(
             if existing is None or not _announce_display_name(existing):
                 result[announced] = display_record
     return result
+
+
+def _identity_states_by_identity(snapshot: dict[str, object]) -> dict[str, dict[str, object]]:
+    states = snapshot.get("identity_states")
+    assert isinstance(states, list)
+    return {
+        str(state.get("identity") or "").lower(): dict(state)
+        for state in states
+        if isinstance(state, dict) and state.get("identity")
+    }
 
 
 def _announce_display_name(announce: dict[str, object] | None) -> str | None:
@@ -712,8 +773,9 @@ def test_config_apply_rejects_invalid_payload(tmp_path):
     assert api.get_config_text() == original
 
 
-def test_identity_status_crud(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_status_crud(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.join("identity-1")
     banned = api.ban_identity("identity-1")
     assert banned.is_banned

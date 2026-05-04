@@ -285,6 +285,26 @@ class RustMissionSyncBridge:
             )
         )
 
+    def set_identity_state(
+        self,
+        identity: str,
+        *,
+        is_banned: bool,
+        is_blackholed: bool,
+    ) -> None:
+        """Persist one Rust-side identity moderation state."""
+
+        self._expect_state_updated(
+            self._request(
+                {
+                    "type": "set_identity_state",
+                    "identity": identity,
+                    "is_banned": is_banned,
+                    "is_blackholed": is_blackholed,
+                }
+            )
+        )
+
     def assign_mission_access_role(
         self,
         mission_uid: str,
