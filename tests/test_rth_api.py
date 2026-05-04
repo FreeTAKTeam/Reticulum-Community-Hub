@@ -114,6 +114,8 @@ class RustTopicSubscriberApi:
                 storage_path=tmp_path,
                 config_path=config_path,
             )
+        else:
+            self._config_manager = HubConfigurationManager(storage_path=tmp_path)
         self._hub_display_name = _read_hub_display_name(tmp_path / "config.ini")
         self._app_name = "ReticulumTelemetryHub" if self._hub_display_name else "TestHub"
         self._bridge = _bridge(tmp_path / "r3akt-api.sqlite")

@@ -1687,10 +1687,13 @@ def test_events_endpoint_returns_nonfatal_exception_entry(tmp_path: Path) -> Non
     assert any(entry["type"] == "telemetry_error" for entry in payload)
 
 
-def test_apply_config_rejects_invalid_payload(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_apply_config_rejects_invalid_payload(
+    tmp_path: Path, backend: str
+) -> None:
     """Return HTTP 400 when a config payload is invalid."""
 
-    client, api, _, _ = _build_client(tmp_path)
+    client, api, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret", "Content-Type": "text/plain"}
 
     config_path = api._config_manager.config_path  # pylint: disable=protected-access
@@ -1704,7 +1707,10 @@ def test_apply_config_rejects_invalid_payload(tmp_path: Path) -> None:
     assert api.get_config_text() == original
 
 
-def test_apply_reticulum_config_rejects_invalid_payload(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_apply_reticulum_config_rejects_invalid_payload(
+    tmp_path: Path, backend: str
+) -> None:
     """Return HTTP 400 when a Reticulum config payload is invalid."""
 
     reticulum_path = tmp_path / "reticulum.conf"
@@ -1714,7 +1720,7 @@ def test_apply_reticulum_config_rejects_invalid_payload(tmp_path: Path) -> None:
         f"[hub]\nreticulum_config_path = {reticulum_path}\n", encoding="utf-8"
     )
 
-    client, api, _, _ = _build_client(tmp_path)
+    client, api, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret", "Content-Type": "text/plain"}
 
     original = api.get_reticulum_config_text()
@@ -1726,8 +1732,9 @@ def test_apply_reticulum_config_rejects_invalid_payload(tmp_path: Path) -> None:
     assert api.get_reticulum_config_text() == original
 
 
-def test_identity_moderation_routes(tmp_path: Path) -> None:
-    client, _, _, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_moderation_routes(tmp_path: Path, backend: str) -> None:
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     ban_response = client.post("/Client/abc/Ban", headers=headers)
