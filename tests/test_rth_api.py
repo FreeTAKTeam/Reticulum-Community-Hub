@@ -268,6 +268,11 @@ class RustTopicSubscriberApi:
         return self._identity_status(identity)
 
     def unban_identity(self, identity: str) -> IdentityStatus:
+        state = _identity_states_by_identity(self._bridge.state_snapshot()).get(
+            identity.lower(), {}
+        )
+        if state.get("is_blackholed"):
+            return self._identity_status(identity)
         self._bridge.set_identity_state(
             identity, is_banned=False, is_blackholed=False
         )
@@ -1173,8 +1178,9 @@ def test_identity_statuses_dedupe_with_announce_only(tmp_path, backend):
     assert matches[0].identity == "deadbeef"
 
 
-def test_identity_statuses_dedupe_preserves_blackhole(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_statuses_dedupe_preserves_blackhole(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.blackhole_identity("deadbeef")
     api.unban_identity("DEADBEEF")
 
