@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `1006 passed, 600 warnings`
+  - Result: `1007 passed, 604 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -159,6 +159,8 @@ It covers:
 - FastAPI northbound status counts, subscribe destination validation, protected
   endpoint auth, auth validation, and bearer-token app/auth payload behavior
   parameterized across Python storage and the Rust bridge-backed API adapter
+- FastAPI northbound sensitive core route remote-auth rejection behavior
+  parameterized across Python storage and the Rust bridge-backed API adapter
 - FastAPI northbound app-info configured hub display-name behavior
   parameterized across Python storage and the Rust bridge-backed API adapter
 - FastAPI northbound chat message send, scope handling, and missing-dispatcher
@@ -218,7 +220,7 @@ coverage for the shared RCH runtime path, not full RCH application parity.
 
 | Requirement | Current evidence | Status |
 | --- | --- | --- |
-| Same suite can run against Python backend | `.\.venv\Scripts\python.exe -m pytest --no-cov -q` passes with `1006 passed, 600 warnings` | Done for Python |
+| Same suite can run against Python backend | `.\.venv\Scripts\python.exe -m pytest --no-cov -q` passes with `1007 passed, 604 warnings` | Done for Python |
 | Same suite can run against Rust backend | Many runtime-facing tests are parameterized with `backend in ["python", "rust"]`, but there is no global Rust backend mode for the full suite | Missing |
 | Rust southbound command behavior matches Python | `tests/rust_runtime/test_rch_bridge_parity.py` covers `87 / 87` declared mission/checklist commands and passes | Done for scoped southbound path |
 | Northbound API/runtime surfaces use Rust bridge where practical | Topic, subscriber, client, identity, REM, subject-rights, file/image, chat, telemetry, gateway, service, websocket, EAM, marker, zone, checklist, and R3AKT route slices are parameterized | Partial |

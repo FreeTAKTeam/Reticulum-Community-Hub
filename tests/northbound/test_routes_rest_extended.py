@@ -2830,8 +2830,11 @@ def test_r3akt_missions_route_applies_limit(tmp_path: Path, backend: str) -> Non
     assert len(single.json()) == 1
 
 
-def test_sensitive_core_routes_require_auth_for_remote_clients(tmp_path: Path) -> None:
-    client, _, _, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_sensitive_core_routes_require_auth_for_remote_clients(
+    tmp_path: Path, backend: str
+) -> None:
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
     remote_client = TestClient(client.app, client=("198.51.100.10", 50000))
     now = int(datetime.now(timezone.utc).timestamp())
 
