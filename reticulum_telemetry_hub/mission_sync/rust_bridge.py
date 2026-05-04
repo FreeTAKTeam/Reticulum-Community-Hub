@@ -250,6 +250,41 @@ class RustMissionSyncBridge:
             )
         )
 
+    def record_identity_announce(
+        self,
+        identity: str,
+        *,
+        announced_identity_hash: str | None = None,
+        display_name: str | None = None,
+        source_interface: str | None = None,
+        announce_capabilities: object = None,
+    ) -> None:
+        """Persist one Rust-side identity announce record."""
+
+        capabilities: list[str]
+        if isinstance(announce_capabilities, str):
+            capabilities = [
+                item.strip()
+                for item in announce_capabilities.split(",")
+                if item.strip()
+            ]
+        elif isinstance(announce_capabilities, list):
+            capabilities = [str(item) for item in announce_capabilities if str(item).strip()]
+        else:
+            capabilities = []
+        self._expect_state_updated(
+            self._request(
+                {
+                    "type": "record_identity_announce",
+                    "identity": identity,
+                    "announced_identity_hash": announced_identity_hash,
+                    "display_name": display_name,
+                    "source_interface": source_interface,
+                    "announce_capabilities": capabilities,
+                }
+            )
+        )
+
     def assign_mission_access_role(
         self,
         mission_uid: str,

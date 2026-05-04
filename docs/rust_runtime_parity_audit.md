@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `891 passed, 465 warnings`
+  - Result: `894 passed, 465 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -84,8 +84,10 @@ It covers:
   and title-case subscriber metadata patch tests, subscriber `reject_tests`
   create/patch-zero behavior, plus client join/list/leave, blank join/leave
   identity rejection, and identity capability grant/list/revoke behavior,
-  parameterized across Python storage and a minimal Rust bridge-backed
-  topic/subscriber/client/API-rights adapter
+  plus topic/client/identity-announce persistence, missing-name announce
+  preservation, and bulk display-name resolution, parameterized across Python
+  storage and a minimal Rust bridge-backed
+  topic/subscriber/client/API-rights/identity adapter
 - mission registry CRUD, patch, parent, zone link/unlink, RDE
 - mission change and log entry upsert/list
 - team, team member, client link/unlink, asset, skill, assignment, and assignment asset flows
@@ -115,9 +117,9 @@ tests Python-specific or not-yet-Rust-backed surfaces including:
   mission-list-limit, and mission-change/log Rust-backed flows, plus OpenAPI
   contracts
 - Direct `ReticulumTelemetryHubAPI` tests beyond current topic/subscriber CRUD,
-  client, and identity-capability parity, including attachment association,
-  identity announce/status, REM peer registry, subject-rights storage, config,
-  and app-info behavior
+  client, identity-capability, and basic identity-announce parity, including
+  attachment association, identity status/moderation, REM peer registry,
+  subject-rights storage, config, and app-info behavior
 - CLI process-control behavior
 - Python storage/migration helpers
 - Reticulum daemon lifecycle and outbound queue behavior

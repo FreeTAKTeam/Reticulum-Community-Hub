@@ -8,6 +8,7 @@ import uuid
 import pytest
 from sqlalchemy.exc import OperationalError
 
+from reticulum_telemetry_hub.api import Client
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api import Subscriber
 from reticulum_telemetry_hub.api import Topic
@@ -196,10 +197,65 @@ class RustTopicSubscriberApi:
         self._command("mission.leave", {}, source_identity=identity)
         return True
 
-    def list_clients(self) -> list[dict[str, object]]:
-        clients = self._bridge.state_snapshot().get("clients")
+    def list_clients(self) -> list[Client]:
+        snapshot = self._bridge.state_snapshot()
+        clients = snapshot.get("clients")
         assert isinstance(clients, list)
-        return [dict(client) for client in clients if isinstance(client, dict)]
+        announces = _identity_announces_by_identity(snapshot)
+        records: list[Client] = []
+        for client in clients:
+            if not isinstance(client, dict):
+                continue
+            identity = str(client.get("identity") or "")
+            announce = announces.get(identity.lower())
+            display_name = _announce_display_name(announce)
+            metadata = {"display_name": display_name} if display_name else {}
+            records.append(
+                Client(
+                    identity=identity,
+                    display_name=display_name,
+                    metadata=metadata,
+                    client_type=str(
+                        (announce or {}).get("client_type") or "generic_lxmf"
+                    ),
+                    announce_capabilities=_announce_capabilities(announce),
+                    is_rem_capable=str(
+                        (announce or {}).get("client_type") or "generic_lxmf"
+                    )
+                    == "rem",
+                )
+            )
+        return records
+
+    def record_identity_announce(
+        self,
+        identity: str,
+        *,
+        announced_identity_hash: str | None = None,
+        display_name: str | None = None,
+        source_interface: str | None = None,
+        announce_capabilities: object = None,
+    ) -> None:
+        self._bridge.record_identity_announce(
+            identity,
+            announced_identity_hash=announced_identity_hash,
+            display_name=display_name,
+            source_interface=source_interface,
+            announce_capabilities=announce_capabilities,
+        )
+
+    def resolve_identity_display_name(self, identity: str) -> str | None:
+        announces = _identity_announces_by_identity(self._bridge.state_snapshot())
+        return _announce_display_name(announces.get(identity.lower()))
+
+    def resolve_identity_display_names_bulk(
+        self, identities: list[str]
+    ) -> dict[str, str | None]:
+        announces = _identity_announces_by_identity(self._bridge.state_snapshot())
+        return {
+            identity: _announce_display_name(announces.get(identity.lower()))
+            for identity in identities
+        }
 
     def list_identity_capabilities(self, identity: str) -> list[str]:
         normalized = identity.lower()
@@ -335,6 +391,48 @@ def _subscriber_from_payload(payload: dict[str, object]) -> Subscriber:
             or ""
         ),
     )
+
+
+def _identity_announces_by_identity(
+    snapshot: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    announces = snapshot.get("identity_announces")
+    assert isinstance(announces, list)
+    records = [dict(record) for record in announces if isinstance(record, dict)]
+    by_destination = {
+        str(record.get("destination_hash") or "").lower(): record
+        for record in records
+        if record.get("destination_hash")
+    }
+    result: dict[str, dict[str, object]] = {}
+    for record in records:
+        destination = str(record.get("destination_hash") or "").lower()
+        announced = str(record.get("announced_identity_hash") or "").lower()
+        canonical = by_destination.get(announced)
+        display_record = canonical if _announce_display_name(canonical) else record
+        if destination:
+            result[destination] = display_record
+        if announced:
+            existing = result.get(announced)
+            if existing is None or not _announce_display_name(existing):
+                result[announced] = display_record
+    return result
+
+
+def _announce_display_name(announce: dict[str, object] | None) -> str | None:
+    if not announce:
+        return None
+    display_name = announce.get("display_name")
+    return str(display_name) if display_name else None
+
+
+def _announce_capabilities(announce: dict[str, object] | None) -> list[str]:
+    if not announce:
+        return []
+    capabilities = announce.get("announce_capabilities")
+    if not isinstance(capabilities, list):
+        return []
+    return [str(capability) for capability in capabilities]
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
@@ -629,15 +727,24 @@ def test_identity_status_crud(tmp_path):
     assert identity_map["identity-2"].status == "blackholed"
 
 
-def test_persistence_between_instances(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_persistence_between_instances(tmp_path, backend):
     cfg = make_config_manager(tmp_path)
-    api1 = ReticulumTelemetryHubAPI(config_manager=cfg)
+    api1 = (
+        RustTopicSubscriberApi(tmp_path)
+        if backend == "rust"
+        else ReticulumTelemetryHubAPI(config_manager=cfg)
+    )
     topic = api1.create_topic(Topic(topic_name="Ops", topic_path="/ops"))
     api1.join("identity42")
     api1.record_identity_announce("identity42", display_name="Sideband-Alice")
 
     # Recreate API with same configuration/DB path
-    api2 = ReticulumTelemetryHubAPI(config_manager=cfg)
+    api2 = (
+        RustTopicSubscriberApi(tmp_path)
+        if backend == "rust"
+        else ReticulumTelemetryHubAPI(config_manager=cfg)
+    )
     assert api2.retrieve_topic(topic.topic_id).topic_name == "Ops"
     clients = api2.list_clients()
     assert any(c.identity == "identity42" and c.display_name == "Sideband-Alice" for c in clients)
@@ -787,18 +894,20 @@ def test_delivery_announce_display_name_does_not_strip_rem_classification(tmp_pa
     assert "emergencymessages" in status.announce_capabilities
 
 
-def test_identity_announce_ignores_missing_name(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_announce_ignores_missing_name(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
     api.record_identity_announce("deadbeef", display_name=None)
 
     assert api.resolve_identity_display_name("deadbeef") == "Sideband-Alice"
 
 
-def test_resolve_identity_display_names_bulk(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_resolve_identity_display_names_bulk(tmp_path, backend):
     """Ensure bulk identity display-name resolution returns merged announce view."""
 
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api = _api(tmp_path, backend)
     api.record_identity_announce("deadbeef-destination", announced_identity_hash="deadbeef")
     api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
 
