@@ -134,6 +134,20 @@ class RustTopicSubscriberApi:
             subscriber_id=str(result.get("subscriber_id") or result.get("Destination") or ""),
         )
 
+    def create_subscriber(self, subscriber: Subscriber) -> Subscriber:
+        if not subscriber.destination:
+            raise ValueError("Subscriber destination is required")
+        result = self._command(
+            "topic.subscribe",
+            {
+                "topic_id": subscriber.topic_id,
+                "destination": subscriber.destination,
+                "reject_tests": subscriber.reject_tests,
+                "metadata": subscriber.metadata or {},
+            },
+        )
+        return _subscriber_from_payload(result)
+
     def retrieve_subscriber(self, subscriber_id: str | None) -> Subscriber:
         for subscriber in self.list_subscribers():
             if subscriber.subscriber_id == subscriber_id:
@@ -1059,8 +1073,9 @@ def test_patch_topic_raises_when_storage_returns_none(tmp_path, monkeypatch):
         api.patch_topic(topic.topic_id, topic_name="New Name")
 
 
-def test_create_subscriber_requires_destination(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_create_subscriber_requires_destination(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     with pytest.raises(ValueError):
         api.create_subscriber(Subscriber(destination=""))
