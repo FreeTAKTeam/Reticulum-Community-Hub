@@ -1408,7 +1408,8 @@ def test_client_list_pagination_preserves_legacy_response(tmp_path: Path) -> Non
     assert payload["has_previous"] is False
 
 
-def test_core_routes_endpoints(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_core_routes_endpoints(tmp_path: Path, backend: str) -> None:
     reticulum_path = tmp_path / "reticulum.conf"
     reticulum_path.write_text("[reticulum]\nshare_instance = yes\n", encoding="utf-8")
     config_path = tmp_path / "config.ini"
@@ -1416,7 +1417,7 @@ def test_core_routes_endpoints(tmp_path: Path) -> None:
         f"[hub]\nreticulum_config_path = {reticulum_path}\n", encoding="utf-8"
     )
 
-    client, api, event_log, telemetry = _build_client(tmp_path)
+    client, api, event_log, telemetry = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     help_response = client.get("/Help")
