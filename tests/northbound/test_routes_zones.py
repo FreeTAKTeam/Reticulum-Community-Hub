@@ -95,7 +95,14 @@ class RustZoneService:
             source_identity="peer-a",
         )
         payload = responses[-1].fields[FIELD_RESULTS]
-        if not isinstance(payload, dict) or payload.get("status") != "result":
+        if not isinstance(payload, dict):
+            raise KeyError(command_type)
+        if payload.get("status") == "rejected":
+            reason = str(payload.get("reason") or payload.get("detail") or command_type)
+            if payload.get("reason_code") == "invalid_payload":
+                raise ValueError(reason)
+            raise KeyError(reason)
+        if payload.get("status") != "result":
             raise KeyError(command_type)
         result = payload.get("result")
         if not isinstance(result, dict):
