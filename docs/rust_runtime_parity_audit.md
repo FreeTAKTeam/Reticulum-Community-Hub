@@ -1,6 +1,6 @@
 # Rust Runtime Parity Audit
 
-Last verified: 2026-05-03
+Last verified: 2026-05-04
 
 ## Objective
 
@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `912 passed, 465 warnings`
+  - Result: `915 passed, 465 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -96,7 +96,9 @@ It covers:
   dedupe, display-name duplicate collapse, joined-identity preference, and
   app-info/Reticulum destination validation behavior, plus static
   subject-rights operation definition inventory and config apply/rollback
-  validation behavior
+  validation behavior; subject-rights capability-grant listing,
+  mission-access role effective authorization, and explicit operation revoke
+  override behavior are also parameterized across Python and Rust
 - mission registry CRUD, patch, parent, zone link/unlink, RDE
 - mission change and log entry upsert/list
 - team, team member, client link/unlink, asset, skill, assignment, and assignment asset flows
@@ -126,8 +128,8 @@ tests Python-specific or not-yet-Rust-backed surfaces including:
   mission-list-limit, and mission-change/log Rust-backed flows, plus OpenAPI
   contracts
 - Direct `ReticulumTelemetryHubAPI` tests beyond current topic/subscriber CRUD,
-  client, identity-capability, identity-announce, and REM-mode parity, including
-  attachment association and subject-rights storage/effective authorization
+  client, identity-capability, identity-announce, REM-mode, and subject-rights
+  parity, including attachment association and private storage edge cases
 - CLI process-control behavior
 - Python storage/migration helpers
 - Reticulum daemon lifecycle and outbound queue behavior

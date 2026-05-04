@@ -482,6 +482,136 @@ class RustTopicSubscriberApi:
         self._bridge.revoke_capability(identity, capability)
         return {"identity": identity, "capability": capability, "granted": False}
 
+    def list_capability_grants(self, identity: str | None = None) -> list[dict[str, object]]:
+        normalized = identity.lower() if identity else None
+        records = self._bridge.state_snapshot().get("identity_capabilities")
+        assert isinstance(records, list)
+        grants: list[dict[str, object]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            record_identity = str(record.get("identity") or "").lower()
+            if normalized is not None and record_identity != normalized:
+                continue
+            capability = str(record.get("capability") or "")
+            if not record_identity or not capability:
+                continue
+            grants.append(
+                {
+                    "grant_uid": f"{record_identity}:{capability}",
+                    "identity": record_identity,
+                    "capability": capability,
+                    "granted": True,
+                    "granted_by": None,
+                    "granted_at": None,
+                    "expires_at": None,
+                    "updated_at": None,
+                }
+            )
+        return sorted(grants, key=lambda grant: str(grant["capability"]))
+
+    def upsert_mission(self, payload: dict[str, object]) -> dict[str, object]:
+        return self._command("mission.registry.mission.upsert", payload)
+
+    def upsert_team(self, payload: dict[str, object]) -> dict[str, object]:
+        return self._command("mission.registry.team.upsert", payload)
+
+    def upsert_team_member(self, payload: dict[str, object]) -> dict[str, object]:
+        return self._command("mission.registry.team_member.upsert", payload)
+
+    def link_team_member_client(
+        self, team_member_uid: str, client_identity: str
+    ) -> dict[str, object]:
+        return self._command(
+            "mission.registry.team_member.client.link",
+            {
+                "team_member_uid": team_member_uid,
+                "client_identity": client_identity,
+            },
+        )
+
+    def assign_mission_access_role(
+        self,
+        mission_uid: str,
+        subject_type: str,
+        subject_id: str,
+        *,
+        role: str | None = None,
+        assigned_by: str | None = None,
+    ) -> dict[str, object]:
+        del assigned_by
+        resolved_role = role or "MISSION_SUBSCRIBER"
+        self._bridge.assign_mission_access_role(
+            mission_uid, subject_type, subject_id, resolved_role
+        )
+        matches = [
+            assignment
+            for assignment in _mission_access_assignments(self._bridge.state_snapshot())
+            if assignment["mission_uid"] == mission_uid
+            and assignment["subject_type"] == subject_type
+            and assignment["subject_id"] == subject_id
+        ]
+        return matches[0] if matches else {}
+
+    def revoke_operation_right(
+        self,
+        subject_type: str,
+        subject_id: str,
+        operation: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        granted_by: str | None = None,
+    ) -> dict[str, object]:
+        del granted_by
+        self._bridge.revoke_operation_right(
+            subject_type,
+            subject_id,
+            operation,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        return {
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "operation": operation,
+            "scope_type": scope_type or "global",
+            "scope_id": scope_id or "",
+            "granted": False,
+        }
+
+    def resolve_effective_operations(
+        self, identity: str, mission_uid: str | None = None
+    ) -> list[str]:
+        snapshot = self._bridge.state_snapshot()
+        subject_refs = _subject_refs_for_identity(snapshot, identity)
+        granted: set[str] = set(self.list_identity_capabilities(identity))
+        denied: set[str] = set()
+        for right in _subject_operation_rights(snapshot):
+            if (right["subject_type"], right["subject_id"]) not in subject_refs:
+                continue
+            if right["scope_type"] == "mission" and right["scope_id"] != mission_uid:
+                continue
+            operation = str(right["operation"])
+            if right["granted"]:
+                granted.add(operation)
+            else:
+                denied.add(operation)
+        for assignment in _mission_access_assignments(snapshot):
+            if (assignment["subject_type"], assignment["subject_id"]) not in subject_refs:
+                continue
+            if mission_uid is not None and assignment["mission_uid"] != mission_uid:
+                continue
+            granted.update(MISSION_ROLE_BUNDLES.get(str(assignment["role"]), set()))
+        return sorted(granted - denied)
+
+    def authorize(
+        self, identity: str, operation: str, mission_uid: str | None = None
+    ) -> bool:
+        return operation in self.resolve_effective_operations(
+            identity, mission_uid=mission_uid
+        )
+
     def _command(
         self,
         command_type: str,
@@ -520,6 +650,17 @@ def _api(tmp_path: Path, backend: str) -> ReticulumTelemetryHubAPI | RustTopicSu
     if backend == "rust":
         return RustTopicSubscriberApi(tmp_path)
     return ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+
+def _rights_domain(
+    api: ReticulumTelemetryHubAPI | RustTopicSubscriberApi,
+    backend: str,
+) -> MissionDomainService | RustTopicSubscriberApi:
+    if backend == "rust":
+        assert isinstance(api, RustTopicSubscriberApi)
+        return api
+    assert isinstance(api, ReticulumTelemetryHubAPI)
+    return MissionDomainService(api._config_manager.config.hub_database_path)  # pylint: disable=protected-access
 
 
 def _runtime_root() -> Path:
@@ -670,6 +811,41 @@ def _identity_rem_modes(snapshot: dict[str, object]) -> dict[str, dict[str, obje
         for mode in modes
         if isinstance(mode, dict) and mode.get("identity")
     }
+
+
+def _mission_access_assignments(snapshot: dict[str, object]) -> list[dict[str, object]]:
+    assignments = snapshot.get("mission_access_assignments")
+    assert isinstance(assignments, list)
+    return [dict(record) for record in assignments if isinstance(record, dict)]
+
+
+def _subject_operation_rights(snapshot: dict[str, object]) -> list[dict[str, object]]:
+    rights = snapshot.get("subject_operation_rights")
+    assert isinstance(rights, list)
+    return [dict(record) for record in rights if isinstance(record, dict)]
+
+
+def _subject_refs_for_identity(
+    snapshot: dict[str, object], identity: str
+) -> set[tuple[str, str]]:
+    normalized = identity.lower()
+    refs: set[tuple[str, str]] = {("identity", normalized)}
+    team_members = snapshot.get("team_members")
+    assert isinstance(team_members, list)
+    for member in team_members:
+        if not isinstance(member, dict):
+            continue
+        if str(member.get("rns_identity") or "").lower() == normalized:
+            refs.add(("team_member", str(member.get("uid") or "")))
+    links = snapshot.get("team_member_client_links")
+    assert isinstance(links, list)
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        if str(link.get("client_identity") or "").lower() == normalized:
+            refs.add(("team_member", str(link.get("team_member_uid") or "")))
+    refs.discard(("team_member", ""))
+    return refs
 
 
 def _rem_mode_for_identity(snapshot: dict[str, object], identity: str) -> str:
@@ -1351,31 +1527,36 @@ def test_identity_capability_grants_round_trip(tmp_path, backend):
     assert api.list_identity_capabilities("deadbeef") == []
 
 
-def test_subject_rights_backfill_legacy_identity_capabilities(tmp_path):
-    cfg = make_config_manager(tmp_path)
-    api = ReticulumTelemetryHubAPI(config_manager=cfg)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_subject_rights_backfill_legacy_identity_capabilities(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
-    with api._storage._Session() as session:
-        session.add(
-            IdentityCapabilityGrantRecord(
-                grant_uid=uuid.uuid4().hex,
-                identity="legacy-peer",
-                capability="mission.join",
-                granted=True,
+    if backend == "python":
+        assert isinstance(api, ReticulumTelemetryHubAPI)
+        with api._storage._Session() as session:
+            session.add(
+                IdentityCapabilityGrantRecord(
+                    grant_uid=uuid.uuid4().hex,
+                    identity="legacy-peer",
+                    capability="mission.join",
+                    granted=True,
+                )
             )
-        )
-        session.commit()
+            session.commit()
 
-    reloaded_api = ReticulumTelemetryHubAPI(config_manager=cfg)
+        api = ReticulumTelemetryHubAPI(config_manager=api._config_manager)  # pylint: disable=protected-access
+    else:
+        api.grant_identity_capability("legacy-peer", "mission.join")
 
-    assert reloaded_api.list_identity_capabilities("legacy-peer") == ["mission.join"]
-    grants = reloaded_api.list_capability_grants(identity="legacy-peer")
+    assert api.list_identity_capabilities("legacy-peer") == ["mission.join"]
+    grants = api.list_capability_grants(identity="legacy-peer")
     assert grants[0]["capability"] == "mission.join"
 
 
-def test_mission_access_roles_grant_effective_operations(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    domain = MissionDomainService(api._config_manager.config.hub_database_path)  # pylint: disable=protected-access
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_mission_access_roles_grant_effective_operations(tmp_path, backend):
+    api = _api(tmp_path, backend)
+    domain = _rights_domain(api, backend)
 
     domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission One"})
     domain.upsert_team({"uid": "team-1", "team_name": "Ops", "mission_uid": "mission-1"})
@@ -1414,9 +1595,10 @@ def test_operation_definitions_include_status_rights_and_bundles(tmp_path, backe
     assert "mission.registry.status.write" in definitions["mission_role_bundles"]["MISSION_OWNER"]
 
 
-def test_explicit_revoke_overrides_mission_access_bundle(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    domain = MissionDomainService(api._config_manager.config.hub_database_path)  # pylint: disable=protected-access
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_explicit_revoke_overrides_mission_access_bundle(tmp_path, backend):
+    api = _api(tmp_path, backend)
+    domain = _rights_domain(api, backend)
 
     domain.upsert_mission({"uid": "mission-1", "mission_name": "Mission One"})
     domain.upsert_team({"uid": "team-1", "team_name": "Ops", "mission_uid": "mission-1"})

@@ -339,6 +339,54 @@ class RustMissionSyncBridge:
             )
         )
 
+    def grant_operation_right(
+        self,
+        subject_type: str,
+        subject_id: str,
+        operation: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+    ) -> None:
+        """Grant one Rust-side subject operation right."""
+
+        self._expect_state_updated(
+            self._request(
+                {
+                    "type": "grant_operation_right",
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "operation": operation,
+                    "scope_type": scope_type or "global",
+                    "scope_id": scope_id or "",
+                }
+            )
+        )
+
+    def revoke_operation_right(
+        self,
+        subject_type: str,
+        subject_id: str,
+        operation: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+    ) -> None:
+        """Revoke one Rust-side subject operation right."""
+
+        self._expect_state_updated(
+            self._request(
+                {
+                    "type": "revoke_operation_right",
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "operation": operation,
+                    "scope_type": scope_type or "global",
+                    "scope_id": scope_id or "",
+                }
+            )
+        )
+
     def set_authorization_required(self, required: bool) -> None:
         """Enable or disable Rust-side capability enforcement."""
 
