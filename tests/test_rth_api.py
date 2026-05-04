@@ -646,8 +646,9 @@ def test_patch_topic_preserves_created_at(tmp_path):
         assert updated_record.created_at == original_created_at
 
 
-def test_join_and_leave_require_identity(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_join_and_leave_require_identity(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     with pytest.raises(ValueError):
         api.join("")
