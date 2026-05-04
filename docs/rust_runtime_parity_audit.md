@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `917 passed, 465 warnings`
+  - Result: `923 passed, 465 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -95,6 +95,9 @@ It covers:
   joined and announce-only identities, plus blackhole-preserving moderation
   dedupe, display-name duplicate collapse, joined-identity preference, and
   concurrent client join/leave plus identity announce upsert dedupe behavior,
+  topic patch created-timestamp preservation, attachment metadata topic
+  assignment/clearing, topic-delete attachment association cleanup, legacy raw
+  UUID attachment cleanup, and case-distinct attachment preservation behavior,
   app-info/Reticulum destination validation behavior, plus static
   subject-rights operation definition inventory and config apply/rollback
   validation behavior; subject-rights capability-grant listing,
@@ -130,8 +133,8 @@ tests Python-specific or not-yet-Rust-backed surfaces including:
   contracts
 - Direct `ReticulumTelemetryHubAPI` tests beyond current topic/subscriber CRUD,
   client, identity-capability, identity-announce, REM-mode, and subject-rights
-  parity, including attachment association and private storage edge cases such
-  as SQLAlchemy session retry and monkeypatched storage-return handling
+  parity, limited to private Python storage edge cases such as SQLAlchemy
+  session retry and monkeypatched storage-return handling
 - CLI process-control behavior
 - Python storage/migration helpers
 - Reticulum daemon lifecycle and outbound queue behavior

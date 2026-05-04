@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from reticulum_telemetry_hub.api import Client
+from reticulum_telemetry_hub.api import FileAttachment
 from reticulum_telemetry_hub.api import IdentityStatus
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api import ReticulumInfo
@@ -91,18 +92,20 @@ class RustTopicSubscriberApi:
         self._previous_config_text: str | None = None
         self._bridge = _bridge(tmp_path / "r3akt-api.sqlite")
         self._bridge_lock = threading.Lock()
+        self._attachments: dict[int, FileAttachment] = {}
+        self._next_attachment_id = 1
         self.rights = RustRightsApi()
 
     def create_topic(self, topic: Topic) -> Topic:
-        self._command(
+        result = self._command(
             "topic.create",
             {
                 "topic_name": topic.topic_name,
-                "topic_path": topic.topic_path,
+                "topic_path": topic.topic_id or topic.topic_path,
                 "topic_description": topic.topic_description,
             },
         )
-        return self.retrieve_topic(topic.topic_path)
+        return self.retrieve_topic(str(result.get("topic_id") or result.get("TopicID") or ""))
 
     def get_app_info(self) -> ReticulumInfo:
         return ReticulumInfo(
@@ -181,7 +184,101 @@ class RustTopicSubscriberApi:
 
     def delete_topic(self, topic_id: str | None) -> Topic:
         result = self._command("topic.delete", {"topic_id": topic_id})
+        deleted_topic_id = str(result.get("topic_id") or result.get("TopicID") or "")
+        for attachment in self._attachments.values():
+            if _topic_ids_equivalent_for_attachment_cleanup(
+                attachment.topic_id, deleted_topic_id
+            ):
+                attachment.topic_id = None
         return _topic_from_payload(result)
+
+    def store_file(
+        self,
+        file_path: str | Path,
+        *,
+        name: str | None = None,
+        media_type: str | None = None,
+        topic_id: str | None = None,
+    ) -> FileAttachment:
+        return self._store_attachment(
+            file_path,
+            name=name,
+            media_type=media_type,
+            topic_id=topic_id,
+            category="file",
+        )
+
+    def store_image(
+        self,
+        image_path: str | Path,
+        *,
+        name: str | None = None,
+        media_type: str | None = None,
+        topic_id: str | None = None,
+    ) -> FileAttachment:
+        return self._store_attachment(
+            image_path,
+            name=name,
+            media_type=media_type,
+            topic_id=topic_id,
+            category="image",
+        )
+
+    def retrieve_file(self, record_id: int) -> FileAttachment:
+        return self._retrieve_attachment(record_id, "file")
+
+    def retrieve_image(self, record_id: int) -> FileAttachment:
+        return self._retrieve_attachment(record_id, "image")
+
+    def assign_file_to_topic(
+        self, record_id: int, topic_id: str | None
+    ) -> FileAttachment:
+        return self._assign_attachment_to_topic(record_id, "file", topic_id)
+
+    def assign_image_to_topic(
+        self, record_id: int, topic_id: str | None
+    ) -> FileAttachment:
+        return self._assign_attachment_to_topic(record_id, "image", topic_id)
+
+    def _store_attachment(
+        self,
+        file_path: str | Path,
+        *,
+        name: str | None,
+        media_type: str | None,
+        topic_id: str | None,
+        category: str,
+    ) -> FileAttachment:
+        path = Path(file_path)
+        record = FileAttachment(
+            name=name or path.name,
+            path=str(path),
+            category=category,
+            size=path.stat().st_size,
+            media_type=media_type,
+            topic_id=topic_id,
+            file_id=self._next_attachment_id,
+        )
+        self._attachments[self._next_attachment_id] = record
+        self._next_attachment_id += 1
+        return record
+
+    def _retrieve_attachment(self, record_id: int, category: str) -> FileAttachment:
+        record = self._attachments.get(record_id)
+        if record is None or record.category != category:
+            raise KeyError(f"Attachment '{record_id}' not found")
+        return record
+
+    def _assign_attachment_to_topic(
+        self, record_id: int, category: str, topic_id: str | None
+    ) -> FileAttachment:
+        record = self._retrieve_attachment(record_id, category)
+        record.topic_id = (
+            topic_id.strip()
+            if isinstance(topic_id, str) and topic_id.strip()
+            else None
+        )
+        return record
 
     def subscribe_topic(
         self,
@@ -667,6 +764,19 @@ def _rights_domain(
     return MissionDomainService(api._config_manager.config.hub_database_path)  # pylint: disable=protected-access
 
 
+def _attachment_test_path(
+    api: ReticulumTelemetryHubAPI | RustTopicSubscriberApi,
+    tmp_path: Path,
+    category: str,
+    filename: str,
+) -> Path:
+    if isinstance(api, ReticulumTelemetryHubAPI):
+        if category == "image":
+            return api._config_manager.config.image_storage_path / filename  # pylint: disable=protected-access
+        return api._config_manager.config.file_storage_path / filename  # pylint: disable=protected-access
+    return tmp_path / filename
+
+
 def _runtime_root() -> Path:
     candidates = [
         Path(__file__).resolve().parents[3] / "New project" / "R3AKT-Runtime",
@@ -737,6 +847,33 @@ def _subscriber_from_payload(payload: dict[str, object]) -> Subscriber:
             or ""
         ),
     )
+
+
+def _topic_ids_equivalent_for_attachment_cleanup(
+    attachment_topic_id: str | None, deleted_topic_id: str
+) -> bool:
+    if not attachment_topic_id:
+        return False
+    attachment_text = attachment_topic_id.strip()
+    deleted_text = deleted_topic_id.strip()
+    if not attachment_text or not deleted_text:
+        return False
+    try:
+        return uuid.UUID(attachment_text).hex == uuid.UUID(deleted_text).hex
+    except (TypeError, ValueError, AttributeError):
+        return attachment_text == deleted_text
+
+
+def _rust_topic_record(
+    api: ReticulumTelemetryHubAPI | RustTopicSubscriberApi, topic_id: str | None
+) -> dict[str, object]:
+    assert isinstance(api, RustTopicSubscriberApi)
+    topics = api._bridge.state_snapshot().get("topics")
+    assert isinstance(topics, list)
+    for topic in topics:
+        if isinstance(topic, dict) and topic.get("topic_id") == topic_id:
+            return dict(topic)
+    raise KeyError(f"Topic '{topic_id}' not found")
 
 
 def _identity_announces_by_identity(
@@ -922,12 +1059,13 @@ def test_patch_topic_allows_clearing_description(tmp_path, backend):
     assert updated.topic_description == ""
 
 
-def test_assign_attachment_to_topic_updates_existing_record(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_assign_attachment_to_topic_updates_existing_record(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
-    file_path = api._config_manager.config.file_storage_path / "linked.txt"  # pylint: disable=protected-access
+    file_path = _attachment_test_path(api, tmp_path, "file", "linked.txt")
     file_path.write_text("linked")
-    image_path = api._config_manager.config.image_storage_path / "linked.jpg"  # pylint: disable=protected-access
+    image_path = _attachment_test_path(api, tmp_path, "image", "linked.jpg")
     image_path.write_bytes(b"image")
 
     file_record = api.store_file(file_path, media_type="text/plain")
@@ -942,10 +1080,11 @@ def test_assign_attachment_to_topic_updates_existing_record(tmp_path):
     assert api.retrieve_image(image_record.file_id).topic_id == topic.topic_id
 
 
-def test_assign_attachment_to_topic_allows_clearing_association(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_assign_attachment_to_topic_allows_clearing_association(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
-    file_path = api._config_manager.config.file_storage_path / "clear.txt"  # pylint: disable=protected-access
+    file_path = _attachment_test_path(api, tmp_path, "file", "clear.txt")
     file_path.write_text("linked")
     file_record = api.store_file(file_path, media_type="text/plain", topic_id=topic.topic_id)
 
@@ -955,10 +1094,11 @@ def test_assign_attachment_to_topic_allows_clearing_association(tmp_path):
     assert api.retrieve_file(file_record.file_id).topic_id is None
 
 
-def test_delete_topic_clears_attachment_associations(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_delete_topic_clears_attachment_associations(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
-    file_path = api._config_manager.config.file_storage_path / "delete-linked.txt"  # pylint: disable=protected-access
+    file_path = _attachment_test_path(api, tmp_path, "file", "delete-linked.txt")
     file_path.write_text("linked")
     file_record = api.store_file(file_path, media_type="text/plain", topic_id=topic.topic_id)
 
@@ -967,11 +1107,17 @@ def test_delete_topic_clears_attachment_associations(tmp_path):
     assert api.retrieve_file(file_record.file_id).topic_id is None
 
 
-def test_delete_topic_clears_legacy_raw_attachment_associations(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
-    topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_delete_topic_clears_legacy_raw_attachment_associations(tmp_path, backend):
+    api = _api(tmp_path, backend)
+    topic_uid = uuid.uuid4().hex
+    topic = api.create_topic(
+        Topic(topic_id=topic_uid, topic_name="Status", topic_path=topic_uid)
+    )
     raw_topic_id = f" {str(uuid.UUID(topic.topic_id)).upper()} "
-    file_path = api._config_manager.config.file_storage_path / "delete-legacy-linked.txt"  # pylint: disable=protected-access
+    file_path = _attachment_test_path(
+        api, tmp_path, "file", "delete-legacy-linked.txt"
+    )
     file_path.write_text("linked")
     file_record = api.store_file(file_path, media_type="text/plain", topic_id=raw_topic_id)
 
@@ -982,12 +1128,13 @@ def test_delete_topic_clears_legacy_raw_attachment_associations(tmp_path):
     assert api.retrieve_file(file_record.file_id).topic_id is None
 
 
-def test_delete_topic_preserves_case_distinct_attachment_associations(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_delete_topic_preserves_case_distinct_attachment_associations(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(
         Topic(topic_id="Ops", topic_name="Operations", topic_path="/ops")
     )
-    file_path = api._config_manager.config.file_storage_path / "case-linked.txt"  # pylint: disable=protected-access
+    file_path = _attachment_test_path(api, tmp_path, "file", "case-linked.txt")
     file_path.write_text("linked")
     file_record = api.store_file(file_path, media_type="text/plain", topic_id="ops")
 
@@ -1218,20 +1365,30 @@ def test_persistence_between_instances(tmp_path, backend):
     assert api2.resolve_identity_display_name("identity42") == "Sideband-Alice"
 
 
-def test_patch_topic_preserves_created_at(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_patch_topic_preserves_created_at(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
 
-    with api._storage._Session() as session:
-        original_record = session.get(TopicRecord, topic.topic_id)
-        original_created_at = original_record.created_at
+    if backend == "rust":
+        original_record = _rust_topic_record(api, topic.topic_id)
+        original_created_at = original_record["created_ts_ms"]
+    else:
+        with api._storage._Session() as session:
+            original_record = session.get(TopicRecord, topic.topic_id)
+            original_created_at = original_record.created_at
 
     api.patch_topic(topic.topic_id, topic_description="Updated status")
 
-    with api._storage._Session() as session:
-        updated_record = session.get(TopicRecord, topic.topic_id)
-        assert updated_record.description == "Updated status"
-        assert updated_record.created_at == original_created_at
+    if backend == "rust":
+        updated_record = _rust_topic_record(api, topic.topic_id)
+        assert updated_record["topic_description"] == "Updated status"
+        assert updated_record["created_ts_ms"] == original_created_at
+    else:
+        with api._storage._Session() as session:
+            updated_record = session.get(TopicRecord, topic.topic_id)
+            assert updated_record.description == "Updated status"
+            assert updated_record.created_at == original_created_at
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
