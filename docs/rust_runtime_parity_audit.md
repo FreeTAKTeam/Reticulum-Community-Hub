@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `1007 passed, 604 warnings`
+  - Result: `1009 passed, 614 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -43,6 +43,8 @@ It covers:
 - marker rename/delete southbound commands and the FastAPI marker
   create/update/delete route flow, MDI symbol acceptance, and alias
   normalization parameterized across Python and Rust
+- FastAPI marker symbol inventory and marker telemetry persistence without a
+  dispatcher parameterized across Python storage and the Rust bridge
 - zone create/list/patch/delete
 - mission marker link/unlink southbound commands, with marker link state
   persisted in Rust and exposed through mission registry route parity
@@ -220,7 +222,7 @@ coverage for the shared RCH runtime path, not full RCH application parity.
 
 | Requirement | Current evidence | Status |
 | --- | --- | --- |
-| Same suite can run against Python backend | `.\.venv\Scripts\python.exe -m pytest --no-cov -q` passes with `1007 passed, 604 warnings` | Done for Python |
+| Same suite can run against Python backend | `.\.venv\Scripts\python.exe -m pytest --no-cov -q` passes with `1009 passed, 614 warnings` | Done for Python |
 | Same suite can run against Rust backend | Many runtime-facing tests are parameterized with `backend in ["python", "rust"]`, but there is no global Rust backend mode for the full suite | Missing |
 | Rust southbound command behavior matches Python | `tests/rust_runtime/test_rch_bridge_parity.py` covers `87 / 87` declared mission/checklist commands and passes | Done for scoped southbound path |
 | Northbound API/runtime surfaces use Rust bridge where practical | Topic, subscriber, client, identity, REM, subject-rights, file/image, chat, telemetry, gateway, service, websocket, EAM, marker, zone, checklist, and R3AKT route slices are parameterized | Partial |

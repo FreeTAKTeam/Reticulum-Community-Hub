@@ -348,8 +348,9 @@ def test_marker_routes_create_update_and_delete(
     assert dispatched[3] == "marker.deleted"
 
 
-def test_marker_symbols_route(tmp_path: Path) -> None:
-    client, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_marker_symbols_route(tmp_path: Path, backend: str) -> None:
+    client, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     response = client.get("/api/markers/symbols", headers=headers)
@@ -426,9 +427,12 @@ def test_marker_routes_normalize_alias_symbols(
     assert marker["symbol"] == "group"
 
 
-def test_marker_telemetry_recorded_without_dispatcher(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_marker_telemetry_recorded_without_dispatcher(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
     monkeypatch.setenv("RTH_MARKER_IDENTITY_KEY", "44" * 32)
-    client, _ = _build_client(tmp_path, marker_dispatcher=None)
+    client, _ = _build_client(tmp_path, backend=backend, marker_dispatcher=None)
     headers = {"X-API-Key": "secret"}
 
     create_response = client.post(
