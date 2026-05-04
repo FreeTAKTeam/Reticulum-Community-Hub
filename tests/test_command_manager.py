@@ -70,17 +70,10 @@ def _attachment_path(
     return base_path / filename
 
 
-def test_handle_leave_invokes_destination_removed_callback():
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_handle_leave_invokes_destination_removed_callback(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
-
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.left: list[str] = []
-
-        def leave(self, identity: str) -> bool:
-            self.left.append(identity)
-            return True
 
     server_dest = RNS.Destination(
         RNS.Identity(),
@@ -96,12 +89,15 @@ def test_handle_leave_invokes_destination_removed_callback():
         "lxmf",
         "delivery",
     )
+    api = _api_for_backend(tmp_path, backend)
+    identity_hex = source_dest.identity.hash.hex().lower()
+    api.join(identity_hex)
     removed: list[str] = []
     manager = CommandManager(
         {source_dest.identity.hash: source_dest},
         type("DummyTelemetry", (), {"handle_command": lambda self, command, message, dest: None})(),
         server_dest,
-        DummyAPI(),
+        api,
         destination_removed_callback=lambda identity: removed.append(identity),
     )
     message = LXMF.LXMessage(server_dest, source_dest, "leave")
@@ -111,8 +107,8 @@ def test_handle_leave_invokes_destination_removed_callback():
     reply = manager._handle_leave(message)
 
     assert "Connection removed" in reply.content_as_string()
-    assert removed == [source_dest.identity.hash.hex().lower()]
-    assert manager.api.left == [source_dest.identity.hash.hex().lower()]
+    assert removed == [identity_hex]
+    assert all(client.identity != identity_hex for client in api.list_clients())
 
 
 def test_apply_lxmf_router_runtime_config_reads_allowed_and_ignored_sidecars(
