@@ -75,8 +75,9 @@ def _attachment_path(
     return base_path / filename
 
 
-def test_help_and_examples_fallback(tmp_path: Path) -> None:
-    services, _, _, _ = _build_services(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_help_and_examples_fallback(tmp_path: Path, backend: str) -> None:
+    services, _, _, _ = _build_services(tmp_path, backend=backend)
 
     help_text = services.help_text()
     examples = services.examples_text()
@@ -117,8 +118,9 @@ def test_status_snapshot_counts(tmp_path: Path, backend: str) -> None:
     assert snapshot["telemetry"]["ingest_count"] == 1
 
 
-def test_record_event_and_list_events(tmp_path: Path) -> None:
-    services, _, _, _ = _build_services(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_record_event_and_list_events(tmp_path: Path, backend: str) -> None:
+    services, _, _, _ = _build_services(tmp_path, backend=backend)
 
     services.record_event("test", "Recorded event")
     events = services.list_events()
@@ -197,14 +199,16 @@ def test_db_backed_topic_subscriber_lookups(tmp_path: Path, backend: str) -> Non
     assert {topic.topic_id for topic in topics} == {alerts.topic_id, ops.topic_id}
 
 
-def test_send_message_requires_dispatcher(tmp_path: Path) -> None:
-    services, _, _, _ = _build_services(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_send_message_requires_dispatcher(tmp_path: Path, backend: str) -> None:
+    services, _, _, _ = _build_services(tmp_path, backend=backend)
 
     with pytest.raises(RuntimeError):
         services.send_message("payload")
 
 
-def test_send_message_dispatches_payload(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_send_message_dispatches_payload(tmp_path: Path, backend: str) -> None:
     captured = {}
 
     def _dispatcher(content, topic_id, destination, fields):
@@ -213,7 +217,9 @@ def test_send_message_dispatches_payload(tmp_path: Path) -> None:
         captured["destination"] = destination
         captured["fields"] = fields
 
-    services, _, _, _ = _build_services(tmp_path, message_dispatcher=_dispatcher)
+    services, _, _, _ = _build_services(
+        tmp_path, backend=backend, message_dispatcher=_dispatcher
+    )
     services.send_message("hello", topic_id="topic-1")
 
     assert captured == {
@@ -224,9 +230,13 @@ def test_send_message_dispatches_payload(tmp_path: Path) -> None:
     }
 
 
-def test_send_message_rejects_mixed_routing_modes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_send_message_rejects_mixed_routing_modes(
+    tmp_path: Path, backend: str
+) -> None:
     services, _, _, _ = _build_services(
         tmp_path,
+        backend=backend,
         message_dispatcher=lambda *_args, **_kwargs: None,
     )
 
@@ -234,8 +244,9 @@ def test_send_message_rejects_mixed_routing_modes(tmp_path: Path) -> None:
         services.send_message("hello", topic_id="topic-1", destination="dest-1")
 
 
-def test_telemetry_entries_proxy(tmp_path: Path) -> None:
-    services, _, telemetry, _ = _build_services(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_telemetry_entries_proxy(tmp_path: Path, backend: str) -> None:
+    services, _, telemetry, _ = _build_services(tmp_path, backend=backend)
     now = datetime.now(timezone.utc)
     telemetry.save_telemetry(
         {
@@ -262,10 +273,13 @@ def test_app_info_round_trip(tmp_path: Path, backend: str) -> None:
     assert "reticulum_destination" in info
 
 
-def test_reticulum_interface_capabilities_proxy(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_reticulum_interface_capabilities_proxy(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
     """Return capabilities payload from the discovery helper."""
 
-    services, _, _, _ = _build_services(tmp_path)
+    services, _, _, _ = _build_services(tmp_path, backend=backend)
     monkeypatch.setattr(
         "reticulum_telemetry_hub.northbound.services.get_interface_capabilities",
         lambda: {"runtime_active": True, "supported_interface_types": ["TCPClientInterface"]},
@@ -277,10 +291,13 @@ def test_reticulum_interface_capabilities_proxy(tmp_path: Path, monkeypatch) -> 
     assert payload["supported_interface_types"] == ["TCPClientInterface"]
 
 
-def test_reticulum_discovery_snapshot_proxy(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_reticulum_discovery_snapshot_proxy(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
     """Return discovery payload from the discovery helper."""
 
-    services, _, _, _ = _build_services(tmp_path)
+    services, _, _, _ = _build_services(tmp_path, backend=backend)
     monkeypatch.setattr(
         "reticulum_telemetry_hub.northbound.services.get_discovery_snapshot",
         lambda: {"runtime_active": False, "discovered_interfaces": []},
