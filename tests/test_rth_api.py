@@ -171,18 +171,37 @@ class RustTopicSubscriberApi:
         result = self._command("topic.subscriber.delete", {"subscriber_id": subscriber_id})
         return _subscriber_from_payload(result)
 
-    def _command(self, command_type: str, args: dict[str, object]) -> dict[str, object]:
+    def join(self, identity: str) -> bool:
+        self._command("mission.join", {}, source_identity=identity)
+        return True
+
+    def leave(self, identity: str) -> bool:
+        self._command("mission.leave", {}, source_identity=identity)
+        return True
+
+    def list_clients(self) -> list[dict[str, object]]:
+        clients = self._bridge.state_snapshot().get("clients")
+        assert isinstance(clients, list)
+        return [dict(client) for client in clients if isinstance(client, dict)]
+
+    def _command(
+        self,
+        command_type: str,
+        args: dict[str, object],
+        *,
+        source_identity: str = "peer-a",
+    ) -> dict[str, object]:
         responses = self._bridge.handle_command(
             MissionCommandEnvelope.model_validate(
                 {
                     "command_id": f"cmd-rust-api-{command_type}",
-                    "source": {"rns_identity": "peer-a"},
+                    "source": {"rns_identity": source_identity},
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "command_type": command_type,
                     "args": args,
                 }
             ),
-            source_identity="peer-a",
+            source_identity=source_identity,
         )
         payload = responses[-1].fields[FIELD_RESULTS]
         if not isinstance(payload, dict):
@@ -408,8 +427,9 @@ def test_patch_subscriber_allows_zero_reject_tests(tmp_path):
     assert updated.reject_tests == 0
 
 
-def test_client_join_leave(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_client_join_leave(tmp_path, backend):
+    api = _api(tmp_path, backend)
     assert api.join("identity1")
     assert len(api.list_clients()) == 1
     assert api.leave("identity1")
