@@ -1,6 +1,8 @@
 import threading
 from datetime import datetime
 from datetime import timezone
+from pathlib import Path
+import subprocess
 import uuid
 
 import pytest
@@ -14,6 +16,13 @@ from reticulum_telemetry_hub.api.storage_models import IdentityAnnounceRecord
 from reticulum_telemetry_hub.api.storage_models import IdentityCapabilityGrantRecord
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.mission_domain import MissionDomainService
+from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
+from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
+
+
+FIELD_RESULTS = 10
+FIELD_GROUP = 11
+FIELD_EVENT = 13
 
 
 def make_config_manager(tmp_path):
@@ -49,8 +58,216 @@ def make_config_manager(tmp_path):
     )
 
 
-def test_topic_crud(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+class RustTopicSubscriberApi:
+    """Minimal ReticulumTelemetryHubAPI topic/subscriber subset backed by Rust."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self._bridge = _bridge(tmp_path / "r3akt-api.sqlite")
+
+    def create_topic(self, topic: Topic) -> Topic:
+        self._command(
+            "topic.create",
+            {
+                "topic_name": topic.topic_name,
+                "topic_path": topic.topic_path,
+                "topic_description": topic.topic_description,
+            },
+        )
+        return self.retrieve_topic(topic.topic_path)
+
+    def retrieve_topic(self, topic_id: str | None) -> Topic:
+        for topic in self.list_topics():
+            if topic.topic_id == topic_id:
+                return topic
+        raise KeyError(f"Topic '{topic_id}' not found")
+
+    def patch_topic(
+        self,
+        topic_id: str | None,
+        *,
+        topic_name: str | None = None,
+        topic_path: str | None = None,
+        topic_description: str | None = None,
+    ) -> Topic:
+        result = self._command(
+            "topic.patch",
+            {
+                "topic_id": topic_id,
+                "topic_name": topic_name,
+                "topic_path": topic_path,
+                "topic_description": topic_description,
+            },
+        )
+        return _topic_from_payload(result)
+
+    def list_topics(self) -> list[Topic]:
+        return [_topic_from_payload(topic.payload) for topic in self._bridge.list_topics()]
+
+    def delete_topic(self, topic_id: str | None) -> Topic:
+        result = self._command("topic.delete", {"topic_id": topic_id})
+        return _topic_from_payload(result)
+
+    def subscribe_topic(
+        self,
+        topic_id: str | None,
+        *,
+        destination: str,
+        reject_tests: int | None = None,
+        metadata: dict | None = None,
+    ) -> Subscriber:
+        _ = reject_tests
+        result = self._command(
+            "topic.subscribe",
+            {
+                "topic_id": topic_id,
+                "destination": destination,
+                "metadata": metadata or {},
+            },
+        )
+        return Subscriber(
+            destination=str(result.get("subscriber_id") or result.get("Destination") or ""),
+            topic_id=str(result.get("topic_id") or result.get("TopicID") or ""),
+            metadata=metadata or {},
+            subscriber_id=str(result.get("subscriber_id") or result.get("Destination") or ""),
+        )
+
+    def retrieve_subscriber(self, subscriber_id: str | None) -> Subscriber:
+        for subscriber in self.list_subscribers():
+            if subscriber.subscriber_id == subscriber_id:
+                return subscriber
+        raise KeyError(f"Subscriber '{subscriber_id}' not found")
+
+    def patch_subscriber(
+        self,
+        subscriber_id: str | None,
+        *,
+        destination: str | None = None,
+        topic_id: str | None = None,
+        reject_tests: int | None = None,
+        metadata: dict | None = None,
+    ) -> Subscriber:
+        _ = reject_tests
+        result = self._command(
+            "topic.subscriber.patch",
+            {
+                "subscriber_id": subscriber_id,
+                "destination": destination,
+                "topic_id": topic_id,
+                "metadata": metadata,
+            },
+        )
+        return _subscriber_from_payload(result)
+
+    def list_subscribers(self) -> list[Subscriber]:
+        return [
+            _subscriber_from_payload(subscriber.payload)
+            for subscriber in self._bridge.list_subscribers()
+        ]
+
+    def delete_subscriber(self, subscriber_id: str | None) -> Subscriber:
+        result = self._command("topic.subscriber.delete", {"subscriber_id": subscriber_id})
+        return _subscriber_from_payload(result)
+
+    def _command(self, command_type: str, args: dict[str, object]) -> dict[str, object]:
+        responses = self._bridge.handle_command(
+            MissionCommandEnvelope.model_validate(
+                {
+                    "command_id": f"cmd-rust-api-{command_type}",
+                    "source": {"rns_identity": "peer-a"},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "command_type": command_type,
+                    "args": args,
+                }
+            ),
+            source_identity="peer-a",
+        )
+        payload = responses[-1].fields[FIELD_RESULTS]
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Rust command returned malformed payload: {command_type}")
+        if payload.get("status") == "rejected":
+            raise ValueError(payload.get("reason") or payload.get("detail") or command_type)
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Rust command returned non-object result: {command_type}")
+        return result
+
+
+def _api(tmp_path: Path, backend: str) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
+    return ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+
+def _runtime_root() -> Path:
+    candidates = [
+        Path(__file__).resolve().parents[3] / "New project" / "R3AKT-Runtime",
+        Path(r"C:\Users\broth\Documents\New project\R3AKT-Runtime"),
+    ]
+    for candidate in candidates:
+        if (candidate / "Cargo.toml").exists():
+            return candidate
+    pytest.fail("R3AKT-Runtime workspace not found for Rust API parity tests")
+
+
+def _bridge(db_path: Path) -> RustMissionSyncBridge:
+    runtime_root = _runtime_root()
+
+    def runner(args, **kwargs):  # type: ignore[no-untyped-def]
+        request_db_path = args[args.index("--db") + 1]
+        return subprocess.run(
+            ["cargo", "run", "-q", "-p", "r3akt-rch-bridge", "--", "--db", request_db_path],
+            cwd=runtime_root,
+            input=kwargs["input"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    return RustMissionSyncBridge(
+        binary_path="cargo-run-r3akt-rch-bridge",
+        db_path=str(db_path),
+        field_results=FIELD_RESULTS,
+        field_event=FIELD_EVENT,
+        field_group=FIELD_GROUP,
+        runner=runner,
+    )
+
+
+def _topic_from_payload(payload: dict[str, object]) -> Topic:
+    return Topic(
+        topic_id=str(payload.get("topic_id") or payload.get("TopicID") or ""),
+        topic_name=str(payload.get("topic_name") or payload.get("TopicName") or ""),
+        topic_path=str(payload.get("topic_path") or payload.get("TopicPath") or ""),
+        topic_description=str(
+            payload.get("topic_description") or payload.get("TopicDescription") or ""
+        ),
+    )
+
+
+def _subscriber_from_payload(payload: dict[str, object]) -> Subscriber:
+    return Subscriber(
+        destination=str(
+            payload.get("destination")
+            or payload.get("Destination")
+            or payload.get("node_id")
+            or payload.get("subscriber_id")
+            or ""
+        ),
+        topic_id=str(payload.get("topic_id") or payload.get("TopicID") or ""),
+        metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        subscriber_id=str(
+            payload.get("subscriber_id")
+            or payload.get("SubscriberID")
+            or payload.get("node_id")
+            or payload.get("destination")
+            or ""
+        ),
+    )
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_topic_crud(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
     assert topic.topic_id
     assert api.retrieve_topic(topic.topic_id).topic_name == "Status"
@@ -62,8 +279,9 @@ def test_topic_crud(tmp_path):
     assert deleted.topic_id == topic.topic_id
 
 
-def test_patch_topic_allows_clearing_description(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_patch_topic_allows_clearing_description(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(
         Topic(
             topic_name="Status", topic_path="/status", topic_description="System status"
@@ -150,8 +368,9 @@ def test_delete_topic_preserves_case_distinct_attachment_associations(tmp_path):
     assert api.retrieve_file(file_record.file_id).topic_id == "ops"
 
 
-def test_subscriber_management(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_subscriber_management(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(Topic(topic_name="Alerts", topic_path="/alerts"))
     subscriber = api.subscribe_topic(topic.topic_id, destination="abc123")
     assert subscriber.subscriber_id
