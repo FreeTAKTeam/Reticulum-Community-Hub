@@ -111,6 +111,44 @@ def test_handle_leave_invokes_destination_removed_callback(tmp_path, backend: st
     assert all(client.identity != identity_hex for client in api.list_clients())
 
 
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_handle_join_records_client_state(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    server_dest = RNS.Destination(
+        RNS.Identity(),
+        RNS.Destination.IN,
+        RNS.Destination.SINGLE,
+        "lxmf",
+        "delivery",
+    )
+    source_dest = RNS.Destination(
+        RNS.Identity(),
+        RNS.Destination.OUT,
+        RNS.Destination.SINGLE,
+        "lxmf",
+        "delivery",
+    )
+    api = _api_for_backend(tmp_path, backend)
+    manager = CommandManager(
+        {},
+        type("DummyTelemetry", (), {"handle_command": lambda self, command, message, dest: None})(),
+        server_dest,
+        api,
+    )
+    message = LXMF.LXMessage(server_dest, source_dest, "join")
+    message.pack()
+    message.signature_validated = True
+
+    reply = manager._handle_join(message)
+
+    identity_hex = source_dest.identity.hash.hex().lower()
+    assert "Connection established" in reply.content_as_string()
+    assert source_dest.identity.hash in manager.connections
+    assert any(client.identity == identity_hex for client in api.list_clients())
+
+
 def test_apply_lxmf_router_runtime_config_reads_allowed_and_ignored_sidecars(
     tmp_path,
 ):
