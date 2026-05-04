@@ -40,6 +40,11 @@ class RustTopicApi:
         self._config_manager = config_manager
         self._bridge = _bridge(db_path)
 
+    def apply_config_text(self, config_text: str) -> dict:
+        result = self._config_manager.apply_config_text(config_text)
+        self._config_manager.reload()
+        return result
+
     def create_topic(self, topic: Topic) -> Topic:
         result = self._result(
             "topic.create",
@@ -329,14 +334,18 @@ def test_topic_list_pagination_uses_configured_default_and_max(
     assert too_large_response.status_code == 422
 
 
-def test_topic_list_pagination_uses_reloaded_config_default(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_topic_list_pagination_uses_reloaded_config_default(
+    tmp_path: Path,
+    backend: str,
+) -> None:
     (tmp_path / "config.ini").write_text(
         "[api]\n"
         "pagination_default_page_size = 2\n"
         "pagination_max_page_size = 5\n",
         encoding="utf-8",
     )
-    client, api = _build_client(tmp_path)
+    client, api = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
     for index in range(5):
         api.create_topic(Topic(topic_name=f"topic-{index}", topic_path=f"topic-{index}"))
