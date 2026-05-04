@@ -1667,8 +1667,11 @@ def test_core_routes_endpoints(tmp_path: Path, backend: str) -> None:
     assert info_response.status_code == 200
 
 
-def test_events_endpoint_returns_nonfatal_exception_entry(tmp_path: Path) -> None:
-    client, _api, event_log, _telemetry = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_events_endpoint_returns_nonfatal_exception_entry(
+    tmp_path: Path, backend: str
+) -> None:
+    client, _api, event_log, _telemetry = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     report_nonfatal_exception(
@@ -1750,12 +1753,13 @@ def test_identity_moderation_routes(tmp_path: Path, backend: str) -> None:
     assert identities_response.status_code == 200
 
 
+@pytest.mark.parametrize("backend", ["python", "rust"])
 def test_reticulum_capabilities_route_runtime_fallback(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, backend: str
 ) -> None:
     """Return a safe capabilities response when runtime is unavailable."""
 
-    client, _, _, _ = _build_client(tmp_path)
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
     monkeypatch.setattr(
         "reticulum_telemetry_hub.northbound.services.get_interface_capabilities",
@@ -1777,12 +1781,13 @@ def test_reticulum_capabilities_route_runtime_fallback(
     assert response.json()["runtime_active"] is False
 
 
+@pytest.mark.parametrize("backend", ["python", "rust"])
 def test_reticulum_discovery_route_runtime_fallback(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, backend: str
 ) -> None:
     """Return a safe discovery response when runtime is unavailable."""
 
-    client, _, _, _ = _build_client(tmp_path)
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
     monkeypatch.setattr(
         "reticulum_telemetry_hub.northbound.services.get_discovery_snapshot",
