@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from reticulum_telemetry_hub.api import Client
+from reticulum_telemetry_hub.api import ChatMessage
 from reticulum_telemetry_hub.api import FileAttachment
 from reticulum_telemetry_hub.api import IdentityStatus
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
@@ -96,6 +97,8 @@ class RustTopicSubscriberApi:
         self._bridge_lock = threading.Lock()
         self._attachments: dict[int, FileAttachment] = {}
         self._next_attachment_id = 1
+        self._chat_messages: dict[str, ChatMessage] = {}
+        self._next_chat_message_id = 1
         self.rights = RustRightsApi()
 
     def create_topic(self, topic: Topic) -> Topic:
@@ -258,7 +261,67 @@ class RustTopicSubscriberApi:
         return len(self.list_images())
 
     def chat_message_stats(self) -> dict[str, int]:
-        return {"sent": 0, "failed": 0, "delivered": 0}
+        stats = {"sent": 0, "failed": 0, "delivered": 0}
+        for message in self._chat_messages.values():
+            stats[message.state] = stats.get(message.state, 0) + 1
+        return stats
+
+    def record_chat_message(self, message: ChatMessage) -> ChatMessage:
+        stored = ChatMessage(
+            direction=message.direction,
+            scope=message.scope,
+            state=message.state,
+            content=message.content,
+            source=message.source,
+            destination=message.destination,
+            topic_id=message.topic_id,
+            attachments=list(message.attachments),
+            delivery_metadata=dict(message.delivery_metadata),
+            created_at=message.created_at,
+            updated_at=message.updated_at,
+            message_id=message.message_id or f"rust-chat-{self._next_chat_message_id}",
+        )
+        if message.message_id is None:
+            self._next_chat_message_id += 1
+        self._chat_messages[stored.message_id or ""] = stored
+        return stored
+
+    def list_chat_messages(self, *, limit: int = 50) -> list[ChatMessage]:
+        return sorted(
+            self._chat_messages.values(),
+            key=lambda message: message.created_at,
+            reverse=True,
+        )[:limit]
+
+    def update_chat_message_state(
+        self, message_id: str, state: str
+    ) -> ChatMessage | None:
+        message = self._chat_messages.get(message_id)
+        if message is None:
+            return None
+        message.state = state
+        return message
+
+    def store_uploaded_attachment(
+        self,
+        *,
+        content: bytes,
+        filename: str,
+        media_type: str | None = None,
+        category: str = "file",
+        topic_id: str | None = None,
+    ) -> FileAttachment:
+        base_path = self._storage_path / ("images" if category == "image" else "files")
+        base_path.mkdir(parents=True, exist_ok=True)
+        file_path = base_path / filename
+        file_path.write_bytes(content)
+        return self._store_attachment(
+            file_path,
+            name=filename,
+            media_type=media_type,
+            topic_id=topic_id,
+            category=category,
+        )
 
     def assign_file_to_topic(
         self, record_id: int, topic_id: str | None

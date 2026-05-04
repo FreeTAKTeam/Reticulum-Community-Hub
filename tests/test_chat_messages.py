@@ -1,6 +1,11 @@
+from pathlib import Path
+
+import pytest
+
 from reticulum_telemetry_hub.api import ChatMessage
 from reticulum_telemetry_hub.api import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.config import HubConfigurationManager
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
 def make_config_manager(tmp_path):
@@ -36,8 +41,17 @@ def make_config_manager(tmp_path):
     )
 
 
-def test_chat_message_persistence(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+def _api_for_backend(
+    tmp_path: Path, backend: str
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
+    return ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_chat_message_persistence(tmp_path, backend):
+    api = _api_for_backend(tmp_path, backend)
     message = ChatMessage(
         direction="inbound",
         scope="dm",
@@ -59,8 +73,9 @@ def test_chat_message_persistence(tmp_path):
     assert stats.get("sent", 0) >= 1
 
 
-def test_store_uploaded_attachment(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_store_uploaded_attachment(tmp_path, backend):
+    api = _api_for_backend(tmp_path, backend)
     attachment = api.store_uploaded_attachment(
         content=b"payload",
         filename="report.txt",
