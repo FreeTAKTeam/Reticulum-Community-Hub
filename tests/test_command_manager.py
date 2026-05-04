@@ -149,6 +149,41 @@ def test_handle_join_records_client_state(tmp_path, backend: str):
     assert any(client.identity == identity_hex for client in api.list_clients())
 
 
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_handle_list_clients_reads_backend_state(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    server_dest = RNS.Destination(
+        RNS.Identity(),
+        RNS.Destination.IN,
+        RNS.Destination.SINGLE,
+        "lxmf",
+        "delivery",
+    )
+    source_dest = RNS.Destination(
+        RNS.Identity(),
+        RNS.Destination.OUT,
+        RNS.Destination.SINGLE,
+        "lxmf",
+        "delivery",
+    )
+    api = _api_for_backend(tmp_path, backend)
+    api.join("aa" * 16)
+    api.join("bb" * 16)
+    manager, _ = make_command_manager(api)
+    message = LXMF.LXMessage(server_dest, source_dest, "list")
+    message.pack()
+    message.signature_validated = True
+
+    reply = manager._handle_list_clients(message)
+    reply_text = reply.content_as_string()
+
+    assert "aa" * 16 in reply_text
+    assert "bb" * 16 in reply_text
+    assert "{}" in reply_text
+
+
 def test_apply_lxmf_router_runtime_config_reads_allowed_and_ignored_sidecars(
     tmp_path,
 ):
