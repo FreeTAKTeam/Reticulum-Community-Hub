@@ -14,8 +14,11 @@ import pytest
 
 from reticulum_telemetry_hub.api.marker_service import MarkerUpdateResult
 from reticulum_telemetry_hub.api.models import Marker
+from reticulum_telemetry_hub.api.models import Zone
+from reticulum_telemetry_hub.api.models import ZonePoint
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
 from reticulum_telemetry_hub.api.storage import HubStorage
+from reticulum_telemetry_hub.api.zone_service import ZoneUpdateResult
 from reticulum_telemetry_hub.config import HubConfigurationManager
 from reticulum_telemetry_hub.lxmf_telemetry.model.persistance.sensors.sensor_enum import (
     SID_LOCATION,
@@ -63,12 +66,57 @@ class RustR3aktDomain:
         expand_topic: bool = False,
         expand: set[str] | None = None,
     ) -> dict[str, object]:
-        _ = expand_topic, expand
-        return _run_rust_command(
+        _ = expand_topic
+        mission = _run_rust_command(
             self._bridge,
             "mission.registry.mission.get",
             {"mission_uid": mission_uid},
         )
+        expand_values = expand or set()
+        if "all" in expand_values or "teams" in expand_values:
+            mission["teams"] = self.list_teams(mission_uid=mission_uid)
+        if "all" in expand_values or "team_members" in expand_values:
+            team_uids = [
+                str(team.get("uid"))
+                for team in self.list_teams(mission_uid=mission_uid)
+                if team.get("uid")
+            ]
+            mission["team_members"] = [
+                member
+                for team_uid in team_uids
+                for member in self.list_team_members(team_uid=team_uid)
+            ]
+        if "all" in expand_values or "assets" in expand_values:
+            members = mission.get("team_members")
+            if not isinstance(members, list):
+                members = [
+                    member
+                    for team in self.list_teams(mission_uid=mission_uid)
+                    for member in self.list_team_members(team_uid=str(team.get("uid") or ""))
+                ]
+            mission["assets"] = [
+                asset
+                for member in members
+                if isinstance(member, dict)
+                for asset in self.list_assets(
+                    team_member_uid=str(member.get("uid") or "")
+                )
+            ]
+        if "all" in expand_values or "mission_changes" in expand_values:
+            mission["mission_changes"] = self.list_mission_changes(mission_uid=mission_uid)
+        if "all" in expand_values or "log_entries" in expand_values:
+            mission["log_entries"] = self.list_log_entries(mission_uid=mission_uid)
+        if "all" in expand_values or "assignments" in expand_values:
+            mission["assignments"] = self.list_assignments(mission_uid=mission_uid)
+        if "all" in expand_values or "checklists" in expand_values:
+            mission["checklists"] = [
+                checklist
+                for checklist in self.list_active_checklists()
+                if checklist.get("mission_id") == mission_uid
+            ]
+        if "all" in expand_values or "mission_rde" in expand_values:
+            mission["mission_rde"] = self.get_mission_rde(mission_uid)
+        return mission
 
     def list_missions(
         self,
@@ -117,6 +165,10 @@ class RustR3aktDomain:
     def list_mission_markers(self, mission_uid: str) -> list[str]:
         mission = self.get_mission(mission_uid)
         return [str(marker_id) for marker_id in mission.get("markers", [])]
+
+    def list_mission_zones(self, mission_uid: str) -> list[str]:
+        mission = self.get_mission(mission_uid)
+        return [str(zone_id) for zone_id in mission.get("zones", [])]
 
     def list_checklist_templates(
         self,
@@ -546,6 +598,20 @@ class RustR3aktDomain:
             {"mission_uid": mission_uid, "marker_id": marker_id},
         )
 
+    def link_mission_zone(self, mission_uid: str, zone_id: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.zone.link",
+            {"mission_uid": mission_uid, "zone_id": zone_id},
+        )
+
+    def unlink_mission_zone(self, mission_uid: str, zone_id: str) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.mission.zone.unlink",
+            {"mission_uid": mission_uid, "zone_id": zone_id},
+        )
+
     def upsert_mission_rde(self, mission_uid: str, role: str) -> dict[str, object]:
         return _run_rust_command(
             self._bridge,
@@ -831,6 +897,24 @@ class RustR3aktDomain:
             {"assignment_uid": assignment_uid, "asset_uid": asset_uid},
         )
 
+    def list_domain_events(self, *, limit: int = 200) -> list[dict[str, object]]:
+        snapshot = self._bridge.state_snapshot()
+        rows = snapshot.get("audit_events")
+        if isinstance(rows, list) and rows:
+            return [dict(row) for row in rows[:limit] if isinstance(row, dict)]
+        commands = snapshot.get("command_results")
+        if isinstance(commands, list):
+            return [
+                {"event_type": "command_result", **dict(row)}
+                for row in commands[:limit]
+                if isinstance(row, dict)
+            ]
+        return []
+
+    def list_domain_snapshots(self, *, limit: int = 200) -> list[dict[str, object]]:
+        _ = limit
+        return [{"snapshot": self._bridge.state_snapshot()}]
+
 
 class RustMarkerService:
     """Marker service subset backed by the same Rust RCH bridge as R3AKT routes."""
@@ -930,6 +1014,146 @@ class RustMarkerService:
         raise KeyError(f"Marker '{object_destination_hash}' not found")
 
 
+class RustZoneService:
+    """Zone service subset backed by the same Rust RCH bridge as R3AKT routes."""
+
+    def __init__(self, bridge: RustMissionSyncBridge) -> None:
+        self._bridge = bridge
+
+    def list_zones(self) -> list[Zone]:
+        result = _run_rust_command(self._bridge, "mission.zone.list", {})
+        zones = result.get("zones")
+        assert isinstance(zones, list)
+        return [_zone_from_payload(dict(zone)) for zone in zones if isinstance(zone, dict)]
+
+    def create_zone(self, *, name: str, points: list[ZonePoint]) -> Zone:
+        return _zone_from_payload(
+            _run_rust_command(
+                self._bridge,
+                "mission.zone.create",
+                {
+                    "name": name,
+                    "points": [point.to_dict() for point in points],
+                },
+            )
+        )
+
+    def update_zone(
+        self,
+        zone_id: str,
+        *,
+        name: str | None = None,
+        points: list[ZonePoint] | None = None,
+    ) -> ZoneUpdateResult:
+        zone = _zone_from_payload(
+            _run_rust_command(
+                self._bridge,
+                "mission.zone.patch",
+                {
+                    "zone_id": zone_id,
+                    "name": name,
+                    "points": [point.to_dict() for point in points] if points else None,
+                },
+            )
+        )
+        return ZoneUpdateResult(zone=zone)
+
+    def delete_zone(self, zone_id: str) -> Zone:
+        return _zone_from_payload(
+            _run_rust_command(self._bridge, "mission.zone.delete", {"zone_id": zone_id})
+        )
+
+
+class RustR3aktApi:
+    """API facade that delegates R3AKT rights state to the Rust bridge."""
+
+    def __init__(
+        self,
+        delegate: ReticulumTelemetryHubAPI,
+        bridge: RustMissionSyncBridge,
+    ) -> None:
+        self._delegate = delegate
+        self._bridge = bridge
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._delegate, name)
+
+    def list_team_member_subjects(
+        self,
+        *,
+        mission_uid: str | None = None,
+    ) -> list[dict[str, object]]:
+        result = _run_rust_command(
+            self._bridge,
+            "mission.registry.rights.subjects.list",
+            {"mission_uid": mission_uid},
+        )
+        subjects = result.get("subjects")
+        assert isinstance(subjects, list)
+        return [dict(subject) for subject in subjects if isinstance(subject, dict)]
+
+    def assign_mission_access_role(
+        self,
+        mission_uid: str,
+        subject_type: str,
+        subject_id: str,
+        *,
+        role: str | None = None,
+        assigned_by: str | None = None,
+    ) -> dict[str, object]:
+        _ = assigned_by
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.rights.mission_access.assign",
+            {
+                "mission_uid": mission_uid,
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "role": role,
+            },
+        )
+
+    def revoke_mission_access_role(
+        self,
+        mission_uid: str,
+        subject_type: str,
+        subject_id: str,
+    ) -> dict[str, object]:
+        return _run_rust_command(
+            self._bridge,
+            "mission.registry.rights.mission_access.revoke",
+            {
+                "mission_uid": mission_uid,
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+            },
+        )
+
+    def list_mission_access_assignments(
+        self,
+        *,
+        mission_uid: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        result = _run_rust_command(
+            self._bridge,
+            "mission.registry.rights.mission_access.list",
+            {
+                "mission_uid": mission_uid,
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+            },
+        )
+        assignments = result.get("mission_access_assignments")
+        assert isinstance(assignments, list)
+        return [
+            dict(assignment)
+            for assignment in assignments
+            if isinstance(assignment, dict)
+        ]
+
+
 def _marker_from_payload(payload: dict[str, object]) -> Marker:
     position = payload.get("position")
     if not isinstance(position, dict):
@@ -954,6 +1178,23 @@ def _marker_from_payload(payload: dict[str, object]) -> Marker:
         time=_parse_datetime(payload.get("time") or updated_at),
         stale_at=stale_at,
         created_at=created_at,
+        updated_at=updated_at,
+    )
+
+
+def _zone_from_payload(payload: dict[str, object]) -> Zone:
+    points = payload.get("points")
+    assert isinstance(points, list)
+    updated_at = _parse_datetime(payload.get("updated_at"))
+    return Zone(
+        zone_id=str(payload.get("zone_id") or ""),
+        name=str(payload.get("name") or ""),
+        points=[
+            ZonePoint(lat=float(point.get("lat")), lon=float(point.get("lon")))
+            for point in points
+            if isinstance(point, dict)
+        ],
+        created_at=_parse_datetime(payload.get("created_at") or updated_at),
         updated_at=updated_at,
     )
 
@@ -1024,10 +1265,10 @@ def _run_rust_command(
     if payload.get("status") == "rejected":
         reason_code = str(payload.get("reason_code") or "")
         reason = str(payload.get("reason") or payload.get("detail") or command_type)
-        if reason.lower() == "mission not found":
-            raise ValueError(reason)
         if reason_code in {"not_found", "not_found_error"} or "not found" in reason.lower():
-            raise KeyError(reason)
+            if command_type.endswith(".get") or command_type.endswith(".delete"):
+                raise KeyError(reason)
+            raise ValueError(reason)
         raise ValueError(reason)
     result = payload.get("result")
     if not isinstance(result, dict):
@@ -1082,8 +1323,9 @@ def _build_client(
         event_log=event_log,
     )
     rust_bridge = _bridge(tmp_path / "r3akt-routes.sqlite") if backend == "rust" else None
+    route_api = RustR3aktApi(api, rust_bridge) if rust_bridge is not None else api
     app = create_app(
-        api=api,
+        api=route_api,
         telemetry_controller=telemetry,
         event_log=event_log,
         auth=ApiAuth(api_key="secret"),
@@ -1091,6 +1333,7 @@ def _build_client(
         message_dispatcher=lambda content, topic_id=None, destination=None, fields=None: None,
         mission_domain_service=RustR3aktDomain(rust_bridge) if rust_bridge is not None else None,
         marker_service=RustMarkerService(rust_bridge) if rust_bridge is not None else None,
+        zone_service=RustZoneService(rust_bridge) if rust_bridge is not None else None,
     )
     return TestClient(app), api, event_log, telemetry
 
@@ -1540,8 +1783,9 @@ def test_reticulum_discovery_route_runtime_fallback(
     assert response.json()["runtime_active"] is False
     assert response.json()["discovered_interfaces"] == []
 
-def test_r3akt_registry_routes_matrix(tmp_path: Path) -> None:
-    client, _, _, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_r3akt_registry_routes_matrix(tmp_path: Path, backend: str) -> None:
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     invalid_grant = client.put(
@@ -2465,6 +2709,36 @@ def test_r3akt_assignment_skill_routes_use_selected_backend(
             str(checklist["uid"]),
             {"task_uid": task_uid, "number": 1},
         )
+    else:
+        template = client.post(
+            "/checklists/templates",
+            json={
+                "template": {
+                    "uid": "template-assign",
+                    "template_name": "Assignment Template",
+                    "created_by_team_member_rns_identity": "peer-assign",
+                }
+            },
+            headers=headers,
+        )
+        assert template.status_code == 200
+        checklist = client.post(
+            "/checklists",
+            json={
+                "checklist_uid": "checklist-assign",
+                "template_uid": "template-assign",
+                "name": "Assignment Checklist",
+                "mission_uid": "mission-assign",
+            },
+            headers=headers,
+        )
+        assert checklist.status_code == 200
+        row = client.post(
+            "/checklists/checklist-assign/tasks",
+            json={"task_uid": task_uid, "number": 1},
+            headers=headers,
+        )
+        assert row.status_code == 200
 
     member_skill = client.post(
         "/api/r3akt/team-member-skills",

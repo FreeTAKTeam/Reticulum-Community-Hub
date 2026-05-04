@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `877 passed, 461 warnings`
+  - Result: `878 passed, 465 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -61,6 +61,12 @@ It covers:
 - FastAPI northbound R3AKT team-member-skill, task-skill-requirement,
   assignment, and assignment-asset route flow parameterized across Python
   storage and a Rust bridge-backed mission domain adapter
+- FastAPI northbound full R3AKT registry route matrix parameterized across
+  Python storage and a Rust bridge-backed mission/domain/API adapter, including
+  capability grant/revoke, mission CRUD/patch/parent/RDE, mission-zone and
+  mission-marker links, mission changes, log entries, teams, team members,
+  mission rights subjects/access, assets, skills, checklist task references,
+  assignments, expansion payloads, cleanup flows, events, and snapshots
 - FastAPI northbound R3AKT mission-change and log-entry route flow
   parameterized across Python storage and a Rust bridge-backed mission domain
   adapter
@@ -97,8 +103,8 @@ The full collected Python suite is broader than the Rust runtime bridge. It also
 tests Python-specific or not-yet-Rust-backed surfaces including:
 
 - FastAPI northbound routes beyond the current topic, marker, zone, EAM,
-  R3AKT core registry, assignment/skill registry, and mission-list-limit
-  Rust-backed flows, plus mission-change/log route coverage and OpenAPI
+  R3AKT core registry, full registry matrix, assignment/skill registry,
+  mission-list-limit, and mission-change/log Rust-backed flows, plus OpenAPI
   contracts
 - CLI process-control behavior
 - Python storage/migration helpers
