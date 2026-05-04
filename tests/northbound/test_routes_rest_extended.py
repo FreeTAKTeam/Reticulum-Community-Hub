@@ -1390,8 +1390,11 @@ def test_openapi_yaml_missing_returns_404(tmp_path: Path) -> None:
     assert response.status_code == 404
 
 
-def test_client_list_pagination_preserves_legacy_response(tmp_path: Path) -> None:
-    client, api, _, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_client_list_pagination_preserves_legacy_response(
+    tmp_path: Path, backend: str
+) -> None:
+    client, api, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
     for identity in ("client-1", "client-2", "client-3"):
         api.join(identity)

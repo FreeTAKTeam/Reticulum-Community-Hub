@@ -619,6 +619,18 @@ class RustTopicSubscriberApi:
     def count_clients(self) -> int:
         return len(self.list_clients())
 
+    def list_clients_paginated(
+        self, page_request: PageRequest
+    ) -> PaginatedResult[Client]:
+        clients = self.list_clients()
+        return PaginatedResult.from_request(
+            items=clients[
+                page_request.offset : page_request.offset + page_request.per_page
+            ],
+            request=page_request,
+            total=len(clients),
+        )
+
     def record_identity_announce(
         self,
         identity: str,
