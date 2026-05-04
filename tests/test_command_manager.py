@@ -417,6 +417,75 @@ def test_identity_moderation_commands_use_backend_state(tmp_path, backend: str):
     assert status.is_blackholed is False
 
 
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_config_commands_use_backend_state(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    config_text = "[app]\nname = CommandHub\n"
+
+    get_message = make_message(server_dest, client_dest, CommandManager.CMD_GET_CONFIG)
+    get_reply = manager.handle_command(
+        get_message.fields[LXMF.FIELD_COMMANDS][0], get_message
+    )
+
+    assert get_reply is not None
+    assert "[app]" in get_reply.content_as_string()
+
+    validate_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_VALIDATE_CONFIG,
+        ConfigText=config_text,
+    )
+    validate_reply = manager.handle_command(
+        validate_message.fields[LXMF.FIELD_COMMANDS][0], validate_message
+    )
+
+    assert validate_reply is not None
+    assert json.loads(validate_reply.content_as_string())["valid"] is True
+
+    apply_message = make_message(
+        server_dest,
+        client_dest,
+        CommandManager.CMD_APPLY_CONFIG,
+        ConfigText=config_text,
+    )
+    apply_reply = manager.handle_command(
+        apply_message.fields[LXMF.FIELD_COMMANDS][0], apply_message
+    )
+
+    assert apply_reply is not None
+    assert json.loads(apply_reply.content_as_string())["applied"] is True
+    assert api.get_config_text() == config_text
+
+    rollback_message = make_message(
+        server_dest, client_dest, CommandManager.CMD_ROLLBACK_CONFIG
+    )
+    rollback_reply = manager.handle_command(
+        rollback_message.fields[LXMF.FIELD_COMMANDS][0], rollback_message
+    )
+
+    assert rollback_reply is not None
+    assert json.loads(rollback_reply.content_as_string())["rolled_back"] is True
+    assert api.get_config_text() != config_text
+
+    reload_message = make_message(
+        server_dest, client_dest, CommandManager.CMD_RELOAD_CONFIG
+    )
+    reload_reply = manager.handle_command(
+        reload_message.fields[LXMF.FIELD_COMMANDS][0], reload_message
+    )
+
+    assert reload_reply is not None
+    assert "app_name" in reload_reply.content_as_string()
+
+
 def test_apply_lxmf_router_runtime_config_reads_allowed_and_ignored_sidecars(
     tmp_path,
 ):
