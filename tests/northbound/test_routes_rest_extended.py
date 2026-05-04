@@ -1347,8 +1347,9 @@ def _build_client(
     return TestClient(app), api, event_log, telemetry
 
 
-def test_openapi_yaml_returns_payload(tmp_path: Path) -> None:
-    client, _, _, _ = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_openapi_yaml_returns_payload(tmp_path: Path, backend: str) -> None:
+    client, _, _, _ = _build_client(tmp_path, backend=backend)
 
     response = client.get("/openapi.yaml")
 
