@@ -400,23 +400,13 @@ def test_handle_commands_accepts_positional_numeric_payload(tmp_path, backend: s
     assert created_topic.topic_path == "environment/weather"
 
 
-def test_create_topic_interactive_prompt_flow():
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.created: list[Topic] = []
-
-        def create_topic(self, topic: Topic) -> Topic:
-            topic.topic_id = "topic-after-prompt"
-            self.created.append(topic)
-            return topic
-
-        def list_topics(self):
-            return []
-
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_create_topic_interactive_prompt_flow(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -449,8 +439,7 @@ def test_create_topic_interactive_prompt_flow():
     assert creation_responses
     creation_text = creation_responses[0].content_as_string()
     assert "Topic created" in creation_text
-    assert manager.api.created
-    created_topic = manager.api.created[0]
+    created_topic = api.list_topics()[0]
     assert created_topic.topic_name == "Weather"
     assert created_topic.topic_path == "environment/weather"
     assert manager.pending_field_requests == {}
