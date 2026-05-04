@@ -3,6 +3,7 @@
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from reticulum_telemetry_hub.api.service import ReticulumTelemetryHubAPI
@@ -13,6 +14,7 @@ from reticulum_telemetry_hub.lxmf_telemetry.telemetry_controller import (
 from reticulum_telemetry_hub.northbound.app import create_app
 from reticulum_telemetry_hub.northbound.auth import ApiAuth
 from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
 class DummyControl:
@@ -62,11 +64,20 @@ class DummyControlNoStart:
         self.shutdown_called = True
 
 
-def _build_app(tmp_path: Path, control) -> TestClient:
+def _api_for_backend(
+    tmp_path: Path, backend: str
+) -> ReticulumTelemetryHubAPI | RustTopicSubscriberApi:
+    if backend == "rust":
+        return RustTopicSubscriberApi(tmp_path)
+    return ReticulumTelemetryHubAPI(
+        config_manager=HubConfigurationManager(storage_path=tmp_path)
+    )
+
+
+def _build_app(tmp_path: Path, control, *, backend: str = "python") -> TestClient:
     """Create a test client wired to the control routes."""
 
-    config_manager = HubConfigurationManager(storage_path=tmp_path)
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    api = _api_for_backend(tmp_path, backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(
         api=api,
@@ -78,11 +89,12 @@ def _build_app(tmp_path: Path, control) -> TestClient:
     return TestClient(app)
 
 
-def test_control_status_and_stop(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_control_status_and_stop(tmp_path, backend: str) -> None:
     """Return status and accept stop requests."""
 
     control = DummyControl()
-    client = _build_app(tmp_path, control)
+    client = _build_app(tmp_path, control, backend=backend)
 
     status_response = client.get("/Control/Status", headers={"X-API-Key": "secret"})
     assert status_response.status_code == 200
@@ -93,22 +105,24 @@ def test_control_status_and_stop(tmp_path) -> None:
     assert control.shutdown_called is True
 
 
-def test_control_start_without_start_hook(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_control_start_without_start_hook(tmp_path, backend: str) -> None:
     """Allow start when a control hook is missing."""
 
     control = DummyControlNoStart()
-    client = _build_app(tmp_path, control)
+    client = _build_app(tmp_path, control, backend=backend)
 
     response = client.post("/Control/Start", headers={"X-API-Key": "secret"})
     assert response.status_code == 200
     assert response.json()["status"] == "running"
 
 
-def test_control_sync_calls_control_hook(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_control_sync_calls_control_hook(tmp_path, backend: str) -> None:
     """Trigger propagation sync through the control endpoint."""
 
     control = DummyControl()
-    client = _build_app(tmp_path, control)
+    client = _build_app(tmp_path, control, backend=backend)
 
     response = client.post("/Control/Sync", headers={"X-API-Key": "secret"})
 
@@ -117,11 +131,12 @@ def test_control_sync_calls_control_hook(tmp_path) -> None:
     assert control.sync_called is True
 
 
-def test_control_sync_unavailable_without_hook(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_control_sync_unavailable_without_hook(tmp_path, backend: str) -> None:
     """Return unavailable when the control surface cannot sync."""
 
     control = DummyControlNoStart()
-    client = _build_app(tmp_path, control)
+    client = _build_app(tmp_path, control, backend=backend)
 
     response = client.post("/Control/Sync", headers={"X-API-Key": "secret"})
 
@@ -129,11 +144,11 @@ def test_control_sync_unavailable_without_hook(tmp_path) -> None:
     assert response.json()["detail"] == "Sync unavailable"
 
 
-def test_control_routes_missing_when_disabled(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_control_routes_missing_when_disabled(tmp_path, backend: str) -> None:
     """Return 404 when control routes are not registered."""
 
-    config_manager = HubConfigurationManager(storage_path=tmp_path)
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager)
+    api = _api_for_backend(tmp_path, backend)
     telemetry = TelemetryController(db_path=tmp_path / "telemetry.db", api=api)
     app = create_app(
         api=api,
