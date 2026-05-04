@@ -224,23 +224,13 @@ def test_handle_commands_parses_string_entries(tmp_path, backend: str):
     assert created_topic.topic_path == "alpha/path"
 
 
-def test_handle_commands_parses_sideband_string_entries():
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.created_topics: list[Topic] = []
-
-        def create_topic(self, topic: Topic) -> Topic:
-            topic.topic_id = "topic-from-sideband-str"
-            self.created_topics.append(topic)
-            return topic
-
-        def list_topics(self):
-            return []
-
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_handle_commands_parses_sideband_string_entries(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -263,29 +253,18 @@ def test_handle_commands_parses_sideband_string_entries():
     assert responses
     reply_text = responses[0].content_as_string()
     assert "Topic created" in reply_text
-    assert manager.api.created_topics
-    created_topic = manager.api.created_topics[0]
+    created_topic = api.list_topics()[0]
     assert created_topic.topic_name == "Alpha"
     assert created_topic.topic_path == "alpha/path"
 
 
-def test_handle_commands_parses_sideband_dict_entries():
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.created_topics: list[Topic] = []
-
-        def create_topic(self, topic: Topic) -> Topic:
-            topic.topic_id = "topic-from-sideband-dict"
-            self.created_topics.append(topic)
-            return topic
-
-        def list_topics(self):
-            return []
-
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_handle_commands_parses_sideband_dict_entries(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -308,29 +287,20 @@ def test_handle_commands_parses_sideband_dict_entries():
     assert responses
     reply_text = responses[0].content_as_string()
     assert "Topic created" in reply_text
-    assert manager.api.created_topics
-    created_topic = manager.api.created_topics[0]
+    created_topic = api.list_topics()[0]
     assert created_topic.topic_name == "Beta"
     assert created_topic.topic_path == "beta/path"
 
 
-def test_handle_commands_parses_sideband_wrapped_string_commands():
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.created_topics: list[Topic] = []
-
-        def create_topic(self, topic: Topic) -> Topic:
-            topic.topic_id = "topic-from-sideband-wrapped-str"
-            self.created_topics.append(topic)
-            return topic
-
-        def list_topics(self):
-            return []
-
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_handle_commands_parses_sideband_wrapped_string_commands(
+    tmp_path, backend: str
+):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -354,29 +324,20 @@ def test_handle_commands_parses_sideband_wrapped_string_commands():
     assert responses
     reply_text = responses[0].content_as_string()
     assert "Topic created" in reply_text
-    assert manager.api.created_topics
-    created_topic = manager.api.created_topics[0]
+    created_topic = api.list_topics()[0]
     assert created_topic.topic_name == "Gamma"
     assert created_topic.topic_path == "gamma/path"
 
 
-def test_handle_commands_parses_sideband_wrapped_object_commands():
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.created_topics: list[Topic] = []
-
-        def create_topic(self, topic: Topic) -> Topic:
-            topic.topic_id = "topic-from-sideband-wrapped-obj"
-            self.created_topics.append(topic)
-            return topic
-
-        def list_topics(self):
-            return []
-
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_handle_commands_parses_sideband_wrapped_object_commands(
+    tmp_path, backend: str
+):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -400,29 +361,18 @@ def test_handle_commands_parses_sideband_wrapped_object_commands():
     assert responses
     reply_text = responses[0].content_as_string()
     assert "Topic created" in reply_text
-    assert manager.api.created_topics
-    created_topic = manager.api.created_topics[0]
+    created_topic = api.list_topics()[0]
     assert created_topic.topic_name == "Delta"
     assert created_topic.topic_path == "delta/path"
 
 
-def test_handle_commands_accepts_positional_numeric_payload():
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.created_topics: list[Topic] = []
-
-        def create_topic(self, topic: Topic) -> Topic:
-            topic.topic_id = "topic-from-positional"
-            self.created_topics.append(topic)
-            return topic
-
-        def list_topics(self):
-            return []
-
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_handle_commands_accepts_positional_numeric_payload(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -445,7 +395,7 @@ def test_handle_commands_accepts_positional_numeric_payload():
     assert responses
     reply_text = responses[0].content_as_string()
     assert "Topic created" in reply_text
-    created_topic = manager.api.created_topics[0]
+    created_topic = api.list_topics()[0]
     assert created_topic.topic_name == "Weather"
     assert created_topic.topic_path == "environment/weather"
 
