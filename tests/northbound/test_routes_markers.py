@@ -360,9 +360,14 @@ def test_marker_symbols_route(tmp_path: Path) -> None:
     assert any(item.get("id") == "vehicle" and item.get("set") == "mdi" for item in payload)
 
 
-def test_marker_routes_accept_mdi_symbols(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_marker_routes_accept_mdi_symbols(
+    tmp_path: Path,
+    monkeypatch,
+    backend: str,
+) -> None:
     monkeypatch.setenv("RTH_MARKER_IDENTITY_KEY", "22" * 32)
-    client, _ = _build_client(tmp_path)
+    client, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     create_response = client.post(
@@ -388,9 +393,14 @@ def test_marker_routes_accept_mdi_symbols(tmp_path: Path, monkeypatch) -> None:
     assert marker["symbol"] == "vehicle"
 
 
-def test_marker_routes_normalize_alias_symbols(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_marker_routes_normalize_alias_symbols(
+    tmp_path: Path,
+    monkeypatch,
+    backend: str,
+) -> None:
     monkeypatch.setenv("RTH_MARKER_IDENTITY_KEY", "33" * 32)
-    client, _ = _build_client(tmp_path)
+    client, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     create_response = client.post(
