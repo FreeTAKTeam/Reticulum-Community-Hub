@@ -74,7 +74,8 @@ It covers:
   adapter
 - FastAPI core route smoke path parameterized across Python storage and the
   Rust bridge, including mission/checklist route creation through the selected
-  backend
+  backend, Rust-backed client/identity/config facade behavior, and Rust-backed
+  subject operation-right grants
 - marker and zone state observed through Rust bridge snapshot requests,
   matching Python service state in the shared parity harness
 - checklist/template/task/cell/feed state observed through the Rust bridge

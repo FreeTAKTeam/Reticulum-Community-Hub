@@ -106,6 +106,8 @@ class RustTopicSubscriberApi:
         self._reticulum_destination: str | None = None
         self._config_text = "[app]\nname = TestHub\nversion = 9.9.9\n"
         self._previous_config_text: str | None = None
+        self._reticulum_config_text = "[reticulum]\nshare_instance = yes\n"
+        self._previous_reticulum_config_text: str | None = None
         config_path = tmp_path / "config.ini"
         if config_path.exists():
             self._config_manager = HubConfigurationManager(
@@ -151,6 +153,9 @@ class RustTopicSubscriberApi:
             reticulum_destination=self._reticulum_destination,
         )
 
+    def reload_config(self) -> ReticulumInfo:
+        return self.get_app_info()
+
     def set_reticulum_destination(self, destination: str | None) -> None:
         if destination is None:
             self._reticulum_destination = None
@@ -168,6 +173,11 @@ class RustTopicSubscriberApi:
     def get_config_text(self) -> str:
         return self._config_text
 
+    def validate_config_text(self, config_text: str) -> dict[str, object]:
+        if not config_text.lstrip().startswith("["):
+            raise ValueError("Invalid configuration payload")
+        return {"valid": True}
+
     def apply_config_text(self, config_text: str) -> dict[str, object]:
         if not config_text.lstrip().startswith("["):
             raise ValueError("Invalid configuration payload")
@@ -175,10 +185,35 @@ class RustTopicSubscriberApi:
         self._config_text = config_text
         return {"applied": True}
 
-    def rollback_config_text(self) -> dict[str, object]:
+    def rollback_config_text(self, backup_path: str | None = None) -> dict[str, object]:
+        _ = backup_path
         if self._previous_config_text is not None:
             self._config_text = self._previous_config_text
             self._previous_config_text = None
+        return {"rolled_back": True}
+
+    def get_reticulum_config_text(self) -> str:
+        return self._reticulum_config_text
+
+    def validate_reticulum_config_text(self, config_text: str) -> dict[str, object]:
+        if not config_text.lstrip().startswith("["):
+            raise ValueError("Invalid Reticulum configuration payload")
+        return {"valid": True}
+
+    def apply_reticulum_config_text(self, config_text: str) -> dict[str, object]:
+        if not config_text.lstrip().startswith("["):
+            raise ValueError("Invalid Reticulum configuration payload")
+        self._previous_reticulum_config_text = self._reticulum_config_text
+        self._reticulum_config_text = config_text
+        return {"applied": True}
+
+    def rollback_reticulum_config_text(
+        self, backup_path: str | None = None
+    ) -> dict[str, object]:
+        _ = backup_path
+        if self._previous_reticulum_config_text is not None:
+            self._reticulum_config_text = self._previous_reticulum_config_text
+            self._previous_reticulum_config_text = None
         return {"rolled_back": True}
 
     def retrieve_topic(self, topic_id: str | None) -> Topic:
@@ -752,14 +787,26 @@ class RustTopicSubscriberApi:
         )
 
     def grant_identity_capability(
-        self, identity: str, capability: str
+        self,
+        identity: str,
+        capability: str,
+        *,
+        granted_by: str | None = None,
+        expires_at: object = None,
     ) -> dict[str, object]:
+        _ = granted_by, expires_at
         self._bridge.grant_capability(identity, capability)
         return {"identity": identity, "capability": capability, "granted": True}
 
     def revoke_identity_capability(
-        self, identity: str, capability: str
+        self,
+        identity: str,
+        capability: str,
+        *,
+        granted_by: str | None = None,
+        revoked_by: str | None = None,
     ) -> dict[str, object]:
+        _ = granted_by, revoked_by
         self._bridge.revoke_capability(identity, capability)
         return {"identity": identity, "capability": capability, "granted": False}
 
@@ -834,6 +881,34 @@ class RustTopicSubscriberApi:
         ]
         return matches[0] if matches else {}
 
+    def grant_operation_right(
+        self,
+        subject_type: str,
+        subject_id: str,
+        operation: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        granted_by: str | None = None,
+        expires_at: object = None,
+    ) -> dict[str, object]:
+        _ = granted_by, expires_at
+        self._bridge.grant_operation_right(
+            subject_type,
+            subject_id,
+            operation,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        return {
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "operation": operation,
+            "scope_type": scope_type or "global",
+            "scope_id": scope_id or "",
+            "granted": True,
+        }
+
     def revoke_operation_right(
         self,
         subject_type: str,
@@ -860,6 +935,31 @@ class RustTopicSubscriberApi:
             "scope_id": scope_id or "",
             "granted": False,
         }
+
+    def list_operation_rights(
+        self,
+        *,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        operation: str | None = None,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        records = _subject_operation_rights(self._bridge.state_snapshot())
+        filtered: list[dict[str, object]] = []
+        for record in records:
+            if subject_type is not None and record["subject_type"] != subject_type:
+                continue
+            if subject_id is not None and record["subject_id"] != subject_id:
+                continue
+            if operation is not None and record["operation"] != operation:
+                continue
+            if scope_type is not None and record["scope_type"] != scope_type:
+                continue
+            if scope_id is not None and record["scope_id"] != scope_id:
+                continue
+            filtered.append(dict(record))
+        return filtered
 
     def resolve_effective_operations(
         self, identity: str, mission_uid: str | None = None

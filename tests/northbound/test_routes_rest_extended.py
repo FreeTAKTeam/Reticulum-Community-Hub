@@ -39,6 +39,7 @@ from reticulum_telemetry_hub.reticulum_server.runtime_events import (
     report_nonfatal_exception,
 )
 from tests.factories import build_location_payload
+from tests.test_rth_api import RustTopicSubscriberApi
 
 
 FIELD_RESULTS = 10
@@ -1312,10 +1313,18 @@ def _build_client(
     tmp_path: Path,
     *,
     backend: str = "python",
-) -> tuple[TestClient, ReticulumTelemetryHubAPI, EventLog, TelemetryController]:
-    config_manager = HubConfigurationManager(storage_path=tmp_path)
-    storage = HubStorage(tmp_path / "hub.sqlite")
-    api = ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
+) -> tuple[
+    TestClient,
+    ReticulumTelemetryHubAPI | RustTopicSubscriberApi,
+    EventLog,
+    TelemetryController,
+]:
+    if backend == "rust":
+        api = RustTopicSubscriberApi(tmp_path)
+    else:
+        config_manager = HubConfigurationManager(storage_path=tmp_path)
+        storage = HubStorage(tmp_path / "hub.sqlite")
+        api = ReticulumTelemetryHubAPI(config_manager=config_manager, storage=storage)
     event_log = EventLog()
     telemetry = TelemetryController(
         db_path=tmp_path / "telemetry.db",
