@@ -121,12 +121,16 @@ class RustTopicSubscriberApi:
             {
                 "topic_id": topic_id,
                 "destination": destination,
+                "reject_tests": reject_tests,
                 "metadata": metadata or {},
             },
         )
         return Subscriber(
             destination=str(result.get("subscriber_id") or result.get("Destination") or ""),
             topic_id=str(result.get("topic_id") or result.get("TopicID") or ""),
+            reject_tests=result.get("reject_tests")
+            if isinstance(result.get("reject_tests"), int)
+            else None,
             metadata=metadata or {},
             subscriber_id=str(result.get("subscriber_id") or result.get("Destination") or ""),
         )
@@ -156,6 +160,7 @@ class RustTopicSubscriberApi:
                 "subscriber_id": subscriber_id,
                 "destination": destination,
                 "topic_id": topic_id,
+                "reject_tests": reject_tests,
                 "metadata": metadata,
             },
         )
@@ -280,6 +285,11 @@ def _subscriber_from_payload(payload: dict[str, object]) -> Subscriber:
             or ""
         ),
         topic_id=str(payload.get("topic_id") or payload.get("TopicID") or ""),
+        reject_tests=payload.get("reject_tests")
+        if isinstance(payload.get("reject_tests"), int)
+        else payload.get("RejectTests")
+        if isinstance(payload.get("RejectTests"), int)
+        else None,
         metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
         subscriber_id=str(
             payload.get("subscriber_id")
@@ -414,8 +424,9 @@ def test_subscriber_management(tmp_path, backend):
     assert api.list_subscribers() == []
 
 
-def test_patch_subscriber_allows_zero_reject_tests(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_patch_subscriber_allows_zero_reject_tests(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(Topic(topic_name="Zero", topic_path="/zero"))
     subscriber = api.subscribe_topic(
         topic.topic_id, destination="abc123", reject_tests=3
