@@ -710,23 +710,13 @@ def test_help_reply_sets_markdown_renderer_hint(tmp_path, backend: str):
     assert reply.fields[LXMF.FIELD_EVENT]["command"] == CommandManager.CMD_HELP
 
 
-def test_create_topic_accepts_snake_case_fields():
-    class DummyAPI:
-        def __init__(self) -> None:
-            self.created: list[Topic] = []
-
-        def create_topic(self, topic: Topic) -> Topic:
-            topic.topic_id = "topic-snake"
-            self.created.append(topic)
-            return topic
-
-        def list_topics(self):
-            return []
-
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_create_topic_accepts_snake_case_fields(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    manager, server_dest = make_command_manager(DummyAPI())
+    api = _api_for_backend(tmp_path, backend)
+    manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
     )
@@ -743,7 +733,9 @@ def test_create_topic_accepts_snake_case_fields():
     assert responses
     reply_text = responses[0].content_as_string()
     assert "Topic created" in reply_text
-    created_topic = manager.api.created[0]
+    topics = api.list_topics()
+    assert len(topics) == 1
+    created_topic = topics[0]
     assert created_topic.topic_name == "Alpha"
     assert created_topic.topic_path == "alpha/path"
 
