@@ -1637,6 +1637,25 @@ def test_config_apply_rejects_invalid_payload(tmp_path, backend):
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
+def test_reticulum_config_apply_and_rollback(tmp_path, backend):
+    api = _api(tmp_path, backend)
+
+    original = api.get_reticulum_config_text()
+    new_config = "[reticulum]\nshare_instance = no\n"
+
+    validate_result = api.validate_reticulum_config_text(new_config)
+    assert validate_result["valid"] is True
+
+    apply_result = api.apply_reticulum_config_text(new_config)
+    assert apply_result["applied"] is True
+    assert api.get_reticulum_config_text() == new_config
+
+    rollback_result = api.rollback_reticulum_config_text()
+    assert rollback_result["rolled_back"] is True
+    assert api.get_reticulum_config_text() == original
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
 def test_identity_status_crud(tmp_path, backend):
     api = _api(tmp_path, backend)
     api.join("identity-1")
