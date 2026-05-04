@@ -115,7 +115,6 @@ class RustTopicSubscriberApi:
         reject_tests: int | None = None,
         metadata: dict | None = None,
     ) -> Subscriber:
-        _ = reject_tests
         result = self._command(
             "topic.subscribe",
             {
@@ -151,7 +150,6 @@ class RustTopicSubscriberApi:
         metadata: dict | None = None,
         **extra: object,
     ) -> Subscriber:
-        _ = reject_tests
         if metadata is None and isinstance(extra.get("Metadata"), dict):
             metadata = extra["Metadata"]
         result = self._command(
@@ -188,6 +186,30 @@ class RustTopicSubscriberApi:
         clients = self._bridge.state_snapshot().get("clients")
         assert isinstance(clients, list)
         return [dict(client) for client in clients if isinstance(client, dict)]
+
+    def list_identity_capabilities(self, identity: str) -> list[str]:
+        normalized = identity.lower()
+        grants = self._bridge.state_snapshot().get("identity_capabilities")
+        assert isinstance(grants, list)
+        return sorted(
+            str(grant.get("capability"))
+            for grant in grants
+            if isinstance(grant, dict)
+            and str(grant.get("identity") or "").lower() == normalized
+            and grant.get("capability")
+        )
+
+    def grant_identity_capability(
+        self, identity: str, capability: str
+    ) -> dict[str, object]:
+        self._bridge.grant_capability(identity, capability)
+        return {"identity": identity, "capability": capability, "granted": True}
+
+    def revoke_identity_capability(
+        self, identity: str, capability: str
+    ) -> dict[str, object]:
+        self._bridge.revoke_capability(identity, capability)
+        return {"identity": identity, "capability": capability, "granted": False}
 
     def _command(
         self,
@@ -882,8 +904,9 @@ def test_identity_statuses_dedupe_prefers_joined_identity(tmp_path):
     assert match.identity == "deadbeef"
 
 
-def test_identity_capability_grants_round_trip(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_capability_grants_round_trip(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     assert api.list_identity_capabilities("deadbeef") == []
 

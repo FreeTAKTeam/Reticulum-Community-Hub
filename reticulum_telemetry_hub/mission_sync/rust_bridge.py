@@ -237,6 +237,19 @@ class RustMissionSyncBridge:
             )
         )
 
+    def revoke_capability(self, identity: str, capability: str) -> None:
+        """Revoke one Rust-side mission-sync capability from an identity."""
+
+        self._expect_state_updated(
+            self._request(
+                {
+                    "type": "revoke_capability",
+                    "identity": identity,
+                    "capability": capability,
+                }
+            )
+        )
+
     def assign_mission_access_role(
         self,
         mission_uid: str,

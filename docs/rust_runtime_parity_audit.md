@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `888 passed, 465 warnings`
+  - Result: `889 passed, 465 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -82,8 +82,9 @@ It covers:
   topic missing/error behavior, topic patch-without-updates behavior, subscriber
   CRUD, subscriber missing/error behavior, and title-case subscriber metadata
   patch tests, subscriber `reject_tests` create/patch-zero behavior, plus client
-  join/list/leave, parameterized across Python storage and a minimal Rust
-  bridge-backed topic/subscriber/client API adapter
+  join/list/leave and identity capability grant/list/revoke behavior,
+  parameterized across Python storage and a minimal Rust bridge-backed
+  topic/subscriber/client/API-rights adapter
 - mission registry CRUD, patch, parent, zone link/unlink, RDE
 - mission change and log entry upsert/list
 - team, team member, client link/unlink, asset, skill, assignment, and assignment asset flows
@@ -112,9 +113,10 @@ tests Python-specific or not-yet-Rust-backed surfaces including:
   R3AKT core registry, full registry matrix, assignment/skill registry,
   mission-list-limit, and mission-change/log Rust-backed flows, plus OpenAPI
   contracts
-- Direct `ReticulumTelemetryHubAPI` tests beyond current topic/subscriber CRUD
-  parity, including attachment association, clients, identity announce/status,
-  REM peer registry, subject-rights storage, config, and app-info behavior
+- Direct `ReticulumTelemetryHubAPI` tests beyond current topic/subscriber CRUD,
+  client, and identity-capability parity, including attachment association,
+  identity announce/status, REM peer registry, subject-rights storage, config,
+  and app-info behavior
 - CLI process-control behavior
 - Python storage/migration helpers
 - Reticulum daemon lifecycle and outbound queue behavior
