@@ -239,8 +239,9 @@ def test_zone_routes_create_list_update_delete(tmp_path: Path, backend: str) -> 
     assert missing_delete.status_code == 404
 
 
-def test_zone_routes_reject_invalid_geometry(tmp_path: Path) -> None:
-    client = _build_client(tmp_path)
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_zone_routes_reject_invalid_geometry(tmp_path: Path, backend: str) -> None:
+    client = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}
 
     # bow-tie/self-intersecting polygon
