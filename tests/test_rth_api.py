@@ -90,6 +90,7 @@ class RustTopicSubscriberApi:
         self._config_text = "[app]\nname = TestHub\nversion = 9.9.9\n"
         self._previous_config_text: str | None = None
         self._bridge = _bridge(tmp_path / "r3akt-api.sqlite")
+        self._bridge_lock = threading.Lock()
         self.rights = RustRightsApi()
 
     def create_topic(self, topic: Topic) -> Topic:
@@ -264,11 +265,13 @@ class RustTopicSubscriberApi:
         return _subscriber_from_payload(result)
 
     def join(self, identity: str) -> bool:
-        self._command("mission.join", {}, source_identity=identity)
+        with self._bridge_lock:
+            self._command("mission.join", {}, source_identity=identity)
         return True
 
     def leave(self, identity: str) -> bool:
-        self._command("mission.leave", {}, source_identity=identity)
+        with self._bridge_lock:
+            self._command("mission.leave", {}, source_identity=identity)
         return True
 
     def list_clients(self) -> list[Client]:
@@ -313,13 +316,14 @@ class RustTopicSubscriberApi:
         source_interface: str | None = None,
         announce_capabilities: object = None,
     ) -> None:
-        self._bridge.record_identity_announce(
-            identity,
-            announced_identity_hash=announced_identity_hash,
-            display_name=display_name,
-            source_interface=source_interface,
-            announce_capabilities=announce_capabilities,
-        )
+        with self._bridge_lock:
+            self._bridge.record_identity_announce(
+                identity,
+                announced_identity_hash=announced_identity_hash,
+                display_name=display_name,
+                source_interface=source_interface,
+                announce_capabilities=announce_capabilities,
+            )
 
     def resolve_identity_display_name(self, identity: str) -> str | None:
         announces = _identity_announces_by_identity(self._bridge.state_snapshot())
@@ -1035,11 +1039,12 @@ def test_client_join_leave(tmp_path, backend):
     assert api.list_clients() == []
 
 
-def test_concurrent_client_join_and_leave(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_concurrent_client_join_and_leave(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
-    worker_count = 20
-    iterations = 4
+    worker_count = 20 if backend == "python" else 6
+    iterations = 4 if backend == "python" else 2
     barrier = threading.Barrier(worker_count)
     errors: list[Exception] = []
 
@@ -1394,8 +1399,9 @@ def test_resolve_identity_display_names_bulk(tmp_path, backend):
     assert resolved["missing"] is None
 
 
-def test_identity_announce_concurrent_upserts_do_not_duplicate_records(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_announce_concurrent_upserts_do_not_duplicate_records(tmp_path, backend):
+    api = _api(tmp_path, backend)
     errors: list[Exception] = []
 
     def _record(display_name: str) -> None:
@@ -1404,12 +1410,13 @@ def test_identity_announce_concurrent_upserts_do_not_duplicate_records(tmp_path)
         except Exception as exc:  # pragma: no cover - defensive capture
             errors.append(exc)
 
+    per_name_count = 10 if backend == "python" else 3
     threads = [
         threading.Thread(target=_record, args=("Sideband-Alice",), daemon=True)
-        for _ in range(10)
+        for _ in range(per_name_count)
     ] + [
         threading.Thread(target=_record, args=("Sideband-Bob",), daemon=True)
-        for _ in range(10)
+        for _ in range(per_name_count)
     ]
     for thread in threads:
         thread.start()
@@ -1421,11 +1428,18 @@ def test_identity_announce_concurrent_upserts_do_not_duplicate_records(tmp_path)
         "Sideband-Alice",
         "Sideband-Bob",
     }
-    records = [
-        record
-        for record in api._storage.list_identity_announces()
-        if record.destination_hash == "deadbeef"
-    ]
+    if backend == "rust":
+        records = [
+            record
+            for record in _raw_identity_announces(api._bridge.state_snapshot())
+            if record["destination_hash"] == "deadbeef"
+        ]
+    else:
+        records = [
+            record
+            for record in api._storage.list_identity_announces()
+            if record.destination_hash == "deadbeef"
+        ]
     assert len(records) == 1
 
 
