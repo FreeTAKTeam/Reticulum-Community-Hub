@@ -344,7 +344,13 @@ class RustTopicSubscriberApi:
         clients = {client.identity.lower(): client for client in self.list_clients()}
         announces = _identity_announces_by_identity(snapshot)
         identities = sorted(set(states) | set(clients) | set(announces))
-        return [self._identity_status(identity, snapshot=snapshot) for identity in identities]
+        return [
+            self._identity_status(
+                clients[identity].identity if identity in clients else identity,
+                snapshot=snapshot,
+            )
+            for identity in identities
+        ]
 
     def _identity_status(
         self, identity: str, *, snapshot: dict[str, object] | None = None
@@ -1141,8 +1147,9 @@ def test_identity_announce_concurrent_upserts_do_not_duplicate_records(tmp_path)
     assert len(records) == 1
 
 
-def test_identity_statuses_dedupe_case_insensitive(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_statuses_dedupe_case_insensitive(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.join("DeAdBeEf")
     api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
 
@@ -1154,8 +1161,9 @@ def test_identity_statuses_dedupe_case_insensitive(tmp_path):
     assert matches[0].display_name == "Sideband-Alice"
 
 
-def test_identity_statuses_dedupe_with_announce_only(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_identity_statuses_dedupe_with_announce_only(tmp_path, backend):
+    api = _api(tmp_path, backend)
     api.record_identity_announce("deadbeef", display_name="Sideband-Alice")
 
     statuses = api.list_identity_statuses()
