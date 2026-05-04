@@ -301,6 +301,50 @@ def test_subscriber_command_retrieve_patch_delete_round_trip(tmp_path, backend: 
         api.retrieve_subscriber(subscriber.subscriber_id)
 
 
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_status_command_uses_backend_counts(tmp_path, backend: str):
+    if RNS.Reticulum.get_instance() is None:
+        RNS.Reticulum()
+
+    class DummyTelemetryController:
+        def handle_command(self, command, message, dest):
+            return None
+
+        def telemetry_stats(self):
+            return {"entries": 3}
+
+    api = _api_for_backend(tmp_path, backend)
+    topic = api.create_topic(Topic(topic_name="Ops", topic_path="/ops"))
+    api.create_subscriber(Subscriber(destination="peer-1", topic_id=topic.topic_id))
+    server_dest = RNS.Destination(
+        RNS.Identity(),
+        RNS.Destination.IN,
+        RNS.Destination.SINGLE,
+        "lxmf",
+        "delivery",
+    )
+    client_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
+    )
+    manager = CommandManager(
+        {client_dest.identity.hash: client_dest},
+        DummyTelemetryController(),
+        server_dest,
+        api,
+    )
+    message = make_message(server_dest, client_dest, CommandManager.CMD_STATUS)
+
+    reply = manager.handle_command(message.fields[LXMF.FIELD_COMMANDS][0], message)
+    payload = json.loads(reply.content_as_string())
+
+    assert payload["clients"] == 1
+    assert payload["topics"] == 1
+    assert payload["subscribers"] == 1
+    assert payload["files"] == 0
+    assert payload["images"] == 0
+    assert payload["telemetry"] == {"entries": 3}
+
+
 def test_apply_lxmf_router_runtime_config_reads_allowed_and_ignored_sidecars(
     tmp_path,
 ):
