@@ -185,7 +185,11 @@ class RustTopicSubscriberApi:
         if not isinstance(payload, dict):
             raise RuntimeError(f"Rust command returned malformed payload: {command_type}")
         if payload.get("status") == "rejected":
-            raise ValueError(payload.get("reason") or payload.get("detail") or command_type)
+            reason_code = str(payload.get("reason_code") or "")
+            reason = str(payload.get("reason") or payload.get("detail") or command_type)
+            if reason_code in {"not_found", "not_found_error"} or "not found" in reason:
+                raise KeyError(reason)
+            raise ValueError(reason)
         result = payload.get("result")
         if not isinstance(result, dict):
             raise RuntimeError(f"Rust command returned non-object result: {command_type}")
@@ -958,15 +962,17 @@ def test_explicit_revoke_overrides_mission_access_bundle(tmp_path):
     assert api.authorize("peer-client", "mission.message.send", mission_uid="mission-1") is False
 
 
-def test_create_topic_requires_fields(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_create_topic_requires_fields(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     with pytest.raises(ValueError):
         api.create_topic(Topic(topic_name="", topic_path=""))
 
 
-def test_topic_operations_raise_when_missing(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_topic_operations_raise_when_missing(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     with pytest.raises(KeyError):
         api.retrieve_topic("missing")
@@ -975,8 +981,9 @@ def test_topic_operations_raise_when_missing(tmp_path):
         api.delete_topic("missing")
 
 
-def test_patch_topic_without_updates_returns_original(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_patch_topic_without_updates_returns_original(tmp_path, backend):
+    api = _api(tmp_path, backend)
     topic = api.create_topic(Topic(topic_name="Status", topic_path="/status"))
 
     returned = api.patch_topic(topic.topic_id)
@@ -1001,8 +1008,9 @@ def test_create_subscriber_requires_destination(tmp_path):
         api.create_subscriber(Subscriber(destination=""))
 
 
-def test_subscriber_operations_raise_when_missing(tmp_path):
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_subscriber_operations_raise_when_missing(tmp_path, backend):
+    api = _api(tmp_path, backend)
 
     with pytest.raises(KeyError):
         api.retrieve_subscriber("unknown")

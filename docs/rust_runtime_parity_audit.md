@@ -11,7 +11,7 @@ the Python implementation and the Rust implementation, and both pass.
 
 - Full Python suite:
   - Command: `.\.venv\Scripts\python.exe -m pytest --no-cov -q`
-  - Result: `881 passed, 465 warnings`
+  - Result: `885 passed, 465 warnings`
 - Shared Python-vs-Rust southbound runtime suite:
   - File: `tests/rust_runtime/test_rch_bridge_parity.py`
   - Command inventory guard covers all declared mission/checklist southbound
@@ -79,8 +79,9 @@ It covers:
   subscriber pagination route checks, subscriber CRUD, and topic pagination
   after config reload
 - Direct `ReticulumTelemetryHubAPI` topic CRUD, topic description clearing,
-  and subscriber CRUD tests parameterized across Python storage and a minimal
-  Rust bridge-backed topic/subscriber API adapter
+  topic missing/error behavior, topic patch-without-updates behavior, subscriber
+  CRUD, and subscriber missing/error behavior tests parameterized across Python
+  storage and a minimal Rust bridge-backed topic/subscriber API adapter
 - mission registry CRUD, patch, parent, zone link/unlink, RDE
 - mission change and log entry upsert/list
 - team, team member, client link/unlink, asset, skill, assignment, and assignment asset flows
