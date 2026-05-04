@@ -682,11 +682,12 @@ def test_command_reply_sets_results_and_preserves_context_fields(tmp_path, backe
     assert reply.fields[LXMF.FIELD_EVENT]["command"] == CommandManager.CMD_GET_APP_INFO
 
 
-def test_help_reply_sets_markdown_renderer_hint(tmp_path):
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_help_reply_sets_markdown_renderer_hint(tmp_path, backend: str):
     if RNS.Reticulum.get_instance() is None:
         RNS.Reticulum()
 
-    api = ReticulumTelemetryHubAPI(config_manager=make_config_manager(tmp_path))
+    api = _api_for_backend(tmp_path, backend)
     manager, server_dest = make_command_manager(api)
     client_dest = RNS.Destination(
         RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery"
