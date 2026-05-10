@@ -194,3 +194,13 @@ RCH_Store/lxmf/outbound_stamp_costs
 RCH_Store/lxmf/outbound_stamp_costs
 RCH_Store/rth_api.sqlite
 RCH_Store/rth_api.sqlite-wal
+node_modules/
+ui/node_modules/
+ui/dist/
+ui/.tmp-*
+ui/test-results/
+ui/qa-artifacts/
+*.log
+*.sqlite
+*.sqlite3
+*.db
