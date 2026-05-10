@@ -27,6 +27,17 @@ src/
 └── LXMF-rs/                   # dependency for lxmf-wire
 ```
 
+## UI and Packaging
+
+- `ui/` is imported from the canonical `ui-shared` branch and must stay
+  compatible with both Python RCH 2.9.x and Rust `r3akt-rch-server`.
+- `apps/rch-desktop/` is the Tauri desktop shell for the Rust product line.
+- `packaging/` contains server package templates and install helpers.
+- Keep Electron only on `rch-python`; do not reintroduce Electron packaging on
+  `rust-next`.
+- Rust server packages are the deployment primitive. Tauri is a desktop shell
+  for local operator workstations.
+
 ## Required Checks
 
 Run these before declaring Rust transition work complete:
@@ -44,6 +55,23 @@ cargo test -p r3akt-rch-server
 cargo test -p r3akt-rch-core
 cargo test -p r3akt-transport-rns
 cargo test -p r3akt-tak-connector
+```
+
+For shared UI changes, also run:
+
+```powershell
+npm --prefix ui ci
+npm --prefix ui run lint
+npm --prefix ui run test
+npm --prefix ui run build
+```
+
+For Rust package changes, run the relevant package build:
+
+```powershell
+cargo build --release -p r3akt-rch-server
+npm --prefix apps/rch-desktop install
+npm --prefix apps/rch-desktop run build
 ```
 
 ## Compatibility Rules

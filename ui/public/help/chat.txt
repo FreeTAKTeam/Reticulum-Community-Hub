@@ -1,0 +1,12 @@
+[Communications // Comms Array]
+
+Purpose:
+This page is the live messaging plane for direct, topic, and broadcast traffic.
+
+Primary systems:
+- Directory lanes for peers, topics, and global broadcast context.
+- Live message stream with inline delivery state and timestamps.
+- Attachment pipeline for images and files with size guardrails.
+- Composer controls for scope selection and target routing.
+
+Use this page to coordinate operators, publish to channels, and exchange attachments through the hub messaging bus.

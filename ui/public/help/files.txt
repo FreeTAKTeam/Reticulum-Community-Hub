@@ -1,0 +1,12 @@
+[Files // Asset Vault]
+
+Purpose:
+This page manages binary assets stored by the hub.
+
+Primary systems:
+- File inventory with media type, size, and creation metadata.
+- Image inventory with preview, raw-open, and download workflows.
+- Delete controls for lifecycle cleanup of stale attachments.
+- Paged browsing for high-volume datasets.
+
+Use this page to audit, retrieve, preview, and remove stored file or image artifacts.

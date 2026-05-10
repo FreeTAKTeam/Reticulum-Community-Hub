@@ -1,0 +1,11 @@
+@import "./tokens.css";
+@import "./foundations.css";
+@import "./layout.css";
+@import "./widgets.css";
+@import "./forms.css";
+@import "./overlays.css";
+@import "./motion.css";
+@import "./utilities.css";
+
+/* Legacy compatibility during migration */
+@import "../cosmic.css";

@@ -1,0 +1,13 @@
+[WebMap // Atlas Operations]
+
+Purpose:
+This page is the spatial console for telemetry and operator markers.
+
+Primary systems:
+- Live map rendering with telemetry and operator marker layers.
+- Marker placement workflow with symbol selection, rename, drag, and persist.
+- Marker Registry sidebar with filters, paging, and fast focus controls.
+- Inspector panel for deep telemetry payload review on selected markers.
+- Coordinate readout for precise cursor position feedback.
+
+Use this page to monitor geospatial movement, place tactical markers, and inspect location-linked telemetry in real time.

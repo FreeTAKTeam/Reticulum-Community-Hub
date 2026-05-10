@@ -1,0 +1,12 @@
+[Configure // Node Tuning]
+
+Purpose:
+This page edits runtime configuration for Reticulum and hub behavior.
+
+Primary systems:
+- Interface profile selection and transport settings.
+- Reticulum parameter editing and validation workflows.
+- Save/apply controls for persistent configuration state.
+- Configuration diagnostics and focused editing panels.
+
+Use this page when changing network stack behavior, transport profiles, or node-level runtime options.

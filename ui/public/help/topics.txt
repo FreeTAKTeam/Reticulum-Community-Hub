@@ -1,0 +1,12 @@
+[Topics // Signal Matrix]
+
+Purpose:
+This page manages the topic hierarchy and subscription routing model.
+
+Primary systems:
+- Topic Hierarchy Tree for branch navigation and focus.
+- Topics tab for creating, editing, and deleting topic definitions.
+- Subscribers tab for creating, editing, and deleting subscriber routes.
+- Branch-aware filtering to isolate one path of the signal tree.
+
+Use this page to shape message routing, maintain taxonomy discipline, and control how traffic fans out through the hub.

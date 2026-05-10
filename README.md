@@ -19,6 +19,12 @@ This root is a Rust 2024 Cargo workspace. The primary server replacement is
 This workspace currently expects the Rust LXMF implementation to be checked out
 beside this repository as `LXMF-rs`.
 
+The shared Vue web UI is maintained on the `ui-shared` branch and is imported
+into `ui/` on this branch for Rust server and desktop packaging. Python 2.9.x
+continues on `rch-python` with its Electron wrapper. Rust server releases are
+packaged from `r3akt-rch-server`; Rust desktop releases use the Tauri shell in
+`apps/rch-desktop`.
+
 Crates:
 
 - `r3akt-protocol`: typed envelopes, NodeHello, Heartbeat, HealthTelemetry,

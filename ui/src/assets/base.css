@@ -1,0 +1,171 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-family: "Barlow", "IBM Plex Sans", "Source Sans 3", "Segoe UI", sans-serif;
+  background-color: #0f1320;
+  color: #e7ecf5;
+  --cui-scrollbar-track: rgba(6, 18, 30, 0.92);
+  --cui-scrollbar-thumb: rgba(44, 212, 230, 0.75);
+  --cui-scrollbar-thumb-strong: rgba(70, 244, 255, 0.9);
+  --cui-scrollbar-border: rgba(56, 244, 255, 0.28);
+  --cui-scrollbar-glow: rgba(44, 212, 230, 0.35);
+  --cui-scrollbar-corner: rgba(8, 18, 26, 0.85);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #0f1320;
+  color: inherit;
+}
+
+code,
+pre {
+  font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+}
+
+.cui-scrollbar,
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--cui-scrollbar-thumb) var(--cui-scrollbar-track);
+}
+
+.cui-scrollbar::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.cui-scrollbar::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(4, 12, 20, 0.95), var(--cui-scrollbar-track));
+  border: 1px solid rgba(56, 244, 255, 0.12);
+  box-shadow: inset 0 0 10px rgba(3, 12, 18, 0.8);
+}
+
+.cui-scrollbar::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(8, 36, 48, 0.95), var(--cui-scrollbar-thumb));
+  border: 1px solid var(--cui-scrollbar-border);
+  border-radius: 999px;
+  box-shadow: 0 0 10px var(--cui-scrollbar-glow);
+}
+
+.cui-scrollbar::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(12, 50, 64, 0.98), var(--cui-scrollbar-thumb-strong));
+}
+
+.cui-scrollbar::-webkit-scrollbar-corner,
+*::-webkit-scrollbar-corner {
+  background: var(--cui-scrollbar-corner);
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+.rth-markdown {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: #e7ecf5;
+}
+
+.rth-markdown h1,
+.rth-markdown h2,
+.rth-markdown h3 {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.rth-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.rth-markdown h2 {
+  font-size: 1.125rem;
+}
+
+.rth-markdown h3 {
+  font-size: 1rem;
+}
+
+.rth-markdown p {
+  margin: 0 0 0.5rem;
+}
+
+.rth-markdown ul,
+.rth-markdown ol {
+  margin: 0 0 0.5rem 1rem;
+  padding: 0;
+}
+
+.rth-markdown li {
+  margin: 0.25rem 0;
+}
+
+.rth-markdown a {
+  color: #4db6ff;
+  text-decoration: underline;
+}
+
+.rth-markdown code {
+  background: #141828;
+  border: 1px solid #252a3d;
+  border-radius: 4px;
+  padding: 0 0.25rem;
+  font-size: 0.85em;
+}
+
+.rth-markdown pre {
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  background: #141828;
+  border: 1px solid #252a3d;
+  border-radius: 6px;
+  overflow: auto;
+}
+
+.rth-markdown pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 0.8rem;
+  color: #e7ecf5;
+}
+
+.rth-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+}
+
+.rth-markdown th,
+.rth-markdown td {
+  border: 1px solid #252a3d;
+  padding: 0.5rem;
+  text-align: left;
+}
+
+.rth-markdown th {
+  background: #141828;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  color: #a7b0c4;
+}
+
+.rth-output-code {
+  margin: 0;
+  max-height: 20rem;
+  overflow: auto;
+  font-size: 0.75rem;
+  color: #e7ecf5;
+}

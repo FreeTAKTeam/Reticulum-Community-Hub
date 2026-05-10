@@ -1,0 +1,11 @@
+[Connect // Link Uplink]
+
+Purpose:
+This page configures and verifies connectivity to the backend and event streams.
+
+Primary systems:
+- Base URL targeting for API and websocket endpoints.
+- Connection status controls and live state validation.
+- Session-oriented connect/disconnect behavior.
+
+Use this page before operations to set target endpoints and verify that command, telemetry, and event channels are reachable.

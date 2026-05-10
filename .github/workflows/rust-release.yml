@@ -1,0 +1,151 @@
+name: Rust release packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v3.0.0-preview.*"
+      - "v3.*"
+
+permissions:
+  contents: write
+
+jobs:
+  server-package:
+    name: Server package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: rch-rust-server-windows-x64
+            binary: r3akt-rch-server.exe
+          - os: ubuntu-latest
+            artifact: rch-rust-server-linux-x64
+            binary: r3akt-rch-server
+
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v4
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v4
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: rch/ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: rch/ui
+        run: npm ci
+
+      - name: Build UI
+        working-directory: rch/ui
+        run: npm run build
+
+      - name: Build server
+        working-directory: rch
+        run: cargo build --release -p r3akt-rch-server
+
+      - name: Package server on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: rch
+        run: |
+          $pkg = "dist/${{ matrix.artifact }}"
+          New-Item -ItemType Directory -Force -Path "$pkg/bin", "$pkg/ui", "$pkg/packaging" | Out-Null
+          Copy-Item "target/release/${{ matrix.binary }}" "$pkg/bin/"
+          Copy-Item -Recurse "ui/dist/*" "$pkg/ui/"
+          Copy-Item -Recurse "packaging/*" "$pkg/packaging/"
+          Compress-Archive -Path "$pkg/*" -DestinationPath "dist/${{ matrix.artifact }}.zip" -Force
+          Get-FileHash "dist/${{ matrix.artifact }}.zip" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  ${{ matrix.artifact }}.zip" } | Set-Content "dist/${{ matrix.artifact }}.zip.sha256"
+
+      - name: Package server on Linux
+        if: runner.os == 'Linux'
+        working-directory: rch
+        run: |
+          pkg="dist/${{ matrix.artifact }}"
+          mkdir -p "$pkg/bin" "$pkg/ui" "$pkg/packaging"
+          cp "target/release/${{ matrix.binary }}" "$pkg/bin/"
+          cp -R ui/dist/. "$pkg/ui/"
+          cp -R packaging/. "$pkg/packaging/"
+          tar -C "$pkg" -czf "dist/${{ matrix.artifact }}.tar.gz" .
+          sha256sum "dist/${{ matrix.artifact }}.tar.gz" > "dist/${{ matrix.artifact }}.tar.gz.sha256"
+
+      - name: Upload server package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            rch/dist/${{ matrix.artifact }}.*
+
+  desktop-package:
+    name: Tauri desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v4
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v4
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: rch/ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: rch/ui
+        run: npm ci
+
+      - name: Install desktop dependencies
+        working-directory: rch/apps/rch-desktop
+        run: npm install
+
+      - name: Build Tauri desktop
+        working-directory: rch/apps/rch-desktop
+        run: npm run build
+
+      - name: Upload desktop package
+        uses: actions/upload-artifact@v4
+        with:
+          name: rch-rust-desktop-${{ runner.os }}
+          path: |
+            rch/apps/rch-desktop/src-tauri/target/release/bundle/**

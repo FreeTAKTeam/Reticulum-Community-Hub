@@ -1,0 +1,155 @@
+﻿.team-roster-workspace {
+  --neon: #37f2ff;
+  --panel-dark: rgba(4, 12, 22, 0.96);
+  --panel-light: rgba(10, 30, 45, 0.94);
+  --amber: #ffb35c;
+  color: #dffcff;
+  font-family: "Orbitron", "Rajdhani", "Barlow", sans-serif;
+}
+
+
+.control-strip {
+  margin-top: 16px;
+  z-index: 1;
+}
+
+.control-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.control-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.control-filters {
+  min-width: 0;
+}
+
+.control-meta {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(204, 247, 255, 0.72);
+}
+
+.workspace-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: 18px;
+  z-index: 1;
+  position: relative;
+}
+
+.stack-list {
+  display: grid;
+  gap: 8px;
+}
+
+.stack-list li {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(55, 242, 255, 0.18);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(6, 18, 30, 0.62);
+}
+
+.stack-list strong {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(206, 249, 255, 0.64);
+}
+
+.stack-list span {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: rgba(222, 253, 255, 0.9);
+}
+
+.add-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+
+.add-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.selected-user {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 12px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(196, 248, 255, 0.78);
+}
+
+.panel-empty {
+  border: 1px dashed rgba(55, 242, 255, 0.25);
+  border-radius: 12px;
+  text-align: center;
+  padding: 18px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  color: rgba(209, 251, 255, 0.62);
+}
+
+.table-wrap {
+  max-height: min(62vh, 640px);
+  overflow: auto;
+}
+
+.mono {
+  font-family: "JetBrains Mono", "Cascadia Mono", monospace;
+}
+
+
+:deep(.team-roster-workspace .cui-combobox__label) {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(209, 251, 255, 0.66);
+}
+
+@media (max-width: 1180px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .registry-top {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+
+  .registry-status {
+    justify-content: center;
+  }
+
+  .control-row {
+    grid-template-columns: 1fr;
+  }
+
+  .add-form {
+    grid-template-columns: 1fr;
+  }
+}

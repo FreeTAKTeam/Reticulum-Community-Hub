@@ -1,0 +1,11 @@
+[About // System Intel]
+
+Purpose:
+This page reports application identity, version, and reference links.
+
+Primary systems:
+- Runtime and build metadata for the deployed hub.
+- Quick-access references to project and protocol resources.
+- High-level product context for operators and maintainers.
+
+Use this page to confirm build provenance, verify runtime identity, and access supporting documentation anchors.
