@@ -13,7 +13,7 @@ export interface RequestOptions {
   retries?: number;
 }
 
-const DEFAULT_TIMEOUT = 10000;
+const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_RETRIES = 2;
 const USE_MOCK = import.meta.env.VITE_RTH_MOCK === "true";
 
@@ -162,10 +162,14 @@ export const getBlob = async (path: string, options: RequestOptions = {}): Promi
   return response.blob();
 };
 
-export const get = async <T>(path: string): Promise<T> => request<T>(path);
+export const get = async <T>(path: string, options: RequestOptions = {}): Promise<T> =>
+  request<T>(path, options);
 
-export const post = async <T>(path: string, body?: unknown): Promise<T> =>
-  request<T>(path, { method: "POST", body });
+export const post = async <T>(
+  path: string,
+  body?: unknown,
+  options: Omit<RequestOptions, "method" | "body"> = {}
+): Promise<T> => request<T>(path, { ...options, method: "POST", body });
 
 export const put = async <T>(path: string, body?: unknown): Promise<T> =>
   request<T>(path, { method: "PUT", body });
@@ -173,4 +177,7 @@ export const put = async <T>(path: string, body?: unknown): Promise<T> =>
 export const patch = async <T>(path: string, body?: unknown): Promise<T> =>
   request<T>(path, { method: "PATCH", body });
 
-export const del = async <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE" });
+export const del = async <T>(
+  path: string,
+  options: Omit<RequestOptions, "method" | "body"> = {}
+): Promise<T> => request<T>(path, { ...options, method: "DELETE" });

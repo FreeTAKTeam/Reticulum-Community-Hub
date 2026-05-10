@@ -215,6 +215,7 @@ type FeedTab = "entries" | "events";
 const route = useRoute();
 const router = useRouter();
 const toastStore = useToastStore();
+const MISSION_WRITE_TIMEOUT_MS = 30000;
 
 const missions = ref<MissionRaw[]>([]);
 const logEntries = ref<LogEntryRaw[]>([]);
@@ -246,7 +247,15 @@ const editor = ref({
   client_time: toNowDateTimeLocal()
 });
 
-const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const toArray = <T>(value: unknown): T[] => {
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+  if (value && typeof value === "object" && Array.isArray((value as { value?: unknown }).value)) {
+    return (value as { value: T[] }).value;
+  }
+  return [];
+};
 const queryText = (value: unknown): string =>
   Array.isArray(value) ? String(value[0] ?? "").trim() : String(value ?? "").trim();
 const toStringList = (value: unknown): string[] =>
@@ -451,7 +460,7 @@ const saveLogEntry = async () => {
     if (editor.value.client_time.trim()) {
       payload.client_time = new Date(editor.value.client_time).toISOString();
     }
-    await post(endpoints.r3aktLogEntries, payload);
+    await post(endpoints.r3aktLogEntries, payload, { timeoutMs: MISSION_WRITE_TIMEOUT_MS });
     await loadWorkspace();
     toastStore.push(editor.value.entry_uid ? "Log entry updated" : "Log entry created", "success");
     resetEditor();

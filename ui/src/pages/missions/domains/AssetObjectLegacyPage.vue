@@ -239,6 +239,7 @@ interface AssetView {
 type EditorMode = "create" | "edit";
 
 const DEFAULT_ASSET_STATUSES = ["AVAILABLE", "IN_USE", "MAINTENANCE", "LOST", "RETIRED"] as const;
+const MISSION_WRITE_TIMEOUT_MS = 30000;
 
 const route = useRoute();
 const router = useRouter();
@@ -271,7 +272,15 @@ const editor = ref({
   notes: ""
 });
 
-const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const toArray = <T>(value: unknown): T[] => {
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+  if (value && typeof value === "object" && Array.isArray((value as { value?: unknown }).value)) {
+    return (value as { value: T[] }).value;
+  }
+  return [];
+};
 const queryText = (value: unknown): string =>
   Array.isArray(value) ? String(value[0] ?? "").trim() : String(value ?? "").trim();
 const parseStringList = (value: unknown): string[] =>
@@ -552,7 +561,7 @@ const saveAsset = async () => {
     if (editorMode.value === "edit" && editor.value.asset_uid.trim()) {
       payload.asset_uid = editor.value.asset_uid.trim();
     }
-    await post(endpoints.r3aktAssets, payload);
+    await post(endpoints.r3aktAssets, payload, { timeoutMs: MISSION_WRITE_TIMEOUT_MS });
     await loadWorkspace();
     editorOpen.value = false;
     toastStore.push(editorMode.value === "edit" ? "Asset updated" : "Asset created", "success");
@@ -570,7 +579,9 @@ const deleteAsset = async (asset: AssetView) => {
   }
   deletingUid.value = asset.uid;
   try {
-    await deleteRequest(`${endpoints.r3aktAssets}/${encodeURIComponent(asset.uid)}`);
+    await deleteRequest(`${endpoints.r3aktAssets}/${encodeURIComponent(asset.uid)}`, {
+      timeoutMs: MISSION_WRITE_TIMEOUT_MS
+    });
     await loadWorkspace();
     toastStore.push("Asset deleted", "success");
   } catch (error) {
