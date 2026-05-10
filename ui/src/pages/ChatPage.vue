@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="chat-cosmos">
     <div class="chat-shell">
       <header class="chat-top">
@@ -564,5 +564,3 @@ watch(activeScope, () => {
 </script>
 
 <style scoped src="./styles/ChatPage.css"></style>
-
-

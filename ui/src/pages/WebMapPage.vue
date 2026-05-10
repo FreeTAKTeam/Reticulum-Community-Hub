@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="webmap-cosmos" :class="{ 'webmap-cosmos--sidebar-collapsed': markersPanelCollapsed }">
     <section class="webmap-main">
       <div class="webmap-stage">
@@ -3629,6 +3629,3 @@ onUnmounted(() => {
 });
 </script>
 <style scoped src="./styles/WebMapPage.css"></style>
-
-
-

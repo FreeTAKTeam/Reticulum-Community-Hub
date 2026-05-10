@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="dashboard-hud">
     <section class="hud-banner">
       <div class="hud-brand">
@@ -889,5 +889,3 @@ onUnmounted(() => {
 </script>
 
 <style scoped src="./styles/DashboardPage.css"></style>
-
-

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="mission-assets-workspace">
     <div class="registry-shell">
       <CosmicTopStatus title="Mission Asset Registry" />
@@ -677,7 +677,3 @@ onMounted(() => {
 </script>
 
 <style scoped src="../../styles/MissionAssetsPage.css"></style>
-
-
-
-

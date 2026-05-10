@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="users-registry">
     <div class="registry-shell">
       <CosmicTopStatus title="User Registry" />
@@ -1652,7 +1652,3 @@ onMounted(() => {
 </script>
 
 <style scoped src="./styles/UsersPage.css"></style>
-
-
-
-

@@ -1927,7 +1927,3 @@ onMounted(() => { loadWorkspace().catch((error) => { handleApiError(error, "Unab
 </script>
 
 <style scoped src="./styles/ChecklistsPage.css"></style>
-
-
-
-

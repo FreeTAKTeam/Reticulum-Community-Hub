@@ -22,4 +22,3 @@ npm --prefix ui run lint
 npm --prefix ui run test
 npm --prefix ui run build
 ```
-

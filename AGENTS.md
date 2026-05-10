@@ -22,4 +22,3 @@ npm --prefix ui run build
 
 Do not commit `ui/dist`, `node_modules`, logs, screenshots, local databases, or
 temporary Playwright/Vite files.
-

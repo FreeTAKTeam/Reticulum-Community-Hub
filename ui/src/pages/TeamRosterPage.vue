@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="team-roster-workspace">
     <div class="registry-shell">
       <CosmicTopStatus title="Team Member Assignment" />
@@ -496,7 +496,3 @@ onMounted(() => {
 </script>
 
 <style scoped src="./styles/TeamRosterPage.css"></style>
-
-
-
-

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="mission-logs-workspace">
     <div class="registry-shell">
       <CosmicTopStatus title="Mission Logbook" />
@@ -591,7 +591,3 @@ onMounted(() => {
 </script>
 
 <style scoped src="../../styles/MissionLogsPage.css"></style>
-
-
-
-
