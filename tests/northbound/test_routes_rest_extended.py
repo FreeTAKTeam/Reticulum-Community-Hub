@@ -1737,6 +1737,47 @@ def test_apply_reticulum_config_rejects_invalid_payload(
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
+def test_reticulum_config_routes_round_trip(
+    tmp_path: Path, backend: str
+) -> None:
+    reticulum_path = tmp_path / "reticulum.conf"
+    reticulum_path.write_text("[reticulum]\nshare_instance = yes\n", encoding="utf-8")
+    config_path = tmp_path / "config.ini"
+    config_path.write_text(
+        f"[hub]\nreticulum_config_path = {reticulum_path}\n", encoding="utf-8"
+    )
+
+    client, api, _, _ = _build_client(tmp_path, backend=backend)
+    headers = {"X-API-Key": "secret", "Content-Type": "text/plain"}
+    original = api.get_reticulum_config_text()
+    updated = "[reticulum]\nshare_instance = no\n"
+
+    get_response = client.get("/Reticulum/Config", headers={"X-API-Key": "secret"})
+    assert get_response.status_code == 200
+    assert get_response.text == original
+
+    validate_response = client.post(
+        "/Reticulum/Config/Validate", data=updated, headers=headers
+    )
+    assert validate_response.status_code == 200
+    assert validate_response.json()["valid"] is True
+
+    apply_response = client.put("/Reticulum/Config", data=updated, headers=headers)
+    assert apply_response.status_code == 200
+    assert apply_response.json()["applied"] is True
+    assert api.get_reticulum_config_text() == updated
+
+    rollback_response = client.post(
+        "/Reticulum/Config/Rollback",
+        json={},
+        headers={"X-API-Key": "secret"},
+    )
+    assert rollback_response.status_code == 200
+    assert rollback_response.json()["rolled_back"] is True
+    assert api.get_reticulum_config_text() == original
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
 def test_identity_moderation_routes(tmp_path: Path, backend: str) -> None:
     client, _, _, _ = _build_client(tmp_path, backend=backend)
     headers = {"X-API-Key": "secret"}

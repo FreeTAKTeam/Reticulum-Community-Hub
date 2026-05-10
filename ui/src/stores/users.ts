@@ -52,19 +52,32 @@ type IdentityApiPayload = {
   AnnounceCapabilities?: string[];
   RemMode?: string | null;
   IsRemCapable?: boolean;
+  IsAnnounced?: boolean;
+  AnnounceDestinationHash?: string | null;
+  AnnouncedIdentityHash?: string | null;
+  AnnounceSource?: string | null;
+  AnnounceFirstSeen?: string | null;
+  AnnounceLastSeen?: string | null;
 };
 
 const fromApiIdentity = (payload: IdentityApiPayload): IdentityEntry => ({
   id: payload.Identity,
   status: payload.Status,
-  last_seen: payload.LastSeen ?? undefined,
+  last_seen: payload.AnnounceLastSeen ?? payload.LastSeen ?? undefined,
   display_name: payload.DisplayName ?? displayNameFromMetadata(payload.Metadata),
+  metadata: payload.Metadata,
   banned: payload.IsBanned,
   blackholed: payload.IsBlackholed,
   client_type: payload.ClientType,
   announce_capabilities: payload.AnnounceCapabilities,
   rem_mode: payload.RemMode ?? undefined,
-  is_rem_capable: payload.IsRemCapable
+  is_rem_capable: payload.IsRemCapable,
+  is_announced: payload.IsAnnounced,
+  announce_destination_hash: payload.AnnounceDestinationHash ?? undefined,
+  announced_identity_hash: payload.AnnouncedIdentityHash ?? undefined,
+  announce_source: payload.AnnounceSource ?? undefined,
+  announce_first_seen: payload.AnnounceFirstSeen ?? undefined,
+  announce_last_seen: payload.AnnounceLastSeen ?? undefined
 });
 
 type RemPeersApiPayload = {

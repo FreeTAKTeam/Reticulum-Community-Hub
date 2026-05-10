@@ -103,6 +103,9 @@ class RuntimeConfigMixin:
         rust_runtime_db_value = self._normalize_optional_text(
             rust_runtime_section.get("db_path")
         )
+        rust_runtime_reticulumd_rpc_endpoint = self._normalize_optional_text(
+            rust_runtime_section.get("reticulumd_rpc_endpoint")
+        )
 
         announce_section = (
             self._get_section("announce.capabilities")
@@ -237,5 +240,6 @@ class RuntimeConfigMixin:
                 if rust_runtime_db_value
                 else None
             ),
+            rust_runtime_reticulumd_rpc_endpoint=rust_runtime_reticulumd_rpc_endpoint,
         )
 

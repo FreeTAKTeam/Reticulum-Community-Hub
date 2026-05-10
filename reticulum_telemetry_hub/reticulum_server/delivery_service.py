@@ -85,6 +85,7 @@ class DeliveryService:
                 propagation_fallback_callback=self.handle_outbound_propagation_fallback,
                 attempt_started_callback=self.handle_outbound_attempt_started,
                 payload_dropped_callback=self.handle_outbound_payload_dropped,
+                rust_bridge=getattr(self._hub, "_rust_bridge", None),
             )
         self._hub._outbound_queue.start()
         return self._hub._outbound_queue

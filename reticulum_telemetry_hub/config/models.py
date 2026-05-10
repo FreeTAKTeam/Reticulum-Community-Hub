@@ -197,6 +197,7 @@ class HubRuntimeConfig:  # pylint: disable=too-many-instance-attributes
     rust_runtime_enabled: bool = False
     rust_runtime_bridge_path: Path | None = None
     rust_runtime_db_path: Path | None = None
+    rust_runtime_reticulumd_rpc_endpoint: str | None = None
 
 
 @dataclass

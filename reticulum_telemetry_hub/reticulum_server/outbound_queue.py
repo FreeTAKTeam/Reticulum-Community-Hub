@@ -9,6 +9,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from queue import Empty
 from queue import Queue
+from typing import Any
 from typing import Callable
 
 import LXMF
@@ -62,6 +63,7 @@ class OutboundMessageQueue(OutboundQueueStatsMixin, OutboundQueueDeliveryMixin):
             Callable[[OutboundPayload, str], None] | None
         ) = None,
         runtime_metrics: RuntimeMetricsStore | None = None,
+        rust_bridge: Any | None = None,
     ) -> None:
         """
         Initialize a bounded outbound queue.
@@ -143,6 +145,7 @@ class OutboundMessageQueue(OutboundQueueStatsMixin, OutboundQueueDeliveryMixin):
         self._attempt_started_callback = attempt_started_callback
         self._payload_dropped_callback = payload_dropped_callback
         self._runtime_metrics = runtime_metrics
+        self._rust_bridge = rust_bridge
         self._max_queue_depth = 0
         self._enqueued_total = 0
         self._dropped_total = 0

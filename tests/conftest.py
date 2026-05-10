@@ -22,6 +22,20 @@ from reticulum_telemetry_hub.reticulum_server.event_log import EventLog
 from reticulum_telemetry_hub.reticulum_server.__main__ import ReticulumTelemetryHub
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register parity-suite controls."""
+
+    parser.addoption(
+        "--rch-backend",
+        choices=("both", "python", "rust"),
+        default="both",
+        help=(
+            "Select backend variants for Python/Rust parity tests. "
+            "Use with -m rust_bridge to run only the selected parity slice."
+        ),
+    )
+
+
 @pytest.fixture(autouse=True)
 def reset_shared_router():
     """Ensure each test starts with a clean shared LXMF router."""
@@ -31,14 +45,34 @@ def reset_shared_router():
     ReticulumTelemetryHub._shared_lxm_router = None
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Tag backend-selected parity tests with a single selectable marker."""
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Tag and optionally filter backend-selected parity tests."""
 
+    selected_backend = config.getoption("--rch-backend")
+    kept_items: list[pytest.Item] = []
+    deselected_items: list[pytest.Item] = []
     for item in items:
         callspec = getattr(item, "callspec", None)
         backend = getattr(callspec, "params", {}).get("backend") if callspec else None
-        if backend in {"python", "rust"} or "tests/rust_runtime/" in item.nodeid:
+        if (
+            backend in {"python", "rust"}
+            or "tests/rust_runtime/" in item.nodeid
+            or "rust_bridge" in item.nodeid
+        ):
             item.add_marker(pytest.mark.rust_bridge)
+        if (
+            selected_backend in {"python", "rust"}
+            and backend in {"python", "rust"}
+            and backend != selected_backend
+        ):
+            deselected_items.append(item)
+        else:
+            kept_items.append(item)
+    if deselected_items:
+        config.hook.pytest_deselected(items=deselected_items)
+        items[:] = kept_items
 
 
 @pytest.fixture

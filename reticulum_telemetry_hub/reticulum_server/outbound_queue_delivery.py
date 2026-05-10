@@ -69,6 +69,29 @@ class OutboundQueueDeliveryMixin:
             with self._active_dispatch_lock:
                 self._active_dispatches += 1
             try:
+                rust_bridge = getattr(self, "_rust_bridge", None)
+                if rust_bridge is not None:
+                    sender = payload.sender or self._sender
+                    source_hash = getattr(sender, "hash", b"")
+                    destination_hex = payload.destination_hex or (
+                        payload.destination_hash.hex()
+                        if payload.destination_hash is not None
+                        else ""
+                    )
+                    rust_bridge.send_outbound(
+                        message_id=(
+                            payload.message_id
+                            or payload.chat_message_id
+                            or f"rch-{time.time_ns()}"
+                        ),
+                        source=source_hash.hex(),
+                        destination=destination_hex,
+                        title="RCH",
+                        content=payload.message_text,
+                        fields=payload.fields,
+                        method=payload.delivery_mode,
+                    )
+                    return
                 message = self._build_message(payload)
                 message.register_delivery_callback(_mark_receipt)
                 message.register_failed_callback(_mark_failure)

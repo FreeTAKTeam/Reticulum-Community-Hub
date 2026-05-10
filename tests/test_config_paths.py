@@ -55,6 +55,7 @@ def test_missing_config_is_bootstrapped_from_default_template(tmp_path):
     assert manager.config_parser.has_option("rust_runtime", "enabled")
     assert manager.config_parser.has_option("rust_runtime", "bridge_path")
     assert manager.config_parser.has_option("rust_runtime", "db_path")
+    assert manager.config_parser.has_option("rust_runtime", "reticulumd_rpc_endpoint")
     assert manager.config_parser.has_section("TAK")
     assert manager.config_parser.has_option("TAK", "fts_compat")
     assert manager.config_parser.has_section("telemetry")
@@ -196,6 +197,7 @@ def test_rust_runtime_config_defaults_disabled(tmp_path):
     assert runtime.rust_runtime_enabled is False
     assert runtime.rust_runtime_bridge_path is None
     assert runtime.rust_runtime_db_path is None
+    assert runtime.rust_runtime_reticulumd_rpc_endpoint is None
 
 
 def test_rust_runtime_config_loads_paths(monkeypatch, tmp_path):
@@ -206,6 +208,7 @@ def test_rust_runtime_config_loads_paths(monkeypatch, tmp_path):
         "enabled = true\n"
         "bridge_path = ~/runtime/r3akt-rch-bridge.exe\n"
         "db_path = ~/runtime/r3akt.sqlite\n"
+        "reticulumd_rpc_endpoint = 127.0.0.1:4243\n"
     )
 
     manager = HubConfigurationManager(storage_path=tmp_path / "store", config_path=config_path)
@@ -214,6 +217,7 @@ def test_rust_runtime_config_loads_paths(monkeypatch, tmp_path):
     assert runtime.rust_runtime_enabled is True
     assert runtime.rust_runtime_bridge_path == tmp_path / "runtime/r3akt-rch-bridge.exe"
     assert runtime.rust_runtime_db_path == tmp_path / "runtime/r3akt.sqlite"
+    assert runtime.rust_runtime_reticulumd_rpc_endpoint == "127.0.0.1:4243"
 
 
 def test_announce_capabilities_defaults(tmp_path):

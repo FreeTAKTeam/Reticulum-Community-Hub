@@ -6,11 +6,16 @@ import json
 from pathlib import Path
 import subprocess
 
+import pytest
+
 from reticulum_telemetry_hub.config.models import HubRuntimeConfig
 from reticulum_telemetry_hub.mission_sync.rust_bridge import DEFAULT_RUST_RUNTIME_DB_FILENAME
 from reticulum_telemetry_hub.mission_sync.rust_bridge import RustMissionSyncBridge
 from reticulum_telemetry_hub.mission_sync.rust_bridge import build_rust_bridge_from_runtime_config
 from reticulum_telemetry_hub.mission_sync.schemas import MissionCommandEnvelope
+
+
+pytestmark = pytest.mark.rust_bridge
 
 
 def _command() -> MissionCommandEnvelope:
@@ -141,6 +146,76 @@ def test_rust_bridge_exposes_state_control_requests() -> None:
     assert seen_requests == [
         {"type": "set_authorization", "required": True},
         {"type": "grant_capability", "identity": "ABCDEF", "capability": "topic.create"},
+    ]
+
+
+def test_rust_bridge_sends_outbound_payload_through_reticulumd_rpc() -> None:
+    seen_requests: list[dict[str, object]] = []
+    seen_args: list[list[str]] = []
+
+    def runner(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen_args.append(args[0])
+        seen_requests.append(json.loads(kwargs["input"]))
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "type": "outbound_send",
+                    "ok": True,
+                    "message_id": "msg-1",
+                    "transport": "reticulumd_rpc",
+                }
+            ),
+            stderr="",
+        )
+
+    bridge = RustMissionSyncBridge(
+        binary_path="r3akt-rch-bridge",
+        db_path="runtime.sqlite",
+        reticulumd_rpc_endpoint="127.0.0.1:4243",
+        field_results=10,
+        field_event=13,
+        field_group=4,
+        runner=runner,
+    )
+
+    result = bridge.send_outbound(
+        message_id="msg-1",
+        source="source-destination",
+        destination="target-destination",
+        title="RCH",
+        content="hello from python",
+        fields={10: {"status": "result"}},
+        method="direct",
+    )
+
+    assert result == {
+        "type": "outbound_send",
+        "ok": True,
+        "message_id": "msg-1",
+        "transport": "reticulumd_rpc",
+    }
+    assert seen_args == [
+        [
+            "r3akt-rch-bridge",
+            "--db",
+            "runtime.sqlite",
+            "--reticulumd-rpc",
+            "127.0.0.1:4243",
+        ]
+    ]
+    assert seen_requests == [
+        {
+            "type": "outbound_send",
+            "message_id": "msg-1",
+            "source": "source-destination",
+            "destination": "target-destination",
+            "title": "RCH",
+            "content": "hello from python",
+            "fields": {"10": {"status": "result"}},
+            "method": "direct",
+        }
     ]
 
 

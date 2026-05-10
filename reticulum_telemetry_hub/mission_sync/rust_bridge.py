@@ -74,6 +74,7 @@ class RustMissionSyncBridge:
     field_results: int
     field_event: int
     field_group: int
+    reticulumd_rpc_endpoint: str | None = None
     runner: Runner = subprocess.run
 
     def handle_command(
@@ -394,9 +395,42 @@ class RustMissionSyncBridge:
             self._request({"type": "set_authorization", "required": required})
         )
 
+    def send_outbound(
+        self,
+        *,
+        message_id: str,
+        source: str,
+        destination: str,
+        title: str,
+        content: str,
+        fields: dict | None,
+        method: str,
+    ) -> dict[str, Any]:
+        """Send one outbound LXMF payload through the Rust Reticulum bridge."""
+
+        if not self.reticulumd_rpc_endpoint:
+            raise RustMissionBridgeError("Rust outbound bridge requires reticulumd RPC endpoint")
+        request = {
+            "type": "outbound_send",
+            "message_id": message_id,
+            "source": source,
+            "destination": destination,
+            "title": title,
+            "content": content,
+            "fields": self._stringify_field_keys(fields),
+            "method": method,
+        }
+        payload = self._request(request)
+        if payload.get("type") != "outbound_send" or payload.get("ok") is not True:
+            raise RustMissionBridgeError("Rust bridge did not confirm outbound send")
+        return payload
+
     def _request(self, request: dict[str, object]) -> dict[str, Any]:
+        command = [self.binary_path, "--db", self.db_path]
+        if request.get("type") == "outbound_send" and self.reticulumd_rpc_endpoint:
+            command.extend(["--reticulumd-rpc", self.reticulumd_rpc_endpoint])
         completed = self.runner(
-            [self.binary_path, "--db", self.db_path],
+            command,
             input=json.dumps(request),
             text=True,
             capture_output=True,
@@ -439,6 +473,12 @@ class RustMissionSyncBridge:
             raise RustMissionBridgeError("Rust bridge response missing FIELD_RESULTS")
         return normalized
 
+    @staticmethod
+    def _stringify_field_keys(fields: dict | None) -> dict[str, object] | None:
+        if fields is None:
+            return None
+        return {str(key): value for key, value in fields.items()}
+
 
 def build_rust_bridge_from_runtime_config(
     runtime_config: Any,
@@ -464,4 +504,9 @@ def build_rust_bridge_from_runtime_config(
         field_results=field_results,
         field_event=field_event,
         field_group=field_group,
+        reticulumd_rpc_endpoint=getattr(
+            runtime_config,
+            "rust_runtime_reticulumd_rpc_endpoint",
+            None,
+        ),
     )

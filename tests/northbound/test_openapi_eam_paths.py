@@ -85,6 +85,10 @@ def test_openapi_exposes_rem_query_and_path_params(
         item["name"]
         for item in paths["/api/EmergencyActionMessage/team/{team_uid}/summary"]["get"]["parameters"]
     }
+    detail_params = {
+        item["name"]
+        for item in paths["/api/EmergencyActionMessage/{callsign}"]["get"]["parameters"]
+    }
 
     assert {"team_uid", "overall_status"}.issubset(list_params)
     assert "subjectType" not in list_params
@@ -92,6 +96,7 @@ def test_openapi_exposes_rem_query_and_path_params(
     assert "teamId" not in list_params
     assert latest_params >= {"team_member_uid"}
     assert summary_params >= {"team_uid"}
+    assert detail_params >= {"callsign"}
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
@@ -121,6 +126,19 @@ def test_openapi_exposes_generic_object_and_array_contracts(
     assert (
         paths["/api/EmergencyActionMessage/team/{team_uid}/summary"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
         == "#/components/schemas/EamTeamSummaryPayload"
+    )
+    for method in ("get", "delete"):
+        assert (
+            paths["/api/EmergencyActionMessage/{callsign}"][method]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+            == "#/components/schemas/EmergencyActionMessagePayload"
+        )
+    assert (
+        paths["/api/EmergencyActionMessage/{callsign}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/EmergencyActionMessageUpsertPayload"
+    )
+    assert (
+        paths["/api/EmergencyActionMessage/{callsign}"]["put"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/EmergencyActionMessagePayload"
     )
     assert {"EmergencyActionMessagePayload", "EmergencyActionMessageUpsertPayload", "EamTeamSummaryPayload", "EamSourcePayload"}.issubset(
         set(schemas)
@@ -162,4 +180,17 @@ def test_checked_in_oas_uses_the_same_eam_schema_names() -> None:
     assert (
         paths["/api/EmergencyActionMessage/team/{team_uid}/summary"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
         == "#/components/schemas/EamTeamSummaryPayload"
+    )
+    for method in ("get", "delete"):
+        assert (
+            paths["/api/EmergencyActionMessage/{callsign}"][method]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+            == "#/components/schemas/EmergencyActionMessagePayload"
+        )
+    assert (
+        paths["/api/EmergencyActionMessage/{callsign}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/EmergencyActionMessageUpsertPayload"
+    )
+    assert (
+        paths["/api/EmergencyActionMessage/{callsign}"]["put"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/EmergencyActionMessagePayload"
     )

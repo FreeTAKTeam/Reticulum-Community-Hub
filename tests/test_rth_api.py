@@ -130,8 +130,9 @@ class RustTopicSubscriberApi:
         result = self._command(
             "topic.create",
             {
+                "topic_id": topic.topic_id,
                 "topic_name": topic.topic_name,
-                "topic_path": topic.topic_id or topic.topic_path,
+                "topic_path": topic.topic_path,
                 "topic_description": topic.topic_description,
             },
         )

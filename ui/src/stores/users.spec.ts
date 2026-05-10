@@ -51,10 +51,16 @@ describe("users store REM registry mapping", () => {
           Identity: "rem-1",
           DisplayName: "REM Alpha",
           Status: "active",
+          LastSeen: "2026-04-02T12:00:00Z",
           ClientType: "rem",
           AnnounceCapabilities: ["r3akt", "emergencymessages"],
           RemMode: "connected",
-          IsRemCapable: true
+          IsRemCapable: true,
+          IsAnnounced: true,
+          AnnounceDestinationHash: "rem-destination",
+          AnnounceSource: "FTSRET",
+          AnnounceFirstSeen: "2026-04-02T11:59:00Z",
+          AnnounceLastSeen: "2026-04-02T12:01:00Z"
         }
       ])
       .mockResolvedValueOnce({
@@ -80,6 +86,10 @@ describe("users store REM registry mapping", () => {
     expect(store.clients[1].client_type).toBe("generic_lxmf");
     expect(store.clients[1].rem_mode).toBeUndefined();
     expect(store.identities[0].is_rem_capable).toBe(true);
+    expect(store.identities[0].is_announced).toBe(true);
+    expect(store.identities[0].announce_source).toBe("FTSRET");
+    expect(store.identities[0].announce_destination_hash).toBe("rem-destination");
+    expect(store.identities[0].last_seen).toBe("2026-04-02T12:01:00Z");
     expect(store.remConnectedMode).toBe(true);
     expect(store.remPeers[0].registered_mode).toBe("connected");
   });

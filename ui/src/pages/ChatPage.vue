@@ -302,18 +302,21 @@ const activeLabel = computed(() => {
 
 const visibleMessages = computed(() => {
   if (activeScope.value === "broadcast") {
-    return chatStore.messages.filter((message) => message.direction !== "outbound");
+    return chatStore.messages.filter((message) => resolveMessageScope(message) === "broadcast");
   }
   if (activeScope.value === "dm") {
     const peerId = activePeer.value;
     return chatStore.messages.filter((message) => {
+      if (resolveMessageScope(message) !== "dm") {
+        return false;
+      }
       const source = message.source ?? "";
       const destination = message.destination ?? "";
       return source === peerId || destination === peerId;
     });
   }
   const topicId = activeTopic.value;
-  return chatStore.messages.filter((message) => message.topic_id === topicId);
+  return chatStore.messages.filter((message) => resolveMessageScope(message) === "topic" && message.topic_id === topicId);
 });
 
 const scrollToLatest = async () => {
@@ -347,6 +350,20 @@ const resolveMessageSource = (message: ChatMessage) => {
   }
   const peer = peers.value.find((entry) => entry.id === message.source);
   return peer?.label ?? message.source ?? "Unknown";
+};
+
+const resolveMessageScope = (message: ChatMessage): "dm" | "topic" | "broadcast" => {
+  const scope = message.scope?.trim().toLowerCase();
+  if (scope === "dm" || scope === "topic" || scope === "broadcast") {
+    return scope;
+  }
+  if (message.topic_id) {
+    return "topic";
+  }
+  if (message.destination) {
+    return "dm";
+  }
+  return "broadcast";
 };
 
 const formatTimestamp = (value?: string) => {
@@ -416,7 +433,8 @@ const sendMessage = async () => {
     return;
   }
   const scope = composerScope.value;
-  if (scope !== "broadcast" && !composerTarget.value) {
+  const target = composerTarget.value;
+  if (scope !== "broadcast" && !target) {
     toastStore.push("Select a target for this message.", "warning");
     return;
   }
@@ -441,7 +459,7 @@ const sendMessage = async () => {
         category,
         file,
         sha256,
-        topic_id: scope === "topic" ? composerTarget.value : undefined
+        topic_id: scope === "topic" ? target : undefined
       });
       if (attachment.file_id !== undefined) {
         if (category === "image") {
@@ -454,11 +472,12 @@ const sendMessage = async () => {
     await chatStore.sendMessage({
       content: prefixedContent,
       scope,
-      destination: scope === "dm" ? composerTarget.value : undefined,
-      topic_id: scope === "topic" ? composerTarget.value : undefined,
+      destination: scope === "dm" ? target : undefined,
+      topic_id: scope === "topic" ? target : undefined,
       file_ids: fileIds,
       image_ids: imageIds
     });
+    selectConversation(scope, scope === "broadcast" ? undefined : target);
     composerText.value = "";
     pendingAttachments.value = [];
     toastStore.push("Message queued.", "success");
@@ -523,7 +542,12 @@ onBeforeUnmount(() => {
   wsClient?.close();
 });
 
-watch(composerScope, () => {
+watch(composerScope, (scope) => {
+  if (scope === activeScope.value) {
+    composerTarget.value =
+      scope === "dm" ? activePeer.value : scope === "topic" ? activeTopic.value : "";
+    return;
+  }
   composerTarget.value = "";
 });
 

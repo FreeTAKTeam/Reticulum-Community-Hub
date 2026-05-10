@@ -61,12 +61,19 @@ export interface IdentityEntry {
   display_name?: string;
   status?: string;
   last_seen?: string;
+  metadata?: Record<string, unknown>;
   banned?: boolean;
   blackholed?: boolean;
   client_type?: string;
   announce_capabilities?: string[];
   rem_mode?: string;
   is_rem_capable?: boolean;
+  is_announced?: boolean;
+  announce_destination_hash?: string;
+  announced_identity_hash?: string;
+  announce_source?: string;
+  announce_first_seen?: string;
+  announce_last_seen?: string;
 }
 
 export interface ClientEntry {

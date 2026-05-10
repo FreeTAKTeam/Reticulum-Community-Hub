@@ -340,6 +340,7 @@ class RuntimeInitMixin:
                 "Rust R3AKT mission-sync bridge enabled",
                 getattr(RNS, "LOG_NOTICE", 3),
             )
+        self._rust_bridge = mission_sync_rust_bridge
         self.mission_sync_router = MissionSyncRouter(
             api=self.api,
             send_message=lambda content, topic_id, destination: self.send_message(

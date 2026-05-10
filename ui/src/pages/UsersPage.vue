@@ -175,8 +175,30 @@
                 <div class="registry-card-meta">
                   <div><span>Last Seen</span><span>{{ formatTimestamp(identity.last_seen) }}</span></div>
                   <div><span>Status</span><span>{{ identity.status || "-" }}</span></div>
+                  <div v-if="identity.is_announced">
+                    <span>Announce Source</span>
+                    <span>{{ identity.announce_source || "-" }}</span>
+                  </div>
+                  <div v-if="identity.is_announced">
+                    <span>Destination</span>
+                    <span class="mono" :title="identity.announce_destination_hash || '-'">
+                      {{ identityAnnounceDestinationLabel(identity) }}
+                    </span>
+                  </div>
+                  <div v-if="identityVoiceDestination(identity)">
+                    <span>Voice</span>
+                    <span class="mono" :title="identityVoiceDestination(identity)">
+                      {{ identityVoiceDestinationLabel(identity) }}
+                    </span>
+                  </div>
+                  <div v-if="identity.is_announced">
+                    <span>First Announce</span>
+                    <span>{{ formatTimestamp(identity.announce_first_seen) }}</span>
+                  </div>
                 </div>
                 <div class="registry-card-badges">
+                  <BaseBadge v-if="identity.is_announced" tone="success">Announce</BaseBadge>
+                  <BaseBadge v-if="identityVoiceDestination(identity)" tone="warning">Voice</BaseBadge>
                   <BaseBadge :tone="identity.is_rem_capable ? 'success' : 'neutral'">
                     {{ clientTypeLabel(identity.client_type, identity.is_rem_capable) }}
                   </BaseBadge>
@@ -647,7 +669,14 @@ const filteredIdentities = computed(() => {
   return usersStore.identities.filter((identity) => {
     const displayName = identity.display_name ?? "";
     const id = identity.id ?? "";
-    return displayName.toLowerCase().includes(filter) || id.toLowerCase().includes(filter);
+    const announceSource = identity.announce_source ?? "";
+    const announceDestination = identity.announce_destination_hash ?? "";
+    return (
+      displayName.toLowerCase().includes(filter) ||
+      id.toLowerCase().includes(filter) ||
+      announceSource.toLowerCase().includes(filter) ||
+      announceDestination.toLowerCase().includes(filter)
+    );
   });
 });
 
@@ -1105,6 +1134,37 @@ const clientTag = (lastSeenAt?: string) => {
 
 const clientTypeLabel = (clientType?: string, isRemCapable?: boolean): string => {
   return isRemCapable || clientType === "rem" ? "REM" : "Generic LXMF";
+};
+
+type IdentityWithAnnounce = {
+  id?: string;
+  announce_destination_hash?: string;
+  metadata?: Record<string, unknown>;
+};
+
+const identityAnnounceDestinationLabel = (identity: IdentityWithAnnounce): string => {
+  const destination = identity.announce_destination_hash;
+  if (!destination) {
+    return "-";
+  }
+  if (destination === identity.id) {
+    return "same identity";
+  }
+  return shortHash(destination, 6, 6);
+};
+
+const identityVoiceDestination = (identity: IdentityWithAnnounce): string | undefined => {
+  const voice = identity.metadata?.voice;
+  if (!voice || typeof voice !== "object") {
+    return undefined;
+  }
+  const destination = (voice as Record<string, unknown>).destination_hash;
+  return typeof destination === "string" && destination.trim() ? destination : undefined;
+};
+
+const identityVoiceDestinationLabel = (identity: IdentityWithAnnounce): string => {
+  const destination = identityVoiceDestination(identity);
+  return destination ? shortHash(destination, 6, 6) : "-";
 };
 
 type IdentityModerationAction = "Ban" | "Unban" | "Blackhole";

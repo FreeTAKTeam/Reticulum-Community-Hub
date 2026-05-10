@@ -63,6 +63,62 @@ def test_outbound_queue_applies_backpressure():
     assert delivered == [recipient_two.identity.hash]
 
 
+def test_outbound_queue_uses_rust_bridge_when_configured():
+    sender = _make_destination(RNS.Destination.IN)
+    recipient = _make_destination()
+    sent: list[dict[str, object]] = []
+
+    class FailingRouter:
+        def handle_outbound(self, message):
+            raise AssertionError("python LXMF router should not be used")
+
+    class RecordingRustBridge:
+        def send_outbound(self, **kwargs):
+            sent.append(kwargs)
+            return {
+                "type": "outbound_send",
+                "ok": True,
+                "message_id": kwargs["message_id"],
+                "transport": "reticulumd_rpc",
+            }
+
+    queue = OutboundMessageQueue(
+        FailingRouter(),
+        sender,
+        queue_size=1,
+        worker_count=1,
+        send_timeout=0.1,
+        backoff_seconds=0.01,
+        max_attempts=1,
+        rust_bridge=RecordingRustBridge(),
+    )
+    payload = OutboundPayload(
+        recipient,
+        "hello from queue",
+        recipient.identity.hash,
+        recipient.identity.hash.hex(),
+        {10: {"status": "result"}},
+        sender,
+        message_id="msg-queue-1",
+        delivery_mode="direct",
+    )
+
+    failure = queue._send_with_timeout(payload)  # pylint: disable=protected-access
+
+    assert failure is None
+    assert sent == [
+        {
+            "message_id": "msg-queue-1",
+            "source": sender.hash.hex(),
+            "destination": recipient.identity.hash.hex(),
+            "title": "RCH",
+            "content": "hello from queue",
+            "fields": {10: {"status": "result"}},
+            "method": "direct",
+        }
+    ]
+
+
 def test_outbound_queue_rejects_delayed_enqueues_when_saturated():
     sender = _make_destination(RNS.Destination.IN)
     recipient = _make_destination()
