@@ -1,0 +1,44 @@
+name: Rust workspace
+
+on:
+  push:
+    branches: ["rust-next", "main"]
+  pull_request:
+    branches: ["rust-next", "main"]
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v4
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v4
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        working-directory: rch
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        working-directory: rch
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        working-directory: rch
+        run: cargo test --workspace

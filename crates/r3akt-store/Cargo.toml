@@ -1,0 +1,16 @@
+[package]
+name = "r3akt-store"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+r3akt-protocol.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true
