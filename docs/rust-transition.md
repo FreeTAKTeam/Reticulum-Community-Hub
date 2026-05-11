@@ -108,6 +108,10 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
   offline checklist creation/list.
+- Repeatable local three-node `reticulumd.exe` receipt/fanout validation:
+  `scripts/local-reticulum-live-gate.ps1` passed on 2026-05-11 and runs both
+  `r3akt-rch-server` live Reticulum receipt/fanout tests against temporary
+  local daemons.
 - Local two-daemon `reticulumd.exe` receipt validation: passed for
   `r3akt-rch-server live_reticulumd_direct_send_receipt_is_delivered_when_configured`,
   with one local daemon sending through the Rust server to a second daemon's

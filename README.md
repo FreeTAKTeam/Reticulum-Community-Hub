@@ -759,6 +759,9 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - Local self-loopback `reticulumd.exe` checks passed for
   `r3akt-transport-rns` live send/receive, `r3akt-rch-bridge` live outbound
   send acceptance, and `r3akt-rch-server` managed daemon lifecycle.
+- Repeatable local three-node `reticulumd.exe` receipt/fanout validation is
+  available through `scripts/local-reticulum-live-gate.ps1`; the latest run on
+  2026-05-11 passed both `r3akt-rch-server` live Reticulum tests.
 - Local two-daemon `reticulumd.exe` receipt validation passed for
   `r3akt-rch-server live_reticulumd_direct_send_receipt_is_delivered_when_configured`,
   sending from one local daemon to another daemon's announced LXMF delivery
@@ -790,13 +793,10 @@ Current local verification snapshot, refreshed on 2026-05-11:
   SDK-prefixed receipt status IDs, retry scheduling after receipt timeout, and
   propagated fallback after direct-send failure.
 
-Not proven by local-only verification yet: final validation against the target
-TAK server profile and broader real-network Reticulum validation outside the
-local multi-daemon harness. The latest configured target TAK keepalive/reconnect
-attempts on 2026-05-11 failed because the TCP endpoint actively refused the
-connection. A Python-equivalent `COT_URL` socket probe against the same
-`TAK_PROTO=0` profile also returned WinError 10061, so this remains an external
-release blocker rather than a local Rust test failure.
+Not proven by local-only verification yet: broader real-network Reticulum
+validation outside the local multi-daemon harness. The configured target TAK
+profile on `tcp://137.184.101.250:8087` passed keepalive, reconnect, and
+bidirectional inbound relay validation on 2026-05-11.
 
 The local release gate runner is:
 
@@ -808,6 +808,13 @@ Use explicit live gates only after configuring reachable infrastructure:
 
 ```powershell
 .\scripts\release-readiness.ps1 -LiveTak -LiveReticulum
+```
+
+Run the repeatable local Reticulum receipt/fanout harness when sibling
+`LXMF-rs\target\debug\reticulumd.exe` is available:
+
+```powershell
+.\scripts\local-reticulum-live-gate.ps1
 ```
 
 ```powershell
@@ -862,6 +869,12 @@ try {
 } finally {
   Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 }
+```
+
+Repeatable local Reticulum receipt and fanout validation:
+
+```powershell
+.\scripts\local-reticulum-live-gate.ps1
 ```
 
 Optional live Reticulum receipt validation against a real reachable peer:
