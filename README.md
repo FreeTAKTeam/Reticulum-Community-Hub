@@ -363,9 +363,12 @@ RCH parity should proceed in this order:
    data into RCH and for reading RCH state/messages that need to be emitted to
    TAK. A separate opt-in live inbound receive smoke runs when
    `R3AKT_TAK_LIVE_INBOUND_COT_URL` is set and can assert a known UID through
-   `R3AKT_TAK_LIVE_INBOUND_EXPECT_UID`. The remaining external service work is
-   validation against a real TAK server profile. The Rust server must not embed
-   Python or own the final TAK socket lifecycle directly.
+   `R3AKT_TAK_LIVE_INBOUND_EXPECT_UID`; for clear TCP targets without an
+   expected UID, it performs an active bidirectional probe by identifying the
+   receiver, publishing a probe CoT through `R3AKT_TAK_LIVE_COT_URL`, and
+   requiring a relayed inbound CoT. The remaining external service work is
+   validation against a real Reticulum/LXMF network profile. The Rust server
+   must not embed Python or own the final TAK socket lifecycle directly.
 8. Replace the Python backend with a Rust northbound runtime incrementally:
    serve UI/admin HTTP routes and WebSocket streams directly from Rust, then
    retire each equivalent FastAPI path once behavioral parity is proven for
@@ -915,9 +918,13 @@ cargo test -p r3akt-tak-connector live_tak_server_accepts_keepalive_when_configu
 cargo test -p r3akt-tak-connector live_tak_server_accepts_reconnect_when_configured -- --nocapture
 ```
 
-Optional live TAK inbound receive smoke:
+Optional live TAK inbound receive smoke. For clear TCP targets without
+`R3AKT_TAK_LIVE_INBOUND_EXPECT_UID`, this test actively publishes a probe CoT
+through `R3AKT_TAK_LIVE_COT_URL` and requires the inbound connection to receive
+a relayed CoT response:
 
 ```powershell
+$env:R3AKT_TAK_LIVE_COT_URL = "tcp://127.0.0.1:8087"
 $env:R3AKT_TAK_LIVE_INBOUND_COT_URL = "tcp://127.0.0.1:8087" # or ssl://host:port / tls://host:port
 # Optional:
 # $env:R3AKT_TAK_LIVE_INBOUND_EXPECT_UID = "expected-cot-uid"

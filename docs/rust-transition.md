@@ -154,7 +154,10 @@ Use `.\scripts\release-readiness.ps1` for the local release gate set. Add
 `-LiveTak` and `-LiveReticulum` only when the required TAK and Reticulum
 environment variables point at reachable infrastructure. `-LiveTak` is a
 send-and-receive gate and requires both `R3AKT_TAK_LIVE_COT_URL` and
-`R3AKT_TAK_LIVE_INBOUND_COT_URL`.
+`R3AKT_TAK_LIVE_INBOUND_COT_URL`. For clear TCP TAK targets without
+`R3AKT_TAK_LIVE_INBOUND_EXPECT_UID`, the inbound gate identifies a receiver,
+publishes a probe CoT through the outbound URL, and requires a relayed inbound
+CoT response.
 
 See `docs/release-readiness-audit.md` for the prompt-to-artifact release
 checklist and the current release decision.

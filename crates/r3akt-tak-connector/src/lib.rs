@@ -2616,14 +2616,16 @@ fN59G+INtr0cPXmM6zCYs+c=
             return;
         };
         let expected_uid = optional_env("R3AKT_TAK_LIVE_INBOUND_EXPECT_UID");
-        let mut receiver = TakSocketReceiver::from_config(&config)
-            .expect("live TAK receiver")
-            .with_read_timeout(StdDuration::from_secs(5));
-
-        let payload = receiver
-            .receive()
-            .expect("receive live TAK CoT")
-            .expect("live TAK server should provide one CoT payload");
+        let payload = if expected_uid.is_none() {
+            match receive_live_tcp_probe_payload(&config) {
+                Some(result) => result
+                    .expect("receive live TAK CoT after probe")
+                    .expect("live TAK server should relay one CoT payload after probe"),
+                None => receive_live_payload(&config),
+            }
+        } else {
+            receive_live_payload(&config)
+        };
         let parsed = parse_inbound_cot_payload(payload, true);
 
         match parsed {
@@ -2635,6 +2637,96 @@ fN59G+INtr0cPXmM6zCYs+c=
                 }
             }
             TakInboundCotResult::Raw(raw) => panic!("expected parsed live TAK CoT, got raw {raw}"),
+        }
+    }
+
+    fn receive_live_payload(config: &TakConnectionConfig) -> Vec<u8> {
+        let mut receiver = TakSocketReceiver::from_config(config)
+            .expect("live TAK receiver")
+            .with_read_timeout(StdDuration::from_secs(5));
+        receiver
+            .receive()
+            .expect("receive live TAK CoT")
+            .expect("live TAK server should provide one CoT payload")
+    }
+
+    fn receive_live_tcp_probe_payload(
+        inbound_config: &TakConnectionConfig,
+    ) -> Option<Result<Option<Vec<u8>>, TakConnectorError>> {
+        let outbound_config = live_tak_config()?;
+        let inbound_url = CotUrl::parse(inbound_config.cot_url.as_str()).ok()?;
+        let outbound_url = CotUrl::parse(outbound_config.cot_url.as_str()).ok()?;
+        if inbound_url.scheme != "tcp" || outbound_url.scheme != "tcp" {
+            return None;
+        }
+
+        Some(receive_live_tcp_probe_payload_inner(
+            inbound_config,
+            &outbound_config,
+            inbound_url.host_port.as_str(),
+        ))
+    }
+
+    fn receive_live_tcp_probe_payload_inner(
+        inbound_config: &TakConnectionConfig,
+        outbound_config: &TakConnectionConfig,
+        inbound_host_port: &str,
+    ) -> Result<Option<Vec<u8>>, TakConnectorError> {
+        let mut stream = TcpStream::connect(inbound_host_port)
+            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
+        stream
+            .set_read_timeout(Some(StdDuration::from_secs(15)))
+            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
+
+        let inbound_connector = TakConnector::new(inbound_config.clone());
+        let hello = CotPayload {
+            kind: CotPayloadKind::Keepalive,
+            xml: inbound_connector.build_keepalive_xml(OffsetDateTime::now_utc()),
+        };
+        let encoded = encode_outbound_cot_payload(&hello, inbound_config.tak_proto);
+        stream
+            .write_all(encoded.as_slice())
+            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
+        stream
+            .flush()
+            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
+
+        thread::sleep(StdDuration::from_millis(250));
+
+        let outbound_connector = TakConnector::new(outbound_config.clone());
+        let sender = TakClearSender::from_config(outbound_config)?;
+        let now = OffsetDateTime::now_utc();
+        let probe_uid = format!("R3AKT-LIVE-PROBE-{}", Uuid::new_v4().simple());
+        let payload = CotPayload {
+            kind: CotPayloadKind::Location,
+            xml: outbound_connector.build_location_xml(
+                &LocationSnapshot {
+                    latitude: 45.0,
+                    longitude: -63.0,
+                    altitude: 10.0,
+                    speed: 0.0,
+                    bearing: 0.0,
+                    accuracy: 5.0,
+                    updated_at: now,
+                    peer_hash: Some(probe_uid),
+                },
+                now,
+                Some("R3AKT Live Probe"),
+            ),
+        };
+        sender.send(&payload)?;
+
+        let mut buffer = vec![0_u8; 8192];
+        match stream.read(buffer.as_mut_slice()) {
+            Ok(0) => Ok(None),
+            Ok(read) => {
+                buffer.truncate(read);
+                Ok(Some(buffer))
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                Ok(None)
+            }
+            Err(error) => Err(TakConnectorError::Send(error.to_string())),
         }
     }
 
