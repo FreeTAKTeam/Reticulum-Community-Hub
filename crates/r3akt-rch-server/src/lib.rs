@@ -40953,67 +40953,14 @@ mod tests {
             .expect("state")
             .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), source);
-        let mut live_announce = None;
-        let mut last_announce_error = None;
-        for _ in 0..poll_attempts {
-            match crate::list_reticulumd_announces(
-                endpoint.as_str(),
-                crate::RETICULUMD_ANNOUNCE_IMPORT_LIMIT,
-            ) {
-                Ok(announces) => {
-                    if let Some(announce) = announces.into_iter().find(|announce| {
-                        crate::normalize_identity_key(&announce.peer)
-                            .is_some_and(|peer| peer.eq_ignore_ascii_case(destination.as_str()))
-                    }) {
-                        live_announce = Some(announce);
-                        break;
-                    }
-                }
-                Err(error) => {
-                    last_announce_error = Some(error.to_string());
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(poll_delay_ms)).await;
-        }
-        let live_announce = live_announce.unwrap_or_else(|| {
-            panic!(
-                "live reticulumd receipt destination {destination} was not present in raw announces; last error: {}",
-                last_announce_error.as_deref().unwrap_or("none")
-            )
-        });
-        let now_ms = crate::unix_now_ms();
-        let destination_hash =
-            crate::normalize_identity_key(&live_announce.peer).expect("normalized destination");
-        let first_seen_ts_ms = if live_announce.first_seen > 0 {
-            live_announce.first_seen.saturating_mul(1000)
-        } else {
-            now_ms
-        };
-        let last_seen_ts_ms = if live_announce.timestamp > 0 {
-            live_announce.timestamp.saturating_mul(1000)
-        } else {
-            now_ms
-        };
-        let record = r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash,
-            announced_identity_hash: None,
-            display_name: live_announce.name.clone(),
-            source_interface: Some(
-                live_announce
-                    .interface
-                    .clone()
-                    .or(live_announce.name_source.clone())
-                    .unwrap_or_else(|| "reticulumd-live-test".to_string()),
-            ),
-            announce_capabilities: vec!["lxmf".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms,
-            last_seen_ts_ms,
-        };
-        crate::persist_identity_announce_records(&state, std::slice::from_ref(&record))
-            .expect("persist live reticulumd destination");
-        crate::record_announce_identity_state(&state, &record)
-            .expect("record live reticulumd destination presence");
+        record_live_reticulumd_destination_presence(
+            &state,
+            endpoint.as_str(),
+            destination.as_str(),
+            poll_attempts,
+            poll_delay_ms,
+        )
+        .await;
         let app = crate::create_app_with_state(state.clone());
         let nonce = Uuid::new_v4();
 
@@ -41098,6 +41045,247 @@ mod tests {
         assert_eq!(
             final_state.delivery_metadata["acknowledgement_type"],
             expected_acknowledgement
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    async fn record_live_reticulumd_destination_presence(
+        state: &crate::AppState,
+        endpoint: &str,
+        destination: &str,
+        poll_attempts: usize,
+        poll_delay_ms: u64,
+    ) {
+        let mut live_announce = None;
+        let mut last_announce_error = None;
+        for _ in 0..poll_attempts {
+            match crate::list_reticulumd_announces(
+                endpoint,
+                crate::RETICULUMD_ANNOUNCE_IMPORT_LIMIT,
+            ) {
+                Ok(announces) => {
+                    if let Some(announce) = announces.into_iter().find(|announce| {
+                        crate::normalize_identity_key(&announce.peer)
+                            .is_some_and(|peer| peer.eq_ignore_ascii_case(destination))
+                    }) {
+                        live_announce = Some(announce);
+                        break;
+                    }
+                }
+                Err(error) => {
+                    last_announce_error = Some(error.to_string());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(poll_delay_ms)).await;
+        }
+        let live_announce = live_announce.unwrap_or_else(|| {
+            panic!(
+                "live reticulumd destination {destination} was not present in raw announces; last error: {}",
+                last_announce_error.as_deref().unwrap_or("none")
+            )
+        });
+        let now_ms = crate::unix_now_ms();
+        let destination_hash =
+            crate::normalize_identity_key(&live_announce.peer).expect("normalized destination");
+        let first_seen_ts_ms = if live_announce.first_seen > 0 {
+            live_announce.first_seen.saturating_mul(1000)
+        } else {
+            now_ms
+        };
+        let last_seen_ts_ms = if live_announce.timestamp > 0 {
+            live_announce.timestamp.saturating_mul(1000)
+        } else {
+            now_ms
+        };
+        let record = r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash,
+            announced_identity_hash: None,
+            display_name: live_announce.name.clone(),
+            source_interface: Some(
+                live_announce
+                    .interface
+                    .clone()
+                    .or(live_announce.name_source.clone())
+                    .unwrap_or_else(|| "reticulumd-live-test".to_string()),
+            ),
+            announce_capabilities: vec!["lxmf".to_string()],
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms,
+            last_seen_ts_ms,
+        };
+        crate::persist_identity_announce_records(state, std::slice::from_ref(&record))
+            .expect("persist live reticulumd destination");
+        crate::record_announce_identity_state(state, &record)
+            .expect("record live reticulumd destination presence");
+    }
+
+    #[tokio::test]
+    async fn live_reticulumd_topic_fanout_receipts_are_delivered_when_configured() {
+        let endpoint = match std::env::var("R3AKT_RETICULUMD_RPC_ENDPOINT") {
+            Ok(value) if !value.trim().is_empty() => value,
+            _ => {
+                eprintln!(
+                    "skipping live fanout receipt test: R3AKT_RETICULUMD_RPC_ENDPOINT is unset"
+                );
+                return;
+            }
+        };
+        let destinations = match std::env::var("R3AKT_RETICULUMD_FANOUT_DESTINATIONS") {
+            Ok(value) if !value.trim().is_empty() => value
+                .split([',', ';', '\n', '\r', '\t', ' '])
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            _ => {
+                eprintln!(
+                    "skipping live fanout receipt test: R3AKT_RETICULUMD_FANOUT_DESTINATIONS is unset"
+                );
+                return;
+            }
+        };
+        assert!(
+            destinations.len() >= 2,
+            "R3AKT_RETICULUMD_FANOUT_DESTINATIONS must include at least two destinations"
+        );
+        let source = std::env::var("R3AKT_RETICULUMD_SOURCE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "r3akt-live-source".to_string());
+        let poll_attempts = std::env::var("R3AKT_RETICULUMD_RECEIPT_POLL_ATTEMPTS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(60);
+        let poll_delay_ms = std::env::var("R3AKT_RETICULUMD_RECEIPT_POLL_DELAY_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(500);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-live-reticulumd-fanout-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_api_key("secret")
+            .with_reticulumd_rpc(endpoint.clone(), source);
+        for destination in &destinations {
+            record_live_reticulumd_destination_presence(
+                &state,
+                endpoint.as_str(),
+                destination.as_str(),
+                poll_attempts,
+                poll_delay_ms,
+            )
+            .await;
+        }
+        let app = crate::create_app_with_state(state.clone());
+        let topic = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/Topic")
+                    .header("X-API-Key", "secret")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "TopicID": "live-fanout",
+                            "TopicName": "Live Fanout",
+                            "TopicPath": "live/fanout"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("topic response");
+        assert_eq!(topic.status(), StatusCode::OK);
+        for destination in &destinations {
+            let subscriber = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/Subscriber/Add")
+                        .header("X-API-Key", "secret")
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(
+                            json!({
+                                "Destination": destination,
+                                "TopicID": "live-fanout"
+                            })
+                            .to_string(),
+                        ))
+                        .expect("request"),
+                )
+                .await
+                .expect("subscriber response");
+            assert_eq!(subscriber.status(), StatusCode::OK);
+        }
+
+        let nonce = Uuid::new_v4();
+        let message = crate::record_outbound_message_with_metadata(
+            &state,
+            format!("live fanout smoke {nonce}").as_str(),
+            Some("live-fanout".to_string()),
+            None,
+            Vec::new(),
+            true,
+            json!({
+                "delivery_receipt_required": true,
+                "max_attempts": 1,
+            }),
+        )
+        .expect("record live fanout message");
+        let message_id = message.message_id.clone();
+
+        let mut final_state = None;
+        for _ in 0..poll_attempts {
+            let _ = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+            let current = state
+                .messages
+                .read()
+                .expect("messages")
+                .iter()
+                .find(|message| message.message_id == message_id)
+                .expect("message")
+                .clone();
+            let receipt_targets = current
+                .delivery_metadata
+                .get("reticulumd_receipt_targets")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if current
+                .delivery_metadata
+                .get("receipt_pending")
+                .and_then(serde_json::Value::as_bool)
+                == Some(false)
+                && receipt_targets.len() == destinations.len()
+                && receipt_targets.iter().all(|target| {
+                    target
+                        .get("status")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|status| status == "delivered")
+                })
+            {
+                final_state = Some(current);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(poll_delay_ms)).await;
+        }
+        let final_state = final_state
+            .unwrap_or_else(|| panic!("live reticulumd fanout not delivered for {message_id}"));
+        assert_eq!(final_state.delivery_state, "delivered");
+        assert_eq!(final_state.delivery_method, "direct");
+        assert_eq!(
+            final_state.delivery_metadata["fanout_count"].as_u64(),
+            Some(destinations.len() as u64)
+        );
+        assert_eq!(
+            final_state.delivery_metadata["acknowledgement_type"],
+            "delivery_receipt"
         );
 
         let _ = std::fs::remove_file(db_path);
