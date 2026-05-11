@@ -29,8 +29,6 @@ struct ServerArgs {
     reticulumd_exe: Option<PathBuf>,
     reticulumd_db_path: Option<PathBuf>,
     reticulumd_transport: Option<String>,
-    tak_cot_url: Option<String>,
-    tak_keepalive_interval_seconds: Option<f64>,
     ui_dist_path: Option<PathBuf>,
     api_key: Option<String>,
     system_status_fanout_mode: Option<String>,
@@ -185,14 +183,6 @@ fn build_runtime_state(
         .api_key
         .clone()
         .or_else(r3akt_rch_server::AppState::env_api_key);
-    let tak_keepalive_interval_seconds = args
-        .tak_keepalive_interval_seconds
-        .or_else(r3akt_rch_server::AppState::env_tak_keepalive_interval_seconds);
-    let tak_config = resolve_tak_config(
-        args.tak_cot_url.as_deref(),
-        tak_keepalive_interval_seconds,
-        args.config_path.as_ref(),
-    )?;
     let system_status_fanout_mode = args
         .system_status_fanout_mode
         .clone()
@@ -203,13 +193,6 @@ fn build_runtime_state(
             let mut state = r3akt_rch_server::AppState::from_sqlite_path(path)?
                 .with_optional_api_key(api_key)
                 .with_optional_system_status_fanout_mode(system_status_fanout_mode);
-            if let Some(config) = tak_config.clone() {
-                println!(
-                    "r3akt-rch-server enabling TAK clear CoT sender at {}",
-                    config.cot_url
-                );
-                state = state.with_tak_cot_config(config, 256)?;
-            }
             if let Some(path) = &args.config_path {
                 state = state.with_config_path(path);
             }
@@ -229,13 +212,6 @@ fn build_runtime_state(
             let mut state = r3akt_rch_server::AppState::default()
                 .with_optional_api_key(api_key)
                 .with_optional_system_status_fanout_mode(system_status_fanout_mode);
-            if let Some(config) = tak_config {
-                println!(
-                    "r3akt-rch-server enabling TAK clear CoT sender at {}",
-                    config.cot_url
-                );
-                state = state.with_tak_cot_config(config, 256)?;
-            }
             if let Some(path) = &args.config_path {
                 state = state.with_config_path(path);
             }
@@ -622,168 +598,6 @@ fn create_app_for_runtime(
     }
 }
 
-fn resolve_tak_config(
-    cli_cot_url: Option<&str>,
-    keepalive_interval_seconds: Option<f64>,
-    config_path: Option<&PathBuf>,
-) -> Result<Option<r3akt_tak_connector::TakConnectionConfig>, Box<dyn std::error::Error>> {
-    if let Some(cot_url) = cli_cot_url
-        .map(ToOwned::to_owned)
-        .or_else(r3akt_rch_server::AppState::env_tak_cot_url)
-    {
-        let mut config = r3akt_tak_connector::TakConnectionConfig {
-            cot_url,
-            ..r3akt_tak_connector::TakConnectionConfig::default()
-        };
-        if let Some(interval) = keepalive_interval_seconds {
-            config.keepalive_interval_seconds = interval;
-        }
-        return Ok(Some(config));
-    }
-
-    if let Some(path) = config_path {
-        let mut config = load_tak_config_from_ini(path)?;
-        if let Some(interval) = keepalive_interval_seconds {
-            if let Some(config) = &mut config {
-                config.keepalive_interval_seconds = interval;
-            }
-        }
-        Ok(config)
-    } else {
-        Ok(None)
-    }
-}
-
-fn load_tak_config_from_ini(
-    path: &PathBuf,
-) -> Result<Option<r3akt_tak_connector::TakConnectionConfig>, Box<dyn std::error::Error>> {
-    let content = match fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(Box::new(error)),
-    };
-    let Some(section) =
-        parse_ini_section(&content, "TAK").or_else(|| parse_ini_section(&content, "tak"))
-    else {
-        return Ok(None);
-    };
-    let defaults = r3akt_tak_connector::TakConnectionConfig::default();
-    Ok(Some(r3akt_tak_connector::TakConnectionConfig {
-        cot_url: section.get("cot_url").cloned().unwrap_or(defaults.cot_url),
-        callsign: section
-            .get("callsign")
-            .cloned()
-            .unwrap_or(defaults.callsign),
-        poll_interval_seconds: first_float(
-            &section,
-            &["poll_interval_seconds", "interval_seconds", "interval"],
-            defaults.poll_interval_seconds,
-        )?,
-        keepalive_interval_seconds: first_float(
-            &section,
-            &[
-                "keepalive_interval_seconds",
-                "keepalive_interval",
-                "keepalive",
-            ],
-            defaults.keepalive_interval_seconds,
-        )?,
-        tls_client_cert: optional_section_text(&section, "tls_client_cert"),
-        tls_client_key: optional_section_text(&section, "tls_client_key"),
-        tls_ca: optional_section_text(&section, "tls_ca"),
-        tls_insecure: first_bool(&section, &["tls_insecure"], defaults.tls_insecure)?,
-        tls_client_password: optional_section_text(&section, "tls_client_password"),
-        pytak_tls_dont_verify: first_u8(
-            &section,
-            &["pytak_tls_dont_verify"],
-            defaults.pytak_tls_dont_verify,
-        )?,
-        tak_proto: first_u8(&section, &["tak_proto"], defaults.tak_proto)?,
-        fts_compat: first_u8(&section, &["fts_compat"], defaults.fts_compat)?,
-    }))
-}
-
-fn optional_section_text(
-    section: &std::collections::HashMap<String, String>,
-    key: &str,
-) -> Option<String> {
-    section
-        .get(key)
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn parse_ini_section(
-    content: &str,
-    section_name: &str,
-) -> Option<std::collections::HashMap<String, String>> {
-    let mut in_section = false;
-    let mut values = std::collections::HashMap::new();
-    for line in content.lines() {
-        let line = line.trim().trim_start_matches('\u{feff}');
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            if in_section {
-                break;
-            }
-            in_section = line[1..line.len() - 1].trim() == section_name;
-            continue;
-        }
-        if in_section {
-            if let Some((key, value)) = line.split_once('=') {
-                values.insert(key.trim().to_ascii_lowercase(), value.trim().to_string());
-            }
-        }
-    }
-    in_section.then_some(values)
-}
-
-fn first_float(
-    section: &std::collections::HashMap<String, String>,
-    keys: &[&str],
-    default: f64,
-) -> Result<f64, Box<dyn std::error::Error>> {
-    for key in keys {
-        if let Some(value) = section.get(*key) {
-            return Ok(value.parse()?);
-        }
-    }
-    Ok(default)
-}
-
-fn first_u8(
-    section: &std::collections::HashMap<String, String>,
-    keys: &[&str],
-    default: u8,
-) -> Result<u8, Box<dyn std::error::Error>> {
-    for key in keys {
-        if let Some(value) = section.get(*key) {
-            return Ok(value.parse()?);
-        }
-    }
-    Ok(default)
-}
-
-fn first_bool(
-    section: &std::collections::HashMap<String, String>,
-    keys: &[&str],
-    default: bool,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    for key in keys {
-        if let Some(value) = section.get(*key) {
-            return match value.trim().to_ascii_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => Ok(true),
-                "0" | "false" | "no" | "off" => Ok(false),
-                other => Err(format!("invalid boolean value for {key}: {other}").into()),
-            };
-        }
-    }
-    Ok(default)
-}
-
 fn gateway_args_to_server_args(
     args: &GatewayArgs,
 ) -> Result<ServerArgs, Box<dyn std::error::Error>> {
@@ -802,8 +616,6 @@ fn gateway_args_to_server_args(
         reticulumd_exe: None,
         reticulumd_db_path: None,
         reticulumd_transport: None,
-        tak_cot_url: None,
-        tak_keepalive_interval_seconds: None,
         ui_dist_path: None,
         api_key: None,
         system_status_fanout_mode: None,
@@ -997,8 +809,6 @@ where
     let mut reticulumd_exe = None;
     let mut reticulumd_db_path = None;
     let mut reticulumd_transport = None;
-    let mut tak_cot_url = None;
-    let mut tak_keepalive_interval_seconds = None;
     let mut ui_dist_path = None;
     let mut api_key = None;
     let mut system_status_fanout_mode = None;
@@ -1017,15 +827,7 @@ where
                 reticulumd_db_path = Some(PathBuf::from(value));
             }
             ("--reticulumd-transport", Some(value)) => reticulumd_transport = Some(value),
-            ("--tak-cot-url", Some(value)) => tak_cot_url = Some(value),
             ("--ui-dist-path", Some(value)) => ui_dist_path = Some(PathBuf::from(value)),
-            ("--tak-keepalive-interval-seconds", Some(value)) => {
-                let parsed = value.parse::<f64>()?;
-                if parsed <= 0.0 {
-                    return Err("--tak-keepalive-interval-seconds must be positive".into());
-                }
-                tak_keepalive_interval_seconds = Some(parsed);
-            }
             ("--api-key", Some(value)) => api_key = Some(value),
             ("--system-status-fanout-mode", Some(value)) => system_status_fanout_mode = Some(value),
             _ => return Err(format!("unsupported argument {arg}").into()),
@@ -1056,8 +858,6 @@ where
         reticulumd_exe,
         reticulumd_db_path,
         reticulumd_transport,
-        tak_cot_url,
-        tak_keepalive_interval_seconds,
         ui_dist_path,
         api_key,
         system_status_fanout_mode,
@@ -1225,8 +1025,6 @@ mod tests {
             reticulumd_exe: None,
             reticulumd_db_path: None,
             reticulumd_transport: None,
-            tak_cot_url: None,
-            tak_keepalive_interval_seconds: None,
             ui_dist_path: None,
             api_key: Some("secret".to_string()),
             system_status_fanout_mode: None,
@@ -1355,10 +1153,6 @@ mod tests {
             "reticulumd.db",
             "--reticulumd-transport",
             "127.0.0.1:0",
-            "--tak-cot-url",
-            "tcp://127.0.0.1:8087",
-            "--tak-keepalive-interval-seconds",
-            "15.5",
             "--ui-dist-path",
             "ui-dist",
             "--api-key",
@@ -1395,8 +1189,6 @@ mod tests {
             Some(std::path::Path::new("reticulumd.db"))
         );
         assert_eq!(args.reticulumd_transport.as_deref(), Some("127.0.0.1:0"));
-        assert_eq!(args.tak_cot_url.as_deref(), Some("tcp://127.0.0.1:8087"));
-        assert_eq!(args.tak_keepalive_interval_seconds, Some(15.5));
         assert_eq!(
             args.ui_dist_path.as_deref(),
             Some(std::path::Path::new("ui-dist"))
@@ -1462,107 +1254,5 @@ mod tests {
             error.to_string(),
             "--reticulumd-transport is only valid with --reticulumd-exe"
         );
-    }
-
-    #[test]
-    fn parse_args_rejects_non_positive_tak_keepalive_interval() {
-        let error =
-            super::parse_args(["--tak-keepalive-interval-seconds", "0"]).expect_err("error");
-
-        assert_eq!(
-            error.to_string(),
-            "--tak-keepalive-interval-seconds must be positive"
-        );
-    }
-
-    #[test]
-    fn load_tak_config_from_ini_matches_python_section_and_aliases() {
-        let path = std::env::temp_dir().join(format!("r3akt-tak-config-{}.ini", Uuid::new_v4()));
-        std::fs::write(
-            &path,
-            "\
-[general]
-name = ignored
-
-[TAK]
-cot_url = udp://tak.example:8087
-callsign = HUB
-interval_seconds = 12.5
-keepalive = 4.25
-tls_client_cert = C:\\certs\\client.pem
-tls_client_key = C:\\certs\\client.key
-tls_ca = C:\\certs\\ca.pem
-tls_insecure = false
-tls_client_password = secret
-pytak_tls_dont_verify = 0
-tak_proto = 2
-fts_compat = 0
-",
-        )
-        .expect("write config");
-
-        let config = super::load_tak_config_from_ini(&path)
-            .expect("config load")
-            .expect("tak config");
-
-        assert_eq!(config.cot_url, "udp://tak.example:8087");
-        assert_eq!(config.callsign, "HUB");
-        assert_eq!(config.poll_interval_seconds, 12.5);
-        assert_eq!(config.keepalive_interval_seconds, 4.25);
-        assert_eq!(
-            config.tls_client_cert.as_deref(),
-            Some(r"C:\certs\client.pem")
-        );
-        assert_eq!(
-            config.tls_client_key.as_deref(),
-            Some(r"C:\certs\client.key")
-        );
-        assert_eq!(config.tls_ca.as_deref(), Some(r"C:\certs\ca.pem"));
-        assert!(!config.tls_insecure);
-        assert_eq!(config.tls_client_password.as_deref(), Some("secret"));
-        assert_eq!(config.pytak_tls_dont_verify, 0);
-        assert_eq!(config.tak_proto, 2);
-        assert_eq!(config.fts_compat, 0);
-
-        std::fs::remove_file(path).expect("cleanup");
-    }
-
-    #[test]
-    fn load_tak_config_from_ini_accepts_windows_utf8_bom() {
-        let path = std::env::temp_dir().join(format!("r3akt-tak-config-{}.ini", Uuid::new_v4()));
-        std::fs::write(&path, "\u{feff}[TAK]\ncot_url = tcp://bom.example:8087\n")
-            .expect("write config");
-
-        let config = super::load_tak_config_from_ini(&path)
-            .expect("config load")
-            .expect("tak config");
-
-        assert_eq!(config.cot_url, "tcp://bom.example:8087");
-
-        std::fs::remove_file(path).expect("cleanup");
-    }
-
-    #[test]
-    fn load_tak_config_prefers_uppercase_section_like_python() {
-        let path = std::env::temp_dir().join(format!("r3akt-tak-config-{}.ini", Uuid::new_v4()));
-        std::fs::write(
-            &path,
-            "\
-[tak]
-cot_url = tcp://legacy.example:8087
-
-[TAK]
-cot_url = tcp://modern.example:8087
-",
-        )
-        .expect("write config");
-
-        let config = super::load_tak_config_from_ini(&path)
-            .expect("config load")
-            .expect("tak config");
-
-        assert_eq!(config.cot_url, "tcp://modern.example:8087");
-
-        std::fs::remove_file(path).expect("cleanup");
     }
 }

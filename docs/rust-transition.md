@@ -21,6 +21,9 @@ maintenance.
   behavior, and Python-compatible response shaping.
 - `r3akt-transport-rns`: LXMF-rs and `reticulumd` adapter boundary.
 - `r3akt-tak-connector`: separately deployable TAK connector service boundary.
+  `r3akt-tak-service` uses RCH northbound HTTP routes for RCH-to-TAK and
+  TAK-to-RCH CoT exchange; TAK socket lifecycle is not part of
+  `r3akt-rch-server`.
 
 ## Release Gates
 

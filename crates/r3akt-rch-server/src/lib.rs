@@ -68,10 +68,6 @@ use r3akt_rch_core::{
     ZoneRecord as CoreZoneRecord, classify_delivery_mode, is_supported_checklist_command,
     is_supported_mission_command, normalize_topic_id,
 };
-use r3akt_tak_connector::{
-    ChatEventInput, LocationSnapshot, TakClearSender, TakConnectionConfig, TakConnectorError,
-    TakService, TakServiceDispatchReport, TakServiceState, TakServiceWorker,
-};
 #[cfg(test)]
 use r3akt_transport_rns::MessageBus;
 use r3akt_transport_rns::{
@@ -185,8 +181,6 @@ pub struct AppState {
     ui_dist_path: Option<Arc<PathBuf>>,
     api_key: Option<Arc<String>>,
     system_status_fanout_mode: SystemStatusFanoutMode,
-    tak_runtime: Option<Arc<Mutex<TakService<TakClearSender>>>>,
-    tak_worker: Option<Arc<Mutex<TakServiceWorker<TakClearSender>>>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -306,31 +300,6 @@ struct ManagedReticulumdState {
     stopped_ts_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct TakDispatchReport {
-    enqueued: bool,
-    sent: usize,
-    pending: usize,
-    dropped_full: u64,
-    total_sent: u64,
-    total_failed: u64,
-    error: Option<String>,
-}
-
-impl From<TakServiceDispatchReport> for TakDispatchReport {
-    fn from(report: TakServiceDispatchReport) -> Self {
-        Self {
-            enqueued: report.enqueued,
-            sent: report.sent,
-            pending: report.status.queue.pending,
-            dropped_full: report.status.queue.dropped_full,
-            total_sent: report.status.total_sent,
-            total_failed: report.status.total_failed,
-            error: report.error,
-        }
-    }
-}
-
 impl Default for RuntimeControlState {
     fn default() -> Self {
         let now_ms = unix_now_ms();
@@ -381,8 +350,6 @@ impl Default for AppState {
             ui_dist_path: None,
             api_key: None,
             system_status_fanout_mode: SystemStatusFanoutMode::EventOnly,
-            tak_runtime: None,
-            tak_worker: None,
         }
     }
 }
@@ -603,67 +570,6 @@ impl AppState {
         }
     }
 
-    pub fn with_tak_cot_url(
-        mut self,
-        cot_url: impl Into<String>,
-        queue_capacity: usize,
-    ) -> Result<Self, TakConnectorError> {
-        let config = TakConnectionConfig {
-            cot_url: cot_url.into(),
-            ..TakConnectionConfig::default()
-        };
-        self = self.with_tak_cot_config(config, queue_capacity)?;
-        Ok(self)
-    }
-
-    pub fn with_tak_cot_config(
-        mut self,
-        config: TakConnectionConfig,
-        queue_capacity: usize,
-    ) -> Result<Self, TakConnectorError> {
-        let sender = TakClearSender::from_config(&config)?;
-        let retry_interval = Duration::from_secs_f64(config.poll_interval_seconds.max(1.0));
-        let service = TakService::new(config, queue_capacity, sender);
-        let worker = TakServiceWorker::spawn(service, retry_interval);
-        self.tak_runtime = Some(worker.service());
-        self.tak_worker = Some(Arc::new(Mutex::new(worker)));
-        Ok(self)
-    }
-
-    pub fn with_tak_cot_url_and_keepalive_interval(
-        self,
-        cot_url: impl Into<String>,
-        keepalive_interval_seconds: f64,
-        queue_capacity: usize,
-    ) -> Result<Self, TakConnectorError> {
-        let config = TakConnectionConfig {
-            cot_url: cot_url.into(),
-            keepalive_interval_seconds,
-            ..TakConnectionConfig::default()
-        };
-        self.with_tak_cot_config(config, queue_capacity)
-    }
-
-    #[must_use]
-    pub fn env_tak_cot_url() -> Option<String> {
-        std::env::var("RTH_TAK_COT_URL")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| {
-                std::env::var("RCH_TAK_COT_URL")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-            })
-    }
-
-    pub fn env_tak_keepalive_interval_seconds() -> Option<f64> {
-        std::env::var("RTH_TAK_KEEPALIVE_INTERVAL_SECONDS")
-            .ok()
-            .or_else(|| std::env::var("RCH_TAK_KEEPALIVE_INTERVAL_SECONDS").ok())
-            .and_then(|value| value.trim().parse::<f64>().ok())
-            .filter(|value| *value > 0.0)
-    }
-
     pub fn from_sqlite_path(
         path: impl AsRef<FsPath>,
     ) -> Result<Self, r3akt_rch_core::RchCoreError> {
@@ -864,7 +770,6 @@ impl AppState {
         drop(records);
         self.persist()?;
         broadcast_telemetry_event(self, &record);
-        dispatch_telemetry_to_tak(self, &record);
         Ok(record)
     }
 
@@ -2578,17 +2483,6 @@ pub fn shutdown_runtime_for_exit(state: &AppState) -> Result<(), String> {
         control.status = "stopping".to_string();
         control.shutdown_requested = true;
         control.last_stop_ts_ms = Some(unix_now_ms());
-    }
-    if let Some(tak_worker) = &state.tak_worker {
-        let _ = tak_worker
-            .lock()
-            .map_err(|error| error.to_string())?
-            .shutdown();
-    } else if let Some(tak_runtime) = &state.tak_runtime {
-        tak_runtime
-            .lock()
-            .map_err(|error| error.to_string())?
-            .stop();
     }
     set_outbound_retry_worker_running(
         state,
@@ -9179,63 +9073,6 @@ fn runtime_services_payload(state: &AppState) -> Value {
         .read()
         .map(|control| control.status == "running" && !control.shutdown_requested)
         .unwrap_or(false);
-    let tak_service = match &state.tak_runtime {
-        Some(service) => match service.lock() {
-            Ok(service) => {
-                let status = service.status();
-                let config = service.config();
-                let parsed_url = r3akt_tak_connector::CotUrl::parse(config.cot_url.as_str()).ok();
-                json!({
-                    "name": "tak_cot",
-                    "configured": true,
-                    "status": tak_service_state_name(status.state),
-                    "running": status.state == TakServiceState::Running,
-                    "endpoint": parsed_url.as_ref().map(|url| url.host_port.as_str()),
-                    "scheme": parsed_url.as_ref().map(|url| url.scheme.as_str()),
-                    "callsign": config.callsign.as_str(),
-                    "tak_proto": config.tak_proto,
-                    "fts_compat": config.fts_compat,
-                    "payload_encoding": if config.tak_proto == 0 { "xml" } else { "tak_proto_v1" },
-                    "protobuf_requested": config.tak_proto > 0,
-                    "protobuf_payloads_supported": true,
-                    "tls": {
-                        "configured": config.tls_client_cert.is_some()
-                            || config.tls_client_key.is_some()
-                            || config.tls_ca.is_some()
-                            || config.cot_url.to_ascii_lowercase().starts_with("ssl://")
-                            || config.cot_url.to_ascii_lowercase().starts_with("tls://"),
-                        "client_cert_configured": config.tls_client_cert.is_some(),
-                        "client_key_configured": config.tls_client_key.is_some(),
-                        "ca_configured": config.tls_ca.is_some(),
-                        "client_password_configured": config.tls_client_password.is_some(),
-                        "insecure": config.tls_insecure,
-                        "verify": !config.tls_insecure && config.pytak_tls_dont_verify == 0,
-                    },
-                    "queue": {
-                        "pending": status.queue.pending,
-                        "capacity": status.queue.capacity,
-                        "dropped_full": status.queue.dropped_full,
-                    },
-                    "total_sent": status.total_sent,
-                    "total_failed": status.total_failed,
-                    "last_error": status.last_error,
-                })
-            }
-            Err(error) => json!({
-                "name": "tak_cot",
-                "configured": true,
-                "status": "error",
-                "running": false,
-                "last_error": error.to_string(),
-            }),
-        },
-        None => json!({
-            "name": "tak_cot",
-            "configured": false,
-            "status": "not_configured",
-            "running": false,
-        }),
-    };
     let managed_reticulumd = match state.managed_reticulumd.read() {
         Ok(managed) => json!({
             "name": "reticulumd_managed_process",
@@ -9319,15 +9156,7 @@ fn runtime_services_payload(state: &AppState) -> Value {
                 .map(|stats| stats.running)
                 .unwrap_or(false),
         },
-        tak_service,
     ])
-}
-
-fn tak_service_state_name(state: TakServiceState) -> &'static str {
-    match state {
-        TakServiceState::Running => "running",
-        TakServiceState::Stopped => "stopped",
-    }
 }
 
 fn outbound_retry_worker_diagnostics(state: &AppState) -> Value {
@@ -11965,7 +11794,6 @@ fn record_outbound_message_with_metadata_mode(
             return Err(error);
         }
     };
-    let tak_dispatch = dispatch_message_to_tak(state, &message);
     let _ = record_system_event(
         state,
         "message_sent",
@@ -11977,7 +11805,6 @@ fn record_outbound_message_with_metadata_mode(
             "delivery_method": message.delivery_method,
             "delivery_policy_reason": message.delivery_policy_reason,
             "reticulumd_dispatch_count": dispatch_report.count,
-            "tak_dispatch": tak_dispatch,
         }),
     );
     Ok(message)
@@ -12669,72 +12496,6 @@ fn broadcast_client_records_for_state(state: &AppState) -> Result<Vec<ClientReco
 
 fn client_has_network_announce(_record: &ClientRecord) -> bool {
     true
-}
-
-fn dispatch_message_to_tak(
-    state: &AppState,
-    message: &OutboundMessageRecord,
-) -> Option<TakDispatchReport> {
-    let runtime = state.tak_runtime.as_ref()?;
-    let timestamp = offset_from_unix_ms(message.created_ts_ms);
-    let input = ChatEventInput {
-        content: message.content.clone(),
-        sender_label: message.sender.clone(),
-        topic_id: message.topic_id.clone(),
-        source_hash: None,
-        timestamp,
-        message_uuid: Some(message.message_id.clone()),
-    };
-    let mut runtime = runtime.lock().ok()?;
-    Some(match runtime.enqueue_chat(&input) {
-        Ok(report) => report.into(),
-        Err(error) => tak_error_report(error),
-    })
-}
-
-fn dispatch_telemetry_to_tak(
-    state: &AppState,
-    record: &TelemetryRecord,
-) -> Option<TakDispatchReport> {
-    let runtime = state.tak_runtime.as_ref()?;
-    let snapshot = location_snapshot_from_telemetry(record)?;
-    let now = OffsetDateTime::now_utc();
-    let mut runtime = runtime.lock().ok()?;
-    Some(
-        match runtime.enqueue_location(&snapshot, now, record.identity_label.as_deref()) {
-            Ok(report) => report.into(),
-            Err(error) => tak_error_report(error),
-        },
-    )
-}
-
-fn tak_error_report(error: TakConnectorError) -> TakDispatchReport {
-    TakDispatchReport {
-        enqueued: false,
-        sent: 0,
-        pending: 0,
-        dropped_full: 0,
-        total_sent: 0,
-        total_failed: 1,
-        error: Some(error.to_string()),
-    }
-}
-
-fn location_snapshot_from_telemetry(record: &TelemetryRecord) -> Option<LocationSnapshot> {
-    let location = record.telemetry.get("location")?;
-    let latitude = json_f64(location, "latitude")?;
-    let longitude = json_f64(location, "longitude")?;
-    Some(LocationSnapshot {
-        latitude,
-        longitude,
-        altitude: json_f64(location, "altitude").unwrap_or(0.0),
-        speed: json_f64(location, "speed").unwrap_or(0.0),
-        bearing: json_f64(location, "bearing").unwrap_or(0.0),
-        accuracy: json_f64(location, "accuracy").unwrap_or(0.0),
-        updated_at: OffsetDateTime::from_unix_timestamp(record.timestamp_s)
-            .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-        peer_hash: Some(record.peer_destination.clone()),
-    })
 }
 
 fn json_f64(value: &Value, key: &str) -> Option<f64> {
@@ -19408,12 +19169,6 @@ fn stop_runtime_services(state: &AppState) -> Result<(), ApiError> {
     state
         .stop_managed_reticulumd()
         .map_err(ApiError::ServiceUnavailable)?;
-    if let Some(tak_runtime) = &state.tak_runtime {
-        let mut service = tak_runtime
-            .lock()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        service.stop();
-    }
     Ok(())
 }
 
@@ -19421,12 +19176,6 @@ fn start_runtime_services(state: &AppState) -> Result<(), ApiError> {
     state
         .start_managed_reticulumd()
         .map_err(ApiError::ServiceUnavailable)?;
-    if let Some(tak_runtime) = &state.tak_runtime {
-        let mut service = tak_runtime
-            .lock()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        service.start();
-    }
     Ok(())
 }
 
@@ -21221,11 +20970,6 @@ fn iso8601_from_unix_ms(ts_ms: i64) -> String {
             .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string()),
         Err(_) => "1970-01-01T00:00:00Z".to_string(),
     }
-}
-
-fn offset_from_unix_ms(ts_ms: i64) -> OffsetDateTime {
-    OffsetDateTime::from_unix_timestamp_nanos(i128::from(ts_ms) * 1_000_000)
-        .unwrap_or_else(|_| OffsetDateTime::now_utc())
 }
 
 fn unix_ms_from_iso8601(timestamp: &str) -> Option<i64> {
@@ -28913,78 +28657,6 @@ mod tests {
             0
         );
 
-        let tak_listener = StdTcpListener::bind("127.0.0.1:0").expect("tak listener");
-        tak_listener
-            .set_nonblocking(true)
-            .expect("tak listener nonblocking");
-        let tak_addr = tak_listener.local_addr().expect("tak addr");
-        let tak_server = thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            loop {
-                match tak_listener.accept() {
-                    Ok((mut stream, _)) => {
-                        stream.set_nonblocking(false).expect("tak stream blocking");
-                        let mut body = String::new();
-                        stream.read_to_string(&mut body).expect("tak read");
-                        if body.contains("GeoChat.") {
-                            return body;
-                        }
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        if std::time::Instant::now() >= deadline {
-                            panic!("TAK chat payload was not received before timeout");
-                        }
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(error) => panic!("tak accept failed: {error}"),
-                }
-            }
-        });
-        let tak_app = crate::create_app_with_state(
-            crate::AppState::default()
-                .with_api_key("secret")
-                .with_tak_cot_url(format!("tcp://{tak_addr}"), 8)
-                .expect("tak state"),
-        );
-        let tak_sent = tak_app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Message")
-                    .header("X-API-Key", "secret")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"Content":"TAK relay","Scope":"topic","TopicID":"ops"}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("tak chat response");
-        assert_eq!(tak_sent.status(), StatusCode::OK);
-        let tak_xml = tak_server.join().expect("tak server");
-        assert!(tak_xml.contains("GeoChat."));
-        assert!(tak_xml.contains("chatroom=\"ops\""));
-        assert!(tak_xml.contains(">TAK relay</remarks>"));
-
-        let events = tak_app
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Events")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("tak events response");
-        assert_eq!(events.status(), StatusCode::OK);
-        let body = events.into_body().collect().await.expect("body").to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload[0]["metadata"]["tak_dispatch"]["sent"], 1);
-        assert_eq!(payload[0]["metadata"]["tak_dispatch"]["pending"], 0);
-        assert!(payload[0]["metadata"]["tak_dispatch"]["error"].is_null());
-
         let attachment_bytes = b"report bytes";
         let attachment_hash = Sha256::digest(attachment_bytes)
             .iter()
@@ -29514,7 +29186,7 @@ mod tests {
         assert_eq!(payload["shutdown_requested"], false);
         assert_eq!(payload["reticulumd_rpc_configured"], false);
         let services = payload["services"].as_array().expect("services");
-        assert_eq!(services.len(), 5);
+        assert_eq!(services.len(), 4);
         let reticulumd = services
             .iter()
             .find(|service| service["name"] == "reticulumd_rpc")
@@ -29527,12 +29199,6 @@ mod tests {
             .expect("managed reticulumd service");
         assert_eq!(managed_reticulumd["configured"], false);
         assert_eq!(managed_reticulumd["status"], "not_configured");
-        let tak = services
-            .iter()
-            .find(|service| service["name"] == "tak_cot")
-            .expect("tak service");
-        assert_eq!(tak["configured"], false);
-        assert_eq!(tak["status"], "not_configured");
         let outbound_worker = services
             .iter()
             .find(|service| service["name"] == "outbound_retry_worker")
@@ -29644,27 +29310,9 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_status_reports_configured_service_inventory() {
-        let mut state = crate::AppState::default()
+        let state = crate::AppState::default()
             .with_api_key("secret")
             .with_reticulumd_rpc("127.0.0.1:1", "source-destination");
-        let config = r3akt_tak_connector::TakConnectionConfig {
-            cot_url: "ssl://127.0.0.1:9".to_string(),
-            callsign: "HUB".to_string(),
-            tls_client_cert: Some(r"C:\certs\client.pem".to_string()),
-            tls_client_key: Some(r"C:\certs\client.key".to_string()),
-            tls_ca: Some(r"C:\certs\ca.pem".to_string()),
-            tls_insecure: false,
-            tls_client_password: Some("secret".to_string()),
-            pytak_tls_dont_verify: 0,
-            tak_proto: 2,
-            fts_compat: 0,
-            ..r3akt_tak_connector::TakConnectionConfig::default()
-        };
-        let sender =
-            r3akt_tak_connector::TakClearSender::new(config.cot_url.as_str()).expect("tak sender");
-        let mut tak_service = r3akt_tak_connector::TakService::new(config, 8, sender);
-        tak_service.start();
-        state.tak_runtime = Some(std::sync::Arc::new(std::sync::Mutex::new(tak_service)));
         let app = crate::create_app_with_state(state);
 
         let response = app
@@ -29694,39 +29342,6 @@ mod tests {
         assert_eq!(reticulumd["configured"], true);
         assert_eq!(reticulumd["running"], true);
         assert_eq!(reticulumd["source_configured"], true);
-
-        let tak = services
-            .iter()
-            .find(|service| service["name"] == "tak_cot")
-            .expect("tak service");
-        assert_eq!(tak["configured"], true);
-        assert_eq!(tak["status"], "running");
-        assert_eq!(tak["running"], true);
-        assert_eq!(tak["endpoint"], "127.0.0.1:9");
-        assert_eq!(tak["scheme"], "ssl");
-        assert_eq!(tak["callsign"], "HUB");
-        assert_eq!(tak["tak_proto"], 2);
-        assert_eq!(tak["fts_compat"], 0);
-        assert_eq!(tak["payload_encoding"], "tak_proto_v1");
-        assert_eq!(tak["protobuf_requested"], true);
-        assert_eq!(tak["protobuf_payloads_supported"], true);
-        assert_eq!(tak["tls"]["configured"], true);
-        assert_eq!(tak["tls"]["client_cert_configured"], true);
-        assert_eq!(tak["tls"]["client_key_configured"], true);
-        assert_eq!(tak["tls"]["ca_configured"], true);
-        assert_eq!(tak["tls"]["client_password_configured"], true);
-        assert_eq!(tak["tls"]["insecure"], false);
-        assert_eq!(tak["tls"]["verify"], true);
-        assert_eq!(tak["queue"]["pending"], 0);
-        assert_eq!(tak["queue"]["capacity"], 8);
-        assert_eq!(tak["total_sent"], 0);
-        assert_eq!(tak["total_failed"], 0);
-        assert!(tak["last_error"].is_null());
-        let rendered = serde_json::to_string(&payload).expect("rendered status");
-        assert!(!rendered.contains("secret"));
-        assert!(!rendered.contains("client.pem"));
-        assert!(!rendered.contains("client.key"));
-        assert!(!rendered.contains("ca.pem"));
     }
 
     #[tokio::test]
@@ -29849,114 +29464,9 @@ mod tests {
         let _ = std::fs::remove_file(format!("{}-wal", db_path.to_string_lossy()));
     }
 
-    #[tokio::test]
-    async fn control_stop_and_start_updates_configured_tak_service_state() {
-        let config = r3akt_tak_connector::TakConnectionConfig {
-            cot_url: "tcp://127.0.0.1:9".to_string(),
-            ..r3akt_tak_connector::TakConnectionConfig::default()
-        };
-        let sender =
-            r3akt_tak_connector::TakClearSender::new(config.cot_url.as_str()).expect("tak sender");
-        let mut tak_service = r3akt_tak_connector::TakService::new(config, 8, sender);
-        tak_service.start();
-        let mut state = crate::AppState::default()
-            .with_api_key("secret")
-            .with_reticulumd_rpc("127.0.0.1:1", "source-destination");
-        state.tak_runtime = Some(std::sync::Arc::new(std::sync::Mutex::new(tak_service)));
-        let app = crate::create_app_with_state(state);
-
-        let stop = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Control/Stop")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("stop response");
-        assert_eq!(stop.status(), StatusCode::OK);
-
-        let stopped = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Control/Status")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("status response");
-        let body = stopped
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        let services = payload["services"].as_array().expect("services");
-        let reticulumd = services
-            .iter()
-            .find(|service| service["name"] == "reticulumd_rpc")
-            .expect("reticulumd service");
-        assert_eq!(reticulumd["configured"], true);
-        assert_eq!(reticulumd["status"], "stopped");
-        assert_eq!(reticulumd["running"], false);
-        assert_eq!(reticulumd["source_configured"], true);
-        let tak = services
-            .iter()
-            .find(|service| service["name"] == "tak_cot")
-            .expect("tak service");
-        assert_eq!(tak["configured"], true);
-        assert_eq!(tak["status"], "stopped");
-        assert_eq!(tak["running"], false);
-
-        let start = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Control/Start")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("start response");
-        assert_eq!(start.status(), StatusCode::OK);
-        let body = start.into_body().collect().await.expect("body").to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        let services = payload["services"].as_array().expect("services");
-        let reticulumd = services
-            .iter()
-            .find(|service| service["name"] == "reticulumd_rpc")
-            .expect("reticulumd service");
-        assert_eq!(reticulumd["status"], "configured");
-        assert_eq!(reticulumd["running"], true);
-        let tak = services
-            .iter()
-            .find(|service| service["name"] == "tak_cot")
-            .expect("tak service");
-        assert_eq!(tak["status"], "running");
-        assert_eq!(tak["running"], true);
-    }
-
     #[test]
-    fn runtime_exit_shutdown_stops_tak_worker_and_marks_retry_worker_stopped() {
-        let state = crate::AppState::default()
-            .with_tak_cot_config(
-                r3akt_tak_connector::TakConnectionConfig {
-                    cot_url: "tcp://127.0.0.1:9".to_string(),
-                    keepalive_interval_seconds: 60.0,
-                    ..r3akt_tak_connector::TakConnectionConfig::default()
-                },
-                8,
-            )
-            .expect("tak state");
+    fn runtime_exit_shutdown_marks_retry_worker_stopped() {
+        let state = crate::AppState::default();
 
         crate::set_outbound_retry_worker_running(&state, true, Duration::from_millis(25));
         crate::shutdown_runtime_for_exit(&state).expect("shutdown");
@@ -29966,18 +29476,6 @@ mod tests {
         assert!(control.shutdown_requested);
         assert!(control.last_stop_ts_ms.is_some());
         drop(control);
-
-        let tak_status = state
-            .tak_runtime
-            .as_ref()
-            .expect("tak runtime")
-            .lock()
-            .expect("tak lock")
-            .status();
-        assert_eq!(
-            tak_status.state,
-            r3akt_tak_connector::TakServiceState::Stopped
-        );
 
         let retry_worker = state
             .outbound_retry_worker_stats
@@ -39477,7 +38975,7 @@ mod tests {
             assert_eq!(payload["reticulumd_rpc_configured"], false);
             assert_eq!(payload["reticulumd_source_configured"], false);
             let services = payload["services"].as_array().expect("services");
-            assert_eq!(services.len(), 5);
+            assert_eq!(services.len(), 4);
             assert_eq!(
                 services
                     .iter()
@@ -39492,13 +38990,6 @@ mod tests {
             assert_eq!(managed_reticulumd["configured"], false);
             assert_eq!(managed_reticulumd["status"], "not_configured");
             assert_eq!(managed_reticulumd["running"], false);
-            assert_eq!(
-                services
-                    .iter()
-                    .find(|service| service["name"] == "tak_cot")
-                    .expect("tak service")["status"],
-                "not_configured"
-            );
             let outbound_worker = services
                 .iter()
                 .find(|service| service["name"] == "outbound_retry_worker")
@@ -45292,67 +44783,6 @@ mod tests {
             .expect("snapshot exists");
         assert!(snapshot.telemetry_records.is_empty());
         assert_eq!(snapshot.system_events[0].event_type, "telemetry_flushed");
-    }
-
-    #[tokio::test]
-    async fn telemetry_record_dispatches_tak_location_cot_when_configured() {
-        let listener = StdTcpListener::bind("127.0.0.1:0").expect("tak listener");
-        let addr = listener.local_addr().expect("tak addr");
-        listener.set_nonblocking(true).expect("tak nonblocking");
-        let tak_server = thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            let mut bodies = Vec::new();
-            while std::time::Instant::now() < deadline {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        stream.set_nonblocking(false).expect("tak stream blocking");
-                        let mut body = String::new();
-                        stream.read_to_string(&mut body).expect("tak read");
-                        let is_location = body.contains("type=\"a-f-G-U-C\"");
-                        bodies.push(body);
-                        if is_location {
-                            return bodies;
-                        }
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(error) => panic!("tak accept: {error}"),
-                }
-            }
-            bodies
-        });
-        let state = crate::AppState::default()
-            .with_tak_cot_url(format!("tcp://{addr}"), 8)
-            .expect("tak state");
-
-        state
-            .record_telemetry(
-                "peer-a",
-                json!({
-                    "location": {
-                        "latitude": 45.5,
-                        "longitude": -63.2,
-                        "altitude": 12.0,
-                        "speed": 1.5,
-                        "bearing": 180.0,
-                        "accuracy": 4.0
-                    }
-                }),
-                1_714_000_000,
-                Some("Alpha".to_string()),
-            )
-            .expect("record telemetry");
-
-        let bodies = tak_server.join().expect("tak server");
-        let xml = bodies
-            .iter()
-            .find(|body| body.contains("type=\"a-f-G-U-C\""))
-            .unwrap_or_else(|| panic!("location CoT not received; received: {bodies:?}"));
-        assert!(xml.contains("type=\"a-f-G-U-C\""));
-        assert!(xml.contains("lat=\"45.5\""));
-        assert!(xml.contains("lon=\"-63.2\""));
-        assert!(xml.contains("callsign=\"Alpha\""));
     }
 
     #[tokio::test]

@@ -126,17 +126,17 @@ Crates:
   boundary. The first slice ports Python-compatible Cursor-on-Target location
   and chat XML builders plus bounded outbound queue/backpressure behavior with
   golden-shape tests. It also has clear TCP/UDP CoT senders for the first
-  non-PyTAK push path, and `r3akt-rch-server` can optionally wire those senders
-  into telemetry and chat side effects with `--tak-cot-url` or
-  `RTH_TAK_COT_URL`. The crate now has an explicit service lifecycle/status
-  object for start/stop, queue drain, send counters, last-error reporting, and
-  a background retry worker that drains pending CoTs after temporary send
-  failures. Python-compatible TAK TLS config fields are loaded by the Rust
-  server and reported as redacted runtime diagnostics; `ssl://`/`tls://` CoT
-  sends now use the Rust native TLS socket path. The worker retries failed
-  sends with Python-style exponential backoff capped at 30 seconds. The pending
-  service slice still owns real TAK profile validation and the internal
-  API/process boundary.
+  non-PyTAK push path. `r3akt-tak-service` is the standalone process that reads
+  RCH telemetry/chat over northbound HTTP and writes received TAK CoT-derived
+  locations back through northbound marker routes; `r3akt-rch-server` does not
+  own TAK socket lifecycle. The crate now has an explicit service
+  lifecycle/status object for start/stop, queue drain, send counters, last-error
+  reporting, and a background retry worker that drains pending CoTs after
+  temporary send failures. Python-compatible TAK TLS config fields are owned by
+  the connector service; `ssl://`/`tls://` CoT sends now use the Rust native TLS
+  socket path. The worker retries failed sends with Python-style exponential
+  backoff capped at 30 seconds. The pending service slice still owns real TAK
+  profile validation.
 - `crates/r3akt-rch-core/migrations/0001_rch_core_snapshot.sql`: first explicit
   SQLite schema artifact for the Rust-owned bridge/runtime state database. This
   database stays separate from the Python RCH application database unless the
@@ -279,7 +279,7 @@ path was checked and was not present.
 | Mission-sync response lifecycle | RCH | Added `MissionSyncResponse` and `handle_mission_sync_command` accepted/result/rejected sequencing, with authorization rejection before acceptance and accepted-then-result/rejected execution responses | Python RCH emits separate accepted and result/rejected replies for executable mission-sync commands | Add more Python golden vectors for command-specific rejection details |
 | Mission-sync authorization | RCH | Added RCH capability requirements for implemented commands plus persisted grants, mission-access roles, explicit operation grants/revokes, and bridge controls | Python RCH rejects unauthorized command issuers before execution while mission registry rights can grant scoped operations | Add more team-derived role edge-case vectors for registry commands |
 | Rust-owned backend switch boundary | RCH | Added `r3akt-rch-bridge` JSON stdin/stdout binary plus disabled-by-default Python `RustMissionSyncBridge` wiring for mission-sync, checklist-sync, state controls, and outbound sends through `reticulumd` RPC, with an env-gated bridge-level live reticulumd outbound smoke; UI/admin pages, backing APIs, WebSocket streams, and northbound HTTP routes are explicitly in scope for the Rust-owned replacement of the Python backend | Lets Python call the Rust core as an isolated transition path while Rust takes over the UI-facing backend surface and Reticulum outbound runtime | Prove the remaining live Reticulum, TAK, and fanout validation gates before retiring the Python service |
-| TAK connector service | RCH PyTAK integration | Added `r3akt-tak-connector` with Python-compatible CoT location/chat XML builders, PyTAK-shaped TAK hello/pong keepalive payloads, bounded outbound queue/backpressure behavior, clear TCP/UDP CoT senders, TAK Protocol v1 stream-framed protobuf payloads when `TAK_PROTO>0`, TLS CoT sender support for `ssl://`/`tls://` with CA/client-cert config, PKCS#12/PFX `tls_client_password` support and explicit unsupported encrypted-PEM failure, structured inbound CoT parsing with Python `ReceiveWorker` raw-fallback behavior, an inbound polling service boundary that records parsed/raw receive results and receiver errors, bounded TCP/UDP/TLS CoT socket receivers, golden-shape tests, local TCP/UDP/TLS loopback tests, local reconnect-after-close coverage, local bidirectional TCP loopback validation, env-gated live TAK keepalive, reconnect push, and inbound receive smokes, an explicit start/stop service lifecycle/status object, Python-compatible TAK TLS config loading with redacted runtime diagnostics covered by regression tests, outbound and inbound retry workers with Python-style exponential send-failure/receive-failure backoff, and the outbound worker wired into `r3akt-rch-server` for configured chat/location CoT dispatch plus TAK ping/keepalive scheduling | TAK server connectivity is its own lifecycle and must remain independently deployable; Rust cannot depend on Python/PyTAK for the final backend switch | Add final validation against the target TAK server profile |
+| TAK connector service | RCH PyTAK integration | Added `r3akt-tak-connector` with Python-compatible CoT location/chat XML builders, PyTAK-shaped TAK hello/pong keepalive payloads, bounded outbound queue/backpressure behavior, clear TCP/UDP CoT senders, TAK Protocol v1 stream-framed protobuf payloads when `TAK_PROTO>0`, TLS CoT sender support for `ssl://`/`tls://` with CA/client-cert config, PKCS#12/PFX `tls_client_password` support and explicit unsupported encrypted-PEM failure, structured inbound CoT parsing with Python `ReceiveWorker` raw-fallback behavior, an inbound polling service boundary that records parsed/raw receive results and receiver errors, bounded TCP/UDP/TLS CoT socket receivers, golden-shape tests, local TCP/UDP/TLS loopback tests, local reconnect-after-close coverage, local bidirectional TCP loopback validation, env-gated live TAK keepalive, reconnect push, and inbound receive smokes, an explicit start/stop service lifecycle/status object, Python-compatible TAK TLS config loading with redacted runtime diagnostics covered by regression tests, outbound and inbound retry workers with Python-style exponential send-failure/receive-failure backoff, and the standalone `r3akt-tak-service` northbound bridge for RCH telemetry/chat to TAK plus TAK CoT to RCH marker ingestion | TAK connectivity runs as a separately deployable service for the final Rust product line, using the RCH northbound API for CoT send/receive integration rather than becoming part of the main server runtime | Add final validation against the target TAK server profile |
 | Product command handlers | RCH, REM | Added the RCH core topic/message path, first mission registry families through assignments, state-backed checklist-sync, and EAM status snapshots | These are needed for backend-switch groundwork but telemetry and remaining mission side effects remain product-specific | Extract telemetry profiles incrementally |
 
 ## Runtime Path
@@ -329,28 +329,17 @@ RCH parity should proceed in this order:
 6. Port the remaining southbound command ingestion path incrementally:
    mission marker links, checklist/EAM mission-change side effects, listener
    notifications, and REM registry envelopes.
-7. Complete the dedicated `r3akt-tak-connector` service. The crate now owns the
-   initial Python-compatible CoT location/chat XML builders, PyTAK-shaped
-   TAK hello/pong keepalive payloads, bounded outbound queue/backpressure
-   behavior, and clear TCP/UDP CoT senders. The Rust server can enable first-pass
-   chat/location telemetry side effects with `--tak-cot-url` or
-   `RTH_TAK_COT_URL` and tune TAK maintenance cadence with
-   `--tak-keepalive-interval-seconds` or
-   `RTH_TAK_KEEPALIVE_INTERVAL_SECONDS`. When explicit TAK URL settings are
-   absent, `--config-path` loads Python-compatible `[TAK]` settings from
-   `config.ini` with legacy `[tak]` fallback plus
-   `poll_interval_seconds`/`interval_seconds`/`interval` and
-   `keepalive_interval_seconds`/`keepalive_interval`/`keepalive` aliases. The
-   Rust config loader also preserves `tls_client_cert`, `tls_client_key`,
-   `tls_ca`, `tls_insecure`, `tls_client_password`, and `pytak_tls_dont_verify` as
-   Python-compatible TAK settings and reports only redacted TLS configuration
-   booleans in runtime service diagnostics. `COT_URL` remains the transport
-   selector as it is in PyTAK; `TAK_PROTO=0` is the XML payload mode and
-   `TAK_PROTO>0` emits TAK Protocol v1 stream-framed protobuf payloads from the
-   generated CoT XML. Runtime diagnostics expose `tak_proto`, `fts_compat`, the
-   effective payload encoding, and whether protobuf was requested, so a
-   target-profile mismatch is visible without exposing certificate paths or
-   passwords. The connector crate now owns an
+7. Complete the dedicated `r3akt-tak-connector` service. The crate owns the
+   Python-compatible CoT location/chat XML builders, PyTAK-shaped TAK hello/pong
+   keepalive payloads, bounded outbound queue/backpressure behavior, and
+   clear TCP/UDP CoT senders. TAK is not a `r3akt-rch-server` runtime service.
+   `r3akt-tak-service` is the separate process boundary: it reads RCH
+   telemetry/chat from northbound HTTP routes, emits TAK CoT over the configured
+   TAK socket, receives TAK CoT through the connector transport, and publishes
+   received CoT-derived location events back through northbound marker routes.
+   `COT_URL` remains the transport selector as it is in PyTAK; `TAK_PROTO=0` is
+   the XML payload mode and `TAK_PROTO>0` emits TAK Protocol v1 stream-framed
+   protobuf payloads from the generated CoT XML. The connector crate owns an
    explicit start/stop lifecycle/status object plus a background retry worker
    with keepalive/ping scheduling, and `ssl://`/`tls://` sends use the Rust
    native TLS socket path. Send failures now back off exponentially up to 30
@@ -369,12 +358,15 @@ RCH parity should proceed in this order:
    `R3AKT_TAK_LIVE_TLS_CA`, `R3AKT_TAK_LIVE_TLS_CLIENT_CERT`,
    `R3AKT_TAK_LIVE_TLS_CLIENT_KEY`, `R3AKT_TAK_LIVE_TLS_CLIENT_PASSWORD`, and
    `R3AKT_TAK_LIVE_TLS_INSECURE`. Runtime diagnostics report TLS config as
-   booleans and omit raw certificate/key/password values. A separate opt-in live
-   inbound receive smoke runs when `R3AKT_TAK_LIVE_INBOUND_COT_URL` is set and
-   can assert a known UID through `R3AKT_TAK_LIVE_INBOUND_EXPECT_UID`. The
-   remaining external service work is validation against a real TAK server
-   profile. The Rust server must not embed Python or own the final TAK socket
-   lifecycle directly.
+   booleans and omit raw certificate/key/password values. TAK inbound CoT is a
+   separate service boundary, not a `r3akt-rch-server` runtime service; it must
+   use the northbound HTTP/WebSocket API for publishing received CoT-derived
+   data into RCH and for reading RCH state/messages that need to be emitted to
+   TAK. A separate opt-in live inbound receive smoke runs when
+   `R3AKT_TAK_LIVE_INBOUND_COT_URL` is set and can assert a known UID through
+   `R3AKT_TAK_LIVE_INBOUND_EXPECT_UID`. The remaining external service work is
+   validation against a real TAK server profile. The Rust server must not embed
+   Python or own the final TAK socket lifecycle directly.
 8. Replace the Python backend with a Rust northbound runtime incrementally:
    serve UI/admin HTTP routes and WebSocket streams directly from Rust, then
    retire each equivalent FastAPI path once behavioral parity is proven for
@@ -699,8 +691,8 @@ against real Reticulum and TAK infrastructure:
 | Python source | Behavior still to prove or port | Reason / follow-up |
 | --- | --- | --- |
 | `reticulum_telemetry_hub/reticulum_server/outbound_queue_delivery.py` and `outbound_queue_stats.py` | LXMF delivery callbacks, receipt registration, timeout finalization, pending dispatch cleanup, and queue retry worker transitions | Rust can send through `reticulumd` RPC, applies the Python-style delivery policy before dispatch, persists accepted/failed/queued/in-progress dispatch state and metadata, reports direct pending-receipt and pending-dispatch diagnostics plus Python-style queue metric keys, accepts internal delivery-receipt, delivery-failure, delivery-retry, propagation-fallback, payload-drop, and attempt-start callbacks that clear pending receipts and emit Python-style `message_delivered`/`message_propagated`/`message_delivery_failed`/`message_delivery_retrying`/`message_propagation_queued` events, polls LXMF-rs `sdk_status_v2` for terminal delivered/failed/cancelled/expired/rejected receipt state, tags callback-origin metadata, summarizes callback totals in runtime diagnostics, finalizes expired direct receipts and stale pending dispatches from diagnostics and the background outbound worker, records Python-style `message_delivery_failed` system events for send failures, receipt timeouts, queue drops, and dispatch timeouts, cools down direct destinations after send failure, runs a Rust retry pickup worker for due `retry_scheduled` messages with metadata-driven backoff and runtime diagnostics counters, and includes opt-in live direct-receipt and fanout validation hooks; local two-daemon direct receipt and three-daemon fanout receipt validation now pass |
-| `reticulum_telemetry_hub/reticulum_server/runtime_init.py` and `runtime_lifecycle.py` | Full hub startup/shutdown orchestration, listener registration, identity capability/presence callbacks, and service wiring | `r3akt-rch-server` owns HTTP/WebSocket state, optional `reticulumd` RPC configuration, optional managed `reticulumd.exe` child startup/shutdown with `/Control/Status` and `/diagnostics/runtime` service inventory visibility, runtime service inventory diagnostics for Reticulum RPC and TAK CoT, control start/stop now applies to configured TAK service state plus managed `reticulumd.exe` child process state plus Reticulum RPC running status, the outbound delivery worker now pauses/resumes across control stop/start instead of exiting permanently, process shutdown now uses Axum graceful shutdown plus explicit TAK worker stop plus outbound/inbound worker abort plus managed `reticulumd` child termination, `/internal/identity-announce` lets a Rust-owned listener persist identity announce metadata, update client presence, annotate REM peers, and emit a system event, and the Rust server starts a `reticulumd` inbound event-cursor worker that consumes LXMF-rs `sdk_poll_events_v2` batches for R3AKT inbound envelopes and Reticulum announces; inbound mission/checklist commands are executed through `RchCore`, reply through `reticulumd`, persist Rust state, and fan out `FIELD_EVENT` mission replies to linked mission team recipients. The Rust replacement architecture treats managed LXMF-rs `reticulumd` as the Reticulum listener/socket owner; an in-process raw listener is only a future fallback if the RPC daemon boundary cannot cover a required RCH workflow. Remaining work is live service-orchestration validation across real Reticulum peers, TAK, inbound event ingestion, outbound retry, and shutdown/restart sequencing. |
-| `reticulum_telemetry_hub/reticulum_server/services.py` and `reticulum_telemetry_hub/reticulum_server/runtime_tak_fields.py` | Configured TAK connector lifecycle, telemetry-to-CoT scheduling, and richer failure logging | Rust now has CoT builders, PyTAK-shaped TAK hello/pong payloads, clear TCP/UDP and native TLS CoT senders, queue/backpressure, Python-compatible `[TAK]`/`[tak]` config loading including TLS field preservation with redacted runtime diagnostics, PKCS#12/PFX `tls_client_password` support with explicit unsupported encrypted-PEM failure, structured inbound CoT parsing with Python `ReceiveWorker` raw-fallback behavior, an inbound polling service boundary for parsed/raw receive result recording, bounded TCP/UDP/TLS socket receivers with local loopback coverage, outbound and inbound background retry workers with Python-style exponential send/receive-failure backoff, keepalive/ping scheduling, local bidirectional TCP loopback validation, and opt-in live TAK push/reconnect/inbound smoke hooks; final validation against the target TAK server profile remains external |
+| `reticulum_telemetry_hub/reticulum_server/runtime_init.py` and `runtime_lifecycle.py` | Full hub startup/shutdown orchestration, listener registration, identity capability/presence callbacks, and service wiring | `r3akt-rch-server` owns HTTP/WebSocket state, optional `reticulumd` RPC configuration, optional managed `reticulumd.exe` child startup/shutdown with `/Control/Status` and `/diagnostics/runtime` service inventory visibility, runtime service inventory diagnostics for Reticulum RPC and managed process state, control start/stop applies to managed `reticulumd.exe` child process state plus Reticulum RPC running status, the outbound delivery worker now pauses/resumes across control stop/start instead of exiting permanently, process shutdown now uses Axum graceful shutdown plus outbound/inbound worker abort plus managed `reticulumd` child termination, `/internal/identity-announce` lets a Rust-owned listener persist identity announce metadata, update client presence, annotate REM peers, and emit a system event, and the Rust server starts a `reticulumd` inbound event-cursor worker that consumes LXMF-rs `sdk_poll_events_v2` batches for R3AKT inbound envelopes and Reticulum announces; inbound mission/checklist commands are executed through `RchCore`, reply through `reticulumd`, persist Rust state, and fan out `FIELD_EVENT` mission replies to linked mission team recipients. The Rust replacement architecture treats managed LXMF-rs `reticulumd` as the Reticulum listener/socket owner; TAK socket lifecycle is owned by the separate `r3akt-tak-service`. Remaining work is live service-orchestration validation across real Reticulum peers, the external TAK service, inbound event ingestion, outbound retry, and shutdown/restart sequencing. |
+| `reticulum_telemetry_hub/reticulum_server/services.py` and `reticulum_telemetry_hub/reticulum_server/runtime_tak_fields.py` | Configured TAK connector lifecycle, telemetry-to-CoT scheduling, and richer failure logging | Rust now has CoT builders, PyTAK-shaped TAK hello/pong payloads, clear TCP/UDP and native TLS CoT senders, queue/backpressure, PKCS#12/PFX `tls_client_password` support with explicit unsupported encrypted-PEM failure, structured inbound CoT parsing with Python `ReceiveWorker` raw-fallback behavior, an inbound polling service boundary for parsed/raw receive result recording, bounded TCP/UDP/TLS socket receivers with local loopback coverage, outbound and inbound background retry workers with Python-style exponential send/receive-failure backoff, keepalive/ping scheduling, local bidirectional TCP loopback validation, opt-in live TAK push/reconnect/inbound smoke hooks, and standalone `r3akt-tak-service` northbound bridging from RCH telemetry/chat to TAK CoT plus TAK CoT to RCH marker ingestion; final validation against the target TAK server profile remains external |
 | `reticulum_telemetry_hub/mission_domain/service_lifecycle.py`, `service_checklists.py`, `service_checklist_tasks.py`, `service_assets.py`, and `service_skills_assignments.py` | Automatic mission-change side effects, post-commit listener notifications, and recipient fanout from checklist delete and skill-related mutations | Rust persists the route families and core records; online checklist creation, checklist upload, task-row creation, row styling, cell edits, status changes, task-row deletes, checklist delete cleanup for tasks/cells/requirements/assignments/assignment-asset links, checklist deleted audit events without auto mission-change creation, asset upsert/delete, assignment upsert/assets set/link/unlink, team delete cleanup, team-member delete cleanup, and post-commit mission-change listener events now match the Python side-effect/listener boundary; checklist upload and assignment asset link fanout now have generic LXMF markdown golden-shape coverage with resolved mission/task/asset names; remaining validation is broader live recipient fanout against real peers |
 | `reticulum_telemetry_hub/reticulum_server/runtime_rem_fanout.py` and `rem_checklist_commands.py` | REM registry/checklist/EAM fanout for mission-change events and duplicate fanout suppression | Rust exposes checklist and mission APIs, tracks mission-change duplicate suppression state/metadata, sends R3AKT mission-delta event fields to linked mission team recipients through reticulumd including each team member's RNS identity plus linked client identities like Python, emits connected-REM `FIELD_COMMANDS` checklist command envelopes for task deltas plus initial checklist create/upload row replay when persisted REM connected mode is effective like Python, sends Python-style markdown-rendered fallback bodies with persisted mission/checklist/task/team/asset name resolution to generic LXMF peers, matches Python's generic mission-log update markdown shape, treats voice-capable LXMF peers as chat-capable destinations with voice as an additional feature, now emits EAM upsert/delete fanout as REM `FIELD_COMMANDS` or generic markdown only when persisted REM connected mode is effective like Python, and passes local three-daemon multi-recipient fanout receipt validation |
 
@@ -905,6 +897,22 @@ $env:R3AKT_TAK_LIVE_INBOUND_COT_URL = "tcp://127.0.0.1:8087" # or ssl://host:por
 # $env:R3AKT_TAK_LIVE_INBOUND_EXPECT_UID = "expected-cot-uid"
 cargo test -p r3akt-tak-connector live_tak_server_provides_inbound_cot_when_configured -- --nocapture
 ```
+
+Standalone TAK connector service smoke:
+
+```powershell
+$env:R3AKT_TAK_RCH_BASE_URL = "http://127.0.0.1:8080"
+$env:R3AKT_TAK_RCH_API_KEY = "<optional-rch-api-key>"
+$env:COT_URL = "tcp://127.0.0.1:8087" # or udp://host:port / ssl://host:port / tls://host:port
+$env:TAK_PROTO = "0" # non-zero enables TAK Protocol v1 stream-framed protobuf payloads
+cargo run -p r3akt-tak-connector --bin r3akt-tak-service -- --once
+```
+
+`r3akt-tak-service` is the final TAK runtime boundary. It reads RCH
+telemetry/chat through `/Telemetry` and `/Chat/Messages`, emits TAK CoT over the
+configured TAK socket, receives TAK CoT through the same connector transport,
+and publishes received CoT location events back through `/api/markers`. It is
+not hosted by `r3akt-rch-server`.
 
 Bridge smoke example:
 
