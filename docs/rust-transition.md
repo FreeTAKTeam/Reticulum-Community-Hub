@@ -74,6 +74,11 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   `r3akt-tak-connector tak_proto_tcp_sender_pushes_stream_framed_protobuf_payload`,
   proving `TAK_PROTO>0` emits stream-framed protobuf payloads instead of XML
   while `COT_URL` remains the transport selector.
+- Standalone TAK service bridge validation: passed for
+  `r3akt-tak-service service_bridges_rch_telemetry_and_chat_to_tak_cot_socket`
+  and `service_bridges_inbound_tak_cot_to_rch_marker_route`, proving the
+  separate process boundary uses RCH northbound HTTP for both CoT directions in
+  local loopback coverage.
 - `cargo test -p r3akt-rch-server`: passed, including the server library,
   gateway binary, `release_major_functionality`, and SAR HTTP seeder suites;
   the server library now includes 215 tests.

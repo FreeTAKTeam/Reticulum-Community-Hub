@@ -357,9 +357,9 @@ RCH parity should proceed in this order:
    reconnect push smokes run when `R3AKT_TAK_LIVE_COT_URL` is set, with optional TLS fields from
    `R3AKT_TAK_LIVE_TLS_CA`, `R3AKT_TAK_LIVE_TLS_CLIENT_CERT`,
    `R3AKT_TAK_LIVE_TLS_CLIENT_KEY`, `R3AKT_TAK_LIVE_TLS_CLIENT_PASSWORD`, and
-   `R3AKT_TAK_LIVE_TLS_INSECURE`. Runtime diagnostics report TLS config as
-   booleans and omit raw certificate/key/password values. TAK inbound CoT is a
-   separate service boundary, not a `r3akt-rch-server` runtime service; it must
+   `R3AKT_TAK_LIVE_TLS_INSECURE`. TAK service tests keep certificate paths and
+   passwords out of rendered diagnostics. TAK inbound CoT is a separate service
+   boundary, not a `r3akt-rch-server` runtime service; it must
    use the northbound HTTP/WebSocket API for publishing received CoT-derived
    data into RCH and for reading RCH state/messages that need to be emitted to
    TAK. A separate opt-in live inbound receive smoke runs when
