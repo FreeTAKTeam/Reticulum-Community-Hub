@@ -762,6 +762,11 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - Repeatable local three-node `reticulumd.exe` receipt/fanout validation is
   available through `scripts/local-reticulum-live-gate.ps1`; the latest run on
   2026-05-11 passed both `r3akt-rch-server` live Reticulum tests.
+- Controlled external RMAP Reticulum validation passed on 2026-05-11 by running
+  `scripts/local-reticulum-live-gate.ps1` with
+  `-ExternalConfigPath C:\Users\broth\Documents\work\ATAK\src\LXMF-rs\target\local\reticulumd-rmap-testnet.toml`;
+  three temporary local identities connected through the public TCP hubs and
+  delivered both direct receipt and two-recipient fanout through the Rust server.
 - Local two-daemon `reticulumd.exe` receipt validation passed for
   `r3akt-rch-server live_reticulumd_direct_send_receipt_is_delivered_when_configured`,
   sending from one local daemon to another daemon's announced LXMF delivery
@@ -793,10 +798,10 @@ Current local verification snapshot, refreshed on 2026-05-11:
   SDK-prefixed receipt status IDs, retry scheduling after receipt timeout, and
   propagated fallback after direct-send failure.
 
-Not proven by local-only verification yet: broader real-network Reticulum
-validation outside the local multi-daemon harness. The configured target TAK
-profile on `tcp://137.184.101.250:8087` passed keepalive, reconnect, and
-bidirectional inbound relay validation on 2026-05-11.
+The configured target TAK profile on `tcp://137.184.101.250:8087` passed
+keepalive, reconnect, and bidirectional inbound relay validation on 2026-05-11.
+The Rust edition has now passed local, CI, package, UI, TAK, local Reticulum,
+and controlled external RMAP Reticulum gates for a preview release decision.
 
 The local release gate runner is:
 
@@ -815,6 +820,18 @@ Run the repeatable local Reticulum receipt/fanout harness when sibling
 
 ```powershell
 .\scripts\local-reticulum-live-gate.ps1
+```
+
+Run the same harness against a controlled external Reticulum/RMAP profile by
+passing a `reticulumd` TOML config:
+
+```powershell
+.\scripts\local-reticulum-live-gate.ps1 `
+  -ExternalConfigPath "C:\Users\broth\Documents\work\ATAK\src\LXMF-rs\target\local\reticulumd-rmap-testnet.toml" `
+  -TimeoutSeconds 180 `
+  -DiscoverySettleSeconds 45 `
+  -ReceiptPollAttempts 240 `
+  -ReceiptPollDelayMs 1000
 ```
 
 ```powershell
@@ -875,6 +892,17 @@ Repeatable local Reticulum receipt and fanout validation:
 
 ```powershell
 .\scripts\local-reticulum-live-gate.ps1
+```
+
+Controlled external RMAP Reticulum receipt and fanout validation:
+
+```powershell
+.\scripts\local-reticulum-live-gate.ps1 `
+  -ExternalConfigPath "C:\Users\broth\Documents\work\ATAK\src\LXMF-rs\target\local\reticulumd-rmap-testnet.toml" `
+  -TimeoutSeconds 180 `
+  -DiscoverySettleSeconds 45 `
+  -ReceiptPollAttempts 240 `
+  -ReceiptPollDelayMs 1000
 ```
 
 Optional live Reticulum receipt validation against a real reachable peer:

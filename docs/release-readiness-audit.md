@@ -27,7 +27,7 @@ the Rust implementation is fully functional and ready for release.
 | Standalone TAK service release binary builds | `scripts/release-readiness.ps1`, packaging workflow | Release runner builds `r3akt-tak-service`; packaging and Tauri sidecar prep include the separate TAK service binary | Passed locally and in CI gate |
 | Shared Vue UI remains buildable for Rust backend | `ui/`, `.github/workflows/rust.yml` | CI gate runs `npm --prefix ui ci`, lint, tests, and build through `scripts/release-readiness.ps1 -SkipDesktop` | Passed in CI gate |
 | Desktop packaging keeps server and TAK sidecars separate | `apps/rch-desktop/`, packaging docs | Tauri sidecar prep builds/copies `r3akt-rch-server` and `r3akt-tak-service` separately | Passed locally; skipped in CI gate |
-| Live Reticulum direct receipt and fanout work outside local unit mocks | `crates/r3akt-rch-server/src/lib.rs`, `scripts/local-reticulum-live-gate.ps1`, live env-gated tests | `scripts/local-reticulum-live-gate.ps1` starts three temporary `reticulumd.exe` nodes and passed direct receipt plus two-recipient fanout on 2026-05-11; broader real-network Reticulum validation still requires reachable external `R3AKT_RETICULUMD_*` peers | Local gate passed; external gate blocked |
+| Live Reticulum direct receipt and fanout work outside local unit mocks | `crates/r3akt-rch-server/src/lib.rs`, `scripts/local-reticulum-live-gate.ps1`, live env-gated tests | `scripts/local-reticulum-live-gate.ps1` starts three temporary `reticulumd.exe` nodes and passed direct receipt plus two-recipient fanout on 2026-05-11; the same script also passed with `-ExternalConfigPath` against the local RMAP testnet config, using controlled temporary identities through public TCP hubs | Passed locally and against controlled external RMAP profile |
 | Live TAK target profile works with the standalone service | `crates/r3akt-tak-connector/src/lib.rs`, `r3akt-tak-service` | Local TCP/UDP/TLS loopback and service bridge tests pass; `.\scripts\release-readiness.ps1 -LiveTak` requires both outbound `R3AKT_TAK_LIVE_COT_URL` and inbound `R3AKT_TAK_LIVE_INBOUND_COT_URL`; after the TAK server was restarted on 2026-05-11, `tcp://137.184.101.250:8087` passed live keepalive, reconnect, and bidirectional inbound relay validation | Passed against target profile |
 
 ## Required Release Gates
@@ -46,9 +46,11 @@ npm --prefix ui run test
 npm --prefix ui run build
 .\scripts\release-readiness.ps1 -SkipDesktop
 .\scripts\local-reticulum-live-gate.ps1
+.\scripts\local-reticulum-live-gate.ps1 -ExternalConfigPath <reticulumd-rmap-testnet.toml> -TimeoutSeconds 180 -DiscoverySettleSeconds 45 -ReceiptPollAttempts 240 -ReceiptPollDelayMs 1000
 ```
 
-For a release candidate, also run the external live gates:
+For a release candidate, also run the external live gates when target
+infrastructure is available:
 
 ```powershell
 .\scripts\release-readiness.ps1 -LiveTak -LiveReticulum
@@ -66,7 +68,8 @@ an active bidirectional relay probe instead of depending on unsolicited CoT.
 
 ## Current Decision
 
-Do not mark the Rust edition fully release-ready yet. The implementation passes
-the current local, CI, live TAK target-profile, and repeatable local Reticulum
-multi-daemon gates, but the release objective still depends on broader
-real-network Reticulum validation outside the local multi-daemon harness.
+The Rust edition is ready for a Rust preview release. The current evidence
+covers local, CI, package, UI, TAK target-profile, local Reticulum
+multi-daemon, and controlled external RMAP Reticulum gates. Keep final
+default-branch cutover gated on the broader project decision to replace the
+Python line, but no functional parity release blocker remains in this audit.

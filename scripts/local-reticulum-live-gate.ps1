@@ -1,8 +1,10 @@
 param(
     [string]$ReticulumdExe = (Join-Path (Resolve-Path "..\LXMF-rs\target\debug").Path "reticulumd.exe"),
+    [string]$ExternalConfigPath = "",
     [string]$RustToolchain = "1.85.0",
     [int]$NodeCount = 3,
     [int]$TimeoutSeconds = 90,
+    [int]$DiscoverySettleSeconds = 3,
     [int]$ReceiptPollAttempts = 120,
     [int]$ReceiptPollDelayMs = 500
 )
@@ -15,6 +17,13 @@ if ($NodeCount -lt 3) {
 
 if (-not (Test-Path -LiteralPath $ReticulumdExe)) {
     throw "reticulumd executable not found: $ReticulumdExe"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ExternalConfigPath)) {
+    $ExternalConfigPath = (Resolve-Path -LiteralPath $ExternalConfigPath).Path
+    if ($DiscoverySettleSeconds -lt 30) {
+        $DiscoverySettleSeconds = 30
+    }
 }
 
 function Get-FreeTcpPort {
@@ -83,29 +92,37 @@ try {
     New-Item -ItemType Directory -Path $tempRoot | Out-Null
 
     $rpcPorts = @()
-    $transportPorts = @()
     for ($idx = 0; $idx -lt $NodeCount; $idx++) {
         $rpcPorts += Get-FreeTcpPort
     }
-    for ($idx = 0; $idx -lt $NodeCount; $idx++) {
-        $transportPorts += Get-FreeTcpPort
+    $transportPorts = @()
+    if ([string]::IsNullOrWhiteSpace($ExternalConfigPath)) {
+        for ($idx = 0; $idx -lt $NodeCount; $idx++) {
+            $transportPorts += Get-FreeTcpPort
+        }
     }
 
     for ($idx = 0; $idx -lt $NodeCount; $idx++) {
         $nodeDir = Join-Path $tempRoot "node-$idx"
         New-Item -ItemType Directory -Path $nodeDir | Out-Null
         $configPath = Join-Path $nodeDir "reticulum.toml"
-        Write-NodeConfig -Path $configPath -NodeIndex $idx -TransportPorts $transportPorts
+        if ([string]::IsNullOrWhiteSpace($ExternalConfigPath)) {
+            Write-NodeConfig -Path $configPath -NodeIndex $idx -TransportPorts $transportPorts
+        } else {
+            Copy-Item -LiteralPath $ExternalConfigPath -Destination $configPath
+        }
 
         $stdoutPath = Join-Path $nodeDir "reticulumd.out.log"
         $stderrPath = Join-Path $nodeDir "reticulumd.err.log"
         $args = @(
             "--rpc", "127.0.0.1:$($rpcPorts[$idx])",
             "--db", (Join-Path $nodeDir "reticulum.db"),
-            "--announce-interval-secs", "1",
-            "--transport", "127.0.0.1:$($transportPorts[$idx])",
-            "--config", $configPath
+            "--announce-interval-secs", "1"
         )
+        if ([string]::IsNullOrWhiteSpace($ExternalConfigPath)) {
+            $args += @("--transport", "127.0.0.1:$($transportPorts[$idx])")
+        }
+        $args += @("--config", $configPath)
         $processes += Start-Process -FilePath $ReticulumdExe `
             -ArgumentList $args `
             -WindowStyle Hidden `
@@ -125,7 +142,7 @@ try {
         Write-Host "  node-$idx rpc=127.0.0.1:$($rpcPorts[$idx]) delivery=$($destinations[$idx])"
     }
 
-    Start-Sleep -Seconds 3
+    Start-Sleep -Seconds $DiscoverySettleSeconds
 
     $env:R3AKT_RETICULUMD_RPC_ENDPOINT = "127.0.0.1:$($rpcPorts[0])"
     $env:R3AKT_RETICULUMD_SOURCE = $destinations[0]
