@@ -727,6 +727,10 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - `.\scripts\release-readiness.ps1 -SkipUi -SkipDesktop -SkipClippy
   -SkipWorkspaceTests` passed, covering the committed gate runner, Rust format
   check, release builds for both server binaries, and release HTTP smoke.
+- `.github/workflows/rust.yml` now runs the committed release gate runner with
+  `-SkipDesktop` so PR/push CI covers Rust format, clippy, workspace tests,
+  server/TAK release builds, shared UI install/lint/test/build, and release
+  HTTP smoke.
 - A release-binary smoke test with a temporary SQLite database passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and

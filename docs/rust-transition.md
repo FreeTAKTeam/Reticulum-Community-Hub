@@ -96,6 +96,8 @@ Validated during the root Rust import and refreshed on 2026-05-11:
 - `.\scripts\release-readiness.ps1 -SkipUi -SkipDesktop -SkipClippy
   -SkipWorkspaceTests`: passed, covering Rust format, release binary builds for
   `r3akt-rch-server` and `r3akt-tak-service`, and the release HTTP smoke.
+- `.github/workflows/rust.yml`: now invokes the committed release gate runner
+  with `-SkipDesktop`; Tauri desktop bundling remains in `rust-release.yml`.
 - `npm ci`, `npm audit --audit-level=moderate`, `npm run lint`,
   `npm run test`, and `npm run build` in `ui/`: passed, including zero audited
   UI vulnerabilities after the lockfile refresh and 23 Vitest files / 70 tests.

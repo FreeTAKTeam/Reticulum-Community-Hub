@@ -14,6 +14,10 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
 
+function Test-Windows {
+    return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+}
+
 function Invoke-Native {
     param(
         [Parameter(Mandatory = $true)] [string] $FilePath,
@@ -68,10 +72,10 @@ function Get-ReleaseBinary {
     param([Parameter(Mandatory = $true)] [string] $Name)
 
     $suffix = ""
-    if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+    if (Test-Windows) {
         $suffix = ".exe"
     }
-    return Join-Path (Get-Location).Path "target\release\$Name$suffix"
+    return [System.IO.Path]::Combine((Get-Location).Path, "target", "release", "$Name$suffix")
 }
 
 function Invoke-ServerSmoke {
@@ -85,13 +89,18 @@ function Invoke-ServerSmoke {
         throw "Expected release server binary at $serverBin"
     }
 
-    $db = Join-Path $env:TEMP ("r3akt-rch-release-smoke-" + [guid]::NewGuid().ToString() + ".sqlite3")
+    $db = Join-Path ([System.IO.Path]::GetTempPath()) ("r3akt-rch-release-smoke-" + [guid]::NewGuid().ToString() + ".sqlite3")
     $headers = @{ "X-API-Key" = $ApiKey }
-    $process = Start-Process -FilePath $serverBin `
-        -ArgumentList @("--bind", $Bind, "--api-key", $ApiKey, "--db-path", $db) `
-        -WorkingDirectory (Get-Location).Path `
-        -WindowStyle Hidden `
-        -PassThru
+    $startArgs = @{
+        FilePath = $serverBin
+        ArgumentList = @("--bind", $Bind, "--api-key", $ApiKey, "--db-path", $db)
+        WorkingDirectory = (Get-Location).Path
+        PassThru = $true
+    }
+    if (Test-Windows) {
+        $startArgs.WindowStyle = "Hidden"
+    }
+    $process = Start-Process @startArgs
 
     try {
         $baseUrl = "http://$Bind"

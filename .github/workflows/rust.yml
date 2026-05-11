@@ -31,14 +31,14 @@ jobs:
           toolchain: "1.85"
           components: rustfmt, clippy
 
-      - name: Check formatting
-        working-directory: rch
-        run: cargo fmt --all -- --check
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: rch/ui/package-lock.json
 
-      - name: Run clippy
+      - name: Run release readiness gates
+        shell: pwsh
         working-directory: rch
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Run tests
-        working-directory: rch
-        run: cargo test --workspace
+        run: ./scripts/release-readiness.ps1 -SkipDesktop
