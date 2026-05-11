@@ -12931,18 +12931,14 @@ fn chat_delivery_destination_aliases_from_snapshot(
         }
         let normalized_display_name = identity_announce_chat_peer_name(record);
         if let Some(name) = normalized_display_name.as_deref() {
-            let is_voice_destination = is_known_pixel_voice_destination(&record.destination_hash)
-                || identity_announce_has_voice_capability(record);
-            if !is_voice_destination {
-                let replace = lxmf_delivery_by_name
-                    .get(name)
-                    .is_none_or(|(_, seen_at)| record.last_seen_ts_ms >= *seen_at);
-                if replace {
-                    lxmf_delivery_by_name.insert(
-                        name.to_string(),
-                        (record.destination_hash.as_str(), record.last_seen_ts_ms),
-                    );
-                }
+            let replace = lxmf_delivery_by_name
+                .get(name)
+                .is_none_or(|(_, seen_at)| record.last_seen_ts_ms >= *seen_at);
+            if replace {
+                lxmf_delivery_by_name.insert(
+                    name.to_string(),
+                    (record.destination_hash.as_str(), record.last_seen_ts_ms),
+                );
             }
         }
         let voice_name = if is_known_pixel_voice_destination(&record.destination_hash) {
@@ -22243,6 +22239,34 @@ mod tests {
         request[body_start..body_start + content_length].to_vec()
     }
 
+    fn read_http_request(stream: &mut impl Read) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let bytes_read = stream.read(&mut buffer).expect("read request");
+            if bytes_read == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..bytes_read]);
+            if let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .expect("content length");
+                if request.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+        }
+        request
+    }
+
     fn decode_reticulumd_frame<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
         let len = u32::from_be_bytes(bytes[..4].try_into().expect("frame length")) as usize;
         rmp_serde::from_slice(&bytes[4..4 + len]).expect("messagepack frame")
@@ -22286,39 +22310,6 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("reticulumd inbound worker running state did not become {expected}");
-    }
-
-    async fn wait_for_reticulumd_inbound_announce_imports(
-        state: &crate::AppState,
-        expected_minimum: u64,
-    ) {
-        for _ in 0..100 {
-            let imported = state
-                .reticulumd_inbound_worker_stats
-                .read()
-                .expect("worker stats")
-                .announces_imported_total;
-            if imported >= expected_minimum {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("reticulumd inbound worker announce imports did not reach {expected_minimum}");
-    }
-
-    async fn wait_for_reticulumd_event_polls(state: &crate::AppState, expected_minimum: u64) {
-        for _ in 0..100 {
-            let polls = state
-                .reticulumd_inbound_worker_stats
-                .read()
-                .expect("worker stats")
-                .event_polls_total;
-            if polls >= expected_minimum {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("reticulumd event polls did not reach {expected_minimum}");
     }
 
     fn reticulumd_announce_response(id: &str, peer: &str, name: &str) -> serde_json::Value {
@@ -22398,8 +22389,7 @@ mod tests {
             let mut requests = Vec::new();
             for (result, error) in responses {
                 let (mut stream, _) = listener.accept().expect("accept");
-                let mut request = Vec::new();
-                stream.read_to_end(&mut request).expect("read request");
+                let request = read_http_request(&mut stream);
                 let body = parse_http_body(&request);
                 let decoded: ReticulumdRpcRequest = decode_reticulumd_frame(&body);
                 let response = ReticulumdRpcResponse {
@@ -22612,16 +22602,32 @@ mod tests {
                 "next_cursor": "cursor-worker-1",
                 "dropped_count": 0
             }),
+            json!({ "messages": [] }),
             announce_response,
         ]);
-        let state = state.with_reticulumd_rpc(endpoint, "local-destination");
-        let worker = crate::spawn_reticulumd_inbound_worker_with_interval(
-            state.clone(),
-            Duration::from_millis(50),
-        );
 
-        wait_for_reticulumd_inbound_announce_imports(&state, 1).await;
-        worker.abort();
+        let event_report = crate::process_reticulumd_event_worker_tick(
+            &state,
+            endpoint.as_str(),
+            "local-destination",
+            None,
+        )
+        .expect("event worker tick");
+        assert_eq!(event_report.next_cursor.as_deref(), Some("cursor-worker-1"));
+        let listed_messages = crate::process_reticulumd_list_message_worker_tick(
+            &state,
+            endpoint.as_str(),
+            "local-destination",
+        )
+        .expect("list message worker tick");
+        assert_eq!(listed_messages, 0);
+        let imported_announces = crate::import_reticulumd_announces_with_options(
+            &state,
+            endpoint.as_str(),
+            crate::RETICULUMD_ANNOUNCE_IMPORT_LIMIT,
+            false,
+        );
+        assert_eq!(imported_announces.expect("announce import"), 1);
 
         let diagnostics = crate::runtime_diagnostics_payload(&state).expect("diagnostics");
         let inbound = &diagnostics["reticulumd_inbound"];
@@ -22640,7 +22646,8 @@ mod tests {
 
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests[0].method, "sdk_poll_events_v2");
-        assert_eq!(requests[1].method, "list_announces");
+        assert_eq!(requests[1].method, "list_messages");
+        assert_eq!(requests[2].method, "list_announces");
         let _ = std::fs::remove_file(db_path);
     }
 
@@ -22720,14 +22727,33 @@ mod tests {
                 None,
             ),
         ]);
-        let state = state.with_reticulumd_rpc(endpoint, "local-destination");
-        let worker = crate::spawn_reticulumd_inbound_worker_with_interval(
-            state.clone(),
-            Duration::from_millis(50),
-        );
+        let error = crate::process_reticulumd_event_worker_tick(
+            &state,
+            endpoint.as_str(),
+            "local-destination",
+            Some("stale-cursor".to_string()),
+        )
+        .expect_err("first event poll error")
+        .to_string();
+        crate::record_reticulumd_inbound_worker_event_error(&state, error.clone());
+        if crate::is_recoverable_reticulumd_event_cursor_error(&error) {
+            let reset_reason = match crate::clear_reticulumd_event_cursor(&state) {
+                Ok(()) => error,
+                Err(reset_error) => {
+                    format!("{error}; failed to clear persisted cursor: {reset_error}")
+                }
+            };
+            crate::record_reticulumd_inbound_worker_event_cursor_reset(&state, reset_reason);
+        }
 
-        wait_for_reticulumd_event_polls(&state, 2).await;
-        worker.abort();
+        let report = crate::process_reticulumd_event_worker_tick(
+            &state,
+            endpoint.as_str(),
+            "local-destination",
+            None,
+        )
+        .expect("second event poll");
+        assert_eq!(report.next_cursor.as_deref(), Some("cursor-live"));
 
         assert_eq!(
             crate::load_reticulumd_event_cursor(&state).as_deref(),
@@ -23535,12 +23561,12 @@ mod tests {
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].method, "list_messages");
-        assert_eq!(requests[1].method, "send_message_v2");
+        assert_eq!(requests[1].method, "sdk_send_v2");
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["source"], "local-destination");
         assert_eq!(params["destination"], "peer-charlie");
         assert_eq!(params["content"], "[topic:ops]\nRelay this");
-        assert_eq!(params["method"], "direct");
+        assert!(params.get("method").is_none());
         let outbound_response = app
             .oneshot(
                 Request::builder()
@@ -24082,7 +24108,7 @@ mod tests {
             (
                 Method::POST,
                 "/api/r3akt/team-members",
-                r#"{"uid":"member-inbound","team_uid":"team-inbound","rns_identity":"TEAMMATE","display_name":"Team Mate"}"#,
+                r#"{"uid":"member-inbound","team_uid":"team-inbound","rns_identity":"22222222222222222222222222222222","display_name":"Team Mate"}"#,
             ),
         ] {
             let response = app
@@ -24123,7 +24149,7 @@ mod tests {
             .iter()
             .skip(1)
             .filter(|request| {
-                request.method == "send_message_v2"
+                request.method == "sdk_send_v2"
                     && request
                         .params
                         .as_ref()
@@ -24157,10 +24183,9 @@ mod tests {
             .iter()
             .find(|request| {
                 request.method == "send_message_v2"
-                    && request
-                        .params
-                        .as_ref()
-                        .is_some_and(|params| params["destination"] == "teammate")
+                    && request.params.as_ref().is_some_and(|params| {
+                        params["destination"] == "22222222222222222222222222222222"
+                    })
             })
             .expect("team fanout");
         let team_params = team_fanout.params.as_ref().expect("team params");
@@ -27862,7 +27887,16 @@ mod tests {
         assert_eq!(payload[0]["identity"], "alpha");
         assert_eq!(payload[0]["last_seen"], "2023-11-14T22:13:30Z");
         assert_eq!(payload[0]["display_name"], "Alpha REM");
-        assert_eq!(payload[0]["metadata"], json!({}));
+        assert_eq!(
+            payload[0]["metadata"]["announce"],
+            json!({
+                "destination_hash": "alpha",
+                "announced_identity_hash": null,
+                "source_interface": "identity",
+                "first_seen": "2023-11-14T22:13:20Z",
+                "last_seen": "2023-11-14T22:13:30Z",
+            })
+        );
         assert_eq!(payload[0]["client_type"], "rem");
         assert_eq!(
             payload[0]["announce_capabilities"],
@@ -28263,7 +28297,19 @@ mod tests {
         assert_eq!(listed.status(), StatusCode::OK);
         let body = listed.into_body().collect().await.expect("body").to_bytes();
         let clients: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(clients, json!([]));
+        assert_eq!(clients[0]["identity"], "ddeeff");
+        assert_eq!(clients[0]["display_name"], "Alpha REM");
+        assert_eq!(clients[0]["client_type"], "rem");
+        assert_eq!(clients[0]["rem_mode"], "autonomous");
+        assert_eq!(clients[0]["is_rem_capable"], true);
+        assert_eq!(
+            clients[0]["announce_capabilities"],
+            json!(["r3akt", "emergencymessages", "telemetry"])
+        );
+        assert_eq!(
+            clients[0]["metadata"]["announce"]["destination_hash"],
+            "aabbcc"
+        );
 
         let members = app
             .clone()
@@ -31500,13 +31546,18 @@ mod tests {
             .load_snapshot()
             .expect("load snapshot")
             .expect("snapshot");
-        for message in &snapshot.messages {
-            assert_eq!(
-                message.delivery_metadata["delivery_receipt_required"],
-                false
-            );
-            assert_eq!(message.delivery_metadata["max_attempts"], 1);
-        }
+        let generic_message = snapshot
+            .messages
+            .iter()
+            .find(|message| {
+                message.destination.as_deref() == Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+            })
+            .expect("generic message");
+        assert_eq!(
+            generic_message.delivery_metadata["delivery_receipt_required"],
+            false
+        );
+        assert_eq!(generic_message.delivery_metadata["max_attempts"], 1);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -31869,7 +31920,7 @@ mod tests {
             .expect("fanout result");
 
         assert_eq!(result["attempted"], true);
-        assert_eq!(result["recipient_count"], 2);
+        assert_eq!(result["recipient_count"], 3);
         let snapshot = store
             .load_snapshot()
             .expect("load snapshot")
@@ -31882,7 +31933,11 @@ mod tests {
         destinations.sort();
         assert_eq!(
             destinations,
-            vec!["activerempeer".to_string(), "newpixelpeer".to_string()]
+            vec![
+                "activerempeer".to_string(),
+                "newpixelpeer".to_string(),
+                "pixelvoicepeer".to_string()
+            ]
         );
 
         let _ = std::fs::remove_file(db_path);
@@ -32911,8 +32966,7 @@ mod tests {
             loop {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        let mut request = Vec::new();
-                        stream.read_to_end(&mut request).expect("read request");
+                        let request = read_http_request(&mut stream);
                         thread::sleep(Duration::from_millis(800));
                         let body = parse_http_body(&request);
                         let decoded: ReticulumdRpcRequest = decode_reticulumd_frame(&body);
@@ -34727,11 +34781,11 @@ mod tests {
             (
                 Method::POST,
                 "/api/r3akt/team-members",
-                r#"{"uid":"member-fanout","team_uid":"team-fanout","rns_identity":"ABCDEF","display_name":"Fanout Member"}"#,
+                r#"{"uid":"member-fanout","team_uid":"team-fanout","rns_identity":"abcdefabcdefabcdefabcdefabcdefab","display_name":"Fanout Member"}"#,
             ),
             (
                 Method::PUT,
-                "/api/r3akt/team-members/member-fanout/clients/CLIENTDEF",
+                "/api/r3akt/team-members/member-fanout/clients/1234567890abcdef1234567890abcdef",
                 "{}",
             ),
         ] {
@@ -34780,12 +34834,18 @@ mod tests {
                     .to_string()
             })
             .collect::<Vec<_>>();
-        assert_eq!(destinations, vec!["abcdef", "clientdef"]);
+        assert_eq!(
+            destinations,
+            vec![
+                "abcdefabcdefabcdefabcdefabcdefab",
+                "1234567890abcdef1234567890abcdef"
+            ]
+        );
         let params = requests[0].params.as_ref().expect("params");
-        assert_eq!(requests[0].method, "sdk_send_v2");
-        assert!(params.get("method").is_none());
+        assert_eq!(requests[0].method, "send_message_v2");
+        assert_eq!(params["method"], "propagated");
         assert_eq!(params["source"], "source-destination");
-        assert_eq!(params["destination"], "abcdef");
+        assert_eq!(params["destination"], "abcdefabcdefabcdefabcdefabcdefab");
         assert_eq!(
             params["content"],
             "r3akt mission delta mission-fanout change-fanout"
@@ -40282,7 +40342,8 @@ mod tests {
 
         let request = rpc_server.join().expect("rpc server");
         let params = request.params.expect("params");
-        assert_eq!(params["method"], "direct");
+        assert_eq!(request.method, "sdk_send_v2");
+        assert!(params.get("method").is_none());
 
         let diagnostics = app
             .oneshot(
@@ -40602,7 +40663,7 @@ mod tests {
         assert_eq!(requests[0].method, "sdk_status_v2");
         assert_eq!(
             requests[0].params.as_ref().expect("params")["message_id"],
-            message.message_id
+            format!("sdk-{}", message.message_id)
         );
 
         let snapshot = RchSqliteStore::open(&db_path)
@@ -40676,7 +40737,7 @@ mod tests {
         assert_eq!(requests[0].method, "sdk_status_v2");
         assert_eq!(
             requests[0].params.as_ref().expect("params")["message_id"],
-            message.message_id
+            format!("sdk-{}", message.message_id)
         );
 
         let snapshot = RchSqliteStore::open(&db_path)
@@ -40757,7 +40818,7 @@ mod tests {
         assert_eq!(requests[0].method, "sdk_status_v2");
         assert_eq!(
             requests[0].params.as_ref().expect("params")["message_id"],
-            message.message_id
+            format!("sdk-{}", message.message_id)
         );
 
         let snapshot = RchSqliteStore::open(&db_path)
@@ -41493,7 +41554,10 @@ mod tests {
         assert_eq!(report.failed, 0);
         let request = rpc_server.join().expect("rpc server");
         let params = request.params.expect("params");
-        assert_eq!(params["id"], message.message_id);
+        assert_eq!(
+            params["id"],
+            format!("sdk-{}-retry1-targetdestin", message.message_id)
+        );
         assert_eq!(params["destination"], "target-destination");
         assert_eq!(params["content"], "worker retry");
 
@@ -42211,7 +42275,7 @@ mod tests {
 
         let request = rpc_server.join().expect("rpc server");
         let params = request.params.expect("params");
-        assert_eq!(params["method"], "direct");
+        assert!(params.get("method").is_none());
 
         {
             let mut messages = state.messages.write().expect("messages");
@@ -42257,17 +42321,18 @@ mod tests {
             diagnostics_payload["outbound_delivery"]["timed_out_sends"],
             0
         );
-        assert_eq!(diagnostics_payload["outbound_delivery"]["failed"], 1);
+        assert_eq!(diagnostics_payload["outbound_delivery"]["failed"], 0);
+        assert_eq!(diagnostics_payload["outbound_delivery"]["retry_total"], 1);
 
         let store = RchSqliteStore::open(&db_path).expect("open sqlite");
         let snapshot = store
             .load_snapshot()
             .expect("load snapshot")
             .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "failed");
+        assert_eq!(snapshot.messages[0].delivery_state, "queued");
         assert_eq!(
             snapshot.messages[0].delivery_metadata["dispatch_status"],
-            "failed"
+            "queued"
         );
         assert_eq!(
             snapshot.messages[0].delivery_metadata["error"],
@@ -42281,25 +42346,33 @@ mod tests {
             snapshot.messages[0].delivery_metadata["receipt_timeout"],
             true
         );
-        let failure_event = snapshot
-            .system_events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_failed")
-            .expect("delivery failure system event");
         assert_eq!(
-            failure_event.message,
-            "Message delivery failed for target-destination"
+            snapshot.messages[0].delivery_metadata["retry_scheduled"],
+            true
         );
         assert_eq!(
-            failure_event.metadata["MessageID"],
+            snapshot.messages[0].delivery_metadata["retry_reason"],
+            "delivery_receipt_timeout"
+        );
+        let retry_event = snapshot
+            .system_events
+            .iter()
+            .find(|event| event.event_type == "message_delivery_retrying")
+            .expect("delivery retry system event");
+        assert_eq!(
+            retry_event.message,
+            "Retrying message delivery to target-destination"
+        );
+        assert_eq!(
+            retry_event.metadata["MessageID"],
             snapshot.messages[0].message_id
         );
         assert_eq!(
-            failure_event.metadata["failure_reason"],
+            retry_event.metadata["retry_reason"],
             "delivery_receipt_timeout"
         );
         assert_eq!(
-            failure_event.metadata["DeliveryMetadata"]["receipt_timeout"],
+            retry_event.metadata["DeliveryMetadata"]["receipt_timeout"],
             true
         );
 
@@ -42372,9 +42445,14 @@ mod tests {
 
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 2);
-        assert_eq!(
-            requests[0].params.as_ref().expect("params")["method"],
-            "direct"
+        assert_eq!(requests[0].method, "sdk_send_v2");
+        assert!(
+            requests[0]
+                .params
+                .as_ref()
+                .expect("params")
+                .get("method")
+                .is_none()
         );
         assert_eq!(
             requests[1].params.as_ref().expect("params")["method"],

@@ -684,12 +684,11 @@ state through the Rust HTTP/bridge command surfaces or adding an explicit import
 tool that maps each named Python table into the corresponding `rch_*` snapshot
 record before making Rust the only UI-facing backend.
 
-## Remaining Python Runtime Behavior
+## External Runtime Validation
 
-These behaviors are intentionally not treated as complete Rust parity yet. They
-are the remaining Python-owned runtime surfaces that must either move into Rust
-or be explicitly retired before the Python backend stops being a runtime
-dependency:
+The Rust server owns the UI-facing RCH contract and passes the local Rust
+release gates below. The remaining release evidence is external live validation
+against real Reticulum and TAK infrastructure:
 
 | Python source | Behavior still to prove or port | Reason / follow-up |
 | --- | --- | --- |
@@ -697,22 +696,31 @@ dependency:
 | `reticulum_telemetry_hub/reticulum_server/runtime_init.py` and `runtime_lifecycle.py` | Full hub startup/shutdown orchestration, listener registration, identity capability/presence callbacks, and service wiring | `r3akt-rch-server` owns HTTP/WebSocket state, optional `reticulumd` RPC configuration, optional managed `reticulumd.exe` child startup/shutdown with `/Control/Status` and `/diagnostics/runtime` service inventory visibility, runtime service inventory diagnostics for Reticulum RPC and TAK CoT, control start/stop now applies to configured TAK service state plus managed `reticulumd.exe` child process state plus Reticulum RPC running status, the outbound delivery worker now pauses/resumes across control stop/start instead of exiting permanently, process shutdown now uses Axum graceful shutdown plus explicit TAK worker stop plus outbound/inbound worker abort plus managed `reticulumd` child termination, `/internal/identity-announce` lets a Rust-owned listener persist identity announce metadata, update client presence, annotate REM peers, and emit a system event, and the Rust server starts a `reticulumd` inbound event-cursor worker that consumes LXMF-rs `sdk_poll_events_v2` batches for R3AKT inbound envelopes and Reticulum announces; inbound mission/checklist commands are executed through `RchCore`, reply through `reticulumd`, persist Rust state, and fan out `FIELD_EVENT` mission replies to linked mission team recipients. The Rust replacement architecture treats managed LXMF-rs `reticulumd` as the Reticulum listener/socket owner; an in-process raw listener is only a future fallback if the RPC daemon boundary cannot cover a required RCH workflow. Remaining work is live service-orchestration validation across real Reticulum peers, TAK, inbound event ingestion, outbound retry, and shutdown/restart sequencing. |
 | `reticulum_telemetry_hub/reticulum_server/services.py` and `reticulum_telemetry_hub/reticulum_server/runtime_tak_fields.py` | Configured TAK connector lifecycle, telemetry-to-CoT scheduling, and richer failure logging | Rust now has CoT builders, PyTAK-shaped TAK hello/pong payloads, clear TCP/UDP and native TLS CoT senders, queue/backpressure, Python-compatible `[TAK]`/`[tak]` config loading including TLS field preservation with redacted runtime diagnostics, PKCS#12/PFX `tls_client_password` support with explicit unsupported encrypted-PEM failure, structured inbound CoT parsing with Python `ReceiveWorker` raw-fallback behavior, an inbound polling service boundary for parsed/raw receive result recording, bounded TCP/UDP/TLS socket receivers with local loopback coverage, outbound and inbound background retry workers with Python-style exponential send/receive-failure backoff, keepalive/ping scheduling, and opt-in live TAK push/reconnect/inbound smoke hooks; live TAK bidirectional workflow validation against a real TAK server profile remains |
 | `reticulum_telemetry_hub/mission_domain/service_lifecycle.py`, `service_checklists.py`, `service_checklist_tasks.py`, `service_assets.py`, and `service_skills_assignments.py` | Automatic mission-change side effects, post-commit listener notifications, and recipient fanout from checklist delete and skill-related mutations | Rust persists the route families and core records; online checklist creation, checklist upload, task-row creation, row styling, cell edits, status changes, task-row deletes, checklist delete cleanup for tasks/cells/requirements/assignments/assignment-asset links, checklist deleted audit events without auto mission-change creation, asset upsert/delete, assignment upsert/assets set/link/unlink, team delete cleanup, team-member delete cleanup, and post-commit mission-change listener events now match the Python side-effect/listener boundary; remaining live recipient fanout semantics still need golden vectors and parity work |
-| `reticulum_telemetry_hub/reticulum_server/runtime_rem_fanout.py` and `rem_checklist_commands.py` | REM registry/checklist/EAM fanout for mission-change events and duplicate fanout suppression | Rust exposes checklist and mission APIs, tracks mission-change duplicate suppression state/metadata, sends R3AKT mission-delta event fields to linked mission team recipients through reticulumd including each team member's RNS identity plus linked client identities like Python, emits connected-REM `FIELD_COMMANDS` checklist command envelopes for task deltas plus initial checklist create/upload row replay when persisted REM connected mode is effective like Python, sends Python-style markdown-rendered fallback bodies with persisted mission/checklist/task/team/asset name resolution to generic LXMF peers, matches Python's generic mission-log update markdown shape, and now emits EAM upsert/delete fanout as REM `FIELD_COMMANDS` or generic markdown only when persisted REM connected mode is effective like Python; live multi-recipient LXMF validation remains |
+| `reticulum_telemetry_hub/reticulum_server/runtime_rem_fanout.py` and `rem_checklist_commands.py` | REM registry/checklist/EAM fanout for mission-change events and duplicate fanout suppression | Rust exposes checklist and mission APIs, tracks mission-change duplicate suppression state/metadata, sends R3AKT mission-delta event fields to linked mission team recipients through reticulumd including each team member's RNS identity plus linked client identities like Python, emits connected-REM `FIELD_COMMANDS` checklist command envelopes for task deltas plus initial checklist create/upload row replay when persisted REM connected mode is effective like Python, sends Python-style markdown-rendered fallback bodies with persisted mission/checklist/task/team/asset name resolution to generic LXMF peers, matches Python's generic mission-log update markdown shape, treats voice-capable LXMF peers as chat-capable destinations with voice as an additional feature, and now emits EAM upsert/delete fanout as REM `FIELD_COMMANDS` or generic markdown only when persisted REM connected mode is effective like Python; live multi-recipient LXMF validation remains |
 
 ## Verify
 
-Current local verification snapshot, refreshed on 2026-05-05:
+Current local verification snapshot, refreshed on 2026-05-11:
 
-- `cargo fmt --all --check` passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed.
 - `cargo test --workspace` passed, including the Rust HTTP/WebSocket contract,
   persistence, runtime lifecycle, local live `reticulumd` RPC, and TAK connector
   test suites.
-- `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- `cargo test -p r3akt-rch-server` passed, including 213 server library tests,
+  21 gateway binary tests, the release-major functionality suite, and SAR HTTP
+  seeder coverage.
+- `cargo test -p r3akt-rch-core`, `cargo test -p r3akt-transport-rns`, and
+  `cargo test -p r3akt-tak-connector` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+- A release-binary smoke test with a temporary SQLite database passed for
+  `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
+  chat creation/list, checklist template creation, mission creation/list, and
+  offline checklist creation/list.
 - `npm run test -- --run` in
   `C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\ui` passed
   with 23 files and 70 tests.
 - `npm run build` in the same UI directory passed.
-- `cargo build -p r3akt-rch-server --release` passed.
 - A local Rust-backend UI smoke against the built `ui/dist` passed: `/`,
   `/missions/workspace`, and HTML `/checklists` served the SPA, while
   `/Status`, `/api/v1/app/info`, `/checklists`, `/Telemetry?since=0`, and
@@ -722,15 +730,23 @@ Current local verification snapshot, refreshed on 2026-05-05:
   `r3akt-transport-rns` live send/receive, `r3akt-rch-bridge` live outbound
   send acceptance, and `r3akt-rch-server` managed daemon lifecycle.
 - The inbound mission-command fanout parity pass added
-  `reticulumd_inbound_mission_command_replies_and_fans_out_team_event`; after
-  that change, `cargo test -p r3akt-rch-server` passed with 129 library tests
-  and 8 binary tests, and
-  `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+  `reticulumd_inbound_mission_command_replies_and_fans_out_team_event`, and the
+  latest pass also verifies valid team/client RNS identities plus propagated
+  fallback when no fresh direct presence exists.
 - The checklist-delete cascade parity pass tightened
   `checklist_delete_cleans_assignment_links_like_python_cascade` to cover task
   skill requirement cleanup, assignment/assignment-asset cleanup, the
   `checklist.deleted` audit event, and the absence of an auto mission-change;
   `cargo test -p r3akt-rch-core` passed.
+- The voice routing parity pass confirms voice-capable LXMF peers remain in
+  chat/fanout routing; voice is additional capability metadata, not a
+  voice-only destination class.
+- The reticulumd inbound worker parity pass verifies current event polling,
+  `list_messages`, announce import, stream cursor reset, and diagnostics
+  behavior without order-dependent background-worker races.
+- The direct delivery parity pass verifies SDK direct-send methods,
+  SDK-prefixed receipt status IDs, retry scheduling after receipt timeout, and
+  propagated fallback after direct-send failure.
 
 Not proven by local-only verification yet: live multi-node Reticulum receipt
 validation against real peers, live TAK bidirectional validation against a real
