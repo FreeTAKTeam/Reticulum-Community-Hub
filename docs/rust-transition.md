@@ -81,10 +81,12 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   local loopback coverage.
 - `cargo test -p r3akt-rch-server`: passed, including the server library,
   gateway binary, `release_major_functionality`, and SAR HTTP seeder suites;
-  the server library now includes 215 tests.
+  the server library now includes 213 tests.
 - `cargo test --workspace`: passed across all Rust crates and examples.
 - `cargo build --release -p r3akt-rch-server`: passed for the deployable
   server binary.
+- `cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service`:
+  passed for the standalone TAK bridge service binary.
 - `npm ci`, `npm audit --audit-level=moderate`, `npm run lint`,
   `npm run test`, and `npm run build` in `ui/`: passed, including zero audited
   UI vulnerabilities after the lockfile refresh and 23 Vitest files / 70 tests.

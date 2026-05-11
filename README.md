@@ -135,7 +135,7 @@ Crates:
   temporary send failures. Python-compatible TAK TLS config fields are owned by
   the connector service; `ssl://`/`tls://` CoT sends now use the Rust native TLS
   socket path. The worker retries failed sends with Python-style exponential
-  backoff capped at 30 seconds. The pending service slice still owns real TAK
+  backoff capped at 30 seconds. Remaining external TAK work is real target
   profile validation.
 - `crates/r3akt-rch-core/migrations/0001_rch_core_snapshot.sql`: first explicit
   SQLite schema artifact for the Rust-owned bridge/runtime state database. This
@@ -225,13 +225,12 @@ Python-shaped `/Status` dashboard payloads, WebSocket streams, chat list limit
 coercion, Python-compatible pagination envelopes for
 topic/subscriber/client/file/image APIs including attachment ordering,
 checklist/admin route families, R3AKT mission/product APIs, telemetry
-list/stream behavior, optional built UI bundle serving with SPA fallback, and
-first-pass TAK chat and location CoT dispatch.
+list/stream behavior, and optional built UI bundle serving with SPA fallback.
 Remaining migration work is deeper runtime parity:
-live TAK reconnect validation, inbound TAK behavior where RCH needs it, future
-dedicated analytics routes if the UI adds surfaces beyond Python's current
-`/Status` and `/Telemetry` contracts, and final live validation before retiring
-Python-owned runtime orchestration.
+target TAK profile validation through the standalone `r3akt-tak-service`,
+future dedicated analytics routes if the UI adds surfaces beyond Python's
+current `/Status` and `/Telemetry` contracts, and final live validation before
+retiring Python-owned runtime orchestration.
 
 Python RCH now has a disabled-by-default bridge hook in the sister checkout:
 `[rust_runtime] enabled`, `bridge_path`, and `db_path` load into
@@ -705,7 +704,7 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - `cargo test --workspace` passed, including the Rust HTTP/WebSocket contract,
   persistence, runtime lifecycle, local live `reticulumd` RPC, and TAK connector
   test suites.
-- `cargo test -p r3akt-rch-server` passed, including 215 server library tests,
+- `cargo test -p r3akt-rch-server` passed, including 213 server library tests,
   21 gateway binary tests, the release-major functionality suite, and SAR HTTP
   seeder coverage.
 - `cargo test -p r3akt-rch-core`, `cargo test -p r3akt-transport-rns`, and
@@ -716,7 +715,12 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - `r3akt-tak-connector tak_proto_tcp_sender_pushes_stream_framed_protobuf_payload`
   passed, covering `TAK_PROTO>0` stream-framed protobuf payload emission while
   preserving `COT_URL` as the transport selector.
+- `r3akt-tak-service service_bridges_rch_telemetry_and_chat_to_tak_cot_socket`
+  and `service_bridges_inbound_tak_cot_to_rch_marker_route` passed, covering
+  the standalone northbound HTTP bridge in both CoT directions.
 - `cargo build --release -p r3akt-rch-server` passed.
+- `cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service`
+  passed.
 - A release-binary smoke test with a temporary SQLite database passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
