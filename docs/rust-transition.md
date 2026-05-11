@@ -75,6 +75,10 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
   offline checklist creation/list.
+- Local two-daemon `reticulumd.exe` receipt validation: passed for
+  `r3akt-rch-server live_reticulumd_direct_send_receipt_is_delivered_when_configured`,
+  with one local daemon sending through the Rust server to a second daemon's
+  announced LXMF delivery destination and settling the direct receipt.
 - Live smoke test with a temporary SQLite database: passed for `/openapi.json`,
   `/Help`, `/api/v1/app/info`, authenticated `/Status`, topic creation, chat
   message creation, checklist template creation, mission creation, and offline
@@ -97,5 +101,5 @@ Release blockers cleared in the latest parity pass:
 
 The Rust edition preserves the RCH northbound contract as the compatibility
 target. Remaining external validation should be tracked explicitly, especially
-live multi-node LXMF receipt behavior, live TAK reconnect/inbound behavior
-against a real TAK profile, and live multi-recipient fanout validation.
+live TAK reconnect/inbound behavior against a real TAK profile and live
+multi-recipient LXMF fanout validation against real peers.

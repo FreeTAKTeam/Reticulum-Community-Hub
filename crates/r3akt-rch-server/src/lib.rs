@@ -40952,7 +40952,68 @@ mod tests {
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
             .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, source);
+            .with_reticulumd_rpc(endpoint.clone(), source);
+        let mut live_announce = None;
+        let mut last_announce_error = None;
+        for _ in 0..poll_attempts {
+            match crate::list_reticulumd_announces(
+                endpoint.as_str(),
+                crate::RETICULUMD_ANNOUNCE_IMPORT_LIMIT,
+            ) {
+                Ok(announces) => {
+                    if let Some(announce) = announces.into_iter().find(|announce| {
+                        crate::normalize_identity_key(&announce.peer)
+                            .is_some_and(|peer| peer.eq_ignore_ascii_case(destination.as_str()))
+                    }) {
+                        live_announce = Some(announce);
+                        break;
+                    }
+                }
+                Err(error) => {
+                    last_announce_error = Some(error.to_string());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(poll_delay_ms)).await;
+        }
+        let live_announce = live_announce.unwrap_or_else(|| {
+            panic!(
+                "live reticulumd receipt destination {destination} was not present in raw announces; last error: {}",
+                last_announce_error.as_deref().unwrap_or("none")
+            )
+        });
+        let now_ms = crate::unix_now_ms();
+        let destination_hash =
+            crate::normalize_identity_key(&live_announce.peer).expect("normalized destination");
+        let first_seen_ts_ms = if live_announce.first_seen > 0 {
+            live_announce.first_seen.saturating_mul(1000)
+        } else {
+            now_ms
+        };
+        let last_seen_ts_ms = if live_announce.timestamp > 0 {
+            live_announce.timestamp.saturating_mul(1000)
+        } else {
+            now_ms
+        };
+        let record = r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash,
+            announced_identity_hash: None,
+            display_name: live_announce.name.clone(),
+            source_interface: Some(
+                live_announce
+                    .interface
+                    .clone()
+                    .or(live_announce.name_source.clone())
+                    .unwrap_or_else(|| "reticulumd-live-test".to_string()),
+            ),
+            announce_capabilities: vec!["lxmf".to_string()],
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms,
+            last_seen_ts_ms,
+        };
+        crate::persist_identity_announce_records(&state, std::slice::from_ref(&record))
+            .expect("persist live reticulumd destination");
+        crate::record_announce_identity_state(&state, &record)
+            .expect("record live reticulumd destination presence");
         let app = crate::create_app_with_state(state.clone());
         let nonce = Uuid::new_v4();
 
