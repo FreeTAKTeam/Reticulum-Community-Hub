@@ -180,19 +180,12 @@ if (-not $SkipSmoke) {
 }
 
 if ($LiveTak) {
-    Invoke-Step "Live TAK keepalive/reconnect gates" {
+    Invoke-Step "Live TAK send/receive gates" {
         Get-RequiredEnv "R3AKT_TAK_LIVE_COT_URL" | Out-Null
+        Get-RequiredEnv "R3AKT_TAK_LIVE_INBOUND_COT_URL" | Out-Null
         Invoke-Native cargo @("test", "-p", "r3akt-tak-connector", "live_tak_server_accepts_keepalive_when_configured", "--", "--nocapture")
         Invoke-Native cargo @("test", "-p", "r3akt-tak-connector", "live_tak_server_accepts_reconnect_when_configured", "--", "--nocapture")
-    }
-
-    $inboundCotUrl = [Environment]::GetEnvironmentVariable("R3AKT_TAK_LIVE_INBOUND_COT_URL")
-    if (-not [string]::IsNullOrWhiteSpace($inboundCotUrl)) {
-        Invoke-Step "Live TAK inbound gate" {
-            Invoke-Native cargo @("test", "-p", "r3akt-tak-connector", "live_tak_server_provides_inbound_cot_when_configured", "--", "--nocapture")
-        }
-    } else {
-        Write-Host "Skipping live TAK inbound gate because R3AKT_TAK_LIVE_INBOUND_COT_URL is unset."
+        Invoke-Native cargo @("test", "-p", "r3akt-tak-connector", "live_tak_server_provides_inbound_cot_when_configured", "--", "--nocapture")
     }
 }
 

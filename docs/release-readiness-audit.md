@@ -28,7 +28,7 @@ the Rust implementation is fully functional and ready for release.
 | Shared Vue UI remains buildable for Rust backend | `ui/`, `.github/workflows/rust.yml` | CI gate runs `npm --prefix ui ci`, lint, tests, and build through `scripts/release-readiness.ps1 -SkipDesktop` | Passed in CI gate |
 | Desktop packaging keeps server and TAK sidecars separate | `apps/rch-desktop/`, packaging docs | Tauri sidecar prep builds/copies `r3akt-rch-server` and `r3akt-tak-service` separately | Passed locally; skipped in CI gate |
 | Live Reticulum direct receipt and fanout work outside local unit mocks | `crates/r3akt-rch-server/src/lib.rs`, live env-gated tests | Local multi-daemon direct receipt and fanout validation are documented as passed; broader real-network Reticulum validation requires reachable `R3AKT_RETICULUMD_*` env vars | Blocked externally |
-| Live TAK target profile works with the standalone service | `crates/r3akt-tak-connector/src/lib.rs`, `r3akt-tak-service` | Local TCP/UDP/TLS loopback and service bridge tests pass; configured target TAK attempts on 2026-05-11 were refused by the endpoint, and the Python-equivalent probe failed the same way | Blocked externally |
+| Live TAK target profile works with the standalone service | `crates/r3akt-tak-connector/src/lib.rs`, `r3akt-tak-service` | Local TCP/UDP/TLS loopback and service bridge tests pass; `.\scripts\release-readiness.ps1 -LiveTak` now requires both outbound `R3AKT_TAK_LIVE_COT_URL` and inbound `R3AKT_TAK_LIVE_INBOUND_COT_URL`; configured target TAK attempts on 2026-05-11 were refused by the endpoint, and the Python-equivalent probe failed the same way | Blocked externally |
 
 ## Required Release Gates
 
@@ -53,9 +53,8 @@ For a release candidate, also run the external live gates:
 .\scripts\release-readiness.ps1 -LiveTak -LiveReticulum
 ```
 
-`-LiveTak` requires reachable TAK infrastructure through
-`R3AKT_TAK_LIVE_COT_URL`, with optional `R3AKT_TAK_LIVE_INBOUND_COT_URL` for
-inbound CoT validation.
+`-LiveTak` requires reachable TAK infrastructure for both directions through
+`R3AKT_TAK_LIVE_COT_URL` and `R3AKT_TAK_LIVE_INBOUND_COT_URL`.
 
 `-LiveReticulum` requires reachable Reticulum/LXMF peers through
 `R3AKT_RETICULUMD_RPC_ENDPOINT`, `R3AKT_RETICULUMD_SOURCE`,
