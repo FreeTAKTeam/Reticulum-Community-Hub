@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 native-tls.workspace = true
+prost.workspace = true
 quick-xml.workspace = true
 thiserror.workspace = true
 time.workspace = true

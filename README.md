@@ -345,10 +345,12 @@ RCH parity should proceed in this order:
    `tls_ca`, `tls_insecure`, `tls_client_password`, and `pytak_tls_dont_verify` as
    Python-compatible TAK settings and reports only redacted TLS configuration
    booleans in runtime service diagnostics. `COT_URL` remains the transport
-   selector as it is in PyTAK; `TAK_PROTO=0` is the XML payload mode. Runtime
-   diagnostics expose `tak_proto`, `fts_compat`, the effective payload encoding,
-   and whether protobuf was requested, so a target-profile mismatch is visible
-   without exposing certificate paths or passwords. The connector crate now owns an
+   selector as it is in PyTAK; `TAK_PROTO=0` is the XML payload mode and
+   `TAK_PROTO>0` emits TAK Protocol v1 stream-framed protobuf payloads from the
+   generated CoT XML. Runtime diagnostics expose `tak_proto`, `fts_compat`, the
+   effective payload encoding, and whether protobuf was requested, so a
+   target-profile mismatch is visible without exposing certificate paths or
+   passwords. The connector crate now owns an
    explicit start/stop lifecycle/status object plus a background retry worker
    with keepalive/ping scheduling, and `ssl://`/`tls://` sends use the Rust
    native TLS socket path. Send failures now back off exponentially up to 30
@@ -719,6 +721,9 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - `r3akt-tak-connector tak_tcp_loopback_validates_bidirectional_cot_workflow`
   passed, covering outbound TCP keepalive send and inbound parsed CoT receive in
   one local bidirectional TAK workflow.
+- `r3akt-tak-connector tak_proto_tcp_sender_pushes_stream_framed_protobuf_payload`
+  passed, covering `TAK_PROTO>0` stream-framed protobuf payload emission while
+  preserving `COT_URL` as the transport selector.
 - `cargo build --release -p r3akt-rch-server` passed.
 - A release-binary smoke test with a temporary SQLite database passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,

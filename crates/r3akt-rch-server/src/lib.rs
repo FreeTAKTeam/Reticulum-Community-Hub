@@ -9195,9 +9195,9 @@ fn runtime_services_payload(state: &AppState) -> Value {
                     "callsign": config.callsign.as_str(),
                     "tak_proto": config.tak_proto,
                     "fts_compat": config.fts_compat,
-                    "payload_encoding": if config.tak_proto == 0 { "xml" } else { "xml_fallback" },
+                    "payload_encoding": if config.tak_proto == 0 { "xml" } else { "tak_proto_v1" },
                     "protobuf_requested": config.tak_proto > 0,
-                    "protobuf_payloads_supported": false,
+                    "protobuf_payloads_supported": true,
                     "tls": {
                         "configured": config.tls_client_cert.is_some()
                             || config.tls_client_key.is_some()
@@ -29707,9 +29707,9 @@ mod tests {
         assert_eq!(tak["callsign"], "HUB");
         assert_eq!(tak["tak_proto"], 2);
         assert_eq!(tak["fts_compat"], 0);
-        assert_eq!(tak["payload_encoding"], "xml_fallback");
+        assert_eq!(tak["payload_encoding"], "tak_proto_v1");
         assert_eq!(tak["protobuf_requested"], true);
-        assert_eq!(tak["protobuf_payloads_supported"], false);
+        assert_eq!(tak["protobuf_payloads_supported"], true);
         assert_eq!(tak["tls"]["configured"], true);
         assert_eq!(tak["tls"]["client_cert_configured"], true);
         assert_eq!(tak["tls"]["client_key_configured"], true);

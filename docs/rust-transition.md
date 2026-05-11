@@ -67,6 +67,10 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   `r3akt-tak-connector tak_tcp_loopback_validates_bidirectional_cot_workflow`,
   covering outbound keepalive send and inbound parsed CoT receive in one local
   workflow.
+- TAK Protocol v1 payload validation: passed for
+  `r3akt-tak-connector tak_proto_tcp_sender_pushes_stream_framed_protobuf_payload`,
+  proving `TAK_PROTO>0` emits stream-framed protobuf payloads instead of XML
+  while `COT_URL` remains the transport selector.
 - `cargo test -p r3akt-rch-server`: passed, including the server library,
   gateway binary, `release_major_functionality`, and SAR HTTP seeder suites;
   the server library now includes 215 tests.

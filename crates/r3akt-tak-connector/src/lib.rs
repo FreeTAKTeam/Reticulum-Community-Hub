@@ -16,6 +16,7 @@ use std::time::Instant;
 use native_tls::Certificate;
 use native_tls::Identity;
 use native_tls::TlsConnector;
+use prost::Message;
 use quick_xml::Reader;
 use quick_xml::events::BytesStart;
 use quick_xml::events::Event as XmlEvent;
@@ -40,6 +41,7 @@ pub const PING_UID: &str = "takPing";
 pub const PONG_UID: &str = "takPong";
 pub const DEFAULT_COT_VALUE: &str = "9999999.0";
 const TAK_WORKER_MAX_BACKOFF: StdDuration = StdDuration::from_secs(30);
+const TAK_PROTO_MAGIC_BYTE: u8 = 0xbf;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum TakConnectorError {
@@ -55,6 +57,52 @@ pub enum TakConnectorError {
     Send(String),
     #[error("TAK service is not running")]
     ServiceStopped,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct TakProtoMessage {
+    #[prost(message, optional, tag = "2")]
+    cot_event: Option<TakProtoCotEvent>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct TakProtoCotEvent {
+    #[prost(string, tag = "1")]
+    r#type: String,
+    #[prost(string, tag = "2")]
+    access: String,
+    #[prost(string, tag = "3")]
+    qos: String,
+    #[prost(string, tag = "4")]
+    opex: String,
+    #[prost(string, tag = "5")]
+    uid: String,
+    #[prost(uint64, tag = "6")]
+    send_time: u64,
+    #[prost(uint64, tag = "7")]
+    start_time: u64,
+    #[prost(uint64, tag = "8")]
+    stale_time: u64,
+    #[prost(string, tag = "9")]
+    how: String,
+    #[prost(double, tag = "10")]
+    lat: f64,
+    #[prost(double, tag = "11")]
+    lon: f64,
+    #[prost(double, tag = "12")]
+    hae: f64,
+    #[prost(double, tag = "13")]
+    ce: f64,
+    #[prost(double, tag = "14")]
+    le: f64,
+    #[prost(message, optional, tag = "15")]
+    detail: Option<TakProtoDetail>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct TakProtoDetail {
+    #[prost(string, tag = "1")]
+    xml_detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +189,79 @@ pub fn parse_inbound_cot_payload(data: impl AsRef<[u8]>, parse: bool) -> TakInbo
     parse_inbound_cot_event(raw.as_str()).map_or(TakInboundCotResult::Raw(raw), |event| {
         TakInboundCotResult::Parsed(Box::new(event))
     })
+}
+
+fn encode_outbound_cot_payload(payload: &CotPayload, tak_proto: u8) -> Vec<u8> {
+    if tak_proto == 0 {
+        return payload.xml.as_bytes().to_vec();
+    }
+    cot_xml_to_tak_proto_frame(payload.xml.as_str())
+        .unwrap_or_else(|| payload.xml.as_bytes().to_vec())
+}
+
+fn cot_xml_to_tak_proto_frame(xml: &str) -> Option<Vec<u8>> {
+    let event = parse_inbound_cot_event(xml)?;
+    let message = TakProtoMessage {
+        cot_event: Some(TakProtoCotEvent {
+            r#type: event.event_type,
+            access: event.access.unwrap_or_default(),
+            qos: String::new(),
+            opex: String::new(),
+            uid: event.uid,
+            send_time: parse_cot_timestamp_millis(event.time.as_str())?,
+            start_time: parse_cot_timestamp_millis(event.start.as_str())?,
+            stale_time: parse_cot_timestamp_millis(event.stale.as_str())?,
+            how: event.how,
+            lat: event.point.lat,
+            lon: event.point.lon,
+            hae: event.point.hae,
+            ce: event.point.ce,
+            le: event.point.le,
+            detail: cot_detail_xml(xml).map(|xml_detail| TakProtoDetail { xml_detail }),
+        }),
+    };
+    let mut proto_payload = Vec::new();
+    message.encode(&mut proto_payload).ok()?;
+    let mut frame = Vec::with_capacity(1 + 10 + proto_payload.len());
+    frame.push(TAK_PROTO_MAGIC_BYTE);
+    encode_u64_varint(proto_payload.len() as u64, &mut frame);
+    frame.extend_from_slice(proto_payload.as_slice());
+    Some(frame)
+}
+
+fn encode_u64_varint(mut value: u64, output: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        output.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn parse_cot_timestamp_millis(value: &str) -> Option<u64> {
+    let timestamp = OffsetDateTime::parse(value, &Rfc3339).ok()?;
+    let nanos = timestamp.unix_timestamp_nanos();
+    if nanos.is_negative() {
+        return None;
+    }
+    u64::try_from(nanos / 1_000_000).ok()
+}
+
+fn cot_detail_xml(xml: &str) -> Option<String> {
+    let detail_start = xml.find("<detail")?;
+    let content_start = xml[detail_start..].find('>')? + detail_start + 1;
+    let content_end = xml[content_start..].find("</detail>")? + content_start;
+    let detail = xml[content_start..content_end].trim();
+    if detail.is_empty() {
+        None
+    } else {
+        Some(detail.to_string())
+    }
 }
 
 fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
@@ -662,6 +783,7 @@ pub struct TakClearSender {
     tls_insecure: bool,
     tls_client_password: Option<String>,
     pytak_tls_dont_verify: u8,
+    tak_proto: u8,
 }
 
 impl TakClearSender {
@@ -674,6 +796,7 @@ impl TakClearSender {
             tls_insecure: TakConnectionConfig::default().tls_insecure,
             tls_client_password: None,
             pytak_tls_dont_verify: TakConnectionConfig::default().pytak_tls_dont_verify,
+            tak_proto: TakConnectionConfig::default().tak_proto,
         })
     }
 
@@ -686,6 +809,7 @@ impl TakClearSender {
             tls_insecure: config.tls_insecure,
             tls_client_password: config.tls_client_password.clone(),
             pytak_tls_dont_verify: config.pytak_tls_dont_verify,
+            tak_proto: config.tak_proto,
         })
     }
 
@@ -708,11 +832,15 @@ impl TakClearSender {
         let mut stream = connector
             .connect(server_name.as_str(), stream)
             .map_err(|error| TakConnectorError::Send(format!("{error:?}")))?;
+        let encoded = encode_outbound_cot_payload(payload, self.tak_proto);
         stream
-            .write_all(payload.xml.as_bytes())
+            .write_all(encoded.as_slice())
             .map_err(|error| TakConnectorError::Send(error.to_string()))?;
         stream
             .flush()
+            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
+        stream
+            .shutdown()
             .map_err(|error| TakConnectorError::Send(error.to_string()))
     }
 }
@@ -723,8 +851,9 @@ impl TakCotSender for TakClearSender {
             "tcp" => {
                 let mut stream = TcpStream::connect(self.url.host_port.as_str())
                     .map_err(|error| TakConnectorError::Send(error.to_string()))?;
+                let encoded = encode_outbound_cot_payload(payload, self.tak_proto);
                 stream
-                    .write_all(payload.xml.as_bytes())
+                    .write_all(encoded.as_slice())
                     .map_err(|error| TakConnectorError::Send(error.to_string()))?;
                 stream
                     .flush()
@@ -733,8 +862,9 @@ impl TakCotSender for TakClearSender {
             "udp" => {
                 let socket = UdpSocket::bind("0.0.0.0:0")
                     .map_err(|error| TakConnectorError::Send(error.to_string()))?;
+                let encoded = encode_outbound_cot_payload(payload, self.tak_proto);
                 socket
-                    .send_to(payload.xml.as_bytes(), self.url.host_port.as_str())
+                    .send_to(encoded.as_slice(), self.url.host_port.as_str())
                     .map(|_| ())
                     .map_err(|error| TakConnectorError::Send(error.to_string()))
             }
@@ -1960,7 +2090,10 @@ fN59G+INtr0cPXmM6zCYs+c=
                     Ok(0) => break,
                     Ok(read) => buffer.extend_from_slice(&chunk[..read]),
                     Err(error)
-                        if error.kind() == ErrorKind::ConnectionReset && !buffer.is_empty() =>
+                        if matches!(
+                            error.kind(),
+                            ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+                        ) && !buffer.is_empty() =>
                     {
                         break;
                     }
@@ -2012,7 +2145,10 @@ fN59G+INtr0cPXmM6zCYs+c=
                     Ok(0) => break,
                     Ok(read) => buffer.extend_from_slice(&chunk[..read]),
                     Err(error)
-                        if error.kind() == ErrorKind::ConnectionReset && !buffer.is_empty() =>
+                        if matches!(
+                            error.kind(),
+                            ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+                        ) && !buffer.is_empty() =>
                     {
                         break;
                     }
@@ -2301,6 +2437,59 @@ fN59G+INtr0cPXmM6zCYs+c=
         sender.send(&second).expect("send second after close");
 
         assert_eq!(server.join().expect("server"), vec![first.xml, second.xml]);
+    }
+
+    #[test]
+    fn tak_proto_tcp_sender_pushes_stream_framed_protobuf_payload() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let addr = listener.local_addr().expect("addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut body = Vec::new();
+            stream.read_to_end(&mut body).expect("read");
+            body
+        });
+        let config = TakConnectionConfig {
+            cot_url: format!("tcp://{addr}"),
+            callsign: "RCH-PROTO".to_string(),
+            tak_proto: 1,
+            ..TakConnectionConfig::default()
+        };
+        let connector = TakConnector::new(config.clone());
+        let sender = TakClearSender::from_config(&config).expect("sender");
+        let payload = CotPayload {
+            kind: CotPayloadKind::Location,
+            xml: connector.build_location_xml(
+                &LocationSnapshot {
+                    latitude: 45.0,
+                    longitude: -63.0,
+                    altitude: 10.0,
+                    speed: 2.5,
+                    bearing: 180.0,
+                    accuracy: 5.0,
+                    updated_at: datetime!(2026-05-11 12:00:00 UTC),
+                    peer_hash: Some("proto-peer".to_string()),
+                },
+                datetime!(2026-05-11 12:00:01 UTC),
+                Some("Proto Peer"),
+            ),
+        };
+
+        sender.send(&payload).expect("send");
+        let received = server.join().expect("server");
+
+        assert_eq!(received.first(), Some(&TAK_PROTO_MAGIC_BYTE));
+        assert_ne!(received.first(), Some(&b'<'));
+        assert!(
+            received
+                .windows(b"proto-peer".len())
+                .any(|window| window == b"proto-peer")
+        );
+        assert!(
+            received
+                .windows(EVENT_TYPE_LOCATION.len())
+                .any(|window| window == EVENT_TYPE_LOCATION.as_bytes())
+        );
     }
 
     #[test]
