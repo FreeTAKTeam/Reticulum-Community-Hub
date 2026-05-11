@@ -63,6 +63,10 @@ Validated during the root Rust import and refreshed on 2026-05-11:
 - `cargo test -p r3akt-rch-core`: passed.
 - `cargo test -p r3akt-transport-rns`: passed.
 - `cargo test -p r3akt-tak-connector`: passed.
+- Local TAK bidirectional TCP loopback validation: passed for
+  `r3akt-tak-connector tak_tcp_loopback_validates_bidirectional_cot_workflow`,
+  covering outbound keepalive send and inbound parsed CoT receive in one local
+  workflow.
 - `cargo test -p r3akt-rch-server`: passed, including the server library,
   gateway binary, `release_major_functionality`, and SAR HTTP seeder suites.
 - `cargo test --workspace`: passed across all Rust crates and examples.
@@ -105,5 +109,5 @@ Release blockers cleared in the latest parity pass:
 
 The Rust edition preserves the RCH northbound contract as the compatibility
 target. Remaining external validation should be tracked explicitly, especially
-live TAK reconnect/inbound behavior against a real TAK profile and broader
-real-network Reticulum validation outside the local multi-daemon harness.
+final validation against the target TAK server profile and broader real-network
+Reticulum validation outside the local multi-daemon harness.

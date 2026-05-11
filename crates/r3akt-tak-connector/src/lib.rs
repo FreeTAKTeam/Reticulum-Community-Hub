@@ -2304,6 +2304,64 @@ fN59G+INtr0cPXmM6zCYs+c=
     }
 
     #[test]
+    fn tak_tcp_loopback_validates_bidirectional_cot_workflow() {
+        let outbound_listener = TcpListener::bind("127.0.0.1:0").expect("outbound listener");
+        let outbound_addr = outbound_listener.local_addr().expect("outbound addr");
+        let outbound_server = thread::spawn(move || {
+            let (mut stream, _) = outbound_listener.accept().expect("outbound accept");
+            let mut body = String::new();
+            stream.read_to_string(&mut body).expect("read outbound cot");
+            body
+        });
+        let outbound_config = TakConnectionConfig {
+            cot_url: format!("tcp://{outbound_addr}"),
+            callsign: "RCH-LOOPBACK".to_string(),
+            ..TakConnectionConfig::default()
+        };
+        let outbound_connector = TakConnector::new(outbound_config.clone());
+        let outbound_sender =
+            TakClearSender::from_config(&outbound_config).expect("outbound sender");
+        let keepalive = CotPayload {
+            kind: CotPayloadKind::Keepalive,
+            xml: outbound_connector.build_keepalive_xml(datetime!(2026-05-11 12:00:00 UTC)),
+        };
+
+        outbound_sender.send(&keepalive).expect("send outbound cot");
+        let outbound_xml = outbound_server.join().expect("join outbound server");
+        assert!(outbound_xml.contains("uid=\"takPong\""));
+        assert!(outbound_xml.contains("type=\"t-x-d-d\""));
+
+        let inbound_listener = TcpListener::bind("127.0.0.1:0").expect("inbound listener");
+        let inbound_addr = inbound_listener.local_addr().expect("inbound addr");
+        let inbound_server = thread::spawn(move || {
+            let (mut stream, _) = inbound_listener.accept().expect("inbound accept");
+            let cot = r#"<event version="2.0" uid="loopback-peer" type="a-f-G-U-C" how="m-g" time="2026-05-11T12:00:00Z" start="2026-05-11T12:00:00Z" stale="2026-05-11T12:05:00Z"><point lat="45.0" lon="-63.0" hae="10.0" ce="5.0" le="5.0" /></event>"#;
+            stream.write_all(cot.as_bytes()).expect("write inbound cot");
+            stream.flush().expect("flush inbound cot");
+        });
+        let mut inbound_receiver = TakSocketReceiver::new(format!("tcp://{inbound_addr}").as_str())
+            .expect("inbound receiver")
+            .with_read_timeout(StdDuration::from_secs(1));
+
+        let inbound_payload = inbound_receiver
+            .receive()
+            .expect("receive inbound cot")
+            .expect("inbound payload");
+        inbound_server.join().expect("join inbound server");
+        let parsed = parse_inbound_cot_payload(inbound_payload, true);
+
+        match parsed {
+            TakInboundCotResult::Parsed(event) => {
+                assert_eq!(event.uid, "loopback-peer");
+                assert_eq!(event.event_type, EVENT_TYPE_LOCATION);
+                assert!((event.point.lat - 45.0).abs() < f64::EPSILON);
+                assert!((event.point.lon + 63.0).abs() < f64::EPSILON);
+            }
+            TakInboundCotResult::Raw(raw) => panic!("expected parsed inbound CoT, got raw {raw}"),
+        }
+    }
+
+    #[test]
     fn clear_udp_sender_pushes_xml_payload() {
         let socket = UdpSocket::bind("127.0.0.1:0").expect("udp listener");
         socket
