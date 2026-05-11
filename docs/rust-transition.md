@@ -90,6 +90,12 @@ Validated during the root Rust import and refreshed on 2026-05-11:
 - `npm --prefix apps/rch-desktop run prepare:sidecar`: passed, producing
   separate Tauri sidecar binaries for `r3akt-rch-server` and
   `r3akt-tak-service`.
+- `.\scripts\release-readiness.ps1 -PlanOnly`: passed, proving the committed
+  release gate runner expands the local and optional live checks without running
+  external infrastructure.
+- `.\scripts\release-readiness.ps1 -SkipUi -SkipDesktop -SkipClippy
+  -SkipWorkspaceTests`: passed, covering Rust format, release binary builds for
+  `r3akt-rch-server` and `r3akt-tak-service`, and the release HTTP smoke.
 - `npm ci`, `npm audit --audit-level=moderate`, `npm run lint`,
   `npm run test`, and `npm run build` in `ui/`: passed, including zero audited
   UI vulnerabilities after the lockfile refresh and 23 Vitest files / 70 tests.
@@ -141,3 +147,7 @@ release blocker rather than a local Rust test failure. A Python-equivalent
 `COT_URL` socket probe against the same `TAK_PROTO=0` profile also returned
 WinError 10061, confirming that PyTAK and Rust select the same TCP endpoint for
 that configuration.
+
+Use `.\scripts\release-readiness.ps1` for the local release gate set. Add
+`-LiveTak` and `-LiveReticulum` only when the required TAK and Reticulum
+environment variables point at reachable infrastructure.

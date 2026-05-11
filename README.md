@@ -724,6 +724,9 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - `npm --prefix apps/rch-desktop run prepare:sidecar` passed, producing
   separate Tauri sidecar binaries for `r3akt-rch-server` and
   `r3akt-tak-service`.
+- `.\scripts\release-readiness.ps1 -SkipUi -SkipDesktop -SkipClippy
+  -SkipWorkspaceTests` passed, covering the committed gate runner, Rust format
+  check, release builds for both server binaries, and release HTTP smoke.
 - A release-binary smoke test with a temporary SQLite database passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
@@ -787,6 +790,18 @@ attempts on 2026-05-11 failed because the TCP endpoint actively refused the
 connection. A Python-equivalent `COT_URL` socket probe against the same
 `TAK_PROTO=0` profile also returned WinError 10061, so this remains an external
 release blocker rather than a local Rust test failure.
+
+The local release gate runner is:
+
+```powershell
+.\scripts\release-readiness.ps1
+```
+
+Use explicit live gates only after configuring reachable infrastructure:
+
+```powershell
+.\scripts\release-readiness.ps1 -LiveTak -LiveReticulum
+```
 
 ```powershell
 cargo fmt --all
