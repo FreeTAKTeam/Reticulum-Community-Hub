@@ -2922,23 +2922,22 @@ fN59G+INtr0cPXmM6zCYs+c=
             timestamp: datetime!(2025-01-01 00:00:00 UTC),
             message_uuid: Some("msg-1".to_string()),
         };
-        let service = TakService::new(
+        let mut service = TakService::new(
             TakConnectionConfig::default(),
             4,
             FlakySender {
                 attempts: Arc::clone(&attempts),
             },
         );
+
+        service.start();
+        let report = service.enqueue_chat(&input).expect("dispatch report");
+        assert_eq!(report.sent, 0);
+        assert_eq!(report.status.queue.pending, 1);
+        assert_eq!(report.status.total_failed, 1);
+
         let mut worker = TakServiceWorker::spawn(service, StdDuration::from_millis(10));
         let service = worker.service();
-
-        {
-            let mut service = service.lock().expect("service lock");
-            let report = service.enqueue_chat(&input).expect("dispatch report");
-            assert_eq!(report.sent, 0);
-            assert_eq!(report.status.queue.pending, 1);
-            assert_eq!(report.status.total_failed, 1);
-        }
 
         for _ in 0..50 {
             let status = service.lock().expect("service lock").status();
