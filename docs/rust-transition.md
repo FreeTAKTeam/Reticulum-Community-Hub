@@ -68,7 +68,8 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   covering outbound keepalive send and inbound parsed CoT receive in one local
   workflow.
 - `cargo test -p r3akt-rch-server`: passed, including the server library,
-  gateway binary, `release_major_functionality`, and SAR HTTP seeder suites.
+  gateway binary, `release_major_functionality`, and SAR HTTP seeder suites;
+  the server library now includes 215 tests.
 - `cargo test --workspace`: passed across all Rust crates and examples.
 - `cargo build --release -p r3akt-rch-server`: passed for the deployable
   server binary.
@@ -107,6 +108,9 @@ Release blockers cleared in the latest parity pass:
   `list_messages`, and announce poll order deterministically.
 - Direct-send tests now assert the LXMF-rs SDK RPC methods and SDK-prefixed
   receipt identifiers used by the Rust adapter.
+- `assignment_asset_link_fanout_uses_python_generic_markdown_shape` proves the
+  generic LXMF fanout path for assignment asset links renders Python-style
+  markdown with resolved mission, checklist task, and asset names.
 
 ## Known Parity Boundaries
 

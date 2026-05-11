@@ -35860,6 +35860,171 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn assignment_asset_link_fanout_uses_python_generic_markdown_shape() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-assignment-asset-generic-{}.db",
+            Uuid::new_v4()
+        ));
+
+        fn seed_command(core: &mut RchCore, command_type: &str, args: serde_json::Value) {
+            let command = r3akt_profile_rch::MissionCommandEnvelope {
+                command_id: format!("seed-{command_type}"),
+                source: r3akt_profile_rch::RchSource::new("seed"),
+                timestamp: "2026-05-11T00:00:00Z".to_string(),
+                command_type: command_type.to_string(),
+                args,
+                correlation_id: None,
+                topics: Vec::new(),
+            };
+            let outcome = core.handle_command(&command);
+            assert_eq!(
+                outcome.result.status,
+                r3akt_profile_rch::CommandResultStatus::Accepted,
+                "{command_type}: {:?}",
+                outcome.result
+            );
+        }
+
+        let mut core = RchCore::new();
+        seed_command(
+            &mut core,
+            "mission.registry.mission.upsert",
+            json!({ "uid": "mission-assignment", "mission_name": "Mission Assignment" }),
+        );
+        seed_command(
+            &mut core,
+            "mission.registry.team.upsert",
+            json!({ "uid": "team-assignment", "team_name": "Team Assignment" }),
+        );
+        seed_command(
+            &mut core,
+            "mission.registry.team.mission.link",
+            json!({ "team_uid": "team-assignment", "mission_uid": "mission-assignment" }),
+        );
+        seed_command(
+            &mut core,
+            "mission.registry.team_member.upsert",
+            json!({
+                "uid": "member-assignment",
+                "team_uid": "team-assignment",
+                "rns_identity": "11111111111111111111111111111111",
+                "display_name": "Generic Peer"
+            }),
+        );
+        seed_command(
+            &mut core,
+            "checklist.template.create",
+            json!({
+                "template": {
+                    "uid": "template-assignment",
+                    "name": "Assignment Template",
+                    "description": "Template for assignment fanout"
+                }
+            }),
+        );
+        seed_command(
+            &mut core,
+            "checklist.create.online",
+            json!({
+                "checklist_uid": "checklist-assignment",
+                "mission_uid": "mission-assignment",
+                "template_uid": "template-assignment",
+                "name": "Assignment Checklist"
+            }),
+        );
+        seed_command(
+            &mut core,
+            "checklist.task.row.add",
+            json!({
+                "checklist_uid": "checklist-assignment",
+                "task_uid": "task-assignment",
+                "number": 1,
+                "notes": "Deliver antenna",
+                "legacy_value": "Deliver antenna"
+            }),
+        );
+        seed_command(
+            &mut core,
+            "mission.registry.asset.upsert",
+            json!({ "asset_uid": "asset-radio", "name": "Mesh Radio" }),
+        );
+        seed_command(
+            &mut core,
+            "mission.registry.assignment.upsert",
+            json!({
+                "assignment_uid": "assignment-radio",
+                "mission_uid": "mission-assignment",
+                "task_uid": "task-assignment",
+                "team_member_rns_identity": "11111111111111111111111111111111",
+                "status": "PENDING"
+            }),
+        );
+
+        let mut snapshot = core.snapshot();
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: "11111111111111111111111111111111".to_string(),
+            announced_identity_hash: None,
+            display_name: Some("Generic Peer".to_string()),
+            source_interface: Some("identity".to_string()),
+            announce_capabilities: vec!["group_chat".to_string()],
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: 1_700_000_000_000,
+            last_seen_ts_ms: crate::unix_now_ms(),
+        }];
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let app = crate::create_app_with_state(
+            crate::AppState::from_sqlite_path(&db_path)
+                .expect("state")
+                .with_api_key("secret")
+                .with_reticulumd_rpc(endpoint, "source-destination"),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/r3akt/assignments/assignment-radio/assets/asset-radio")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("link response");
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+
+        let request = rpc_server.join().expect("rpc server");
+        let params = request.params.expect("params");
+        assert_eq!(params["destination"], "11111111111111111111111111111111");
+        assert_eq!(params["title"], "RCH");
+        assert_eq!(
+            params["content"],
+            "### Mission Mission Assignment\n- Update: Assignment asset linked\n- Detail: Deliver antenna\n- Asset: Mesh Radio"
+        );
+        assert_eq!(params["fields"][crate::LXMF_FIELD_RENDERER.to_string()], 2);
+        assert_eq!(
+            params["fields"][crate::FIELD_EVENT.to_string()]["event_type"],
+            "mission.registry.mission_change.upserted"
+        );
+        assert!(
+            params["fields"]
+                .get(crate::FIELD_COMMANDS.to_string())
+                .is_none()
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn log_entry_fanout_sends_rem_field_commands_shape() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
         let db_path =
