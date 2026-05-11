@@ -344,7 +344,11 @@ RCH parity should proceed in this order:
    Rust config loader also preserves `tls_client_cert`, `tls_client_key`,
    `tls_ca`, `tls_insecure`, `tls_client_password`, and `pytak_tls_dont_verify` as
    Python-compatible TAK settings and reports only redacted TLS configuration
-   booleans in runtime service diagnostics. The connector crate now owns an
+   booleans in runtime service diagnostics. `COT_URL` remains the transport
+   selector as it is in PyTAK; `TAK_PROTO=0` is the XML payload mode. Runtime
+   diagnostics expose `tak_proto`, `fts_compat`, the effective payload encoding,
+   and whether protobuf was requested, so a target-profile mismatch is visible
+   without exposing certificate paths or passwords. The connector crate now owns an
    explicit start/stop lifecycle/status object plus a background retry worker
    with keepalive/ping scheduling, and `ssl://`/`tls://` sends use the Rust
    native TLS socket path. Send failures now back off exponentially up to 30
@@ -776,8 +780,9 @@ Not proven by local-only verification yet: final validation against the target
 TAK server profile and broader real-network Reticulum validation outside the
 local multi-daemon harness. The latest configured target TAK keepalive/reconnect
 attempts on 2026-05-11 failed because the TCP endpoint actively refused the
-connection, so this remains an external release blocker rather than a local
-Rust test failure.
+connection. A Python-equivalent `COT_URL` socket probe against the same
+`TAK_PROTO=0` profile also returned WinError 10061, so this remains an external
+release blocker rather than a local Rust test failure.
 
 ```powershell
 cargo fmt --all

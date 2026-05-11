@@ -120,4 +120,7 @@ final validation against the target TAK server profile and broader real-network
 Reticulum validation outside the local multi-daemon harness. The latest
 configured target TAK keepalive/reconnect attempts on 2026-05-11 failed because
 the TCP endpoint actively refused the connection, so this remains an external
-release blocker rather than a local Rust test failure.
+release blocker rather than a local Rust test failure. A Python-equivalent
+`COT_URL` socket probe against the same `TAK_PROTO=0` profile also returned
+WinError 10061, confirming that PyTAK and Rust select the same TCP endpoint for
+that configuration.

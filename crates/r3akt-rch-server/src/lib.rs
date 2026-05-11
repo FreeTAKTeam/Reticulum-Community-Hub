@@ -9193,6 +9193,11 @@ fn runtime_services_payload(state: &AppState) -> Value {
                     "endpoint": parsed_url.as_ref().map(|url| url.host_port.as_str()),
                     "scheme": parsed_url.as_ref().map(|url| url.scheme.as_str()),
                     "callsign": config.callsign.as_str(),
+                    "tak_proto": config.tak_proto,
+                    "fts_compat": config.fts_compat,
+                    "payload_encoding": if config.tak_proto == 0 { "xml" } else { "xml_fallback" },
+                    "protobuf_requested": config.tak_proto > 0,
+                    "protobuf_payloads_supported": false,
                     "tls": {
                         "configured": config.tls_client_cert.is_some()
                             || config.tls_client_key.is_some()
@@ -29651,6 +29656,8 @@ mod tests {
             tls_insecure: false,
             tls_client_password: Some("secret".to_string()),
             pytak_tls_dont_verify: 0,
+            tak_proto: 2,
+            fts_compat: 0,
             ..r3akt_tak_connector::TakConnectionConfig::default()
         };
         let sender =
@@ -29698,6 +29705,11 @@ mod tests {
         assert_eq!(tak["endpoint"], "127.0.0.1:9");
         assert_eq!(tak["scheme"], "ssl");
         assert_eq!(tak["callsign"], "HUB");
+        assert_eq!(tak["tak_proto"], 2);
+        assert_eq!(tak["fts_compat"], 0);
+        assert_eq!(tak["payload_encoding"], "xml_fallback");
+        assert_eq!(tak["protobuf_requested"], true);
+        assert_eq!(tak["protobuf_payloads_supported"], false);
         assert_eq!(tak["tls"]["configured"], true);
         assert_eq!(tak["tls"]["client_cert_configured"], true);
         assert_eq!(tak["tls"]["client_key_configured"], true);
