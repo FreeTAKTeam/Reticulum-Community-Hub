@@ -5446,12 +5446,12 @@ impl RchCore {
             .values()
             .find(|eam| eam.callsign == callsign && eam.deleted_ts_ms.is_none())
             .map(|eam| eam.eam_uid.clone());
-        if let Some(callsign_uid) = active_callsign_uid.as_deref()
-            && active_member_uid.as_deref() != Some(callsign_uid)
-        {
-            return Err(RchCoreError::InvalidPayload(format!(
-                "callsign '{callsign}' is already assigned to another status snapshot"
-            )));
+        if let Some(callsign_uid) = active_callsign_uid.as_deref() {
+            if active_member_uid.as_deref() != Some(callsign_uid) {
+                return Err(RchCoreError::InvalidPayload(format!(
+                    "callsign '{callsign}' is already assigned to another status snapshot"
+                )));
+            }
         }
         let deleted_uids: HashSet<String> = self
             .eam_snapshots
@@ -5472,16 +5472,17 @@ impl RchCore {
         let eam_uid = optional_text(args, &["eam_uid"])
             .or(existing_uid)
             .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
-        if let Some(active_uid) = self
+        let active_uid = self
             .eam_snapshots
             .values()
             .find(|eam| eam.team_member_uid == team_member_uid && eam.deleted_ts_ms.is_none())
-            .map(|eam| eam.eam_uid.clone())
-            && optional_text(args, &["eam_uid"]).is_some_and(|provided| provided != active_uid)
-        {
-            return Err(RchCoreError::InvalidPayload(format!(
-                "eam_uid '{eam_uid}' does not match the existing snapshot for team_member_uid '{team_member_uid}'"
-            )));
+            .map(|eam| eam.eam_uid.clone());
+        if let Some(active_uid) = active_uid {
+            if optional_text(args, &["eam_uid"]).is_some_and(|provided| provided != active_uid) {
+                return Err(RchCoreError::InvalidPayload(format!(
+                    "eam_uid '{eam_uid}' does not match the existing snapshot for team_member_uid '{team_member_uid}'"
+                )));
+            }
         }
         let now = utc_now_ms();
         let statuses = EamStatuses::from_args(args)?;

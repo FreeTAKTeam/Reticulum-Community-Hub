@@ -228,23 +228,20 @@ fn build_runtime_state(
             state
         }
     };
-    if let Some(endpoint) = managed_reticulumd_launch.rpc.clone()
-        && managed_reticulumd_launch.exe.is_some()
-    {
-        state = state
-            .with_managed_reticulumd(
-                managed_reticulumd_launch
-                    .exe
-                    .as_ref()
-                    .expect("checked managed reticulumd exe"),
-                endpoint,
-                managed_reticulumd_launch
-                    .db_path
-                    .as_ref()
-                    .map(|path| path.to_string_lossy().to_string()),
-                managed_reticulumd_launch.config_path.as_ref(),
-            )
-            .with_managed_reticulumd_transport(managed_reticulumd_launch.transport.clone());
+    if let Some(endpoint) = managed_reticulumd_launch.rpc.clone() {
+        if let Some(exe) = managed_reticulumd_launch.exe.as_ref() {
+            state = state
+                .with_managed_reticulumd(
+                    exe,
+                    endpoint,
+                    managed_reticulumd_launch
+                        .db_path
+                        .as_ref()
+                        .map(|path| path.to_string_lossy().to_string()),
+                    managed_reticulumd_launch.config_path.as_ref(),
+                )
+                .with_managed_reticulumd_transport(managed_reticulumd_launch.transport.clone());
+        }
     }
     Ok(state)
 }
@@ -475,11 +472,11 @@ fn stop_command(args: &ControlArgs) -> i32 {
         println!("RCH stop requested.");
         return 0;
     }
-    if let Some(state) = state
-        && stop_with_signal(state.pid)
-    {
-        println!("RCH stop signal sent.");
-        return 0;
+    if let Some(state) = state {
+        if stop_with_signal(state.pid) {
+            println!("RCH stop signal sent.");
+            return 0;
+        }
     }
     println!("RCH is not running.");
     1

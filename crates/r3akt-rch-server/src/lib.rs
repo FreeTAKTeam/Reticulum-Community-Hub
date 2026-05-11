@@ -16291,16 +16291,17 @@ fn eam_payload_for_path(callsign: String, payload: Value) -> Result<Value, ApiEr
         .as_object()
         .cloned()
         .ok_or_else(|| ApiError::BadRequest("payload must be an object".to_string()))?;
-    if let Some(body_callsign) = object
+    let body_callsign = object
         .get("callsign")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        && body_callsign != callsign
-    {
-        return Err(ApiError::BadRequest(
-            "callsign in body must match the path callsign".to_string(),
-        ));
+        .filter(|value| !value.is_empty());
+    if let Some(body_callsign) = body_callsign {
+        if body_callsign != callsign {
+            return Err(ApiError::BadRequest(
+                "callsign in body must match the path callsign".to_string(),
+            ));
+        }
     }
     object.insert("callsign".to_string(), json!(callsign));
     Ok(Value::Object(object))
@@ -17088,28 +17089,28 @@ fn parse_zone_update_payload(input: Value) -> Result<ZoneUpdatePayload, ApiError
 }
 
 fn validate_zone_pydantic_shape(input: &Value, require_points: bool) -> Result<(), ApiError> {
-    if let Some(Value::String(name)) = input.get("name")
-        && name.is_empty()
-    {
-        return Err(ApiError::PydanticValidation(python_string_too_short_body(
-            "name",
-            json!(name),
-            1,
-        )));
+    if let Some(Value::String(name)) = input.get("name") {
+        if name.is_empty() {
+            return Err(ApiError::PydanticValidation(python_string_too_short_body(
+                "name",
+                json!(name),
+                1,
+            )));
+        }
     }
     if let Some(points) = input.get("points") {
         if points.is_null() && !require_points {
             return Ok(());
         }
-        if let Some(points) = points.as_array()
-            && points.len() < 3
-        {
-            return Err(ApiError::PydanticValidation(python_list_too_short_body(
-                "points",
-                Value::Array(points.clone()),
-                3,
-                points.len(),
-            )));
+        if let Some(points) = points.as_array() {
+            if points.len() < 3 {
+                return Err(ApiError::PydanticValidation(python_list_too_short_body(
+                    "points",
+                    Value::Array(points.clone()),
+                    3,
+                    points.len(),
+                )));
+            }
         }
     }
     Ok(())
