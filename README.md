@@ -720,11 +720,17 @@ Current local verification snapshot, refreshed on 2026-05-11:
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
   offline checklist creation/list.
-- `npm run test -- --run` in
+- `npm ci` and `npm audit --audit-level=moderate` in
+  `C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\ui` passed
+  with zero audited vulnerabilities after the lockfile refresh.
+- `npm run lint` in the same UI directory passed.
+- `npm run test` in
   `C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\ui` passed
   with 23 files and 70 tests.
 - `npm run build` in the same UI directory passed.
-- `npm --prefix apps/rch-desktop run build` passed, including shared UI build,
+- `npm run build` in
+  `C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\apps\rch-desktop`
+  passed, including shared UI build,
   Tauri sidecar preparation, optimized desktop build, and Windows x64 NSIS
   installer generation for `RCH Desktop_3.0.0-preview.0_x64-setup.exe`.
 - A local Rust-backend UI smoke against the built `ui/dist` passed: `/`,
@@ -764,7 +770,10 @@ Current local verification snapshot, refreshed on 2026-05-11:
 
 Not proven by local-only verification yet: final validation against the target
 TAK server profile and broader real-network Reticulum validation outside the
-local multi-daemon harness.
+local multi-daemon harness. The latest configured target TAK keepalive/reconnect
+attempts on 2026-05-11 failed because the TCP endpoint actively refused the
+connection, so this remains an external release blocker rather than a local
+Rust test failure.
 
 ```powershell
 cargo fmt --all

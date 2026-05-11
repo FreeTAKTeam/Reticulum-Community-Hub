@@ -72,7 +72,10 @@ Validated during the root Rust import and refreshed on 2026-05-11:
 - `cargo test --workspace`: passed across all Rust crates and examples.
 - `cargo build --release -p r3akt-rch-server`: passed for the deployable
   server binary.
-- `npm --prefix apps/rch-desktop run build`: passed, including shared UI build,
+- `npm ci`, `npm audit --audit-level=moderate`, `npm run lint`,
+  `npm run test`, and `npm run build` in `ui/`: passed, including zero audited
+  UI vulnerabilities after the lockfile refresh and 23 Vitest files / 70 tests.
+- `npm run build` in `apps/rch-desktop/`: passed, including shared UI build,
   Tauri sidecar preparation, optimized desktop build, and Windows x64 NSIS
   installer generation for `RCH Desktop_3.0.0-preview.0_x64-setup.exe`.
 - Release-binary smoke test with a temporary SQLite database: passed for
@@ -110,4 +113,7 @@ Release blockers cleared in the latest parity pass:
 The Rust edition preserves the RCH northbound contract as the compatibility
 target. Remaining external validation should be tracked explicitly, especially
 final validation against the target TAK server profile and broader real-network
-Reticulum validation outside the local multi-daemon harness.
+Reticulum validation outside the local multi-daemon harness. The latest
+configured target TAK keepalive/reconnect attempts on 2026-05-11 failed because
+the TCP endpoint actively refused the connection, so this remains an external
+release blocker rather than a local Rust test failure.
