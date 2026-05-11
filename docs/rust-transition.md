@@ -68,6 +68,9 @@ Validated during the root Rust import and refreshed on 2026-05-11:
 - `cargo test --workspace`: passed across all Rust crates and examples.
 - `cargo build --release -p r3akt-rch-server`: passed for the deployable
   server binary.
+- `npm --prefix apps/rch-desktop run build`: passed, including shared UI build,
+  Tauri sidecar preparation, optimized desktop build, and Windows x64 NSIS
+  installer generation for `RCH Desktop_3.0.0-preview.0_x64-setup.exe`.
 - Release-binary smoke test with a temporary SQLite database: passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
