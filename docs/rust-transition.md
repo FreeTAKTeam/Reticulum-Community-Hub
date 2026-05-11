@@ -153,3 +153,6 @@ that configuration.
 Use `.\scripts\release-readiness.ps1` for the local release gate set. Add
 `-LiveTak` and `-LiveReticulum` only when the required TAK and Reticulum
 environment variables point at reachable infrastructure.
+
+See `docs/release-readiness-audit.md` for the prompt-to-artifact release
+checklist and the current release decision.
