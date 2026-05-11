@@ -1,5 +1,4 @@
 #![allow(
-    clippy::elidable_lifetime_names,
     clippy::items_after_test_module,
     clippy::missing_errors_doc,
     clippy::needless_pass_by_value
@@ -28,14 +27,14 @@ pub enum StoreError {
 }
 
 pub trait DurableStore: Send {
-    fn put_inbox<'a>(&'a mut self, envelope: ProtocolEnvelope) -> StoreFuture<'a, StoreWrite>;
-    fn put_outbox<'a>(&'a mut self, envelope: ProtocolEnvelope) -> StoreFuture<'a, StoreWrite>;
+    fn put_inbox(&mut self, envelope: ProtocolEnvelope) -> StoreFuture<'_, StoreWrite>;
+    fn put_outbox(&mut self, envelope: ProtocolEnvelope) -> StoreFuture<'_, StoreWrite>;
     fn get_envelope<'a>(&'a self, key: &'a str) -> StoreFuture<'a, Option<ProtocolEnvelope>>;
-    fn list_inbox<'a>(&'a self) -> StoreFuture<'a, Vec<ProtocolEnvelope>>;
-    fn list_outbox<'a>(&'a self) -> StoreFuture<'a, Vec<ProtocolEnvelope>>;
+    fn list_inbox(&self) -> StoreFuture<'_, Vec<ProtocolEnvelope>>;
+    fn list_outbox(&self) -> StoreFuture<'_, Vec<ProtocolEnvelope>>;
     fn contains_dedupe_key<'a>(&'a self, key: &'a str) -> StoreFuture<'a, bool>;
-    fn audit<'a>(&'a mut self, record: AuditRecord) -> StoreFuture<'a, ()>;
-    fn retain_since<'a>(&'a mut self, cutoff: OffsetDateTime) -> StoreFuture<'a, RetentionReport>;
+    fn audit(&mut self, record: AuditRecord) -> StoreFuture<'_, ()>;
+    fn retain_since(&mut self, cutoff: OffsetDateTime) -> StoreFuture<'_, RetentionReport>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,7 +136,7 @@ impl MemoryStore {
 }
 
 impl DurableStore for MemoryStore {
-    fn put_inbox<'a>(&'a mut self, envelope: ProtocolEnvelope) -> StoreFuture<'a, StoreWrite> {
+    fn put_inbox(&mut self, envelope: ProtocolEnvelope) -> StoreFuture<'_, StoreWrite> {
         Box::pin(async move {
             let key = envelope.stable_dedupe_key();
             let duplicate = !self.seen.insert(key.clone());
@@ -148,7 +147,7 @@ impl DurableStore for MemoryStore {
         })
     }
 
-    fn put_outbox<'a>(&'a mut self, envelope: ProtocolEnvelope) -> StoreFuture<'a, StoreWrite> {
+    fn put_outbox(&mut self, envelope: ProtocolEnvelope) -> StoreFuture<'_, StoreWrite> {
         Box::pin(async move {
             let key = envelope.stable_dedupe_key();
             let duplicate = !self.seen.insert(key.clone());
@@ -173,22 +172,22 @@ impl DurableStore for MemoryStore {
         })
     }
 
-    fn list_inbox<'a>(&'a self) -> StoreFuture<'a, Vec<ProtocolEnvelope>> {
+    fn list_inbox(&self) -> StoreFuture<'_, Vec<ProtocolEnvelope>> {
         Box::pin(async move { Ok(self.inbox.values().cloned().collect()) })
     }
 
-    fn list_outbox<'a>(&'a self) -> StoreFuture<'a, Vec<ProtocolEnvelope>> {
+    fn list_outbox(&self) -> StoreFuture<'_, Vec<ProtocolEnvelope>> {
         Box::pin(async move { Ok(self.outbox.values().cloned().collect()) })
     }
 
-    fn audit<'a>(&'a mut self, record: AuditRecord) -> StoreFuture<'a, ()> {
+    fn audit(&mut self, record: AuditRecord) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             self.audit.push(record);
             Ok(())
         })
     }
 
-    fn retain_since<'a>(&'a mut self, cutoff: OffsetDateTime) -> StoreFuture<'a, RetentionReport> {
+    fn retain_since(&mut self, cutoff: OffsetDateTime) -> StoreFuture<'_, RetentionReport> {
         Box::pin(async move {
             let inbox_before = self.inbox.len();
             let outbox_before = self.outbox.len();
@@ -306,11 +305,11 @@ impl SqliteStore {
 }
 
 impl DurableStore for SqliteStore {
-    fn put_inbox<'a>(&'a mut self, envelope: ProtocolEnvelope) -> StoreFuture<'a, StoreWrite> {
+    fn put_inbox(&mut self, envelope: ProtocolEnvelope) -> StoreFuture<'_, StoreWrite> {
         Box::pin(async move { self.put_envelope(envelope, "inbox") })
     }
 
-    fn put_outbox<'a>(&'a mut self, envelope: ProtocolEnvelope) -> StoreFuture<'a, StoreWrite> {
+    fn put_outbox(&mut self, envelope: ProtocolEnvelope) -> StoreFuture<'_, StoreWrite> {
         Box::pin(async move { self.put_envelope(envelope, "outbox") })
     }
 
@@ -339,15 +338,15 @@ impl DurableStore for SqliteStore {
         })
     }
 
-    fn list_inbox<'a>(&'a self) -> StoreFuture<'a, Vec<ProtocolEnvelope>> {
+    fn list_inbox(&self) -> StoreFuture<'_, Vec<ProtocolEnvelope>> {
         Box::pin(async move { self.list_direction("inbox") })
     }
 
-    fn list_outbox<'a>(&'a self) -> StoreFuture<'a, Vec<ProtocolEnvelope>> {
+    fn list_outbox(&self) -> StoreFuture<'_, Vec<ProtocolEnvelope>> {
         Box::pin(async move { self.list_direction("outbox") })
     }
 
-    fn audit<'a>(&'a mut self, record: AuditRecord) -> StoreFuture<'a, ()> {
+    fn audit(&mut self, record: AuditRecord) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             self.connection.execute(
                 "INSERT INTO audit_records
@@ -365,7 +364,7 @@ impl DurableStore for SqliteStore {
         })
     }
 
-    fn retain_since<'a>(&'a mut self, cutoff: OffsetDateTime) -> StoreFuture<'a, RetentionReport> {
+    fn retain_since(&mut self, cutoff: OffsetDateTime) -> StoreFuture<'_, RetentionReport> {
         Box::pin(async move {
             let cutoff = cutoff.to_string();
             let removed_inbox = self.connection.execute(

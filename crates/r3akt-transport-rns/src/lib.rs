@@ -1,8 +1,4 @@
-#![allow(
-    clippy::elidable_lifetime_names,
-    clippy::items_after_test_module,
-    clippy::missing_errors_doc
-)]
+#![allow(clippy::items_after_test_module, clippy::missing_errors_doc)]
 
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
@@ -77,8 +73,8 @@ impl LxmfRsFrame {
 /// SDK, the daemon RPC surface, or a future in-process runtime without coupling
 /// R3AKT protocol crates to LXMF internals.
 pub trait LxmfRsAdapter: Send {
-    fn send_frame<'a>(&'a mut self, frame: LxmfRsFrame) -> TransportFuture<'a, ()>;
-    fn receive_frame<'a>(&'a mut self) -> TransportFuture<'a, Option<LxmfRsFrame>>;
+    fn send_frame(&mut self, frame: LxmfRsFrame) -> TransportFuture<'_, ()>;
+    fn receive_frame(&mut self) -> TransportFuture<'_, Option<LxmfRsFrame>>;
 }
 
 pub const R3AKT_LXMF_CONTENT: &str = "r3akt protocol envelope";
@@ -341,7 +337,7 @@ impl<'a> ReticulumdRpcLxmfRsAdapter<'a> {
 }
 
 impl LxmfRsAdapter for ReticulumdRpcLxmfRsAdapter<'_> {
-    fn send_frame<'a>(&'a mut self, frame: LxmfRsFrame) -> TransportFuture<'a, ()> {
+    fn send_frame(&mut self, frame: LxmfRsFrame) -> TransportFuture<'_, ()> {
         Box::pin(async move {
             let payload_b64 = base64::engine::general_purpose::STANDARD.encode(&frame.bytes);
             let params = serde_json::json!({
@@ -367,7 +363,7 @@ impl LxmfRsAdapter for ReticulumdRpcLxmfRsAdapter<'_> {
         })
     }
 
-    fn receive_frame<'a>(&'a mut self) -> TransportFuture<'a, Option<LxmfRsFrame>> {
+    fn receive_frame(&mut self) -> TransportFuture<'_, Option<LxmfRsFrame>> {
         Box::pin(async move {
             let response = self.rpc.call("list_messages", None)?;
             if let Some(error) = response.error {
@@ -1109,11 +1105,10 @@ fn json_number_to_i64(value: &JsonValue) -> Option<i64> {
 }
 
 fn json_number_from_f64(value: f64) -> JsonValue {
-    if value.is_finite()
-        && value.fract() == 0.0
-        && let Ok(integer) = format!("{value:.0}").parse::<i64>()
-    {
-        return JsonValue::from(integer);
+    if value.is_finite() && value.fract() == 0.0 {
+        if let Ok(integer) = format!("{value:.0}").parse::<i64>() {
+            return JsonValue::from(integer);
+        }
     }
     JsonValue::from(value)
 }
@@ -1404,8 +1399,8 @@ fn default_attachment_name(category: &str) -> String {
 }
 
 pub trait MessageBus: Send {
-    fn publish<'a>(&'a mut self, envelope: ProtocolEnvelope) -> TransportFuture<'a, ()>;
-    fn poll<'a>(&'a mut self) -> TransportFuture<'a, Option<ProtocolEnvelope>>;
+    fn publish(&mut self, envelope: ProtocolEnvelope) -> TransportFuture<'_, ()>;
+    fn poll(&mut self) -> TransportFuture<'_, Option<ProtocolEnvelope>>;
 }
 
 pub trait RnsTransport: MessageBus {}
@@ -1431,7 +1426,7 @@ impl<A> MessageBus for LxmfRsTransport<A>
 where
     A: LxmfRsAdapter,
 {
-    fn publish<'a>(&'a mut self, envelope: ProtocolEnvelope) -> TransportFuture<'a, ()> {
+    fn publish(&mut self, envelope: ProtocolEnvelope) -> TransportFuture<'_, ()> {
         Box::pin(async move {
             let bytes = envelope
                 .encode_msgpack()
@@ -1445,7 +1440,7 @@ where
         })
     }
 
-    fn poll<'a>(&'a mut self) -> TransportFuture<'a, Option<ProtocolEnvelope>> {
+    fn poll(&mut self) -> TransportFuture<'_, Option<ProtocolEnvelope>> {
         Box::pin(async move {
             let Some(frame) = self.adapter.receive_frame().await? else {
                 return Ok(None);
@@ -1503,7 +1498,7 @@ impl MockTransport {
 }
 
 impl MessageBus for MockTransport {
-    fn publish<'a>(&'a mut self, envelope: ProtocolEnvelope) -> TransportFuture<'a, ()> {
+    fn publish(&mut self, envelope: ProtocolEnvelope) -> TransportFuture<'_, ()> {
         Box::pin(async move {
             let mut outbound = self
                 .outbound
@@ -1517,7 +1512,7 @@ impl MessageBus for MockTransport {
         })
     }
 
-    fn poll<'a>(&'a mut self) -> TransportFuture<'a, Option<ProtocolEnvelope>> {
+    fn poll(&mut self) -> TransportFuture<'_, Option<ProtocolEnvelope>> {
         Box::pin(async move {
             let mut inbound = self
                 .inbound

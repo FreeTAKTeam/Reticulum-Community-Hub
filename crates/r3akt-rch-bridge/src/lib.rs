@@ -279,10 +279,10 @@ fn handle_outbound_send(
         "fields".to_string(),
         request.fields.unwrap_or(JsonValue::Null),
     );
-    if rpc_method == "send_message_v2"
-        && let Some(method) = request.method
-    {
-        params.insert("method".to_string(), JsonValue::String(method));
+    if rpc_method == "send_message_v2" {
+        if let Some(method) = request.method {
+            params.insert("method".to_string(), JsonValue::String(method));
+        }
     }
     let response = client.call(rpc_method, Some(JsonValue::Object(params)))?;
     if let Some(error) = response.error {

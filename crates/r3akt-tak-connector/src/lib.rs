@@ -1163,11 +1163,11 @@ where
         let handle = thread::spawn(move || {
             let mut current_interval = interval;
             while !worker_stop.load(Ordering::SeqCst) {
-                if let Ok(mut service) = worker_service.lock()
-                    && let Ok(report) = service.poll_once()
-                {
-                    current_interval =
-                        tak_inbound_interval_after_report(current_interval, interval, &report);
+                if let Ok(mut service) = worker_service.lock() {
+                    if let Ok(report) = service.poll_once() {
+                        current_interval =
+                            tak_inbound_interval_after_report(current_interval, interval, &report);
+                    }
                 }
                 thread::sleep(current_interval);
             }

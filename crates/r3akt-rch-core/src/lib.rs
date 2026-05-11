@@ -5536,13 +5536,14 @@ impl RchCore {
         args: &Value,
     ) -> Result<(), RchCoreError> {
         let canonical_color = canonical_team_color_for_uid(team_uid);
-        if let Some(group_name) = optional_text(args, &["group_name"])
-            && let Some(canonical_color) = canonical_color
-            && normalize_team_color(&group_name).ok().as_deref() != Some(canonical_color)
-        {
-            return Err(RchCoreError::InvalidPayload(format!(
-                "group_name '{group_name}' does not match canonical team_uid '{team_uid}'"
-            )));
+        if let Some(group_name) = optional_text(args, &["group_name"]) {
+            if let Some(canonical_color) = canonical_color {
+                if normalize_team_color(&group_name).ok().as_deref() != Some(canonical_color) {
+                    return Err(RchCoreError::InvalidPayload(format!(
+                        "group_name '{group_name}' does not match canonical team_uid '{team_uid}'"
+                    )));
+                }
+            }
         }
 
         if !self.teams.contains_key(team_uid) {
