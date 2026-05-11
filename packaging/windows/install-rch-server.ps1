@@ -12,3 +12,4 @@ Copy-Item -Recurse -Force -Path (Join-Path $SourceDir "packaging") -Destination 
 
 Write-Host "Installed RCH Rust server to $InstallDir"
 Write-Host "Start with: $InstallDir\packaging\windows\start-rch-server.ps1"
+Write-Host "Start TAK bridge separately with: $InstallDir\packaging\windows\start-rch-tak-service.ps1"

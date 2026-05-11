@@ -24,7 +24,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "appimage"],
-    "externalBin": ["binaries/r3akt-rch-server"],
+    "externalBin": ["binaries/r3akt-rch-server", "binaries/r3akt-tak-service"],
     "windows": {
       "nsis": {
         "installMode": "perMachine"

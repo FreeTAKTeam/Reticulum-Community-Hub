@@ -721,6 +721,9 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - `cargo build --release -p r3akt-rch-server` passed.
 - `cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service`
   passed.
+- `npm --prefix apps/rch-desktop run prepare:sidecar` passed, producing
+  separate Tauri sidecar binaries for `r3akt-rch-server` and
+  `r3akt-tak-service`.
 - A release-binary smoke test with a temporary SQLite database passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and

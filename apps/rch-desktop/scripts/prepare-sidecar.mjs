@@ -14,19 +14,42 @@ if (!targetTriple) {
   throw new Error("Could not determine Rust host target triple");
 }
 
-execFileSync("cargo", ["build", "--release", "-p", "r3akt-rch-server"], {
-  cwd: repoRoot,
-  stdio: "inherit",
-});
-
 const exeSuffix = process.platform === "win32" ? ".exe" : "";
-const source = join(repoRoot, "target", "release", `r3akt-rch-server${exeSuffix}`);
-const destination = join(binariesDir, `r3akt-rch-server-${targetTriple}${exeSuffix}`);
-
-if (!existsSync(source)) {
-  throw new Error(`Expected server binary at ${source}`);
-}
-
 mkdirSync(binariesDir, { recursive: true });
-copyFileSync(source, destination);
-console.log(`Prepared Tauri sidecar: ${destination}`);
+
+const sidecars = [
+  {
+    packageName: "r3akt-rch-server",
+    binaryName: "r3akt-rch-server",
+    cargoArgs: ["build", "--release", "-p", "r3akt-rch-server"],
+  },
+  {
+    packageName: "r3akt-tak-connector",
+    binaryName: "r3akt-tak-service",
+    cargoArgs: [
+      "build",
+      "--release",
+      "-p",
+      "r3akt-tak-connector",
+      "--bin",
+      "r3akt-tak-service",
+    ],
+  },
+];
+
+for (const sidecar of sidecars) {
+  execFileSync("cargo", sidecar.cargoArgs, {
+    cwd: repoRoot,
+    stdio: "inherit",
+  });
+
+  const source = join(repoRoot, "target", "release", `${sidecar.binaryName}${exeSuffix}`);
+  const destination = join(binariesDir, `${sidecar.binaryName}-${targetTriple}${exeSuffix}`);
+
+  if (!existsSync(source)) {
+    throw new Error(`Expected ${sidecar.packageName} binary at ${source}`);
+  }
+
+  copyFileSync(source, destination);
+  console.log(`Prepared Tauri sidecar: ${destination}`);
+}
