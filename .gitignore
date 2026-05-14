@@ -1,18 +1,177 @@
-/target/
-/ui/node_modules/
-/ui/dist/
-/apps/rch-desktop/node_modules/
-/apps/rch-desktop/src-tauri/target/
-/apps/rch-desktop/src-tauri/binaries/r3akt-rch-server-*
-/apps/rch-desktop/src-tauri/binaries/r3akt-tak-service-*
-/apps/rch-desktop/src-tauri/gen/
-rch-runtime*.db
+# ------------------------------------------------------------
+# Rust
+# ------------------------------------------------------------
+
+# Rust build output
+target/
+
+# Cargo lock:
+# Keep Cargo.lock for applications.
+# Ignore it only for libraries if you intentionally want that.
+# Cargo.lock
+
+# Rust backup files
+**/*.rs.bk
+
+# Rust profiling / coverage
+*.profraw
+*.profdata
+coverage/
+tarpaulin-report.html
+lcov.info
+
+# ------------------------------------------------------------
+# Node / Vue / Vite
+# ------------------------------------------------------------
+
+# Dependencies
+node_modules/
+
+# Package manager caches / state
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Keep this if using Yarn Berry and you want reproducible installs:
+# !.yarn/cache/
+
+# Vue / Vite build output
+dist/
+dist-ssr/
+.vite/
+.cache/
+
+# Nuxt, if used
+.nuxt/
+.output/
+
+# VuePress / VitePress, if used
+.vuepress/dist/
+.vitepress/dist/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Test output
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+cypress/videos/
+cypress/screenshots/
+
+# ------------------------------------------------------------
+# Environment / secrets
+# ------------------------------------------------------------
+
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Local config
+*.local
+
+# ------------------------------------------------------------
+# Logs
+# ------------------------------------------------------------
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------------------------------------------
+# Editors / IDEs
+# ------------------------------------------------------------
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+.idea/
+*.iml
+
+# Vim / swap files
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------
+# OS files
+# ------------------------------------------------------------
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ------------------------------------------------------------
+# Windows / WSL noise
+# ------------------------------------------------------------
+
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ------------------------------------------------------------
+# Python helper tooling, if repo uses scripts
+# ------------------------------------------------------------
+
+.venv/
+venv/
+venv_linux/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+
+# ------------------------------------------------------------
+# Docker / local runtime
+# ------------------------------------------------------------
+
+docker-compose.override.yml
+tmp/
+temp/
+
+# ------------------------------------------------------------
+# App-specific generated files
+# ------------------------------------------------------------
+
 *.sqlite
 *.sqlite3
-r3akt-rch-server*.log
-*.log
-logs/
+*.db
+*.pid
+*.seed
+*.tmp
+
+# RCH runtime stores and local operator/test artifacts
+RCH_Store/
+RTH_Store/
 files/
 images/
-.playwright-mcp/
 screenshots/
+.playwright-mcp/
+.tmp_internal_ws_smoke/
+
+# Local analysis output
+.desloppify/
+
+# Legacy Electron build/release output kept out of rust-next
+electron/backend/build/
+electron/backend/rch-backend.exe
+electron/backend/rch-backend.spec
+electron/dist-release/
+
+# Tauri desktop generated binaries and metadata
+apps/rch-desktop/src-tauri/binaries/r3akt-rch-server-*
+apps/rch-desktop/src-tauri/binaries/r3akt-tak-service-*
+apps/rch-desktop/src-tauri/gen/
