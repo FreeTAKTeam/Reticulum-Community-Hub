@@ -670,6 +670,12 @@
   right: 0;
   bottom: 0;
   z-index: 8;
+  width: 58px;
+  pointer-events: none;
+}
+
+.webmap-cosmos--sidebar-collapsed .webmap-sidebar--collapsed button {
+  pointer-events: auto;
 }
 
 .webmap-sidebar-head {
@@ -830,9 +836,18 @@
     min-height: 54px;
   }
 
+  .webmap-cosmos--sidebar-collapsed .webmap-sidebar--collapsed {
+    width: 58px;
+    min-height: 0;
+  }
+
   .webmap-sidebar-collapsed {
     writing-mode: horizontal-tb;
     text-orientation: mixed;
+  }
+
+  .webmap-cosmos--sidebar-collapsed .webmap-sidebar-collapsed {
+    writing-mode: vertical-rl;
   }
 }
 

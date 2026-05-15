@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::time::Duration;
 use thiserror::Error;
+
+const RETICULUMD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum BridgeError {
@@ -566,10 +569,24 @@ fn rpc_call(
     endpoint: &str,
     request: &ReticulumdRpcRequest,
 ) -> Result<ReticulumdRpcResponse, BridgeError> {
+    rpc_call_with_timeout(endpoint, request, RETICULUMD_RPC_TIMEOUT)
+}
+
+fn rpc_call_with_timeout(
+    endpoint: &str,
+    request: &ReticulumdRpcRequest,
+    timeout: Duration,
+) -> Result<ReticulumdRpcResponse, BridgeError> {
     let frame = encode_frame(request).map_err(|error| BridgeError::Outbound(error.to_string()))?;
     let http_request = build_http_post("/rpc", endpoint, &frame);
     let mut stream =
         TcpStream::connect(endpoint).map_err(|error| BridgeError::Outbound(error.to_string()))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|error| BridgeError::Outbound(error.to_string()))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| BridgeError::Outbound(error.to_string()))?;
     stream
         .write_all(&http_request)
         .map_err(|error| BridgeError::Outbound(error.to_string()))?;
@@ -662,6 +679,9 @@ fn parse_http_response_body(response: &[u8]) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use r3akt_profile_rch::{RchSource, decode_results, encode_results};
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     use super::*;
 
@@ -692,6 +712,35 @@ mod tests {
                 error: None,
             })
         }
+    }
+
+    #[test]
+    fn reticulumd_rpc_call_times_out_when_peer_accepts_without_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let endpoint = listener.local_addr().expect("addr").to_string();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            thread::sleep(Duration::from_millis(500));
+        });
+        let request = ReticulumdRpcRequest {
+            id: 1,
+            method: "list_messages".to_string(),
+            params: None,
+        };
+
+        let started = Instant::now();
+        let error = rpc_call_with_timeout(&endpoint, &request, Duration::from_millis(100))
+            .expect_err("timeout error");
+        let elapsed = started.elapsed();
+        server.join().expect("server");
+
+        assert!(matches!(error, BridgeError::Outbound(_)));
+        assert!(
+            elapsed < Duration::from_millis(450),
+            "RPC call did not honor timeout; elapsed={elapsed:?}"
+        );
     }
 
     #[test]

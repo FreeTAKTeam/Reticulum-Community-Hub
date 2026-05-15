@@ -3264,7 +3264,7 @@ const addChecklistTaskFromDetail = async () => {
   try {
     const nextNumber = checklistDetailRows.value.reduce((max, row) => Math.max(max, row.number), 0) + 1;
     const payload: Record<string, unknown> = { number: nextNumber };
-    const dueDraft = checklistTaskDueDraft.value.trim();
+    const dueDraft = String(checklistTaskDueDraft.value ?? "").trim();
     if (dueDraft.length > 0) {
       const parsedDue = Number(dueDraft);
       if (Number.isFinite(parsedDue)) {

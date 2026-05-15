@@ -1105,6 +1105,7 @@ dependencies = [
  "r3akt-rch-core",
  "r3akt-transport-rns",
  "rmp-serde",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",

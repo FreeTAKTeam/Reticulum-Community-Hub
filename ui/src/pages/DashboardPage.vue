@@ -139,6 +139,9 @@
               Announce
             </BaseButton>
           </div>
+          <div v-if="lastSyncMessage" class="hud-control-result">
+            {{ lastSyncMessage }}
+          </div>
         </div>
       </aside>
 
@@ -317,6 +320,7 @@ const wsClient = ref<WsClient | null>(null);
 const telemetryWsClient = ref<WsClient | null>(null);
 const controlStatus = ref<ControlStatus | null>(null);
 const controlBusy = ref(false);
+const lastSyncMessage = ref("");
 let telemetryTickId: number | undefined;
 let sparklineTickId: number | undefined;
 let brandTraceFrameId: number | undefined;
@@ -329,6 +333,20 @@ interface ControlStatus {
   pid?: number;
   port?: number;
   uptime_seconds?: number;
+}
+
+interface PropagationFetchResult {
+  available_count?: number;
+  fetched_count?: number;
+  imported_count?: number;
+  result?: PropagationFetchResult;
+  status?: string;
+  error?: string;
+}
+
+interface ControlSyncResponse {
+  status?: string;
+  fetch_result?: PropagationFetchResult;
 }
 
 interface TelemetryBucket {
@@ -790,13 +808,28 @@ const sendAnnounce = async () => {
   }
 };
 
+const propagationFetchToast = (response?: ControlSyncResponse): string => {
+  const fetchResult = response?.fetch_result?.result ?? response?.fetch_result;
+  if (fetchResult?.error) {
+    return `Propagation sync requested; fetch failed: ${fetchResult.error}`;
+  }
+  if (typeof fetchResult?.imported_count === "number") {
+    const fetched = typeof fetchResult.fetched_count === "number" ? fetchResult.fetched_count : 0;
+    const available = typeof fetchResult.available_count === "number" ? fetchResult.available_count : fetched;
+    return `Propagation sync requested; fetched ${fetched}/${available}, imported ${fetchResult.imported_count}`;
+  }
+  return response?.status === "sync_requested" ? "Propagation sync requested" : response?.status ?? "Propagation sync requested";
+};
+
 const syncBackend = async () => {
   controlBusy.value = true;
   try {
-    const response = await post<{ status?: string }>(endpoints.controlSync);
-    const message = response?.status === "sync_requested" ? "Propagation sync requested" : response?.status;
-    toastStore.push(message ?? "Propagation sync requested", "success");
+    const response = await post<ControlSyncResponse>(endpoints.controlSync);
+    const message = propagationFetchToast(response);
+    lastSyncMessage.value = message;
+    toastStore.push(message, "success");
   } catch (error) {
+    lastSyncMessage.value = "Propagation sync failed";
     toastStore.push("Propagation sync failed", "danger");
   } finally {
     controlBusy.value = false;

@@ -6,6 +6,7 @@ use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use base64::Engine;
 use r3akt_protocol::{
@@ -18,6 +19,8 @@ use thiserror::Error;
 
 pub type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send + 'a>>;
+
+const RETICULUMD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum TransportError {
@@ -1535,10 +1538,24 @@ fn reticulumd_rpc_call(
     endpoint: &str,
     request: &ReticulumdRpcRequest,
 ) -> Result<ReticulumdRpcResponse, TransportError> {
+    reticulumd_rpc_call_with_timeout(endpoint, request, RETICULUMD_RPC_TIMEOUT)
+}
+
+fn reticulumd_rpc_call_with_timeout(
+    endpoint: &str,
+    request: &ReticulumdRpcRequest,
+    timeout: Duration,
+) -> Result<ReticulumdRpcResponse, TransportError> {
     let frame = encode_frame(request).map_err(|error| TransportError::Send(error.to_string()))?;
     let http_request = build_http_post("/rpc", endpoint, &frame);
     let mut stream =
         TcpStream::connect(endpoint).map_err(|error| TransportError::Send(error.to_string()))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|error| TransportError::Send(error.to_string()))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| TransportError::Send(error.to_string()))?;
     stream
         .write_all(&http_request)
         .map_err(|error| TransportError::Send(error.to_string()))?;
@@ -1634,7 +1651,7 @@ mod tests {
     use std::env;
     use std::net::TcpListener;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::*;
 
@@ -2066,6 +2083,36 @@ mod tests {
         server.join().expect("server");
 
         assert_eq!(response.result, Some(serde_json::json!({ "messages": [] })));
+    }
+
+    #[test]
+    fn reticulumd_rpc_call_times_out_when_peer_accepts_without_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let endpoint = listener.local_addr().expect("addr").to_string();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            thread::sleep(Duration::from_millis(500));
+        });
+        let request = ReticulumdRpcRequest {
+            id: 1,
+            method: "list_messages".to_string(),
+            params: None,
+        };
+
+        let started = Instant::now();
+        let error =
+            reticulumd_rpc_call_with_timeout(&endpoint, &request, Duration::from_millis(100))
+                .expect_err("timeout error");
+        let elapsed = started.elapsed();
+        server.join().expect("server");
+
+        assert!(matches!(error, TransportError::Receive(_)));
+        assert!(
+            elapsed < Duration::from_millis(450),
+            "RPC call did not honor timeout; elapsed={elapsed:?}"
+        );
     }
 
     #[test]

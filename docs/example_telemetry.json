@@ -1,0 +1,503 @@
+[
+    {
+        "peer_destination": "a2d16aa7a5af06852586fbf4740e39be",
+        "timestamp": 1763398150,
+        "telemetry": {
+            "time": {
+                "timestamp": 1763398109.0,
+                "iso": "2025-11-17T16:48:29"
+            },
+            "location": {
+                "latitude": 43.967087,
+                "longitude": -66.126176,
+                "altitude": 1.84,
+                "speed": 0.0,
+                "bearing": 0.0,
+                "accuracy": 47.88,
+                "last_update_iso": "2025-11-17T16:20:24",
+                "last_update_timestamp": 1763396424.0
+            },
+            "acceleration": {
+                "x": 0.018544,
+                "y": -1.517349,
+                "z": 9.684052
+            },
+            "angular_velocity": {
+                "x": -7.6E-05,
+                "y": 0.000153,
+                "z": 0.0
+            }
+        }
+    },
+    {
+        "peer_destination": "c9ded55aad183600fd8c4e2ad341a7e1",
+        "timestamp": 1763395940,
+        "telemetry": {
+            "time": {
+                "timestamp": 1763395881.0,
+                "iso": "2025-11-17T16:11:21"
+            },
+            "location": {
+                "latitude": 43.96736,
+                "longitude": -66.126141,
+                "altitude": 42949612.15,
+                "speed": 0.0,
+                "bearing": 0.0,
+                "accuracy": 12.44,
+                "last_update_iso": "2025-11-17T15:48:22",
+                "last_update_timestamp": 1763394502.0
+            },
+            "acceleration": {
+                "x": -0.125854,
+                "y": -0.435501,
+                "z": 9.945053
+            },
+            "angular_velocity": {
+                "x": 1.5E-05,
+                "y": -4.6E-05,
+                "z": -0.000214
+            },
+            "information": {
+                "contents": ""
+            }
+        }
+    },
+    {
+        "peer_destination": "64eaf3f40445a2e77d797d5933caa918",
+        "timestamp": 1763328242,
+        "telemetry": {
+            "time": {
+                "timestamp": 1763328191.0,
+                "iso": "2025-11-16T21:23:11"
+            },
+            "location": {
+                "latitude": 43.967351,
+                "longitude": -66.126131,
+                "altitude": 42949671.86,
+                "speed": 0.0,
+                "bearing": 0.0,
+                "accuracy": 100.0,
+                "last_update_iso": "2025-11-16T21:20:09",
+                "last_update_timestamp": 1763328009.0
+            },
+            "acceleration": {
+                "x": -0.032901,
+                "y": -0.017348,
+                "z": 9.7992069999999991
+            },
+            "angular_velocity": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+            },
+            "information": {
+                "contents": ""
+            },
+            "rns_transport": {
+                "transport_enabled": true,
+                "transport_identity": "b'S\\xd9%\\xa5\\xf7\\xf3\\x1f_\\xf4\\xa6)\\xd7mv7\\xeb'",
+                "transport_uptime": 185.98445820808411,
+                "traffic_rxb": 12150,
+                "traffic_txb": 23021,
+                "speed_rx": 164.38727167203385,
+                "speed_tx": 456.42425470720974,
+                "speed_rx_inst": 0.0,
+                "speed_tx_inst": 0.0,
+                "memory_used": null,
+                "interface_count": 5,
+                "link_count": 0,
+                "interfaces": [
+                    {
+                        "clients": 1,
+                        "bitrate": 1000000000,
+                        "rxs": 0.0,
+                        "txs": 0.0,
+                        "ifac_signature": null,
+                        "ifac_size": null,
+                        "ifac_netname": null,
+                        "announce_queue": 0,
+                        "name": "Shared Instance[37428]",
+                        "short_name": "Reticulum",
+                        "hash": "b'\\x80\\x8d\\x0f\\xb6_\\x12\\xb0\\x00h\\x17G\\xcb\\xd3\\x021[\\xc5\\xbc\\xe0\\xeb\\xf2\\x1f44O|t\\x07\\x99\\xdb\\x84\\xf7'",
+                        "type": "LocalServerInterface",
+                        "rxb": 398,
+                        "txb": 9139,
+                        "incoming_announce_frequency": 0.01091924537420492,
+                        "outgoing_announce_frequency": 0.33391742532924024,
+                        "held_announces": 0,
+                        "status": true,
+                        "mode": 1
+                    },
+                    {
+                        "clients": null,
+                        "parent_interface_name": "Shared Instance[37428]",
+                        "parent_interface_hash": "b'\\x80\\x8d\\x0f\\xb6_\\x12\\xb0\\x00h\\x17G\\xcb\\xd3\\x021[\\xc5\\xbc\\xe0\\xeb\\xf2\\x1f44O|t\\x07\\x99\\xdb\\x84\\xf7'",
+                        "bitrate": 1000000000,
+                        "rxs": 0,
+                        "txs": 0,
+                        "ifac_signature": null,
+                        "ifac_size": null,
+                        "ifac_netname": null,
+                        "announce_queue": 0,
+                        "name": "LocalInterface[50426]",
+                        "short_name": "50426",
+                        "hash": "b'\\xfe\\xe1L\\xfb\\x01\\xac\\x94\\xe52T\\xcby\\xbd<\\xeeK\\x92;:q\\x08\\xf4a&!\\x17\\x8e\\xe4\\xcc\\xd2\\xd1\\xc3'",
+                        "type": "LocalClientInterface",
+                        "rxb": 398,
+                        "txb": 9139,
+                        "incoming_announce_frequency": 0.010919212072511777,
+                        "outgoing_announce_frequency": 0.33390661933437132,
+                        "held_announces": 0,
+                        "status": true,
+                        "mode": 1
+                    },
+                    {
+                        "clients": null,
+                        "bitrate": 100000000,
+                        "rxs": 0.0,
+                        "txs": 0.0,
+                        "ifac_signature": null,
+                        "ifac_size": null,
+                        "ifac_netname": null,
+                        "announce_queue": 0,
+                        "name": "BackboneInterface[TCP Client/sideband.connect.reticulum.network:7822]",
+                        "short_name": "TCP Client",
+                        "hash": "b'\\xd6J\\xe2\\xa3\\x94\\xc9\\xda\\x16VU\\xa4\\xcf\\x91\\xd7$\\xc7\\xb0\\xac\\x81\\xdb\\xfd\\xeev\\xf6\\xbb\\x06\\x8d\\xf9X\\x06\\x0f\\x82'",
+                        "type": "BackboneClientInterface",
+                        "rxb": 6237,
+                        "txb": 8643,
+                        "incoming_announce_frequency": 0.046188898023360306,
+                        "outgoing_announce_frequency": 0.053211270288453127,
+                        "held_announces": 7,
+                        "status": true,
+                        "mode": 1
+                    },
+                    {
+                        "clients": null,
+                        "bitrate": 10000000,
+                        "rxs": 0.0,
+                        "txs": 0.0,
+                        "peers": 1,
+                        "ifac_signature": null,
+                        "ifac_size": null,
+                        "ifac_netname": null,
+                        "announce_queue": 0,
+                        "name": "AutoInterface[AutoInterface]",
+                        "short_name": "AutoInterface",
+                        "hash": "b'\\x06\\xda\\x17B|\\x05\\xab\\xa2d\\x1dq\\x8a\\xa7u\\xcff\\xed\\xf71B]\\xbd\\xb9O\\xcd\\xceA4\\xc5wr\\xa2'",
+                        "type": "AutoInterface",
+                        "rxb": 5515,
+                        "txb": 5239,
+                        "incoming_announce_frequency": 0.061834505199917504,
+                        "outgoing_announce_frequency": 0.3461985480029256,
+                        "held_announces": 0,
+                        "status": true,
+                        "mode": 1
+                    },
+                    {
+                        "clients": null,
+                        "parent_interface_name": "AutoInterface[AutoInterface]",
+                        "parent_interface_hash": "b'\\x06\\xda\\x17B|\\x05\\xab\\xa2d\\x1dq\\x8a\\xa7u\\xcff\\xed\\xf71B]\\xbd\\xb9O\\xcd\\xceA4\\xc5wr\\xa2'",
+                        "bitrate": 10000000,
+                        "rxs": 0,
+                        "txs": 0,
+                        "ifac_signature": null,
+                        "ifac_size": null,
+                        "ifac_netname": null,
+                        "announce_queue": 0,
+                        "name": "AutoInterfacePeer[wlan0/fe80::55c1:3e30:85ab:c79b]",
+                        "short_name": "None",
+                        "hash": "b'U\\t\\xd4\\xfc\\x81r/Wi%6<\\x18#\\xbbJ\\xa3\\xa7{E{U\\xdd\\xd7>S3\\xb9\\x8c;.\\xf6'",
+                        "type": "AutoInterfacePeer",
+                        "rxb": 5515,
+                        "txb": 5239,
+                        "incoming_announce_frequency": 0.061834160770905533,
+                        "outgoing_announce_frequency": 0.053211522314933167,
+                        "held_announces": 0,
+                        "status": true,
+                        "mode": 1
+                    }
+                ],
+                "path_table": [
+                    {
+                        "hash": "b'|i\\x03\\xceQpC\\xb2x}c\\xc5ar\\x91|'",
+                        "timestamp": 1763328010.7244377,
+                        "via": "b'\\x0fK(W\\xf9\\x1b\\xedQj\\xd4k\\xc30>\\xad\\x88'",
+                        "hops": 3,
+                        "expires": 1763932810.7244377,
+                        "interface": "AutoInterfacePeer[wlan0/fe80::55c1:3e30:85ab:c79b]"
+                    },
+                    {
+                        "hash": "b'\\x0b\\xc3\\xcdzBC\\x7f-\\\\u\\xf4XG\\xf7?/'",
+                        "timestamp": 1763328020.7351322,
+                        "via": "b'\\x0fK(W\\xf9\\x1b\\xedQj\\xd4k\\xc30>\\xad\\x88'",
+                        "hops": 3,
+                        "expires": 1763932820.7351322,
+                        "interface": "AutoInterfacePeer[wlan0/fe80::55c1:3e30:85ab:c79b]"
+                    },
+                    {
+                        "hash": "b\"{\\x05\\xb5\\xed\\xec\\xb9\\xe0\\x07\\x95Em'e\\xae6\\x88\"",
+                        "timestamp": 1763328030.7692542,
+                        "via": "b'\\x0fK(W\\xf9\\x1b\\xedQj\\xd4k\\xc30>\\xad\\x88'",
+                        "hops": 3,
+                        "expires": 1763932830.7692542,
+                        "interface": "AutoInterfacePeer[wlan0/fe80::55c1:3e30:85ab:c79b]"
+                    },
+                    {
+                        "hash": "b'\\xb3\\xbb\\x80\\xabD\\x07t\\x86\\xb7\\xc5{\\xb6\\xe3\\xe7\\x80T'",
+                        "timestamp": 1763328172.9121535,
+                        "via": "b'\\x0fK(W\\xf9\\x1b\\xedQj\\xd4k\\xc30>\\xad\\x88'",
+                        "hops": 3,
+                        "expires": 1763932972.9121535,
+                        "interface": "AutoInterfacePeer[wlan0/fe80::55c1:3e30:85ab:c79b]"
+                    },
+                    {
+                        "hash": "b'\\x81\\xf9h\\x8cC\\x14\\xd7\\xa0\\xeexP\\x8ein\\xf9A'",
+                        "timestamp": 1763328172.9777241,
+                        "via": "b'\\x0fK(W\\xf9\\x1b\\xedQj\\xd4k\\xc30>\\xad\\x88'",
+                        "hops": 3,
+                        "expires": 1763932972.9777241,
+                        "interface": "AutoInterfacePeer[wlan0/fe80::55c1:3e30:85ab:c79b]"
+                    },
+                    {
+                        "hash": "b'\\xb7Pb\\x06\\xb8\\xbe@\\xeb\\x9a\\x1a\\x8c\\xd6k\\x92b\\xfb'",
+                        "timestamp": 1763328042.7536061,
+                        "via": "b'\\x0fK(W\\xf9\\x1b\\xedQj\\xd4k\\xc30>\\xad\\x88'",
+                        "hops": 4,
+                        "expires": 1763932842.7536061,
+                        "interface": "AutoInterfacePeer[wlan0/fe80::55c1:3e30:85ab:c79b]"
+                    },
+                    {
+                        "hash": "b'\\x86\\xeb\\xaet;6_\\xdc\\xa7\\xbb\\xb8\\xd3w)\\xbc\\xa8'",
+                        "timestamp": 1763328070.748992,
+                        "via": "b'\\x0fK(W\\xf9\\x1b\\xedQj\\xd4k\\xc30>\\xad\\x88'",
+                        "hops": 5,
+                        "expires": 1763932870.748992,
+                        "interface": "AutoInterfacePeer[wlan0/fe80::55c1:3e30:85ab:c79b]"
+                    },
+                    {
+                        "hash": "b'\\x1b,<\\x89<\\xa0\\tLa\\r\\xc9\\xa4\\xed\\\\|\\x81'",
+                        "timestamp": 1763328009.7988181,
+                        "via": "b'R\\x1c\\x87\\xa8:\\xfb\\x8f)\\xe4E^w\\x93\\x0b\\x97;'",
+                        "hops": 2,
+                        "expires": 1763932809.7988181,
+                        "interface": "BackboneInterface[TCP Client/sideband.connect.reticulum.network:7822]"
+                    },
+                    {
+                        "hash": "b'7E\\xa3\\xf1\\x1d\\xb6\\x03\\tD\\xf4FJ\\xbcu\\x0f '",
+                        "timestamp": 1763328091.4802854,
+                        "via": "b'R\\x1c\\x87\\xa8:\\xfb\\x8f)\\xe4E^w\\x93\\x0b\\x97;'",
+                        "hops": 2,
+                        "expires": 1763932872.1461902,
+                        "interface": "BackboneInterface[TCP Client/sideband.connect.reticulum.network:7822]"
+                    },
+                    {
+                        "hash": "b'=\\x18\\xf6\\x99\\xde.O\\xb72=)1\\xc5\\x0e\\ty'",
+                        "timestamp": 1763328077.2072463,
+                        "via": "b'R\\x1c\\x87\\xa8:\\xfb\\x8f)\\xe4E^w\\x93\\x0b\\x97;'",
+                        "hops": 2,
+                        "expires": 1763932877.2072463,
+                        "interface": "BackboneInterface[TCP Client/sideband.connect.reticulum.network:7822]"
+                    },
+                    {
+                        "hash": "b'\\xd2\\x079p\\x94\\x04\\xb0\\xfb\\xdaPb\\xce\\xfc\\x87\\xe2.'",
+                        "timestamp": 1763328093.5456059,
+                        "via": "b'R\\x1c\\x87\\xa8:\\xfb\\x8f)\\xe4E^w\\x93\\x0b\\x97;'",
+                        "hops": 2,
+                        "expires": 1763932893.5456059,
+                        "interface": "BackboneInterface[TCP Client/sideband.connect.reticulum.network:7822]"
+                    }
+                ],
+                "ifstats": {
+                    "interfaces": [
+                        {
+                            "clients": 1,
+                            "bitrate": 1000000000,
+                            "rxs": 0.0,
+                            "txs": 0.0,
+                            "ifac_signature": null,
+                            "ifac_size": null,
+                            "ifac_netname": null,
+                            "announce_queue": 0,
+                            "name": "Shared Instance[37428]",
+                            "short_name": "Reticulum",
+                            "hash": "b'\\x80\\x8d\\x0f\\xb6_\\x12\\xb0\\x00h\\x17G\\xcb\\xd3\\x021[\\xc5\\xbc\\xe0\\xeb\\xf2\\x1f44O|t\\x07\\x99\\xdb\\x84\\xf7'",
+                            "type": "LocalServerInterface",
+                            "rxb": 398,
+                            "txb": 9139,
+                            "incoming_announce_frequency": 0.01091924537420492,
+                            "outgoing_announce_frequency": 0.33391742532924024,
+                            "held_announces": 0,
+                            "status": true,
+                            "mode": 1
+                        },
+                        {
+                            "clients": null,
+                            "parent_interface_name": "Shared Instance[37428]",
+                            "parent_interface_hash": "b'\\x80\\x8d\\x0f\\xb6_\\x12\\xb0\\x00h\\x17G\\xcb\\xd3\\x021[\\xc5\\xbc\\xe0\\xeb\\xf2\\x1f44O|t\\x07\\x99\\xdb\\x84\\xf7'",
+                            "bitrate": 1000000000,
+                            "rxs": 0,
+                            "txs": 0,
+                            "ifac_signature": null,
+                            "ifac_size": null,
+                            "ifac_netname": null,
+                            "announce_queue": 0,
+                            "name": "LocalInterface[50426]",
+                            "short_name": "50426",
+                            "hash": "b'\\xfe\\xe1L\\xfb\\x01\\xac\\x94\\xe52T\\xcby\\xbd<\\xeeK\\x92;:q\\x08\\xf4a&!\\x17\\x8e\\xe4\\xcc\\xd2\\xd1\\xc3'",
+                            "type": "LocalClientInterface",
+                            "rxb": 398,
+                            "txb": 9139,
+                            "incoming_announce_frequency": 0.010919212072511777,
+                            "outgoing_announce_frequency": 0.33390661933437132,
+                            "held_announces": 0,
+                            "status": true,
+                            "mode": 1
+                        },
+                        {
+                            "clients": null,
+                            "bitrate": 100000000,
+                            "rxs": 0.0,
+                            "txs": 0.0,
+                            "ifac_signature": null,
+                            "ifac_size": null,
+                            "ifac_netname": null,
+                            "announce_queue": 0,
+                            "name": "BackboneInterface[TCP Client/sideband.connect.reticulum.network:7822]",
+                            "short_name": "TCP Client",
+                            "hash": "b'\\xd6J\\xe2\\xa3\\x94\\xc9\\xda\\x16VU\\xa4\\xcf\\x91\\xd7$\\xc7\\xb0\\xac\\x81\\xdb\\xfd\\xeev\\xf6\\xbb\\x06\\x8d\\xf9X\\x06\\x0f\\x82'",
+                            "type": "BackboneClientInterface",
+                            "rxb": 6237,
+                            "txb": 8643,
+                            "incoming_announce_frequency": 0.046188898023360306,
+                            "outgoing_announce_frequency": 0.053211270288453127,
+                            "held_announces": 7,
+                            "status": true,
+                            "mode": 1
+                        },
+                        {
+                            "clients": null,
+                            "bitrate": 10000000,
+                            "rxs": 0.0,
+                            "txs": 0.0,
+                            "peers": 1,
+                            "ifac_signature": null,
+                            "ifac_size": null,
+                            "ifac_netname": null,
+                            "announce_queue": 0,
+                            "name": "AutoInterface[AutoInterface]",
+                            "short_name": "AutoInterface",
+                            "hash": "b'\\x06\\xda\\x17B|\\x05\\xab\\xa2d\\x1dq\\x8a\\xa7u\\xcff\\xed\\xf71B]\\xbd\\xb9O\\xcd\\xceA4\\xc5wr\\xa2'",
+                            "type": "AutoInterface",
+                            "rxb": 5515,
+                            "txb": 5239,
+                            "incoming_announce_frequency": 0.061834505199917504,
+                            "outgoing_announce_frequency": 0.3461985480029256,
+                            "held_announces": 0,
+                            "status": true,
+                            "mode": 1
+                        },
+                        {
+                            "clients": null,
+                            "parent_interface_name": "AutoInterface[AutoInterface]",
+                            "parent_interface_hash": "b'\\x06\\xda\\x17B|\\x05\\xab\\xa2d\\x1dq\\x8a\\xa7u\\xcff\\xed\\xf71B]\\xbd\\xb9O\\xcd\\xceA4\\xc5wr\\xa2'",
+                            "bitrate": 10000000,
+                            "rxs": 0,
+                            "txs": 0,
+                            "ifac_signature": null,
+                            "ifac_size": null,
+                            "ifac_netname": null,
+                            "announce_queue": 0,
+                            "name": "AutoInterfacePeer[wlan0/fe80::55c1:3e30:85ab:c79b]",
+                            "short_name": "None",
+                            "hash": "b'U\\t\\xd4\\xfc\\x81r/Wi%6<\\x18#\\xbbJ\\xa3\\xa7{E{U\\xdd\\xd7>S3\\xb9\\x8c;.\\xf6'",
+                            "type": "AutoInterfacePeer",
+                            "rxb": 5515,
+                            "txb": 5239,
+                            "incoming_announce_frequency": 0.061834160770905533,
+                            "outgoing_announce_frequency": 0.053211522314933167,
+                            "held_announces": 0,
+                            "status": true,
+                            "mode": 1
+                        }
+                    ],
+                    "rxb": 12150,
+                    "txb": 23021,
+                    "rxs": 0.0,
+                    "txs": 0.0,
+                    "transport_id": "b'S\\xd9%\\xa5\\xf7\\xf3\\x1f_\\xf4\\xa6)\\xd7mv7\\xeb'",
+                    "transport_uptime": 185.98445820808411,
+                    "probe_responder": null
+                }
+            }
+        }
+    },
+    {
+        "peer_destination": "48814c9977cb85abacf4c7972b908f02",
+        "timestamp": 1763328135,
+        "telemetry": {
+            "time": {
+                "timestamp": 1763327534.0,
+                "iso": "2025-11-16T21:12:14"
+            },
+            "location": {
+                "latitude": 49.976,
+                "longitude": -66.141999,
+                "altitude": 0.0,
+                "speed": 0.0,
+                "bearing": 0.0,
+                "accuracy": 0.01,
+                "last_update_iso": "2025-11-16T21:11:14",
+                "last_update_timestamp": 1763327474.0
+            },
+            "information": {
+                "contents": ""
+            }
+        }
+    },
+    {
+        "peer_destination": "f4c1d2e3a4b5c6d7e8f90123456789ab",
+        "timestamp": 1763399000,
+        "telemetry": {
+            "time": {
+                "timestamp": 1763399000.0,
+                "iso": "2025-11-17T17:03:20"
+            },
+            "location": {
+                "latitude": 43.9675,
+                "longitude": -66.1265,
+                "altitude": 0.0,
+                "speed": 0.0,
+                "bearing": 0.0,
+                "accuracy": 0.0,
+                "last_update_iso": "2025-11-17T17:03:20",
+                "last_update_timestamp": 1763399000.0
+            },
+            "information": {
+                "contents": "Hub Operator"
+            },
+            "custom": {
+                "marker": [
+                    {
+                        "object_type": "marker",
+                        "object_id": "f4c1d2e3a4b5c6d7e8f90123456789ab",
+                        "event_type": "marker.created",
+                        "marker_type": "person",
+                        "symbol": "person",
+                        "category": "person",
+                        "name": "Hub Operator",
+                        "origin_rch": "aabbccddeeff00112233445566778899",
+                        "position": {
+                            "lat": 43.9675,
+                            "lon": -66.1265
+                        },
+                        "time": "2025-11-17T17:03:20+00:00",
+                        "stale_at": "2025-11-18T17:03:20+00:00",
+                        "notes": "Operator-provided marker"
+                    },
+                    null
+                ]
+            }
+        }
+    }
+]

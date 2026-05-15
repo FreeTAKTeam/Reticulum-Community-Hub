@@ -21,6 +21,8 @@ use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
+pub mod python_migration;
+
 pub const DELIVERY_ENVELOPE_FIELD: &str = "RTHDelivery";
 pub const DELIVERY_SCHEMA_VERSION: &str = "1";
 pub const DEFAULT_TTL_SECONDS: u32 = 300;
@@ -10185,7 +10187,15 @@ fn canonical_team_from_team_args<'a>(
     if let Some(uid) = requested_uid {
         return canonical_team_for_uid(uid);
     }
+    let has_noncanonical_name = ["team_name", "name", "group_name"].iter().any(|field| {
+        optional_text(args, &[*field])
+            .and_then(|value| normalize_team_color(&value).ok())
+            .is_none()
+    });
     for field in ["color", "team_name", "name", "group_name"] {
+        if field == "color" && has_noncanonical_name {
+            continue;
+        }
         let Some(value) = optional_text(args, &[field]) else {
             continue;
         };
@@ -12229,6 +12239,22 @@ mod tests {
                 .results_field()
                 .expect("result")["result"]["team_name"],
             "Ops"
+        );
+        let ui_colored_team = core.handle_mission_sync_command(&command(
+            "mission.registry.team.upsert",
+            json!({ "color": "GREEN", "team_name": "UI Smoke Team" }),
+        ));
+        assert_ne!(
+            ui_colored_team[1].results_field().expect("result")["result"]["uid"],
+            "612a32262163b73a80eca944c2158546"
+        );
+        assert_eq!(
+            ui_colored_team[1].results_field().expect("result")["result"]["color"],
+            "GREEN"
+        );
+        assert_eq!(
+            ui_colored_team[1].results_field().expect("result")["result"]["team_name"],
+            "UI Smoke Team"
         );
 
         let team_upsert = core.handle_mission_sync_command(&command(

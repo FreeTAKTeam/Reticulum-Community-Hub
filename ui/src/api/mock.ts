@@ -376,7 +376,18 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
   }
 
   if (pathname === "/Control/Sync" && method === "POST") {
-    return jsonResponse({ status: "sync_requested", propagation_node: "mock-node" });
+    return jsonResponse({
+      status: "sync_requested",
+      propagation_node: "mock-node",
+      fetch_result: {
+        remote: "mock-node",
+        result: {
+          available_count: 0,
+          fetched_count: 0,
+          imported_count: 0
+        }
+      }
+    });
   }
 
   if (pathname === "/Events") {

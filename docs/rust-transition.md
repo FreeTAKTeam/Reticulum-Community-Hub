@@ -43,6 +43,15 @@ The live smoke test should start `r3akt-rch-server` with a temporary SQLite
 database and validate `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`,
 and at least one topic/chat/checklist/mission flow.
 
+The Python parity plus Rust capability gate is tracked in
+`docs/release-contract-matrix.json` and generated with
+`scripts/python-rust-parity.ps1`. The matrix separates Python-compatible
+contracts from Rust-only required improvements such as REM compatibility,
+LXMF-rs/`reticulumd` runtime behavior, install-over-Python migration, Tauri
+sidecars, and the standalone TAK service. Rust release readiness requires no
+unwaived Python-visible regressions and green evidence for Rust additive
+capabilities.
+
 ## Packaging
 
 - Server packages are built from `r3akt-rch-server` and include the built
