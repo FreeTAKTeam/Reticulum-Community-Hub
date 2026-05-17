@@ -861,6 +861,7 @@ interface DomainEventRaw {
   aggregate_uid?: string | null;
   event_type?: string | null;
   payload?: unknown;
+  payload_summary?: unknown;
   created_at?: string | null;
 }
 
@@ -1174,7 +1175,7 @@ const formatDueRelativeMinutesLabel = (value?: number | null): string => {
 };
 
 const formatDomainEventMessage = (event: DomainEventRaw): string => {
-  const payload = asRecord(event.payload);
+  const payload = asRecord(event.payload ?? event.payload_summary);
   const name = payload.name;
   if (typeof name === "string" && name.trim()) {
     return name.trim();
@@ -2846,7 +2847,7 @@ const missionAudit = computed<AuditEvent[]>(() => {
       if (String(entry.aggregate_type ?? "").trim() === "checklist" && missionChecklistUids.has(aggregateUid)) {
         return true;
       }
-      const payload = asRecord(entry.payload);
+      const payload = asRecord(entry.payload ?? entry.payload_summary);
       const payloadMissionUid = String(payload.mission_uid ?? payload.mission_id ?? "").trim();
       if (payloadMissionUid && payloadMissionUid === missionUid) {
         return true;
@@ -2857,7 +2858,7 @@ const missionAudit = computed<AuditEvent[]>(() => {
     .map((entry) => {
       const createdAt = String(entry.created_at ?? "");
       const eventType = String(entry.event_type ?? "domain.event").trim();
-      const payload = asRecord(entry.payload);
+      const payload = asRecord(entry.payload ?? entry.payload_summary);
       return {
         uid: String(entry.event_uid ?? `${entry.event_type}-${createdAt}`),
         mission_uid: missionUid,

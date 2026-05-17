@@ -13,7 +13,7 @@ use r3akt_profile_rch::{
     CommandResultEnvelope, CommandResultStatus, EventEnvelope, MissionCommandEnvelope,
 };
 use r3akt_protocol::{Destination, NodeId, Payload, ProtocolEnvelope, Topic, TopicMessage};
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, OpenFlags, Transaction, params};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1109,6 +1109,12 @@ impl RchSqliteStore {
         Self::from_connection(Connection::open(path)?)
     }
 
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, RchCoreError> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        configure_sqlite_connection(&connection)?;
+        Ok(Self { connection })
+    }
+
     pub fn in_memory() -> Result<Self, RchCoreError> {
         Self::from_connection(Connection::open_in_memory()?)
     }
@@ -1222,6 +1228,18 @@ impl RchSqliteStore {
         )
     }
 
+    pub fn load_identity_states(&self) -> Result<Vec<IdentityStateRecord>, RchCoreError> {
+        self.load_payload_rows::<IdentityStateRecord>(
+            "SELECT payload FROM rch_identity_states ORDER BY identity",
+        )
+    }
+
+    pub fn load_identity_rem_modes(&self) -> Result<Vec<IdentityRemModeRecord>, RchCoreError> {
+        self.load_payload_rows::<IdentityRemModeRecord>(
+            "SELECT payload FROM rch_identity_rem_modes ORDER BY identity",
+        )
+    }
+
     pub fn count_file_attachments_by_category(
         &self,
         category: &str,
@@ -1232,6 +1250,37 @@ impl RchSqliteStore {
             |row| row.get::<_, i64>(0),
         )?;
         Ok(usize::try_from(count).unwrap_or(usize::MAX))
+    }
+
+    pub fn load_file_attachments_by_category(
+        &self,
+        category: &str,
+    ) -> Result<Vec<FileAttachmentRecord>, RchCoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT payload FROM rch_file_attachments WHERE category = ?1 ORDER BY file_id",
+        )?;
+        let rows = statement.query_map(params![category], |row| row.get::<_, Vec<u8>>(0))?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(decode_msgpack(&row?)?);
+        }
+        Ok(records)
+    }
+
+    pub fn load_file_attachment(
+        &self,
+        file_id: u64,
+        category: &str,
+    ) -> Result<Option<FileAttachmentRecord>, RchCoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT payload FROM rch_file_attachments WHERE file_id = ?1 AND category = ?2",
+        )?;
+        let mut rows = statement.query(params![file_id, category])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let payload = row.get::<_, Vec<u8>>(0)?;
+        Ok(Some(decode_msgpack(&payload)?))
     }
 
     pub fn upsert_identity_states(
@@ -1260,6 +1309,141 @@ impl RchSqliteStore {
         } else {
             Ok(Some(snapshot))
         }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub fn load_r3akt_read_snapshot(&self) -> Result<RchCoreSnapshot, RchCoreError> {
+        let topics = self
+            .load_payload_rows::<TopicRecord>("SELECT payload FROM rch_topics ORDER BY topic_id")?;
+        let subscribers = self.load_payload_rows::<SubscriberRecord>(
+            "SELECT payload FROM rch_subscribers ORDER BY topic_id, node_id",
+        )?;
+        let clients = self.load_payload_rows::<ClientRecord>(
+            "SELECT payload FROM rch_clients ORDER BY identity",
+        )?;
+        let identity_announces = self.load_payload_rows::<IdentityAnnounceRecord>(
+            "SELECT payload FROM rch_identity_announces ORDER BY destination_hash",
+        )?;
+        let identity_states = self.load_payload_rows::<IdentityStateRecord>(
+            "SELECT payload FROM rch_identity_states ORDER BY identity",
+        )?;
+        let identity_rem_modes = self.load_payload_rows::<IdentityRemModeRecord>(
+            "SELECT payload FROM rch_identity_rem_modes ORDER BY identity",
+        )?;
+        let markers = self.load_payload_rows::<MarkerRecord>(
+            "SELECT payload FROM rch_markers ORDER BY object_destination_hash",
+        )?;
+        let zones =
+            self.load_payload_rows::<ZoneRecord>("SELECT payload FROM rch_zones ORDER BY zone_id")?;
+        let missions = self
+            .load_payload_rows::<MissionRecord>("SELECT payload FROM rch_missions ORDER BY uid")?;
+        let mission_changes = self.load_payload_rows::<MissionChangeRecord>(
+            "SELECT payload FROM rch_mission_changes ORDER BY uid",
+        )?;
+        let log_entries = self.load_payload_rows::<LogEntryRecord>(
+            "SELECT payload FROM rch_log_entries ORDER BY entry_uid",
+        )?;
+        let eam_snapshots = self.load_payload_rows::<EamSnapshotRecord>(
+            "SELECT payload FROM rch_eam_snapshots ORDER BY callsign",
+        )?;
+        let teams =
+            self.load_payload_rows::<TeamRecord>("SELECT payload FROM rch_teams ORDER BY uid")?;
+        let mission_team_links = self.load_payload_rows::<MissionTeamLinkRecord>(
+            "SELECT payload FROM rch_mission_team_links ORDER BY mission_uid, team_uid",
+        )?;
+        let mission_zone_links = self.load_payload_rows::<MissionZoneLinkRecord>(
+            "SELECT payload FROM rch_mission_zone_links ORDER BY mission_uid, zone_id",
+        )?;
+        let mission_marker_links = self.load_payload_rows::<MissionMarkerLinkRecord>(
+            "SELECT payload FROM rch_mission_marker_links ORDER BY mission_uid, marker_id",
+        )?;
+        let team_members = self.load_payload_rows::<TeamMemberRecord>(
+            "SELECT payload FROM rch_team_members ORDER BY uid",
+        )?;
+        let team_member_client_links = self.load_payload_rows::<TeamMemberClientLinkRecord>(
+            "SELECT payload FROM rch_team_member_client_links ORDER BY team_member_uid, client_identity",
+        )?;
+        let assets = self.load_payload_rows::<AssetRecord>(
+            "SELECT payload FROM rch_assets ORDER BY asset_uid",
+        )?;
+        let skills = self.load_payload_rows::<SkillRecord>(
+            "SELECT payload FROM rch_skills ORDER BY skill_uid",
+        )?;
+        let team_member_skills = self.load_payload_rows::<TeamMemberSkillRecord>(
+            "SELECT payload FROM rch_team_member_skills ORDER BY team_member_rns_identity, skill_uid",
+        )?;
+        let task_skill_requirements = self.load_payload_rows::<TaskSkillRequirementRecord>(
+            "SELECT payload FROM rch_task_skill_requirements ORDER BY task_uid, skill_uid",
+        )?;
+        let assignments = self.load_payload_rows::<AssignmentRecord>(
+            "SELECT payload FROM rch_assignments ORDER BY assignment_uid",
+        )?;
+        let assignment_asset_links = self.load_payload_rows::<AssignmentAssetLinkRecord>(
+            "SELECT payload FROM rch_assignment_asset_links ORDER BY assignment_uid, asset_uid",
+        )?;
+        let (
+            checklists,
+            checklist_templates,
+            checklist_columns,
+            checklist_tasks,
+            checklist_cells,
+            checklist_feed_publications,
+        ) = self.load_checklist_snapshot_rows()?;
+        let identity_capabilities = self.load_payload_rows::<IdentityCapabilityGrant>(
+            "SELECT payload FROM rch_identity_capabilities ORDER BY identity, capability",
+        )?;
+        let mission_access_assignments = self.load_payload_rows::<MissionAccessAssignment>(
+            "SELECT payload FROM rch_mission_access_assignments ORDER BY mission_uid, subject_type, subject_id",
+        )?;
+        let subject_operation_rights = self.load_payload_rows::<SubjectOperationRight>(
+            "SELECT payload FROM rch_subject_operation_rights
+             ORDER BY subject_type, subject_id, operation, scope_type, scope_id",
+        )?;
+        let authorization_required = self
+            .setting_value("authorization_required")?
+            .is_some_and(|value| value == "true");
+        Ok(RchCoreSnapshot {
+            topics,
+            subscribers,
+            messages: Vec::new(),
+            clients,
+            identity_announces,
+            identity_states,
+            identity_rem_modes,
+            audit_events: Vec::new(),
+            system_events: Vec::new(),
+            telemetry_records: Vec::new(),
+            markers,
+            zones,
+            missions,
+            mission_changes,
+            log_entries,
+            file_attachments: Vec::new(),
+            eam_snapshots,
+            teams,
+            mission_team_links,
+            mission_zone_links,
+            mission_marker_links,
+            team_members,
+            team_member_client_links,
+            assets,
+            skills,
+            team_member_skills,
+            task_skill_requirements,
+            assignments,
+            assignment_asset_links,
+            checklists,
+            checklist_templates,
+            checklist_columns,
+            checklist_tasks,
+            checklist_cells,
+            checklist_feed_publications,
+            command_results: Vec::new(),
+            identity_capabilities,
+            mission_access_assignments,
+            subject_operation_rights,
+            authorization_required,
+        })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1457,6 +1641,141 @@ impl RchSqliteStore {
         snapshot.checklist_feed_publications = checklist_feed_publications;
         let core = RchCore::from_snapshot(snapshot)?;
         Ok(json!({ "checklists": core.checklist_values() }))
+    }
+
+    pub fn load_checklist_template_list_value(&self) -> Result<Value, RchCoreError> {
+        let mut snapshot = RchCore::new().snapshot();
+        snapshot.checklist_templates = self.load_payload_rows::<ChecklistTemplateRecord>(
+            "SELECT payload FROM rch_checklist_templates ORDER BY uid",
+        )?;
+        snapshot.checklist_columns = self.load_payload_rows::<ChecklistColumnRecord>(
+            "SELECT payload FROM rch_checklist_columns ORDER BY checklist_uid, column_uid",
+        )?;
+        let core = RchCore::from_snapshot(snapshot)?;
+        Ok(json!({ "templates": core.checklist_template_values() }))
+    }
+
+    pub fn load_mission_list_value(&self, args: &Value) -> Result<Value, RchCoreError> {
+        let snapshot = if mission_expand_values(args).is_empty() {
+            let mut snapshot = RchCore::new().snapshot();
+            snapshot.missions = self.load_payload_rows::<MissionRecord>(
+                "SELECT payload FROM rch_missions ORDER BY uid",
+            )?;
+            snapshot.mission_zone_links = self.load_payload_rows::<MissionZoneLinkRecord>(
+                "SELECT payload FROM rch_mission_zone_links ORDER BY mission_uid, zone_id",
+            )?;
+            snapshot.mission_marker_links = self.load_payload_rows::<MissionMarkerLinkRecord>(
+                "SELECT payload FROM rch_mission_marker_links ORDER BY mission_uid, marker_id",
+            )?;
+            snapshot
+        } else {
+            self.load_r3akt_read_snapshot()?
+        };
+        let core = RchCore::from_snapshot(snapshot)?;
+        Ok(json!({ "missions": core.limited_mission_values(args) }))
+    }
+
+    pub fn load_mission_change_list_value(
+        &self,
+        mission_uid: Option<&str>,
+    ) -> Result<Value, RchCoreError> {
+        let mut snapshot = RchCore::new().snapshot();
+        snapshot.mission_changes = self.load_payload_rows::<MissionChangeRecord>(
+            "SELECT payload FROM rch_mission_changes ORDER BY uid",
+        )?;
+        let core = RchCore::from_snapshot(snapshot)?;
+        Ok(json!({ "mission_changes": core.mission_change_values(mission_uid) }))
+    }
+
+    pub fn load_log_entry_list_value(
+        &self,
+        mission_uid: Option<&str>,
+        marker_ref: Option<&str>,
+    ) -> Result<Value, RchCoreError> {
+        let mut snapshot = RchCore::new().snapshot();
+        snapshot.log_entries = self.load_payload_rows::<LogEntryRecord>(
+            "SELECT payload FROM rch_log_entries ORDER BY entry_uid",
+        )?;
+        let core = RchCore::from_snapshot(snapshot)?;
+        Ok(json!({ "log_entries": core.log_entry_values(mission_uid, marker_ref) }))
+    }
+
+    pub fn load_team_list_value(&self, mission_uid: Option<&str>) -> Result<Value, RchCoreError> {
+        let mut snapshot = RchCore::new().snapshot();
+        snapshot.teams =
+            self.load_payload_rows::<TeamRecord>("SELECT payload FROM rch_teams ORDER BY uid")?;
+        let core = RchCore::from_snapshot(snapshot)?;
+        Ok(json!({ "teams": core.team_values(mission_uid) }))
+    }
+
+    pub fn load_team_member_list_value(
+        &self,
+        team_uid: Option<&str>,
+    ) -> Result<Value, RchCoreError> {
+        let mut snapshot = RchCore::new().snapshot();
+        snapshot.team_members = self.load_payload_rows::<TeamMemberRecord>(
+            "SELECT payload FROM rch_team_members ORDER BY uid",
+        )?;
+        let core = RchCore::from_snapshot(snapshot)?;
+        Ok(json!({ "team_members": core.team_member_values(team_uid) }))
+    }
+
+    pub fn load_asset_list_value(
+        &self,
+        team_member_uid: Option<&str>,
+    ) -> Result<Value, RchCoreError> {
+        let mut snapshot = RchCore::new().snapshot();
+        snapshot.assets = self.load_payload_rows::<AssetRecord>(
+            "SELECT payload FROM rch_assets ORDER BY asset_uid",
+        )?;
+        let core = RchCore::from_snapshot(snapshot)?;
+        Ok(json!({ "assets": core.asset_values(team_member_uid) }))
+    }
+
+    pub fn load_assignment_list_value(
+        &self,
+        mission_uid: Option<&str>,
+        task_uid: Option<&str>,
+    ) -> Result<Value, RchCoreError> {
+        let mut snapshot = RchCore::new().snapshot();
+        snapshot.assignments = self.load_payload_rows::<AssignmentRecord>(
+            "SELECT payload FROM rch_assignments ORDER BY assignment_uid",
+        )?;
+        snapshot.assignment_asset_links = self.load_payload_rows::<AssignmentAssetLinkRecord>(
+            "SELECT payload FROM rch_assignment_asset_links ORDER BY assignment_uid, asset_uid",
+        )?;
+        let core = RchCore::from_snapshot(snapshot)?;
+        Ok(json!({ "assignments": core.assignment_values(mission_uid, task_uid) }))
+    }
+
+    pub fn load_eam_list_value(
+        &self,
+        team_uid: Option<&str>,
+        overall_status: Option<&str>,
+    ) -> Result<Value, RchCoreError> {
+        let mut snapshot = RchCore::new().snapshot();
+        snapshot.eam_snapshots = self.load_payload_rows::<EamSnapshotRecord>(
+            "SELECT payload FROM rch_eam_snapshots ORDER BY callsign",
+        )?;
+        let core = RchCore::from_snapshot(snapshot)?;
+        Ok(json!({ "eams": core.eam_values(team_uid, overall_status)? }))
+    }
+
+    pub fn load_audit_events_desc(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<MissionAuditEvent>, RchCoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = self
+            .connection
+            .prepare("SELECT payload FROM rch_audit_events ORDER BY id DESC LIMIT ?1")?;
+        let rows = statement.query_map(params![limit], |row| row.get::<_, Vec<u8>>(0))?;
+        let mut records: Vec<MissionAuditEvent> = Vec::new();
+        for row in rows {
+            records.push(decode_msgpack(&row?)?);
+        }
+        records.sort_by(|left, right| right.timestamp_ms.cmp(&left.timestamp_ms));
+        Ok(records)
     }
 
     pub fn row_count(&self, table: &str) -> Result<usize, RchCoreError> {
@@ -4403,9 +4722,12 @@ impl RchCore {
             other => return Err(RchCoreError::UnsupportedCommand(other.to_string())),
         };
         let event_type = checklist_event_type(command.command_type.as_str());
-        if command.command_type == "checklist.create.online" {
+        if matches!(
+            command.command_type.as_str(),
+            "checklist.create.online" | "checklist.import.csv"
+        ) {
             self.emit_auto_checklist_created_mission_change(command, &payload)?;
-        } else if command.command_type == "checklist.upload" {
+        } else if matches!(command.command_type.as_str(), "checklist.upload") {
             self.emit_auto_checklist_uploaded_mission_change(command, &payload)?;
         } else if command.command_type == "checklist.update"
             && checklist_update_added_shareable_mission(
@@ -4468,12 +4790,9 @@ impl RchCore {
         command: &MissionCommandEnvelope,
         checklist_payload: &Value,
     ) -> Result<(), RchCoreError> {
-        let Some(mission_uid) = optional_text(checklist_payload, &["mission_uid", "mission_id"])
-            .filter(|uid| !uid.trim().is_empty())
-        else {
-            return Ok(());
-        };
-        if !self.missions.contains_key(&mission_uid) {
+        let mission_uid =
+            optional_text(checklist_payload, &["mission_uid", "mission_id"]).unwrap_or_default();
+        if !mission_uid.is_empty() && !self.missions.contains_key(&mission_uid) {
             return Err(RchCoreError::MissionNotFound);
         }
         let now = utc_now_ms();
@@ -4518,12 +4837,9 @@ impl RchCore {
         command: &MissionCommandEnvelope,
         checklist_payload: &Value,
     ) -> Result<(), RchCoreError> {
-        let Some(mission_uid) = optional_text(checklist_payload, &["mission_uid", "mission_id"])
-            .filter(|uid| !uid.trim().is_empty())
-        else {
-            return Ok(());
-        };
-        if !self.missions.contains_key(&mission_uid) {
+        let mission_uid =
+            optional_text(checklist_payload, &["mission_uid", "mission_id"]).unwrap_or_default();
+        if !mission_uid.is_empty() && !self.missions.contains_key(&mission_uid) {
             return Err(RchCoreError::MissionNotFound);
         }
         let now = utc_now_ms();
@@ -4566,12 +4882,9 @@ impl RchCore {
         command: &MissionCommandEnvelope,
         checklist_payload: &Value,
     ) -> Result<(), RchCoreError> {
-        let Some(mission_uid) = optional_text(checklist_payload, &["mission_uid", "mission_id"])
-            .filter(|uid| !uid.trim().is_empty())
-        else {
-            return Ok(());
-        };
-        if !self.missions.contains_key(&mission_uid) {
+        let mission_uid =
+            optional_text(checklist_payload, &["mission_uid", "mission_id"]).unwrap_or_default();
+        if !mission_uid.is_empty() && !self.missions.contains_key(&mission_uid) {
             return Err(RchCoreError::MissionNotFound);
         }
         let Some(task_delta) = checklist_task_row_added_delta(checklist_payload, &command.args)
@@ -4621,12 +4934,9 @@ impl RchCore {
         team_member_rns_identity: Option<String>,
         change_type: &str,
     ) -> Result<(), RchCoreError> {
-        let Some(mission_uid) = optional_text(checklist_payload, &["mission_uid", "mission_id"])
-            .filter(|uid| !uid.trim().is_empty())
-        else {
-            return Ok(());
-        };
-        if !self.missions.contains_key(&mission_uid) {
+        let mission_uid =
+            optional_text(checklist_payload, &["mission_uid", "mission_id"]).unwrap_or_default();
+        if !mission_uid.is_empty() && !self.missions.contains_key(&mission_uid) {
             return Err(RchCoreError::MissionNotFound);
         }
         let Some(task_delta) = task_delta else {
@@ -5246,6 +5556,18 @@ impl RchCore {
         } else {
             current.map_or_else(Vec::new, |entry| entry.content_hashes.clone())
         };
+        let keywords = if args
+            .as_object()
+            .is_some_and(|object| object.contains_key("keywords"))
+        {
+            let mut keywords = string_list(args.get("keywords"), "keywords")?;
+            append_mecp_keywords(&mut keywords, &content);
+            keywords
+        } else {
+            let mut keywords = current.map_or_else(Vec::new, |entry| entry.keywords.clone());
+            append_mecp_keywords(&mut keywords, &content);
+            keywords
+        };
         let entry = LogEntryRecord {
             entry_uid: entry_uid.clone(),
             mission_uid: mission_uid.clone(),
@@ -5257,14 +5579,7 @@ impl RchCore {
             client_time: optional_text_or_empty(args, &["client_time", "clientTime", "clienttime"])
                 .or_else(|| current.and_then(|entry| entry.client_time.clone())),
             content_hashes,
-            keywords: if args
-                .as_object()
-                .is_some_and(|object| object.contains_key("keywords"))
-            {
-                string_list(args.get("keywords"), "keywords")?
-            } else {
-                current.map_or_else(Vec::new, |entry| entry.keywords.clone())
-            },
+            keywords,
             created_ts_ms: current.map_or(now, |entry| entry.created_ts_ms),
             updated_ts_ms: now,
         };
@@ -5339,6 +5654,7 @@ impl RchCore {
             "server_time": millis_to_rfc3339(entry.server_time_ms),
             "client_time": entry.client_time,
             "keywords": entry.keywords,
+            "mecp": mecp_log_entry_value(&entry.content),
             "content_hashes": entry.content_hashes,
         });
         self.mission_changes.insert(
@@ -7762,6 +8078,7 @@ impl RchCore {
             "client_time": entry.client_time,
             "content_hashes": entry.content_hashes,
             "keywords": entry.keywords,
+            "mecp": mecp_log_entry_value(&entry.content),
             "created_at": millis_to_rfc3339(entry.created_ts_ms),
             "updated_at": millis_to_rfc3339(entry.updated_ts_ms),
         })
@@ -10461,9 +10778,16 @@ fn checklist_task_row_style_delta(checklist_payload: &Value, args: &Value) -> Op
     let selected = checklist_task_from_payload(checklist_payload, args)?;
     Some(json!({
         "op": "row_style_set",
-        "mission_uid": checklist_payload.get("mission_id").cloned().unwrap_or(Value::Null),
+        "mission_uid": checklist_payload
+            .get("mission_uid")
+            .or_else(|| checklist_payload.get("mission_id"))
+            .cloned()
+            .unwrap_or(Value::Null),
         "checklist_uid": checklist_payload.get("uid").cloned().unwrap_or(Value::Null),
         "task_uid": selected.get("task_uid").cloned().unwrap_or(Value::Null),
+        "number": selected.get("number").cloned().unwrap_or(Value::Null),
+        "notes": selected.get("notes").cloned().unwrap_or(Value::Null),
+        "legacy_value": selected.get("legacy_value").cloned().unwrap_or(Value::Null),
         "row_background_color": selected.get("row_background_color").cloned().unwrap_or(Value::Null),
         "line_break_enabled": selected.get("line_break_enabled").cloned().unwrap_or(Value::Null),
     }))
@@ -10497,9 +10821,16 @@ fn checklist_task_cell_set_delta(
     (
         Some(json!({
             "op": "cell_set",
-            "mission_uid": checklist_payload.get("mission_id").cloned().unwrap_or(Value::Null),
+            "mission_uid": checklist_payload
+                .get("mission_uid")
+                .or_else(|| checklist_payload.get("mission_id"))
+                .cloned()
+                .unwrap_or(Value::Null),
             "checklist_uid": checklist_payload.get("uid").cloned().unwrap_or(Value::Null),
             "task_uid": selected.get("task_uid").cloned().unwrap_or(Value::Null),
+            "number": selected.get("number").cloned().unwrap_or(Value::Null),
+            "notes": selected.get("notes").cloned().unwrap_or(Value::Null),
+            "legacy_value": selected.get("legacy_value").cloned().unwrap_or(Value::Null),
             "column_uid": column_uid,
             "value": cell.and_then(|cell| cell.get("value")).cloned().unwrap_or(Value::Null),
             "updated_by_team_member_rns_identity": updated_by,
@@ -10522,9 +10853,16 @@ fn checklist_task_status_set_delta(
     (
         Some(json!({
             "op": "status_set",
-            "mission_uid": checklist_payload.get("mission_id").cloned().unwrap_or(Value::Null),
+            "mission_uid": checklist_payload
+                .get("mission_uid")
+                .or_else(|| checklist_payload.get("mission_id"))
+                .cloned()
+                .unwrap_or(Value::Null),
             "checklist_uid": checklist_payload.get("uid").cloned().unwrap_or(Value::Null),
             "task_uid": selected.get("task_uid").cloned().unwrap_or(Value::Null),
+            "number": selected.get("number").cloned().unwrap_or(Value::Null),
+            "notes": selected.get("notes").cloned().unwrap_or(Value::Null),
+            "legacy_value": selected.get("legacy_value").cloned().unwrap_or(Value::Null),
             "previous_status": previous_status,
             "current_status": selected.get("task_status").cloned().unwrap_or(Value::Null),
             "user_status": selected.get("user_status").cloned().unwrap_or(Value::Null),
@@ -10546,6 +10884,54 @@ fn checklist_task_from_payload<'a>(
     tasks
         .iter()
         .find(|task| task.get("task_uid").and_then(value_as_str).as_deref() == Some(&task_uid))
+}
+
+fn append_mecp_keywords(keywords: &mut Vec<String>, content: &str) {
+    let Ok(decoded) = r3akt_profile_rch::decode_mecp_message(content) else {
+        return;
+    };
+    if !decoded.valid {
+        return;
+    }
+    if let Some(category) = decoded.category {
+        push_unique_keyword(keywords, format!("r3akt:event-type:{category}"));
+    }
+    for code in decoded.codes {
+        push_unique_keyword(keywords, format!("r3akt:event-code:{code}"));
+    }
+}
+
+fn push_unique_keyword(keywords: &mut Vec<String>, keyword: String) {
+    if !keywords.iter().any(|existing| existing == &keyword) {
+        keywords.push(keyword);
+    }
+}
+
+fn mecp_log_entry_value(content: &str) -> Value {
+    let Ok(decoded) = r3akt_profile_rch::decode_mecp_message(content) else {
+        return Value::Null;
+    };
+    if !decoded.valid {
+        return Value::Null;
+    }
+    let category_label = decoded
+        .category
+        .as_deref()
+        .map_or("MECP", r3akt_profile_rch::mecp_category_label);
+    let severity = decoded.severity.unwrap_or_default();
+    let mut value = serde_json::to_value(&decoded).unwrap_or(Value::Null);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("category_label".to_string(), json!(category_label));
+        object.insert(
+            "severity_label".to_string(),
+            json!(r3akt_profile_rch::mecp_severity_label(severity)),
+        );
+        object.insert(
+            "severity_status".to_string(),
+            json!(r3akt_profile_rch::mecp_severity_status(severity)),
+        );
+    }
+    value
 }
 
 fn value_as_f64(value: &Value) -> Option<f64> {
@@ -11912,6 +12298,51 @@ mod tests {
     }
 
     #[test]
+    fn registry_log_upsert_decodes_mecp_event_content() {
+        let mut core = RchCore::new();
+
+        let log_upsert = core.handle_mission_sync_command(&command(
+            "mission.registry.log_entry.upsert",
+            json!({
+                "entry_uid": "mecp-log",
+                "content": "MECP/1/R03 T99 4pax 45.5017,-73.5673 #A1 15 @en @0930 ~EAGLE-1 north gate",
+            }),
+        ));
+        let result = &log_upsert[1].results_field().expect("result")["result"];
+
+        assert_eq!(result["entry_uid"], "mecp-log");
+        assert_eq!(result["mecp"]["valid"], true);
+        assert_eq!(result["mecp"]["severity"], 1);
+        assert_eq!(result["mecp"]["category"], "R");
+        assert_eq!(result["mecp"]["category_label"], "Response");
+        assert_eq!(result["mecp"]["code_details"][0]["label"], "ETA [minutes]");
+        assert_eq!(result["mecp"]["extras"]["eta_minutes"], 15);
+        assert_eq!(result["mecp"]["extras"]["pax"], 4);
+        assert_eq!(
+            result["keywords"],
+            json!([
+                "r3akt:event-type:R",
+                "r3akt:event-code:R03",
+                "r3akt:event-code:T99"
+            ])
+        );
+
+        let log_list = core.handle_mission_sync_command(&command(
+            "mission.registry.log_entry.list",
+            json!({ "mission_uid": "mission-default" }),
+        ));
+        assert_eq!(
+            log_list[1].results_field().expect("result")["result"]["log_entries"][0]["mecp"]["codes"]
+                [1],
+            "T99"
+        );
+        assert_eq!(
+            core.mission_changes()[0].delta["logs"][0]["mecp"]["extras"]["references"][0],
+            "#A1"
+        );
+    }
+
+    #[test]
     fn registry_log_commands_use_python_rch_capabilities() {
         let mut core = RchCore::new();
         core.set_authorization_required(true);
@@ -12995,6 +13426,57 @@ mod tests {
         );
         assert_eq!(core.handle_checklist_sync_command(&delete), []);
         assert!(core.checklists().is_empty());
+    }
+
+    #[test]
+    fn standalone_checklist_task_status_emits_mission_change_for_current_user_fanout() {
+        let mut core = RchCore::new();
+        let created = core.handle_command(&command(
+            "checklist.create.offline",
+            json!({
+                "checklist_uid": "standalone-checklist",
+                "name": "Standalone Checklist"
+            }),
+        ));
+        assert_eq!(created.result.status, CommandResultStatus::Accepted);
+        let added = core.handle_command(&command(
+            "checklist.task.row.add",
+            json!({
+                "checklist_uid": "standalone-checklist",
+                "task_uid": "standalone-task",
+                "number": 1,
+                "legacy_value": "Confirm relay"
+            }),
+        ));
+        assert_eq!(added.result.status, CommandResultStatus::Accepted);
+
+        let completed = core.handle_command(&command(
+            "checklist.task.status.set",
+            json!({
+                "checklist_uid": "standalone-checklist",
+                "task_uid": "standalone-task",
+                "user_status": "COMPLETE",
+                "changed_by_team_member_rns_identity": "ui.operator"
+            }),
+        ));
+        assert_eq!(completed.result.status, CommandResultStatus::Accepted);
+
+        let status_change = core
+            .mission_changes()
+            .into_iter()
+            .find(|change| change.name.as_deref() == Some("mission.checklist.task.status_set"))
+            .expect("standalone status mission change");
+        assert_eq!(status_change.mission_uid, "");
+        assert_eq!(
+            status_change.delta["tasks"][0]["checklist_uid"],
+            "standalone-checklist"
+        );
+        assert_eq!(
+            status_change.delta["tasks"][0]["task_uid"],
+            "standalone-task"
+        );
+        assert_eq!(status_change.delta["tasks"][0]["number"], 1);
+        assert_eq!(status_change.delta["tasks"][0]["user_status"], "COMPLETE");
     }
 
     #[test]
