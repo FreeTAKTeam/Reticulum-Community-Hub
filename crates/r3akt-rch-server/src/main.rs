@@ -12,6 +12,8 @@ use std::time::Duration as StdDuration;
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8000;
 const DEFAULT_MANAGED_RETICULUMD_TRANSPORT: &str = "127.0.0.1:0";
+const DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT: &str = "tcp://127.0.0.1:9100";
+const DEFAULT_LXMF_ZMQ_RESPONSE_ENDPOINT: &str = "tcp://127.0.0.1:9101";
 const DEFAULT_STORAGE_PATH: &str = "RTH_Store";
 const DEFAULT_LOG_LEVEL_NAME: &str = "debug";
 const STATE_FILENAME: &str = "rch_state.json";
@@ -26,6 +28,8 @@ struct ServerArgs {
     reticulum_config_path: Option<PathBuf>,
     reticulumd_rpc: Option<String>,
     reticulumd_source: Option<String>,
+    lxmf_zmq_command: Option<String>,
+    lxmf_zmq_response: Option<String>,
     reticulumd_exe: Option<PathBuf>,
     reticulumd_db_path: Option<PathBuf>,
     reticulumd_transport: Option<String>,
@@ -79,6 +83,7 @@ enum CliCommand {
 struct ManagedReticulumdLaunch {
     exe: Option<PathBuf>,
     rpc: Option<String>,
+    zmq_command: Option<String>,
     db_path: Option<PathBuf>,
     config_path: Option<PathBuf>,
     transport: Option<String>,
@@ -89,6 +94,11 @@ impl ManagedReticulumdLaunch {
         Self {
             exe: args.reticulumd_exe.clone(),
             rpc: args.reticulumd_rpc.clone(),
+            zmq_command: args.lxmf_zmq_command.clone().or_else(|| {
+                args.reticulumd_exe
+                    .is_some()
+                    .then(|| DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT.to_string())
+            }),
             db_path: args.reticulumd_db_path.clone(),
             config_path: args.reticulum_config_path.clone(),
             transport: args.reticulumd_transport.clone().or_else(|| {
@@ -212,6 +222,15 @@ fn build_runtime_state(
                     .ok_or("--reticulumd-source is required with --reticulumd-rpc")?;
                 state = state.with_reticulumd_rpc(endpoint.as_str(), source);
             }
+            if let (Some(command), Some(response)) =
+                (&args.lxmf_zmq_command, &args.lxmf_zmq_response)
+            {
+                let source = args
+                    .reticulumd_source
+                    .as_deref()
+                    .ok_or("--reticulumd-source is required with --lxmf-zmq-command")?;
+                state = state.with_lxmf_zmq_sdk(command.as_str(), response.as_str(), source);
+            }
             state
         }
         None => {
@@ -232,10 +251,33 @@ fn build_runtime_state(
                     .ok_or("--reticulumd-source is required with --reticulumd-rpc")?;
                 state = state.with_reticulumd_rpc(endpoint.as_str(), source);
             }
+            if let (Some(command), Some(response)) =
+                (&args.lxmf_zmq_command, &args.lxmf_zmq_response)
+            {
+                let source = args
+                    .reticulumd_source
+                    .as_deref()
+                    .ok_or("--reticulumd-source is required with --lxmf-zmq-command")?;
+                state = state.with_lxmf_zmq_sdk(command.as_str(), response.as_str(), source);
+            }
             state
         }
     };
-    if let Some(endpoint) = managed_reticulumd_launch.rpc.clone() {
+    if let Some(command_endpoint) = managed_reticulumd_launch.zmq_command.clone() {
+        if let Some(exe) = managed_reticulumd_launch.exe.as_ref() {
+            state = state
+                .with_managed_reticulumd_zmq(
+                    exe,
+                    command_endpoint,
+                    managed_reticulumd_launch
+                        .db_path
+                        .as_ref()
+                        .map(|path| path.to_string_lossy().to_string()),
+                    managed_reticulumd_launch.config_path.as_ref(),
+                )
+                .with_managed_reticulumd_transport(managed_reticulumd_launch.transport.clone());
+        }
+    } else if let Some(endpoint) = managed_reticulumd_launch.rpc.clone() {
         if let Some(exe) = managed_reticulumd_launch.exe.as_ref() {
             state = state
                 .with_managed_reticulumd(
@@ -895,6 +937,8 @@ fn gateway_args_to_server_args(
         reticulum_config_path: None,
         reticulumd_rpc: None,
         reticulumd_source: None,
+        lxmf_zmq_command: None,
+        lxmf_zmq_response: None,
         reticulumd_exe: None,
         reticulumd_db_path: None,
         reticulumd_transport: None,
@@ -1107,6 +1151,8 @@ where
     let mut reticulum_config_path = None;
     let mut reticulumd_rpc = None;
     let mut reticulumd_source = None;
+    let mut lxmf_zmq_command = None;
+    let mut lxmf_zmq_response = None;
     let mut reticulumd_exe = None;
     let mut reticulumd_db_path = None;
     let mut reticulumd_transport = None;
@@ -1140,6 +1186,13 @@ where
             "--reticulumd-source" => {
                 reticulumd_source =
                     Some(args.next().ok_or("--reticulumd-source requires a value")?);
+            }
+            "--lxmf-zmq-command" | "--reticulumd-zmq-command" => {
+                lxmf_zmq_command = Some(args.next().ok_or("--lxmf-zmq-command requires a value")?);
+            }
+            "--lxmf-zmq-response" | "--reticulumd-zmq-response" => {
+                lxmf_zmq_response =
+                    Some(args.next().ok_or("--lxmf-zmq-response requires a value")?);
             }
             "--reticulumd-exe" => {
                 reticulumd_exe = Some(PathBuf::from(
@@ -1186,11 +1239,32 @@ where
     if reticulumd_rpc.is_some() && reticulumd_source.is_none() {
         return Err("--reticulumd-source is required with --reticulumd-rpc".into());
     }
-    if reticulumd_source.is_some() && reticulumd_rpc.is_none() {
-        return Err("--reticulumd-rpc is required with --reticulumd-source".into());
+    if reticulumd_source.is_some()
+        && reticulumd_rpc.is_none()
+        && lxmf_zmq_command.is_none()
+        && lxmf_zmq_response.is_none()
+    {
+        return Err(
+            "--reticulumd-rpc or --lxmf-zmq-command is required with --reticulumd-source".into(),
+        );
     }
-    if reticulumd_exe.is_some() && reticulumd_rpc.is_none() {
-        return Err("--reticulumd-rpc is required with --reticulumd-exe".into());
+    if lxmf_zmq_command.is_some() && lxmf_zmq_response.is_none() {
+        lxmf_zmq_response = Some(DEFAULT_LXMF_ZMQ_RESPONSE_ENDPOINT.to_string());
+    }
+    if lxmf_zmq_response.is_some() && lxmf_zmq_command.is_none() {
+        lxmf_zmq_command = Some(DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT.to_string());
+    }
+    if lxmf_zmq_command.is_some() && reticulumd_source.is_none() {
+        return Err("--reticulumd-source is required with --lxmf-zmq-command".into());
+    }
+    if reticulumd_exe.is_some() && reticulumd_rpc.is_none() && lxmf_zmq_command.is_none() {
+        lxmf_zmq_command = Some(DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT.to_string());
+    }
+    if lxmf_zmq_command.is_some() && lxmf_zmq_response.is_none() {
+        lxmf_zmq_response = Some(DEFAULT_LXMF_ZMQ_RESPONSE_ENDPOINT.to_string());
+    }
+    if lxmf_zmq_command.is_some() && reticulumd_source.is_none() {
+        return Err("--reticulumd-source is required with --lxmf-zmq-command".into());
     }
     if reticulumd_db_path.is_some() && reticulumd_exe.is_none() {
         return Err("--reticulumd-db-path is only valid with --reticulumd-exe".into());
@@ -1205,6 +1279,8 @@ where
         reticulum_config_path,
         reticulumd_rpc,
         reticulumd_source,
+        lxmf_zmq_command,
+        lxmf_zmq_response,
         reticulumd_exe,
         reticulumd_db_path,
         reticulumd_transport,
@@ -1379,6 +1455,8 @@ mod tests {
             reticulum_config_path: None,
             reticulumd_rpc: None,
             reticulumd_source: None,
+            lxmf_zmq_command: None,
+            lxmf_zmq_response: None,
             reticulumd_exe: None,
             reticulumd_db_path: None,
             reticulumd_transport: None,
@@ -1592,6 +1670,8 @@ mod tests {
             reticulum_config_path: None,
             reticulumd_rpc: None,
             reticulumd_source: None,
+            lxmf_zmq_command: None,
+            lxmf_zmq_response: None,
             reticulumd_exe: None,
             reticulumd_db_path: None,
             reticulumd_transport: None,
@@ -1712,7 +1792,39 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "--reticulumd-rpc is required with --reticulumd-exe"
+            "--reticulumd-source is required with --lxmf-zmq-command"
+        );
+    }
+
+    #[test]
+    fn parse_args_accepts_zero_mq_sdk_endpoints() {
+        let args = super::parse_args([
+            "--reticulumd-source",
+            "source-destination",
+            "--lxmf-zmq-command",
+            "tcp://127.0.0.1:9100",
+            "--lxmf-zmq-response",
+            "tcp://127.0.0.1:9101",
+            "--reticulumd-exe",
+            "reticulumd.exe",
+        ])
+        .expect("args");
+
+        assert_eq!(
+            args.reticulumd_source.as_deref(),
+            Some("source-destination")
+        );
+        assert_eq!(
+            args.lxmf_zmq_command.as_deref(),
+            Some("tcp://127.0.0.1:9100")
+        );
+        assert_eq!(
+            args.lxmf_zmq_response.as_deref(),
+            Some("tcp://127.0.0.1:9101")
+        );
+        assert_eq!(
+            args.reticulumd_exe.as_deref(),
+            Some(std::path::Path::new("reticulumd.exe"))
         );
     }
 

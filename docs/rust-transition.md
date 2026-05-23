@@ -146,10 +146,10 @@ Release blockers cleared in the latest parity pass:
 - Voice-capable LXMF destinations remain chat destinations. Voice is treated as
   an additional feature on top of LXMF chat, not as a separate voice-only
   routing class.
-- Inbound reticulumd worker tests now cover the current event poll,
-  `list_messages`, and announce poll order deterministically.
-- Direct-send tests now assert the LXMF-rs SDK RPC methods and SDK-prefixed
-  receipt identifiers used by the Rust adapter.
+- The transport crate now has ZeroMQ SDK adapter coverage for R3AKT frame
+  sends, normal RCH LXMF field payload sends, and inbound SDK event conversion.
+- Direct-send compatibility tests still cover the legacy RPC fallback while the
+  server runtime moves release traffic to the ZeroMQ SDK pipeline.
 - `assignment_asset_link_fanout_uses_python_generic_markdown_shape` proves the
   generic LXMF fanout path for assignment asset links renders Python-style
   markdown with resolved mission, checklist task, and asset names.

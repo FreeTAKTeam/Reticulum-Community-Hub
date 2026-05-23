@@ -9,6 +9,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine;
+use lxmf_sdk::{
+    Client as LxmfSdkClient, EventBatch as LxmfSdkEventBatch, EventCursor as LxmfSdkEventCursor,
+    LxmfSdk, SdkConfig as LxmfSdkConfig, SdkEvent as LxmfSdkEvent,
+    SendRequest as LxmfSdkSendRequest, StartRequest as LxmfSdkStartRequest,
+    ZmqPipelineBackendClient, ZmqPipelineBackendConfig,
+};
 use r3akt_protocol::{
     Destination, NodeId, Payload, ProtocolEnvelope, TelemetrySample, Topic, TopicAttachment,
     TopicMessage,
@@ -78,6 +84,33 @@ impl LxmfRsFrame {
 pub trait LxmfRsAdapter: Send {
     fn send_frame(&mut self, frame: LxmfRsFrame) -> TransportFuture<'_, ()>;
     fn receive_frame(&mut self) -> TransportFuture<'_, Option<LxmfRsFrame>>;
+}
+
+pub trait LxmfSdkRuntime: Send {
+    fn send(&mut self, request: LxmfSdkSendRequest) -> Result<String, TransportError>;
+
+    fn poll_events(
+        &mut self,
+        cursor: Option<LxmfSdkEventCursor>,
+        max: usize,
+    ) -> Result<LxmfSdkEventBatch, TransportError>;
+}
+
+impl LxmfSdkRuntime for LxmfSdkClient<ZmqPipelineBackendClient> {
+    fn send(&mut self, request: LxmfSdkSendRequest) -> Result<String, TransportError> {
+        LxmfSdk::send(self, request)
+            .map(|message_id| message_id.to_string())
+            .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK: {error}")))
+    }
+
+    fn poll_events(
+        &mut self,
+        cursor: Option<LxmfSdkEventCursor>,
+        max: usize,
+    ) -> Result<LxmfSdkEventBatch, TransportError> {
+        LxmfSdk::poll_events(self, cursor, max)
+            .map_err(|error| TransportError::Receive(format!("LXMF-rs ZeroMQ SDK: {error}")))
+    }
 }
 
 pub const R3AKT_LXMF_CONTENT: &str = "r3akt protocol envelope";
@@ -418,6 +451,178 @@ impl LxmfRsAdapter for ReticulumdRpcLxmfRsAdapter<'_> {
             }
             Ok(None)
         })
+    }
+}
+
+pub struct LxmfSdkLxmfRsAdapter<C> {
+    source: String,
+    runtime: C,
+    next_message_sequence: u64,
+    next_event_cursor: Option<String>,
+    max_poll_events: usize,
+}
+
+impl<C> LxmfSdkLxmfRsAdapter<C>
+where
+    C: LxmfSdkRuntime,
+{
+    #[must_use]
+    pub fn new(source: impl Into<String>, runtime: C) -> Self {
+        Self {
+            source: source.into(),
+            runtime,
+            next_message_sequence: 1,
+            next_event_cursor: None,
+            max_poll_events: 256,
+        }
+    }
+
+    #[must_use]
+    pub fn into_runtime(self) -> C {
+        self.runtime
+    }
+
+    fn next_message_id(&mut self) -> String {
+        let id = format!("r3akt-transport-{}", self.next_message_sequence);
+        self.next_message_sequence = self.next_message_sequence.wrapping_add(1);
+        id
+    }
+}
+
+impl LxmfSdkLxmfRsAdapter<LxmfSdkClient<ZmqPipelineBackendClient>> {
+    pub fn from_zmq_endpoints(
+        source: impl Into<String>,
+        command_endpoint: impl Into<String>,
+        response_endpoint: impl Into<String>,
+    ) -> Result<Self, TransportError> {
+        Self::from_zmq_config(
+            source,
+            ZmqPipelineBackendConfig::local_tcp(command_endpoint, response_endpoint),
+        )
+    }
+
+    pub fn from_zmq_config(
+        source: impl Into<String>,
+        config: ZmqPipelineBackendConfig,
+    ) -> Result<Self, TransportError> {
+        let backend = ZmqPipelineBackendClient::new(config)
+            .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
+        let client = LxmfSdkClient::new(backend);
+        LxmfSdk::start(
+            &client,
+            LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
+        )
+        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK start: {error}")))?;
+        Ok(Self::new(source, client))
+    }
+}
+
+impl<C> LxmfRsAdapter for LxmfSdkLxmfRsAdapter<C>
+where
+    C: LxmfSdkRuntime,
+{
+    fn send_frame(&mut self, frame: LxmfRsFrame) -> TransportFuture<'_, ()> {
+        Box::pin(async move {
+            let payload_b64 = base64::engine::general_purpose::STANDARD.encode(&frame.bytes);
+            let correlation_id = self.next_message_id();
+            let payload = serde_json::json!({
+                "title": "R3AKT",
+                "content": R3AKT_LXMF_CONTENT,
+                R3AKT_LXMF_FIELD_CONTENT_TYPE: R3AKT_LXMF_CONTENT_TYPE,
+                R3AKT_LXMF_FIELD_PAYLOAD_B64: payload_b64
+            });
+            let request = LxmfSdkSendRequest::new(self.source.clone(), frame.destination, payload)
+                .with_correlation_id(correlation_id.clone())
+                .with_idempotency_key(correlation_id);
+            self.runtime.send(request)?;
+            Ok(())
+        })
+    }
+
+    fn receive_frame(&mut self) -> TransportFuture<'_, Option<LxmfRsFrame>> {
+        Box::pin(async move {
+            let cursor = self.next_event_cursor.clone().map(LxmfSdkEventCursor);
+            let batch = self.runtime.poll_events(cursor, self.max_poll_events)?;
+            self.next_event_cursor = Some(batch.next_cursor.0.clone());
+            for event in batch.events {
+                let record = lxmf_sdk_event_to_reticulumd_event_record(event);
+                if let Some(envelope) = reticulumd_event_to_envelope(&record, self.source.as_str())?
+                {
+                    let bytes = envelope
+                        .encode_msgpack()
+                        .map_err(|error| TransportError::Receive(error.to_string()))?;
+                    return Ok(Some(LxmfRsFrame {
+                        destination: destination_hint(&envelope),
+                        bytes,
+                    }));
+                }
+            }
+            Ok(None)
+        })
+    }
+}
+
+pub struct LxmfSdkOutboundMessage {
+    pub source: String,
+    pub destination: String,
+    pub title: String,
+    pub content: String,
+    pub fields: JsonValue,
+    pub correlation_id: String,
+}
+
+pub fn send_lxmf_zmq_outbound_message(
+    command_endpoint: impl Into<String>,
+    response_endpoint: impl Into<String>,
+    message: LxmfSdkOutboundMessage,
+) -> Result<String, TransportError> {
+    let config = ZmqPipelineBackendConfig::local_tcp(command_endpoint, response_endpoint);
+    let backend = ZmqPipelineBackendClient::new(config)
+        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
+    let mut client = LxmfSdkClient::new(backend);
+    LxmfSdk::start(
+        &client,
+        LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
+    )
+    .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK start: {error}")))?;
+    send_lxmf_sdk_outbound_message_with_runtime(&mut client, message)
+}
+
+pub fn send_lxmf_sdk_outbound_message_with_runtime(
+    runtime: &mut impl LxmfSdkRuntime,
+    message: LxmfSdkOutboundMessage,
+) -> Result<String, TransportError> {
+    let mut payload = match message.fields {
+        JsonValue::Object(map) => JsonValue::Object(map),
+        other => serde_json::json!({ "fields": other }),
+    };
+    if let JsonValue::Object(map) = &mut payload {
+        map.insert("title".to_string(), JsonValue::String(message.title));
+        map.insert("content".to_string(), JsonValue::String(message.content));
+    }
+    let request = LxmfSdkSendRequest::new(message.source, message.destination, payload)
+        .with_correlation_id(message.correlation_id.clone())
+        .with_idempotency_key(message.correlation_id);
+    runtime.send(request)
+}
+
+fn lxmf_sdk_event_to_reticulumd_event_record(event: LxmfSdkEvent) -> ReticulumdEventRecord {
+    ReticulumdEventRecord {
+        event_id: event.event_id,
+        runtime_id: Some(event.runtime_id),
+        stream_id: Some(event.stream_id),
+        seq_no: Some(event.seq_no),
+        contract_version: Some(event.contract_version),
+        ts_ms: Some(event.ts_ms),
+        event_type: event.event_type,
+        severity: Some(format!("{:?}", event.severity).to_ascii_lowercase()),
+        source_component: Some(event.source_component),
+        operation_id: event.operation_id,
+        message_id: event.message_id,
+        peer_id: event.peer_id,
+        correlation_id: event.correlation_id,
+        trace_id: event.trace_id,
+        payload: event.payload,
     }
 }
 
@@ -1647,6 +1852,7 @@ fn parse_http_response_body(response: &[u8]) -> io::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use lxmf_sdk::{EventBatch, EventCursor, SendRequest as LxmfSdkSendRequest};
     use r3akt_protocol::{Destination, HealthStatus, Heartbeat, NodeId, Payload, Topic};
     use std::env;
     use std::net::TcpListener;
@@ -1665,6 +1871,30 @@ mod tests {
     struct RecordingReticulumdRpc {
         calls: Vec<RecordedRpcCall>,
         responses: VecDeque<serde_json::Value>,
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingLxmfSdkRuntime {
+        send_requests: Vec<LxmfSdkSendRequest>,
+        event_batches: VecDeque<EventBatch>,
+    }
+
+    impl LxmfSdkRuntime for RecordingLxmfSdkRuntime {
+        fn send(&mut self, request: LxmfSdkSendRequest) -> Result<String, TransportError> {
+            self.send_requests.push(request);
+            Ok("sdk-recorded-1".to_string())
+        }
+
+        fn poll_events(
+            &mut self,
+            _cursor: Option<EventCursor>,
+            _max: usize,
+        ) -> Result<EventBatch, TransportError> {
+            Ok(self
+                .event_batches
+                .pop_front()
+                .unwrap_or_else(|| EventBatch::empty(EventCursor("cursor-0".to_string()))))
+        }
     }
 
     impl RecordingReticulumdRpc {
@@ -1808,6 +2038,124 @@ mod tests {
             "AQIDBA=="
         );
         assert_eq!(rpc.calls[0].params["method"], "direct");
+    }
+
+    #[test]
+    fn lxmf_sdk_adapter_sends_frame_with_zero_mq_sdk_payload() {
+        let runtime = RecordingLxmfSdkRuntime::default();
+        let mut adapter = LxmfSdkLxmfRsAdapter::new("source-destination", runtime);
+        let frame = LxmfRsFrame {
+            destination: "target-destination".to_string(),
+            bytes: vec![1, 2, 3, 4],
+        };
+
+        crate::test_block_on(adapter.send_frame(frame)).expect("send frame");
+
+        let runtime = adapter.into_runtime();
+        assert_eq!(runtime.send_requests.len(), 1);
+        let request = &runtime.send_requests[0];
+        assert_eq!(request.source, "source-destination");
+        assert_eq!(request.destination, "target-destination");
+        assert_eq!(request.payload["title"], "R3AKT");
+        assert_eq!(request.payload["content"], "r3akt protocol envelope");
+        assert_eq!(
+            request.payload["r3akt_content_type"],
+            "application/x-r3akt-msgpack"
+        );
+        assert_eq!(request.payload["r3akt_payload_b64"], "AQIDBA==");
+        assert_eq!(request.correlation_id.as_deref(), Some("r3akt-transport-1"));
+    }
+
+    #[test]
+    fn lxmf_sdk_adapter_receives_inbound_event_batch() {
+        let envelope = ProtocolEnvelope::new(
+            NodeId::new("peer-alpha"),
+            Destination::Topic(Topic::new("ops")),
+            Topic::new("ops"),
+            Payload::TopicMessage(TopicMessage {
+                body: "event message".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        )
+        .with_dedupe_key("event-msg-1");
+        let payload_b64 = base64::engine::general_purpose::STANDARD
+            .encode(envelope.encode_msgpack().expect("msgpack"));
+        let mut runtime = RecordingLxmfSdkRuntime::default();
+        runtime.event_batches.push_back(
+            serde_json::from_value(serde_json::json!({
+                "events": [{
+                    "event_id": "evt-inbound-1",
+                    "runtime_id": "runtime-a",
+                    "stream_id": "sdk-events",
+                    "seq_no": 1,
+                    "contract_version": 2,
+                    "ts_ms": 1_700_000_000_000_u64,
+                    "event_type": "inbound",
+                    "severity": "info",
+                    "source_component": "lxmf-sdk",
+                    "message_id": "lxmf-1",
+                    "peer_id": "peer-alpha",
+                    "payload": {
+                        "message": {
+                            "id": "lxmf-1",
+                            "destination": "local-destination",
+                            "fields": {
+                                "r3akt_payload_b64": payload_b64
+                            }
+                        }
+                    }
+                }],
+                "next_cursor": "cursor-1",
+                "dropped_count": 0,
+                "snapshot_high_watermark_seq_no": 1
+            }))
+            .expect("sdk event batch"),
+        );
+        let mut adapter = LxmfSdkLxmfRsAdapter::new("local-destination", runtime);
+
+        let frame = crate::test_block_on(adapter.receive_frame())
+            .expect("receive frame")
+            .expect("frame");
+        let decoded = ProtocolEnvelope::decode_msgpack(&frame.bytes).expect("decode");
+
+        assert_eq!(decoded.id, envelope.id);
+        assert_eq!(decoded.source, envelope.source);
+        assert_eq!(frame.destination, "ops");
+    }
+
+    #[test]
+    fn lxmf_sdk_outbound_message_preserves_rch_fields() {
+        let mut runtime = RecordingLxmfSdkRuntime::default();
+
+        let message_id = send_lxmf_sdk_outbound_message_with_runtime(
+            &mut runtime,
+            LxmfSdkOutboundMessage {
+                source: "source-destination".to_string(),
+                destination: "target-destination".to_string(),
+                title: "RCH".to_string(),
+                content: "hello".to_string(),
+                fields: serde_json::json!({
+                    "9": [{"cmd": "mission.join"}],
+                    "custom": "value"
+                }),
+                correlation_id: "message-1".to_string(),
+            },
+        )
+        .expect("send");
+
+        assert_eq!(message_id, "sdk-recorded-1");
+        assert_eq!(runtime.send_requests.len(), 1);
+        let request = &runtime.send_requests[0];
+        assert_eq!(request.source, "source-destination");
+        assert_eq!(request.destination, "target-destination");
+        assert_eq!(request.payload["title"], "RCH");
+        assert_eq!(request.payload["content"], "hello");
+        assert_eq!(request.payload["9"][0]["cmd"], "mission.join");
+        assert_eq!(request.payload["custom"], "value");
+        assert_eq!(request.correlation_id.as_deref(), Some("message-1"));
+        assert_eq!(request.idempotency_key.as_deref(), Some("message-1"));
     }
 
     #[test]

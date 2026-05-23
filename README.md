@@ -104,7 +104,8 @@ Crates:
   migration experiments. It loads Rust RCH core state from SQLite, executes a
   mission command or topic query, saves state, returns RCH-style field
   responses with `FIELD_RESULTS`/`FIELD_EVENT` keys, and can send outbound RCH
-  payloads through an LXMF-rs `reticulumd` RPC endpoint with `--reticulumd-rpc`.
+  payloads through the legacy LXMF-rs `reticulumd` RPC endpoint for migration
+  experiments.
 - `r3akt-rch-server`: long-running Rust HTTP server for the UI-facing backend
   replacement path. The current slice exposes Python-compatible OpenAPI
   metadata, `/Help`, `/Examples`, `/Status`, `/api/v1/app/info`, auth
@@ -115,11 +116,10 @@ Crates:
   R3AKT mission/product APIs including Python-compatible R3AKT list limit
   validation, marker symbol registry/alias validation, and WebSocket stream
   contracts.
-  When configured with `--reticulumd-rpc` and `--reticulumd-source`, it starts
-  Rust-owned outbound delivery and inbound event-cursor workers; the inbound
-  worker consumes LXMF-rs `sdk_poll_events_v2` batches for R3AKT MessagePack
-  envelopes and Reticulum identity announces, persists the last event cursor,
-  and records event-stream plus announce diagnostics in `/diagnostics/runtime`.
+  When configured with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and
+  `--reticulumd-source`, outbound delivery uses the LXMF-rs ZeroMQ SDK
+  pipeline. The legacy `reticulumd` RPC worker remains as a compatibility
+  fallback while inbound/event diagnostics are migrated to the SDK event stream.
   Remaining backend service contracts should continue to be ported in small
   contract-tested slices.
 - `r3akt-tak-connector`: dedicated Rust TAK connector crate and service
@@ -169,18 +169,15 @@ at `crates/libs/lxmf-core`, `lxmf-sdk`, `reticulum-rs-transport`,
 `reticulum-rs-rpc`, and the `reticulumd` app. The `lxmf-wire` crate already uses
 MessagePack for LXMF payloads and exposes `WireMessage` packing, unpacking,
 message IDs, signing, and verification. This milestone does not invent a
-Reticulum/LXMF implementation. `r3akt-transport-rns` now includes a
-`reticulumd` RPC-backed `LxmfRsAdapter` that maps R3AKT MessagePack envelopes to
-LXMF-rs `send_message_v2`, debug `list_messages`/`list_announces` calls, and
-live inbound `sdk_poll_events_v2` batches.
+Reticulum/LXMF implementation. `r3akt-transport-rns` now includes a ZeroMQ
+SDK-backed adapter for R3AKT MessagePack envelopes and normal RCH outbound
+LXMF field payloads, while retaining the older `reticulumd` RPC adapter as a
+test and migration fallback.
 
-Gap: this adapter has unit coverage against the inspected RPC contract and an
-env-gated live-daemon end-to-end test that sends through a local self-loopback
-`reticulumd` RPC endpoint when `R3AKT_RETICULUMD_RPC_ENDPOINT` is set. Live LXMF
-receipt status polling is wired through `sdk_status_v2` for terminal delivered
-and failed/cancelled/expired/rejected states, with Rust applying the same
-pending-receipt state transitions and system events as the internal callback
-adapter.
+Gap: the ZeroMQ SDK path has unit coverage for outbound payload mapping and
+inbound SDK event conversion. Broader live-daemon gates still need to move from
+HTTP RPC fixtures to `reticulumd --features zmq-pipeline-rpc` before the
+compatibility fallback can be removed.
 
 ### Reticulum Mobile Emergency Management
 
@@ -389,11 +386,11 @@ cargo run -p r3akt-rch-server -- --bind 127.0.0.1:8080 --db-path .\rch-runtime.d
 ```
 
 To make Rust send outbound UI messages through LXMF-rs `reticulumd` instead of
-only recording them locally, add the RPC endpoint and the local source
+only recording them locally, add the ZeroMQ SDK endpoints and the local source
 destination:
 
 ```powershell
-cargo run -p r3akt-rch-server -- --bind 127.0.0.1:8080 --db-path .\rch-runtime.db --config-path .\config.ini --reticulum-config-path $env:USERPROFILE\.reticulum\config --reticulumd-rpc 127.0.0.1:4242 --reticulumd-source <local-destination>
+cargo run -p r3akt-rch-server -- --bind 127.0.0.1:8080 --db-path .\rch-runtime.db --config-path .\config.ini --reticulum-config-path $env:USERPROFILE\.reticulum\config --lxmf-zmq-command tcp://127.0.0.1:9100 --lxmf-zmq-response tcp://127.0.0.1:9101 --reticulumd-source <local-destination>
 ```
 
 To let the Rust server own the local LXMF-rs daemon lifecycle, also pass the
@@ -402,10 +399,13 @@ To let the Rust server own the local LXMF-rs daemon lifecycle, also pass the
 graceful shutdown, and applies `/Control/Stop` and `/Control/Start` to the child
 process lifecycle. `/Control/Status` and `/diagnostics/runtime` expose the
 managed child as `reticulumd_managed_process` with pid, endpoint, database path,
-running status, and lifecycle timestamps:
+running status, and lifecycle timestamps. Managed `reticulumd` defaults to
+`tcp://127.0.0.1:9100` for the ZeroMQ command endpoint and
+`tcp://127.0.0.1:9101` for the SDK response endpoint. The managed daemon binary
+must be built from LXMF-rs with `zmq-pipeline-rpc` support:
 
 ```powershell
-cargo run -p r3akt-rch-server -- --bind 127.0.0.1:8080 --db-path .\rch-runtime.db --config-path .\config.ini --reticulum-config-path $env:USERPROFILE\.reticulum\config --reticulumd-rpc 127.0.0.1:4242 --reticulumd-source <local-destination> --reticulumd-exe "C:\Users\broth\Documents\work\ATAK\src\LXMF-rs\target\debug\reticulumd.exe" --reticulumd-db-path .\reticulumd.db
+cargo run -p r3akt-rch-server -- --bind 127.0.0.1:8080 --db-path .\rch-runtime.db --config-path .\config.ini --reticulum-config-path $env:USERPROFILE\.reticulum\config --reticulumd-source <local-destination> --reticulumd-exe "C:\Users\broth\Documents\work\ATAK\src\LXMF-rs\target\debug\reticulumd.exe" --reticulumd-db-path .\reticulumd.db
 ```
 
 Pass `--ui-dist-path "C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\ui\dist"`

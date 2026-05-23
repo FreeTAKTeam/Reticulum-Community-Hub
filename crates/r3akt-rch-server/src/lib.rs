@@ -71,8 +71,9 @@ use r3akt_rch_core::{
 #[cfg(test)]
 use r3akt_transport_rns::MessageBus;
 use r3akt_transport_rns::{
-    ReticulumdAnnounceRecord, list_reticulumd_announces, poll_reticulumd_events,
-    reticulumd_event_to_envelope, reticulumd_message_to_envelope,
+    LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, list_reticulumd_announces,
+    poll_reticulumd_events, reticulumd_event_to_envelope, reticulumd_message_to_envelope,
+    send_lxmf_zmq_outbound_message,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -175,6 +176,8 @@ pub struct AppState {
     runtime_metrics: Arc<RuntimeMetricCounters>,
     reticulumd_rpc_endpoint: Option<Arc<String>>,
     reticulumd_source: Option<Arc<String>>,
+    lxmf_zmq_command_endpoint: Option<Arc<String>>,
+    lxmf_zmq_response_endpoint: Option<Arc<String>>,
     runtime_control: Arc<RwLock<RuntimeControlState>>,
     managed_reticulumd: Arc<RwLock<ManagedReticulumdState>>,
     managed_reticulumd_process: Arc<Mutex<Option<Child>>>,
@@ -301,6 +304,7 @@ struct ManagedReticulumdState {
     exe_path: Option<PathBuf>,
     config_path: Option<PathBuf>,
     endpoint: Option<String>,
+    zmq_command_endpoint: Option<String>,
     db_path: Option<String>,
     transport: Option<String>,
     pid: Option<u32>,
@@ -345,6 +349,8 @@ impl Default for AppState {
             runtime_metrics: Arc::default(),
             reticulumd_rpc_endpoint: None,
             reticulumd_source: None,
+            lxmf_zmq_command_endpoint: None,
+            lxmf_zmq_response_endpoint: None,
             runtime_control: Arc::default(),
             managed_reticulumd: Arc::default(),
             managed_reticulumd_process: Arc::default(),
@@ -487,6 +493,44 @@ impl AppState {
             managed.exe_path = Some(exe_path.as_ref().to_path_buf());
             managed.config_path = config_path.map(|path| path.as_ref().to_path_buf());
             managed.endpoint = Some(endpoint.into());
+            managed.zmq_command_endpoint = None;
+            managed.db_path = db_path.map(Into::into);
+            managed.transport = None;
+            managed.running = false;
+            managed.pid = None;
+            managed.started_ts_ms = None;
+            managed.stopped_ts_ms = None;
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn with_lxmf_zmq_sdk(
+        mut self,
+        command_endpoint: impl Into<String>,
+        response_endpoint: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Self {
+        self.lxmf_zmq_command_endpoint = Some(Arc::new(command_endpoint.into()));
+        self.lxmf_zmq_response_endpoint = Some(Arc::new(response_endpoint.into()));
+        self.reticulumd_source = Some(Arc::new(source.into()));
+        self
+    }
+
+    #[must_use]
+    pub fn with_managed_reticulumd_zmq(
+        self,
+        exe_path: impl AsRef<FsPath>,
+        command_endpoint: impl Into<String>,
+        db_path: Option<impl Into<String>>,
+        config_path: Option<impl AsRef<FsPath>>,
+    ) -> Self {
+        if let Ok(mut managed) = self.managed_reticulumd.write() {
+            managed.configured = true;
+            managed.exe_path = Some(exe_path.as_ref().to_path_buf());
+            managed.config_path = config_path.map(|path| path.as_ref().to_path_buf());
+            managed.endpoint = None;
+            managed.zmq_command_endpoint = Some(command_endpoint.into());
             managed.db_path = db_path.map(Into::into);
             managed.transport = None;
             managed.running = false;
@@ -518,10 +562,11 @@ impl AppState {
             .exe_path
             .as_ref()
             .ok_or_else(|| "managed reticulumd executable path missing".to_string())?;
-        let endpoint = launch
-            .endpoint
-            .as_deref()
-            .ok_or_else(|| "managed reticulumd RPC endpoint missing".to_string())?;
+        let endpoint = launch.endpoint.as_deref();
+        let zmq_command_endpoint = launch.zmq_command_endpoint.as_deref();
+        if endpoint.is_none() && zmq_command_endpoint.is_none() {
+            return Err("managed reticulumd endpoint missing".to_string());
+        }
         let mut process = self
             .managed_reticulumd_process
             .lock()
@@ -539,9 +584,12 @@ impl AppState {
             }
         }
         let mut command = Command::new(exe_path);
+        if let Some(zmq_command_endpoint) = zmq_command_endpoint {
+            command.arg("--zmq-rpc-command").arg(zmq_command_endpoint);
+        } else if let Some(endpoint) = endpoint {
+            command.arg("--rpc").arg(endpoint);
+        }
         command
-            .arg("--rpc")
-            .arg(endpoint)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -12389,9 +12437,12 @@ fn dispatch_outbound_message(
     state: &AppState,
     message: &OutboundMessageRecord,
 ) -> Result<DispatchReport, ApiError> {
-    let Some(endpoint) = &state.reticulumd_rpc_endpoint else {
+    let has_zmq_endpoint =
+        state.lxmf_zmq_command_endpoint.is_some() && state.lxmf_zmq_response_endpoint.is_some();
+    let has_rpc_endpoint = state.reticulumd_rpc_endpoint.is_some();
+    if !has_zmq_endpoint && !has_rpc_endpoint {
         return Ok(DispatchReport::default());
-    };
+    }
     let source = state
         .reticulumd_source
         .as_ref()
@@ -12421,18 +12472,43 @@ fn dispatch_outbound_message(
             "destination": destination,
             "title": outbound_lxmf_title(&dispatch_message),
             "content": outbound_lxmf_content(&dispatch_message),
-            "fields": fields,
+            "fields": fields.clone(),
             "method": message.delivery_method,
         })
         .to_string();
-        if let Err(error) = r3akt_rch_bridge::handle_outbound_json_request_with_reticulumd(
-            endpoint.as_str(),
-            &request,
+        let dispatch_result = if let (Some(command_endpoint), Some(response_endpoint)) = (
+            &state.lxmf_zmq_command_endpoint,
+            &state.lxmf_zmq_response_endpoint,
         ) {
+            send_lxmf_zmq_outbound_message(
+                command_endpoint.as_str(),
+                response_endpoint.as_str(),
+                LxmfSdkOutboundMessage {
+                    source: source.to_string(),
+                    destination: destination.clone(),
+                    title: outbound_lxmf_title(&dispatch_message).to_string(),
+                    content: outbound_lxmf_content(&dispatch_message).to_string(),
+                    fields,
+                    correlation_id: message_id.clone(),
+                },
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        } else if let Some(endpoint) = &state.reticulumd_rpc_endpoint {
+            r3akt_rch_bridge::handle_outbound_json_request_with_reticulumd(
+                endpoint.as_str(),
+                &request,
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        } else {
+            Ok(())
+        };
+        if let Err(error) = dispatch_result {
             if message.delivery_method == "direct" {
                 mark_direct_delivery_failure(state, destination.as_str())?;
             }
-            return Err(ApiError::ServiceUnavailable(error.to_string()));
+            return Err(ApiError::ServiceUnavailable(error));
         }
         report.count += 1;
         report.receipts.push(ReticulumdReceiptTarget {
