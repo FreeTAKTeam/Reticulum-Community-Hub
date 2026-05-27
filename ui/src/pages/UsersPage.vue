@@ -1161,6 +1161,11 @@ const teamColorOptions = [
 const teamRoleOptions = [
   { label: "Team Member", value: "TEAM_MEMBER" },
   { label: "Team Lead", value: "TEAM_LEAD" },
+  { label: "Field Operator", value: "FIELD_OPERATOR" },
+  { label: "Incident Commander", value: "INCIDENT_COMMANDER" },
+  { label: "Logistics/resource Manager", value: "LOGISTICS_RESOURCE_MANAGER" },
+  { label: "Communications Operator", value: "COMMUNICATIONS_OPERATOR" },
+  { label: "System Admin", value: "SYSTEM_ADMIN" },
   { label: "HQ", value: "HQ" },
   { label: "Sniper", value: "SNIPER" },
   { label: "Medic", value: "MEDIC" },

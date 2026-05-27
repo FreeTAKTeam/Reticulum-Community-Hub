@@ -41,6 +41,8 @@ Crates:
 - `r3akt-profile-rch`: RCH LXMF field profile for `FIELD_COMMANDS` (`0x09`),
   `FIELD_RESULTS` (`0x0A`), and `FIELD_EVENT` (`0x0D`) command/result/event
   conversion.
+- `docs/rem-southbound-interface.md`: optimized REM southbound command payload
+  shape emitted by the Rust RCH runtime.
 - `r3akt-rch-core`: RCH-specific core behavior extracted behind reusable Rust
   types: `RTHDelivery` validation, RCH topic/hash/message-id normalization,
   delivery mode classification, topic/subscriber state, command replay caching,

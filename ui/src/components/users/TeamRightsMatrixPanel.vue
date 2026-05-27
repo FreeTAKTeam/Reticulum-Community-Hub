@@ -21,6 +21,21 @@
         :options="missionOptions"
         :disabled="missionOptions.length === 0"
       />
+      <BaseSelect
+        v-model="selectedRoleBundle"
+        label="Role Bundle"
+        :options="roleBundleOptions"
+        :disabled="roleBundleOptions.length <= 1"
+      />
+      <BaseButton
+        class="rights-bundle-apply"
+        variant="secondary"
+        icon-left="check"
+        :disabled="loading || saving || !selectedRoleBundle || !filteredMembers.length"
+        @click="applySelectedRoleBundle"
+      >
+        Apply Bundle
+      </BaseButton>
       <label class="rights-filter">
         <span>Member Filter</span>
         <input v-model="memberFilter" type="text" placeholder="Callsign, role, identity" />
@@ -33,8 +48,14 @@
 
     <div class="rights-bundles" v-if="scopeMode === 'mission'">
       <div v-for="bundle in bundleSummaries" :key="bundle.role" class="rights-bundle-card">
-        <CosmicBadge tone="info">{{ bundle.roleLabel }}</CosmicBadge>
-        <span>{{ bundle.operationCount }} mapped operations</span>
+        <div class="rights-bundle-head">
+          <CosmicBadge tone="info">{{ bundle.roleLabel }}</CosmicBadge>
+          <span>{{ bundle.operationCount }} mapped operations</span>
+        </div>
+        <p v-if="bundle.description" class="rights-bundle-description">{{ bundle.description }}</p>
+        <div v-if="bundle.needs.length" class="rights-bundle-needs">
+          <span v-for="need in bundle.needs" :key="`${bundle.role}-${need}`">{{ need }}</span>
+        </div>
       </div>
     </div>
 
@@ -169,6 +190,7 @@ const {
   saving,
   selectedTeamUid,
   selectedMissionUid,
+  selectedRoleBundle,
   scopeMode,
   memberFilter,
   operationFilter,
@@ -176,12 +198,14 @@ const {
   hasDraftChanges,
   missionOptions,
   roleOptions,
+  roleBundleOptions,
   teamOptions,
   visibleOperations,
   cellEnabled,
   cellSource,
   getRoleDraft,
   refresh,
+  applySelectedRoleBundle,
   applyChanges,
   resetDraft,
   revokeVisible,
@@ -218,14 +242,34 @@ const selectedMissionLabel = computed(() => {
   return missionNameByUid.value.get(missionUid) ?? missionUid;
 });
 
+const roleBundleDetails = computed(() => {
+  const map = new Map<string, { description: string; needs: string[] }>();
+  (definitions.value?.role_bundles ?? []).forEach((bundle) => {
+    const role = String(bundle.role ?? "").trim();
+    if (!role) {
+      return;
+    }
+    map.set(role, {
+      description: String(bundle.description ?? "").trim(),
+      needs: Array.isArray(bundle.needs) ? bundle.needs.map((need) => String(need).trim()).filter(Boolean) : []
+    });
+  });
+  return map;
+});
+
 const bundleSummaries = computed(() =>
   roleOptions.value
     .filter((option) => option.value.length > 0)
-    .map((option) => ({
-      role: option.value,
-      roleLabel: option.label,
-      operationCount: definitions.value?.mission_role_bundles[option.value]?.length ?? 0
-    }))
+    .map((option) => {
+      const details = roleBundleDetails.value.get(option.value);
+      return {
+        role: option.value,
+        roleLabel: option.label,
+        operationCount: definitions.value?.mission_role_bundles[option.value]?.length ?? 0,
+        description: details?.description ?? "",
+        needs: details?.needs ?? []
+      };
+    })
 );
 
 const operationSegmentAliases: Record<string, string> = {
@@ -254,7 +298,20 @@ const operationSegmentAliases: Record<string, string> = {
   team: "Team",
   log: "Log",
   r3akt: "R3AKT",
-  feed: "Feed"
+  feed: "Feed",
+  admin: "Admin",
+  backup: "Backup",
+  config: "Config",
+  enrollment: "Enrollment",
+  identity: "Identity",
+  diagnostics: "Diagnostics",
+  network: "Network",
+  runtime: "Runtime",
+  delivery: "Delivery",
+  node: "Node",
+  routing: "Routing",
+  emergency: "Emergency",
+  alert: "Alert"
 };
 
 const formatOperationLabel = (operation: string): string =>
@@ -423,6 +480,10 @@ watch(
   gap: 6px;
 }
 
+.rights-bundle-apply {
+  align-self: end;
+}
+
 .rights-filter span {
   font-size: 11px;
   letter-spacing: 0.14em;
@@ -453,9 +514,11 @@ watch(
 }
 
 .rights-bundle-card {
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  min-width: 220px;
+  max-width: 360px;
   padding: 8px 12px;
   border-radius: 12px;
   border: 1px solid rgba(55, 242, 255, 0.18);
@@ -463,6 +526,31 @@ watch(
   color: rgba(216, 250, 255, 0.84);
   font-size: 12px;
   letter-spacing: 0.08em;
+}
+
+.rights-bundle-head,
+.rights-bundle-needs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rights-bundle-description {
+  margin: 0;
+  color: rgba(216, 250, 255, 0.72);
+  font-size: 12px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.rights-bundle-needs span {
+  padding: 3px 7px;
+  border: 1px solid rgba(117, 239, 255, 0.2);
+  border-radius: 999px;
+  color: rgba(158, 226, 255, 0.82);
+  font-size: 11px;
+  letter-spacing: 0.06em;
 }
 
 .rights-actions {

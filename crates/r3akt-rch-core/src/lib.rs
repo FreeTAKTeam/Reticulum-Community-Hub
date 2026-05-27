@@ -38,6 +38,336 @@ const ACCEPTED_CONTENT_TYPES: [&str; 3] = [
     "application/cbor; schema=lxmf.v1",
 ];
 
+pub const ROLE_FIELD_OPERATOR: &str = "FIELD_OPERATOR";
+pub const ROLE_TEAM_LEAD: &str = "TEAM_LEAD";
+pub const ROLE_INCIDENT_COMMANDER: &str = "INCIDENT_COMMANDER";
+pub const ROLE_LOGISTICS_RESOURCE_MANAGER: &str = "LOGISTICS_RESOURCE_MANAGER";
+pub const ROLE_COMMUNICATIONS_OPERATOR: &str = "COMMUNICATIONS_OPERATOR";
+pub const ROLE_SYSTEM_ADMIN: &str = "SYSTEM_ADMIN";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RchRoleBundleDefinition {
+    pub role: &'static str,
+    pub label: &'static str,
+    pub persona: &'static str,
+    pub description: &'static str,
+    pub scope_types: &'static [&'static str],
+    pub needs: &'static [&'static str],
+    pub operations: &'static [&'static str],
+}
+
+const MISSION_READONLY_OPERATION_LIST: &[&str] = &[
+    "checklist.join",
+    "checklist.read",
+    "mission.audit.read",
+    "mission.content.read",
+    "mission.join",
+    "mission.leave",
+    "mission.registry.asset.read",
+    "mission.registry.assignment.read",
+    "mission.registry.log.read",
+    "mission.registry.mission.read",
+    "mission.registry.skill.read",
+    "mission.registry.status.read",
+    "mission.registry.team.read",
+    "mission.zone.read",
+    "topic.read",
+];
+
+const MISSION_WRITE_OPERATION_LIST: &[&str] = &[
+    "checklist.feed.publish",
+    "checklist.join",
+    "checklist.read",
+    "checklist.upload",
+    "checklist.write",
+    "mission.audit.read",
+    "mission.content.read",
+    "mission.content.write",
+    "mission.join",
+    "mission.leave",
+    "mission.message.send",
+    "mission.registry.assignment.read",
+    "mission.registry.assignment.write",
+    "mission.registry.asset.read",
+    "mission.registry.log.read",
+    "mission.registry.log.write",
+    "mission.registry.mission.read",
+    "mission.registry.skill.read",
+    "mission.registry.status.read",
+    "mission.registry.status.write",
+    "mission.registry.team.read",
+    "mission.zone.read",
+    "mission.zone.write",
+    "topic.read",
+    "topic.subscribe",
+];
+
+const MISSION_OWNER_OPERATION_LIST: &[&str] = &[
+    "checklist.feed.publish",
+    "checklist.join",
+    "checklist.read",
+    "checklist.upload",
+    "checklist.write",
+    "mission.audit.read",
+    "mission.content.read",
+    "mission.content.write",
+    "mission.join",
+    "mission.leave",
+    "mission.message.send",
+    "mission.registry.asset.read",
+    "mission.registry.asset.write",
+    "mission.registry.assignment.read",
+    "mission.registry.assignment.write",
+    "mission.registry.log.read",
+    "mission.registry.log.write",
+    "mission.registry.mission.read",
+    "mission.registry.mission.write",
+    "mission.registry.skill.read",
+    "mission.registry.skill.write",
+    "mission.registry.status.read",
+    "mission.registry.status.write",
+    "mission.registry.team.read",
+    "mission.registry.team.write",
+    "mission.zone.delete",
+    "mission.zone.read",
+    "mission.zone.write",
+    "topic.create",
+    "topic.delete",
+    "topic.read",
+    "topic.subscribe",
+    "topic.write",
+];
+
+const FIELD_OPERATOR_OPERATION_LIST: &[&str] = &[
+    "checklist.join",
+    "checklist.read",
+    "checklist.write",
+    "emergency.alert.send",
+    "mission.content.read",
+    "mission.join",
+    "mission.leave",
+    "mission.message.send",
+    "mission.registry.assignment.read",
+    "mission.registry.assignment.write",
+    "mission.registry.status.read",
+    "mission.registry.status.write",
+    "mission.zone.read",
+    "topic.read",
+    "topic.subscribe",
+];
+
+const TEAM_LEAD_OPERATION_LIST: &[&str] = &[
+    "checklist.feed.publish",
+    "checklist.join",
+    "checklist.read",
+    "checklist.upload",
+    "checklist.write",
+    "emergency.alert.send",
+    "mission.audit.read",
+    "mission.content.read",
+    "mission.content.write",
+    "mission.join",
+    "mission.leave",
+    "mission.message.send",
+    "mission.registry.assignment.read",
+    "mission.registry.assignment.write",
+    "mission.registry.status.read",
+    "mission.registry.status.write",
+    "mission.registry.team.read",
+    "mission.zone.read",
+    "mission.zone.write",
+    "topic.read",
+    "topic.subscribe",
+];
+
+const INCIDENT_COMMANDER_OPERATION_LIST: &[&str] = &[
+    "checklist.feed.publish",
+    "checklist.join",
+    "checklist.read",
+    "checklist.template.read",
+    "checklist.upload",
+    "checklist.write",
+    "emergency.alert.send",
+    "mission.audit.read",
+    "mission.content.read",
+    "mission.content.write",
+    "mission.join",
+    "mission.leave",
+    "mission.message.send",
+    "mission.registry.asset.read",
+    "mission.registry.asset.write",
+    "mission.registry.assignment.read",
+    "mission.registry.assignment.write",
+    "mission.registry.log.read",
+    "mission.registry.log.write",
+    "mission.registry.mission.read",
+    "mission.registry.mission.write",
+    "mission.registry.skill.read",
+    "mission.registry.skill.write",
+    "mission.registry.status.read",
+    "mission.registry.status.write",
+    "mission.registry.team.read",
+    "mission.registry.team.write",
+    "mission.zone.delete",
+    "mission.zone.read",
+    "mission.zone.write",
+    "topic.create",
+    "topic.delete",
+    "topic.read",
+    "topic.subscribe",
+    "topic.write",
+];
+
+const LOGISTICS_RESOURCE_MANAGER_OPERATION_LIST: &[&str] = &[
+    "checklist.join",
+    "checklist.read",
+    "checklist.upload",
+    "checklist.write",
+    "mission.audit.read",
+    "mission.content.read",
+    "mission.join",
+    "mission.leave",
+    "mission.message.send",
+    "mission.registry.asset.read",
+    "mission.registry.asset.write",
+    "mission.registry.assignment.read",
+    "mission.registry.assignment.write",
+    "mission.registry.log.read",
+    "mission.registry.log.write",
+    "mission.registry.skill.read",
+    "mission.registry.status.read",
+    "mission.registry.status.write",
+    "mission.registry.team.read",
+    "mission.zone.read",
+    "topic.read",
+    "topic.subscribe",
+];
+
+const COMMUNICATIONS_OPERATOR_OPERATION_LIST: &[&str] = &[
+    "diagnostics.network.read",
+    "mission.audit.read",
+    "mission.content.read",
+    "mission.join",
+    "mission.leave",
+    "mission.message.send",
+    "mission.registry.log.read",
+    "mission.registry.log.write",
+    "mission.registry.status.read",
+    "mission.registry.status.write",
+    "mission.registry.team.read",
+    "runtime.delivery.read",
+    "runtime.node.read",
+    "runtime.routing.read",
+    "topic.create",
+    "topic.delete",
+    "topic.read",
+    "topic.subscribe",
+    "topic.write",
+];
+
+const SYSTEM_ADMIN_OPERATION_LIST: &[&str] = &[
+    "admin.backup.write",
+    "admin.config.write",
+    "admin.enrollment.write",
+    "admin.identity.revoke",
+    "diagnostics.network.read",
+    "mission.audit.read",
+    "mission.registry.log.read",
+    "mission.registry.mission.read",
+    "mission.registry.status.read",
+    "mission.registry.team.read",
+    "mission.registry.team.write",
+    "r3akt",
+    "runtime.delivery.read",
+    "runtime.node.read",
+    "runtime.routing.read",
+];
+
+const RCH_ROLE_BUNDLES: &[RchRoleBundleDefinition] = &[
+    RchRoleBundleDefinition {
+        role: ROLE_FIELD_OPERATOR,
+        label: "Field operator",
+        persona: "Field operator",
+        description: "Simple status buttons, task list, emergency alert, map, and team messages.",
+        scope_types: &["mission"],
+        needs: &[
+            "Simple status buttons",
+            "Task list",
+            "Emergency alert",
+            "Map",
+            "Team messages",
+        ],
+        operations: FIELD_OPERATOR_OPERATION_LIST,
+    },
+    RchRoleBundleDefinition {
+        role: ROLE_TEAM_LEAD,
+        label: "Team lead",
+        persona: "Team lead",
+        description: "Assign tasks, monitor team status, and coordinate movement.",
+        scope_types: &["mission"],
+        needs: &["Assign tasks", "Monitor team status", "Coordinate movement"],
+        operations: TEAM_LEAD_OPERATION_LIST,
+    },
+    RchRoleBundleDefinition {
+        role: ROLE_INCIDENT_COMMANDER,
+        label: "Incident commander",
+        persona: "Incident commander",
+        description: "Incident dashboard, objectives, resources, priorities, and audit log.",
+        scope_types: &["mission"],
+        needs: &[
+            "Incident dashboard",
+            "Objectives",
+            "Resources",
+            "Priorities",
+            "Audit log",
+        ],
+        operations: INCIDENT_COMMANDER_OPERATION_LIST,
+    },
+    RchRoleBundleDefinition {
+        role: ROLE_LOGISTICS_RESOURCE_MANAGER,
+        label: "Logistics/resource manager",
+        persona: "Logistics/resource manager",
+        description: "Resource requests, staging, availability, and fulfillment.",
+        scope_types: &["mission"],
+        needs: &[
+            "Resource requests",
+            "Staging",
+            "Availability",
+            "Fulfillment",
+        ],
+        operations: LOGISTICS_RESOURCE_MANAGER_OPERATION_LIST,
+    },
+    RchRoleBundleDefinition {
+        role: ROLE_COMMUNICATIONS_OPERATOR,
+        label: "Communications operator",
+        persona: "Communications operator",
+        description: "Node health, routing status, message delivery, and degraded-network diagnostics.",
+        scope_types: &["global", "mission"],
+        needs: &[
+            "Node health",
+            "Routing status",
+            "Message delivery",
+            "Degraded-network diagnostics",
+        ],
+        operations: COMMUNICATIONS_OPERATOR_OPERATION_LIST,
+    },
+    RchRoleBundleDefinition {
+        role: ROLE_SYSTEM_ADMIN,
+        label: "System admin",
+        persona: "System admin",
+        description: "Enrollment, roles, revocation, configuration, and backups.",
+        scope_types: &["global"],
+        needs: &[
+            "Enrollment",
+            "Roles",
+            "Revocation",
+            "Configuration",
+            "Backups",
+        ],
+        operations: SYSTEM_ADMIN_OPERATION_LIST,
+    },
+];
+
 const RCH_SQLITE_MIGRATION_SQL: &str = include_str!("../migrations/0001_rch_core_snapshot.sql");
 const RCH_SQLITE_SCHEMA_VERSION: &str = "1";
 const RCH_SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -10067,6 +10397,89 @@ fn dedupe_non_empty(values: Vec<String>) -> Vec<String> {
     normalized
 }
 
+#[must_use]
+pub fn rch_role_bundle_definitions() -> &'static [RchRoleBundleDefinition] {
+    RCH_ROLE_BUNDLES
+}
+
+#[must_use]
+pub fn rch_operation_definitions() -> Vec<&'static str> {
+    let mut operations = Vec::new();
+    operations.extend([
+        "checklist.feed.publish",
+        "checklist.join",
+        "checklist.read",
+        "checklist.template.delete",
+        "checklist.template.read",
+        "checklist.template.write",
+        "checklist.upload",
+        "checklist.write",
+        "emergency.alert.send",
+        "mission.audit.read",
+        "mission.content.read",
+        "mission.content.write",
+        "mission.join",
+        "mission.leave",
+        "mission.message.send",
+        "mission.registry.asset.read",
+        "mission.registry.asset.write",
+        "mission.registry.assignment.read",
+        "mission.registry.assignment.write",
+        "mission.registry.log.read",
+        "mission.registry.log.write",
+        "mission.registry.mission.read",
+        "mission.registry.mission.write",
+        "mission.registry.skill.read",
+        "mission.registry.skill.write",
+        "mission.registry.status.read",
+        "mission.registry.status.write",
+        "mission.registry.team.read",
+        "mission.registry.team.write",
+        "mission.zone.delete",
+        "mission.zone.read",
+        "mission.zone.write",
+        "r3akt",
+        "topic.create",
+        "topic.delete",
+        "topic.read",
+        "topic.subscribe",
+        "topic.write",
+    ]);
+    operations.extend([
+        "admin.backup.write",
+        "admin.config.write",
+        "admin.enrollment.write",
+        "admin.identity.revoke",
+        "diagnostics.network.read",
+        "runtime.delivery.read",
+        "runtime.node.read",
+        "runtime.routing.read",
+    ]);
+    for bundle in RCH_ROLE_BUNDLES {
+        operations.extend(bundle.operations.iter().copied());
+    }
+    operations.sort_unstable();
+    operations.dedup();
+    operations
+}
+
+#[must_use]
+pub fn rch_mission_role_bundle_definitions() -> BTreeMap<&'static str, Vec<&'static str>> {
+    let mut bundles = BTreeMap::new();
+    bundles.insert(
+        "MISSION_READONLY_SUBSCRIBER",
+        MISSION_READONLY_OPERATION_LIST.to_vec(),
+    );
+    bundles.insert("MISSION_SUBSCRIBER", MISSION_WRITE_OPERATION_LIST.to_vec());
+    bundles.insert("MISSION_OWNER", MISSION_OWNER_OPERATION_LIST.to_vec());
+    for bundle in RCH_ROLE_BUNDLES {
+        if bundle.scope_types.contains(&"mission") {
+            bundles.insert(bundle.role, bundle.operations.to_vec());
+        }
+    }
+    bundles
+}
+
 fn normalize_mission_role(value: &str, field_name: &str) -> Result<String, RchCoreError> {
     normalize_enum(
         value,
@@ -10075,6 +10488,12 @@ fn normalize_mission_role(value: &str, field_name: &str) -> Result<String, RchCo
             "MISSION_OWNER",
             "MISSION_SUBSCRIBER",
             "MISSION_READONLY_SUBSCRIBER",
+            ROLE_FIELD_OPERATOR,
+            ROLE_TEAM_LEAD,
+            ROLE_INCIDENT_COMMANDER,
+            ROLE_LOGISTICS_RESOURCE_MANAGER,
+            ROLE_COMMUNICATIONS_OPERATOR,
+            ROLE_SYSTEM_ADMIN,
         ],
     )
 }
@@ -10084,62 +10503,32 @@ fn mission_role_operations(role: &str) -> HashSet<&'static str> {
         "MISSION_OWNER" => mission_owner_operations(),
         "MISSION_SUBSCRIBER" => mission_write_operations(),
         "MISSION_READONLY_SUBSCRIBER" => mission_readonly_operations(),
+        ROLE_FIELD_OPERATOR => FIELD_OPERATOR_OPERATION_LIST.iter().copied().collect(),
+        ROLE_TEAM_LEAD => TEAM_LEAD_OPERATION_LIST.iter().copied().collect(),
+        ROLE_INCIDENT_COMMANDER => INCIDENT_COMMANDER_OPERATION_LIST.iter().copied().collect(),
+        ROLE_LOGISTICS_RESOURCE_MANAGER => LOGISTICS_RESOURCE_MANAGER_OPERATION_LIST
+            .iter()
+            .copied()
+            .collect(),
+        ROLE_COMMUNICATIONS_OPERATOR => COMMUNICATIONS_OPERATOR_OPERATION_LIST
+            .iter()
+            .copied()
+            .collect(),
+        ROLE_SYSTEM_ADMIN => SYSTEM_ADMIN_OPERATION_LIST.iter().copied().collect(),
         _ => HashSet::new(),
     }
 }
 
 fn mission_readonly_operations() -> HashSet<&'static str> {
-    [
-        "mission.join",
-        "mission.leave",
-        "mission.audit.read",
-        "topic.read",
-        "mission.content.read",
-        "mission.zone.read",
-        "mission.registry.mission.read",
-        "mission.registry.log.read",
-        "mission.registry.status.read",
-        "mission.registry.team.read",
-        "mission.registry.asset.read",
-        "mission.registry.skill.read",
-        "mission.registry.assignment.read",
-        "checklist.read",
-        "checklist.join",
-    ]
-    .into_iter()
-    .collect()
+    MISSION_READONLY_OPERATION_LIST.iter().copied().collect()
 }
 
 fn mission_write_operations() -> HashSet<&'static str> {
-    let mut operations = mission_readonly_operations();
-    operations.extend([
-        "mission.message.send",
-        "topic.subscribe",
-        "mission.content.write",
-        "mission.zone.write",
-        "mission.registry.log.write",
-        "mission.registry.status.write",
-        "mission.registry.assignment.write",
-        "checklist.write",
-        "checklist.upload",
-        "checklist.feed.publish",
-    ]);
-    operations
+    MISSION_WRITE_OPERATION_LIST.iter().copied().collect()
 }
 
 fn mission_owner_operations() -> HashSet<&'static str> {
-    let mut operations = mission_write_operations();
-    operations.extend([
-        "topic.create",
-        "topic.write",
-        "topic.delete",
-        "mission.zone.delete",
-        "mission.registry.mission.write",
-        "mission.registry.team.write",
-        "mission.registry.asset.write",
-        "mission.registry.skill.write",
-    ]);
-    operations
+    MISSION_OWNER_OPERATION_LIST.iter().copied().collect()
 }
 
 fn normalize_mission_status(value: Option<&str>) -> Result<String, RchCoreError> {
@@ -10185,6 +10574,11 @@ fn normalize_team_role(value: &str) -> Result<String, RchCoreError> {
         &[
             "TEAM_MEMBER",
             "TEAM_LEAD",
+            ROLE_FIELD_OPERATOR,
+            ROLE_INCIDENT_COMMANDER,
+            ROLE_LOGISTICS_RESOURCE_MANAGER,
+            ROLE_COMMUNICATIONS_OPERATOR,
+            ROLE_SYSTEM_ADMIN,
             "HQ",
             "SNIPER",
             "MEDIC",
@@ -13345,6 +13739,76 @@ mod tests {
             "peer-client",
             "mission.message.send",
             Some("mission-1")
+        ));
+    }
+
+    #[test]
+    fn persona_role_bundles_define_release_roles_and_grant_expected_operations() {
+        let definitions = rch_role_bundle_definitions();
+        for role in [
+            ROLE_FIELD_OPERATOR,
+            ROLE_TEAM_LEAD,
+            ROLE_INCIDENT_COMMANDER,
+            ROLE_LOGISTICS_RESOURCE_MANAGER,
+            ROLE_COMMUNICATIONS_OPERATOR,
+            ROLE_SYSTEM_ADMIN,
+        ] {
+            assert!(
+                definitions.iter().any(|bundle| bundle.role == role),
+                "{role} bundle missing"
+            );
+        }
+
+        let mission_bundles = rch_mission_role_bundle_definitions();
+        assert!(mission_bundles[ROLE_FIELD_OPERATOR].contains(&"mission.message.send"));
+        assert!(mission_bundles[ROLE_FIELD_OPERATOR].contains(&"checklist.write"));
+        assert!(mission_bundles[ROLE_TEAM_LEAD].contains(&"mission.registry.assignment.write"));
+        assert!(
+            mission_bundles[ROLE_INCIDENT_COMMANDER].contains(&"mission.registry.mission.write")
+        );
+        assert!(
+            mission_bundles[ROLE_LOGISTICS_RESOURCE_MANAGER]
+                .contains(&"mission.registry.asset.write")
+        );
+        assert!(mission_bundles[ROLE_COMMUNICATIONS_OPERATOR].contains(&"runtime.routing.read"));
+        assert!(!mission_bundles.contains_key(ROLE_SYSTEM_ADMIN));
+        assert!(rch_operation_definitions().contains(&"admin.config.write"));
+
+        let mut core = RchCore::new();
+        core.handle_command(&command(
+            "mission.registry.mission.upsert",
+            json!({ "uid": "mission-roles", "mission_name": "Mission Roles" }),
+        ));
+        core.handle_command(&command(
+            "mission.registry.team.upsert",
+            json!({ "uid": "team-roles", "mission_uid": "mission-roles", "team_name": "Ops" }),
+        ));
+        core.handle_command(&command(
+            "mission.registry.team_member.upsert",
+            json!({
+                "uid": "member-roles",
+                "team_uid": "team-roles",
+                "rns_identity": "peer-roles",
+                "display_name": "Peer Roles",
+                "role": ROLE_FIELD_OPERATOR
+            }),
+        ));
+        core.assign_mission_access_role(
+            "mission-roles",
+            "team_member",
+            "member-roles",
+            ROLE_TEAM_LEAD,
+        )
+        .expect("team lead mission bundle");
+        assert!(core.authorize_identity_operation(
+            "peer-roles",
+            "mission.registry.assignment.write",
+            Some("mission-roles")
+        ));
+        assert!(!core.authorize_identity_operation(
+            "peer-roles",
+            "admin.config.write",
+            Some("mission-roles")
         ));
     }
 

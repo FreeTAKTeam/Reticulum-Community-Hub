@@ -916,6 +916,7 @@ version = "0.2.1"
 dependencies = [
  "hex",
  "hmac",
+ "lxmf-wire",
  "reticulum-rs-rpc",
  "serde",
  "serde_json",

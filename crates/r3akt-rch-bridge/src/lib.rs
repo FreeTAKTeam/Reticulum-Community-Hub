@@ -259,7 +259,10 @@ fn handle_outbound_send(
     client: &mut impl ReticulumdRpc,
     request: OutboundSendRequest,
 ) -> Result<BridgeResponse, BridgeError> {
-    let rpc_method = if request.method.as_deref() == Some("direct") {
+    let requested_method = request.method.as_deref().map(str::trim);
+    let is_direct = requested_method.is_some_and(|method| method.eq_ignore_ascii_case("direct"));
+    let is_auto = requested_method.is_some_and(|method| method.eq_ignore_ascii_case("auto"));
+    let rpc_method = if is_direct {
         "sdk_send_v2"
     } else {
         "send_message_v2"
@@ -283,7 +286,13 @@ fn handle_outbound_send(
         request.fields.unwrap_or(JsonValue::Null),
     );
     if rpc_method == "send_message_v2" {
-        if let Some(method) = request.method {
+        if is_auto {
+            params.insert(
+                "method".to_string(),
+                JsonValue::String("direct".to_string()),
+            );
+            params.insert("try_propagation_on_fail".to_string(), JsonValue::Bool(true));
+        } else if let Some(method) = request.method {
             params.insert("method".to_string(), JsonValue::String(method));
         }
     }
@@ -1153,6 +1162,59 @@ mod tests {
         assert_eq!(client.calls[0].params["content"], "hello from rust");
         assert_eq!(client.calls[0].params["fields"]["10"]["status"], "result");
         assert!(client.calls[0].params.get("method").is_none());
+    }
+
+    #[test]
+    fn outbound_auto_send_requests_reticulumd_direct_with_propagation_fallback() {
+        let mut client = RecordingReticulumdRpc::default();
+        let input = serde_json::json!({
+            "type": "outbound_send",
+            "message_id": "rch-msg-auto",
+            "source": "source-destination",
+            "destination": "target-destination",
+            "title": "",
+            "content": "rem command",
+            "fields": { "9": [{ "command_type": "checklist.create.online" }] },
+            "method": "auto"
+        })
+        .to_string();
+
+        handle_outbound_json_request(&mut client, &input).expect("outbound bridge response");
+
+        assert_eq!(client.calls.len(), 1);
+        assert_eq!(client.calls[0].method, "send_message_v2");
+        assert_eq!(client.calls[0].params["id"], "rch-msg-auto");
+        assert_eq!(client.calls[0].params["method"], "direct");
+        assert_eq!(client.calls[0].params["try_propagation_on_fail"], true);
+    }
+
+    #[test]
+    fn outbound_propagated_send_preserves_method_for_reticulumd() {
+        let mut client = RecordingReticulumdRpc::default();
+        let input = serde_json::json!({
+            "type": "outbound_send",
+            "message_id": "rch-msg-propagated",
+            "source": "source-destination",
+            "destination": "target-destination",
+            "title": "",
+            "content": "relay command",
+            "fields": { "9": [{ "command_type": "checklist.create.online" }] },
+            "method": "propagated"
+        })
+        .to_string();
+
+        handle_outbound_json_request(&mut client, &input).expect("outbound bridge response");
+
+        assert_eq!(client.calls.len(), 1);
+        assert_eq!(client.calls[0].method, "send_message_v2");
+        assert_eq!(client.calls[0].params["id"], "rch-msg-propagated");
+        assert_eq!(client.calls[0].params["method"], "propagated");
+        assert!(
+            client.calls[0]
+                .params
+                .get("try_propagation_on_fail")
+                .is_none()
+        );
     }
 
     #[test]

@@ -138,7 +138,18 @@ export interface RightsDefinitions {
   subject_types: string[];
   scope_types: string[];
   operations: string[];
+  role_bundles?: RoleBundleDefinition[];
   mission_role_bundles: Record<string, string[]>;
+}
+
+export interface RoleBundleDefinition {
+  role: string;
+  label: string;
+  persona: string;
+  description: string;
+  scope_types: string[];
+  needs: string[];
+  operations: string[];
 }
 
 export interface RightsSubjectRecord {

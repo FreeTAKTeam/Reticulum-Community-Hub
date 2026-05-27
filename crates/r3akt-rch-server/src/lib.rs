@@ -66,7 +66,8 @@ use r3akt_rch_core::{
     SubscriberRecord as CoreSubscriberRecord, SystemEventRecord, TelemetryRecord,
     TopicRecord as CoreTopicRecord, Visibility, ZonePointRecord as CoreZonePointRecord,
     ZoneRecord as CoreZoneRecord, classify_delivery_mode, is_supported_checklist_command,
-    is_supported_mission_command, normalize_topic_id,
+    is_supported_mission_command, normalize_topic_id, rch_mission_role_bundle_definitions,
+    rch_operation_definitions, rch_role_bundle_definitions,
 };
 #[cfg(test)]
 use r3akt_transport_rns::MessageBus;
@@ -505,6 +506,14 @@ impl AppState {
     }
 
     #[must_use]
+    pub fn with_managed_reticulumd_transport(self, transport: Option<impl Into<String>>) -> Self {
+        if let Ok(mut managed) = self.managed_reticulumd.write() {
+            managed.transport = transport.map(Into::into);
+        }
+        self
+    }
+
+    #[must_use]
     pub fn with_lxmf_zmq_sdk(
         mut self,
         command_endpoint: impl Into<String>,
@@ -537,14 +546,6 @@ impl AppState {
             managed.pid = None;
             managed.started_ts_ms = None;
             managed.stopped_ts_ms = None;
-        }
-        self
-    }
-
-    #[must_use]
-    pub fn with_managed_reticulumd_transport(self, transport: Option<impl Into<String>>) -> Self {
-        if let Ok(mut managed) = self.managed_reticulumd.write() {
-            managed.transport = transport.map(Into::into);
         }
         self
     }
@@ -14658,6 +14659,7 @@ struct RemChecklistFanoutMessage {
     fields: Value,
 }
 
+#[cfg(test)]
 const LXMF_FIELDS_MSGPACK_B64_KEY: &str = "_lxmf_fields_msgpack_b64";
 const REM_COMMAND_PLACEHOLDER_BODY: &str = "cmd";
 
@@ -15259,18 +15261,10 @@ fn rem_checklist_snapshot_value(
 
 fn rem_command_transport_fields(envelope: Value) -> Value {
     let mut fields_map = serde_json::Map::new();
-    fields_map.insert(FIELD_COMMANDS.to_string(), json!([envelope.clone()]));
-    let mut wire_fields = std::collections::BTreeMap::<u8, Value>::new();
-    wire_fields.insert(
-        FIELD_COMMANDS as u8,
+    fields_map.insert(
+        FIELD_COMMANDS.to_string(),
         json!([rem_wire_command_envelope(&envelope)]),
     );
-    if let Ok(bytes) = rmp_serde::to_vec(&wire_fields) {
-        fields_map.insert(
-            LXMF_FIELDS_MSGPACK_B64_KEY.to_string(),
-            json!(BASE64_STANDARD.encode(bytes)),
-        );
-    }
     Value::Object(fields_map)
 }
 
@@ -15279,7 +15273,10 @@ fn rem_wire_command_envelope(envelope: &Value) -> Value {
         .get("command_type")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let mut wire = envelope.as_object().cloned().unwrap_or_default();
+    let mut wire = serde_json::Map::new();
+    if !command_type.is_empty() {
+        wire.insert("command_type".to_string(), json!(command_type));
+    }
     if let Some(args) = envelope.get("args") {
         wire.insert(
             "args".to_string(),
@@ -15290,8 +15287,9 @@ fn rem_wire_command_envelope(envelope: &Value) -> Value {
         if let Some(snapshot_json) = envelope.get("snapshot_json").and_then(Value::as_str) {
             if let Ok(snapshot) = serde_json::from_str::<Value>(snapshot_json) {
                 wire.insert("snapshot".to_string(), snapshot);
-                wire.remove("snapshot_json");
             }
+        } else if let Some(snapshot) = envelope.get("snapshot") {
+            wire.insert("snapshot".to_string(), snapshot.clone());
         }
     }
     Value::Object(
@@ -15319,6 +15317,21 @@ fn rem_wire_command_args(command_type: &str, args: &Value) -> Value {
             "legacy_value",
             "task",
             "changed_by_team_member_rns_identity",
+        ],
+        "checklist.task.row.delete" => &["checklist_uid", "task_uid"],
+        "checklist.task.row.style.set" => &[
+            "checklist_uid",
+            "task_uid",
+            "row_background_color",
+            "line_break_enabled",
+            "changed_by_team_member_rns_identity",
+        ],
+        "checklist.task.cell.set" => &[
+            "checklist_uid",
+            "task_uid",
+            "column_uid",
+            "value",
+            "updated_by_team_member_rns_identity",
         ],
         "checklist.task.status.set" => &["checklist_uid", "task_uid", "user_status"],
         _ => return args.clone(),
@@ -19427,126 +19440,9 @@ async fn r3akt_rights_definitions() -> Json<Value> {
     Json(json!({
         "subject_types": ["identity", "team_member"],
         "scope_types": ["global", "mission"],
-        "operations": [
-            "checklist.feed.publish",
-            "checklist.join",
-            "checklist.read",
-            "checklist.template.delete",
-            "checklist.template.read",
-            "checklist.template.write",
-            "checklist.upload",
-            "checklist.write",
-            "mission.audit.read",
-            "mission.content.read",
-            "mission.content.write",
-            "mission.join",
-            "mission.leave",
-            "mission.message.send",
-            "mission.registry.asset.read",
-            "mission.registry.asset.write",
-            "mission.registry.assignment.read",
-            "mission.registry.assignment.write",
-            "mission.registry.log.read",
-            "mission.registry.log.write",
-            "mission.registry.mission.read",
-            "mission.registry.mission.write",
-            "mission.registry.skill.read",
-            "mission.registry.skill.write",
-            "mission.registry.status.read",
-            "mission.registry.status.write",
-            "mission.registry.team.read",
-            "mission.registry.team.write",
-            "mission.zone.delete",
-            "mission.zone.read",
-            "mission.zone.write",
-            "r3akt",
-            "topic.create",
-            "topic.delete",
-            "topic.read",
-            "topic.subscribe",
-            "topic.write",
-        ],
-        "mission_role_bundles": {
-            "MISSION_READONLY_SUBSCRIBER": [
-                "checklist.join",
-                "checklist.read",
-                "mission.audit.read",
-                "mission.content.read",
-                "mission.join",
-                "mission.leave",
-                "mission.registry.asset.read",
-                "mission.registry.assignment.read",
-                "mission.registry.log.read",
-                "mission.registry.mission.read",
-                "mission.registry.skill.read",
-                "mission.registry.status.read",
-                "mission.registry.team.read",
-                "mission.zone.read",
-                "topic.read",
-            ],
-            "MISSION_SUBSCRIBER": [
-                "checklist.feed.publish",
-                "checklist.join",
-                "checklist.read",
-                "checklist.upload",
-                "checklist.write",
-                "mission.audit.read",
-                "mission.content.read",
-                "mission.content.write",
-                "mission.join",
-                "mission.leave",
-                "mission.message.send",
-                "mission.registry.assignment.read",
-                "mission.registry.assignment.write",
-                "mission.registry.asset.read",
-                "mission.registry.log.read",
-                "mission.registry.log.write",
-                "mission.registry.mission.read",
-                "mission.registry.skill.read",
-                "mission.registry.status.read",
-                "mission.registry.status.write",
-                "mission.registry.team.read",
-                "mission.zone.read",
-                "mission.zone.write",
-                "topic.read",
-                "topic.subscribe",
-            ],
-            "MISSION_OWNER": [
-                "checklist.feed.publish",
-                "checklist.join",
-                "checklist.read",
-                "checklist.upload",
-                "checklist.write",
-                "mission.audit.read",
-                "mission.content.read",
-                "mission.content.write",
-                "mission.join",
-                "mission.leave",
-                "mission.message.send",
-                "mission.registry.asset.read",
-                "mission.registry.asset.write",
-                "mission.registry.assignment.read",
-                "mission.registry.assignment.write",
-                "mission.registry.log.read",
-                "mission.registry.log.write",
-                "mission.registry.mission.read",
-                "mission.registry.mission.write",
-                "mission.registry.skill.read",
-                "mission.registry.skill.write",
-                "mission.registry.status.read",
-                "mission.registry.status.write",
-                "mission.registry.team.read",
-                "mission.registry.team.write",
-                "mission.zone.delete",
-                "mission.zone.read",
-                "mission.zone.write",
-                "topic.create",
-                "topic.delete",
-                "topic.read",
-                "topic.subscribe",
-                "topic.write",
-            ],
-        }
+        "operations": rch_operation_definitions(),
+        "role_bundles": rch_role_bundle_definitions(),
+        "mission_role_bundles": rch_mission_role_bundle_definitions(),
     }))
 }
 
@@ -23424,14 +23320,18 @@ mod tests {
         ReticulumdRpcTransport,
     };
     use serde::Serialize;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use sha2::{Digest, Sha256};
-    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
     use tokio::net::TcpListener;
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
     use tower::ServiceExt;
+
+    fn assert_rem_auto_rpc_method(params: &Value) {
+        assert_eq!(params["method"], "direct");
+        assert_eq!(params["try_propagation_on_fail"], true);
+    }
 
     fn test_client(identity: &str, now: i64) -> r3akt_rch_core::ClientRecord {
         r3akt_rch_core::ClientRecord {
@@ -32979,10 +32879,10 @@ mod tests {
         let rem_params = rem.params.as_ref().expect("rem params");
         assert_eq!(rem_params["title"], "");
         assert_eq!(rem_params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
-        assert!(rem_params.get("method").is_none());
+        assert_rem_auto_rpc_method(rem_params);
         let command = &rem_params["fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(command["command_type"], "mission.registry.telemetry.upsert");
-        assert_eq!(command["source"]["rns_identity"], "source-destination");
+        assert!(command.get("source").is_none());
         assert_eq!(command["args"]["callsign"], "Hostile");
         assert_eq!(command["args"]["lat"], 45.5017);
         assert_eq!(command["args"]["lon"], -73.5673);
@@ -33075,12 +32975,11 @@ mod tests {
         ];
         store.save_snapshot(&snapshot).expect("save snapshot");
 
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_api_key("secret")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+        let app = crate::create_app_with_state(state.clone());
 
         let mission = app
             .clone()
@@ -33148,13 +33047,12 @@ mod tests {
         let rem_params = rem.params.as_ref().expect("rem params");
         assert_eq!(rem_params["title"], "");
         assert_eq!(rem_params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
-        assert!(rem_params.get("method").is_none());
+        assert_rem_auto_rpc_method(rem_params);
         let command = &rem_params["fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(
             command["command_type"],
             "mission.registry.mission.zone.link"
         );
-        assert_eq!(command["source"]["rns_identity"], "source-destination");
         assert_eq!(command["args"]["mission_uid"], "zone-mission");
         assert_eq!(command["args"]["zone_id"], zone_id);
 
@@ -33214,6 +33112,10 @@ mod tests {
         let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
         let now = crate::unix_now_ms();
         let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.clients = vec![
+            test_client("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now),
+            test_client("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", now),
+        ];
         snapshot.identity_announces = vec![
             r3akt_rch_core::IdentityAnnounceRecord {
                 destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
@@ -33356,6 +33258,7 @@ mod tests {
         let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
         let now = crate::unix_now_ms();
         let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.clients = vec![test_client("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now)];
         snapshot.identity_announces = vec![
             r3akt_rch_core::IdentityAnnounceRecord {
                 destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
@@ -33385,12 +33288,11 @@ mod tests {
         ];
         store.save_snapshot(&snapshot).expect("save snapshot");
 
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_api_key("secret")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+        let app = crate::create_app_with_state(state.clone());
 
         let created = app
             .clone()
@@ -33409,6 +33311,11 @@ mod tests {
             .expect("create response");
         assert_eq!(created.status(), StatusCode::CREATED);
 
+        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
+        assert_eq!(report.processed, 1);
+        assert_eq!(report.dispatched, 1);
+        assert_eq!(report.failed, 0);
+
         let requests = rpc_server.join().expect("rpc requests");
         let send_requests = requests
             .iter()
@@ -33417,7 +33324,7 @@ mod tests {
         assert_eq!(send_requests.len(), 1);
         let params = send_requests[0].params.as_ref().expect("params");
         assert_eq!(params["destination"], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        assert!(params.get("method").is_none());
+        assert_rem_auto_rpc_method(params);
         assert_eq!(params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
         assert_eq!(
             params["fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"],
@@ -34756,19 +34663,11 @@ mod tests {
             [crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(row_command["args"]["checklist_uid"], payload["uid"]);
         assert_eq!(row_command["args"]["task"]["legacy_value"], "Camera sensor");
-        let encoded = requests[1].params.as_ref().expect("params")["fields"]
-            [crate::LXMF_FIELDS_MSGPACK_B64_KEY]
-            .as_str()
-            .expect("encoded wire fields");
-        let bytes = BASE64_STANDARD.decode(encoded).expect("base64 wire fields");
-        let wire_fields: std::collections::BTreeMap<u8, serde_json::Value> =
-            rmp_serde::from_slice(&bytes).expect("wire fields msgpack");
-        let wire_command = &wire_fields
-            .get(&(crate::FIELD_COMMANDS as u8))
-            .expect("commands field")[0];
-        assert_eq!(
-            wire_command["args"]["task"]["legacy_value"],
-            "Camera sensor"
+        assert_eq!(row_command["args"]["task"]["legacy_value"], "Camera sensor");
+        assert!(
+            requests[1].params.as_ref().expect("params")["fields"]
+                .get(crate::LXMF_FIELDS_MSGPACK_B64_KEY)
+                .is_none()
         );
         assert_eq!(
             requests[0].params.as_ref().expect("params")["content"],
@@ -34847,6 +34746,11 @@ mod tests {
             source_interface: Some("identity".to_string()),
             announce_capabilities: vec!["r3akt".to_string(), "emergencymessages".to_string()],
             client_type: "rem".to_string(),
+            first_seen_ts_ms: now,
+            last_seen_ts_ms: now,
+        }];
+        snapshot.clients = vec![r3akt_rch_core::ClientRecord {
+            identity: "remstatuspeer".to_string(),
             first_seen_ts_ms: now,
             last_seen_ts_ms: now,
         }];
@@ -35031,6 +34935,11 @@ mod tests {
             source_interface: Some("identity".to_string()),
             announce_capabilities: vec!["r3akt".to_string(), "emergencymessages".to_string()],
             client_type: "rem".to_string(),
+            first_seen_ts_ms: now,
+            last_seen_ts_ms: now,
+        }];
+        snapshot.clients = vec![r3akt_rch_core::ClientRecord {
+            identity: "remlinkpeer".to_string(),
             first_seen_ts_ms: now,
             last_seen_ts_ms: now,
         }];
@@ -37025,18 +36934,15 @@ mod tests {
         assert_eq!(params["destination"], "abcdef");
         assert_eq!(params["title"], "");
         assert_eq!(params["content"], "Task Radio added");
-        assert!(params.get("method").is_none());
+        assert_rem_auto_rpc_method(&params);
         let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(command["command_type"], "checklist.task.row.add");
-        assert_eq!(command["correlation_id"], "change-rem-row");
-        assert_eq!(command["source"]["rns_identity"], "source-destination");
-        assert_eq!(command["source"]["display_name"], "RCH");
-        assert_eq!(command["topics"], json!(["mission-rem", "checklist-alpha"]));
-        assert!(command["command_id"].as_str().is_some_and(|value| {
-            value.starts_with("cra-") && value.contains("change-rem-row")
-        }));
-        assert!(command["timestamp"].as_str().is_some());
-        assert_eq!(command["args"]["mission_uid"], "mission-rem");
+        assert!(command.get("correlation_id").is_none());
+        assert!(command.get("source").is_none());
+        assert!(command.get("topics").is_none());
+        assert!(command.get("command_id").is_none());
+        assert!(command.get("timestamp").is_none());
+        assert!(command["args"].get("mission_uid").is_none());
         assert_eq!(command["args"]["checklist_uid"], "checklist-alpha");
         assert_eq!(command["args"]["task_uid"], "task-alpha");
         assert_eq!(command["args"]["number"], 3);
@@ -37199,14 +37105,11 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(rem_requests.iter().all(|request| {
-            request.method == "send_message_v2"
-                && request
-                    .params
-                    .as_ref()
-                    .expect("params")
-                    .get("method")
-                    .and_then(serde_json::Value::as_str)
-                    .is_none()
+            if request.method != "send_message_v2" {
+                return false;
+            }
+            let params = request.params.as_ref().expect("params");
+            params["method"] == "direct" && params["try_propagation_on_fail"] == true
         }));
         let command_types = requests
             .iter()
@@ -37277,15 +37180,9 @@ mod tests {
         let status_command = &requests[2].params.as_ref().expect("params")["fields"]
             [crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(status_command["command_type"], "checklist.task.status.set");
-        assert_eq!(
-            status_command["source"]["rns_identity"],
-            "source-destination"
-        );
-        assert_eq!(status_command["correlation_id"], "change-rem-created");
-        assert_eq!(
-            status_command["topics"],
-            json!(["mission-rem-replay", "checklist-upload"])
-        );
+        assert!(status_command.get("source").is_none());
+        assert!(status_command.get("correlation_id").is_none());
+        assert!(status_command.get("topics").is_none());
         assert_eq!(status_command["args"]["checklist_uid"], "checklist-upload");
         assert_eq!(status_command["args"]["task_uid"], "task-upload");
         assert_eq!(status_command["args"]["user_status"], "COMPLETE");
@@ -37333,32 +37230,12 @@ mod tests {
             row_command["args"]["task"]["task_uid"],
             "task-without-parent"
         );
-        assert_eq!(
-            row_command["topics"],
-            json!(["mission-parent-checklist", "checklist-parent"])
-        );
+        assert!(row_command.get("topics").is_none());
         let status_command = &messages[2].fields[crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(status_command["command_type"], "checklist.task.status.set");
         assert_eq!(status_command["args"]["checklist_uid"], "checklist-parent");
         assert_eq!(status_command["args"]["task_uid"], "task-without-parent");
-        let timestamps = messages
-            .iter()
-            .map(|message| {
-                let timestamp = message.fields[crate::FIELD_COMMANDS.to_string()][0]["timestamp"]
-                    .as_str()
-                    .expect("timestamp")
-                    .to_string();
-                OffsetDateTime::parse(&timestamp, &Rfc3339)
-                    .expect("parse timestamp")
-                    .unix_timestamp_nanos()
-            })
-            .collect::<Vec<_>>();
-        for pair in timestamps.windows(2) {
-            assert!(
-                pair[0] < pair[1],
-                "REM checklist fanout timestamps must be strictly increasing: {timestamps:?}"
-            );
-        }
+        assert!(status_command.get("timestamp").is_none());
     }
 
     #[test]
@@ -37393,24 +37270,253 @@ mod tests {
         let upload_fields = &messages[0].fields;
         let stored_command = &upload_fields[crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(stored_command["command_type"], "checklist.upload");
-        assert!(stored_command["snapshot_json"].as_str().is_some());
-
-        let encoded = upload_fields[crate::LXMF_FIELDS_MSGPACK_B64_KEY]
-            .as_str()
-            .expect("encoded wire fields");
-        let bytes = BASE64_STANDARD.decode(encoded).expect("base64 wire fields");
-        let wire_fields: std::collections::BTreeMap<u8, serde_json::Value> =
-            rmp_serde::from_slice(&bytes).expect("wire fields msgpack");
-        let wire_command = &wire_fields
-            .get(&(crate::FIELD_COMMANDS as u8))
-            .expect("commands field")[0];
-        assert_eq!(wire_command["command_type"], "checklist.upload");
-        assert_eq!(wire_command["snapshot"]["uid"], "checklist-wire");
+        assert!(stored_command.get("snapshot_json").is_none());
+        assert!(
+            upload_fields
+                .get(crate::LXMF_FIELDS_MSGPACK_B64_KEY)
+                .is_none()
+        );
+        assert_eq!(stored_command["snapshot"]["uid"], "checklist-wire");
         assert_eq!(
-            wire_command["snapshot"]["tasks"][0]["task_uid"],
+            stored_command["snapshot"]["tasks"][0]["task_uid"],
             "task-wire"
         );
-        assert!(wire_command.get("snapshot_json").is_none());
+        assert!(stored_command.get("snapshot_json").is_none());
+    }
+
+    #[test]
+    fn rem_southbound_commands_use_optimized_signature_only() {
+        fn command_from_fields(fields: &serde_json::Value) -> &serde_json::Value {
+            assert!(
+                fields.get(crate::LXMF_FIELDS_MSGPACK_B64_KEY).is_none(),
+                "optimized REM commands must not carry alternate encoded legacy fields"
+            );
+            &fields[crate::FIELD_COMMANDS.to_string()][0]
+        }
+
+        fn assert_optimized_command(command: &serde_json::Value, command_type: &str) {
+            assert_eq!(command["command_type"], command_type);
+            assert!(command["args"].is_object(), "{command_type} args missing");
+            for legacy_key in [
+                "command_id",
+                "correlation_id",
+                "source",
+                "timestamp",
+                "topics",
+                "snapshot_json",
+            ] {
+                assert!(
+                    command.get(legacy_key).is_none(),
+                    "{command_type} unexpectedly carried {legacy_key}"
+                );
+            }
+        }
+
+        let task = json!({
+            "checklist_uid": "checklist-optimized",
+            "task_uid": "task-optimized",
+            "number": 4,
+            "notes": "Optimized row",
+            "legacy_value": "Radio",
+            "due_dtg": "DUE",
+            "row_background_color": "#112233",
+            "line_break_enabled": true,
+            "column_uid": "column-optimized",
+            "value": "Cell value",
+            "user_status": "COMPLETE",
+            "changed_by_team_member_rns_identity": "rem-peer"
+        });
+        let create_message = crate::rem_checklist_command_message_at(
+            "checklist.create.online",
+            json!({
+                "checklist_uid": "checklist-optimized",
+                "mission_uid": "mission-optimized",
+                "name": "Optimized Checklist",
+                "total_tasks": 1,
+                "participant_rns_identities": ["rem-peer"]
+            }),
+            "source-destination",
+            "change-optimized",
+            1_778_000_000_000,
+        );
+        let create = command_from_fields(&create_message.fields);
+        assert_optimized_command(create, "checklist.create.online");
+        assert_eq!(create["args"]["mission_uid"], "mission-optimized");
+
+        let row_message = crate::rem_checklist_task_command_message_at(
+            "checklist.task.row.add",
+            crate::rem_args_with_mission_uid(
+                crate::row_add_args(task.as_object().expect("task")).expect("row args"),
+                "mission-optimized",
+            ),
+            task.as_object().expect("task"),
+            "source-destination",
+            "change-optimized",
+            1_778_000_000_000,
+        );
+        let row = command_from_fields(&row_message.fields);
+        assert_optimized_command(row, "checklist.task.row.add");
+        assert_eq!(row["args"]["checklist_uid"], "checklist-optimized");
+        assert_eq!(row["args"]["task_uid"], "task-optimized");
+        assert_eq!(row["args"]["number"], 4);
+        assert!(row["args"].get("mission_uid").is_none());
+
+        for (command_type, args) in [
+            (
+                "checklist.task.row.delete",
+                crate::row_delete_args(task.as_object().expect("task")).expect("delete args"),
+            ),
+            (
+                "checklist.task.row.style.set",
+                crate::row_style_args(task.as_object().expect("task")).expect("style args"),
+            ),
+            (
+                "checklist.task.cell.set",
+                crate::cell_set_args(task.as_object().expect("task")).expect("cell args"),
+            ),
+            (
+                "checklist.task.status.set",
+                crate::status_set_args(task.as_object().expect("task")).expect("status args"),
+            ),
+        ] {
+            let message = crate::rem_checklist_task_command_message_at(
+                command_type,
+                crate::rem_args_with_mission_uid(args, "mission-optimized"),
+                task.as_object().expect("task"),
+                "source-destination",
+                "change-optimized",
+                1_778_000_000_000,
+            );
+            let command = command_from_fields(&message.fields);
+            assert_optimized_command(command, command_type);
+            assert_eq!(command["args"]["checklist_uid"], "checklist-optimized");
+            assert_eq!(command["args"]["task_uid"], "task-optimized");
+            assert!(command["args"].get("mission_uid").is_none());
+        }
+
+        let upload = crate::rem_checklist_upload_command_message_at(
+            task.as_object().expect("checklist"),
+            "mission-optimized",
+            "change-optimized",
+            "source-destination",
+            &["rem-peer".to_string()],
+            &json!({
+                "checklist_uid": "checklist-optimized",
+                "mission_uid": "mission-optimized",
+                "name": "Optimized Checklist"
+            }),
+            1_778_000_000_000,
+        )
+        .expect("upload command");
+        let upload_command = command_from_fields(&upload.fields);
+        assert_optimized_command(upload_command, "checklist.upload");
+        assert_eq!(
+            upload_command["args"]["checklist_uid"],
+            "checklist-optimized"
+        );
+        assert_eq!(upload_command["args"]["mission_uid"], "mission-optimized");
+        assert_eq!(upload_command["snapshot"]["uid"], "checklist-optimized");
+
+        let log_fields = crate::rem_log_entry_command_fields(
+            json!({
+                "entry_uid": "log-optimized",
+                "mission_uid": "mission-optimized",
+                "content": "Optimized log",
+                "callsign": "RCH"
+            })
+            .as_object()
+            .expect("log"),
+            "mission-optimized",
+            "change-optimized",
+            "source-destination",
+        )
+        .expect("log fields");
+        let log = command_from_fields(&log_fields);
+        assert_optimized_command(log, "mission.registry.log_entry.upsert");
+        assert_eq!(log["args"]["entry_uid"], "log-optimized");
+        assert_eq!(log["args"]["source_identity"], "source-destination");
+
+        for (command_type, fields) in [
+            (
+                "mission.registry.eam.upsert",
+                crate::rem_eam_command_fields(
+                    "mission.registry.eam.upserted",
+                    &json!({
+                        "callsign": "BRAVO",
+                        "team_uid": "team-optimized",
+                        "overall_status": "GREEN"
+                    }),
+                    "source-destination",
+                ),
+            ),
+            (
+                "mission.registry.telemetry.upsert",
+                crate::rem_marker_telemetry_command_fields(
+                    "marker.created",
+                    &crate::MarkerRecord {
+                        local_id: "marker-local".to_string(),
+                        object_destination_hash: "marker-optimized".to_string(),
+                        origin_rch: "RCH".to_string(),
+                        marker_type: "friendly".to_string(),
+                        symbol: "marker".to_string(),
+                        name: "Optimized Marker".to_string(),
+                        category: "friendly".to_string(),
+                        lat: 45.0,
+                        lon: -63.0,
+                        notes: Some("optimized".to_string()),
+                        created_ts_ms: 1_778_000_000_000,
+                        updated_ts_ms: 1_778_000_000_000,
+                    },
+                    "source-destination",
+                ),
+            ),
+            (
+                "mission.registry.eam.delete",
+                crate::rem_eam_command_fields(
+                    "mission.registry.eam.deleted",
+                    &json!({ "callsign": "BRAVO" }),
+                    "source-destination",
+                ),
+            ),
+            (
+                "mission.registry.mission.marker.link",
+                crate::rem_mission_marker_link_command_fields(
+                    "mission.registry.mission.marker.link",
+                    "mission-optimized",
+                    "marker-optimized",
+                    "source-destination",
+                ),
+            ),
+            (
+                "mission.registry.mission.marker.unlink",
+                crate::rem_mission_marker_link_command_fields(
+                    "mission.registry.mission.marker.unlink",
+                    "mission-optimized",
+                    "marker-optimized",
+                    "source-destination",
+                ),
+            ),
+            (
+                "mission.registry.mission.zone.link",
+                crate::rem_mission_zone_link_command_fields(
+                    "mission.registry.mission.zone.link",
+                    "mission-optimized",
+                    "zone-optimized",
+                    "source-destination",
+                ),
+            ),
+            (
+                "mission.registry.mission.zone.unlink",
+                crate::rem_mission_zone_link_command_fields(
+                    "mission.registry.mission.zone.unlink",
+                    "mission-optimized",
+                    "zone-optimized",
+                    "source-destination",
+                ),
+            ),
+        ] {
+            assert_optimized_command(command_from_fields(&fields), command_type);
+        }
     }
 
     #[test]
@@ -37600,7 +37706,7 @@ mod tests {
                 let params = request.params.as_ref().expect("params");
                 assert_eq!(params["destination"], "autonomouspeer");
                 assert_eq!(params["title"], "");
-                assert!(params.get("method").is_none());
+                assert_rem_auto_rpc_method(params);
                 params["fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"]
                     .as_str()
                     .expect("command type")
@@ -37769,7 +37875,7 @@ mod tests {
                 assert_eq!(request.method, "send_message_v2");
                 let params = request.params.as_ref().expect("params");
                 assert_eq!(params["content"], "Task Confirm relay completed");
-                assert!(params.get("method").is_none());
+                assert_rem_auto_rpc_method(params);
                 let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
                 assert_eq!(command["command_type"], "checklist.task.status.set");
                 assert_eq!(command["args"]["checklist_uid"], "standalone-checklist");
@@ -38556,11 +38662,11 @@ mod tests {
         let params = request.params.expect("params");
         assert_eq!(params["destination"], "abcdefabcdefabcdefabcdefabcdefab");
         assert_eq!(params["title"], "");
-        assert!(params.get("method").is_none());
+        assert_rem_auto_rpc_method(&params);
         assert_eq!(params["content"], "cmd");
         let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(command["command_type"], "mission.registry.log_entry.upsert");
-        assert_eq!(command["source"]["rns_identity"], "source-destination");
+        assert!(command.get("source").is_none());
         assert!(command.get("correlation_id").is_none());
         assert!(command.get("topics").is_none());
         assert_eq!(command["args"]["entry_uid"], "log-rem-fanout");
@@ -39410,7 +39516,7 @@ mod tests {
         let params = request.params.expect("params");
         assert_eq!(params["destination"], "remeampeer");
         assert_eq!(params["title"], "");
-        assert!(params.get("method").is_none());
+        assert_rem_auto_rpc_method(&params);
         assert_eq!(params["content"], "cmd");
         let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(command["command_type"], "mission.registry.eam.upsert");
@@ -39678,6 +39784,58 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn r3akt_rights_definitions_include_persona_role_bundles() {
+        let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/r3akt/rights/definitions")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("definitions response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        let role_bundles = payload["role_bundles"].as_array().expect("role bundles");
+        for role in [
+            "FIELD_OPERATOR",
+            "TEAM_LEAD",
+            "INCIDENT_COMMANDER",
+            "LOGISTICS_RESOURCE_MANAGER",
+            "COMMUNICATIONS_OPERATOR",
+            "SYSTEM_ADMIN",
+        ] {
+            assert!(
+                role_bundles.iter().any(|bundle| bundle["role"] == role),
+                "{role} bundle missing"
+            );
+        }
+        assert!(
+            payload["mission_role_bundles"]["FIELD_OPERATOR"]
+                .as_array()
+                .expect("field operator mission bundle")
+                .iter()
+                .any(|operation| operation.as_str() == Some("mission.message.send"))
+        );
+        assert!(
+            payload["operations"]
+                .as_array()
+                .expect("operations")
+                .iter()
+                .any(|operation| operation.as_str() == Some("admin.config.write"))
+        );
     }
 
     #[tokio::test]
@@ -46203,7 +46361,7 @@ mod tests {
         assert_eq!(joined.status(), StatusCode::OK);
 
         for (content, expected_status) in [
-            ("first send should fail", StatusCode::SERVICE_UNAVAILABLE),
+            ("first send should retry", StatusCode::OK),
             ("second send should propagate", StatusCode::OK),
         ] {
             let response = app
@@ -46257,10 +46415,18 @@ mod tests {
             snapshot.messages[1].delivery_policy_reason,
             "direct_cooldown"
         );
-        assert_eq!(snapshot.messages[0].delivery_state, "failed");
+        assert_eq!(snapshot.messages[0].delivery_state, "queued");
         assert_eq!(
             snapshot.messages[0].delivery_metadata["dispatch_status"],
-            "failed"
+            "queued"
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["retry_reason"],
+            "send_error"
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["retry_scheduled"],
+            true
         );
         assert!(
             snapshot.messages[0].delivery_metadata["error"]
@@ -46277,24 +46443,24 @@ mod tests {
             snapshot.messages[1].delivery_metadata["reticulumd_dispatch_count"],
             1
         );
-        let failure_event = snapshot
+        let retry_event = snapshot
             .system_events
             .iter()
-            .find(|event| event.event_type == "message_delivery_failed")
-            .expect("send failure system event");
+            .find(|event| event.event_type == "message_delivery_retrying")
+            .expect("send retry system event");
         assert_eq!(
-            failure_event.message,
-            "Message delivery failed for target-destination"
+            retry_event.message,
+            "Retrying message delivery to target-destination"
         );
         assert_eq!(
-            failure_event.metadata["MessageID"],
+            retry_event.metadata["MessageID"],
             snapshot.messages[0].message_id
         );
-        assert_eq!(failure_event.metadata["failure_reason"], "send_error");
+        assert_eq!(retry_event.metadata["retry_reason"], "send_error");
         assert!(
-            failure_event.metadata["DeliveryMetadata"]["error"]
+            retry_event.metadata["DeliveryMetadata"]["error"]
                 .as_str()
-                .expect("failure event error")
+                .expect("retry event error")
                 .contains("reticulumd RPC send_failed: offline")
         );
 
@@ -46653,6 +46819,13 @@ mod tests {
                 metadata: json!({}),
             },
         );
+        state.clients.write().expect("clients").insert(
+            "1123c2623132bf9899ae5d3b28d9f79e".to_string(),
+            crate::ClientRecord::new(
+                "1123c2623132bf9899ae5d3b28d9f79e".to_string(),
+                crate::unix_now_ms(),
+            ),
+        );
 
         let direct = crate::OutboundMessageRecord {
             message_id: "direct-message".to_string(),
@@ -46893,7 +47066,7 @@ mod tests {
 
     #[tokio::test]
     async fn outbound_identity_allowlist_scopes_rem_checklist_participants() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(3);
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(1);
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-outbound-allowlist-rem-checklist-{}.db",
             Uuid::new_v4()
@@ -46904,6 +47077,11 @@ mod tests {
         let s8_rem = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let pixel_rem = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let pixel_sideband = "cccccccccccccccccccccccccccccccc";
+        snapshot.clients = vec![
+            test_client(s8_rem, now),
+            test_client(pixel_rem, now),
+            test_client(pixel_sideband, now),
+        ];
         snapshot.identity_announces = vec![
             r3akt_rch_core::IdentityAnnounceRecord {
                 destination_hash: s8_rem.to_string(),
@@ -47005,32 +47183,33 @@ mod tests {
             .iter()
             .map(|message| message.destination.clone())
             .collect::<Vec<_>>();
-        assert_eq!(
-            recorded_destinations,
-            vec![
-                Some(pixel_rem.to_string()),
-                Some(pixel_rem.to_string()),
-                Some(pixel_rem.to_string())
-            ]
-        );
+        assert_eq!(recorded_destinations, vec![Some(pixel_rem.to_string())]);
         let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 3);
+        assert_eq!(requests.len(), 1);
         assert!(requests.iter().all(|request| {
             request.params.as_ref().expect("params")["destination"] == pixel_rem
         }));
-        let create_command = &requests[0].params.as_ref().expect("params")["fields"]
+        let upload_command = &requests[0].params.as_ref().expect("params")["fields"]
             [crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(
             requests[0].params.as_ref().expect("params")["content"],
-            "Checklist Allowlist REM Checklist created"
+            "Checklist Allowlist REM Checklist uploaded"
         );
+        assert_eq!(upload_command["command_type"], "checklist.upload");
         assert_eq!(
-            create_command["args"]["participant_rns_identities"],
-            json!([pixel_rem])
+            upload_command["snapshot"]["participant_rns_identities"],
+            json!([pixel_rem, "source-destination"])
         );
         assert_ne!(
-            create_command["args"]["participant_rns_identities"],
+            upload_command["snapshot"]["participant_rns_identities"],
             json!([s8_rem, pixel_rem, pixel_sideband])
+        );
+        assert!(
+            !upload_command["snapshot"]["participant_rns_identities"]
+                .as_array()
+                .expect("participants")
+                .iter()
+                .any(|identity| identity == s8_rem || identity == pixel_sideband)
         );
 
         let _ = std::fs::remove_file(db_path);
@@ -48039,6 +48218,11 @@ mod tests {
                 last_seen_ts_ms: stale_ts_ms,
             },
         ];
+        snapshot.clients = vec![r3akt_rch_core::ClientRecord {
+            identity: "fb4c70e20cfac047b899ca2f3671b50a".to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+        }];
         store.save_snapshot(&snapshot).expect("save snapshot");
         let announce_response = json!({
             "announces": [

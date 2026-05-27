@@ -744,6 +744,7 @@ interface ChecklistTemplateDraftColumn {
 // Constants
 const DEFAULT_SOURCE_IDENTITY = "ui.operator";
 const SYSTEM_DUE_COLUMN_KEY = "DUE_RELATIVE_DTG";
+const CHECKLIST_MUTATION_TIMEOUT_MS = 90_000;
 const checklistTemplateColumnTypeOptions: ChecklistTemplateColumnType[] = [
   "SHORT_STRING",
   "LONG_STRING",
@@ -1822,7 +1823,7 @@ const createChecklistFromSelectedTemplateAction = async () => {
   if (!selectedTemplate) throw new Error("Selected checklist template could not be found");
   const missionUid = checklistDetailRecord.value?.mission_uid || undefined;
   const checklistName = checklistTemplateNameDraft.value.trim() || buildChecklistDraftName();
-  const created = selectedTemplate.source_type === "template" ? await post<ChecklistRaw>(endpoints.checklists, { template_uid: selectionUid, mission_uid: missionUid, name: checklistName, source_identity: DEFAULT_SOURCE_IDENTITY }) : await createChecklistFromCsvImportAction(selectionUid, checklistName, missionUid);
+  const created = selectedTemplate.source_type === "template" ? await post<ChecklistRaw>(endpoints.checklists, { template_uid: selectionUid, mission_uid: missionUid, name: checklistName, source_identity: DEFAULT_SOURCE_IDENTITY }, { timeoutMs: CHECKLIST_MUTATION_TIMEOUT_MS }) : await createChecklistFromCsvImportAction(selectionUid, checklistName, missionUid);
   await loadWorkspace();
   const createdUid = String(created.uid ?? "").trim();
   if (createdUid) { checklistDetailUid.value = createdUid; checklistWorkspaceView.value = "active"; try { await hydrateChecklistRecord(createdUid); } catch (error) { handleApiError(error, "Checklist run created but detail refresh failed"); } }
@@ -1854,7 +1855,7 @@ const createChecklistFromCsvImportAction = async (sourceChecklistUid: string, ch
     origin_type: "RCH_TEMPLATE",
     source_identity: DEFAULT_SOURCE_IDENTITY,
     columns: toChecklistTemplateColumnPayload(normalizeChecklistTemplateDraftColumns(sourceColumns))
-  });
+  }, { timeoutMs: CHECKLIST_MUTATION_TIMEOUT_MS });
   const createdChecklistUid = String(created.uid ?? "").trim();
   if (!createdChecklistUid) throw new Error("Checklist creation failed");
   const createdColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(created.columns));
@@ -1874,7 +1875,7 @@ const createChecklistFromCsvImportAction = async (sourceChecklistUid: string, ch
     const legacyValue = String(sourceTask.legacy_value ?? "").trim() || resolveChecklistTaskName(sourceChecklist, sourceTask);
     if (legacyValue) taskPayload.legacy_value = legacyValue;
     if (dueRelativeMinutes !== undefined) taskPayload.due_relative_minutes = dueRelativeMinutes;
-    const taskCreated = await post<ChecklistRaw>(`${endpoints.checklists}/${createdChecklistUid}/tasks`, taskPayload);
+    const taskCreated = await post<ChecklistRaw>(`${endpoints.checklists}/${createdChecklistUid}/tasks`, taskPayload, { timeoutMs: CHECKLIST_MUTATION_TIMEOUT_MS });
     const createdTaskUid = String(toArray<ChecklistTaskRaw>(taskCreated.tasks).find((task) => Number(task.number ?? 0) === taskNumber)?.task_uid ?? "").trim();
     if (!createdTaskUid) continue;
     const sourceCells = toArray<ChecklistCellRaw>(sourceTask.cells);
