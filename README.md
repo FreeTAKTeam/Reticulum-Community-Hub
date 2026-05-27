@@ -120,8 +120,9 @@ Crates:
   contracts.
   When configured with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and
   `--reticulumd-source`, outbound delivery uses the LXMF-rs ZeroMQ SDK
-  pipeline. The legacy `reticulumd` RPC worker remains as a compatibility
-  fallback while inbound/event diagnostics are migrated to the SDK event stream.
+  pipeline. For the initial server package, ZeroMQ is mandatory for southbound
+  command dispatch; `reticulumd` HTTP RPC may still be configured for daemon
+  event/receipt polling until the LXMF-rs ZeroMQ event stream is stable.
   Remaining backend service contracts should continue to be ported in small
   contract-tested slices.
 - `r3akt-tak-connector`: dedicated Rust TAK connector crate and service
@@ -177,9 +178,10 @@ LXMF field payloads, while retaining the older `reticulumd` RPC adapter as a
 test and migration fallback.
 
 Gap: the ZeroMQ SDK path has unit coverage for outbound payload mapping and
-inbound SDK event conversion. Broader live-daemon gates still need to move from
-HTTP RPC fixtures to `reticulumd --features zmq-pipeline-rpc` before the
-compatibility fallback can be removed.
+inbound SDK event conversion. The default server package path requires ZeroMQ
+for outbound commands, but still allows HTTP RPC for daemon event/receipt
+polling. The experimental `R3AKT_ENABLE_ZMQ_EVENT_POLL=1` path needs broader
+live-daemon validation before HTTP RPC event polling can be removed.
 
 ### Reticulum Mobile Emergency Management
 

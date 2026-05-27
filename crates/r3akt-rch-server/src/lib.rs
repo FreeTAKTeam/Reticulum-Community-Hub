@@ -73,8 +73,8 @@ use r3akt_rch_core::{
 use r3akt_transport_rns::MessageBus;
 use r3akt_transport_rns::{
     LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, list_reticulumd_announces,
-    poll_reticulumd_events, reticulumd_event_to_envelope, reticulumd_message_to_envelope,
-    send_lxmf_zmq_outbound_message,
+    poll_lxmf_zmq_events, poll_reticulumd_events, reticulumd_event_to_envelope,
+    reticulumd_message_to_envelope, send_lxmf_zmq_outbound_message,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -2438,13 +2438,31 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
         let poll_interval = poll_interval.max(Duration::from_millis(50));
         let announce_list_poll_interval = Duration::from_millis(RETICULUMD_ANNOUNCE_LIST_POLL_MS);
         set_reticulumd_inbound_worker_running(&state, false, poll_interval);
-        let Some(endpoint) = state
+        let endpoint = state
             .reticulumd_rpc_endpoint
             .as_deref()
-            .map(ToOwned::to_owned)
-        else {
+            .map(ToOwned::to_owned);
+        let zmq_event_poll_enabled = lxmf_zmq_event_poll_enabled();
+        let zmq_command_endpoint = zmq_event_poll_enabled
+            .then(|| {
+                state
+                    .lxmf_zmq_command_endpoint
+                    .as_deref()
+                    .map(ToOwned::to_owned)
+            })
+            .flatten();
+        let zmq_response_endpoint = zmq_event_poll_enabled
+            .then(|| {
+                state
+                    .lxmf_zmq_response_endpoint
+                    .as_deref()
+                    .map(ToOwned::to_owned)
+            })
+            .flatten();
+        if endpoint.is_none() && (zmq_command_endpoint.is_none() || zmq_response_endpoint.is_none())
+        {
             return;
-        };
+        }
         let Some(source) = state.reticulumd_source.as_deref().map(ToOwned::to_owned) else {
             return;
         };
@@ -2470,9 +2488,12 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
             }
             let worker_state = state.clone();
             let worker_endpoint = endpoint.clone();
+            let worker_zmq_command_endpoint = zmq_command_endpoint.clone();
+            let worker_zmq_response_endpoint = zmq_response_endpoint.clone();
             let worker_source = source.clone();
             let worker_cursor = cursor.clone();
-            let check_cursor_stream_position = cursor.is_some()
+            let check_cursor_stream_position = worker_endpoint.is_some()
+                && cursor.is_some()
                 && last_cursor_stream_check.is_none_or(|last_check| {
                     last_check.elapsed()
                         >= Duration::from_millis(RETICULUMD_EVENT_CURSOR_STREAM_CHECK_MS)
@@ -2482,13 +2503,27 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
             }
             let mut event_poll_ok = false;
             match tokio::task::spawn_blocking(move || {
-                process_reticulumd_event_worker_tick_with_options(
-                    &worker_state,
-                    worker_endpoint.as_str(),
-                    worker_source.as_str(),
-                    worker_cursor,
-                    check_cursor_stream_position,
-                )
+                if let Some(worker_endpoint) = worker_endpoint {
+                    process_reticulumd_event_worker_tick_with_options(
+                        &worker_state,
+                        worker_endpoint.as_str(),
+                        worker_source.as_str(),
+                        worker_cursor,
+                        check_cursor_stream_position,
+                    )
+                } else if let (Some(command_endpoint), Some(response_endpoint)) =
+                    (worker_zmq_command_endpoint, worker_zmq_response_endpoint)
+                {
+                    process_lxmf_zmq_event_worker_tick(
+                        &worker_state,
+                        command_endpoint.as_str(),
+                        response_endpoint.as_str(),
+                        worker_source.as_str(),
+                        worker_cursor,
+                    )
+                } else {
+                    Ok(ReticulumdEventWorkerReport { next_cursor: None })
+                }
             })
             .await
             {
@@ -2527,10 +2562,10 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
             let should_poll_list_messages = last_list_message_poll.is_none_or(|last_poll| {
                 last_poll.elapsed() >= Duration::from_millis(RETICULUMD_LIST_MESSAGE_POLL_MS)
             });
-            if should_poll_list_messages {
+            if should_poll_list_messages && endpoint.is_some() {
                 last_list_message_poll = Some(std::time::Instant::now());
                 let worker_state = state.clone();
-                let worker_endpoint = endpoint.clone();
+                let worker_endpoint = endpoint.clone().unwrap_or_default();
                 let worker_source = source.clone();
                 match tokio::task::spawn_blocking(move || {
                     process_reticulumd_list_message_worker_tick(
@@ -2575,10 +2610,10 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
             let should_poll_announces = event_poll_ok
                 && last_announce_list_poll
                     .is_none_or(|last_poll| last_poll.elapsed() >= announce_list_poll_interval);
-            if should_poll_announces {
+            if should_poll_announces && endpoint.is_some() {
                 last_announce_list_poll = Some(std::time::Instant::now());
                 let worker_state = state.clone();
-                let worker_endpoint = endpoint.clone();
+                let worker_endpoint = endpoint.clone().unwrap_or_default();
                 match tokio::task::spawn_blocking(move || {
                     import_reticulumd_announces_with_options(
                         &worker_state,
@@ -2631,6 +2666,15 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
             }
             tokio::time::sleep(poll_interval).await;
         }
+    })
+}
+
+fn lxmf_zmq_event_poll_enabled() -> bool {
+    std::env::var("R3AKT_ENABLE_ZMQ_EVENT_POLL").is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
     })
 }
 
@@ -2881,20 +2925,47 @@ fn process_reticulumd_event_worker_tick_with_options(
         && cursor.as_deref().is_some()
         && batch.events.is_empty()
         && batch.next_cursor.as_deref() == cursor.as_deref()
-        && let Some(stream_position) = reticulumd_event_stream_position(endpoint)?
-        && reticulumd_event_cursor_is_ahead_of_stream(cursor.as_deref(), stream_position)
     {
-        let requested_cursor = cursor.as_deref().unwrap_or_default();
-        clear_reticulumd_event_cursor(state)?;
-        record_reticulumd_inbound_worker_event_cursor_reset(
-            state,
-            format!(
-                "event cursor {requested_cursor} is ahead of reticulumd stream position {stream_position}"
-            ),
-        );
-        batch = poll_reticulumd_events(endpoint, None, RETICULUMD_EVENT_POLL_MAX)
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if let Some(stream_position) = reticulumd_event_stream_position(endpoint)? {
+            if reticulumd_event_cursor_is_ahead_of_stream(cursor.as_deref(), stream_position) {
+                let requested_cursor = cursor.as_deref().unwrap_or_default();
+                clear_reticulumd_event_cursor(state)?;
+                record_reticulumd_inbound_worker_event_cursor_reset(
+                    state,
+                    format!(
+                        "event cursor {requested_cursor} is ahead of reticulumd stream position {stream_position}"
+                    ),
+                );
+                batch = poll_reticulumd_events(endpoint, None, RETICULUMD_EVENT_POLL_MAX)
+                    .map_err(|error| ApiError::Internal(error.to_string()))?;
+            }
+        }
     }
+    process_reticulumd_event_batch(state, source, batch)
+}
+
+fn process_lxmf_zmq_event_worker_tick(
+    state: &AppState,
+    command_endpoint: &str,
+    response_endpoint: &str,
+    source: &str,
+    cursor: Option<String>,
+) -> Result<ReticulumdEventWorkerReport, ApiError> {
+    let batch = poll_lxmf_zmq_events(
+        command_endpoint,
+        response_endpoint,
+        cursor,
+        RETICULUMD_EVENT_POLL_MAX,
+    )
+    .map_err(|error| ApiError::Internal(error.to_string()))?;
+    process_reticulumd_event_batch(state, source, batch)
+}
+
+fn process_reticulumd_event_batch(
+    state: &AppState,
+    source: &str,
+    batch: r3akt_transport_rns::ReticulumdEventBatch,
+) -> Result<ReticulumdEventWorkerReport, ApiError> {
     let events_seen = batch.events.len();
     let mut stream_gaps = 0_u64;
     let mut last_event_id = None;
@@ -10232,10 +10303,10 @@ fn mark_reticulumd_status_delivery_failure(
     };
     state.persist()?;
     broadcast_message_event(&state, &message);
-    if (message.delivery_method == "direct" || queued_propagation_fallback)
-        && let Some(destination) = message.destination.as_deref()
-    {
-        mark_direct_delivery_failure(state, destination)?;
+    if message.delivery_method == "direct" || queued_propagation_fallback {
+        if let Some(destination) = message.destination.as_deref() {
+            mark_direct_delivery_failure(state, destination)?;
+        }
     }
     let destination = message.destination.as_deref().unwrap_or("unknown");
     if queued_propagation_fallback {
@@ -10516,21 +10587,21 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
             .get("receipt_active_extension_count")
             .and_then(Value::as_u64)
             .unwrap_or(0);
-        if let Some(active_reticulumd_status) = active_reticulumd_status
-            && active_extension_count < OUTBOUND_RECEIPT_ACTIVE_EXTENSION_MAX
-        {
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "receipt_pending": true,
-                    "receipt_status": active_reticulumd_status,
-                    "receipt_timeout": false,
-                    "receipt_active_extension_count": active_extension_count.saturating_add(1),
-                    "receipt_deadline_ts_ms": now_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS,
-                }),
-            );
-            changed = true;
-            continue;
+        if let Some(active_reticulumd_status) = active_reticulumd_status {
+            if active_extension_count < OUTBOUND_RECEIPT_ACTIVE_EXTENSION_MAX {
+                merge_delivery_metadata(
+                    &mut message.delivery_metadata,
+                    json!({
+                        "receipt_pending": true,
+                        "receipt_status": active_reticulumd_status,
+                        "receipt_timeout": false,
+                        "receipt_active_extension_count": active_extension_count.saturating_add(1),
+                        "receipt_deadline_ts_ms": now_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS,
+                    }),
+                );
+                changed = true;
+                continue;
+            }
         }
         message.delivery_state = "failed".to_string();
         merge_delivery_metadata(
@@ -34587,7 +34658,7 @@ mod tests {
         );
         assert_eq!(
             requests[0].params.as_ref().expect("params")["content"],
-            "Checklist Cameras Sensors and Radio Links Emplacement Tasks created"
+            crate::REM_COMMAND_PLACEHOLDER_BODY
         );
         let generic = requests[3].params.as_ref().expect("generic params");
         assert_eq!(generic["title"], "RCH");
@@ -36849,7 +36920,7 @@ mod tests {
         let params = request.params.expect("params");
         assert_eq!(params["destination"], "abcdef");
         assert_eq!(params["title"], "");
-        assert_eq!(params["content"], "Task Radio added");
+        assert_eq!(params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
         assert_rem_auto_rpc_method(&params);
         let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(command["command_type"], "checklist.task.row.add");
@@ -37085,7 +37156,7 @@ mod tests {
             [crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(
             requests[1].params.as_ref().expect("params")["content"],
-            "Task Upload added"
+            crate::REM_COMMAND_PLACEHOLDER_BODY
         );
         assert_eq!(row_command["command_type"], "checklist.task.row.add");
         assert_eq!(row_command["args"]["checklist_uid"], "checklist-upload");
@@ -37104,7 +37175,7 @@ mod tests {
         assert_eq!(status_command["args"]["user_status"], "COMPLETE");
         assert_eq!(
             requests[2].params.as_ref().expect("params")["content"],
-            "Task Upload completed"
+            crate::REM_COMMAND_PLACEHOLDER_BODY
         );
 
         let _ = std::fs::remove_file(db_path);
@@ -37182,7 +37253,7 @@ mod tests {
         );
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].body, "Checklist Wire Upload Checklist uploaded");
+        assert_eq!(messages[0].body, crate::REM_COMMAND_PLACEHOLDER_BODY);
         let upload_fields = &messages[0].fields;
         let stored_command = &upload_fields[crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(stored_command["command_type"], "checklist.upload");
@@ -37637,7 +37708,7 @@ mod tests {
             [crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(
             requests[0].params.as_ref().expect("params")["content"],
-            "Checklist Autonomous Checklist created"
+            crate::REM_COMMAND_PLACEHOLDER_BODY
         );
         assert_eq!(
             create_command["args"]["participant_rns_identities"],
@@ -37790,7 +37861,7 @@ mod tests {
             .map(|request| {
                 assert_eq!(request.method, "send_message_v2");
                 let params = request.params.as_ref().expect("params");
-                assert_eq!(params["content"], "Task Confirm relay completed");
+                assert_eq!(params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
                 assert_rem_auto_rpc_method(params);
                 let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
                 assert_eq!(command["command_type"], "checklist.task.status.set");
@@ -37975,8 +38046,8 @@ mod tests {
         assert_eq!(
             rem_contents,
             vec![
-                "Checklist Autonomous Mixed Checklist created",
-                "Task Autonomous mixed row added",
+                crate::REM_COMMAND_PLACEHOLDER_BODY,
+                crate::REM_COMMAND_PLACEHOLDER_BODY,
             ]
         );
         let generic = requests[2].params.as_ref().expect("generic params");
@@ -47109,7 +47180,7 @@ mod tests {
             [crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(
             requests[0].params.as_ref().expect("params")["content"],
-            "Checklist Allowlist REM Checklist uploaded"
+            crate::REM_COMMAND_PLACEHOLDER_BODY
         );
         assert_eq!(upload_command["command_type"], "checklist.upload");
         assert_eq!(

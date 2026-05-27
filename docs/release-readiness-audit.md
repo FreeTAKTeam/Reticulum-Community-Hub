@@ -5,7 +5,7 @@ It is intentionally stricter than a green CI badge: Rust is not release-ready
 until every required local, CI, package, UI, TAK, and Reticulum gate is either
 passed or explicitly waived for a preview release.
 
-Audit date: 2026-05-11
+Audit date: 2026-05-27
 
 ## Objective
 
@@ -28,7 +28,9 @@ the Rust implementation is fully functional and ready for release.
 | Standalone TAK service release binary builds | `scripts/release-readiness.ps1`, packaging workflow | Release runner builds `r3akt-tak-service`; packaging and Tauri sidecar prep include the separate TAK service binary | Passed locally and in CI gate |
 | Shared Vue UI remains buildable for Rust backend | `ui/`, `.github/workflows/rust.yml` | CI gate runs `npm --prefix ui ci`, lint, tests, and build through `scripts/release-readiness.ps1 -SkipDesktop` | Passed in CI gate |
 | Desktop packaging keeps server and TAK sidecars separate | `apps/rch-desktop/`, packaging docs | Tauri sidecar prep builds/copies `r3akt-rch-server` and `r3akt-tak-service` separately | Passed locally; skipped in CI gate |
-| Live Reticulum direct receipt and fanout work outside local unit mocks | `crates/r3akt-rch-server/src/lib.rs`, `scripts/local-reticulum-live-gate.ps1`, live env-gated tests | `scripts/local-reticulum-live-gate.ps1` starts three temporary `reticulumd.exe` nodes and passed direct receipt plus two-recipient fanout on 2026-05-11; the same script also passed with `-ExternalConfigPath` against the local RMAP testnet config, using controlled temporary identities through public TCP hubs | Passed locally and against controlled external RMAP profile |
+| ZeroMQ is the mandatory server-package southbound command transport | `crates/r3akt-transport-rns/src/lib.rs`, `crates/r3akt-rch-server/src/lib.rs`, live REM validation | RCH now runs outbound REM fanout through the LXMF-rs ZeroMQ SDK when `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source` are configured. The SDK call is isolated from Tokio runtime nesting and serialized so fanout clients do not contend for the same ZeroMQ response endpoint. | Passed for build/unit coverage; release-blocked on live delivery latency/backlog |
+| Live REM reduced-signature fanout works against connected phones | `docs/rem-southbound-interface.md`, `target/live-rem-validation/zmq-release-20260527-175234-*` local evidence | On 2026-05-27, two attached REM 1.1.1 phones (`35031FDH2003N8`, `988b9b344135304639`) were discovered over ADB and their REM processes were running. RCH accepted checklist create/upload/task add/delete/style/cell/status, EAM upsert/delete, marker create, and mission marker link/unlink with connected REM peers and ZeroMQ outbound enabled. Delivery was not green: several fanout calls took about 45-120 seconds, the queue backed up, `outbound_enqueued_total=16`, `queue_depth=16`, `retry_total=15`, and phone logs showed repeated Reticulum link activation timeouts/reconnect backoff. | Blocked |
+| Live Reticulum direct receipt and fanout work outside local unit mocks | `crates/r3akt-rch-server/src/lib.rs`, `scripts/local-reticulum-live-gate.ps1`, live env-gated tests | `scripts/local-reticulum-live-gate.ps1` starts three temporary `reticulumd.exe` nodes and passed direct receipt plus two-recipient fanout on 2026-05-11; the same script also passed with `-ExternalConfigPath` against the local RMAP testnet config, using controlled temporary identities through public TCP hubs. This evidence predates the mandatory ZeroMQ/reduced-signature release validation and is no longer sufficient as final release evidence. | Needs refresh |
 | Live TAK target profile works with the standalone service | `crates/r3akt-tak-connector/src/lib.rs`, `r3akt-tak-service` | Local TCP/UDP/TLS loopback and service bridge tests pass; `.\scripts\release-readiness.ps1 -LiveTak` requires both outbound `R3AKT_TAK_LIVE_COT_URL` and inbound `R3AKT_TAK_LIVE_INBOUND_COT_URL`; after the TAK server was restarted on 2026-05-11, `tcp://137.184.101.250:8087` passed live keepalive, reconnect, and bidirectional inbound relay validation | Passed against target profile |
 
 ## Required Release Gates
@@ -70,8 +72,29 @@ an active bidirectional relay probe instead of depending on unsolicited CoT.
 
 ## Current Decision
 
-The Rust edition is ready for a Rust preview release. The current evidence
-covers local, CI, package, UI, TAK target-profile, local Reticulum
-multi-daemon, and controlled external RMAP Reticulum gates. Keep final
-default-branch cutover gated on the broader project decision to replace the
-Python line, but no functional parity release blocker remains in this audit.
+The Rust edition is not ready for the 3.0 server-package release yet.
+
+Release scope is intentionally narrowed to the server package; desktop/Tauri
+packaging is not an initial-version gate. ZeroMQ is mandatory for the
+southbound command path. The reduced REM southbound interface is documented in
+`docs/rem-southbound-interface.md` and remains optimized-only; no compatibility
+payload is part of the release surface.
+
+Open blockers:
+
+- Fresh REM live validation is not green after the reduced-signature work.
+  RCH accepted the command matrix, but delivery to the two connected REM phones
+  backed up behind Reticulum link activation timeouts.
+- The ZeroMQ SDK outbound boundary no longer panics inside Tokio, but live
+  fanout still needs a passing two-phone evidence run with queue depth returning
+  to zero and no sustained retry backlog.
+- ZeroMQ event polling is not a default release path yet. An experimental
+  `R3AKT_ENABLE_ZMQ_EVENT_POLL=1` path exists for further daemon validation,
+  but the 2026-05-27 no-RPC attempt caused reticulumd ZeroMQ RPC connection
+  abort/timeouts. For the server package, keep HTTP RPC available for daemon
+  event/receipt polling while ZeroMQ remains mandatory for outbound commands
+  until the LXMF-rs ZeroMQ event stream is stable.
+
+Next release-ready decision point: rerun the server package gates and the REM
+live matrix after the Reticulum link/queue issue is fixed, then update this
+audit with the new run ID and counters.

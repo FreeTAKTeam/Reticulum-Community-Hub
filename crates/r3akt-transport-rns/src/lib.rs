@@ -27,6 +27,7 @@ pub type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send + 'a>>;
 
 const RETICULUMD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+static ZMQ_SDK_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Error)]
 pub enum TransportError {
@@ -505,15 +506,18 @@ impl LxmfSdkLxmfRsAdapter<LxmfSdkClient<ZmqPipelineBackendClient>> {
         source: impl Into<String>,
         config: ZmqPipelineBackendConfig,
     ) -> Result<Self, TransportError> {
-        let backend = ZmqPipelineBackendClient::new(config)
-            .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
-        let client = LxmfSdkClient::new(backend);
-        LxmfSdk::start(
-            &client,
-            LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
-        )
-        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK start: {error}")))?;
-        Ok(Self::new(source, client))
+        let source = source.into();
+        run_zmq_sdk_operation(move || {
+            let backend = ZmqPipelineBackendClient::new(config)
+                .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
+            let client = LxmfSdkClient::new(backend);
+            LxmfSdk::start(
+                &client,
+                LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
+            )
+            .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK start: {error}")))?;
+            Ok(Self::new(source, client))
+        })
     }
 }
 
@@ -577,15 +581,67 @@ pub fn send_lxmf_zmq_outbound_message(
     message: LxmfSdkOutboundMessage,
 ) -> Result<String, TransportError> {
     let config = ZmqPipelineBackendConfig::local_tcp(command_endpoint, response_endpoint);
-    let backend = ZmqPipelineBackendClient::new(config)
-        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
-    let mut client = LxmfSdkClient::new(backend);
-    LxmfSdk::start(
-        &client,
-        LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
-    )
-    .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK start: {error}")))?;
-    send_lxmf_sdk_outbound_message_with_runtime(&mut client, message)
+    run_zmq_sdk_operation(move || {
+        let backend = ZmqPipelineBackendClient::new(config)
+            .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
+        let mut client = LxmfSdkClient::new(backend);
+        LxmfSdk::start(
+            &client,
+            LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
+        )
+        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK start: {error}")))?;
+        send_lxmf_sdk_outbound_message_with_runtime(&mut client, message)
+    })
+}
+
+pub fn poll_lxmf_zmq_events(
+    command_endpoint: impl Into<String>,
+    response_endpoint: impl Into<String>,
+    cursor: Option<String>,
+    max: usize,
+) -> Result<ReticulumdEventBatch, TransportError> {
+    let config = ZmqPipelineBackendConfig::local_tcp(command_endpoint, response_endpoint);
+    run_zmq_sdk_operation(move || {
+        let backend = ZmqPipelineBackendClient::new(config)
+            .map_err(|error| TransportError::Receive(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
+        let client = LxmfSdkClient::new(backend);
+        LxmfSdk::start(
+            &client,
+            LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
+        )
+        .map_err(|error| TransportError::Receive(format!("LXMF-rs ZeroMQ SDK start: {error}")))?;
+        let batch =
+            LxmfSdk::poll_events(&client, cursor.map(LxmfSdkEventCursor), max.clamp(1, 256))
+                .map_err(|error| TransportError::Receive(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
+        Ok(ReticulumdEventBatch {
+            events: batch
+                .events
+                .into_iter()
+                .map(lxmf_sdk_event_to_reticulumd_event_record)
+                .collect(),
+            next_cursor: Some(batch.next_cursor.0),
+            dropped_count: batch.dropped_count,
+            snapshot_high_watermark_seq_no: batch.snapshot_high_watermark_seq_no,
+        })
+    })
+}
+
+fn run_zmq_sdk_operation<T>(
+    operation: impl FnOnce() -> Result<T, TransportError> + Send + 'static,
+) -> Result<T, TransportError>
+where
+    T: Send + 'static,
+{
+    std::thread::spawn(move || {
+        let _guard = ZMQ_SDK_OPERATION_LOCK.lock().map_err(|error| {
+            TransportError::Send(format!(
+                "LXMF-rs ZeroMQ SDK operation lock poisoned: {error}"
+            ))
+        })?;
+        operation()
+    })
+    .join()
+    .map_err(|_| TransportError::Send("LXMF-rs ZeroMQ SDK worker panicked".to_string()))?
 }
 
 pub fn send_lxmf_sdk_outbound_message_with_runtime(
@@ -2156,6 +2212,27 @@ mod tests {
         assert_eq!(request.payload["custom"], "value");
         assert_eq!(request.correlation_id.as_deref(), Some("message-1"));
         assert_eq!(request.idempotency_key.as_deref(), Some("message-1"));
+    }
+
+    #[test]
+    fn zmq_sdk_start_inside_tokio_runtime_returns_error_without_panicking() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let outcome = std::panic::catch_unwind(|| {
+            runtime.block_on(async {
+                let mut config = ZmqPipelineBackendConfig::local_tcp(
+                    "tcp://127.0.0.1:59100",
+                    "tcp://127.0.0.1:59101",
+                );
+                config.request_timeout = Duration::from_millis(25);
+                LxmfSdkLxmfRsAdapter::from_zmq_config("source-destination", config)
+            })
+        });
+
+        assert!(outcome.is_ok(), "ZeroMQ SDK path panicked inside Tokio");
+        assert!(
+            outcome.expect("panic checked").is_err(),
+            "unconnected ZeroMQ endpoints should return a transport error"
+        );
     }
 
     #[test]
