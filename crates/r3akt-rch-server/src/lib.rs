@@ -14663,6 +14663,15 @@ struct RemChecklistFanoutMessage {
 const LXMF_FIELDS_MSGPACK_B64_KEY: &str = "_lxmf_fields_msgpack_b64";
 const REM_COMMAND_PLACEHOLDER_BODY: &str = "cmd";
 
+#[cfg(test)]
+fn rem_checklist_command_body(
+    _command_type: &str,
+    _args: &Value,
+    _source: Option<&serde_json::Map<String, Value>>,
+) -> &'static str {
+    REM_COMMAND_PLACEHOLDER_BODY
+}
+
 fn rem_checklist_command_messages_for_mission_change(
     state: &AppState,
     mission_uid: &str,
@@ -14819,13 +14828,13 @@ fn rem_checklist_task_command_message_at(
     mission_change_uid: &str,
     timestamp_ms: i64,
 ) -> RemChecklistFanoutMessage {
-    let body = rem_checklist_command_body(command_type, &args, Some(task));
+    let _ = task;
     rem_checklist_command_message_with_body_at(
         command_type,
         args,
         source_identity,
         mission_change_uid,
-        body,
+        REM_COMMAND_PLACEHOLDER_BODY.to_string(),
         timestamp_ms,
     )
 }
@@ -14857,98 +14866,6 @@ fn rem_checklist_command_message_with_body_at(
         body,
         fields: rem_command_transport_fields(envelope),
     }
-}
-
-fn rem_checklist_command_body(
-    command_type: &str,
-    args: &Value,
-    source: Option<&serde_json::Map<String, Value>>,
-) -> String {
-    let checklist = rem_human_text(source, &["checklist_name", "name", "title"])
-        .or_else(|| rem_arg_human_text(args, &["checklist_name", "name", "title"]))
-        .or_else(|| rem_arg_human_text(args, &["checklist_uid"]))
-        .unwrap_or_else(|| "checklist".to_string());
-    let task = rem_human_text(
-        source,
-        &["legacy_value", "task_name", "name", "title", "notes"],
-    )
-    .or_else(|| {
-        rem_arg_human_text(
-            args,
-            &["legacy_value", "task_name", "name", "title", "notes"],
-        )
-    })
-    .or_else(|| rem_task_number_text(source))
-    .or_else(|| rem_arg_task_number_text(args))
-    .or_else(|| rem_arg_human_text(args, &["task_uid"]))
-    .unwrap_or_else(|| "task".to_string());
-
-    match command_type {
-        "checklist.create.online" => format!("Checklist {checklist} created"),
-        "checklist.upload" => format!("Checklist {checklist} uploaded"),
-        "checklist.task.row.add" => format!("Task {task} added"),
-        "checklist.task.row.delete" => format!("Task {task} deleted"),
-        "checklist.task.row.style.set" => format!("Task {task} style updated"),
-        "checklist.task.cell.set" => format!("Task {task} updated"),
-        "checklist.task.status.set" => {
-            let status = rem_arg_human_text(args, &["user_status"])
-                .unwrap_or_default()
-                .to_ascii_uppercase();
-            if status == "COMPLETE" {
-                format!("Task {task} completed")
-            } else {
-                format!("Task {task} marked pending")
-            }
-        }
-        _ if task != "task" => format!("Task {task} updated"),
-        _ => format!("Checklist {checklist} updated"),
-    }
-}
-
-fn rem_human_text(
-    source: Option<&serde_json::Map<String, Value>>,
-    keys: &[&str],
-) -> Option<String> {
-    let source = source?;
-    keys.iter()
-        .find_map(|key| rem_human_value(source.get(*key)))
-}
-
-fn rem_arg_human_text(args: &Value, keys: &[&str]) -> Option<String> {
-    let object = args.as_object()?;
-    keys.iter()
-        .find_map(|key| rem_human_value(object.get(*key)))
-}
-
-fn rem_task_number_text(source: Option<&serde_json::Map<String, Value>>) -> Option<String> {
-    let source = source?;
-    rem_human_value(source.get("number")).or_else(|| {
-        source
-            .get("task")
-            .and_then(Value::as_object)
-            .and_then(|task| rem_human_value(task.get("number")))
-    })
-}
-
-fn rem_arg_task_number_text(args: &Value) -> Option<String> {
-    let object = args.as_object()?;
-    rem_human_value(object.get("number")).or_else(|| {
-        object
-            .get("task")
-            .and_then(Value::as_object)
-            .and_then(|task| rem_human_value(task.get("number")))
-    })
-}
-
-fn rem_human_value(value: Option<&Value>) -> Option<String> {
-    let text = match value? {
-        Value::String(text) => text.clone(),
-        Value::Number(number) => number.to_string(),
-        Value::Bool(value) => value.to_string(),
-        _ => return None,
-    };
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    (!text.is_empty()).then_some(text)
 }
 
 fn initial_rem_checklist_command_messages(
@@ -15049,13 +14966,12 @@ fn rem_checklist_command_message_at(
     mission_change_uid: &str,
     timestamp_ms: i64,
 ) -> RemChecklistFanoutMessage {
-    let body = rem_checklist_command_body(command_type, &args, None);
     rem_checklist_command_message_with_body_at(
         command_type,
         args,
         source_identity,
         mission_change_uid,
-        body,
+        REM_COMMAND_PLACEHOLDER_BODY.to_string(),
         timestamp_ms,
     )
 }
@@ -15100,7 +15016,7 @@ fn rem_checklist_upload_command_message_at(
         "snapshot_json": snapshot_json,
     });
     Some(RemChecklistFanoutMessage {
-        body: rem_checklist_command_body("checklist.upload", create_args, Some(checklist)),
+        body: REM_COMMAND_PLACEHOLDER_BODY.to_string(),
         fields: rem_command_transport_fields(envelope),
     })
 }
@@ -37520,7 +37436,7 @@ mod tests {
     }
 
     #[test]
-    fn rem_checklist_unknown_command_body_stays_human_readable() {
+    fn rem_checklist_unknown_command_body_uses_placeholder() {
         let task_value = json!({
             "checklist_uid": "checklist-alpha",
             "task_uid": "task-alpha",
@@ -37529,7 +37445,7 @@ mod tests {
         let task = task_value.as_object().expect("task object");
         assert_eq!(
             crate::rem_checklist_command_body("checklist.task.custom", &json!({}), Some(task)),
-            "Task Radio updated"
+            crate::REM_COMMAND_PLACEHOLDER_BODY
         );
 
         assert_eq!(
@@ -37538,12 +37454,12 @@ mod tests {
                 &json!({"checklist_uid": "Alpha Checklist"}),
                 None,
             ),
-            "Checklist Alpha Checklist updated"
+            crate::REM_COMMAND_PLACEHOLDER_BODY
         );
     }
 
     #[test]
-    fn rem_checklist_command_body_uses_task_number_before_internal_uid() {
+    fn rem_checklist_command_body_uses_placeholder_for_known_commands() {
         let task_value = json!({
             "checklist_uid": "checklist-alpha",
             "task_uid": "78280e705cf34ceb94cc4c64aaa01bdb",
@@ -37554,7 +37470,7 @@ mod tests {
 
         assert_eq!(
             crate::rem_checklist_command_body("checklist.task.row.add", &json!({}), Some(task)),
-            "Task 2 added"
+            crate::REM_COMMAND_PLACEHOLDER_BODY
         );
         assert_eq!(
             crate::rem_checklist_command_body(
@@ -37566,7 +37482,7 @@ mod tests {
                 }),
                 None,
             ),
-            "Task 2 completed"
+            crate::REM_COMMAND_PLACEHOLDER_BODY
         );
     }
 
