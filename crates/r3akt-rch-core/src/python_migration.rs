@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_lines, clippy::similar_names)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use rusqlite::types::Value as SqlValue;
@@ -11,7 +12,7 @@ use time::{
     Date, Month, OffsetDateTime, PrimitiveDateTime, Time, format_description::well_known::Rfc3339,
 };
 
-use crate::RchSqliteStore;
+use crate::{RchSqliteStore, TelemetryRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PythonMigrationReport {
@@ -196,6 +197,308 @@ pub fn import_legacy_config_settings(
     Ok(count)
 }
 
+#[derive(Debug)]
+struct LegacyTelemetryRecord {
+    peer_destination: String,
+    timestamp_s: i64,
+    telemetry: Map<String, Value>,
+}
+
+pub fn import_legacy_telemetry_database(
+    target_db_path: impl AsRef<Path>,
+    telemetry_db_path: impl AsRef<Path>,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let telemetry_db_path = telemetry_db_path.as_ref().to_path_buf();
+    let source = Connection::open_with_flags(
+        &telemetry_db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    if !table_exists(&source, "Telemeter")? || !table_exists(&source, "Sensor")? {
+        return Ok(0);
+    }
+
+    let store = RchSqliteStore::open(&target_db_path)?;
+    drop(store);
+    let mut target = Connection::open(target_db_path)?;
+    let mut records = load_legacy_telemeter_records(&source, &telemetry_db_path)?;
+    if records.is_empty() {
+        return Ok(0);
+    }
+
+    let sensor_to_telemeter = load_legacy_sensor_map(&source, &mut records)?;
+    import_legacy_sensor_tables(&source, &sensor_to_telemeter, &mut records)?;
+
+    let transaction = target.transaction()?;
+    let mut statement = transaction.prepare(
+        "INSERT INTO rch_telemetry_records (peer_destination, timestamp_s, payload) VALUES (?1, ?2, ?3)",
+    )?;
+    let mut count = 0_usize;
+    for record in records.into_values() {
+        let telemetry_record = TelemetryRecord {
+            peer_destination: record.peer_destination,
+            timestamp_s: record.timestamp_s,
+            telemetry: Value::Object(record.telemetry),
+            display_name: None,
+            identity_label: None,
+        };
+        statement.execute(params![
+            telemetry_record.peer_destination,
+            telemetry_record.timestamp_s,
+            rmp_serde::to_vec_named(&telemetry_record)?
+        ])?;
+        count += 1;
+    }
+    drop(statement);
+    transaction.commit()?;
+    Ok(count)
+}
+
+fn load_legacy_telemeter_records(
+    source: &Connection,
+    telemetry_db_path: &Path,
+) -> rusqlite::Result<BTreeMap<i64, LegacyTelemetryRecord>> {
+    let mut statement = source.prepare("SELECT id, time, peer_dest FROM Telemeter ORDER BY id")?;
+    let rows = statement.query_map([], |row| {
+        let id: i64 = row.get("id")?;
+        let time: String = row.get("time")?;
+        let peer_destination: String = row.get("peer_dest")?;
+        let timestamp_s = parse_datetime_ms(&time).unwrap_or_default() / 1000;
+        let mut telemetry = Map::new();
+        telemetry.insert("legacy_source".to_string(), json!("reticulum_telemeter"));
+        telemetry.insert(
+            "legacy_source_path".to_string(),
+            json!(telemetry_db_path.display().to_string()),
+        );
+        telemetry.insert("legacy_telemeter_id".to_string(), json!(id));
+        telemetry.insert("recorded_at".to_string(), json!(time));
+        Ok((
+            id,
+            LegacyTelemetryRecord {
+                peer_destination,
+                timestamp_s,
+                telemetry,
+            },
+        ))
+    })?;
+    let mut records = BTreeMap::new();
+    for row in rows {
+        let (id, record) = row?;
+        records.insert(id, record);
+    }
+    Ok(records)
+}
+
+fn load_legacy_sensor_map(
+    source: &Connection,
+    records: &mut BTreeMap<i64, LegacyTelemetryRecord>,
+) -> rusqlite::Result<BTreeMap<i64, i64>> {
+    let mut statement = source
+        .prepare("SELECT id, sid, stale_time, data, synthesized, telemeter_id FROM Sensor")?;
+    let rows = statement.query_map([], |row| {
+        let sensor_id: i64 = row.get("id")?;
+        let sid: i64 = row.get("sid")?;
+        let stale_time: Option<f64> = row.get("stale_time")?;
+        let data: Option<Vec<u8>> = row.get("data")?;
+        let synthesized: Option<i64> = row.get("synthesized")?;
+        let telemeter_id: i64 = row.get("telemeter_id")?;
+        let mut metadata = Map::new();
+        metadata.insert("sensor_id".to_string(), json!(sensor_id));
+        metadata.insert("sid".to_string(), json!(sid));
+        if let Some(value) = stale_time {
+            metadata.insert("stale_time".to_string(), json!(value));
+        }
+        if let Some(value) = data {
+            metadata.insert("data_hex".to_string(), json!(blob_to_hex(&value)));
+        }
+        if let Some(value) = synthesized {
+            metadata.insert("synthesized".to_string(), json!(value != 0));
+        }
+        Ok((sensor_id, telemeter_id, Value::Object(metadata)))
+    })?;
+
+    let mut sensor_to_telemeter = BTreeMap::new();
+    for row in rows {
+        let (sensor_id, telemeter_id, metadata) = row?;
+        sensor_to_telemeter.insert(sensor_id, telemeter_id);
+        if let Some(record) = records.get_mut(&telemeter_id) {
+            append_telemetry_array(&mut record.telemetry, "legacy_sensors", metadata);
+        }
+    }
+    Ok(sensor_to_telemeter)
+}
+
+fn import_legacy_sensor_tables(
+    source: &Connection,
+    sensor_to_telemeter: &BTreeMap<i64, i64>,
+    records: &mut BTreeMap<i64, LegacyTelemetryRecord>,
+) -> rusqlite::Result<()> {
+    for table in legacy_telemetry_table_names(source)? {
+        if matches!(table.as_str(), "Telemeter" | "Sensor") {
+            continue;
+        }
+        import_legacy_sensor_table(source, sensor_to_telemeter, records, &table)?;
+    }
+    Ok(())
+}
+
+fn import_legacy_sensor_table(
+    source: &Connection,
+    sensor_to_telemeter: &BTreeMap<i64, i64>,
+    records: &mut BTreeMap<i64, LegacyTelemetryRecord>,
+    table: &str,
+) -> rusqlite::Result<()> {
+    let columns = legacy_table_columns(source, table)?;
+    let Some(id_index) = columns
+        .iter()
+        .position(|column| column.eq_ignore_ascii_case("id"))
+    else {
+        return Ok(());
+    };
+    let select_list = columns
+        .iter()
+        .map(|column| quote_identifier(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT {select_list} FROM {} ORDER BY {}",
+        quote_identifier(table),
+        quote_identifier(&columns[id_index])
+    );
+    let mut statement = source.prepare(&sql)?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let sensor_id = sql_value_as_i64(row.get::<_, SqlValue>(id_index)?).unwrap_or_default();
+        let Some(telemeter_id) = sensor_to_telemeter.get(&sensor_id) else {
+            continue;
+        };
+        let Some(record) = records.get_mut(telemeter_id) else {
+            continue;
+        };
+        let mut payload = Map::new();
+        payload.insert("sensor_id".to_string(), json!(sensor_id));
+        for (index, column) in columns.iter().enumerate() {
+            if index == id_index {
+                continue;
+            }
+            let value = row.get::<_, SqlValue>(index)?;
+            if matches!(value, SqlValue::Null) {
+                continue;
+            }
+            payload.insert(normalize_setting_segment(column), sql_value_to_json(value));
+        }
+        merge_telemetry_value(
+            &mut record.telemetry,
+            &legacy_telemetry_key(table),
+            Value::Object(payload),
+        );
+    }
+    Ok(())
+}
+
+fn legacy_telemetry_table_names(source: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut statement = source.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    )?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut tables = Vec::new();
+    for row in rows {
+        tables.push(row?);
+    }
+    Ok(tables)
+}
+
+fn legacy_table_columns(source: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
+    let mut statement =
+        source.prepare(&format!("PRAGMA table_info({})", quote_identifier(table)))?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    let mut columns = Vec::new();
+    for row in rows {
+        columns.push(row?);
+    }
+    Ok(columns)
+}
+
+fn quote_identifier(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn legacy_telemetry_key(table: &str) -> String {
+    let mut key = String::new();
+    let mut previous_was_lower_or_digit = false;
+    for ch in table.chars() {
+        if ch.is_ascii_uppercase() {
+            if previous_was_lower_or_digit {
+                key.push('_');
+            }
+            key.push(ch.to_ascii_lowercase());
+            previous_was_lower_or_digit = false;
+        } else if ch.is_ascii_alphanumeric() {
+            key.push(ch.to_ascii_lowercase());
+            previous_was_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        } else if !key.ends_with('_') {
+            key.push('_');
+            previous_was_lower_or_digit = false;
+        }
+    }
+    key.trim_matches('_').to_string()
+}
+
+fn sql_value_to_json(value: SqlValue) -> Value {
+    match value {
+        SqlValue::Null => Value::Null,
+        SqlValue::Integer(value) => json!(value),
+        SqlValue::Real(value) => json!(value),
+        SqlValue::Text(value) => Value::String(value),
+        SqlValue::Blob(value) => Value::String(blob_to_hex(&value)),
+    }
+}
+
+fn sql_value_as_i64(value: SqlValue) -> Option<i64> {
+    match value {
+        SqlValue::Integer(value) => Some(value),
+        #[allow(clippy::cast_possible_truncation)]
+        SqlValue::Real(value) => Some(value as i64),
+        SqlValue::Text(value) => value.parse().ok(),
+        SqlValue::Null | SqlValue::Blob(_) => None,
+    }
+}
+
+fn append_telemetry_array(telemetry: &mut Map<String, Value>, key: &str, value: Value) {
+    match telemetry.get_mut(key) {
+        Some(Value::Array(values)) => values.push(value),
+        Some(existing) => {
+            let first = existing.take();
+            *existing = Value::Array(vec![first, value]);
+        }
+        None => {
+            telemetry.insert(key.to_string(), Value::Array(vec![value]));
+        }
+    }
+}
+
+fn merge_telemetry_value(telemetry: &mut Map<String, Value>, key: &str, value: Value) {
+    match telemetry.get_mut(key) {
+        Some(Value::Array(values)) => values.push(value),
+        Some(existing) => {
+            let first = existing.take();
+            *existing = Value::Array(vec![first, value]);
+        }
+        None => {
+            telemetry.insert(key.to_string(), value);
+        }
+    }
+}
+
+fn blob_to_hex(value: &[u8]) -> String {
+    value.iter().fold(
+        String::with_capacity(value.len().saturating_mul(2)),
+        |mut output, byte| {
+            let _ = write!(output, "{byte:02x}");
+            output
+        },
+    )
+}
+
 fn normalize_setting_segment(value: &str) -> String {
     value
         .trim()
@@ -341,7 +644,7 @@ fn migrate_messages(
                 "delivery_state": text(row, "state")?,
                 "delivery_metadata": json_value(row, "delivery_metadata")?,
                 "created_ts_ms": datetime_ms(row, "created_at")?,
-                "attachments": json_value(row, "attachments")?
+                "attachments": chat_attachments(row, "attachments")?
             }),
         ))
     })
@@ -1418,9 +1721,61 @@ fn json_array(row: &Row<'_>, column: &str) -> rusqlite::Result<Value> {
     match json_value(row, column)? {
         Value::Array(values) => Ok(Value::Array(values)),
         Value::Null => Ok(Value::Array(Vec::new())),
+        Value::Object(values) if values.is_empty() => Ok(Value::Array(Vec::new())),
         value if value.as_str().is_some_and(str::is_empty) => Ok(Value::Array(Vec::new())),
         value => Ok(Value::Array(vec![value])),
     }
+}
+
+fn chat_attachments(row: &Row<'_>, column: &str) -> rusqlite::Result<Value> {
+    let Value::Array(values) = json_array(row, column)? else {
+        return Ok(Value::Array(Vec::new()));
+    };
+    let attachments = values
+        .into_iter()
+        .filter_map(|value| {
+            let object = value.as_object()?;
+            let mut attachment = Map::new();
+            attachment.insert(
+                "file_id".to_string(),
+                json!(json_u64(object, &["file_id", "FileID", "id", "ID"]).unwrap_or_default()),
+            );
+            attachment.insert(
+                "category".to_string(),
+                json!(json_string(object, &["category", "Category"]).unwrap_or_default()),
+            );
+            attachment.insert(
+                "name".to_string(),
+                json!(json_string(object, &["name", "Name"]).unwrap_or_default()),
+            );
+            attachment.insert(
+                "size".to_string(),
+                json!(json_u64(object, &["size", "Size"]).unwrap_or_default()),
+            );
+            attachment.insert(
+                "media_type".to_string(),
+                json_string(object, &["media_type", "mediaType", "MediaType"])
+                    .map_or(Value::Null, Value::String),
+            );
+            Some(Value::Object(attachment))
+        })
+        .collect::<Vec<_>>();
+    Ok(Value::Array(attachments))
+}
+
+fn json_string(object: &Map<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_str).map(str::to_string))
+}
+
+fn json_u64(object: &Map<String, Value>, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| {
+        object.get(*key).and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+        })
+    })
 }
 
 fn datetime_ms(row: &Row<'_>, column: &str) -> rusqlite::Result<i64> {

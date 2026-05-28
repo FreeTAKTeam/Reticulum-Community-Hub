@@ -48,7 +48,7 @@ quick-xml = "0.38"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-tungstenite = "0.29"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
@@ -57,6 +57,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "macros", "parsing", "serde"] }
 uuid = { version = "1.8", features = ["serde", "v4", "v7"] }
+zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "tcp-transport"] }
 
 [workspace.lints.rust]
 unsafe_code = "warn"

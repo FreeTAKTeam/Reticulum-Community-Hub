@@ -1346,6 +1346,64 @@ pub struct RchCoreSnapshot {
     pub authorization_required: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct SnapshotSaveOptions {
+    preserve_identity_announces: bool,
+}
+
+#[derive(Debug, Clone)]
+struct MessageQueueProjection {
+    delivery_state: String,
+    dispatch_status: String,
+    next_attempt_at_ts_ms: Option<i64>,
+    attempts: i64,
+    priority: i64,
+    batch_id: Option<String>,
+    created_ts_ms: i64,
+}
+
+fn message_queue_projection(record: &MessageRecord) -> MessageQueueProjection {
+    MessageQueueProjection {
+        delivery_state: if record.delivery_state.trim().is_empty() {
+            "queued".to_string()
+        } else {
+            record.delivery_state.clone()
+        },
+        dispatch_status: record
+            .delivery_metadata
+            .get("dispatch_status")
+            .and_then(Value::as_str)
+            .map_or_else(|| "queued".to_string(), str::to_string),
+        next_attempt_at_ts_ms: record
+            .delivery_metadata
+            .get("next_attempt_at_ts_ms")
+            .and_then(Value::as_i64),
+        attempts: record
+            .delivery_metadata
+            .get("attempts")
+            .and_then(Value::as_i64)
+            .or_else(|| {
+                record
+                    .delivery_metadata
+                    .get("attempts")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| i64::try_from(value).ok())
+            })
+            .unwrap_or(0),
+        priority: record
+            .delivery_metadata
+            .get("priority")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        batch_id: record
+            .delivery_metadata
+            .get("batch_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        created_ts_ms: record.created_ts_ms,
+    }
+}
+
 impl RchCoreSnapshot {
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -1457,10 +1515,30 @@ impl RchSqliteStore {
     }
 
     pub fn save_snapshot(&mut self, snapshot: &RchCoreSnapshot) -> Result<(), RchCoreError> {
+        self.save_snapshot_with_options(snapshot, SnapshotSaveOptions::default())
+    }
+
+    pub fn save_snapshot_preserving_identity_announces(
+        &mut self,
+        snapshot: &RchCoreSnapshot,
+    ) -> Result<(), RchCoreError> {
+        self.save_snapshot_with_options(
+            snapshot,
+            SnapshotSaveOptions {
+                preserve_identity_announces: true,
+            },
+        )
+    }
+
+    fn save_snapshot_with_options(
+        &mut self,
+        snapshot: &RchCoreSnapshot,
+        options: SnapshotSaveOptions,
+    ) -> Result<(), RchCoreError> {
         let preserved_settings = self.settings_with_prefix("reticulumd_")?;
         let transaction = self.connection.transaction()?;
-        clear_snapshot_tables(&transaction)?;
-        save_topic_snapshot_tables(&transaction, snapshot)?;
+        clear_snapshot_tables(&transaction, options)?;
+        save_topic_snapshot_tables(&transaction, snapshot, options)?;
         save_registry_snapshot_tables(&transaction, snapshot)?;
         for result in &snapshot.command_results {
             transaction.execute(
@@ -1552,6 +1630,87 @@ impl RchSqliteStore {
         Ok(())
     }
 
+    pub fn upsert_message(&mut self, record: &MessageRecord) -> Result<(), RchCoreError> {
+        let projection = message_queue_projection(record);
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM rch_messages WHERE message_id = ?1",
+            params![record.message_id],
+        )?;
+        transaction.execute(
+            "INSERT INTO rch_messages (
+                message_id,
+                payload,
+                delivery_state,
+                dispatch_status,
+                next_attempt_at_ts_ms,
+                attempts,
+                priority,
+                batch_id,
+                created_ts_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                record.message_id,
+                encode_msgpack(record)?,
+                projection.delivery_state,
+                projection.dispatch_status,
+                projection.next_attempt_at_ts_ms,
+                projection.attempts,
+                projection.priority,
+                projection.batch_id,
+                projection.created_ts_ms,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn upsert_system_event(&mut self, record: &SystemEventRecord) -> Result<(), RchCoreError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM rch_system_events WHERE event_id = ?1",
+            params![record.event_id],
+        )?;
+        transaction.execute(
+            "INSERT INTO rch_system_events (event_id, payload) VALUES (?1, ?2)",
+            params![record.event_id, encode_msgpack(record)?],
+        )?;
+        transaction.execute(
+            "DELETE FROM rch_system_events
+             WHERE id NOT IN (
+                 SELECT id FROM rch_system_events ORDER BY id DESC LIMIT 200
+             )",
+            [],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn insert_telemetry_record(
+        &mut self,
+        record: &TelemetryRecord,
+    ) -> Result<(), RchCoreError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO rch_telemetry_records (peer_destination, timestamp_s, payload)
+             VALUES (?1, ?2, ?3)",
+            params![
+                record.peer_destination,
+                record.timestamp_s,
+                encode_msgpack(record)?
+            ],
+        )?;
+        transaction.execute(
+            "DELETE FROM rch_telemetry_records
+             WHERE id NOT IN (
+                 SELECT id FROM rch_telemetry_records ORDER BY id DESC LIMIT 1000
+             )",
+            [],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn load_identity_announces(&self) -> Result<Vec<IdentityAnnounceRecord>, RchCoreError> {
         self.load_payload_rows::<IdentityAnnounceRecord>(
             "SELECT payload FROM rch_identity_announces ORDER BY destination_hash",
@@ -1633,7 +1792,18 @@ impl RchSqliteStore {
     }
 
     pub fn load_snapshot(&self) -> Result<Option<RchCoreSnapshot>, RchCoreError> {
-        let snapshot = self.load_snapshot_rows()?;
+        let snapshot = self.load_snapshot_rows(true)?;
+        if snapshot.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(snapshot))
+        }
+    }
+
+    pub fn load_snapshot_without_identity_announces(
+        &self,
+    ) -> Result<Option<RchCoreSnapshot>, RchCoreError> {
+        let snapshot = self.load_snapshot_rows(false)?;
         if snapshot.is_empty() {
             Ok(None)
         } else {
@@ -1777,7 +1947,10 @@ impl RchSqliteStore {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn load_snapshot_rows(&self) -> Result<RchCoreSnapshot, RchCoreError> {
+    fn load_snapshot_rows(
+        &self,
+        include_identity_announces: bool,
+    ) -> Result<RchCoreSnapshot, RchCoreError> {
         let topics = self
             .load_payload_rows::<TopicRecord>("SELECT payload FROM rch_topics ORDER BY topic_id")?;
         let subscribers = self.load_payload_rows::<SubscriberRecord>(
@@ -1788,9 +1961,13 @@ impl RchSqliteStore {
         let clients = self.load_payload_rows::<ClientRecord>(
             "SELECT payload FROM rch_clients ORDER BY identity",
         )?;
-        let identity_announces = self.load_payload_rows::<IdentityAnnounceRecord>(
-            "SELECT payload FROM rch_identity_announces ORDER BY destination_hash",
-        )?;
+        let identity_announces = if include_identity_announces {
+            self.load_payload_rows::<IdentityAnnounceRecord>(
+                "SELECT payload FROM rch_identity_announces ORDER BY destination_hash",
+            )?
+        } else {
+            Vec::new()
+        };
         let identity_states = self.load_payload_rows::<IdentityStateRecord>(
             "SELECT payload FROM rch_identity_states ORDER BY identity",
         )?;
@@ -2176,6 +2353,30 @@ impl RchSqliteStore {
                 [],
             )?;
         }
+        for (column, definition) in [
+            ("delivery_state", "TEXT NOT NULL DEFAULT 'queued'"),
+            ("dispatch_status", "TEXT NOT NULL DEFAULT 'queued'"),
+            ("next_attempt_at_ts_ms", "INTEGER"),
+            ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ("priority", "INTEGER NOT NULL DEFAULT 0"),
+            ("batch_id", "TEXT"),
+            ("created_ts_ms", "INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            if !sqlite_table_has_column(&self.connection, "rch_messages", column)? {
+                self.connection.execute(
+                    &format!("ALTER TABLE rch_messages ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
+        self.connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_rch_messages_queue_due
+                ON rch_messages (delivery_state, dispatch_status, next_attempt_at_ts_ms, priority, id);
+             CREATE INDEX IF NOT EXISTS idx_rch_messages_batch
+                ON rch_messages (batch_id);
+             CREATE INDEX IF NOT EXISTS idx_rch_messages_created
+                ON rch_messages (created_ts_ms);",
+        )?;
         Ok(())
     }
 
@@ -3046,8 +3247,24 @@ impl RchCore {
         store.save_snapshot(&self.snapshot())
     }
 
+    pub fn save_to_sqlite_preserving_identity_announces(
+        &self,
+        store: &mut RchSqliteStore,
+    ) -> Result<(), RchCoreError> {
+        store.save_snapshot_preserving_identity_announces(&self.snapshot())
+    }
+
     pub fn load_from_sqlite(store: &RchSqliteStore) -> Result<Option<Self>, RchCoreError> {
         store.load_snapshot()?.map(Self::from_snapshot).transpose()
+    }
+
+    pub fn load_from_sqlite_without_identity_announces(
+        store: &RchSqliteStore,
+    ) -> Result<Option<Self>, RchCoreError> {
+        store
+            .load_snapshot_without_identity_announces()?
+            .map(Self::from_snapshot)
+            .transpose()
     }
 
     #[must_use]
@@ -9503,7 +9720,10 @@ fn sqlite_table_has_column(
     Ok(false)
 }
 
-fn clear_snapshot_tables(transaction: &Transaction<'_>) -> Result<(), RchCoreError> {
+fn clear_snapshot_tables(
+    transaction: &Transaction<'_>,
+    options: SnapshotSaveOptions,
+) -> Result<(), RchCoreError> {
     for table in [
         "rch_topics",
         "rch_subscribers",
@@ -9546,6 +9766,9 @@ fn clear_snapshot_tables(transaction: &Transaction<'_>) -> Result<(), RchCoreErr
         "rch_subject_operation_rights",
         "rch_settings",
     ] {
+        if options.preserve_identity_announces && table == "rch_identity_announces" {
+            continue;
+        }
         transaction.execute(&format!("DELETE FROM {table}"), [])?;
     }
     Ok(())
@@ -9554,6 +9777,7 @@ fn clear_snapshot_tables(transaction: &Transaction<'_>) -> Result<(), RchCoreErr
 fn save_topic_snapshot_tables(
     transaction: &Transaction<'_>,
     snapshot: &RchCoreSnapshot,
+    options: SnapshotSaveOptions,
 ) -> Result<(), RchCoreError> {
     for topic in &snapshot.topics {
         transaction.execute(
@@ -9572,9 +9796,30 @@ fn save_topic_snapshot_tables(
         )?;
     }
     for message in &snapshot.messages {
+        let projection = message_queue_projection(message);
         transaction.execute(
-            "INSERT INTO rch_messages (message_id, payload) VALUES (?1, ?2)",
-            params![message.message_id, encode_msgpack(message)?],
+            "INSERT INTO rch_messages (
+                message_id,
+                payload,
+                delivery_state,
+                dispatch_status,
+                next_attempt_at_ts_ms,
+                attempts,
+                priority,
+                batch_id,
+                created_ts_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                message.message_id,
+                encode_msgpack(message)?,
+                projection.delivery_state,
+                projection.dispatch_status,
+                projection.next_attempt_at_ts_ms,
+                projection.attempts,
+                projection.priority,
+                projection.batch_id,
+                projection.created_ts_ms,
+            ],
         )?;
     }
     for client in &snapshot.clients {
@@ -9583,11 +9828,13 @@ fn save_topic_snapshot_tables(
             params![client.identity, encode_msgpack(client)?],
         )?;
     }
-    for announce in &snapshot.identity_announces {
-        transaction.execute(
-            "INSERT INTO rch_identity_announces (destination_hash, payload) VALUES (?1, ?2)",
-            params![announce.destination_hash, encode_msgpack(announce)?],
-        )?;
+    if !options.preserve_identity_announces {
+        for announce in &snapshot.identity_announces {
+            transaction.execute(
+                "INSERT INTO rch_identity_announces (destination_hash, payload) VALUES (?1, ?2)",
+                params![announce.destination_hash, encode_msgpack(announce)?],
+            )?;
+        }
     }
     for state in &snapshot.identity_states {
         transaction.execute(
@@ -11384,11 +11631,137 @@ mod tests {
     }
 
     #[test]
+    fn core_save_preserves_identity_announces_written_by_row_api() {
+        let mut store = RchSqliteStore::in_memory().expect("store");
+        store
+            .upsert_identity_announces(&[IdentityAnnounceRecord {
+                destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                announced_identity_hash: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
+                display_name: Some("REM Alpha".to_string()),
+                source_interface: Some("test".to_string()),
+                announce_capabilities: vec!["r3akt".to_string(), "emergencymessages".to_string()],
+                client_type: "rem".to_string(),
+                first_seen_ts_ms: 1,
+                last_seen_ts_ms: 2,
+            }])
+            .expect("upsert announce");
+
+        let core = RchCore::new();
+        core.save_to_sqlite_preserving_identity_announces(&mut store)
+            .expect("save core");
+
+        assert_eq!(
+            store
+                .row_count("rch_identity_announces")
+                .expect("announce count"),
+            1
+        );
+    }
+
+    #[test]
+    fn row_level_message_upsert_preserves_identity_announces() {
+        let mut store = RchSqliteStore::in_memory().expect("store");
+        store
+            .upsert_identity_announces(&[IdentityAnnounceRecord {
+                destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                announced_identity_hash: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
+                display_name: Some("REM Alpha".to_string()),
+                source_interface: Some("test".to_string()),
+                announce_capabilities: vec!["r3akt".to_string(), "emergencymessages".to_string()],
+                client_type: "rem".to_string(),
+                first_seen_ts_ms: 1,
+                last_seen_ts_ms: 2,
+            }])
+            .expect("upsert announce");
+
+        store
+            .upsert_message(&MessageRecord {
+                message_id: "message-1".to_string(),
+                topic_id: None,
+                destination: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
+                sender: "northbound".to_string(),
+                content: "cmd".to_string(),
+                delivery_mode: DeliveryMode::Targeted,
+                delivery_method: "direct".to_string(),
+                delivery_policy_reason: "rem_auto".to_string(),
+                delivery_state: "queued".to_string(),
+                delivery_metadata: json!({
+                    "dispatch_status": "queued_deferred",
+                    "next_attempt_at_ts_ms": 10,
+                    "attempts": 0,
+                }),
+                created_ts_ms: 5,
+                attachments: Vec::new(),
+            })
+            .expect("upsert message");
+
+        assert_eq!(store.row_count("rch_messages").expect("message count"), 1);
+        assert_eq!(
+            store
+                .row_count("rch_identity_announces")
+                .expect("announce count"),
+            1
+        );
+    }
+
+    #[test]
+    fn row_level_message_upsert_handles_ten_thousand_jobs() {
+        let mut store = RchSqliteStore::in_memory().expect("store");
+        store
+            .upsert_identity_announces(&[IdentityAnnounceRecord {
+                destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                announced_identity_hash: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
+                display_name: Some("REM Alpha".to_string()),
+                source_interface: Some("test".to_string()),
+                announce_capabilities: vec!["r3akt".to_string(), "emergencymessages".to_string()],
+                client_type: "rem".to_string(),
+                first_seen_ts_ms: 1,
+                last_seen_ts_ms: 2,
+            }])
+            .expect("upsert announce");
+
+        for index in 0..10_000 {
+            store
+                .upsert_message(&MessageRecord {
+                    message_id: format!("message-{index:05}"),
+                    topic_id: None,
+                    destination: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
+                    sender: "northbound".to_string(),
+                    content: "cmd".to_string(),
+                    delivery_mode: DeliveryMode::Targeted,
+                    delivery_method: "auto".to_string(),
+                    delivery_policy_reason: "rem_auto".to_string(),
+                    delivery_state: "queued".to_string(),
+                    delivery_metadata: json!({
+                        "dispatch_status": "queued_deferred",
+                        "next_attempt_at_ts_ms": index,
+                        "attempts": 0,
+                        "batch_id": "batch-10k",
+                    }),
+                    created_ts_ms: index,
+                    attachments: Vec::new(),
+                })
+                .expect("upsert message");
+        }
+
+        assert_eq!(
+            store.row_count("rch_messages").expect("message count"),
+            10_000
+        );
+        assert_eq!(
+            store
+                .row_count("rch_identity_announces")
+                .expect("announce count"),
+            1
+        );
+    }
+
+    #[test]
     fn delivery_envelope_validates_required_fields_and_ttl() {
+        let now = utc_now_ms();
         let envelope =
             build_delivery_envelope(BuildDeliveryEnvelope::new("ABCDEF")).expect("build");
-        let validated =
-            validate_delivery_envelope(&envelope.to_json(), utc_now_ms()).expect("valid");
+        let validated = validate_delivery_envelope(&envelope.to_json(), now).expect("valid");
 
         assert_eq!(validated.sender, "abcdef");
         assert_eq!(validated.ttl_seconds, DEFAULT_TTL_SECONDS);
@@ -11401,9 +11774,9 @@ mod tests {
         ));
 
         let mut future = envelope.to_json();
-        future["Born"] = json!(utc_now_ms() + (MAX_CLOCK_SKEW_SECONDS * 1000) + 1);
+        future["Born"] = json!(now + (MAX_CLOCK_SKEW_SECONDS * 1000) + 1);
         assert!(matches!(
-            validate_delivery_envelope(&future, utc_now_ms()),
+            validate_delivery_envelope(&future, now),
             Err(RchCoreError::Delivery(reason)) if reason == "Clock skew exceeds delivery budget"
         ));
     }

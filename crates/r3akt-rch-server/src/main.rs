@@ -12,8 +12,8 @@ use std::time::Duration as StdDuration;
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8000;
 const DEFAULT_MANAGED_RETICULUMD_TRANSPORT: &str = "127.0.0.1:0";
-const DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT: &str = "tcp://127.0.0.1:9100";
-const DEFAULT_LXMF_ZMQ_RESPONSE_ENDPOINT: &str = "tcp://127.0.0.1:9101";
+const DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT: &str = "tcp://localhost:9100";
+const DEFAULT_LXMF_ZMQ_RESPONSE_ENDPOINT: &str = "tcp://localhost:9101";
 const DEFAULT_STORAGE_PATH: &str = "RTH_Store";
 const DEFAULT_LOG_LEVEL_NAME: &str = "debug";
 const STATE_FILENAME: &str = "rch_state.json";
@@ -1802,9 +1802,9 @@ mod tests {
             "--reticulumd-source",
             "source-destination",
             "--lxmf-zmq-command",
-            "tcp://127.0.0.1:9100",
+            "tcp://localhost:9100",
             "--lxmf-zmq-response",
-            "tcp://127.0.0.1:9101",
+            "tcp://localhost:9101",
             "--reticulumd-exe",
             "reticulumd.exe",
         ])
@@ -1816,11 +1816,11 @@ mod tests {
         );
         assert_eq!(
             args.lxmf_zmq_command.as_deref(),
-            Some("tcp://127.0.0.1:9100")
+            Some("tcp://localhost:9100")
         );
         assert_eq!(
             args.lxmf_zmq_response.as_deref(),
-            Some("tcp://127.0.0.1:9101")
+            Some("tcp://localhost:9101")
         );
         assert_eq!(
             args.reticulumd_exe.as_deref(),
