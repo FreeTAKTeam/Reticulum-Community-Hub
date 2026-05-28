@@ -1414,11 +1414,13 @@ dependencies = [
  "lxmf-sdk",
  "lxmf-wire",
  "r3akt-protocol",
+ "reticulum-rs-rpc",
  "rmp-serde",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "zeromq",
 ]
 
 [[package]]

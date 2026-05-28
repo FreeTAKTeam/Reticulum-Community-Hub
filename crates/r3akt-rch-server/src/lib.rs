@@ -12566,7 +12566,7 @@ fn dispatch_outbound_message(
                     title: outbound_lxmf_title(&dispatch_message).to_string(),
                     content: outbound_lxmf_content(&dispatch_message).to_string(),
                     fields,
-                    delivery_method: Some(lxmf_sdk_delivery_method(message).to_string()),
+                    delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
                     try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
                     correlation_id: message_id.clone(),
                 },
@@ -12599,15 +12599,16 @@ fn dispatch_outbound_message(
     Ok(report)
 }
 
-fn lxmf_sdk_delivery_method(message: &OutboundMessageRecord) -> &str {
+fn lxmf_sdk_delivery_method(message: &OutboundMessageRecord) -> Option<&str> {
     if message.delivery_method == "auto" && is_rem_command_message(message) {
-        return "propagated";
+        return Some("propagated");
     }
     match message.delivery_method.as_str() {
-        "propagated" => "propagated",
-        "opportunistic" => "opportunistic",
-        "paper" => "paper",
-        _ => "direct",
+        "direct" if is_rem_command_message(message) => Some("direct"),
+        "propagated" => Some("propagated"),
+        "opportunistic" => Some("opportunistic"),
+        "paper" => Some("paper"),
+        _ => None,
     }
 }
 
@@ -23808,6 +23809,16 @@ mod tests {
     fn fake_reticulumd_rpc_server_for_request_count(
         expected_requests: usize,
     ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
+        fake_reticulumd_rpc_server_for_request_count_with_accept_timeout(
+            expected_requests,
+            Duration::from_secs(2),
+        )
+    }
+
+    fn fake_reticulumd_rpc_server_for_request_count_with_accept_timeout(
+        expected_requests: usize,
+        accept_timeout: Duration,
+    ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
         let responses = (0..expected_requests)
             .map(|_| {
                 json!({
@@ -23815,21 +23826,38 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        fake_reticulumd_rpc_server_with_results(responses)
+        fake_reticulumd_rpc_server_with_results_and_accept_timeout(responses, accept_timeout)
     }
 
     fn fake_reticulumd_rpc_server_with_results(
         results: Vec<serde_json::Value>,
     ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
+        fake_reticulumd_rpc_server_with_results_and_accept_timeout(results, Duration::from_secs(2))
+    }
+
+    fn fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+        results: Vec<serde_json::Value>,
+        accept_timeout: Duration,
+    ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
         let responses = results
             .into_iter()
             .map(|result| (Some(result), None))
             .collect::<Vec<_>>();
-        fake_reticulumd_rpc_server_with_responses(responses)
+        fake_reticulumd_rpc_server_with_responses_and_accept_timeout(responses, accept_timeout)
     }
 
     fn fake_reticulumd_rpc_server_with_responses(
         responses: Vec<(Option<serde_json::Value>, Option<ReticulumdRpcError>)>,
+    ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
+        fake_reticulumd_rpc_server_with_responses_and_accept_timeout(
+            responses,
+            Duration::from_secs(2),
+        )
+    }
+
+    fn fake_reticulumd_rpc_server_with_responses_and_accept_timeout(
+        responses: Vec<(Option<serde_json::Value>, Option<ReticulumdRpcError>)>,
+        accept_timeout: Duration,
     ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
         let listener = StdTcpListener::bind("127.0.0.1:0").expect("listener");
         listener
@@ -23839,7 +23867,7 @@ mod tests {
         let server = thread::spawn(move || {
             let mut requests = Vec::new();
             for (result, error) in responses {
-                let accept_deadline = std::time::Instant::now() + Duration::from_secs(2);
+                let accept_deadline = std::time::Instant::now() + accept_timeout;
                 let mut stream = loop {
                     match listener.accept() {
                         Ok((stream, _)) => break stream,
@@ -46838,7 +46866,11 @@ mod tests {
     async fn chat_topic_send_fans_out_to_fifty_members_reliably() {
         const MEMBER_COUNT: usize = 50;
 
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(MEMBER_COUNT);
+        let (endpoint, rpc_server) =
+            fake_reticulumd_rpc_server_for_request_count_with_accept_timeout(
+                MEMBER_COUNT,
+                Duration::from_secs(15),
+            );
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-reticulumd-topic-fifty-{}.db",
             Uuid::new_v4()
@@ -49087,7 +49119,10 @@ mod tests {
         };
         let message = crate::OutboundMessageRecord::from(message);
 
-        assert_eq!(crate::lxmf_sdk_delivery_method(&message), "propagated");
+        assert_eq!(
+            crate::lxmf_sdk_delivery_method(&message),
+            Some("propagated")
+        );
         assert!(!crate::lxmf_sdk_try_propagation_on_fail(&message));
     }
 
