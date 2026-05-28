@@ -1,4 +1,5 @@
 param(
+    [switch] $ServerOnlyAlpha,
     [switch] $SkipUi,
     [switch] $SkipDesktop,
     [switch] $SkipClippy,
@@ -8,7 +9,10 @@ param(
     [switch] $LiveReticulum,
     [switch] $PlanOnly,
     [string] $Bind = "127.0.0.1:18080",
-    [string] $ApiKey = "release-smoke"
+    [string] $ApiKey = "release-smoke",
+    [string] $LxmfZmqCommand = "tcp://localhost:9100",
+    [string] $LxmfZmqResponse = "tcp://localhost:9101",
+    [string] $ReticulumdSource = "release-smoke-source"
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +57,22 @@ function Invoke-Step {
     & $Script
 }
 
+function Invoke-RustFormatCheck {
+    if ($ServerOnlyAlpha) {
+        Invoke-Native cargo @(
+            "fmt",
+            "-p", "r3akt-rch-server",
+            "-p", "r3akt-rch-core",
+            "-p", "r3akt-transport-rns",
+            "-p", "r3akt-tak-connector",
+            "--",
+            "--check"
+        )
+    } else {
+        Invoke-Native cargo @("fmt", "--all", "--", "--check")
+    }
+}
+
 function Get-RequiredEnv {
     param([Parameter(Mandatory = $true)] [string] $Name)
 
@@ -80,7 +100,11 @@ function Get-ReleaseBinary {
 
 function Invoke-ServerSmoke {
     if ($PlanOnly) {
-        Write-Host "PLAN: start target/release/r3akt-rch-server and validate /Status, /openapi.json, /Help, /api/v1/app/info"
+        if ($ServerOnlyAlpha) {
+            Write-Host "PLAN: start target/release/r3akt-rch-server with mandatory ZeroMQ SDK endpoints and validate /Status, /openapi.json, /Help, /api/v1/app/info, /diagnostics/runtime"
+        } else {
+            Write-Host "PLAN: start target/release/r3akt-rch-server and validate /Status, /openapi.json, /Help, /api/v1/app/info"
+        }
         return
     }
 
@@ -91,9 +115,18 @@ function Invoke-ServerSmoke {
 
     $db = Join-Path ([System.IO.Path]::GetTempPath()) ("r3akt-rch-release-smoke-" + [guid]::NewGuid().ToString() + ".sqlite3")
     $headers = @{ "X-API-Key" = $ApiKey }
+    $serverArgs = @("--bind", $Bind, "--api-key", $ApiKey, "--db-path", $db)
+    if ($ServerOnlyAlpha) {
+        $serverArgs += @(
+            "--lxmf-zmq-command", $LxmfZmqCommand,
+            "--lxmf-zmq-response", $LxmfZmqResponse,
+            "--reticulumd-source", $ReticulumdSource
+        )
+    }
+
     $startArgs = @{
         FilePath = $serverBin
-        ArgumentList = @("--bind", $Bind, "--api-key", $ApiKey, "--db-path", $db)
+        ArgumentList = $serverArgs
         WorkingDirectory = (Get-Location).Path
         PassThru = $true
     }
@@ -122,6 +155,12 @@ function Invoke-ServerSmoke {
         Invoke-RestMethod -Headers $headers -Uri "$baseUrl/openapi.json" | Out-Null
         Invoke-RestMethod -Headers $headers -Uri "$baseUrl/Help" | Out-Null
         Invoke-RestMethod -Headers $headers -Uri "$baseUrl/api/v1/app/info" | Out-Null
+        if ($ServerOnlyAlpha) {
+            $diagnostics = Invoke-RestMethod -Headers $headers -Uri "$baseUrl/diagnostics/runtime"
+            if (-not $diagnostics.reticulumd_source_configured) {
+                throw "Server-only alpha smoke expected a configured Reticulum source for mandatory ZeroMQ."
+            }
+        }
     } finally {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $db -Force -ErrorAction SilentlyContinue
@@ -129,7 +168,7 @@ function Invoke-ServerSmoke {
 }
 
 Invoke-Step "Rust formatting" {
-    Invoke-Native cargo @("fmt", "--all", "--", "--check")
+    Invoke-RustFormatCheck
 }
 
 if (-not $SkipClippy) {
@@ -148,11 +187,13 @@ Invoke-Step "Build RCH server release binary" {
     Invoke-Native cargo @("build", "--release", "-p", "r3akt-rch-server")
 }
 
-Invoke-Step "Build standalone TAK service release binary" {
-    Invoke-Native cargo @("build", "--release", "-p", "r3akt-tak-connector", "--bin", "r3akt-tak-service")
+if (-not $ServerOnlyAlpha) {
+    Invoke-Step "Build standalone TAK service release binary" {
+        Invoke-Native cargo @("build", "--release", "-p", "r3akt-tak-connector", "--bin", "r3akt-tak-service")
+    }
 }
 
-if (-not $SkipUi) {
+if (-not $SkipUi -and -not $ServerOnlyAlpha) {
     Invoke-Step "Shared UI install" {
         Invoke-Native npm @("--prefix", "ui", "ci")
     }
@@ -167,7 +208,7 @@ if (-not $SkipUi) {
     }
 }
 
-if (-not $SkipDesktop) {
+if (-not $SkipDesktop -and -not $ServerOnlyAlpha) {
     Invoke-Step "Desktop sidecar preparation" {
         Invoke-Native npm @("--prefix", "apps/rch-desktop", "run", "prepare:sidecar")
     }

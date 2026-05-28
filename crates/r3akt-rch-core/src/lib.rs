@@ -11385,10 +11385,10 @@ mod tests {
 
     #[test]
     fn delivery_envelope_validates_required_fields_and_ttl() {
+        let now = utc_now_ms();
         let envelope =
             build_delivery_envelope(BuildDeliveryEnvelope::new("ABCDEF")).expect("build");
-        let validated =
-            validate_delivery_envelope(&envelope.to_json(), utc_now_ms()).expect("valid");
+        let validated = validate_delivery_envelope(&envelope.to_json(), now).expect("valid");
 
         assert_eq!(validated.sender, "abcdef");
         assert_eq!(validated.ttl_seconds, DEFAULT_TTL_SECONDS);
@@ -11401,9 +11401,9 @@ mod tests {
         ));
 
         let mut future = envelope.to_json();
-        future["Born"] = json!(utc_now_ms() + (MAX_CLOCK_SKEW_SECONDS * 1000) + 1);
+        future["Born"] = json!(now + (MAX_CLOCK_SKEW_SECONDS * 1000) + 1);
         assert!(matches!(
-            validate_delivery_envelope(&future, utc_now_ms()),
+            validate_delivery_envelope(&future, now),
             Err(RchCoreError::Delivery(reason)) if reason == "Clock skew exceeds delivery budget"
         ));
     }

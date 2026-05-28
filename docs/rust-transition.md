@@ -54,15 +54,15 @@ capabilities.
 
 ## Packaging
 
-- Server packages are built from `r3akt-rch-server` and include the built
-  `ui/dist`, config samples, a Linux `systemd` unit, Windows PowerShell helpers,
-  and checksums.
-- Desktop packages are built from `apps/rch-desktop` with Tauri. The app loads
-  the shared Vue UI and starts `r3akt-rch-server` as a managed sidecar on
-  `127.0.0.1:8000`.
-- Windows and Linux are the first-class Rust packaging targets. Windows produces
-  a Tauri NSIS installer and server archive; Linux produces a Tauri AppImage and
-  server tarball.
+- Initial alpha server packages are built from `r3akt-rch-server` and include
+  the server binary, mandatory ZeroMQ configuration samples, a Linux `systemd`
+  unit, Windows PowerShell helpers, and checksums.
+- Desktop packages are built later from `apps/rch-desktop` with Tauri. The app
+  loads the shared Vue UI and starts `r3akt-rch-server` as a managed sidecar on
+  `127.0.0.1:8000`; desktop packaging is not an initial alpha release gate.
+- Windows and Linux are the first-class Rust server packaging targets for the
+  alpha. UI bundles, Tauri installers, and standalone TAK service packages are
+  validated independently and are not alpha release-blocking artifacts.
 - Python `2.9.x` keeps its existing Electron package on `rch-python`; Electron
   is not part of `rust-next`.
 
@@ -94,19 +94,16 @@ Validated during the root Rust import and refreshed on 2026-05-11:
 - `cargo test --workspace`: passed across all Rust crates and examples.
 - `cargo build --release -p r3akt-rch-server`: passed for the deployable
   server binary.
-- `cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service`:
-  passed for the standalone TAK bridge service binary.
-- `npm --prefix apps/rch-desktop run prepare:sidecar`: passed, producing
-  separate Tauri sidecar binaries for `r3akt-rch-server` and
-  `r3akt-tak-service`.
 - `.\scripts\release-readiness.ps1 -PlanOnly`: passed, proving the committed
   release gate runner expands the local and optional live checks without running
   external infrastructure.
-- `.\scripts\release-readiness.ps1 -SkipUi -SkipDesktop -SkipClippy
-  -SkipWorkspaceTests`: passed, covering Rust format, release binary builds for
-  `r3akt-rch-server` and `r3akt-tak-service`, and the release HTTP smoke.
+- `.\scripts\release-readiness.ps1 -ServerOnlyAlpha -SkipClippy
+  -SkipWorkspaceTests`: passed, covering Rust format, the
+  `r3akt-rch-server` release binary, and the release HTTP smoke with mandatory
+  ZeroMQ SDK endpoints configured.
 - `.github/workflows/rust.yml`: now invokes the committed release gate runner
-  with `-SkipDesktop`; Tauri desktop bundling remains in `rust-release.yml`.
+  with `-ServerOnlyAlpha`; Tauri desktop bundling is outside the initial alpha
+  release workflow.
 - `npm ci`, `npm audit --audit-level=moderate`, `npm run lint`,
   `npm run test`, and `npm run build` in `ui/`: passed, including zero audited
   UI vulnerabilities after the lockfile refresh and 23 Vitest files / 70 tests.
@@ -167,9 +164,10 @@ release blocker rather than a local Rust test failure. A Python-equivalent
 WinError 10061, confirming that PyTAK and Rust select the same TCP endpoint for
 that configuration.
 
-Use `.\scripts\release-readiness.ps1` for the local release gate set. Add
-`-LiveTak` and `-LiveReticulum` only when the required TAK and Reticulum
-environment variables point at reachable infrastructure. `-LiveTak` is a
+Use `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` for the local
+server-only alpha release gate set. Add `-LiveTak` and `-LiveReticulum` only
+when the required TAK and Reticulum environment variables point at reachable
+infrastructure. `-LiveTak` is a
 send-and-receive gate and requires both `R3AKT_TAK_LIVE_COT_URL` and
 `R3AKT_TAK_LIVE_INBOUND_COT_URL`. For clear TCP TAK targets without
 `R3AKT_TAK_LIVE_INBOUND_EXPECT_UID`, the inbound gate identifies a receiver,

@@ -1,18 +1,17 @@
 # RCH Rust Packaging
 
-Rust has two package shapes:
+The initial Rust alpha has one release package shape:
 
-- Server package: deployable `r3akt-rch-server` binary plus UI bundle, config
-  templates, service helper files, and checksums.
-- TAK service package contents: deployable `r3akt-tak-service` companion binary
-  plus its own service helper files. It is a separate process that talks to RCH
-  through the northbound HTTP API and talks to TAK through `COT_URL`.
-- Desktop package: Tauri shell that bundles the shared UI and launches
-  `r3akt-rch-server` as a managed local sidecar. The TAK service binary is
-  bundled as a separate sidecar artifact for operator-managed startup.
+- Server package: deployable `r3akt-rch-server` binary, mandatory ZeroMQ
+  southbound configuration, service helper files, config templates, and
+  checksums.
 
 Python 2.9.x packaging remains on `rch-python` and keeps using the existing
 Electron wrapper.
+
+The TAK service, shared UI bundle, and Tauri desktop shell are not alpha
+release-blocking artifacts. They remain separate product workstreams and can be
+validated independently after the server package is cut.
 
 ## Python Store Migration
 
@@ -46,5 +45,6 @@ If no legacy store is found, it asks for the Python store directory or
 ## Release Lines
 
 - Python maintenance: `v2.9.x` from `rch-python`.
-- Rust previews: `v3.0.0-preview.N` from `rust-next`.
+- Rust alpha previews: `v3.0.0-alpha.N` or `v3.0.0-preview.N` from
+  `rust-next`, server package only.
 - Rust stable: `v3.0.0` after all Rust server and desktop gates pass.

@@ -20,10 +20,11 @@ This workspace currently expects the Rust LXMF implementation to be checked out
 beside this repository as `LXMF-rs`.
 
 The shared Vue web UI is maintained on the `ui-shared` branch and is imported
-into `ui/` on this branch for Rust server and desktop packaging. Python 2.9.x
-continues on `rch-python` with its Electron wrapper. Rust server releases are
-packaged from `r3akt-rch-server`; Rust desktop releases use the Tauri shell in
-`apps/rch-desktop`.
+into `ui/` on this branch for Rust server and desktop work. Python 2.9.x
+continues on `rch-python` with its Electron wrapper. The initial Rust alpha is
+a server-package-only release built from `r3akt-rch-server`; UI packaging,
+Tauri desktop packaging, Electron, and the standalone TAK service are not alpha
+release-blocking artifacts.
 
 Crates:
 
@@ -394,7 +395,7 @@ only recording them locally, add the ZeroMQ SDK endpoints and the local source
 destination:
 
 ```powershell
-cargo run -p r3akt-rch-server -- --bind 127.0.0.1:8080 --db-path .\rch-runtime.db --config-path .\config.ini --reticulum-config-path $env:USERPROFILE\.reticulum\config --lxmf-zmq-command tcp://127.0.0.1:9100 --lxmf-zmq-response tcp://127.0.0.1:9101 --reticulumd-source <local-destination>
+cargo run -p r3akt-rch-server -- --bind 127.0.0.1:8080 --db-path .\rch-runtime.db --config-path .\config.ini --reticulum-config-path $env:USERPROFILE\.reticulum\config --lxmf-zmq-command tcp://localhost:9100 --lxmf-zmq-response tcp://localhost:9101 --reticulumd-source <local-destination>
 ```
 
 To let the Rust server own the local LXMF-rs daemon lifecycle, also pass the
@@ -404,8 +405,8 @@ graceful shutdown, and applies `/Control/Stop` and `/Control/Start` to the child
 process lifecycle. `/Control/Status` and `/diagnostics/runtime` expose the
 managed child as `reticulumd_managed_process` with pid, endpoint, database path,
 running status, and lifecycle timestamps. Managed `reticulumd` defaults to
-`tcp://127.0.0.1:9100` for the ZeroMQ command endpoint and
-`tcp://127.0.0.1:9101` for the SDK response endpoint. The managed daemon binary
+`tcp://localhost:9100` for the ZeroMQ command endpoint and
+`tcp://localhost:9101` for the SDK response endpoint. The managed daemon binary
 must be built from LXMF-rs with `zmq-pipeline-rpc` support:
 
 ```powershell
@@ -726,18 +727,13 @@ Current local verification snapshot, refreshed on 2026-05-11:
   and `service_bridges_inbound_tak_cot_to_rch_marker_route` passed, covering
   the standalone northbound HTTP bridge in both CoT directions.
 - `cargo build --release -p r3akt-rch-server` passed.
-- `cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service`
-  passed.
-- `npm --prefix apps/rch-desktop run prepare:sidecar` passed, producing
-  separate Tauri sidecar binaries for `r3akt-rch-server` and
-  `r3akt-tak-service`.
-- `.\scripts\release-readiness.ps1 -SkipUi -SkipDesktop -SkipClippy
-  -SkipWorkspaceTests` passed, covering the committed gate runner, Rust format
-  check, release builds for both server binaries, and release HTTP smoke.
+- `.\scripts\release-readiness.ps1 -ServerOnlyAlpha -SkipClippy
+  -SkipWorkspaceTests` passed, covering the committed alpha gate runner, Rust
+  format check, the server release build, and a release HTTP smoke started with
+  mandatory ZeroMQ SDK endpoints.
 - `.github/workflows/rust.yml` now runs the committed release gate runner with
-  `-SkipDesktop` so PR/push CI covers Rust format, clippy, workspace tests,
-  server/TAK release builds, shared UI install/lint/test/build, and release
-  HTTP smoke.
+  `-ServerOnlyAlpha` so PR/push CI covers Rust format, clippy, workspace tests,
+  the server release build, and the ZeroMQ-configured release HTTP smoke.
 - A release-binary smoke test with a temporary SQLite database passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
@@ -804,13 +800,15 @@ Current local verification snapshot, refreshed on 2026-05-11:
 
 The configured target TAK profile on `tcp://137.184.101.250:8087` passed
 keepalive, reconnect, and bidirectional inbound relay validation on 2026-05-11.
-The Rust edition has now passed local, CI, package, UI, TAK, local Reticulum,
-and controlled external RMAP Reticulum gates for a preview release decision.
+The initial alpha decision is scoped to the server package. UI, TAK, desktop,
+local Reticulum, and controlled external RMAP evidence remain useful validation
+history, but only the server-package alpha gates are release-blocking for this
+milestone.
 
-The local release gate runner is:
+The local server-only alpha release gate runner is:
 
 ```powershell
-.\scripts\release-readiness.ps1
+.\scripts\release-readiness.ps1 -ServerOnlyAlpha
 ```
 
 Use explicit live gates only after configuring reachable infrastructure:

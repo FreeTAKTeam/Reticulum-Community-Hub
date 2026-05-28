@@ -27,6 +27,9 @@ pub type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send + 'a>>;
 
 const RETICULUMD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+// Live Reticulum link activation can outlast short SDK defaults. Keep the
+// client open long enough for reticulumd to return its delivery outcome.
+const LXMF_ZMQ_SEND_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 static ZMQ_SDK_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Error)]
@@ -496,10 +499,9 @@ impl LxmfSdkLxmfRsAdapter<LxmfSdkClient<ZmqPipelineBackendClient>> {
         command_endpoint: impl Into<String>,
         response_endpoint: impl Into<String>,
     ) -> Result<Self, TransportError> {
-        Self::from_zmq_config(
-            source,
-            ZmqPipelineBackendConfig::local_tcp(command_endpoint, response_endpoint),
-        )
+        let mut config = ZmqPipelineBackendConfig::local_tcp(command_endpoint, response_endpoint);
+        config.request_timeout = LXMF_ZMQ_SEND_REQUEST_TIMEOUT;
+        Self::from_zmq_config(source, config)
     }
 
     pub fn from_zmq_config(
@@ -580,7 +582,8 @@ pub fn send_lxmf_zmq_outbound_message(
     response_endpoint: impl Into<String>,
     message: LxmfSdkOutboundMessage,
 ) -> Result<String, TransportError> {
-    let config = ZmqPipelineBackendConfig::local_tcp(command_endpoint, response_endpoint);
+    let mut config = ZmqPipelineBackendConfig::local_tcp(command_endpoint, response_endpoint);
+    config.request_timeout = LXMF_ZMQ_SEND_REQUEST_TIMEOUT;
     run_zmq_sdk_operation(move || {
         let backend = ZmqPipelineBackendClient::new(config)
             .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
