@@ -26,8 +26,8 @@ server-package-only milestone, not the full stable 3.0 release.
 | Release CI gate runs the committed alpha verifier | `.github/workflows/rust.yml`, `scripts/release-readiness.ps1` | CI invokes `scripts/release-readiness.ps1 -ServerOnlyAlpha`, which excludes UI, desktop, and TAK service packaging from the alpha gate. The same committed alpha verifier passed locally on 2026-05-28 after LXMF-rs PR 207 merged into `origin/main` at `cbccf0f`. | Pending CI rerun |
 | Server release binary builds and smokes with ZeroMQ configured | `scripts/release-readiness.ps1` | Alpha runner builds `r3akt-rch-server`, starts it with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source`, and validates `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, and `/diagnostics/runtime` against a temporary SQLite DB. This passed locally through `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` on 2026-05-28 against LXMF-rs `origin/main` `cbccf0f`. | Passed locally |
 | Server package contains only alpha artifacts | `.github/workflows/rust-release.yml`, `packaging/` | Release workflow packages the `r3akt-rch-server` binary plus server config/service helpers. It does not build or include UI assets, Tauri desktop artifacts, Electron, or `r3akt-tak-service` in the alpha server archive. | Passed by review; pending CI packaging run |
-| ZeroMQ is the mandatory server-package southbound command transport | `crates/r3akt-transport-rns/src/lib.rs`, `crates/r3akt-rch-server/src/lib.rs`, live REM validation | RCH now runs outbound REM fanout through the LXMF-rs ZeroMQ SDK when `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source` are configured. The SDK call is isolated from Tokio runtime nesting and serialized so fanout clients do not contend for the same ZeroMQ response endpoint. RCH extends the ZeroMQ SDK request timeout to 300 seconds so live Reticulum link activation can return a daemon outcome instead of timing out on the client side first. LXMF-rs PR 207 merged into `origin/main` at `cbccf0f`; `cargo +1.85.0 test -p reticulumd zmq_rpc_loop --features zmq-pipeline-rpc`, `cargo +1.85.0 build --release -p reticulumd --features zmq-pipeline-rpc`, and `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` passed locally against that merged dependency state on 2026-05-28. | Passed for build/unit/package-smoke coverage against latest fetched LXMF-rs `origin/main`; release-blocked on sustained live delivery |
-| Live REM reduced-signature fanout works against connected phones | `docs/rem-southbound-interface.md`, `target/live-rem-validation/alpha-rem-300s-20260527-221119-*`, `target/live-rem-validation/alpha-rem-validcfg-20260527-232938-*`, `target/live-rem-validation/alpha-rem-patched-20260528-020620-*`, `target/live-rem-validation/alpha-rem-patched-20260528-025508-*` local evidence | On 2026-05-28, two attached REM phones (`35031FDH2003N8`, `988b9b344135304639`) were available over ADB. After LXMF-rs PR 207 merged, run `alpha-rem-patched-20260528-020620` classified both target identities as REM-capable and persisted reduced-signature field `9` commands for checklist create, checklist upload, checklist task add, EAM upsert/delete, mission marker link, and telemetry upsert. Runtime diagnostics ended with `outbound_enqueued_total=15`, `queue_depth=15`, `retry_total=13`, `receipt_timeout_total=1`, `timeout_total=1`, and `sent=0`; reticulumd did not log `zmq rpc loop stopped`, but did log `link activation timed out` and repeated `zmq rpc response dropped client connection` lines. A follow-up fixed-validator run `alpha-rem-patched-20260528-025508` exceeded the one-hour command cap and was stopped; its decoded SQLite store still proved reduced field `9` commands were persisted for checklist row style, cell update, status, and row delete against the real task UID, but the store ended with 21 queued messages and no delivery success. EAM delete, marker unlink, and log-entry completion remain unproven in that run. | Blocked |
+| ZeroMQ is the mandatory server-package southbound command transport | `crates/r3akt-transport-rns/src/lib.rs`, `crates/r3akt-rch-server/src/lib.rs`, live REM validation | RCH now runs outbound REM fanout through the LXMF-rs ZeroMQ SDK when `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source` are configured. The SDK call is isolated from Tokio runtime nesting and serialized so fanout clients do not contend for the same ZeroMQ response endpoint. RCH extends the ZeroMQ SDK request timeout to 300 seconds so live Reticulum link activation can return a daemon outcome instead of timing out on the client side first. Optimized REM command channels are now always recorded as deferred outbound work (`dispatch_status=queued_deferred`) instead of blocking HTTP request handling on inline ZeroMQ dispatch; `cargo +1.85.0 test -p r3akt-rch-server -- --test-threads=1` passed locally on 2026-05-28 with this contract. LXMF-rs PR 207 merged into `origin/main` at `cbccf0f`; `cargo +1.85.0 test -p reticulumd zmq_rpc_loop --features zmq-pipeline-rpc`, `cargo +1.85.0 build --release -p reticulumd --features zmq-pipeline-rpc`, and `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` passed locally against that merged dependency state on 2026-05-28. | Passed for build/unit/package-smoke coverage against latest fetched LXMF-rs `origin/main`; release-blocked on sustained live delivery |
+| Live REM reduced-signature fanout works against connected phones | `docs/rem-southbound-interface.md`, `target/live-rem-validation/alpha-rem-300s-20260527-221119-*`, `target/live-rem-validation/alpha-rem-validcfg-20260527-232938-*`, `target/live-rem-validation/alpha-rem-patched-20260528-020620-*`, `target/live-rem-validation/alpha-rem-patched-20260528-025508-*`, `target/live-rem-validation/alpha-rem-patched-20260528-051549-*` local evidence | On 2026-05-28, two attached REM phones (`35031FDH2003N8`, `988b9b344135304639`) were available over ADB. After the RCH deferred-dispatch fix and LXMF-rs PR 207 merge, run `alpha-rem-patched-20260528-051549` completed all HTTP validation operations without timeout and classified both target identities as REM-capable. Its decoded SQLite store proved reduced-signature field `9` commands for checklist create/upload/task add/delete/style/cell/status, EAM upsert/delete, log entry upsert, mission marker link/unlink, and telemetry upsert. Runtime diagnostics ended with `enqueued_total=28`, `queue_depth=28`, `retry_total=28`, `receipt_timeout_total=1`, `timeout_total=1`, `reticulumd_dispatch_count=1`, `dispatch_accepted=0`, and `sent=0`; reticulumd did not log `zmq rpc loop stopped` or response-dropped-client in this run, but still logged link activation timeout. | Blocked |
 | Live Reticulum direct receipt and fanout work outside local unit mocks | `crates/r3akt-rch-server/src/lib.rs`, `scripts/local-reticulum-live-gate.ps1`, live env-gated tests | `scripts/local-reticulum-live-gate.ps1` starts three temporary `reticulumd.exe` nodes and passed direct receipt plus two-recipient fanout on 2026-05-11; the same script also passed with `-ExternalConfigPath` against the local RMAP testnet config, using controlled temporary identities through public TCP hubs. This evidence predates the mandatory ZeroMQ/reduced-signature release validation and is no longer sufficient as final release evidence. | Needs refresh |
 | Live TAK target profile works with the standalone service | `crates/r3akt-tak-connector/src/lib.rs`, `r3akt-tak-service` | Local TCP/UDP/TLS loopback and service bridge tests pass; `.\scripts\release-readiness.ps1 -LiveTak` requires both outbound `R3AKT_TAK_LIVE_COT_URL` and inbound `R3AKT_TAK_LIVE_INBOUND_COT_URL`; after the TAK server was restarted on 2026-05-11, `tcp://137.184.101.250:8087` passed live keepalive, reconnect, and bidirectional inbound relay validation | Passed against target profile |
 
@@ -81,23 +81,28 @@ payload is part of the release surface.
 Open blockers:
 
 - Fresh REM live validation is still not green after the reduced-signature
-  work. The post-merge 2026-05-28 run
-  `alpha-rem-patched-20260528-020620` proved the reduced field `9` command
-  shape is used for connected S8 and Pixelcorvo REM identities, including
-  forward-compatible marker and telemetry commands. It did not prove live
-  delivery: the queue ended at depth 15 with zero final sent messages.
+  work. The latest 2026-05-28 run
+  `alpha-rem-patched-20260528-051549` proved the reduced field `9` command
+  shape is used for connected S8 and Pixelcorvo REM identities across the full
+  checklist, EAM, log, marker, and telemetry matrix. It did not prove live
+  delivery: the queue ended at depth 28 with zero final sent messages.
+- RCH now records optimized REM command fanout as deferred outbound work before
+  dispatch, so checklist/EAM/log/marker/zone command routes are not expected to
+  block on live ZeroMQ link activation. The `alpha-rem-patched-20260528-051549`
+  connected-phone run confirmed all HTTP operations completed in under one
+  second, but it still requires a follow-up run proving the deferred queue
+  drains successfully.
 - LXMF-rs PR 207 fixed the previous daemon failure mode where one client
   disconnect stopped the reticulumd ZeroMQ RPC loop and is now merged in
   `origin/main` at `cbccf0f`. The daemon kept the loop alive in post-merge
-  validation, but the live run still logged response drops after
-  `link activation timed out` and `Not connected to peers. Unable to send
-  messages`.
-- A passing two-phone evidence run is still missing. Both attached phones were
-  foregrounded over ADB and marked REM-capable for the run. The fixed-validator
-  partial run proved checklist row-style/cell/status/delete commands are
-  serialized with the reduced REM signature, but it exceeded the one-hour
-  command cap before proving EAM delete, marker unlink, log entry, or any
-  successful delivery.
+  validation. The latest live run did not log response-dropped-client, but it
+  still logged `link activation timed out` and did not accept any final
+  dispatch.
+- A passing two-phone delivery evidence run is still missing. Both attached
+  phones were foregrounded over ADB and marked REM-capable for the latest run.
+  The validator now proves EAM delete, marker unlink, log entry, checklist row
+  delete, and telemetry serialization, but no message reached a final sent or
+  delivered state.
 - Latest LXMF-rs `reticulumd` expects TOML config, not the legacy Python
   Reticulum config syntax. The live runs using
   `target/live-rem-validation/reticulumd.toml` loaded the expected six

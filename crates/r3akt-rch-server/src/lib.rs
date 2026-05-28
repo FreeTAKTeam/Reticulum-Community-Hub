@@ -12353,11 +12353,16 @@ fn record_outbound_message_with_metadata_mode(
         .map_err(|error| ApiError::BadRequest(python_delivery_error_detail(&error)))?;
     let mut delivery_decision =
         outbound_delivery_decision(state, delivery_mode, destination.as_deref())?;
-    if delivery_metadata
+    let is_rem_command = delivery_metadata
         .get("fanout_channel")
         .and_then(Value::as_str)
-        .is_some_and(is_rem_command_channel)
-    {
+        .is_some_and(is_rem_command_channel);
+    let effective_dispatch_mode = if is_rem_command {
+        OutboundDispatchMode::Deferred
+    } else {
+        dispatch_mode
+    };
+    if is_rem_command {
         delivery_decision.method = "auto".to_string();
         delivery_decision.reason = "rem_auto".to_string();
     }
@@ -12380,7 +12385,7 @@ fn record_outbound_message_with_metadata_mode(
         created_ts_ms: unix_now_ms(),
         attachments,
     };
-    if dispatch_mode == OutboundDispatchMode::Deferred {
+    if effective_dispatch_mode == OutboundDispatchMode::Deferred {
         let created_ts_ms = message.created_ts_ms;
         let next_attempt_at_ts_ms = message
             .delivery_metadata
@@ -12407,7 +12412,7 @@ fn record_outbound_message_with_metadata_mode(
     drop(messages);
     state.persist()?;
     broadcast_message_event(state, &message);
-    if dispatch_mode == OutboundDispatchMode::Deferred {
+    if effective_dispatch_mode == OutboundDispatchMode::Deferred {
         return Ok(message);
     }
     let dispatch_report = match dispatch_outbound_message(state, &message) {
@@ -12660,6 +12665,7 @@ fn is_rem_command_channel(channel: &str) -> bool {
         "rem_checklist_command"
             | "rem_log_command"
             | "rem_eam_command"
+            | "rem_telemetry_command"
             | "rem_marker_command"
             | "rem_marker_link_command"
             | "rem_zone_command"
@@ -15410,7 +15416,8 @@ fn rem_log_entry_command_fields(
         .or_else(|| string_or_value(log_entry.get("uid")))?;
     let log_mission_uid =
         string_or_value(log_entry.get("mission_uid")).unwrap_or_else(|| json!(mission_uid));
-    let content = string_or_value(log_entry.get("content"))?;
+    let content = string_or_value(log_entry.get("content"))
+        .or_else(|| string_or_value(log_entry.get("text")))?;
     let callsign = string_or_value(log_entry.get("callsign")).unwrap_or_else(|| json!("RCH"));
     let command_id =
         compact_rem_command_id("mission.registry.log_entry.upsert", mission_change_uid);
@@ -15449,12 +15456,53 @@ fn rem_log_entry_command_fields(
 }
 
 fn first_log_entry_from_mission_change(change: &Value) -> Option<&serde_json::Map<String, Value>> {
-    change
-        .get("delta")
-        .and_then(|delta| delta.get("logs"))
+    let delta = change.get("delta")?;
+    delta
+        .get("logs")
+        .or_else(|| delta.get("log_entries"))
         .and_then(Value::as_array)
         .and_then(|logs| logs.first())
         .and_then(Value::as_object)
+}
+
+fn first_telemetry_from_mission_change(change: &Value) -> Option<&serde_json::Map<String, Value>> {
+    change
+        .get("delta")
+        .and_then(|delta| delta.get("telemetry"))
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(Value::as_object)
+}
+
+fn rem_telemetry_command_fields(
+    telemetry: &serde_json::Map<String, Value>,
+    mission_uid: &str,
+    source_identity: &str,
+) -> Value {
+    let telemetry_mission_uid =
+        string_or_value(telemetry.get("mission_uid")).unwrap_or_else(|| json!(mission_uid));
+    let args = json_object_without_nulls([
+        ("uid", compact_rem_identifier_value(telemetry.get("uid"))),
+        ("mission_uid", Some(telemetry_mission_uid)),
+        ("callsign", string_or_value(telemetry.get("callsign"))),
+        ("lat", string_or_value(telemetry.get("lat"))),
+        ("lon", string_or_value(telemetry.get("lon"))),
+        ("alt", string_or_value(telemetry.get("alt"))),
+        ("speed", string_or_value(telemetry.get("speed"))),
+        ("course", string_or_value(telemetry.get("course"))),
+        ("accuracy", string_or_value(telemetry.get("accuracy"))),
+        ("battery", string_or_value(telemetry.get("battery"))),
+        ("notes", string_or_value(telemetry.get("notes"))),
+        (
+            "source_identity",
+            Some(json!(compact_rem_identifier_string(source_identity))),
+        ),
+    ]);
+    let envelope = json!({
+        "command_type": "mission.registry.telemetry.upsert",
+        "args": clean_optional_args(args),
+    });
+    rem_command_transport_fields(envelope)
 }
 
 fn clean_optional_args(args: Value) -> Value {
@@ -15863,14 +15911,23 @@ fn fanout_mission_change_to_recipients(
         .reticulumd_source
         .as_ref()
         .map_or("r3akt-rch-server", |value| value.as_str());
-    let rem_log_fields = if source_event_type == "mission.log_entry.upserted" {
+    let rem_log_fields = if matches!(
+        source_event_type.as_str(),
+        "mission.log_entry.upserted" | "mission.registry.log_entry.upserted"
+    ) {
         first_log_entry_from_mission_change(change).and_then(|log| {
             rem_log_entry_command_fields(log, mission_uid, mission_change_uid, source_identity)
         })
     } else {
         None
     };
-    if rem_log_fields.is_some() {
+    let rem_telemetry_fields = if source_event_type == "mission.registry.telemetry.upserted" {
+        first_telemetry_from_mission_change(change)
+            .map(|telemetry| rem_telemetry_command_fields(telemetry, mission_uid, source_identity))
+    } else {
+        None
+    };
+    if rem_log_fields.is_some() || rem_telemetry_fields.is_some() {
         for destination in current_user_destinations_for_state(state)? {
             push_unique_destination(&mut destinations, destination);
         }
@@ -15971,19 +16028,27 @@ fn fanout_mission_change_to_recipients(
                 }
             }
         } else if rem_checklist_messages.is_empty()
-            && rem_log_fields.is_some()
+            && (rem_log_fields.is_some() || rem_telemetry_fields.is_some())
             && annotations
                 .get(destination)
                 .is_some_and(|annotation| annotation.is_rem_capable)
         {
+            let (fields, channel) = if let Some(fields) = &rem_log_fields {
+                (fields.clone(), "rem_log_command")
+            } else {
+                (
+                    rem_telemetry_fields.clone().unwrap_or_else(|| json!({})),
+                    "rem_telemetry_command",
+                )
+            };
             let body = "cmd".to_string();
             let metadata = json!({
                 "fanout_kind": "mission_change",
-                "fanout_channel": "rem_log_command",
+                "fanout_channel": channel,
                 "mission_uid": mission_uid,
                 "mission_change_uid": mission_change_uid,
                 "source_event_type": source_event_type.clone(),
-                "lxmf_fields": rem_log_fields.clone().unwrap_or_else(|| json!({})),
+                "lxmf_fields": fields,
             });
             match record_mission_change_fanout_message(
                 state,
@@ -16003,6 +16068,9 @@ fn fanout_mission_change_to_recipients(
             }
         } else if rem_checklist_messages.is_empty()
             && identity_supports_r3akt(&annotations, destination)
+            && !annotations
+                .get(destination)
+                .is_some_and(|annotation| annotation.is_rem_capable)
         {
             let metadata = json!({
                 "fanout_kind": "mission_change",
@@ -23746,11 +23814,26 @@ mod tests {
         responses: Vec<(Option<serde_json::Value>, Option<ReticulumdRpcError>)>,
     ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
         let listener = StdTcpListener::bind("127.0.0.1:0").expect("listener");
+        listener
+            .set_nonblocking(true)
+            .expect("set fake RPC listener nonblocking");
         let endpoint = listener.local_addr().expect("addr").to_string();
         let server = thread::spawn(move || {
             let mut requests = Vec::new();
             for (result, error) in responses {
-                let (mut stream, _) = listener.accept().expect("accept");
+                let accept_deadline = std::time::Instant::now() + Duration::from_secs(2);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            if std::time::Instant::now() >= accept_deadline {
+                                return requests;
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("accept fake RPC request: {error}"),
+                    }
+                };
                 let request = read_http_request(&mut stream);
                 let body = parse_http_body(&request);
                 let decoded: ReticulumdRpcRequest = decode_reticulumd_frame(&body);
@@ -32917,14 +33000,6 @@ mod tests {
 
     #[tokio::test]
     async fn mission_zone_link_sends_rem_command_and_generic_markdown() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
-            json!({
-                "message_id": "message"
-            }),
-            json!({
-                "message_id": "message"
-            }),
-        ]);
         let db_path =
             std::env::temp_dir().join(format!("r3akt-rch-zone-fanout-{}.db", Uuid::new_v4()));
         let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
@@ -32964,8 +33039,7 @@ mod tests {
 
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
+            .with_api_key("secret");
         let app = crate::create_app_with_state(state.clone());
 
         let mission = app
@@ -33021,21 +33095,23 @@ mod tests {
         let body = linked.into_body().collect().await.expect("body").to_bytes();
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 
-        let requests = rpc_server.join().expect("rpc requests");
-        let rem = requests
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let rem = snapshot
+            .messages
             .iter()
-            .find(|request| {
-                request.params.as_ref().expect("params")["destination"]
-                    .as_str()
-                    .is_some_and(|destination| destination == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .find(|message| {
+                message.destination.as_deref() == Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             })
-            .expect("rem request");
-        assert_eq!(rem.method, "send_message_v2");
-        let rem_params = rem.params.as_ref().expect("rem params");
-        assert_eq!(rem_params["title"], "");
-        assert_eq!(rem_params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
-        assert_rem_auto_rpc_method(rem_params);
-        let command = &rem_params["fields"][crate::FIELD_COMMANDS.to_string()][0];
+            .expect("rem message");
+        assert_eq!(rem.content, crate::REM_COMMAND_PLACEHOLDER_BODY);
+        assert_eq!(
+            rem.delivery_metadata["dispatch_status"],
+            json!("queued_deferred")
+        );
+        let command = &rem.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(
             command["command_type"],
             "mission.registry.mission.zone.link"
@@ -33043,30 +33119,7 @@ mod tests {
         assert_eq!(command["args"]["mission_uid"], "zone-mission");
         assert_eq!(command["args"]["zone_id"], zone_id);
 
-        let generic = requests
-            .iter()
-            .find(|request| {
-                request.params.as_ref().expect("params")["destination"]
-                    .as_str()
-                    .is_some_and(|destination| destination == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-            })
-            .expect("generic request");
-        let generic_params = generic.params.as_ref().expect("generic params");
-        assert_eq!(generic_params["title"], "RCH");
-        assert_eq!(
-            generic_params["content"],
-            "### Mission Zone Mission\n- Update: Zone linked\n- Zone: Link Zone"
-        );
-        assert!(
-            generic_params["fields"]
-                .get(crate::FIELD_COMMANDS.to_string())
-                .is_none()
-        );
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        let generic_message = snapshot
+        let generic = snapshot
             .messages
             .iter()
             .find(|message| {
@@ -33074,24 +33127,25 @@ mod tests {
             })
             .expect("generic message");
         assert_eq!(
-            generic_message.delivery_metadata["delivery_receipt_required"],
+            generic.content,
+            "### Mission Zone Mission\n- Update: Zone linked\n- Zone: Link Zone"
+        );
+        assert!(
+            generic.delivery_metadata["lxmf_fields"]
+                .get(crate::FIELD_COMMANDS.to_string())
+                .is_none()
+        );
+        assert_eq!(
+            generic.delivery_metadata["delivery_receipt_required"],
             false
         );
-        assert_eq!(generic_message.delivery_metadata["max_attempts"], 1);
+        assert_eq!(generic.delivery_metadata["max_attempts"], 1);
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
     async fn mission_marker_link_sends_rem_command_and_generic_markdown() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
-            json!({
-                "message_id": "message"
-            }),
-            json!({
-                "message_id": "message"
-            }),
-        ]);
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-marker-link-fanout-{}.db",
             Uuid::new_v4()
@@ -33171,8 +33225,7 @@ mod tests {
         let app = crate::create_app_with_state(
             crate::AppState::from_sqlite_path(&db_path)
                 .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
+                .with_api_key("secret"),
         );
 
         let linked = app
@@ -33191,19 +33244,23 @@ mod tests {
         let body = linked.into_body().collect().await.expect("body").to_bytes();
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 
-        let requests = rpc_server.join().expect("rpc requests");
-        let rem = requests
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let rem = snapshot
+            .messages
             .iter()
-            .find(|request| {
-                request.params.as_ref().expect("params")["destination"]
-                    .as_str()
-                    .is_some_and(|destination| destination == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .find(|message| {
+                message.destination.as_deref() == Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             })
-            .expect("rem request");
-        let rem_params = rem.params.as_ref().expect("rem params");
-        assert_eq!(rem_params["title"], "");
-        assert_eq!(rem_params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
-        let command = &rem_params["fields"][crate::FIELD_COMMANDS.to_string()][0];
+            .expect("rem message");
+        assert_eq!(rem.content, crate::REM_COMMAND_PLACEHOLDER_BODY);
+        assert_eq!(
+            rem.delivery_metadata["dispatch_status"],
+            json!("queued_deferred")
+        );
+        let command = &rem.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(
             command["command_type"],
             "mission.registry.mission.marker.link"
@@ -33211,21 +33268,19 @@ mod tests {
         assert_eq!(command["args"]["mission_uid"], "marker-link-mission");
         assert_eq!(command["args"]["marker_id"], "markerhashalpha");
 
-        let generic = requests
+        let generic = snapshot
+            .messages
             .iter()
-            .find(|request| {
-                request.params.as_ref().expect("params")["destination"]
-                    .as_str()
-                    .is_some_and(|destination| destination == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+            .find(|message| {
+                message.destination.as_deref() == Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
             })
-            .expect("generic request");
-        let generic_params = generic.params.as_ref().expect("generic params");
+            .expect("generic message");
         assert_eq!(
-            generic_params["content"],
+            generic.content,
             "### Mission Marker Link Mission\n- Update: Marker linked\n- Marker: Link Marker"
         );
         assert!(
-            generic_params["fields"]
+            generic.delivery_metadata["lxmf_fields"]
                 .get(crate::FIELD_COMMANDS.to_string())
                 .is_none()
         );
@@ -36823,7 +36878,6 @@ mod tests {
 
     #[tokio::test]
     async fn mission_change_listener_uses_rem_checklist_commands_for_connected_rem_peers() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-checklist-fanout-{}.db",
             Uuid::new_v4()
@@ -36854,8 +36908,7 @@ mod tests {
 
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
+            .with_api_key("secret");
         let app = crate::create_app_with_state(state.clone());
 
         for (method, uri, body) in [
@@ -36915,14 +36968,29 @@ mod tests {
         let body = change.into_body().collect().await.expect("body").to_bytes();
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 
-        let request = rpc_server.join().expect("rpc server");
-        assert_eq!(request.method, "send_message_v2");
-        let params = request.params.expect("params");
-        assert_eq!(params["destination"], "abcdef");
-        assert_eq!(params["title"], "");
-        assert_eq!(params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
-        assert_rem_auto_rpc_method(&params);
-        let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let message = snapshot
+            .messages
+            .iter()
+            .find(|message| {
+                message.destination.as_deref() == Some("abcdef")
+                    && message.delivery_metadata["lxmf_fields"]
+                        .get(crate::FIELD_COMMANDS.to_string())
+                        .and_then(Value::as_array)
+                        .and_then(|commands| commands.first())
+                        .is_some_and(|command| command["command_type"] == "checklist.task.row.add")
+            })
+            .expect("rem checklist command");
+        assert_eq!(message.content, crate::REM_COMMAND_PLACEHOLDER_BODY);
+        assert_eq!(
+            message.delivery_metadata["dispatch_status"],
+            json!("queued_deferred")
+        );
+        let command =
+            &message.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(command["command_type"], "checklist.task.row.add");
         assert!(command.get("correlation_id").is_none());
         assert!(command.get("source").is_none());
@@ -36935,7 +37003,7 @@ mod tests {
         assert_eq!(command["args"]["number"], 3);
         assert_eq!(command["args"]["notes"], "Pack radio");
         assert!(
-            params["fields"]
+            message.delivery_metadata["lxmf_fields"]
                 .get(crate::FIELD_EVENT.to_string())
                 .is_none()
         );
@@ -36956,6 +37024,118 @@ mod tests {
         let body = listed.into_body().collect().await.expect("body").to_bytes();
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload, json!([]));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn mission_change_listener_uses_rem_log_and_telemetry_commands_for_rem_peers() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-rem-mission-command-fanout-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let now = crate::unix_now_ms();
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.clients = vec![test_client("abcdefabcdefabcdefabcdefabcdefab", now)];
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: "abcdefabcdefabcdefabcdefabcdefab".to_string(),
+            announced_identity_hash: None,
+            display_name: Some("REM Mission Peer".to_string()),
+            source_interface: Some("identity".to_string()),
+            announce_capabilities: vec![
+                "r3akt".to_string(),
+                "emergencymessages".to_string(),
+                "telemetry".to_string(),
+            ],
+            client_type: "rem".to_string(),
+            first_seen_ts_ms: now,
+            last_seen_ts_ms: now,
+        }];
+        snapshot.missions = vec![r3akt_rch_core::MissionRecord {
+            uid: "mission-rem-registry".to_string(),
+            mission_name: "Mission REM Registry".to_string(),
+            description: String::new(),
+            topic_id: None,
+            path: None,
+            classification: None,
+            tool: None,
+            keywords: Vec::new(),
+            parent_uid: None,
+            feeds: Vec::new(),
+            password_hash: None,
+            default_role: None,
+            mission_priority: None,
+            mission_status: "ACTIVE".to_string(),
+            owner_role: None,
+            token: None,
+            invite_only: false,
+            expiration: None,
+            mission_rde_role: None,
+            created_ts_ms: now,
+            updated_ts_ms: now,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let app = crate::create_app_with_state(
+            crate::AppState::from_sqlite_path(&db_path)
+                .expect("state")
+                .with_api_key("secret")
+                .with_reticulumd_rpc("tcp://127.0.0.1:1", "source-destination"),
+        );
+
+        for body in [
+            r#"{"uid":"change-rem-telemetry","mission_uid":"mission-rem-registry","name":"mission.registry.telemetry.upserted","change_type":"ADD_CONTENT","delta":{"source_event_type":"mission.registry.telemetry.upserted","telemetry":[{"uid":"telemetry-rem","mission_uid":"mission-rem-registry","callsign":"RCH","lat":45.5,"lon":-63.2,"battery":87}]}}"#,
+            r#"{"uid":"change-rem-log","mission_uid":"mission-rem-registry","name":"mission.registry.log_entry.upserted","change_type":"ADD_CONTENT","delta":{"source_event_type":"mission.registry.log_entry.upserted","log_entries":[{"entry_uid":"log-rem","mission_uid":"mission-rem-registry","text":"REM log text","created_by":"live-validator"}]}}"#,
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/api/r3akt/mission-changes")
+                        .header("X-API-Key", "secret")
+                        .header(axum::http::header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .expect("request"),
+                )
+                .await
+                .expect("mission change response");
+            let status = response.status();
+            let body = response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
+            assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        }
+
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let command_types = snapshot
+            .messages
+            .iter()
+            .filter(|message| {
+                message.destination.as_deref() == Some("abcdefabcdefabcdefabcdefabcdefab")
+            })
+            .map(|message| {
+                assert_eq!(
+                    message.delivery_metadata["dispatch_status"],
+                    json!("queued_deferred")
+                );
+                assert_ne!(message.delivery_metadata["fanout_channel"], "r3akt_delta");
+                message.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0]
+                    ["command_type"]
+                    .as_str()
+                    .expect("command type")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert!(command_types.contains(&"mission.registry.telemetry.upsert".to_string()));
+        assert!(command_types.contains(&"mission.registry.log_entry.upsert".to_string()));
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -38543,7 +38723,6 @@ mod tests {
 
     #[tokio::test]
     async fn log_entry_fanout_sends_rem_field_commands_shape() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
         let db_path =
             std::env::temp_dir().join(format!("r3akt-rch-rem-log-command-{}.db", Uuid::new_v4()));
         let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
@@ -38622,7 +38801,7 @@ mod tests {
             crate::AppState::from_sqlite_path(&db_path)
                 .expect("state")
                 .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
+                .with_reticulumd_rpc("tcp://127.0.0.1:1", "source-destination"),
         );
 
         let log = app
@@ -38644,14 +38823,24 @@ mod tests {
         let body = log.into_body().collect().await.expect("body").to_bytes();
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 
-        let request = rpc_server.join().expect("rpc server");
-        assert_eq!(request.method, "send_message_v2");
-        let params = request.params.expect("params");
-        assert_eq!(params["destination"], "abcdefabcdefabcdefabcdefabcdefab");
-        assert_eq!(params["title"], "");
-        assert_rem_auto_rpc_method(&params);
-        assert_eq!(params["content"], "cmd");
-        let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let message = snapshot
+            .messages
+            .iter()
+            .find(|message| {
+                message.destination.as_deref() == Some("abcdefabcdefabcdefabcdefabcdefab")
+            })
+            .expect("rem log message");
+        assert_eq!(message.content, "cmd");
+        assert_eq!(
+            message.delivery_metadata["dispatch_status"],
+            json!("queued_deferred")
+        );
+        let command =
+            &message.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(command["command_type"], "mission.registry.log_entry.upsert");
         assert!(command.get("source").is_none());
         assert!(command.get("correlation_id").is_none());
@@ -38661,14 +38850,17 @@ mod tests {
         assert_eq!(command["args"]["callsign"], "Alpha");
         assert_eq!(command["args"]["content"], "REM log command update");
         assert_eq!(command["args"]["source_identity"], "source-destination");
-        assert!(params["fields"].get("r3akt_mission_delta").is_none());
+        assert!(
+            message.delivery_metadata["lxmf_fields"]
+                .get("r3akt_mission_delta")
+                .is_none()
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
     async fn log_entry_fanout_sends_rem_commands_without_team_recipients() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-log-known-peer-{}.db",
             Uuid::new_v4()
@@ -38720,8 +38912,7 @@ mod tests {
         let app = crate::create_app_with_state(
             crate::AppState::from_sqlite_path(&db_path)
                 .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
+                .with_api_key("secret"),
         );
 
         let response = app
@@ -38747,13 +38938,24 @@ mod tests {
             .to_bytes();
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 
-        let request = rpc_server.join().expect("rpc server");
-        let params = request.params.expect("params");
-        assert_eq!(params["destination"], "47ff8b43fea7df9082f6fc1e2b8c954b");
-        assert_eq!(params["title"], "");
-        assert_eq!(params["content"], "cmd");
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let message = snapshot
+            .messages
+            .iter()
+            .find(|message| {
+                message.destination.as_deref() == Some("47ff8b43fea7df9082f6fc1e2b8c954b")
+            })
+            .expect("known REM log message");
+        assert_eq!(message.content, "cmd");
         assert_eq!(
-            params["fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"],
+            message.delivery_metadata["dispatch_status"],
+            json!("queued_deferred")
+        );
+        assert_eq!(
+            message.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"],
             "mission.registry.log_entry.upsert"
         );
 
@@ -39417,9 +39619,6 @@ mod tests {
 
     #[tokio::test]
     async fn eam_status_fanout_sends_rem_field_commands_shape() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
-            "message_id": "message"
-        })]);
         let db_path =
             std::env::temp_dir().join(format!("r3akt-rch-eam-rem-command-{}.db", Uuid::new_v4()));
         let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
@@ -39446,8 +39645,7 @@ mod tests {
         let app = crate::create_app_with_state(
             crate::AppState::from_sqlite_path(&db_path)
                 .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
+                .with_api_key("secret"),
         );
 
         let team = app
@@ -39495,17 +39693,22 @@ mod tests {
         let body = eam.into_body().collect().await.expect("body").to_bytes();
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 
-        let requests = rpc_server.join().expect("rpc server");
-        let request = requests
-            .into_iter()
-            .find(|request| request.method == "send_message_v2")
-            .expect("send request");
-        let params = request.params.expect("params");
-        assert_eq!(params["destination"], "remeampeer");
-        assert_eq!(params["title"], "");
-        assert_rem_auto_rpc_method(&params);
-        assert_eq!(params["content"], "cmd");
-        let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let outbound = snapshot
+            .messages
+            .iter()
+            .find(|message| message.destination.as_deref() == Some("remeampeer"))
+            .expect("REM EAM message");
+        assert_eq!(outbound.content, "cmd");
+        assert_eq!(
+            outbound.delivery_metadata["dispatch_status"],
+            json!("queued_deferred")
+        );
+        let command =
+            &outbound.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(command["command_type"], "mission.registry.eam.upsert");
         assert!(command.get("source").is_none());
         assert!(command.get("command_id").is_none());
@@ -39516,7 +39719,7 @@ mod tests {
         assert_eq!(command["args"]["capability_status"], "Green");
         assert_eq!(command["args"]["preparedness_status"], "Red");
         assert!(
-            params["fields"]
+            outbound.delivery_metadata["lxmf_fields"]
                 .get(crate::LXMF_FIELD_RENDERER.to_string())
                 .is_none()
         );
@@ -39651,7 +39854,6 @@ mod tests {
 
     #[tokio::test]
     async fn eam_delete_fanout_sends_rem_delete_command_shape() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(2);
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-eam-delete-rem-command-{}.db",
             Uuid::new_v4()
@@ -39680,8 +39882,7 @@ mod tests {
         let app = crate::create_app_with_state(
             crate::AppState::from_sqlite_path(&db_path)
                 .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
+                .with_api_key("secret"),
         );
 
         let team = app
@@ -39748,24 +39949,32 @@ mod tests {
             .to_bytes();
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 2);
-        let params = requests
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let message = snapshot
+            .messages
             .iter()
-            .filter_map(|request| request.params.as_ref())
-            .find(|params| {
-                params["fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"]
-                    == "mission.registry.eam.delete"
+            .find(|message| {
+                message.destination.as_deref() == Some("remdeleteeampeer")
+                    && message.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()]
+                        [0]["command_type"]
+                        == "mission.registry.eam.delete"
             })
-            .expect("delete params");
-        assert_eq!(params["destination"], "remdeleteeampeer");
-        assert_eq!(params["content"], "cmd");
-        let command = &params["fields"][crate::FIELD_COMMANDS.to_string()][0];
+            .expect("delete message");
+        assert_eq!(message.content, "cmd");
+        assert_eq!(
+            message.delivery_metadata["dispatch_status"],
+            json!("queued_deferred")
+        );
+        let command =
+            &message.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0];
         assert_eq!(command["command_type"], "mission.registry.eam.delete");
         assert!(command.get("source").is_none());
         assert_eq!(command["args"], json!({"callsign": "Delete Bravo"}));
         assert!(
-            params["fields"]
+            message.delivery_metadata["lxmf_fields"]
                 .get(crate::LXMF_FIELD_RENDERER.to_string())
                 .is_none()
         );
@@ -43230,6 +43439,46 @@ mod tests {
         assert_eq!(
             params["fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"],
             "checklist.task.status.set"
+        );
+    }
+
+    #[test]
+    fn rem_command_recording_always_defers_live_dispatch_from_request_path() {
+        let state = crate::AppState::default();
+
+        let message = crate::record_outbound_message_with_metadata(
+            &state,
+            "cmd",
+            None,
+            Some("a1c8126d7cb806e6bde086d582b6cb0d".to_string()),
+            Vec::new(),
+            false,
+            json!({
+                "fanout_channel": "rem_eam_command",
+                "lxmf_fields": {
+                    crate::FIELD_COMMANDS.to_string(): [{
+                        "command_type": "mission.registry.eam.upsert",
+                        "args": {
+                            "callsign": "Alpha"
+                        }
+                    }]
+                }
+            }),
+        )
+        .expect("record REM command");
+
+        assert_eq!(message.delivery_method, "auto");
+        assert_eq!(message.delivery_policy_reason, "rem_auto");
+        assert_eq!(message.delivery_state, "queued");
+        assert_eq!(
+            message.delivery_metadata["dispatch_status"],
+            json!("queued_deferred")
+        );
+        assert_eq!(message.delivery_metadata["deferred_dispatch"], true);
+        assert_eq!(message.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(
+            message.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"],
+            "mission.registry.eam.upsert"
         );
     }
 
