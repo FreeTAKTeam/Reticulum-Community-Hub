@@ -12566,6 +12566,8 @@ fn dispatch_outbound_message(
                     title: outbound_lxmf_title(&dispatch_message).to_string(),
                     content: outbound_lxmf_content(&dispatch_message).to_string(),
                     fields,
+                    delivery_method: Some(lxmf_sdk_delivery_method(message).to_string()),
+                    try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
                     correlation_id: message_id.clone(),
                 },
             )
@@ -12595,6 +12597,22 @@ fn dispatch_outbound_message(
         });
     }
     Ok(report)
+}
+
+fn lxmf_sdk_delivery_method(message: &OutboundMessageRecord) -> &str {
+    if message.delivery_method == "auto" && is_rem_command_message(message) {
+        return "propagated";
+    }
+    match message.delivery_method.as_str() {
+        "propagated" => "propagated",
+        "opportunistic" => "opportunistic",
+        "paper" => "paper",
+        _ => "direct",
+    }
+}
+
+fn lxmf_sdk_try_propagation_on_fail(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "direct" && is_rem_command_message(message)
 }
 
 #[derive(Default)]
@@ -49037,6 +49055,40 @@ mod tests {
         drop(rpc_server);
 
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn rem_auto_messages_request_propagated_send_for_live_delivery() {
+        let message = r3akt_rch_core::MessageRecord {
+            message_id: "rem-auto-command".to_string(),
+            topic_id: None,
+            destination: Some("6521979f1165965b24731061ef4a6906".to_string()),
+            sender: "northbound".to_string(),
+            content: "Task status completed".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "auto".to_string(),
+            delivery_policy_reason: "rem_auto".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "fanout_channel": "rem_checklist_command",
+                "lxmf_fields": {
+                    crate::FIELD_COMMANDS.to_string(): [{
+                        "command_type": "checklist.task.status.set",
+                        "args": {
+                            "checklist_uid": "checklist-pixel",
+                            "task_uid": "task-pixel",
+                            "user_status": "COMPLETE"
+                        }
+                    }]
+                }
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        let message = crate::OutboundMessageRecord::from(message);
+
+        assert_eq!(crate::lxmf_sdk_delivery_method(&message), "propagated");
+        assert!(!crate::lxmf_sdk_try_propagation_on_fail(&message));
     }
 
     #[test]

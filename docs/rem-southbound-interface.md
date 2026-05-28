@@ -19,6 +19,10 @@ The southbound wire payload does not include legacy envelope metadata such as
 does not emit an alternate encoded compatibility payload such as
 `_lxmf_fields_msgpack_b64`. The Reticulum message body for REM commands is a
 small placeholder (`cmd`), while the command data lives in `FIELD_COMMANDS`.
+When the Rust server uses the LXMF-rs ZeroMQ SDK path, REM `auto` delivery is
+submitted to the daemon as a propagated send so the reduced command payload is
+queued through the selected propagation node instead of attempting a direct
+link-first send.
 
 ## Common Shape
 

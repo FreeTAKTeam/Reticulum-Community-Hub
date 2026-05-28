@@ -574,6 +574,8 @@ pub struct LxmfSdkOutboundMessage {
     pub title: String,
     pub content: String,
     pub fields: JsonValue,
+    pub delivery_method: Option<String>,
+    pub try_propagation_on_fail: bool,
     pub correlation_id: String,
 }
 
@@ -659,9 +661,15 @@ pub fn send_lxmf_sdk_outbound_message_with_runtime(
         map.insert("title".to_string(), JsonValue::String(message.title));
         map.insert("content".to_string(), JsonValue::String(message.content));
     }
-    let request = LxmfSdkSendRequest::new(message.source, message.destination, payload)
+    let mut request = LxmfSdkSendRequest::new(message.source, message.destination, payload)
         .with_correlation_id(message.correlation_id.clone())
         .with_idempotency_key(message.correlation_id);
+    if let Some(delivery_method) = message.delivery_method {
+        request = request.with_delivery_method(delivery_method);
+    }
+    if message.try_propagation_on_fail {
+        request = request.with_try_propagation_on_fail(true);
+    }
     runtime.send(request)
 }
 
@@ -2199,6 +2207,8 @@ mod tests {
                     "9": [{"cmd": "mission.join"}],
                     "custom": "value"
                 }),
+                delivery_method: Some("direct".to_string()),
+                try_propagation_on_fail: true,
                 correlation_id: "message-1".to_string(),
             },
         )
@@ -2213,6 +2223,8 @@ mod tests {
         assert_eq!(request.payload["content"], "hello");
         assert_eq!(request.payload["9"][0]["cmd"], "mission.join");
         assert_eq!(request.payload["custom"], "value");
+        assert_eq!(request.delivery_method.as_deref(), Some("direct"));
+        assert_eq!(request.try_propagation_on_fail, Some(true));
         assert_eq!(request.correlation_id.as_deref(), Some("message-1"));
         assert_eq!(request.idempotency_key.as_deref(), Some("message-1"));
     }
