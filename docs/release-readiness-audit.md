@@ -5,7 +5,7 @@ It is intentionally stricter than a green CI badge: the initial Rust alpha is
 not release-ready until every required local, CI, server-package, ZeroMQ, REM,
 and Reticulum gate is either passed or recorded as an explicit alpha risk.
 
-Audit date: 2026-05-27
+Audit date: 2026-05-28
 
 ## Objective
 
@@ -26,8 +26,8 @@ server-package-only milestone, not the full stable 3.0 release.
 | Release CI gate runs the committed alpha verifier | `.github/workflows/rust.yml`, `scripts/release-readiness.ps1` | CI invokes `scripts/release-readiness.ps1 -ServerOnlyAlpha`, which excludes UI, desktop, and TAK service packaging from the alpha gate. The same committed alpha verifier passed locally on 2026-05-27. | Pending CI rerun |
 | Server release binary builds and smokes with ZeroMQ configured | `scripts/release-readiness.ps1` | Alpha runner builds `r3akt-rch-server`, starts it with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source`, and validates `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, and `/diagnostics/runtime` against a temporary SQLite DB. This passed locally through `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` on 2026-05-27. | Passed locally |
 | Server package contains only alpha artifacts | `.github/workflows/rust-release.yml`, `packaging/` | Release workflow packages the `r3akt-rch-server` binary plus server config/service helpers. It does not build or include UI assets, Tauri desktop artifacts, Electron, or `r3akt-tak-service` in the alpha server archive. | Passed by review; pending CI packaging run |
-| ZeroMQ is the mandatory server-package southbound command transport | `crates/r3akt-transport-rns/src/lib.rs`, `crates/r3akt-rch-server/src/lib.rs`, live REM validation | RCH now runs outbound REM fanout through the LXMF-rs ZeroMQ SDK when `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source` are configured. The SDK call is isolated from Tokio runtime nesting and serialized so fanout clients do not contend for the same ZeroMQ response endpoint. RCH extends the ZeroMQ SDK request timeout to 300 seconds so live Reticulum link activation can return a daemon outcome instead of timing out on the client side first. | Passed for build/unit coverage; release-blocked on sustained live delivery/backlog |
-| Live REM reduced-signature fanout works against connected phones | `docs/rem-southbound-interface.md`, `target/live-rem-validation/alpha-rem-300s-20260527-221119-*`, `target/live-rem-validation/alpha-rem-validcfg-20260527-232938-*` local evidence | On 2026-05-27, two attached REM phones (`35031FDH2003N8`, `988b9b344135304639`) were available over ADB. A clean single-message S8 marker probe on run `alpha-rem-timeout-20260527-215431` dispatched through reticulumd with `dispatch_accepted=1`, `sent=1`, `queue_depth=0`, and no ZeroMQ loop death after the timeout mitigation. The broader `alpha-rem-300s-20260527-221119` run persisted checklist create/upload/task add/style/cell/status/delete, EAM upsert/delete, marker create/link/unlink, mission forward-compatible change, and log-entry operations, but outbound delivery still ended with `outbound_enqueued_total=14`, `queue_depth=14`, `retry_total=14`, `timed_out_sends=1`, and daemon ZeroMQ loop stop. A fresh continuation run on 2026-05-27 using valid TOML reticulumd config and joined current REM clients (`alpha-rem-validcfg-20260527-232938`) confirmed the current blocker: reticulumd loaded six interfaces, accepted the S8 REM announce, RCH persisted checklist create/upload/task add reduced-signature commands for both S8 and Pixelcorvo, then S8 delivery failed at `link activation timed out` and reticulumd later logged `zmq rpc loop stopped: Codec Error: An established connection was aborted by the software in your host machine. (os error 10053)`. The full matrix did not reach row style/cell/status/delete/EAM/marker/log in that fresh joined-client run because the HTTP validation request timed out while the ZeroMQ SDK waited on the live delivery path. | Blocked |
+| ZeroMQ is the mandatory server-package southbound command transport | `crates/r3akt-transport-rns/src/lib.rs`, `crates/r3akt-rch-server/src/lib.rs`, live REM validation | RCH now runs outbound REM fanout through the LXMF-rs ZeroMQ SDK when `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source` are configured. The SDK call is isolated from Tokio runtime nesting and serialized so fanout clients do not contend for the same ZeroMQ response endpoint. RCH extends the ZeroMQ SDK request timeout to 300 seconds so live Reticulum link activation can return a daemon outcome instead of timing out on the client side first. `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` passed locally against the patched sibling LXMF-rs checkout on 2026-05-28. The required reticulumd loop-resilience fix is in LXMF-rs commit `0fe13e2` / PR `FreeTAKTeam/LXMF-rs#207`, not yet in the dependency's `origin/main`. | Passed for build/unit/package-smoke coverage against patched sibling; release-blocked until LXMF-rs PR 207 lands and sustained live delivery is green |
+| Live REM reduced-signature fanout works against connected phones | `docs/rem-southbound-interface.md`, `target/live-rem-validation/alpha-rem-300s-20260527-221119-*`, `target/live-rem-validation/alpha-rem-validcfg-20260527-232938-*`, `target/live-rem-validation/alpha-rem-patched-20260528-005813-*` local evidence | On 2026-05-28, two attached REM phones (`35031FDH2003N8`, `988b9b344135304639`) were available over ADB. The patched run `alpha-rem-patched-20260528-005813` classified both target identities as REM-capable and persisted reduced-signature field `9` commands for checklist create, checklist upload, checklist task add, EAM upsert/delete, mission marker link/unlink, and telemetry upsert across the S8 and Pixelcorvo identities. The run did not complete the full matrix: checklist task add, EAM upsert/delete, marker link/unlink, telemetry, and log-entry requests timed out or were left queued; row-style/cell/status/task-delete returned 404 because the task-add request timed out before the validator could capture the task UID. Runtime diagnostics ended with `outbound_enqueued_total=17`, `queue_depth=17`, `retry_total=13`, `receipt_timeout_total=1`, `timeout_total=1`, `sent=0`, and `dispatch_accepted=0`. The patched reticulumd process no longer logged `zmq rpc loop stopped`, but it did log `link activation timed out` followed by repeated `zmq rpc response dropped client connection` entries, including `Not connected to peers. Unable to send messages`. | Blocked |
 | Live Reticulum direct receipt and fanout work outside local unit mocks | `crates/r3akt-rch-server/src/lib.rs`, `scripts/local-reticulum-live-gate.ps1`, live env-gated tests | `scripts/local-reticulum-live-gate.ps1` starts three temporary `reticulumd.exe` nodes and passed direct receipt plus two-recipient fanout on 2026-05-11; the same script also passed with `-ExternalConfigPath` against the local RMAP testnet config, using controlled temporary identities through public TCP hubs. This evidence predates the mandatory ZeroMQ/reduced-signature release validation and is no longer sufficient as final release evidence. | Needs refresh |
 | Live TAK target profile works with the standalone service | `crates/r3akt-tak-connector/src/lib.rs`, `r3akt-tak-service` | Local TCP/UDP/TLS loopback and service bridge tests pass; `.\scripts\release-readiness.ps1 -LiveTak` requires both outbound `R3AKT_TAK_LIVE_COT_URL` and inbound `R3AKT_TAK_LIVE_INBOUND_COT_URL`; after the TAK server was restarted on 2026-05-11, `tcp://137.184.101.250:8087` passed live keepalive, reconnect, and bidirectional inbound relay validation | Passed against target profile |
 
@@ -81,23 +81,24 @@ payload is part of the release surface.
 Open blockers:
 
 - Fresh REM live validation is still not green after the reduced-signature
-  work. Prior route-matrix attempts accepted checklist/EAM/marker/mission/log
-  operations with optimized REM payloads, but live delivery backed up behind
-  Reticulum link activation timeouts. The freshest joined-client run with a
-  valid reticulumd TOML config only reached checklist create/upload/task add
-  before the HTTP validation request timed out on the ZeroMQ live delivery path.
-- The ZeroMQ SDK outbound boundary no longer panics inside Tokio, and a single
-  S8 marker probe dispatched successfully after extending the SDK request
-  timeout. Sustained matrix fanout still stops the reticulumd ZeroMQ loop after
-  a live timeout, leaving queued messages and retry backlog.
-- A passing two-phone evidence run is still missing. Pixelcorvo could be
-  foregrounded over ADB and later logged a REM announce on-device, but the
-  current RCH/reticulumd run did not produce a stable two-phone fanout with
-  queue depth returning to zero.
+  work. The 2026-05-28 patched run
+  `alpha-rem-patched-20260528-005813` proved the reduced field `9` command
+  shape is used for the connected S8 and Pixelcorvo REM identities, including
+  forward-compatible marker and telemetry commands. It did not prove live
+  delivery: the queue ended at depth 17 with zero final sent messages.
+- LXMF-rs PR 207 fixes the previous daemon failure mode where one client
+  disconnect stopped the reticulumd ZeroMQ RPC loop. The patched daemon kept
+  the loop alive, but the live run still logged response drops after
+  `link activation timed out` and `Not connected to peers. Unable to send
+  messages`. The release must not depend on an unmerged sibling patch.
+- A passing two-phone evidence run is still missing. Both attached phones were
+  foregrounded over ADB and marked REM-capable for the run, but checklist task
+  add timed out before row-style/cell/status/delete could operate on a captured
+  task UID, and EAM/marker/telemetry/log operations timed out or stayed queued.
 - Latest LXMF-rs `reticulumd` expects TOML config, not the legacy Python
-  Reticulum config syntax. The live run using `target/live-rem-validation/reticulumd.toml`
-  loaded the expected six interfaces and reproduced the link-activation/ZMQ
-  loop blocker.
+  Reticulum config syntax. The live runs using
+  `target/live-rem-validation/reticulumd.toml` loaded the expected six
+  interfaces and reproduced the link-activation/ZeroMQ response-drop blocker.
 - ZeroMQ event polling is not a default release path yet. An experimental
   `R3AKT_ENABLE_ZMQ_EVENT_POLL=1` path exists for further daemon validation,
   but the 2026-05-27 no-RPC attempt caused reticulumd ZeroMQ RPC connection
@@ -105,6 +106,7 @@ Open blockers:
   event/receipt polling while ZeroMQ remains mandatory for outbound commands
   until the LXMF-rs ZeroMQ event stream is stable.
 
-Next release-ready decision point: rerun the server package gates and the REM
-live matrix after the Reticulum link/queue issue is fixed, then update this
-audit with the new run ID and counters.
+Next release-ready decision point: merge or otherwise consume LXMF-rs PR 207,
+then rerun the server package gates and the REM live matrix after the
+Reticulum link/queue issue is fixed. The audit must be updated with a new run
+ID and counters showing the connected-phone queue drains to zero.
