@@ -718,6 +718,11 @@
   table-layout: fixed;
 }
 
+.hud-events-pagination {
+  margin-top: 8px;
+  padding: 0 4px 2px;
+}
+
 .hud-events-table thead th {
   text-align: left;
   font-size: 0.55rem;
