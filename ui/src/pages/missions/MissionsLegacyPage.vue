@@ -1432,6 +1432,24 @@ const upsertChecklistRecord = (record: ChecklistRaw) => {
   checklistRecords.value = next;
 };
 
+const removeChecklistRecord = (checklistUid: string) => {
+  const uid = String(checklistUid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  checklistRecords.value = checklistRecords.value.filter((entry) => String(entry.uid ?? "").trim() !== uid);
+};
+
+const selectChecklistRecord = (record: ChecklistRaw) => {
+  upsertChecklistRecord(record);
+  const uid = String(record.uid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  selectedChecklistUid.value = uid;
+  checklistDetailUid.value = uid;
+};
+
 const hydrateChecklistRecord = async (checklistUid: string): Promise<ChecklistRaw | null> => {
   const uid = String(checklistUid ?? "").trim();
   if (!uid) {
@@ -3203,6 +3221,7 @@ const deleteChecklistFromDetail = async () => {
   checklistDeleteBusy.value = true;
   try {
     await deleteRequest(`${endpoints.checklists}/${checklistUid}`);
+    removeChecklistRecord(checklistUid);
     if (selectedChecklistUid.value === checklistUid) {
       selectedChecklistUid.value = "";
     }
@@ -3210,7 +3229,6 @@ const deleteChecklistFromDetail = async () => {
       checklistDetailUid.value = "";
     }
     checklistLinkMissionModalOpen.value = false;
-    await loadWorkspace();
     toastStore.push("Checklist removed", "success");
   } catch (error) {
     handleApiError(error, "Unable to remove checklist");
@@ -3235,17 +3253,10 @@ const submitChecklistMissionLink = async () => {
   checklistLinkMissionSubmitting.value = true;
   const missionUid = checklistLinkMissionSelectionUid.value.trim();
   try {
-    await patchRequest(`${endpoints.checklists}/${checklistUid}`, {
+    const updated = await patchRequest<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}`, {
       patch: { mission_uid: missionUid || null }
     });
-    await loadWorkspace();
-    selectedChecklistUid.value = checklistUid;
-    checklistDetailUid.value = checklistUid;
-    try {
-      await hydrateChecklistRecord(checklistUid);
-    } catch (error) {
-      handleApiError(error, "Checklist mission link saved but detail refresh failed");
-    }
+    selectChecklistRecord(updated);
     checklistLinkMissionModalOpen.value = false;
     toastStore.push(missionUid ? "Checklist linked to mission" : "Checklist mission link cleared", "success");
   } catch (error) {
@@ -3272,8 +3283,8 @@ const addChecklistTaskFromDetail = async () => {
         payload.due_relative_minutes = Math.trunc(parsedDue);
       }
     }
-    await post(`${endpoints.checklists}/${checklist.uid}/tasks`, payload);
-    await loadWorkspace();
+    const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/tasks`, payload);
+    selectChecklistRecord(updated);
     toastStore.push("Checklist task added", "success");
   } catch (error) {
     handleApiError(error, "Unable to add checklist task");
@@ -3297,11 +3308,11 @@ const toggleChecklistTaskDone = async (row: { task_uid: string; done: boolean })
   };
   try {
     const userStatus = row.done ? "PENDING" : "COMPLETE";
-    await post(`${endpoints.checklists}/${checklistUid}/tasks/${taskUid}/status`, {
+    const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks/${taskUid}/status`, {
       user_status: userStatus,
       changed_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
     });
-    await loadWorkspace();
+    selectChecklistRecord(updated);
     toastStore.push("Task status updated", "success");
   } catch (error) {
     handleApiError(error, "Unable to update task status");
@@ -3760,13 +3771,11 @@ const ensureChecklistTaskContext = async (): Promise<{ checklistUid: string; tas
   let taskUid = toArray<ChecklistTaskRaw>(checklist.tasks).find((task) => String(task.task_uid ?? "").trim().length > 0)
     ?.task_uid;
   if (!taskUid) {
-    await post(`${endpoints.checklists}/${checklistUid}/tasks`, {
+    const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks`, {
       number: 1
     });
-    await loadWorkspace();
-    checklist =
-      checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === checklistUid) ??
-      resolveMissionChecklistRaw(missionUid);
+    selectChecklistRecord(updated);
+    checklist = updated ?? resolveMissionChecklistRaw(missionUid);
     taskUid = toArray<ChecklistTaskRaw>(checklist?.tasks).find((task) => String(task.task_uid ?? "").trim().length > 0)
       ?.task_uid;
   }
@@ -3958,22 +3967,28 @@ const createChecklistAction = async () => {
   const suffix = new Date().toISOString().slice(11, 19).replace(/:/g, "");
   const checklistName = `${missionName} Checklist ${suffix}`;
   const firstTemplate = templateRecords.value.find((entry) => String(entry.uid ?? "").trim().length > 0);
+  let created: ChecklistRaw;
   if (firstTemplate?.uid) {
-    await post<ChecklistRaw>(endpoints.checklists, {
+    created = await post<ChecklistRaw>(endpoints.checklists, {
       template_uid: firstTemplate.uid,
       mission_uid: missionUid,
       name: checklistName,
       source_identity: DEFAULT_SOURCE_IDENTITY
     });
   } else {
-    await post<ChecklistRaw>(resolveChecklistCreateEndpoint(checklistCreateOfflineDraft.value), {
+    created = await post<ChecklistRaw>(resolveChecklistCreateEndpoint(checklistCreateOfflineDraft.value), {
       mission_uid: missionUid,
       name: checklistName,
       origin_type: "BLANK_TEMPLATE",
       source_identity: DEFAULT_SOURCE_IDENTITY
     });
   }
-  await loadWorkspace();
+  upsertChecklistRecord(created);
+  const createdUid = String(created.uid ?? "").trim();
+  if (createdUid) {
+    selectedChecklistUid.value = createdUid;
+    checklistDetailUid.value = createdUid;
+  }
 };
 
 const toSortedChecklistColumns = (columns: ChecklistColumnRaw[]): ChecklistColumnRaw[] => {
@@ -4072,53 +4087,21 @@ const createChecklistFromCsvImportAction = async (
   if (!sourceColumns.length) {
     throw new Error("Selected CSV template has no columns");
   }
-
-  const created = await post<ChecklistRaw>(endpoints.checklists, {
-    mission_uid: missionUid,
-    name: checklistName,
-    origin_type: "RCH_TEMPLATE",
-    source_identity: DEFAULT_SOURCE_IDENTITY,
-    columns: toChecklistColumnPayload(sourceColumns)
-  });
-
-  const createdChecklistUid = String(created.uid ?? "").trim();
-  if (!createdChecklistUid) {
-    throw new Error("Checklist creation failed");
-  }
-
-  const createdColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(created.columns));
-  const sourceColumnUidByOrder = new Map<number, string>();
+  const sourceColumnOrderByUid = new Map<string, number>();
   sourceColumns.forEach((column, index) => {
     const columnUid = String(column.column_uid ?? "").trim();
     if (!columnUid) {
       return;
     }
-    sourceColumnUidByOrder.set(index + 1, columnUid);
-  });
-  const targetColumnUidByOrder = new Map<number, string>();
-  createdColumns.forEach((column, index) => {
-    const columnUid = String(column.column_uid ?? "").trim();
-    if (!columnUid) {
-      return;
-    }
-    targetColumnUidByOrder.set(index + 1, columnUid);
-  });
-  const sourceToTargetColumnUid = new Map<string, string>();
-  sourceColumnUidByOrder.forEach((sourceColumnUid, order) => {
-    const targetColumnUid = targetColumnUidByOrder.get(order);
-    if (!targetColumnUid) {
-      return;
-    }
-    sourceToTargetColumnUid.set(sourceColumnUid, targetColumnUid);
+    const order = index + 1;
+    sourceColumnOrderByUid.set(columnUid, order);
   });
 
   const sourceDueColumnUid = findDueColumnUid(sourceColumns);
   const sourceTasks = [...toArray<ChecklistTaskRaw>(sourceChecklist.tasks)].sort(
     (left, right) => Number(left.number ?? 0) - Number(right.number ?? 0)
   );
-
-  for (let index = 0; index < sourceTasks.length; index += 1) {
-    const sourceTask = sourceTasks[index];
+  const tasks = sourceTasks.map((sourceTask, index) => {
     const taskNumber = index + 1;
     const dueRelativeMinutes = parseDueRelativeMinutes(sourceTask, sourceDueColumnUid);
     const taskPayload: Record<string, unknown> = { number: taskNumber };
@@ -4129,37 +4112,40 @@ const createChecklistFromCsvImportAction = async (
     if (dueRelativeMinutes !== undefined) {
       taskPayload.due_relative_minutes = dueRelativeMinutes;
     }
-    const taskCreated = await post<ChecklistRaw>(`${endpoints.checklists}/${createdChecklistUid}/tasks`, taskPayload);
-    const createdTaskUid = String(
-      toArray<ChecklistTaskRaw>(taskCreated.tasks).find((task) => Number(task.number ?? 0) === taskNumber)?.task_uid ?? ""
-    ).trim();
-    if (!createdTaskUid) {
-      continue;
-    }
-
-    const sourceCells = toArray<ChecklistCellRaw>(sourceTask.cells);
-    for (const sourceCell of sourceCells) {
-      const sourceColumnUid = String(sourceCell.column_uid ?? "").trim();
-      const targetColumnUid = sourceToTargetColumnUid.get(sourceColumnUid);
-      const value = String(sourceCell.value ?? "").trim();
-      if (!sourceColumnUid || !targetColumnUid || !value) {
-        continue;
-      }
-      if (sourceColumnUid === sourceDueColumnUid) {
-        continue;
-      }
-      await patchRequest(
-        `${endpoints.checklists}/${createdChecklistUid}/tasks/${createdTaskUid}/cells/${targetColumnUid}`,
-        {
+    taskPayload.cells = toArray<ChecklistCellRaw>(sourceTask.cells)
+      .map((sourceCell) => {
+        const sourceColumnUid = String(sourceCell.column_uid ?? "").trim();
+        const sourceColumnOrder = sourceColumnOrderByUid.get(sourceColumnUid);
+        const value = String(sourceCell.value ?? "").trim();
+        if (!sourceColumnUid || !sourceColumnOrder || !value || sourceColumnUid === sourceDueColumnUid) {
+          return null;
+        }
+        return {
+          column_order: sourceColumnOrder,
           value,
           updated_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
-        }
-      );
-    }
+        };
+      })
+      .filter((cell): cell is { column_order: number; value: string; updated_by_team_member_rns_identity: string } => cell !== null);
+    return taskPayload;
+  });
+
+  const created = await post<ChecklistRaw>(endpoints.checklists, {
+    mission_uid: missionUid,
+    name: checklistName,
+    origin_type: "RCH_TEMPLATE",
+    source_identity: DEFAULT_SOURCE_IDENTITY,
+    columns: toChecklistColumnPayload(sourceColumns),
+    tasks
+  });
+
+  const createdChecklistUid = String(created.uid ?? "").trim();
+  if (!createdChecklistUid) {
+    throw new Error("Checklist creation failed");
   }
 
-  const hydrated = await hydrateChecklistRecord(createdChecklistUid);
-  return hydrated ?? created;
+  upsertChecklistRecord(created);
+  return created;
 };
 
 const buildChecklistDraftName = (): string => {
@@ -4220,17 +4206,12 @@ const createChecklistFromSelectedTemplateAction = async () => {
           missionUid,
           checklistCreateOfflineDraft.value
         );
-  await loadWorkspace();
   const createdUid = String(created.uid ?? "").trim();
   if (createdUid) {
+    upsertChecklistRecord(created);
     selectedChecklistUid.value = createdUid;
     checklistDetailUid.value = createdUid;
     checklistWorkspaceView.value = "active";
-    try {
-      await hydrateChecklistRecord(createdUid);
-    } catch (error) {
-      handleApiError(error, "Checklist run created but detail refresh failed");
-    }
   }
 };
 
@@ -4262,34 +4243,27 @@ const importChecklistAction = async () => {
   const missionUid = selectedMissionUid.value || undefined;
   const baseName = (csvImportFilename.value || "Checklist CSV").replace(/\.csv$/i, "").trim() || "Checklist CSV";
   const imported = await createChecklistFromUploadedCsvAction(baseName, missionUid);
-  await loadWorkspace();
   const importedUid = String(imported.uid ?? "").trim();
   if (importedUid) {
-    selectedChecklistUid.value = importedUid;
-    checklistDetailUid.value = importedUid;
+    selectChecklistRecord(imported);
     checklistWorkspaceView.value = "active";
-    try {
-      await hydrateChecklistRecord(importedUid);
-    } catch (error) {
-      handleApiError(error, "Checklist imported but detail refresh failed");
-    }
   }
 };
 
 const joinChecklistAction = async () => {
   const checklist = ensureChecklistSelected();
-  await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/join`, {
+  const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/join`, {
     source_identity: DEFAULT_SOURCE_IDENTITY
   });
-  await loadWorkspace();
+  selectChecklistRecord(updated);
 };
 
 const uploadChecklistAction = async () => {
   const checklist = ensureChecklistSelected();
-  await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/upload`, {
+  const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/upload`, {
     source_identity: DEFAULT_SOURCE_IDENTITY
   });
-  await loadWorkspace();
+  selectChecklistRecord(updated);
 };
 
 const publishChecklistAction = async () => {
@@ -4299,15 +4273,15 @@ const publishChecklistAction = async () => {
     String(checklist.mode ?? "").toUpperCase() === "OFFLINE" &&
     String(checklist.sync_state ?? "").toUpperCase() !== "SYNCED"
   ) {
-    await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/upload`, {
+    const uploaded = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/upload`, {
       source_identity: DEFAULT_SOURCE_IDENTITY
     });
+    selectChecklistRecord(uploaded);
   }
   const missionFeedUid = selectedMissionUid.value || "mission-feed";
   await post(`${endpoints.checklists}/${checklistUid}/feeds/${encodeURIComponent(missionFeedUid)}`, {
     source_identity: DEFAULT_SOURCE_IDENTITY
   });
-  await loadWorkspace();
 };
 
 const setChecklistTaskStatusAction = async () => {
@@ -4316,18 +4290,18 @@ const setChecklistTaskStatusAction = async () => {
   const tasks = toArray<ChecklistTaskRaw>(checklist.tasks);
   const firstTask = tasks.find((task) => String(task.task_uid ?? "").trim().length > 0);
   if (!firstTask?.task_uid) {
-    await post(`${endpoints.checklists}/${checklistUid}/tasks`, {
+    const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks`, {
       number: 1
     });
-    await loadWorkspace();
+    selectChecklistRecord(updated);
     return;
   }
   const userStatus = String(firstTask.user_status ?? "PENDING").toUpperCase() === "COMPLETE" ? "PENDING" : "COMPLETE";
-  await post(`${endpoints.checklists}/${checklistUid}/tasks/${firstTask.task_uid}/status`, {
+  const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks/${firstTask.task_uid}/status`, {
     user_status: userStatus,
     changed_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
   });
-  await loadWorkspace();
+  selectChecklistRecord(updated);
 };
 
 const createZoneAction = async () => {
@@ -4496,11 +4470,11 @@ const editChecklistCellAction = async () => {
     throw new Error("Checklist has no editable column");
   }
   const member = await ensureMemberIdentityForMission();
-  await patchRequest(`${endpoints.checklists}/${checklistUid}/tasks/${taskUid}/cells/${columnUid}`, {
+  const updated = await patchRequest<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks/${taskUid}/cells/${columnUid}`, {
     value: `Updated @ ${new Date().toISOString()}`,
     updated_by_team_member_rns_identity: member.identity
   });
-  await loadWorkspace();
+  selectChecklistRecord(updated);
 };
 
 const validateChecklistAction = async () => {

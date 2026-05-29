@@ -103,6 +103,7 @@ const RETICULUMD_ANNOUNCE_LIST_POLL_MS: u64 = 30_000;
 const RETICULUMD_EVENT_CURSOR_STREAM_CHECK_MS: u64 = 60_000;
 const RETICULUMD_EVENT_CURSOR_SETTING: &str = "reticulumd_event_cursor";
 const LOCAL_TELEMETRY_SAMPLER_INTERVAL_MS: u64 = 600_000;
+const MISSION_CHANGE_FANOUT_DEFER_MS: u64 = 750;
 const MISSION_CHANGE_FANOUT_CACHE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 #[cfg(test)]
 const MISSION_CHANGE_AUTONOMOUS_REM_WINDOW_MS: i64 = 30 * 60 * 1000;
@@ -13867,6 +13868,24 @@ fn mission_change_payload_map(core: &RchCore) -> HashMap<String, Value> {
         .collect()
 }
 
+fn mission_change_uid_set(core: &RchCore) -> HashSet<String> {
+    core.mission_changes()
+        .into_iter()
+        .map(|change| change.uid)
+        .collect()
+}
+
+fn mission_change_payload_map_excluding(
+    core: &RchCore,
+    excluded_uids: &HashSet<String>,
+) -> HashMap<String, Value> {
+    core.mission_changes()
+        .into_iter()
+        .filter(|change| !excluded_uids.contains(change.uid.as_str()))
+        .map(|change| (change.uid.clone(), mission_change_payload(&change)))
+        .collect()
+}
+
 fn prune_mission_change_fanout_cache(state: &AppState, now_ms: i64) -> Result<usize, ApiError> {
     let mut cache = state
         .mission_change_fanout_cache
@@ -13915,41 +13934,48 @@ fn mission_team_member_destinations(
     if state.sqlite_path.is_none() {
         return Ok(Vec::new());
     }
-    with_rch_snapshot(state, false, |snapshot| {
-        let mut team_uids = snapshot
-            .mission_team_links
-            .iter()
-            .filter(|link| link.mission_uid == mission_uid)
-            .map(|link| link.team_uid.as_str())
-            .collect::<Vec<_>>();
-        team_uids.sort_unstable();
-        team_uids.dedup();
-        let mut destinations = Vec::new();
-        for member in &snapshot.team_members {
-            let Some(team_uid) = member.team_uid.as_deref() else {
-                continue;
-            };
-            if !team_uids.contains(&team_uid) {
+    let path = state
+        .sqlite_path
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("RCH SQLite state unavailable".to_string()))?;
+    let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
+    let store = RchSqliteStore::open(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let (mission_team_links, team_members, team_member_client_links) = store
+        .load_mission_team_recipient_rows()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let mut team_uids = mission_team_links
+        .iter()
+        .filter(|link| link.mission_uid == mission_uid)
+        .map(|link| link.team_uid.as_str())
+        .collect::<Vec<_>>();
+    team_uids.sort_unstable();
+    team_uids.dedup();
+    let mut destinations = Vec::new();
+    for member in &team_members {
+        let Some(team_uid) = member.team_uid.as_deref() else {
+            continue;
+        };
+        if !team_uids.contains(&team_uid) {
+            continue;
+        }
+        if let Some(identity) = reticulum_destination_hash(&member.rns_identity) {
+            if !destinations.contains(&identity) {
+                destinations.push(identity);
+            }
+        }
+        for link in &team_member_client_links {
+            if link.team_member_uid != member.uid {
                 continue;
             }
-            if let Some(identity) = reticulum_destination_hash(&member.rns_identity) {
+            if let Some(identity) = reticulum_destination_hash(&link.client_identity) {
                 if !destinations.contains(&identity) {
                     destinations.push(identity);
                 }
             }
-            for link in &snapshot.team_member_client_links {
-                if link.team_member_uid != member.uid {
-                    continue;
-                }
-                if let Some(identity) = reticulum_destination_hash(&link.client_identity) {
-                    if !destinations.contains(&identity) {
-                        destinations.push(identity);
-                    }
-                }
-            }
         }
-        Ok(destinations)
-    })
+    }
+    Ok(destinations)
 }
 
 #[cfg(test)]
@@ -14221,7 +14247,11 @@ fn command_fanout_recipients_for_state(state: &AppState) -> Result<Vec<ClientRec
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    let annotations = rem_annotations_for_state(state)?;
+    let annotation_destinations = client_records
+        .iter()
+        .filter_map(|record| normalize_identity_key(&record.identity))
+        .collect::<Vec<_>>();
+    let annotations = rem_annotations_for_destinations(state, &annotation_destinations)?;
     let runtime_freshness_cutoff_ms = rem_peer_runtime_freshness_cutoff_ms(state);
     let mut recipients = Vec::new();
     let mut recipient_identities = HashSet::new();
@@ -15954,7 +15984,6 @@ fn fanout_mission_change_to_recipients(
     change: &Value,
 ) -> Result<Value, ApiError> {
     let mut destinations = mission_team_member_destinations(state, mission_uid)?;
-    let annotations = rem_annotations_for_state(state)?;
     let effective_rem_connected_mode = effective_rem_connected_mode_for_state(state)?;
     let has_rem_checklist_messages = !rem_checklist_command_messages_for_mission_change(
         state,
@@ -16001,6 +16030,7 @@ fn fanout_mission_change_to_recipients(
         }
     }
     retain_outbound_allowed_destinations(state, &mut destinations);
+    let annotations = rem_annotations_for_destinations(state, &destinations)?;
     let rem_checklist_messages = if has_rem_checklist_messages {
         rem_checklist_command_messages_for_mission_change(
             state,
@@ -16143,7 +16173,7 @@ fn next_rem_command_attempt_at_with_spacing(
         .max();
     Ok(latest_scheduled
         .map(|scheduled| scheduled.saturating_add(spacing_ms))
-        .unwrap_or(now)
+        .unwrap_or_else(|| now.saturating_add(spacing_ms))
         .max(now))
 }
 
@@ -16854,6 +16884,32 @@ fn emit_mission_change_listener_events(
     Ok(())
 }
 
+fn spawn_mission_change_listener_events(
+    state: &AppState,
+    before: HashMap<String, Value>,
+    after: HashMap<String, Value>,
+) -> Result<(), ApiError> {
+    if before == after {
+        return Ok(());
+    }
+    let state = state.clone();
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn_blocking(move || {
+            std::thread::sleep(Duration::from_millis(MISSION_CHANGE_FANOUT_DEFER_MS));
+            if let Err(error) = emit_mission_change_listener_events(&state, &before, &after) {
+                let _ = record_system_event(
+                    &state,
+                    "mission.registry.mission_change.listener_failed",
+                    "Mission change listener failed",
+                    json!({ "error": error.to_string() }),
+                );
+            }
+        });
+        return Ok(());
+    }
+    emit_mission_change_listener_events(&state, &before, &after)
+}
+
 async fn send_message(
     State(state): State<AppState>,
     Json(input): Json<Value>,
@@ -17384,6 +17440,13 @@ fn empty_rem_peer_registry() -> Value {
 fn rem_annotations_for_state(
     state: &AppState,
 ) -> Result<HashMap<String, RemIdentityAnnotation>, ApiError> {
+    rem_annotations_for_destinations(state, &[])
+}
+
+fn rem_annotations_for_destinations(
+    state: &AppState,
+    destinations: &[String],
+) -> Result<HashMap<String, RemIdentityAnnotation>, ApiError> {
     if state.sqlite_path.is_none() {
         return Ok(HashMap::new());
     }
@@ -17392,12 +17455,24 @@ fn rem_annotations_for_state(
     };
     let store = RchSqliteStore::open_read_only(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let identity_announces = store
-        .load_identity_announces()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let identity_rem_modes = store
-        .load_identity_rem_modes()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let identity_announces = if destinations.is_empty() {
+        store
+            .load_identity_announces()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    } else {
+        store
+            .load_identity_announces_by_destination_hashes(destinations)
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    };
+    let identity_rem_modes = if destinations.is_empty() {
+        store
+            .load_identity_rem_modes()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    } else {
+        store
+            .load_identity_rem_modes_by_identities(destinations)
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    };
     Ok(rem_annotations_from_records(
         &identity_announces,
         &identity_rem_modes,
@@ -19066,37 +19141,40 @@ fn checklist_command(state: &AppState, command_type: &str, args: Value) -> Resul
         let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
         let store = RchSqliteStore::open(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mut core = RchCore::load_from_sqlite_without_identity_announces(&store)
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-            .unwrap_or_else(RchCore::new);
+        let snapshot = store
+            .load_checklist_command_snapshot()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let mut core = RchCore::from_snapshot(snapshot)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
         let outcome = core.handle_command(&command);
         return checklist_command_outcome_value(outcome);
     }
-    let (outcome, mission_changes_before, mission_changes_after) = {
+    let (outcome, mission_changes_after) = {
         let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
         let mut store = RchSqliteStore::open(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mut core = RchCore::load_from_sqlite_without_identity_announces(&store)
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-            .unwrap_or_else(RchCore::new);
-        let mission_changes_before = mission_change_payload_map(&core);
+        let snapshot = store
+            .load_checklist_command_snapshot()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let mut core = RchCore::from_snapshot(snapshot)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let mission_change_uids_before = mission_change_uid_set(&core);
         let outcome = core.handle_command(&command);
         let mission_changes_after = if outcome.result.status == CommandResultStatus::Accepted {
-            let mission_changes_after = mission_change_payload_map(&core);
-            core.save_to_sqlite_preserving_identity_announces(&mut store)
+            let mission_changes_after =
+                mission_change_payload_map_excluding(&core, &mission_change_uids_before);
+            let snapshot = core.snapshot();
+            store
+                .save_checklist_command_projection(&snapshot)
                 .map_err(|error| ApiError::Internal(error.to_string()))?;
             mission_changes_after
         } else {
             HashMap::new()
         };
-        (outcome, mission_changes_before, mission_changes_after)
+        (outcome, mission_changes_after)
     };
     if outcome.result.status == CommandResultStatus::Accepted {
-        emit_mission_change_listener_events(
-            state,
-            &mission_changes_before,
-            &mission_changes_after,
-        )?;
+        spawn_mission_change_listener_events(state, HashMap::new(), mission_changes_after)?;
         return Ok(outcome.result.result);
     }
     checklist_command_outcome_value(outcome)
@@ -20004,12 +20082,12 @@ fn with_r3akt_core<T>(
     let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
     let mut store = RchSqliteStore::open(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let mut core = RchCore::load_from_sqlite(&store)
+    let mut core = RchCore::load_from_sqlite_without_identity_announces(&store)
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .unwrap_or_else(RchCore::new);
     let result = f(&mut core)?;
     if write {
-        core.save_to_sqlite(&mut store)
+        core.save_to_sqlite_preserving_identity_announces(&mut store)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
     }
     Ok(result)
@@ -20048,14 +20126,14 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
         let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
         let mut store = RchSqliteStore::open(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mut core = RchCore::load_from_sqlite(&store)
+        let mut core = RchCore::load_from_sqlite_without_identity_announces(&store)
             .map_err(|error| ApiError::Internal(error.to_string()))?
             .unwrap_or_else(RchCore::new);
         let mission_changes_before = mission_change_payload_map(&core);
         let outcome = core.handle_command(&command);
         let mission_changes_after = if outcome.result.status == CommandResultStatus::Accepted {
             let mission_changes_after = mission_change_payload_map(&core);
-            core.save_to_sqlite(&mut store)
+            core.save_to_sqlite_preserving_identity_announces(&mut store)
                 .map_err(|error| ApiError::Internal(error.to_string()))?;
             mission_changes_after
         } else {
@@ -20064,11 +20142,7 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
         (outcome, mission_changes_before, mission_changes_after)
     };
     if outcome.result.status == CommandResultStatus::Accepted {
-        emit_mission_change_listener_events(
-            state,
-            &mission_changes_before,
-            &mission_changes_after,
-        )?;
+        spawn_mission_change_listener_events(state, mission_changes_before, mission_changes_after)?;
         return Ok(outcome.result.result);
     }
     r3akt_command_outcome_value(outcome)

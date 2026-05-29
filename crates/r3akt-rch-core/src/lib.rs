@@ -1530,6 +1530,61 @@ impl RchSqliteStore {
         )
     }
 
+    pub fn save_checklist_command_projection(
+        &mut self,
+        snapshot: &RchCoreSnapshot,
+    ) -> Result<(), RchCoreError> {
+        let transaction = self.connection.transaction()?;
+        for table in [
+            "rch_checklists",
+            "rch_checklist_templates",
+            "rch_checklist_columns",
+            "rch_checklist_tasks",
+            "rch_checklist_cells",
+            "rch_checklist_feed_publications",
+            "rch_task_skill_requirements",
+            "rch_assignments",
+            "rch_assignment_asset_links",
+        ] {
+            transaction.execute(&format!("DELETE FROM {table}"), [])?;
+        }
+        save_checklist_snapshot_tables(&transaction, snapshot)?;
+        for record in &snapshot.task_skill_requirements {
+            transaction.execute(
+                "INSERT INTO rch_task_skill_requirements (task_uid, skill_uid, payload)
+                 VALUES (?1, ?2, ?3)",
+                params![record.task_uid, record.skill_uid, encode_msgpack(record)?],
+            )?;
+        }
+        for assignment in &snapshot.assignments {
+            transaction.execute(
+                "INSERT INTO rch_assignments (assignment_uid, payload) VALUES (?1, ?2)",
+                params![assignment.assignment_uid, encode_msgpack(assignment)?],
+            )?;
+        }
+        for link in &snapshot.assignment_asset_links {
+            transaction.execute(
+                "INSERT INTO rch_assignment_asset_links (assignment_uid, asset_uid, payload)
+                 VALUES (?1, ?2, ?3)",
+                params![link.assignment_uid, link.asset_uid, encode_msgpack(link)?],
+            )?;
+        }
+        for change in &snapshot.mission_changes {
+            transaction.execute(
+                "INSERT OR REPLACE INTO rch_mission_changes (uid, payload) VALUES (?1, ?2)",
+                params![change.uid, encode_msgpack(change)?],
+            )?;
+        }
+        for result in &snapshot.command_results {
+            transaction.execute(
+                "INSERT OR REPLACE INTO rch_command_results (command_id, payload) VALUES (?1, ?2)",
+                params![result.command_id, encode_msgpack(result)?],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     fn save_snapshot_with_options(
         &mut self,
         snapshot: &RchCoreSnapshot,
@@ -1717,6 +1772,31 @@ impl RchSqliteStore {
         )
     }
 
+    pub fn load_identity_announces_by_destination_hashes(
+        &self,
+        destinations: &[String],
+    ) -> Result<Vec<IdentityAnnounceRecord>, RchCoreError> {
+        if destinations.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut statement = self
+            .connection
+            .prepare("SELECT payload FROM rch_identity_announces WHERE destination_hash = ?1")?;
+        let mut seen = HashSet::new();
+        let mut records = Vec::new();
+        for destination in destinations {
+            let destination = destination.trim().to_ascii_lowercase();
+            if destination.is_empty() || !seen.insert(destination.clone()) {
+                continue;
+            }
+            let rows = statement.query_map(params![destination], |row| row.get::<_, Vec<u8>>(0))?;
+            for row in rows {
+                records.push(decode_msgpack(&row?)?);
+            }
+        }
+        Ok(records)
+    }
+
     pub fn load_identity_states(&self) -> Result<Vec<IdentityStateRecord>, RchCoreError> {
         self.load_payload_rows::<IdentityStateRecord>(
             "SELECT payload FROM rch_identity_states ORDER BY identity",
@@ -1727,6 +1807,31 @@ impl RchSqliteStore {
         self.load_payload_rows::<IdentityRemModeRecord>(
             "SELECT payload FROM rch_identity_rem_modes ORDER BY identity",
         )
+    }
+
+    pub fn load_identity_rem_modes_by_identities(
+        &self,
+        identities: &[String],
+    ) -> Result<Vec<IdentityRemModeRecord>, RchCoreError> {
+        if identities.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut statement = self
+            .connection
+            .prepare("SELECT payload FROM rch_identity_rem_modes WHERE identity = ?1")?;
+        let mut seen = HashSet::new();
+        let mut records = Vec::new();
+        for identity in identities {
+            let identity = identity.trim().to_ascii_lowercase();
+            if identity.is_empty() || !seen.insert(identity.clone()) {
+                continue;
+            }
+            let rows = statement.query_map(params![identity], |row| row.get::<_, Vec<u8>>(0))?;
+            for row in rows {
+                records.push(decode_msgpack(&row?)?);
+            }
+        }
+        Ok(records)
     }
 
     pub fn count_file_attachments_by_category(
@@ -1809,6 +1914,60 @@ impl RchSqliteStore {
         } else {
             Ok(Some(snapshot))
         }
+    }
+
+    pub fn load_checklist_command_snapshot(&self) -> Result<RchCoreSnapshot, RchCoreError> {
+        let mut snapshot = RchCore::new().snapshot();
+        let (
+            checklists,
+            checklist_templates,
+            checklist_columns,
+            checklist_tasks,
+            checklist_cells,
+            checklist_feed_publications,
+        ) = self.load_checklist_snapshot_rows()?;
+        snapshot.checklists = checklists;
+        snapshot.checklist_templates = checklist_templates;
+        snapshot.checklist_columns = checklist_columns;
+        snapshot.checklist_tasks = checklist_tasks;
+        snapshot.checklist_cells = checklist_cells;
+        snapshot.checklist_feed_publications = checklist_feed_publications;
+        snapshot.mission_changes = self.load_payload_rows::<MissionChangeRecord>(
+            "SELECT payload FROM rch_mission_changes ORDER BY uid",
+        )?;
+        snapshot.task_skill_requirements = self.load_payload_rows::<TaskSkillRequirementRecord>(
+            "SELECT payload FROM rch_task_skill_requirements ORDER BY task_uid, skill_uid",
+        )?;
+        snapshot.assignments = self.load_payload_rows::<AssignmentRecord>(
+            "SELECT payload FROM rch_assignments ORDER BY assignment_uid",
+        )?;
+        snapshot.assignment_asset_links = self.load_payload_rows::<AssignmentAssetLinkRecord>(
+            "SELECT payload FROM rch_assignment_asset_links ORDER BY assignment_uid, asset_uid",
+        )?;
+        Ok(snapshot)
+    }
+
+    pub fn load_mission_team_recipient_rows(
+        &self,
+    ) -> Result<
+        (
+            Vec<MissionTeamLinkRecord>,
+            Vec<TeamMemberRecord>,
+            Vec<TeamMemberClientLinkRecord>,
+        ),
+        RchCoreError,
+    > {
+        Ok((
+            self.load_payload_rows::<MissionTeamLinkRecord>(
+                "SELECT payload FROM rch_mission_team_links ORDER BY mission_uid, team_uid",
+            )?,
+            self.load_payload_rows::<TeamMemberRecord>(
+                "SELECT payload FROM rch_team_members ORDER BY uid",
+            )?,
+            self.load_payload_rows::<TeamMemberClientLinkRecord>(
+                "SELECT payload FROM rch_team_member_client_links ORDER BY team_member_uid, client_identity",
+            )?,
+        ))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -7315,8 +7474,86 @@ impl RchCore {
         };
         self.checklists.insert(uid.clone(), checklist.clone());
         self.insert_checklist_columns(&uid, columns, now);
+        self.insert_initial_checklist_tasks_from_args(&uid, command.args.get("tasks"))?;
         self.recompute_checklist_status(&uid)?;
         Ok(self.checklists.get(&uid).cloned().unwrap_or(checklist))
+    }
+
+    fn insert_initial_checklist_tasks_from_args(
+        &mut self,
+        checklist_uid: &str,
+        tasks: Option<&Value>,
+    ) -> Result<(), RchCoreError> {
+        let Some(tasks) = tasks.and_then(Value::as_array) else {
+            return Ok(());
+        };
+        let columns = self.columns_for_checklist(checklist_uid);
+        let column_by_order = columns
+            .iter()
+            .map(|column| (column.display_order, column.column_uid.clone()))
+            .collect::<HashMap<_, _>>();
+        let column_by_name = columns
+            .iter()
+            .map(|column| {
+                (
+                    column.column_name.trim().to_ascii_lowercase(),
+                    column.column_uid.clone(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        for task in tasks {
+            let existing_task_uids = self
+                .checklist_tasks
+                .values()
+                .filter(|task| task.checklist_uid == checklist_uid)
+                .map(|task| task.task_uid.clone())
+                .collect::<HashSet<_>>();
+            self.add_checklist_task_row(checklist_uid, task)?;
+            let Some(task_uid) = self
+                .checklist_tasks
+                .values()
+                .filter(|task| task.checklist_uid == checklist_uid)
+                .find(|task| !existing_task_uids.contains(&task.task_uid))
+                .map(|task| task.task_uid.clone())
+            else {
+                continue;
+            };
+            let Some(cells) = task.get("cells").and_then(Value::as_array) else {
+                continue;
+            };
+            for cell in cells {
+                let column_uid = optional_text(cell, &["column_uid"])
+                    .filter(|column_uid| {
+                        self.checklist_columns
+                            .get(column_uid)
+                            .is_some_and(|column| {
+                                column.checklist_uid.as_deref() == Some(checklist_uid)
+                            })
+                    })
+                    .or_else(|| {
+                        optional_i64(cell, "column_order")
+                            .ok()
+                            .flatten()
+                            .and_then(|order| column_by_order.get(&order).cloned())
+                    })
+                    .or_else(|| {
+                        optional_i64(cell, "display_order")
+                            .ok()
+                            .flatten()
+                            .and_then(|order| column_by_order.get(&order).cloned())
+                    })
+                    .or_else(|| {
+                        optional_text(cell, &["column_name"])
+                            .map(|name| name.trim().to_ascii_lowercase())
+                            .and_then(|name| column_by_name.get(&name).cloned())
+                    });
+                let Some(column_uid) = column_uid else {
+                    continue;
+                };
+                self.set_checklist_task_cell(checklist_uid, &task_uid, &column_uid, cell)?;
+            }
+        }
+        Ok(())
     }
 
     fn insert_checklist_columns(&mut self, checklist_uid: &str, columns: Vec<Value>, now: i64) {
@@ -7408,8 +7645,9 @@ impl RchCore {
             due_relative_minutes,
             due_ts_ms,
             notes: optional_text_or_empty(args, &["notes"]).and_then(none_if_empty),
-            row_background_color: None,
-            line_break_enabled: false,
+            row_background_color: optional_text_or_empty(args, &["row_background_color"])
+                .and_then(none_if_empty),
+            line_break_enabled: optional_bool(args, "line_break_enabled").unwrap_or(false),
             completed_ts_ms: None,
             completed_by_team_member_rns_identity: None,
             legacy_value: optional_text_or_empty(args, &["legacy_value"]).and_then(none_if_empty),
@@ -14693,6 +14931,50 @@ mod tests {
         assert_eq!(core.handle_checklist_sync_command(&create_online), []);
         assert_eq!(core.checklists()[0].mode, "ONLINE");
         assert_eq!(core.checklist_columns().len(), 6);
+
+        let create_online_with_rows = command(
+            "checklist.create.online",
+            json!({
+                "checklist_uid": "checklist-online-with-rows",
+                "name": "Checklist Online With Rows",
+                "columns": default_checklist_columns(),
+                "tasks": [
+                    {
+                        "number": 1,
+                        "legacy_value": "Pack radio",
+                        "row_background_color": "#112233",
+                        "line_break_enabled": true,
+                        "cells": [
+                            {
+                                "column_order": 1,
+                                "value": "Pack radio",
+                                "updated_by_team_member_rns_identity": "peer-a"
+                            }
+                        ]
+                    }
+                ]
+            }),
+        );
+        assert_eq!(
+            core.handle_checklist_sync_command(&create_online_with_rows),
+            []
+        );
+        let batched_task = core
+            .checklist_tasks()
+            .into_iter()
+            .find(|task| task.checklist_uid == "checklist-online-with-rows")
+            .expect("batched task");
+        assert_eq!(batched_task.legacy_value.as_deref(), Some("Pack radio"));
+        assert_eq!(
+            batched_task.row_background_color.as_deref(),
+            Some("#112233")
+        );
+        assert!(batched_task.line_break_enabled);
+        assert!(core.checklist_cells().iter().any(|cell| {
+            cell.task_uid == batched_task.task_uid
+                && cell.value.as_deref() == Some("Pack radio")
+                && cell.updated_by_team_member_rns_identity.as_deref() == Some("peer-a")
+        }));
 
         let delete_template = command(
             "checklist.template.delete",
