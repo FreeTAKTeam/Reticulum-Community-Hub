@@ -16,7 +16,14 @@ CREATE TABLE IF NOT EXISTS rch_subscribers (
 CREATE TABLE IF NOT EXISTS rch_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id TEXT NOT NULL,
-    payload BLOB NOT NULL
+    payload BLOB NOT NULL,
+    delivery_state TEXT NOT NULL DEFAULT 'queued',
+    dispatch_status TEXT NOT NULL DEFAULT 'queued',
+    next_attempt_at_ts_ms INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    priority INTEGER NOT NULL DEFAULT 0,
+    batch_id TEXT,
+    created_ts_ms INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS rch_clients (
     identity TEXT PRIMARY KEY,
@@ -64,6 +71,7 @@ CREATE TABLE IF NOT EXISTS rch_missions (
 );
 CREATE TABLE IF NOT EXISTS rch_mission_changes (
     uid TEXT PRIMARY KEY,
+    mission_uid TEXT NOT NULL DEFAULT '',
     payload BLOB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS rch_log_entries (
@@ -137,6 +145,9 @@ CREATE TABLE IF NOT EXISTS rch_task_skill_requirements (
 );
 CREATE TABLE IF NOT EXISTS rch_assignments (
     assignment_uid TEXT PRIMARY KEY,
+    mission_uid TEXT NOT NULL DEFAULT '',
+    task_uid TEXT NOT NULL DEFAULT '',
+    team_member_rns_identity TEXT NOT NULL DEFAULT '',
     payload BLOB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS rch_assignment_asset_links (
@@ -157,6 +168,7 @@ CREATE TABLE IF NOT EXISTS rch_checklist_columns (
     column_uid TEXT PRIMARY KEY,
     checklist_uid TEXT,
     template_uid TEXT,
+    display_order INTEGER NOT NULL DEFAULT 0,
     payload BLOB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS rch_checklist_tasks (
@@ -206,6 +218,31 @@ CREATE TABLE IF NOT EXISTS rch_subject_operation_rights (
 CREATE TABLE IF NOT EXISTS rch_settings (
     setting_key TEXT PRIMARY KEY,
     setting_value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rch_domain_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    collection TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    operation_id TEXT,
+    created_ts_ms INTEGER NOT NULL,
+    payload BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rch_outbound_jobs (
+    job_id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL,
+    delivery_state TEXT NOT NULL,
+    dispatch_status TEXT NOT NULL,
+    next_attempt_at_ts_ms INTEGER,
+    lease_until_ts_ms INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    priority INTEGER NOT NULL DEFAULT 0,
+    batch_id TEXT,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    created_ts_ms INTEGER NOT NULL,
+    updated_ts_ms INTEGER NOT NULL,
+    payload BLOB NOT NULL
 );
 
 INSERT OR REPLACE INTO rch_settings (setting_key, setting_value)

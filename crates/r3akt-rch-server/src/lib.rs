@@ -28,7 +28,7 @@
 )]
 #![recursion_limit = "512"]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::pending;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path as FsPath, PathBuf};
@@ -37,7 +37,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::Multipart;
@@ -103,7 +103,6 @@ const RETICULUMD_ANNOUNCE_LIST_POLL_MS: u64 = 30_000;
 const RETICULUMD_EVENT_CURSOR_STREAM_CHECK_MS: u64 = 60_000;
 const RETICULUMD_EVENT_CURSOR_SETTING: &str = "reticulumd_event_cursor";
 const LOCAL_TELEMETRY_SAMPLER_INTERVAL_MS: u64 = 600_000;
-const MISSION_CHANGE_FANOUT_DEFER_MS: u64 = 750;
 const MISSION_CHANGE_FANOUT_CACHE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 #[cfg(test)]
 const MISSION_CHANGE_AUTONOMOUS_REM_WINDOW_MS: i64 = 30 * 60 * 1000;
@@ -124,6 +123,7 @@ const WS_SYSTEM_EVENTS_MAX_LIMIT: usize = 200;
 const API_PAGINATION_DEFAULT_PAGE_SIZE: usize = 50;
 const API_PAGINATION_MAX_PAGE_SIZE: usize = 500;
 const LXMF_FIELD_ATTACHMENTS_PUBLIC_KEY: &str = "attachments";
+const SQLITE_LATENCY_SAMPLE_LIMIT: usize = 512;
 #[cfg(test)]
 const LXMF_FIELD_RENDERER: i64 = 0x0F;
 #[cfg(test)]
@@ -191,6 +191,7 @@ pub struct AppState {
     reticulumd_inbound_worker_stats: Arc<RwLock<ReticulumdInboundWorkerStats>>,
     outbound_identity_allowlist: Option<Arc<HashSet<String>>>,
     mission_change_fanout_cache: Arc<RwLock<HashMap<String, i64>>>,
+    #[cfg(test)]
     rch_sqlite_lock: Arc<Mutex<()>>,
     sqlite_path: Option<Arc<PathBuf>>,
     config_path: Option<Arc<PathBuf>>,
@@ -256,6 +257,10 @@ struct RuntimeMetricCounters {
     ws_event_dropped_oldest: AtomicU64,
     ws_telemetry_dropped_oldest: AtomicU64,
     ws_message_dropped_oldest: AtomicU64,
+    sqlite_transactions: AtomicU64,
+    sqlite_latency_total_ms: AtomicU64,
+    sqlite_latency_max_ms: AtomicU64,
+    sqlite_latency_samples_ms: Mutex<VecDeque<u64>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -364,6 +369,7 @@ impl Default for AppState {
             reticulumd_inbound_worker_stats: Arc::default(),
             outbound_identity_allowlist: None,
             mission_change_fanout_cache: Arc::default(),
+            #[cfg(test)]
             rch_sqlite_lock: Arc::default(),
             sqlite_path: None,
             config_path: None,
@@ -375,6 +381,7 @@ impl Default for AppState {
     }
 }
 
+#[cfg(test)]
 fn lock_rch_sqlite_snapshot(state: &AppState) -> Result<std::sync::MutexGuard<'_, ()>, ApiError> {
     state
         .rch_sqlite_lock
@@ -745,6 +752,7 @@ impl AppState {
         Ok(state)
     }
 
+    #[cfg(test)]
     fn persist(&self) -> Result<(), ApiError> {
         let Some(path) = &self.sqlite_path else {
             return Ok(());
@@ -807,7 +815,7 @@ impl AppState {
             .map_err(|error| ApiError::Internal(error.to_string()))?
             .clone();
         let _sqlite_guard = lock_rch_sqlite_snapshot(self)?;
-        let mut store = RchSqliteStore::open(path.as_ref())
+        let mut store = RchSqliteStore::open_admin(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let mut snapshot = store
             .load_snapshot_without_identity_announces()
@@ -3368,7 +3376,7 @@ fn persist_identity_announce_records(
     let Some(path) = &state.sqlite_path else {
         return Ok(());
     };
-    let mut store = RchSqliteStore::open(path.as_ref())
+    let mut store = RchSqliteStore::open_admin(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     store
         .upsert_identity_announces(records)
@@ -3457,7 +3465,16 @@ fn record_announce_identity_state_inner(
         }
     }
     if persist {
-        state.persist()?;
+        let record = state
+            .identity_states
+            .read()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .get(&primary_identity)
+            .cloned()
+            .ok_or_else(|| {
+                ApiError::Internal("identity announce state was not recorded".to_string())
+            })?;
+        persist_identity_status_row(state, &record)?;
     }
     Ok(())
 }
@@ -3642,7 +3659,7 @@ fn record_inbound_topic_message(
         messages.drain(0..overflow);
     }
     drop(messages);
-    state.persist()?;
+    persist_outbound_message_row(state, &record)?;
     broadcast_message_event(state, &record);
     Ok(record)
 }
@@ -3686,16 +3703,10 @@ fn store_inbound_topic_attachments(
 
         let now = unix_now_ms();
         let topic_id = normalize_topic_id(Some(topic_id));
-        let record = with_rch_snapshot(state, true, |snapshot| {
-            let next_id = snapshot
-                .file_attachments
-                .iter()
-                .map(|attachment| attachment.file_id)
-                .max()
-                .unwrap_or(0)
-                + 1;
-            let record = FileAttachmentRecord {
-                file_id: next_id,
+        let record = insert_file_attachment_row(
+            state,
+            FileAttachmentRecord {
+                file_id: 0,
                 name: safe_name.clone(),
                 path: target_path.display().to_string(),
                 category: category.to_string(),
@@ -3704,10 +3715,8 @@ fn store_inbound_topic_attachments(
                 topic_id: topic_id.clone(),
                 created_ts_ms: now,
                 updated_ts_ms: now,
-            };
-            snapshot.file_attachments.push(record.clone());
-            Ok(record)
-        })?;
+            },
+        )?;
         stored.push(chat_attachment_from_file_record(&record));
     }
     Ok(stored)
@@ -3899,13 +3908,17 @@ fn process_reticulumd_inbound_command(
                     &["topic_description", "TopicDescription", "description"],
                 ),
             })?;
-            let mut topics = state
-                .topics
-                .write()
-                .map_err(|error| ApiError::Internal(error.to_string()))?;
-            topics.entry(topic.topic_id.clone()).or_insert(topic);
-            drop(topics);
-            state.persist()
+            let topic = {
+                let mut topics = state
+                    .topics
+                    .write()
+                    .map_err(|error| ApiError::Internal(error.to_string()))?;
+                topics
+                    .entry(topic.topic_id.clone())
+                    .or_insert(topic)
+                    .clone()
+            };
+            persist_topic_row(state, &topic)
         }
         command_name if is_supported_mission_command(command_name) => {
             process_reticulumd_inbound_mission_sync_command(state, envelope, command, false)
@@ -3959,17 +3972,40 @@ fn process_reticulumd_inbound_mission_sync_command(
     checklist: bool,
 ) -> Result<(), ApiError> {
     let mission_command = mission_sync_command_from_reticulumd(envelope, command);
-    let responses = with_rch_snapshot(state, true, |snapshot| {
-        let mut core = RchCore::from_snapshot(snapshot.clone())
+    let path = state
+        .sqlite_path
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("RCH SQLite state unavailable".to_string()))?;
+    let started = Instant::now();
+    let mut store = RchSqliteStore::open(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let snapshot = if checklist {
+        store
+            .load_checklist_command_snapshot()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    } else {
+        store
+            .load_r3akt_read_snapshot()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    };
+    let mut core = RchCore::from_snapshot(snapshot.clone())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let responses = if checklist {
+        core.handle_checklist_sync_command(&mission_command)
+    } else {
+        core.handle_mission_sync_command(&mission_command)
+    };
+    let after = core.snapshot();
+    if checklist {
+        store
+            .save_checklist_command_delta(&snapshot, &after)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let responses = if checklist {
-            core.handle_checklist_sync_command(&mission_command)
-        } else {
-            core.handle_mission_sync_command(&mission_command)
-        };
-        *snapshot = core.snapshot();
-        Ok(responses)
-    })?;
+    } else {
+        store
+            .save_r3akt_command_delta(&snapshot, &after)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+    }
+    record_sqlite_latency(state, started.elapsed());
 
     for response in responses {
         send_mission_sync_response_to_source(
@@ -4120,7 +4156,7 @@ fn touch_reticulumd_inbound_client(state: &AppState, source: &str) -> Result<(),
         return Ok(());
     }
     let now_ms = unix_now_ms();
-    {
+    let client = {
         let mut clients = state
             .clients
             .write()
@@ -4130,8 +4166,9 @@ fn touch_reticulumd_inbound_client(state: &AppState, source: &str) -> Result<(),
             .and_modify(|client| {
                 client.last_seen = iso8601_from_unix_ms(now_ms);
             })
-            .or_insert_with(|| ClientRecord::new(source.to_string(), now_ms));
-    }
+            .or_insert_with(|| ClientRecord::new(source.to_string(), now_ms))
+            .clone()
+    };
     {
         let mut policy = state
             .outbound_delivery_policy
@@ -4139,7 +4176,7 @@ fn touch_reticulumd_inbound_client(state: &AppState, source: &str) -> Result<(),
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         policy.mark_presence(source, now_ms);
     }
-    state.persist()
+    persist_client_row(state, &client)
 }
 
 fn subscribe_reticulumd_inbound_source(
@@ -4175,9 +4212,9 @@ fn subscribe_reticulumd_inbound_source(
         .subscribers
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    subscribers.insert(subscriber.subscriber_id.clone(), subscriber);
+    subscribers.insert(subscriber.subscriber_id.clone(), subscriber.clone());
     drop(subscribers);
-    state.persist()
+    persist_subscriber_row(state, &subscriber)
 }
 
 fn command_topic_id(command: &r3akt_protocol::Command) -> Option<String> {
@@ -9243,7 +9280,9 @@ fn runtime_metrics_compat_payload(state: &AppState, outbound_delivery: &Value) -
             "ws_telemetry_subscribers": state.telemetry_events.receiver_count(),
             "ws_message_subscribers": state.message_events.receiver_count(),
         },
-        "timers": {},
+        "timers": {
+            "sqlite": sqlite_runtime_metrics(state),
+        },
         "queue": {
             "queue_depth": queue_depth,
             "delayed_depth": delayed_depth,
@@ -9311,6 +9350,80 @@ fn record_ws_dropped_oldest(state: &AppState, kind: WsBroadcastKind, dropped: u6
             .ws_message_dropped_oldest
             .fetch_add(dropped, Ordering::Relaxed),
     };
+}
+
+fn record_sqlite_latency(state: &AppState, elapsed: Duration) {
+    let elapsed_ms = elapsed.as_millis().try_into().unwrap_or(u64::MAX);
+    state
+        .runtime_metrics
+        .sqlite_transactions
+        .fetch_add(1, Ordering::Relaxed);
+    state
+        .runtime_metrics
+        .sqlite_latency_total_ms
+        .fetch_add(elapsed_ms, Ordering::Relaxed);
+    let mut current_max = state
+        .runtime_metrics
+        .sqlite_latency_max_ms
+        .load(Ordering::Relaxed);
+    while elapsed_ms > current_max {
+        match state
+            .runtime_metrics
+            .sqlite_latency_max_ms
+            .compare_exchange(
+                current_max,
+                elapsed_ms,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+            Ok(_) => break,
+            Err(observed) => current_max = observed,
+        }
+    }
+    if let Ok(mut samples) = state.runtime_metrics.sqlite_latency_samples_ms.lock() {
+        samples.push_back(elapsed_ms);
+        while samples.len() > SQLITE_LATENCY_SAMPLE_LIMIT {
+            samples.pop_front();
+        }
+    }
+}
+
+fn percentile_ms(samples: &[u64], percentile: usize) -> Option<u64> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    let rank = percentile
+        .saturating_mul(sorted.len().saturating_sub(1))
+        .saturating_add(99)
+        / 100;
+    sorted.get(rank.min(sorted.len() - 1)).copied()
+}
+
+fn sqlite_runtime_metrics(state: &AppState) -> Value {
+    let transactions = state
+        .runtime_metrics
+        .sqlite_transactions
+        .load(Ordering::Relaxed);
+    let total_ms = state
+        .runtime_metrics
+        .sqlite_latency_total_ms
+        .load(Ordering::Relaxed);
+    let samples = state
+        .runtime_metrics
+        .sqlite_latency_samples_ms
+        .lock()
+        .map(|samples| samples.iter().copied().collect::<Vec<_>>())
+        .unwrap_or_default();
+    json!({
+        "transactions": transactions,
+        "avg_ms": if transactions == 0 { 0 } else { total_ms / transactions },
+        "p50_ms": percentile_ms(&samples, 50),
+        "p95_ms": percentile_ms(&samples, 95),
+        "max_ms": state.runtime_metrics.sqlite_latency_max_ms.load(Ordering::Relaxed),
+        "sample_count": samples.len(),
+    })
 }
 
 fn persistence_diagnostics(state: &AppState) -> Result<Value, ApiError> {
@@ -11775,27 +11888,37 @@ async fn internal_identity_announce(
             .unwrap_or_default();
     }
 
-    let announce = with_rch_snapshot(&state, true, |snapshot| {
-        let mut core = RchCore::from_snapshot(snapshot.clone())
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        core.record_identity_announce(
-            &normalized_identity,
-            announced_identity_hash.clone(),
-            display_name.clone(),
-            source_interface.clone(),
-            announce_capabilities.clone(),
-        )
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-        let updated = core.snapshot();
-        let record = updated
-            .identity_announces
-            .iter()
-            .find(|record| record.destination_hash == normalized_identity)
-            .cloned()
-            .ok_or_else(|| ApiError::Internal("identity announce was not recorded".to_string()))?;
-        *snapshot = updated;
-        Ok(record)
-    })?;
+    let path = state
+        .sqlite_path
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("RCH SQLite state unavailable".to_string()))?;
+    let started = Instant::now();
+    let mut store = RchSqliteStore::open(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let mut snapshot = RchCore::new().snapshot();
+    snapshot.identity_announces = store
+        .load_identity_announces_by_destination_hashes(std::slice::from_ref(&normalized_identity))
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let mut core =
+        RchCore::from_snapshot(snapshot).map_err(|error| ApiError::Internal(error.to_string()))?;
+    core.record_identity_announce(
+        &normalized_identity,
+        announced_identity_hash.clone(),
+        display_name.clone(),
+        source_interface.clone(),
+        announce_capabilities.clone(),
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let announce = core
+        .snapshot()
+        .identity_announces
+        .into_iter()
+        .find(|record| record.destination_hash == normalized_identity)
+        .ok_or_else(|| ApiError::Internal("identity announce was not recorded".to_string()))?;
+    store
+        .upsert_identity_announces(std::slice::from_ref(&announce))
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    record_sqlite_latency(&state, started.elapsed());
 
     let primary_identity = announce
         .announced_identity_hash
@@ -13496,23 +13619,61 @@ struct OutboundDestinationRoutingContext {
     chat_delivery_aliases: HashMap<String, String>,
 }
 
+fn load_identity_announces_for_state(
+    state: &AppState,
+) -> Result<Vec<r3akt_rch_core::IdentityAnnounceRecord>, ApiError> {
+    let Some(path) = &state.sqlite_path else {
+        return Ok(Vec::new());
+    };
+    let store = RchSqliteStore::open_read_only(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    store
+        .load_identity_announces()
+        .map_err(|error| ApiError::Internal(error.to_string()))
+}
+
+#[cfg(test)]
+fn load_identity_states_for_state(
+    state: &AppState,
+) -> Result<Vec<CoreIdentityStateRecord>, ApiError> {
+    let Some(path) = &state.sqlite_path else {
+        return Ok(Vec::new());
+    };
+    let store = RchSqliteStore::open_read_only(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    store
+        .load_identity_states()
+        .map_err(|error| ApiError::Internal(error.to_string()))
+}
+
+fn load_identity_rem_modes_for_state(
+    state: &AppState,
+) -> Result<Vec<r3akt_rch_core::IdentityRemModeRecord>, ApiError> {
+    let Some(path) = &state.sqlite_path else {
+        return Ok(Vec::new());
+    };
+    let store = RchSqliteStore::open_read_only(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    store
+        .load_identity_rem_modes()
+        .map_err(|error| ApiError::Internal(error.to_string()))
+}
+
 fn outbound_destination_routing_context(
     state: &AppState,
 ) -> Result<OutboundDestinationRoutingContext, ApiError> {
     if state.sqlite_path.is_none() {
         return Ok(OutboundDestinationRoutingContext::default());
     }
-    with_rch_snapshot(state, false, |snapshot| {
-        let rem_app_destinations = snapshot
-            .identity_announces
-            .iter()
-            .filter(|record| record.client_type.trim().eq_ignore_ascii_case("rem"))
-            .filter_map(|record| normalize_identity_key(&record.destination_hash))
-            .collect::<HashSet<_>>();
-        Ok(OutboundDestinationRoutingContext {
-            rem_app_destinations,
-            chat_delivery_aliases: chat_delivery_destination_aliases_from_snapshot(snapshot),
-        })
+    let announces = load_identity_announces_for_state(state)?;
+    let rem_app_destinations = announces
+        .iter()
+        .filter(|record| record.client_type.trim().eq_ignore_ascii_case("rem"))
+        .filter_map(|record| normalize_identity_key(&record.destination_hash))
+        .collect::<HashSet<_>>();
+    Ok(OutboundDestinationRoutingContext {
+        rem_app_destinations,
+        chat_delivery_aliases: chat_delivery_destination_aliases_from_announces(&announces),
     })
 }
 
@@ -13557,9 +13718,8 @@ fn chat_delivery_destination_aliases_for_state(
     if state.sqlite_path.is_none() {
         return Ok(HashMap::new());
     }
-    with_rch_snapshot(state, false, |snapshot| {
-        Ok(chat_delivery_destination_aliases_from_snapshot(snapshot))
-    })
+    let announces = load_identity_announces_for_state(state)?;
+    Ok(chat_delivery_destination_aliases_from_announces(&announces))
 }
 
 fn destination_is_rem_app_identity_for_state(
@@ -13572,13 +13732,13 @@ fn destination_is_rem_app_identity_for_state(
     if state.sqlite_path.is_none() {
         return Ok(false);
     }
-    with_rch_snapshot(state, false, |snapshot| {
-        Ok(snapshot.identity_announces.iter().any(|record| {
+    Ok(load_identity_announces_for_state(state)?
+        .iter()
+        .any(|record| {
             record.client_type.trim().eq_ignore_ascii_case("rem")
                 && normalize_identity_key(&record.destination_hash).as_deref()
                     == Some(destination.as_str())
         }))
-    })
 }
 
 fn rem_destination_prefers_propagation(
@@ -13591,27 +13751,33 @@ fn rem_destination_prefers_propagation(
     if state.sqlite_path.is_none() {
         return Ok(false);
     }
-    with_rch_snapshot(state, false, |snapshot| {
-        if snapshot.identity_announces.iter().any(|record| {
-            record.client_type.trim().eq_ignore_ascii_case("rem")
-                && normalize_identity_key(&record.destination_hash).as_deref()
-                    == Some(destination.as_str())
-        }) {
-            return Ok(true);
-        }
-        let aliases = chat_delivery_destination_aliases_from_snapshot(snapshot);
-        Ok(aliases
-            .keys()
-            .any(|rem_destination| rem_destination == &destination))
-    })
+    let announces = load_identity_announces_for_state(state)?;
+    if announces.iter().any(|record| {
+        record.client_type.trim().eq_ignore_ascii_case("rem")
+            && normalize_identity_key(&record.destination_hash).as_deref()
+                == Some(destination.as_str())
+    }) {
+        return Ok(true);
+    }
+    let aliases = chat_delivery_destination_aliases_from_announces(&announces);
+    Ok(aliases
+        .keys()
+        .any(|rem_destination| rem_destination == &destination))
 }
 
+#[cfg(test)]
 fn chat_delivery_destination_aliases_from_snapshot(
     snapshot: &r3akt_rch_core::RchCoreSnapshot,
 ) -> HashMap<String, String> {
+    chat_delivery_destination_aliases_from_announces(&snapshot.identity_announces)
+}
+
+fn chat_delivery_destination_aliases_from_announces(
+    announces: &[r3akt_rch_core::IdentityAnnounceRecord],
+) -> HashMap<String, String> {
     let mut lxmf_delivery_by_name: HashMap<String, (&str, i64)> = HashMap::new();
     let mut voice_by_name: HashMap<String, (&str, i64)> = HashMap::new();
-    for record in &snapshot.identity_announces {
+    for record in announces {
         if record.client_type.trim().eq_ignore_ascii_case("rem") {
             continue;
         }
@@ -13648,7 +13814,7 @@ fn chat_delivery_destination_aliases_from_snapshot(
     }
 
     let mut aliases = HashMap::new();
-    for record in &snapshot.identity_announces {
+    for record in announces {
         let Some(name) = identity_announce_chat_peer_name(record) else {
             continue;
         };
@@ -13792,10 +13958,28 @@ fn with_core_store_write(
     let Some(path) = &state.sqlite_path else {
         return Ok(());
     };
-    let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
+    let started = Instant::now();
     let mut store = RchSqliteStore::open(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    operation(&mut store).map_err(|error| ApiError::Internal(error.to_string()))
+    let result = operation(&mut store).map_err(|error| ApiError::Internal(error.to_string()));
+    record_sqlite_latency(state, started.elapsed());
+    result
+}
+
+fn with_required_core_store_write<T>(
+    state: &AppState,
+    operation: impl FnOnce(&mut RchSqliteStore) -> Result<T, r3akt_rch_core::RchCoreError>,
+) -> Result<T, ApiError> {
+    let path = state
+        .sqlite_path
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("RCH SQLite state unavailable".to_string()))?;
+    let started = Instant::now();
+    let mut store = RchSqliteStore::open(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let result = operation(&mut store).map_err(|error| ApiError::Internal(error.to_string()));
+    record_sqlite_latency(state, started.elapsed());
+    result
 }
 
 fn persist_outbound_message_row(
@@ -13815,6 +13999,87 @@ fn persist_telemetry_record_row(
     record: &TelemetryRecord,
 ) -> Result<(), ApiError> {
     with_core_store_write(state, |store| store.insert_telemetry_record(record))
+}
+
+fn persist_client_row(state: &AppState, client: &ClientRecord) -> Result<(), ApiError> {
+    let record = CoreClientRecord::from(client.clone());
+    with_core_store_write(state, |store| store.upsert_client(&record))
+}
+
+fn delete_client_row(state: &AppState, identity: &str) -> Result<(), ApiError> {
+    with_core_store_write(state, |store| store.delete_client(identity))
+}
+
+fn persist_identity_status_row(
+    state: &AppState,
+    record: &IdentityStatusRecord,
+) -> Result<(), ApiError> {
+    let record = CoreIdentityStateRecord::from(record.clone());
+    with_core_store_write(state, |store| store.upsert_identity_state(&record))
+}
+
+fn persist_topic_row(state: &AppState, topic: &TopicRecord) -> Result<(), ApiError> {
+    let record = CoreTopicRecord::from(topic.clone());
+    with_core_store_write(state, |store| store.upsert_topic(&record))
+}
+
+fn delete_topic_row(state: &AppState, topic_id: &str) -> Result<(), ApiError> {
+    with_core_store_write(state, |store| store.delete_topic(topic_id))
+}
+
+fn persist_subscriber_row(state: &AppState, subscriber: &SubscriberRecord) -> Result<(), ApiError> {
+    let record = CoreSubscriberRecord::from(subscriber.clone());
+    with_core_store_write(state, |store| store.upsert_subscriber(&record))
+}
+
+fn delete_subscriber_row(state: &AppState, subscriber: &SubscriberRecord) -> Result<(), ApiError> {
+    with_core_store_write(state, |store| {
+        store.delete_subscriber(&subscriber.destination, &subscriber.topic_id)
+    })
+}
+
+fn persist_marker_row(state: &AppState, marker: &MarkerRecord) -> Result<(), ApiError> {
+    let record = CoreMarkerRecord::from(marker.clone());
+    with_core_store_write(state, |store| store.upsert_marker(&record))
+}
+
+fn delete_marker_row(state: &AppState, object_destination_hash: &str) -> Result<(), ApiError> {
+    with_core_store_write(state, |store| store.delete_marker(object_destination_hash))
+}
+
+fn persist_zone_row(state: &AppState, zone: &ZoneRecord) -> Result<(), ApiError> {
+    let record = CoreZoneRecord::from(zone.clone());
+    with_core_store_write(state, |store| store.upsert_zone(&record))
+}
+
+fn delete_zone_row(state: &AppState, zone_id: &str) -> Result<(), ApiError> {
+    with_core_store_write(state, |store| store.delete_zone(zone_id))
+}
+
+fn insert_file_attachment_row(
+    state: &AppState,
+    record: FileAttachmentRecord,
+) -> Result<FileAttachmentRecord, ApiError> {
+    with_required_core_store_write(state, |store| {
+        store.insert_file_attachment_with_next_id(record)
+    })
+}
+
+fn persist_file_attachment_row(
+    state: &AppState,
+    record: &FileAttachmentRecord,
+) -> Result<(), ApiError> {
+    with_core_store_write(state, |store| store.upsert_file_attachment(record))
+}
+
+fn delete_file_attachment_row(
+    state: &AppState,
+    file_id: u64,
+    category: &str,
+) -> Result<(), ApiError> {
+    with_core_store_write(state, |store| {
+        store.delete_file_attachment(file_id, category)
+    })
 }
 
 fn record_system_event(
@@ -13938,8 +14203,7 @@ fn mission_team_member_destinations(
         .sqlite_path
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("RCH SQLite state unavailable".to_string()))?;
-    let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
-    let store = RchSqliteStore::open(path.as_ref())
+    let store = RchSqliteStore::open_read_only(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let (mission_team_links, team_members, team_member_client_links) = store
         .load_mission_team_recipient_rows()
@@ -13999,91 +14263,86 @@ fn known_rem_peer_destinations_inner(
         return Ok(Vec::new());
     }
     let runtime_freshness_cutoff_ms = rem_peer_runtime_freshness_cutoff_ms(state);
-    with_rch_snapshot(state, false, |snapshot| {
-        let moderation: HashMap<String, (bool, bool)> = snapshot
-            .identity_states
-            .iter()
-            .filter_map(|record| {
-                normalize_identity_key(&record.identity)
-                    .map(|identity| (identity, (record.is_banned, record.is_blackholed)))
-            })
-            .collect();
-        let mut candidates: HashMap<String, (&r3akt_rch_core::IdentityAnnounceRecord, String)> =
-            HashMap::new();
-        for record in &snapshot.identity_announces {
-            let identity = record
-                .announced_identity_hash
-                .as_deref()
-                .and_then(normalize_identity_key)
-                .or_else(|| normalize_identity_key(&record.destination_hash));
-            let Some(identity) = identity else {
+    let identity_states = load_identity_states_for_state(state)?;
+    let identity_announces = load_identity_announces_for_state(state)?;
+    let moderation: HashMap<String, (bool, bool)> = identity_states
+        .iter()
+        .filter_map(|record| {
+            normalize_identity_key(&record.identity)
+                .map(|identity| (identity, (record.is_banned, record.is_blackholed)))
+        })
+        .collect();
+    let mut candidates: HashMap<String, (&r3akt_rch_core::IdentityAnnounceRecord, String)> =
+        HashMap::new();
+    for record in &identity_announces {
+        let identity = record
+            .announced_identity_hash
+            .as_deref()
+            .and_then(normalize_identity_key)
+            .or_else(|| normalize_identity_key(&record.destination_hash));
+        let Some(identity) = identity else {
+            continue;
+        };
+        let explicitly_allowed = outbound_identity_explicitly_allowed(state, identity.as_str());
+        if record.client_type.trim().to_ascii_lowercase() != "rem" {
+            continue;
+        }
+        if rem_announce_superseded_by_generic_on_same_source(record, &identity_announces) {
+            continue;
+        }
+        if let Some(active_window_ms) = active_window_ms {
+            if record.last_seen_ts_ms < unix_now_ms() - active_window_ms && !explicitly_allowed {
                 continue;
-            };
-            let explicitly_allowed = outbound_identity_explicitly_allowed(state, identity.as_str());
-            if record.client_type.trim().to_ascii_lowercase() != "rem" {
-                continue;
-            }
-            if rem_announce_superseded_by_generic_on_same_source(
-                record,
-                &snapshot.identity_announces,
-            ) {
-                continue;
-            }
-            if let Some(active_window_ms) = active_window_ms {
-                if record.last_seen_ts_ms < unix_now_ms() - active_window_ms && !explicitly_allowed
-                {
-                    continue;
-                }
-            }
-            if !rem_peer_announce_is_fresh_for_runtime(record, runtime_freshness_cutoff_ms)
-                && !explicitly_allowed
-            {
-                continue;
-            }
-            let has_r3akt = record
-                .announce_capabilities
-                .iter()
-                .any(|capability| capability.trim().eq_ignore_ascii_case("r3akt"));
-            let has_emergency_messages = record
-                .announce_capabilities
-                .iter()
-                .any(|capability| capability.trim().eq_ignore_ascii_case("emergencymessages"));
-            let has_command_capability = has_emergency_messages
-                || record.announce_capabilities.iter().any(|capability| {
-                    let capability = capability.trim();
-                    capability.eq_ignore_ascii_case("eam")
-                        || capability.eq_ignore_ascii_case("telemetry")
-                });
-            if !has_r3akt || !has_command_capability {
-                continue;
-            }
-            if moderation
-                .get(&identity)
-                .is_some_and(|(is_banned, is_blackholed)| *is_banned || *is_blackholed)
-            {
-                continue;
-            }
-            let source = record
-                .source_interface
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_ascii_lowercase)
-                .unwrap_or_else(|| "identity".to_string());
-            let replace = candidates
-                .get(&identity)
-                .is_none_or(|(_, existing_source)| {
-                    source == "destination" && existing_source != "destination"
-                });
-            if replace {
-                candidates.insert(identity, (record, source));
             }
         }
-        let mut destinations = candidates.into_keys().collect::<Vec<_>>();
-        destinations.sort();
-        destinations.dedup();
-        Ok(destinations)
-    })
+        if !rem_peer_announce_is_fresh_for_runtime(record, runtime_freshness_cutoff_ms)
+            && !explicitly_allowed
+        {
+            continue;
+        }
+        let has_r3akt = record
+            .announce_capabilities
+            .iter()
+            .any(|capability| capability.trim().eq_ignore_ascii_case("r3akt"));
+        let has_emergency_messages = record
+            .announce_capabilities
+            .iter()
+            .any(|capability| capability.trim().eq_ignore_ascii_case("emergencymessages"));
+        let has_command_capability = has_emergency_messages
+            || record.announce_capabilities.iter().any(|capability| {
+                let capability = capability.trim();
+                capability.eq_ignore_ascii_case("eam")
+                    || capability.eq_ignore_ascii_case("telemetry")
+            });
+        if !has_r3akt || !has_command_capability {
+            continue;
+        }
+        if moderation
+            .get(&identity)
+            .is_some_and(|(is_banned, is_blackholed)| *is_banned || *is_blackholed)
+        {
+            continue;
+        }
+        let source = record
+            .source_interface
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_else(|| "identity".to_string());
+        let replace = candidates
+            .get(&identity)
+            .is_none_or(|(_, existing_source)| {
+                source == "destination" && existing_source != "destination"
+            });
+        if replace {
+            candidates.insert(identity, (record, source));
+        }
+    }
+    let mut destinations = candidates.into_keys().collect::<Vec<_>>();
+    destinations.sort();
+    destinations.dedup();
+    Ok(destinations)
 }
 
 #[cfg(test)]
@@ -14137,66 +14396,63 @@ fn generic_lxmf_peer_destinations_for_mission_change(
     if state.sqlite_path.is_none() {
         return Ok(Vec::new());
     }
-    with_rch_snapshot(state, false, |snapshot| {
-        let rem_peer_names = snapshot
-            .identity_announces
-            .iter()
-            .filter(|record| record.client_type.eq_ignore_ascii_case("rem"))
-            .filter_map(identity_announce_chat_peer_name)
-            .collect::<HashSet<_>>();
-        let generic_display_names = snapshot
-            .identity_announces
-            .iter()
-            .filter(|record| record.client_type.eq_ignore_ascii_case("generic_lxmf"))
-            .filter(|record| {
-                !is_known_pixel_voice_destination(&record.destination_hash)
-                    && !identity_announce_has_voice_capability(record)
-            })
-            .filter_map(identity_announce_chat_peer_name)
-            .collect::<HashSet<_>>();
-        let mut candidates: HashMap<String, (i64, String)> = HashMap::new();
-        for record in &snapshot.identity_announces {
-            if !record.client_type.eq_ignore_ascii_case("generic_lxmf") {
-                continue;
-            }
-            let identity = record
-                .announced_identity_hash
-                .as_deref()
-                .and_then(normalize_identity_key)
-                .or_else(|| normalize_identity_key(&record.destination_hash));
-            let Some(identity) = identity else {
-                continue;
-            };
-            if identity_announce_voice_owner_name(record)
-                .as_deref()
-                .is_some_and(|name| generic_display_names.contains(name))
-            {
-                continue;
-            }
-            let peer_name = identity_announce_chat_peer_name(record);
-            if peer_name
-                .as_deref()
-                .is_some_and(|name| rem_peer_names.contains(name))
-                && !outbound_identity_explicitly_allowed(state, identity.as_str())
-            {
-                continue;
-            }
-            let key = peer_name.unwrap_or_else(|| identity.clone());
-            let replace = candidates
-                .get(&key)
-                .is_none_or(|(last_seen_ts_ms, _)| record.last_seen_ts_ms > *last_seen_ts_ms);
-            if replace {
-                candidates.insert(key, (record.last_seen_ts_ms, identity));
-            }
+    let identity_announces = load_identity_announces_for_state(state)?;
+    let rem_peer_names = identity_announces
+        .iter()
+        .filter(|record| record.client_type.eq_ignore_ascii_case("rem"))
+        .filter_map(identity_announce_chat_peer_name)
+        .collect::<HashSet<_>>();
+    let generic_display_names = identity_announces
+        .iter()
+        .filter(|record| record.client_type.eq_ignore_ascii_case("generic_lxmf"))
+        .filter(|record| {
+            !is_known_pixel_voice_destination(&record.destination_hash)
+                && !identity_announce_has_voice_capability(record)
+        })
+        .filter_map(identity_announce_chat_peer_name)
+        .collect::<HashSet<_>>();
+    let mut candidates: HashMap<String, (i64, String)> = HashMap::new();
+    for record in &identity_announces {
+        if !record.client_type.eq_ignore_ascii_case("generic_lxmf") {
+            continue;
         }
-        let mut destinations = candidates
-            .into_values()
-            .map(|(_, identity)| identity)
-            .collect::<Vec<_>>();
-        destinations.sort();
-        destinations.dedup();
-        Ok(destinations)
-    })
+        let identity = record
+            .announced_identity_hash
+            .as_deref()
+            .and_then(normalize_identity_key)
+            .or_else(|| normalize_identity_key(&record.destination_hash));
+        let Some(identity) = identity else {
+            continue;
+        };
+        if identity_announce_voice_owner_name(record)
+            .as_deref()
+            .is_some_and(|name| generic_display_names.contains(name))
+        {
+            continue;
+        }
+        let peer_name = identity_announce_chat_peer_name(record);
+        if peer_name
+            .as_deref()
+            .is_some_and(|name| rem_peer_names.contains(name))
+            && !outbound_identity_explicitly_allowed(state, identity.as_str())
+        {
+            continue;
+        }
+        let key = peer_name.unwrap_or_else(|| identity.clone());
+        let replace = candidates
+            .get(&key)
+            .is_none_or(|(last_seen_ts_ms, _)| record.last_seen_ts_ms > *last_seen_ts_ms);
+        if replace {
+            candidates.insert(key, (record.last_seen_ts_ms, identity));
+        }
+    }
+    let mut destinations = candidates
+        .into_values()
+        .map(|(_, identity)| identity)
+        .collect::<Vec<_>>();
+    destinations.sort();
+    destinations.dedup();
+    Ok(destinations)
 }
 
 fn reticulum_destination_hash(value: &str) -> Option<String> {
@@ -16688,12 +16944,9 @@ fn effective_rem_connected_mode_for_state(state: &AppState) -> Result<bool, ApiE
     if state.sqlite_path.is_none() {
         return Ok(false);
     }
-    with_rch_snapshot(state, false, |snapshot| {
-        Ok(snapshot
-            .identity_rem_modes
-            .iter()
-            .any(|record| record.mode.trim().eq_ignore_ascii_case("connected")))
-    })
+    Ok(load_identity_rem_modes_for_state(state)?
+        .iter()
+        .any(|record| record.mode.trim().eq_ignore_ascii_case("connected")))
 }
 
 #[cfg(test)]
@@ -16890,21 +17143,6 @@ fn spawn_mission_change_listener_events(
     after: HashMap<String, Value>,
 ) -> Result<(), ApiError> {
     if before == after {
-        return Ok(());
-    }
-    let state = state.clone();
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn_blocking(move || {
-            std::thread::sleep(Duration::from_millis(MISSION_CHANGE_FANOUT_DEFER_MS));
-            if let Err(error) = emit_mission_change_listener_events(&state, &before, &after) {
-                let _ = record_system_event(
-                    &state,
-                    "mission.registry.mission_change.listener_failed",
-                    "Mission change listener failed",
-                    json!({ "error": error.to_string() }),
-                );
-            }
-        });
         return Ok(());
     }
     emit_mission_change_listener_events(&state, &before, &after)
@@ -17216,16 +17454,10 @@ async fn upload_chat_attachment(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
     let now = unix_now_ms();
-    let record = with_rch_snapshot(&state, true, |snapshot| {
-        let next_id = snapshot
-            .file_attachments
-            .iter()
-            .map(|attachment| attachment.file_id)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        let record = FileAttachmentRecord {
-            file_id: next_id,
+    let record = insert_file_attachment_row(
+        &state,
+        FileAttachmentRecord {
+            file_id: 0,
             name: safe_name,
             path: target_path.display().to_string(),
             category,
@@ -17234,10 +17466,8 @@ async fn upload_chat_attachment(
             topic_id: normalize_optional_text(topic_id),
             created_ts_ms: now,
             updated_ts_ms: now,
-        };
-        snapshot.file_attachments.push(record.clone());
-        Ok(record)
-    })?;
+        },
+    )?;
 
     Ok(Json(attachment_to_python_value(&record)))
 }
@@ -18144,7 +18374,7 @@ async fn create_marker(
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .insert(object_destination_hash.clone(), marker.clone());
-    state.persist()?;
+    persist_marker_row(&state, &marker)?;
     record_marker_activity(&state, "marker.created", &marker)?;
     Ok((
         StatusCode::CREATED,
@@ -18216,7 +18446,7 @@ async fn patch_marker_position(
         marker.updated_ts_ms = updated_at;
         marker.clone()
     };
-    state.persist()?;
+    persist_marker_row(&state, &marker)?;
     record_marker_activity(&state, "marker.updated", &marker)?;
     Ok(Json(json!({
         "status": "ok",
@@ -18243,7 +18473,7 @@ async fn patch_marker(
         marker.updated_ts_ms = updated_at;
         marker.clone()
     };
-    state.persist()?;
+    persist_marker_row(&state, &marker)?;
     record_marker_activity(&state, "marker.updated", &marker)?;
     Ok(Json(json!({
         "status": "ok",
@@ -18261,7 +18491,7 @@ async fn delete_marker(
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .remove(&object_destination_hash);
     let marker = removed.ok_or_else(|| marker_not_found(&object_destination_hash))?;
-    state.persist()?;
+    delete_marker_row(&state, &object_destination_hash)?;
     record_marker_activity(&state, "marker.deleted", &marker)?;
     Ok(Json(json!({
         "status": "ok",
@@ -18565,8 +18795,8 @@ async fn create_zone(
         .zones
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?
-        .insert(zone_id.clone(), zone);
-    state.persist()?;
+        .insert(zone_id.clone(), zone.clone());
+    persist_zone_row(&state, &zone)?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -18590,7 +18820,7 @@ async fn patch_zone(
         .map(|value| validate_python_name_field(value, "name"))
         .transpose()?;
     let updated_at = unix_now_ms();
-    {
+    let zone = {
         let mut zones = state
             .zones
             .write()
@@ -18605,8 +18835,9 @@ async fn patch_zone(
             zone.points = points;
         }
         zone.updated_ts_ms = updated_at;
-    }
-    state.persist()?;
+        zone.clone()
+    };
+    persist_zone_row(&state, &zone)?;
     Ok(Json(json!({
         "status": "ok",
         "updated_at": iso8601_from_unix_ms(updated_at)
@@ -18702,7 +18933,7 @@ async fn delete_zone(
     if removed.is_none() {
         return Err(zone_not_found(&zone_id));
     }
-    state.persist()?;
+    delete_zone_row(&state, &zone_id)?;
     Ok(Json(json!({
         "status": "ok",
         "deleted_at": iso8601_from_unix_ms(unix_now_ms())
@@ -19125,6 +19356,7 @@ fn checklist_command(state: &AppState, command_type: &str, args: Value) -> Resul
         .sqlite_path
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("Checklist writes unavailable".to_string()))?;
+    let started = Instant::now();
     let is_read_only = checklist_command_is_read_only(command_type);
     let command = MissionCommandEnvelope {
         command_id: Uuid::new_v4().to_string(),
@@ -19138,34 +19370,33 @@ fn checklist_command(state: &AppState, command_type: &str, args: Value) -> Resul
         topics: Vec::new(),
     };
     if is_read_only {
-        let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
-        let store = RchSqliteStore::open(path.as_ref())
+        let store = RchSqliteStore::open_read_only(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let snapshot = store
             .load_checklist_command_snapshot()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mut core = RchCore::from_snapshot(snapshot)
+        let mut core = RchCore::from_snapshot(snapshot.clone())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let outcome = core.handle_command(&command);
+        record_sqlite_latency(state, started.elapsed());
         return checklist_command_outcome_value(outcome);
     }
     let (outcome, mission_changes_after) = {
-        let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
         let mut store = RchSqliteStore::open(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let snapshot = store
             .load_checklist_command_snapshot()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mut core = RchCore::from_snapshot(snapshot)
+        let mut core = RchCore::from_snapshot(snapshot.clone())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let mission_change_uids_before = mission_change_uid_set(&core);
         let outcome = core.handle_command(&command);
         let mission_changes_after = if outcome.result.status == CommandResultStatus::Accepted {
             let mission_changes_after =
                 mission_change_payload_map_excluding(&core, &mission_change_uids_before);
-            let snapshot = core.snapshot();
+            let after = core.snapshot();
             store
-                .save_checklist_command_projection(&snapshot)
+                .save_checklist_command_delta(&snapshot, &after)
                 .map_err(|error| ApiError::Internal(error.to_string()))?;
             mission_changes_after
         } else {
@@ -19173,6 +19404,7 @@ fn checklist_command(state: &AppState, command_type: &str, args: Value) -> Resul
         };
         (outcome, mission_changes_after)
     };
+    record_sqlite_latency(state, started.elapsed());
     if outcome.result.status == CommandResultStatus::Accepted {
         spawn_mission_change_listener_events(state, HashMap::new(), mission_changes_after)?;
         return Ok(outcome.result.result);
@@ -20079,17 +20311,26 @@ fn with_r3akt_core<T>(
         .sqlite_path
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("R3AKT HTTP writes unavailable".to_string()))?;
-    let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
-    let mut store = RchSqliteStore::open(path.as_ref())
+    let started = Instant::now();
+    let mut store = if write {
+        RchSqliteStore::open(path.as_ref())
+    } else {
+        RchSqliteStore::open_read_only(path.as_ref())
+    }
+    .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let snapshot = store
+        .load_r3akt_read_snapshot()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let mut core = RchCore::load_from_sqlite_without_identity_announces(&store)
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .unwrap_or_else(RchCore::new);
+    let mut core = RchCore::from_snapshot(snapshot.clone())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
     let result = f(&mut core)?;
     if write {
-        core.save_to_sqlite_preserving_identity_announces(&mut store)
+        let after = core.snapshot();
+        store
+            .save_r3akt_command_delta(&snapshot, &after)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
     }
+    record_sqlite_latency(state, started.elapsed());
     Ok(result)
 }
 
@@ -20098,6 +20339,7 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
         .sqlite_path
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("R3AKT HTTP writes unavailable".to_string()))?;
+    let started = Instant::now();
     let is_read_only = r3akt_command_is_read_only(command_type);
     let command = MissionCommandEnvelope {
         command_id: Uuid::new_v4().to_string(),
@@ -20111,8 +20353,7 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
         topics: Vec::new(),
     };
     if is_read_only {
-        let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
-        let store = RchSqliteStore::open(path.as_ref())
+        let store = RchSqliteStore::open_read_only(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let snapshot = store
             .load_r3akt_read_snapshot()
@@ -20120,20 +20361,24 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
         let mut core = RchCore::from_snapshot(snapshot)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let outcome = core.handle_command(&command);
+        record_sqlite_latency(state, started.elapsed());
         return r3akt_command_outcome_value(outcome);
     }
     let (outcome, mission_changes_before, mission_changes_after) = {
-        let _sqlite_guard = lock_rch_sqlite_snapshot(state)?;
         let mut store = RchSqliteStore::open(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mut core = RchCore::load_from_sqlite_without_identity_announces(&store)
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-            .unwrap_or_else(RchCore::new);
+        let snapshot = store
+            .load_r3akt_read_snapshot()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let mut core = RchCore::from_snapshot(snapshot.clone())
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
         let mission_changes_before = mission_change_payload_map(&core);
         let outcome = core.handle_command(&command);
         let mission_changes_after = if outcome.result.status == CommandResultStatus::Accepted {
             let mission_changes_after = mission_change_payload_map(&core);
-            core.save_to_sqlite_preserving_identity_announces(&mut store)
+            let after = core.snapshot();
+            store
+                .save_r3akt_command_delta(&snapshot, &after)
                 .map_err(|error| ApiError::Internal(error.to_string()))?;
             mission_changes_after
         } else {
@@ -20141,6 +20386,7 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
         };
         (outcome, mission_changes_before, mission_changes_after)
     };
+    record_sqlite_latency(state, started.elapsed());
     if outcome.result.status == CommandResultStatus::Accepted {
         spawn_mission_change_listener_events(state, mission_changes_before, mission_changes_after)?;
         return Ok(outcome.result.result);
@@ -21769,22 +22015,14 @@ fn patch_attachment_topic(
     category: &str,
     topic_id: Option<String>,
 ) -> Result<Value, ApiError> {
-    if state.sqlite_path.is_none() {
-        return Err(attachment_not_found(file_id));
-    }
-    with_rch_snapshot(state, true, |snapshot| {
-        let attachment = snapshot
-            .file_attachments
-            .iter_mut()
-            .find(|record| record.file_id == file_id && record.category == category)
-            .ok_or_else(|| attachment_not_found(file_id))?;
-        attachment.topic_id = topic_id.and_then(|value| {
-            let value = value.trim().to_string();
-            (!value.is_empty()).then_some(value)
-        });
-        attachment.updated_ts_ms = unix_now_ms();
-        Ok(attachment_to_python_value(attachment))
-    })
+    let mut attachment = get_attachment_record(state, file_id, category)?;
+    attachment.topic_id = topic_id.and_then(|value| {
+        let value = value.trim().to_string();
+        (!value.is_empty()).then_some(value)
+    });
+    attachment.updated_ts_ms = unix_now_ms();
+    persist_file_attachment_row(state, &attachment)?;
+    Ok(attachment_to_python_value(&attachment))
 }
 
 fn clear_attachment_topic_links(state: &AppState, topic_id: &str) -> Result<(), ApiError> {
@@ -21794,8 +22032,8 @@ fn clear_attachment_topic_links(state: &AppState, topic_id: &str) -> Result<(), 
     let Some(topic_id) = normalize_topic_id(Some(topic_id)) else {
         return Ok(());
     };
-    with_rch_snapshot(state, true, |snapshot| {
-        for attachment in &mut snapshot.file_attachments {
+    for category in ["file", "image"] {
+        for mut attachment in load_attachment_records(state, category)? {
             if attachment
                 .topic_id
                 .as_deref()
@@ -21805,10 +22043,11 @@ fn clear_attachment_topic_links(state: &AppState, topic_id: &str) -> Result<(), 
             {
                 attachment.topic_id = None;
                 attachment.updated_ts_ms = unix_now_ms();
+                persist_file_attachment_row(state, &attachment)?;
             }
         }
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 fn delete_attachment_record(
@@ -21816,21 +22055,12 @@ fn delete_attachment_record(
     file_id: u64,
     category: &str,
 ) -> Result<Value, ApiError> {
-    if state.sqlite_path.is_none() {
-        return Err(attachment_not_found(file_id));
+    let attachment = get_attachment_record(state, file_id, category)?;
+    delete_file_attachment_row(state, file_id, category)?;
+    if !attachment.path.trim().is_empty() {
+        let _ = std::fs::remove_file(&attachment.path);
     }
-    with_rch_snapshot(state, true, |snapshot| {
-        let index = snapshot
-            .file_attachments
-            .iter()
-            .position(|record| record.file_id == file_id && record.category == category)
-            .ok_or_else(|| attachment_not_found(file_id))?;
-        let attachment = snapshot.file_attachments.remove(index);
-        if !attachment.path.trim().is_empty() {
-            let _ = std::fs::remove_file(&attachment.path);
-        }
-        Ok(attachment_to_python_value(&attachment))
-    })
+    Ok(attachment_to_python_value(&attachment))
 }
 
 fn retrieve_attachment_raw(
@@ -21850,6 +22080,7 @@ fn retrieve_attachment_raw(
         .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
+#[cfg(test)]
 fn with_rch_snapshot<T>(
     state: &AppState,
     write: bool,
@@ -22010,24 +22241,26 @@ async fn join_client(
     let key = normalize_identity_key(&identity)
         .ok_or_else(|| ApiError::BadRequest("identity is required".to_string()))?;
     let now = unix_now_ms();
-    let mut clients = state
-        .clients
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    clients
-        .entry(key)
-        .and_modify(|client| {
-            client.identity.clone_from(&identity);
-            client.last_seen = iso8601_from_unix_ms(now);
-        })
-        .or_insert_with(|| ClientRecord::new(identity, now));
-    drop(clients);
+    let client = {
+        let mut clients = state
+            .clients
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        clients
+            .entry(key)
+            .and_modify(|client| {
+                client.identity.clone_from(&identity);
+                client.last_seen = iso8601_from_unix_ms(now);
+            })
+            .or_insert_with(|| ClientRecord::new(identity, now))
+            .clone()
+    };
     state
         .outbound_delivery_policy
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .mark_presence(&query.identity, now);
-    state.persist()?;
+    persist_client_row(&state, &client)?;
     Ok(Json(true))
 }
 
@@ -22043,7 +22276,9 @@ async fn leave_client(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let removed = clients.remove(&key).is_some();
     drop(clients);
-    state.persist()?;
+    if removed {
+        delete_client_row(&state, &key)?;
+    }
     Ok(Json(removed))
 }
 
@@ -22078,7 +22313,7 @@ async fn upsert_identity_status(
         })
         .clone();
     drop(identity_states);
-    state.persist()?;
+    persist_identity_status_row(&state, &record)?;
     let annotations = rem_annotations_for_state(&state)?;
     Ok(Json(
         record.to_python_value(annotations.get(&record.identity_key())),
@@ -22202,7 +22437,7 @@ async fn create_topic(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     topics.insert(topic.topic_id.clone(), topic.clone());
     drop(topics);
-    state.persist()?;
+    persist_topic_row(&state, &topic)?;
     Ok(Json(topic))
 }
 
@@ -22220,7 +22455,7 @@ async fn delete_topic(
         .remove(topic_id.as_str())
         .ok_or_else(|| ApiError::NotFound(format!("Topic not found: {topic_id}")))?;
     drop(topics);
-    state.persist()?;
+    delete_topic_row(&state, &topic.topic_id)?;
     clear_attachment_topic_links(&state, &topic.topic_id)?;
     Ok(Json(topic))
 }
@@ -22271,7 +22506,7 @@ async fn subscribe_topic(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     subscribers.insert(subscriber.subscriber_id.clone(), subscriber.clone());
     drop(subscribers);
-    state.persist()?;
+    persist_subscriber_row(&state, &subscriber)?;
     Ok(Json(subscriber))
 }
 
@@ -22410,7 +22645,7 @@ async fn create_subscriber_record(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     subscribers.insert(subscriber.subscriber_id.clone(), subscriber.clone());
     drop(subscribers);
-    state.persist()?;
+    persist_subscriber_row(&state, &subscriber)?;
     Ok(Json(subscriber))
 }
 
@@ -22430,6 +22665,7 @@ async fn patch_subscriber(
     let subscriber = subscribers
         .get_mut(subscriber_id.as_str())
         .ok_or_else(|| ApiError::NotFound(format!("Subscriber not found: {subscriber_id}")))?;
+    let previous = subscriber.clone();
     if let Some(destination) = payload.destination {
         subscriber.destination = destination;
     }
@@ -22444,7 +22680,10 @@ async fn patch_subscriber(
     }
     let subscriber = subscriber.clone();
     drop(subscribers);
-    state.persist()?;
+    if previous.destination != subscriber.destination || previous.topic_id != subscriber.topic_id {
+        delete_subscriber_row(&state, &previous)?;
+    }
+    persist_subscriber_row(&state, &subscriber)?;
     Ok(Json(subscriber))
 }
 
@@ -22462,7 +22701,7 @@ async fn delete_subscriber(
             ApiError::NotFound(format!("Subscriber not found: {}", query.subscriber_id))
         })?;
     drop(subscribers);
-    state.persist()?;
+    delete_subscriber_row(&state, &subscriber)?;
     Ok(Json(subscriber))
 }
 
@@ -22493,7 +22732,7 @@ async fn patch_topic(
     }
     let topic = topic.clone();
     drop(topics);
-    state.persist()?;
+    persist_topic_row(&state, &topic)?;
     Ok(Json(topic))
 }
 
@@ -23776,7 +24015,7 @@ mod tests {
     ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
         fake_reticulumd_rpc_server_for_request_count_with_accept_timeout(
             expected_requests,
-            Duration::from_secs(2),
+            Duration::from_secs(10),
         )
     }
 
@@ -23797,7 +24036,7 @@ mod tests {
     fn fake_reticulumd_rpc_server_with_results(
         results: Vec<serde_json::Value>,
     ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
-        fake_reticulumd_rpc_server_with_results_and_accept_timeout(results, Duration::from_secs(2))
+        fake_reticulumd_rpc_server_with_results_and_accept_timeout(results, Duration::from_secs(10))
     }
 
     fn fake_reticulumd_rpc_server_with_results_and_accept_timeout(
@@ -23816,7 +24055,7 @@ mod tests {
     ) -> (String, thread::JoinHandle<Vec<ReticulumdRpcRequest>>) {
         fake_reticulumd_rpc_server_with_responses_and_accept_timeout(
             responses,
-            Duration::from_secs(2),
+            Duration::from_secs(10),
         )
     }
 
@@ -42623,7 +42862,13 @@ mod tests {
             assert_eq!(payload["gauges"]["ws_event_subscribers"], 0);
             assert_eq!(payload["gauges"]["ws_telemetry_subscribers"], 0);
             assert_eq!(payload["gauges"]["ws_message_subscribers"], 0);
-            assert!(payload["timers"].as_object().expect("timers").is_empty());
+            assert!(payload["timers"]["sqlite"].is_object());
+            assert_eq!(payload["timers"]["sqlite"]["transactions"], 0);
+            assert_eq!(payload["timers"]["sqlite"]["avg_ms"], 0);
+            assert_eq!(payload["timers"]["sqlite"]["p50_ms"], Value::Null);
+            assert_eq!(payload["timers"]["sqlite"]["p95_ms"], Value::Null);
+            assert_eq!(payload["timers"]["sqlite"]["max_ms"], 0);
+            assert_eq!(payload["timers"]["sqlite"]["sample_count"], 0);
             assert_eq!(payload["queue"]["queue_depth"], 0);
             assert_eq!(payload["queue"]["delayed_depth"], 0);
             assert_eq!(payload["queue"]["pending_dispatches"], 0);

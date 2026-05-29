@@ -13,7 +13,8 @@ use r3akt_profile_rch::{
     CommandResultEnvelope, CommandResultStatus, EventEnvelope, MissionCommandEnvelope,
 };
 use r3akt_protocol::{Destination, NodeId, Payload, ProtocolEnvelope, Topic, TopicMessage};
-use rusqlite::{Connection, OpenFlags, Transaction, params};
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{Connection, OpenFlags, Transaction, params, params_from_iter};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -370,7 +371,9 @@ const RCH_ROLE_BUNDLES: &[RchRoleBundleDefinition] = &[
 
 const RCH_SQLITE_MIGRATION_SQL: &str = include_str!("../migrations/0001_rch_core_snapshot.sql");
 const RCH_SQLITE_SCHEMA_VERSION: &str = "1";
-const RCH_SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
+const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
+const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
+const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Debug, Error)]
 pub enum RchCoreError {
@@ -1214,6 +1217,12 @@ type ChecklistSnapshotRows = (
     Vec<ChecklistFeedPublicationRecord>,
 );
 
+type MissionTeamRecipientRows = (
+    Vec<MissionTeamLinkRecord>,
+    Vec<TeamMemberRecord>,
+    Vec<TeamMemberClientLinkRecord>,
+);
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RchCommandOutcome {
     pub result: CommandResultEnvelope,
@@ -1492,25 +1501,50 @@ pub struct RchSqliteStore {
     connection: Connection,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RchSqliteConnectionProfile {
+    ReadOnly,
+    Write,
+    Admin,
+}
+
 impl RchSqliteStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, RchCoreError> {
-        Self::from_connection(Connection::open(path)?)
+        let connection = Connection::open(path)?;
+        Self::from_connection_with_profile(connection, RchSqliteConnectionProfile::Write)
+    }
+
+    pub fn open_admin(path: impl AsRef<Path>) -> Result<Self, RchCoreError> {
+        let connection = Connection::open(path)?;
+        Self::from_connection_with_profile(connection, RchSqliteConnectionProfile::Admin)
     }
 
     pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, RchCoreError> {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        configure_sqlite_connection(&connection)?;
+        configure_sqlite_connection(&connection, RchSqliteConnectionProfile::ReadOnly)?;
         Ok(Self { connection })
     }
 
     pub fn in_memory() -> Result<Self, RchCoreError> {
-        Self::from_connection(Connection::open_in_memory()?)
+        Self::from_connection_with_profile(
+            Connection::open_in_memory()?,
+            RchSqliteConnectionProfile::Admin,
+        )
     }
 
     pub fn from_connection(connection: Connection) -> Result<Self, RchCoreError> {
-        configure_sqlite_connection(&connection)?;
+        Self::from_connection_with_profile(connection, RchSqliteConnectionProfile::Admin)
+    }
+
+    fn from_connection_with_profile(
+        connection: Connection,
+        profile: RchSqliteConnectionProfile,
+    ) -> Result<Self, RchCoreError> {
+        configure_sqlite_connection(&connection, profile)?;
         let store = Self { connection };
-        store.migrate()?;
+        if profile != RchSqliteConnectionProfile::ReadOnly {
+            store.migrate()?;
+        }
         Ok(store)
     }
 
@@ -1558,8 +1592,16 @@ impl RchSqliteStore {
         }
         for assignment in &snapshot.assignments {
             transaction.execute(
-                "INSERT INTO rch_assignments (assignment_uid, payload) VALUES (?1, ?2)",
-                params![assignment.assignment_uid, encode_msgpack(assignment)?],
+                "INSERT INTO rch_assignments
+                    (assignment_uid, mission_uid, task_uid, team_member_rns_identity, payload)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    assignment.assignment_uid,
+                    assignment.mission_uid,
+                    assignment.task_uid,
+                    assignment.team_member_rns_identity,
+                    encode_msgpack(assignment)?
+                ],
             )?;
         }
         for link in &snapshot.assignment_asset_links {
@@ -1571,8 +1613,9 @@ impl RchSqliteStore {
         }
         for change in &snapshot.mission_changes {
             transaction.execute(
-                "INSERT OR REPLACE INTO rch_mission_changes (uid, payload) VALUES (?1, ?2)",
-                params![change.uid, encode_msgpack(change)?],
+                "INSERT OR REPLACE INTO rch_mission_changes (uid, mission_uid, payload)
+                 VALUES (?1, ?2, ?3)",
+                params![change.uid, change.mission_uid, encode_msgpack(change)?],
             )?;
         }
         for result in &snapshot.command_results {
@@ -1581,6 +1624,28 @@ impl RchSqliteStore {
                 params![result.command_id, encode_msgpack(result)?],
             )?;
         }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn save_checklist_command_delta(
+        &mut self,
+        before: &RchCoreSnapshot,
+        after: &RchCoreSnapshot,
+    ) -> Result<(), RchCoreError> {
+        let transaction = self.connection.transaction()?;
+        save_checklist_delta_tables(&transaction, before, after)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn save_r3akt_command_delta(
+        &mut self,
+        before: &RchCoreSnapshot,
+        after: &RchCoreSnapshot,
+    ) -> Result<(), RchCoreError> {
+        let transaction = self.connection.transaction()?;
+        save_registry_delta_tables(&transaction, before, after)?;
         transaction.commit()?;
         Ok(())
     }
@@ -1664,6 +1729,11 @@ impl RchSqliteStore {
         Ok(self
             .setting_value("schema_version")?
             .unwrap_or_else(|| RCH_SQLITE_SCHEMA_VERSION.to_string()))
+    }
+
+    pub fn optimize(&self) -> Result<(), RchCoreError> {
+        self.connection.execute_batch("PRAGMA optimize;")?;
+        Ok(())
     }
 
     pub fn upsert_identity_announces(
@@ -1877,6 +1947,59 @@ impl RchSqliteStore {
         Ok(Some(decode_msgpack(&payload)?))
     }
 
+    pub fn next_file_attachment_id(&self) -> Result<u64, RchCoreError> {
+        let max_id = self.connection.query_row(
+            "SELECT COALESCE(MAX(file_id), 0) FROM rch_file_attachments",
+            [],
+            |row| row.get::<_, u64>(0),
+        )?;
+        Ok(max_id.saturating_add(1))
+    }
+
+    pub fn upsert_file_attachment(
+        &mut self,
+        record: &FileAttachmentRecord,
+    ) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO rch_file_attachments (file_id, category, payload)
+             VALUES (?1, ?2, ?3)",
+            params![record.file_id, record.category, encode_msgpack(record)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_file_attachment_with_next_id(
+        &mut self,
+        mut record: FileAttachmentRecord,
+    ) -> Result<FileAttachmentRecord, RchCoreError> {
+        let transaction = self.connection.transaction()?;
+        let max_id = transaction.query_row(
+            "SELECT COALESCE(MAX(file_id), 0) FROM rch_file_attachments",
+            [],
+            |row| row.get::<_, u64>(0),
+        )?;
+        record.file_id = max_id.saturating_add(1);
+        transaction.execute(
+            "INSERT INTO rch_file_attachments (file_id, category, payload)
+             VALUES (?1, ?2, ?3)",
+            params![record.file_id, record.category, encode_msgpack(&record)?],
+        )?;
+        transaction.commit()?;
+        Ok(record)
+    }
+
+    pub fn delete_file_attachment(
+        &mut self,
+        file_id: u64,
+        category: &str,
+    ) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "DELETE FROM rch_file_attachments WHERE file_id = ?1 AND category = ?2",
+            params![file_id, category],
+        )?;
+        Ok(())
+    }
+
     pub fn upsert_identity_states(
         &mut self,
         records: &[IdentityStateRecord],
@@ -1893,6 +2016,101 @@ impl RchSqliteStore {
             )?;
         }
         transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn upsert_client(&mut self, record: &ClientRecord) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO rch_clients (identity, payload) VALUES (?1, ?2)",
+            params![record.identity, encode_msgpack(record)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_client(&mut self, identity: &str) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "DELETE FROM rch_clients WHERE identity = ?1",
+            params![identity],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_identity_state(
+        &mut self,
+        record: &IdentityStateRecord,
+    ) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO rch_identity_states (identity, payload) VALUES (?1, ?2)",
+            params![record.identity, encode_msgpack(record)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_topic(&mut self, record: &TopicRecord) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO rch_topics (topic_id, payload) VALUES (?1, ?2)",
+            params![record.topic_id, encode_msgpack(record)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_topic(&mut self, topic_id: &str) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "DELETE FROM rch_topics WHERE topic_id = ?1",
+            params![topic_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_subscriber(&mut self, record: &SubscriberRecord) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO rch_subscribers (node_id, topic_id, payload)
+             VALUES (?1, ?2, ?3)",
+            params![record.node_id, record.topic_id, encode_msgpack(record)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_subscriber(
+        &mut self,
+        subscriber_id: &str,
+        topic_id: &str,
+    ) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "DELETE FROM rch_subscribers WHERE node_id = ?1 AND topic_id = ?2",
+            params![subscriber_id, topic_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_marker(&mut self, record: &MarkerRecord) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO rch_markers (object_destination_hash, payload)
+             VALUES (?1, ?2)",
+            params![record.object_destination_hash, encode_msgpack(record)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_marker(&mut self, object_destination_hash: &str) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "DELETE FROM rch_markers WHERE object_destination_hash = ?1",
+            params![object_destination_hash],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_zone(&mut self, record: &ZoneRecord) -> Result<(), RchCoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO rch_zones (zone_id, payload) VALUES (?1, ?2)",
+            params![record.zone_id, encode_msgpack(record)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_zone(&mut self, zone_id: &str) -> Result<(), RchCoreError> {
+        self.connection
+            .execute("DELETE FROM rch_zones WHERE zone_id = ?1", params![zone_id])?;
         Ok(())
     }
 
@@ -1932,6 +2150,19 @@ impl RchSqliteStore {
         snapshot.checklist_tasks = checklist_tasks;
         snapshot.checklist_cells = checklist_cells;
         snapshot.checklist_feed_publications = checklist_feed_publications;
+        snapshot.missions = self
+            .load_payload_rows::<MissionRecord>("SELECT payload FROM rch_missions ORDER BY uid")?;
+        snapshot.teams =
+            self.load_payload_rows::<TeamRecord>("SELECT payload FROM rch_teams ORDER BY uid")?;
+        snapshot.mission_team_links = self.load_payload_rows::<MissionTeamLinkRecord>(
+            "SELECT payload FROM rch_mission_team_links ORDER BY mission_uid, team_uid",
+        )?;
+        snapshot.team_members = self.load_payload_rows::<TeamMemberRecord>(
+            "SELECT payload FROM rch_team_members ORDER BY uid",
+        )?;
+        snapshot.team_member_client_links = self.load_payload_rows::<TeamMemberClientLinkRecord>(
+            "SELECT payload FROM rch_team_member_client_links ORDER BY team_member_uid, client_identity",
+        )?;
         snapshot.mission_changes = self.load_payload_rows::<MissionChangeRecord>(
             "SELECT payload FROM rch_mission_changes ORDER BY uid",
         )?;
@@ -1949,14 +2180,7 @@ impl RchSqliteStore {
 
     pub fn load_mission_team_recipient_rows(
         &self,
-    ) -> Result<
-        (
-            Vec<MissionTeamLinkRecord>,
-            Vec<TeamMemberRecord>,
-            Vec<TeamMemberClientLinkRecord>,
-        ),
-        RchCoreError,
-    > {
+    ) -> Result<MissionTeamRecipientRows, RchCoreError> {
         Ok((
             self.load_payload_rows::<MissionTeamLinkRecord>(
                 "SELECT payload FROM rch_mission_team_links ORDER BY mission_uid, team_uid",
@@ -2484,6 +2708,8 @@ impl RchSqliteStore {
             | "rch_identity_capabilities"
             | "rch_mission_access_assignments"
             | "rch_subject_operation_rights"
+            | "rch_domain_events"
+            | "rch_outbound_jobs"
             | "rch_settings" => table,
             _ => {
                 return Err(RchCoreError::InvalidPayload(format!(
@@ -2512,6 +2738,13 @@ impl RchSqliteStore {
                 [],
             )?;
         }
+        if !sqlite_table_has_column(&self.connection, "rch_checklist_columns", "display_order")? {
+            self.connection.execute(
+                "ALTER TABLE rch_checklist_columns
+                 ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
         for (column, definition) in [
             ("delivery_state", "TEXT NOT NULL DEFAULT 'queued'"),
             ("dispatch_status", "TEXT NOT NULL DEFAULT 'queued'"),
@@ -2528,13 +2761,63 @@ impl RchSqliteStore {
                 )?;
             }
         }
+        if !sqlite_table_has_column(&self.connection, "rch_mission_changes", "mission_uid")? {
+            self.connection.execute(
+                "ALTER TABLE rch_mission_changes ADD COLUMN mission_uid TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+        for (column, definition) in [
+            ("mission_uid", "TEXT NOT NULL DEFAULT ''"),
+            ("task_uid", "TEXT NOT NULL DEFAULT ''"),
+            ("team_member_rns_identity", "TEXT NOT NULL DEFAULT ''"),
+        ] {
+            if !sqlite_table_has_column(&self.connection, "rch_assignments", column)? {
+                self.connection.execute(
+                    &format!("ALTER TABLE rch_assignments ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
         self.connection.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_rch_messages_queue_due
                 ON rch_messages (delivery_state, dispatch_status, next_attempt_at_ts_ms, priority, id);
              CREATE INDEX IF NOT EXISTS idx_rch_messages_batch
                 ON rch_messages (batch_id);
              CREATE INDEX IF NOT EXISTS idx_rch_messages_created
-                ON rch_messages (created_ts_ms);",
+                ON rch_messages (created_ts_ms);
+             CREATE INDEX IF NOT EXISTS idx_rch_messages_queue_due_partial
+                ON rch_messages (next_attempt_at_ts_ms, priority, id)
+                WHERE delivery_state = 'queued';
+             CREATE INDEX IF NOT EXISTS idx_rch_checklist_tasks_checklist
+                ON rch_checklist_tasks (checklist_uid, task_uid);
+             CREATE INDEX IF NOT EXISTS idx_rch_checklist_cells_task_column
+                ON rch_checklist_cells (task_uid, column_uid);
+             CREATE INDEX IF NOT EXISTS idx_rch_checklist_columns_checklist
+                ON rch_checklist_columns (checklist_uid, display_order, column_uid);
+             CREATE INDEX IF NOT EXISTS idx_rch_checklist_columns_template
+                ON rch_checklist_columns (template_uid, display_order, column_uid);
+             CREATE INDEX IF NOT EXISTS idx_rch_mission_changes_mission
+                ON rch_mission_changes (mission_uid, uid);
+             CREATE INDEX IF NOT EXISTS idx_rch_assignments_mission_task
+                ON rch_assignments (mission_uid, task_uid, team_member_rns_identity, assignment_uid);
+             CREATE INDEX IF NOT EXISTS idx_rch_telemetry_timestamp_peer
+                ON rch_telemetry_records (timestamp_s, peer_destination);
+             CREATE INDEX IF NOT EXISTS idx_rch_file_attachments_category
+                ON rch_file_attachments (category, file_id);
+             CREATE INDEX IF NOT EXISTS idx_rch_eam_active_team_member
+                ON rch_eam_snapshots (team_uid, team_member_uid, deleted_ts_ms);
+             CREATE INDEX IF NOT EXISTS idx_rch_domain_events_sequence
+                ON rch_domain_events (sequence);
+             CREATE INDEX IF NOT EXISTS idx_rch_domain_events_collection
+                ON rch_domain_events (collection, entity_id, sequence);
+             CREATE INDEX IF NOT EXISTS idx_rch_outbound_jobs_due
+                ON rch_outbound_jobs (delivery_state, dispatch_status, next_attempt_at_ts_ms, priority, created_ts_ms);
+             CREATE INDEX IF NOT EXISTS idx_rch_outbound_jobs_due_partial
+                ON rch_outbound_jobs (next_attempt_at_ts_ms, priority, created_ts_ms)
+                WHERE delivery_state = 'queued';
+             CREATE INDEX IF NOT EXISTS idx_rch_outbound_jobs_batch
+                ON rch_outbound_jobs (batch_id);",
         )?;
         Ok(())
     }
@@ -2586,8 +2869,31 @@ impl RchSqliteStore {
     }
 }
 
-fn configure_sqlite_connection(connection: &Connection) -> Result<(), RchCoreError> {
-    connection.busy_timeout(Duration::from_millis(RCH_SQLITE_BUSY_TIMEOUT_MS))?;
+fn configure_sqlite_connection(
+    connection: &Connection,
+    profile: RchSqliteConnectionProfile,
+) -> Result<(), RchCoreError> {
+    let busy_timeout_ms = match profile {
+        RchSqliteConnectionProfile::ReadOnly => RCH_SQLITE_READ_BUSY_TIMEOUT_MS,
+        RchSqliteConnectionProfile::Write => RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS,
+        RchSqliteConnectionProfile::Admin => RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS,
+    };
+    connection.busy_timeout(Duration::from_millis(busy_timeout_ms))?;
+    connection.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA temp_store = MEMORY;",
+    )?;
+    match profile {
+        RchSqliteConnectionProfile::ReadOnly => {
+            connection.execute_batch("PRAGMA query_only = ON;")?;
+        }
+        RchSqliteConnectionProfile::Write | RchSqliteConnectionProfile::Admin => {
+            connection.execute_batch(
+                "PRAGMA journal_mode = WAL;
+                 PRAGMA synchronous = NORMAL;",
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -9958,6 +10264,120 @@ fn sqlite_table_has_column(
     Ok(false)
 }
 
+fn sql_text(value: impl Into<String>) -> SqlValue {
+    SqlValue::Text(value.into())
+}
+
+fn sql_optional_text(value: Option<&str>) -> SqlValue {
+    value.map_or(SqlValue::Null, |value| SqlValue::Text(value.to_string()))
+}
+
+fn sql_integer(value: i64) -> SqlValue {
+    SqlValue::Integer(value)
+}
+
+fn sql_key_string(columns: &[(&'static str, SqlValue)]) -> String {
+    columns
+        .iter()
+        .map(|(_, value)| match value {
+            SqlValue::Null => "<null>".to_string(),
+            SqlValue::Integer(value) => value.to_string(),
+            SqlValue::Real(value) => value.to_string(),
+            SqlValue::Text(value) => value.clone(),
+            SqlValue::Blob(value) => bytes_to_lower_hex(value),
+        })
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
+}
+
+fn delete_payload_row(
+    transaction: &Transaction<'_>,
+    table: &str,
+    key_columns: Vec<(&'static str, SqlValue)>,
+) -> Result<(), RchCoreError> {
+    let where_clause = key_columns
+        .iter()
+        .enumerate()
+        .map(|(index, (column, _))| format!("{column} = ?{}", index + 1))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let values = key_columns
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    transaction.execute(
+        &format!("DELETE FROM {table} WHERE {where_clause}"),
+        params_from_iter(values),
+    )?;
+    Ok(())
+}
+
+fn upsert_payload_row<T>(
+    transaction: &Transaction<'_>,
+    table: &str,
+    indexed_columns: Vec<(&'static str, SqlValue)>,
+    payload: &T,
+) -> Result<(), RchCoreError>
+where
+    T: Serialize,
+{
+    let column_names = indexed_columns
+        .iter()
+        .map(|(column, _)| *column)
+        .chain(std::iter::once("payload"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let placeholders = (1..=indexed_columns.len() + 1)
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut values = indexed_columns
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    values.push(SqlValue::Blob(encode_msgpack(payload)?));
+    transaction.execute(
+        &format!("INSERT OR REPLACE INTO {table} ({column_names}) VALUES ({placeholders})"),
+        params_from_iter(values),
+    )?;
+    Ok(())
+}
+
+fn save_payload_delta<T, KeyFn, UpsertFn>(
+    transaction: &Transaction<'_>,
+    table: &str,
+    before: &[T],
+    after: &[T],
+    key_columns: KeyFn,
+    indexed_columns: UpsertFn,
+) -> Result<(), RchCoreError>
+where
+    T: Serialize,
+    KeyFn: Fn(&T) -> Vec<(&'static str, SqlValue)> + Copy,
+    UpsertFn: Fn(&T) -> Vec<(&'static str, SqlValue)> + Copy,
+{
+    let before_keys = before
+        .iter()
+        .map(|record| {
+            let columns = key_columns(record);
+            (sql_key_string(&columns), columns)
+        })
+        .collect::<HashMap<_, _>>();
+    let after_key_set = after
+        .iter()
+        .map(|record| sql_key_string(&key_columns(record)))
+        .collect::<HashSet<_>>();
+    for (key, columns) in before_keys {
+        if !after_key_set.contains(key.as_str()) {
+            delete_payload_row(transaction, table, columns)?;
+        }
+    }
+    for record in after {
+        upsert_payload_row(transaction, table, indexed_columns(record), record)?;
+    }
+    Ok(())
+}
+
 fn clear_snapshot_tables(
     transaction: &Transaction<'_>,
     options: SnapshotSaveOptions,
@@ -10111,6 +10531,486 @@ fn save_topic_snapshot_tables(
     Ok(())
 }
 
+fn save_registry_delta_tables(
+    transaction: &Transaction<'_>,
+    before: &RchCoreSnapshot,
+    after: &RchCoreSnapshot,
+) -> Result<(), RchCoreError> {
+    save_payload_delta(
+        transaction,
+        "rch_markers",
+        &before.markers,
+        &after.markers,
+        |record| {
+            vec![(
+                "object_destination_hash",
+                sql_text(&record.object_destination_hash),
+            )]
+        },
+        |record| {
+            vec![(
+                "object_destination_hash",
+                sql_text(&record.object_destination_hash),
+            )]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_zones",
+        &before.zones,
+        &after.zones,
+        |record| vec![("zone_id", sql_text(&record.zone_id))],
+        |record| vec![("zone_id", sql_text(&record.zone_id))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_missions",
+        &before.missions,
+        &after.missions,
+        |record| vec![("uid", sql_text(&record.uid))],
+        |record| vec![("uid", sql_text(&record.uid))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_mission_changes",
+        &before.mission_changes,
+        &after.mission_changes,
+        |record| vec![("uid", sql_text(&record.uid))],
+        |record| {
+            vec![
+                ("uid", sql_text(&record.uid)),
+                ("mission_uid", sql_text(&record.mission_uid)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_log_entries",
+        &before.log_entries,
+        &after.log_entries,
+        |record| vec![("entry_uid", sql_text(&record.entry_uid))],
+        |record| vec![("entry_uid", sql_text(&record.entry_uid))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_eam_snapshots",
+        &before.eam_snapshots,
+        &after.eam_snapshots,
+        |record| vec![("eam_uid", sql_text(&record.eam_uid))],
+        |record| {
+            vec![
+                ("eam_uid", sql_text(&record.eam_uid)),
+                ("callsign", sql_text(&record.callsign)),
+                ("team_member_uid", sql_text(&record.team_member_uid)),
+                ("team_uid", sql_text(&record.team_uid)),
+                (
+                    "deleted_ts_ms",
+                    record
+                        .deleted_ts_ms
+                        .map_or(SqlValue::Null, SqlValue::Integer),
+                ),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_teams",
+        &before.teams,
+        &after.teams,
+        |record| vec![("uid", sql_text(&record.uid))],
+        |record| vec![("uid", sql_text(&record.uid))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_mission_team_links",
+        &before.mission_team_links,
+        &after.mission_team_links,
+        |record| {
+            vec![
+                ("mission_uid", sql_text(&record.mission_uid)),
+                ("team_uid", sql_text(&record.team_uid)),
+            ]
+        },
+        |record| {
+            vec![
+                ("mission_uid", sql_text(&record.mission_uid)),
+                ("team_uid", sql_text(&record.team_uid)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_mission_zone_links",
+        &before.mission_zone_links,
+        &after.mission_zone_links,
+        |record| {
+            vec![
+                ("mission_uid", sql_text(&record.mission_uid)),
+                ("zone_id", sql_text(&record.zone_id)),
+            ]
+        },
+        |record| {
+            vec![
+                ("mission_uid", sql_text(&record.mission_uid)),
+                ("zone_id", sql_text(&record.zone_id)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_mission_marker_links",
+        &before.mission_marker_links,
+        &after.mission_marker_links,
+        |record| {
+            vec![
+                ("mission_uid", sql_text(&record.mission_uid)),
+                ("marker_id", sql_text(&record.marker_id)),
+            ]
+        },
+        |record| {
+            vec![
+                ("mission_uid", sql_text(&record.mission_uid)),
+                ("marker_id", sql_text(&record.marker_id)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_team_members",
+        &before.team_members,
+        &after.team_members,
+        |record| vec![("uid", sql_text(&record.uid))],
+        |record| vec![("uid", sql_text(&record.uid))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_team_member_client_links",
+        &before.team_member_client_links,
+        &after.team_member_client_links,
+        |record| {
+            vec![
+                ("team_member_uid", sql_text(&record.team_member_uid)),
+                ("client_identity", sql_text(&record.client_identity)),
+            ]
+        },
+        |record| {
+            vec![
+                ("team_member_uid", sql_text(&record.team_member_uid)),
+                ("client_identity", sql_text(&record.client_identity)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_assets",
+        &before.assets,
+        &after.assets,
+        |record| vec![("asset_uid", sql_text(&record.asset_uid))],
+        |record| vec![("asset_uid", sql_text(&record.asset_uid))],
+    )?;
+    save_skill_assignment_delta_tables(transaction, before, after)?;
+    save_authorization_delta_tables(transaction, before, after)?;
+    save_audit_event_delta_tables(transaction, before, after)?;
+    save_payload_delta(
+        transaction,
+        "rch_command_results",
+        &before.command_results,
+        &after.command_results,
+        |record| vec![("command_id", sql_text(&record.command_id))],
+        |record| vec![("command_id", sql_text(&record.command_id))],
+    )?;
+    Ok(())
+}
+
+fn save_audit_event_delta_tables(
+    transaction: &Transaction<'_>,
+    before: &RchCoreSnapshot,
+    after: &RchCoreSnapshot,
+) -> Result<(), RchCoreError> {
+    save_payload_delta(
+        transaction,
+        "rch_audit_events",
+        &before.audit_events,
+        &after.audit_events,
+        |record| vec![("event_id", sql_text(&record.event_id))],
+        |record| vec![("event_id", sql_text(&record.event_id))],
+    )
+}
+
+fn save_skill_assignment_delta_tables(
+    transaction: &Transaction<'_>,
+    before: &RchCoreSnapshot,
+    after: &RchCoreSnapshot,
+) -> Result<(), RchCoreError> {
+    save_payload_delta(
+        transaction,
+        "rch_skills",
+        &before.skills,
+        &after.skills,
+        |record| vec![("skill_uid", sql_text(&record.skill_uid))],
+        |record| vec![("skill_uid", sql_text(&record.skill_uid))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_team_member_skills",
+        &before.team_member_skills,
+        &after.team_member_skills,
+        |record| {
+            vec![
+                (
+                    "team_member_rns_identity",
+                    sql_text(&record.team_member_rns_identity),
+                ),
+                ("skill_uid", sql_text(&record.skill_uid)),
+            ]
+        },
+        |record| {
+            vec![
+                (
+                    "team_member_rns_identity",
+                    sql_text(&record.team_member_rns_identity),
+                ),
+                ("skill_uid", sql_text(&record.skill_uid)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_task_skill_requirements",
+        &before.task_skill_requirements,
+        &after.task_skill_requirements,
+        |record| {
+            vec![
+                ("task_uid", sql_text(&record.task_uid)),
+                ("skill_uid", sql_text(&record.skill_uid)),
+            ]
+        },
+        |record| {
+            vec![
+                ("task_uid", sql_text(&record.task_uid)),
+                ("skill_uid", sql_text(&record.skill_uid)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_assignments",
+        &before.assignments,
+        &after.assignments,
+        |record| vec![("assignment_uid", sql_text(&record.assignment_uid))],
+        |record| {
+            vec![
+                ("assignment_uid", sql_text(&record.assignment_uid)),
+                ("mission_uid", sql_text(&record.mission_uid)),
+                ("task_uid", sql_text(&record.task_uid)),
+                (
+                    "team_member_rns_identity",
+                    sql_text(&record.team_member_rns_identity),
+                ),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_assignment_asset_links",
+        &before.assignment_asset_links,
+        &after.assignment_asset_links,
+        |record| {
+            vec![
+                ("assignment_uid", sql_text(&record.assignment_uid)),
+                ("asset_uid", sql_text(&record.asset_uid)),
+            ]
+        },
+        |record| {
+            vec![
+                ("assignment_uid", sql_text(&record.assignment_uid)),
+                ("asset_uid", sql_text(&record.asset_uid)),
+            ]
+        },
+    )?;
+    Ok(())
+}
+
+fn save_authorization_delta_tables(
+    transaction: &Transaction<'_>,
+    before: &RchCoreSnapshot,
+    after: &RchCoreSnapshot,
+) -> Result<(), RchCoreError> {
+    save_payload_delta(
+        transaction,
+        "rch_identity_capabilities",
+        &before.identity_capabilities,
+        &after.identity_capabilities,
+        |record| {
+            vec![
+                ("identity", sql_text(&record.identity)),
+                ("capability", sql_text(&record.capability)),
+            ]
+        },
+        |record| {
+            vec![
+                ("identity", sql_text(&record.identity)),
+                ("capability", sql_text(&record.capability)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_mission_access_assignments",
+        &before.mission_access_assignments,
+        &after.mission_access_assignments,
+        |record| {
+            vec![
+                ("mission_uid", sql_text(&record.mission_uid)),
+                ("subject_type", sql_text(&record.subject_type)),
+                ("subject_id", sql_text(&record.subject_id)),
+            ]
+        },
+        |record| {
+            vec![
+                ("mission_uid", sql_text(&record.mission_uid)),
+                ("subject_type", sql_text(&record.subject_type)),
+                ("subject_id", sql_text(&record.subject_id)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_subject_operation_rights",
+        &before.subject_operation_rights,
+        &after.subject_operation_rights,
+        |record| {
+            vec![
+                ("subject_type", sql_text(&record.subject_type)),
+                ("subject_id", sql_text(&record.subject_id)),
+                ("operation", sql_text(&record.operation)),
+                ("scope_type", sql_text(&record.scope_type)),
+                ("scope_id", sql_text(&record.scope_id)),
+            ]
+        },
+        |record| {
+            vec![
+                ("subject_type", sql_text(&record.subject_type)),
+                ("subject_id", sql_text(&record.subject_id)),
+                ("operation", sql_text(&record.operation)),
+                ("scope_type", sql_text(&record.scope_type)),
+                ("scope_id", sql_text(&record.scope_id)),
+            ]
+        },
+    )?;
+    Ok(())
+}
+
+fn save_checklist_delta_tables(
+    transaction: &Transaction<'_>,
+    before: &RchCoreSnapshot,
+    after: &RchCoreSnapshot,
+) -> Result<(), RchCoreError> {
+    save_payload_delta(
+        transaction,
+        "rch_checklists",
+        &before.checklists,
+        &after.checklists,
+        |record| vec![("uid", sql_text(&record.uid))],
+        |record| vec![("uid", sql_text(&record.uid))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_checklist_templates",
+        &before.checklist_templates,
+        &after.checklist_templates,
+        |record| vec![("uid", sql_text(&record.uid))],
+        |record| vec![("uid", sql_text(&record.uid))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_checklist_columns",
+        &before.checklist_columns,
+        &after.checklist_columns,
+        |record| vec![("column_uid", sql_text(&record.column_uid))],
+        |record| {
+            vec![
+                ("column_uid", sql_text(&record.column_uid)),
+                (
+                    "checklist_uid",
+                    sql_optional_text(record.checklist_uid.as_deref()),
+                ),
+                (
+                    "template_uid",
+                    sql_optional_text(record.template_uid.as_deref()),
+                ),
+                ("display_order", sql_integer(record.display_order)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_checklist_tasks",
+        &before.checklist_tasks,
+        &after.checklist_tasks,
+        |record| vec![("task_uid", sql_text(&record.task_uid))],
+        |record| {
+            vec![
+                ("task_uid", sql_text(&record.task_uid)),
+                ("checklist_uid", sql_text(&record.checklist_uid)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_checklist_cells",
+        &before.checklist_cells,
+        &after.checklist_cells,
+        |record| vec![("cell_uid", sql_text(&record.cell_uid))],
+        |record| {
+            vec![
+                ("cell_uid", sql_text(&record.cell_uid)),
+                ("task_uid", sql_text(&record.task_uid)),
+                ("column_uid", sql_text(&record.column_uid)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_checklist_feed_publications",
+        &before.checklist_feed_publications,
+        &after.checklist_feed_publications,
+        |record| vec![("publication_uid", sql_text(&record.publication_uid))],
+        |record| {
+            vec![
+                ("publication_uid", sql_text(&record.publication_uid)),
+                ("checklist_uid", sql_text(&record.checklist_uid)),
+                ("mission_feed_uid", sql_text(&record.mission_feed_uid)),
+                ("published_ts_ms", sql_integer(record.published_ts_ms)),
+            ]
+        },
+    )?;
+    save_skill_assignment_delta_tables(transaction, before, after)?;
+    save_payload_delta(
+        transaction,
+        "rch_mission_changes",
+        &before.mission_changes,
+        &after.mission_changes,
+        |record| vec![("uid", sql_text(&record.uid))],
+        |record| {
+            vec![
+                ("uid", sql_text(&record.uid)),
+                ("mission_uid", sql_text(&record.mission_uid)),
+            ]
+        },
+    )?;
+    save_audit_event_delta_tables(transaction, before, after)?;
+    save_payload_delta(
+        transaction,
+        "rch_command_results",
+        &before.command_results,
+        &after.command_results,
+        |record| vec![("command_id", sql_text(&record.command_id))],
+        |record| vec![("command_id", sql_text(&record.command_id))],
+    )?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 fn save_registry_snapshot_tables(
     transaction: &Transaction<'_>,
@@ -10136,8 +11036,8 @@ fn save_registry_snapshot_tables(
     }
     for change in &snapshot.mission_changes {
         transaction.execute(
-            "INSERT INTO rch_mission_changes (uid, payload) VALUES (?1, ?2)",
-            params![change.uid, encode_msgpack(change)?],
+            "INSERT INTO rch_mission_changes (uid, mission_uid, payload) VALUES (?1, ?2, ?3)",
+            params![change.uid, change.mission_uid, encode_msgpack(change)?],
         )?;
     }
     for entry in &snapshot.log_entries {
@@ -10255,8 +11155,16 @@ fn save_skill_assignment_snapshot_tables(
     }
     for assignment in &snapshot.assignments {
         transaction.execute(
-            "INSERT INTO rch_assignments (assignment_uid, payload) VALUES (?1, ?2)",
-            params![assignment.assignment_uid, encode_msgpack(assignment)?],
+            "INSERT INTO rch_assignments
+                (assignment_uid, mission_uid, task_uid, team_member_rns_identity, payload)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                assignment.assignment_uid,
+                assignment.mission_uid,
+                assignment.task_uid,
+                assignment.team_member_rns_identity,
+                encode_msgpack(assignment)?
+            ],
         )?;
     }
     for link in &snapshot.assignment_asset_links {
@@ -10288,12 +11196,14 @@ fn save_checklist_snapshot_tables(
     }
     for column in &snapshot.checklist_columns {
         transaction.execute(
-            "INSERT INTO rch_checklist_columns (column_uid, checklist_uid, template_uid, payload)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO rch_checklist_columns
+                (column_uid, checklist_uid, template_uid, display_order, payload)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 column.column_uid,
                 column.checklist_uid,
                 column.template_uid,
+                column.display_order,
                 encode_msgpack(column)?
             ],
         )?;
@@ -15324,7 +16234,7 @@ mod tests {
 
         assert_eq!(
             busy_timeout_ms,
-            i64::try_from(RCH_SQLITE_BUSY_TIMEOUT_MS).expect("busy timeout fits in i64")
+            i64::try_from(RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS).expect("busy timeout fits in i64")
         );
     }
 
