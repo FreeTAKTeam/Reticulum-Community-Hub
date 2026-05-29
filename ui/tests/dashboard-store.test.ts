@@ -6,6 +6,7 @@ import { vi } from "vitest";
 import { createPinia } from "pinia";
 import { setActivePinia } from "pinia";
 import { useDashboardStore } from "../src/stores/dashboard";
+import { resolveEventFeedMessage } from "../src/utils/event-feed";
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -80,5 +81,93 @@ describe("dashboard store", () => {
     expect(store.status?.clients).toBe(9);
     expect(store.events).toHaveLength(0);
     expect(store.activeMissions).toBeNull();
+  });
+
+  it("keeps dashboard refresh working when dev server fallback returns non-array payloads", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/Status")) {
+        return Promise.resolve(
+          new Response("<!DOCTYPE html><html></html>", {
+            status: 200,
+            headers: { "Content-Type": "text/html" }
+          })
+        );
+      }
+      if (url.endsWith("/Events")) {
+        return Promise.resolve(
+          new Response("<!DOCTYPE html><html></html>", {
+            status: 200,
+            headers: { "Content-Type": "text/html" }
+          })
+        );
+      }
+      if (url.endsWith("/api/r3akt/missions") || url.endsWith("/api/r3akt/team-members")) {
+        return Promise.resolve(
+          new Response("<!DOCTYPE html><html></html>", {
+            status: 200,
+            headers: { "Content-Type": "text/html" }
+          })
+        );
+      }
+      return Promise.resolve(jsonResponse({ detail: "not found" }, 404));
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const store = useDashboardStore();
+    await store.refresh();
+
+    expect(store.events).toHaveLength(0);
+    expect(store.activeMissions).toBe(0);
+  });
+
+  it("uses client announce names when formatting event feed hashes", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/Status")) {
+        return Promise.resolve(jsonResponse({ clients: 1, topics: 0, subscribers: 0, telemetry: {} }));
+      }
+      if (url.endsWith("/Events")) {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              timestamp: "2026-05-29T10:00:00Z",
+              type: "message.delivery.retrying",
+              message: "Retrying message delivery to fb4c70e20cfac047b899ca2f3671b50a",
+              metadata: { Destination: "fb4c70e20cfac047b899ca2f3671b50a" }
+            }
+          ])
+        );
+      }
+      if (url.endsWith("/api/r3akt/missions") || url.endsWith("/api/r3akt/team-members")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url.endsWith("/Client")) {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              identity: "fb4c70e20cfac047b899ca2f3671b50a",
+              display_name: "R3AKT,EMergencyMessages,Telemetry;name=Pixelcorvo",
+              announce_capabilities: ["R3AKT", "EMergencyMessages", "Telemetry", "name=pixelcorvo"]
+            }
+          ])
+        );
+      }
+      if (url.endsWith("/Identities")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url.endsWith("/api/rem/peers")) {
+        return Promise.resolve(jsonResponse({ effective_connected_mode: false, items: [] }));
+      }
+      return Promise.resolve(jsonResponse({ detail: "not found" }, 404));
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const store = useDashboardStore();
+    await store.refresh();
+
+    expect(resolveEventFeedMessage(store.events[0], store.eventCallsignLookup)).toBe(
+      "Retrying message delivery to Pixelcorvo"
+    );
   });
 });

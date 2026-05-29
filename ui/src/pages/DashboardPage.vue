@@ -231,7 +231,7 @@
                 <template v-for="(event, index) in dashboard.events" :key="eventRowKey(event, index)">
                   <tr class="hud-events-row">
                     <td class="hud-events-cell hud-events-cell--message">
-                      <span class="hud-event-title">{{ event.message }}</span>
+                      <span class="hud-event-title">{{ eventFeedMessage(event) }}</span>
                     </td>
                     <td class="hud-events-cell hud-events-cell--meta">
                       <span class="hud-event-tag">{{ event.category }}</span>
@@ -309,6 +309,7 @@ import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
 import { formatNumber } from "../utils/format";
 import { formatTimestamp } from "../utils/format";
+import { resolveEventFeedMessage } from "../utils/event-feed";
 import ReticulumClock from "../components/ReticulumClock.vue";
 import type { EventEntry } from "../api/types";
 
@@ -610,6 +611,8 @@ const eventRowKey = (event: EventEntry, index: number) => {
   const createdAt = event.created_at ?? "no-time";
   return `${base}-${category}-${createdAt}-${index}`;
 };
+
+const eventFeedMessage = (event: EventEntry) => resolveEventFeedMessage(event, dashboard.eventCallsignLookup);
 
 const isEventExpanded = (key: string) => Boolean(expandedEvents.value[key]);
 
