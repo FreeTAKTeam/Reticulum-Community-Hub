@@ -1,17 +1,27 @@
 # RCH Rust Packaging
 
-The initial Rust alpha has one release package shape:
+The Rust packaging line now has two release package shapes:
 
-- Server package: deployable `r3akt-rch-server` binary, mandatory ZeroMQ
-  southbound configuration, service helper files, config templates, and
-  checksums.
+- Server package: deployable `r3akt-rch-server` binary, `r3akt-tak-service`
+  binary, mandatory ZeroMQ southbound configuration, shared UI bundle, service
+  helper files, config templates, and checksums.
+- Desktop packages: Tauri bundles from `apps/rch-desktop` with the Rust server
+  and TAK service sidecars. Current CI builds Windows x64 NSIS and Linux x64
+  AppImage artifacts.
 
 Python 2.9.x packaging remains on `rch-python` and keeps using the existing
 Electron wrapper.
 
-The TAK service, shared UI bundle, and Tauri desktop shell are not alpha
-release-blocking artifacts. They remain separate product workstreams and can be
-validated independently after the server package is cut.
+The server-only alpha gate remains `scripts/release-readiness.ps1
+-ServerOnlyAlpha`. Full release packaging is handled by
+`.github/workflows/rust-release.yml`, which mirrors the Python release workflow
+shape: manual workflow artifacts on `workflow_dispatch` and file attachment
+when a GitHub release is published.
+
+Pull request quality control is handled by
+`.github/workflows/rust-pr-quality.yml`. It runs Rust 1.85 formatting, clippy,
+locked workspace tests, release builds for the server and TAK service, and
+`cargo audit` before release packaging is considered.
 
 ## Python Store Migration
 
@@ -46,5 +56,5 @@ If no legacy store is found, it asks for the Python store directory or
 
 - Python maintenance: `v2.9.x` from `rch-python`.
 - Rust alpha previews: `v3.0.0-alpha.N` or `v3.0.0-preview.N` from
-  `rust-next`, server package only.
+  `rust-next`, with server package artifacts and optional desktop artifacts.
 - Rust stable: `v3.0.0` after all Rust server and desktop gates pass.

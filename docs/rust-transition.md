@@ -43,6 +43,12 @@ The live smoke test should start `r3akt-rch-server` with a temporary SQLite
 database and validate `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`,
 and at least one topic/chat/checklist/mission flow.
 
+GitHub PR quality control is handled by
+`.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.85, checks
+out the sibling `LXMF-rs` workspace beside RCH, and exposes separate required
+checks for formatting, clippy with `-D warnings`, locked workspace tests,
+release server/TAK-service builds, and `cargo audit`.
+
 The Python parity plus Rust capability gate is tracked in
 `docs/release-contract-matrix.json` and generated with
 `scripts/python-rust-parity.ps1`. The matrix separates Python-compatible
@@ -54,15 +60,16 @@ capabilities.
 
 ## Packaging
 
-- Initial alpha server packages are built from `r3akt-rch-server` and include
-  the server binary, mandatory ZeroMQ configuration samples, a Linux `systemd`
-  unit, Windows PowerShell helpers, and checksums.
-- Desktop packages are built later from `apps/rch-desktop` with Tauri. The app
-  loads the shared Vue UI and starts `r3akt-rch-server` as a managed sidecar on
-  `127.0.0.1:8000`; desktop packaging is not an initial alpha release gate.
-- Windows and Linux are the first-class Rust server packaging targets for the
-  alpha. UI bundles, Tauri installers, and standalone TAK service packages are
-  validated independently and are not alpha release-blocking artifacts.
+- Initial alpha server gates are built from `r3akt-rch-server` and still use
+  `scripts/release-readiness.ps1 -ServerOnlyAlpha`.
+- Full GitHub release packaging is handled by
+  `.github/workflows/rust-release.yml`. It builds Windows and Linux server
+  archives containing `r3akt-rch-server`, `r3akt-tak-service`, the shared UI
+  bundle, service helpers, templates, and checksums.
+- Desktop packages are built from `apps/rch-desktop` with Tauri. The app loads
+  the shared Vue UI and starts `r3akt-rch-server` as a managed sidecar on
+  `127.0.0.1:8000`; CI currently emits Windows x64 NSIS and Linux x64 AppImage
+  artifacts.
 - Python `2.9.x` keeps its existing Electron package on `rch-python`; Electron
   is not part of `rust-next`.
 
@@ -114,10 +121,12 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
   offline checklist creation/list.
-- Repeatable local three-node `reticulumd.exe` receipt/fanout validation:
-  `scripts/local-reticulum-live-gate.ps1` passed on 2026-05-11 and runs both
-  `r3akt-rch-server` live Reticulum receipt/fanout tests against temporary
-  local daemons.
+- Repeatable local three-node `reticulumd.exe` receipt/fanout/ZeroMQ event
+  validation: `scripts/local-reticulum-live-gate.ps1 -IncludeZmqEventPoll
+  -DiscoverySettleSeconds 10 -ReceiptPollAttempts 180` passed on 2026-05-30.
+  The refreshed gate runs both `r3akt-rch-server` live Reticulum receipt/fanout
+  tests through the outbound worker path, then validates `sdk_poll_events_v2`
+  over the LXMF-rs ZeroMQ RPC loop.
 - Controlled external RMAP Reticulum validation: the same script passed on
   2026-05-11 with `-ExternalConfigPath` pointing at the local RMAP testnet
   config, using three temporary controlled identities connected through public
@@ -165,8 +174,11 @@ WinError 10061, confirming that PyTAK and Rust select the same TCP endpoint for
 that configuration.
 
 Use `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` for the local
-server-only alpha release gate set. Add `-LiveTak` and `-LiveReticulum` only
-when the required TAK and Reticulum environment variables point at reachable
+server-only alpha release gate set. Use
+`.\scripts\local-reticulum-live-gate.ps1 -IncludeZmqEventPoll` for the
+repeatable local Reticulum direct receipt, fanout, and ZeroMQ event-poll gate.
+Add `-LiveTak` and `-LiveReticulum` only when the required TAK and Reticulum
+environment variables point at reachable
 infrastructure. `-LiveTak` is a
 send-and-receive gate and requires both `R3AKT_TAK_LIVE_COT_URL` and
 `R3AKT_TAK_LIVE_INBOUND_COT_URL`. For clear TCP TAK targets without

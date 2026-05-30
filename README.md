@@ -21,10 +21,10 @@ beside this repository as `LXMF-rs`.
 
 The shared Vue web UI is maintained on the `ui-shared` branch and is imported
 into `ui/` on this branch for Rust server and desktop work. Python 2.9.x
-continues on `rch-python` with its Electron wrapper. The initial Rust alpha is
-a server-package-only release built from `r3akt-rch-server`; UI packaging,
-Tauri desktop packaging, Electron, and the standalone TAK service are not alpha
-release-blocking artifacts.
+continues on `rch-python` with its Electron wrapper. The server-only alpha gate
+is built from `r3akt-rch-server`; the full Rust release workflow also assembles
+server archives with the UI bundle and `r3akt-tak-service`, plus Tauri desktop
+artifacts for Windows x64 NSIS and Linux x64 AppImage.
 
 Crates:
 
@@ -122,8 +122,10 @@ Crates:
   When configured with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and
   `--reticulumd-source`, outbound delivery uses the LXMF-rs ZeroMQ SDK
   pipeline. For the initial server package, ZeroMQ is mandatory for southbound
-  command dispatch; `reticulumd` HTTP RPC may still be configured for daemon
-  event/receipt polling until the LXMF-rs ZeroMQ event stream is stable.
+  command dispatch; `reticulumd` HTTP RPC may still be configured as the
+  conservative daemon event/receipt polling fallback. The opt-in
+  `R3AKT_ENABLE_ZMQ_EVENT_POLL=1` path now prefers the LXMF-rs ZeroMQ event
+  stream when both ZeroMQ endpoints are configured.
   Remaining backend service contracts should continue to be ported in small
   contract-tested slices.
 - `r3akt-tak-connector`: dedicated Rust TAK connector crate and service
@@ -179,10 +181,11 @@ LXMF field payloads, while retaining the older `reticulumd` RPC adapter as a
 test and migration fallback.
 
 Gap: the ZeroMQ SDK path has unit coverage for outbound payload mapping and
-inbound SDK event conversion. The default server package path requires ZeroMQ
-for outbound commands, but still allows HTTP RPC for daemon event/receipt
-polling. The experimental `R3AKT_ENABLE_ZMQ_EVENT_POLL=1` path needs broader
-live-daemon validation before HTTP RPC event polling can be removed.
+inbound SDK event conversion, plus local live-daemon validation for
+`sdk_poll_events_v2` over ZeroMQ. The default server package path requires
+ZeroMQ for outbound commands, but still allows HTTP RPC as the conservative
+daemon event/receipt polling fallback. Keep HTTP RPC available until external
+Reticulum and REM phone evidence also pass with ZeroMQ event polling enabled.
 
 ### Reticulum Mobile Emergency Management
 
@@ -731,9 +734,12 @@ Current local verification snapshot, refreshed on 2026-05-11:
   -SkipWorkspaceTests` passed, covering the committed alpha gate runner, Rust
   format check, the server release build, and a release HTTP smoke started with
   mandatory ZeroMQ SDK endpoints.
-- `.github/workflows/rust.yml` now runs the committed release gate runner with
-  `-ServerOnlyAlpha` so PR/push CI covers Rust format, clippy, workspace tests,
-  the server release build, and the ZeroMQ-configured release HTTP smoke.
+- `.github/workflows/rust-pr-quality.yml` runs PR quality-control checks for
+  Rust formatting, clippy with warnings denied, locked workspace tests, release
+  binary builds, and `cargo audit` against Rust 1.85.
+- `.github/workflows/rust.yml` runs the committed release gate runner with
+  `-ServerOnlyAlpha` so push and PR CI still cover the alpha verifier, the
+  server release build, and the ZeroMQ-configured release HTTP smoke.
 - A release-binary smoke test with a temporary SQLite database passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
@@ -759,9 +765,11 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - Local self-loopback `reticulumd.exe` checks passed for
   `r3akt-transport-rns` live send/receive, `r3akt-rch-bridge` live outbound
   send acceptance, and `r3akt-rch-server` managed daemon lifecycle.
-- Repeatable local three-node `reticulumd.exe` receipt/fanout validation is
-  available through `scripts/local-reticulum-live-gate.ps1`; the latest run on
-  2026-05-11 passed both `r3akt-rch-server` live Reticulum tests.
+- Repeatable local three-node `reticulumd.exe` receipt/fanout/ZeroMQ event
+  validation is available through `scripts/local-reticulum-live-gate.ps1`; the
+  latest run on 2026-05-30 passed direct receipt, two-recipient fanout, and
+  `sdk_poll_events_v2` over the LXMF-rs ZeroMQ RPC loop with
+  `-IncludeZmqEventPoll -DiscoverySettleSeconds 10 -ReceiptPollAttempts 180`.
 - Controlled external RMAP Reticulum validation passed on 2026-05-11 by running
   `scripts/local-reticulum-live-gate.ps1` with
   `-ExternalConfigPath C:\Users\broth\Documents\work\ATAK\src\LXMF-rs\target\local\reticulumd-rmap-testnet.toml`;
@@ -800,9 +808,10 @@ Current local verification snapshot, refreshed on 2026-05-11:
 
 The configured target TAK profile on `tcp://137.184.101.250:8087` passed
 keepalive, reconnect, and bidirectional inbound relay validation on 2026-05-11.
-The initial alpha decision is scoped to the server package. UI, TAK, desktop,
-local Reticulum, and controlled external RMAP evidence remain useful validation
-history, but only the server-package alpha gates are release-blocking for this
+The initial alpha decision is scoped to the server package. Full release
+packaging now builds UI, TAK, and desktop artifacts in CI, while local
+Reticulum and controlled external RMAP evidence remain useful validation
+history. Only the server-package alpha gates are release-blocking for this
 milestone.
 
 The local server-only alpha release gate runner is:
@@ -817,11 +826,18 @@ Use explicit live gates only after configuring reachable infrastructure:
 .\scripts\release-readiness.ps1 -LiveTak -LiveReticulum
 ```
 
-Run the repeatable local Reticulum receipt/fanout harness when sibling
+Build full GitHub release artifacts with `.github/workflows/rust-release.yml`.
+Manual runs upload workflow artifacts; published GitHub releases receive the
+server archives, checksums, and desktop bundles as release assets.
+
+Run the repeatable local Reticulum receipt/fanout/ZeroMQ event-poll harness when sibling
 `LXMF-rs\target\debug\reticulumd.exe` is available:
 
 ```powershell
-.\scripts\local-reticulum-live-gate.ps1
+.\scripts\local-reticulum-live-gate.ps1 `
+  -IncludeZmqEventPoll `
+  -DiscoverySettleSeconds 10 `
+  -ReceiptPollAttempts 180
 ```
 
 Run the same harness against a controlled external Reticulum/RMAP profile by
@@ -890,10 +906,13 @@ try {
 }
 ```
 
-Repeatable local Reticulum receipt and fanout validation:
+Repeatable local Reticulum receipt, fanout, and ZeroMQ event-poll validation:
 
 ```powershell
-.\scripts\local-reticulum-live-gate.ps1
+.\scripts\local-reticulum-live-gate.ps1 `
+  -IncludeZmqEventPoll `
+  -DiscoverySettleSeconds 10 `
+  -ReceiptPollAttempts 180
 ```
 
 Controlled external RMAP Reticulum receipt and fanout validation:

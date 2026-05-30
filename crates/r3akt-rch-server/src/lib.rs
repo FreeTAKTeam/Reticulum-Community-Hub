@@ -2471,8 +2471,13 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
                     .map(ToOwned::to_owned)
             })
             .flatten();
-        if endpoint.is_none() && (zmq_command_endpoint.is_none() || zmq_response_endpoint.is_none())
-        {
+        let event_poll_transport = select_reticulumd_event_poll_transport(
+            endpoint.as_deref(),
+            zmq_command_endpoint.as_deref(),
+            zmq_response_endpoint.as_deref(),
+            zmq_event_poll_enabled,
+        );
+        if event_poll_transport == ReticulumdEventPollTransport::None {
             return;
         }
         let Some(source) = state.reticulumd_source.as_deref().map(ToOwned::to_owned) else {
@@ -2504,7 +2509,9 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
             let worker_zmq_response_endpoint = zmq_response_endpoint.clone();
             let worker_source = source.clone();
             let worker_cursor = cursor.clone();
-            let check_cursor_stream_position = worker_endpoint.is_some()
+            let worker_event_poll_transport = event_poll_transport;
+            let check_cursor_stream_position = worker_event_poll_transport
+                == ReticulumdEventPollTransport::Rpc
                 && cursor.is_some()
                 && last_cursor_stream_check.is_none_or(|last_check| {
                     last_check.elapsed()
@@ -2514,8 +2521,11 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
                 last_cursor_stream_check = Some(std::time::Instant::now());
             }
             let mut event_poll_ok = false;
-            match tokio::task::spawn_blocking(move || {
-                if let Some(worker_endpoint) = worker_endpoint {
+            match tokio::task::spawn_blocking(move || match worker_event_poll_transport {
+                ReticulumdEventPollTransport::Rpc => {
+                    let Some(worker_endpoint) = worker_endpoint else {
+                        return Ok(ReticulumdEventWorkerReport { next_cursor: None });
+                    };
                     process_reticulumd_event_worker_tick_with_options(
                         &worker_state,
                         worker_endpoint.as_str(),
@@ -2523,9 +2533,13 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
                         worker_cursor,
                         check_cursor_stream_position,
                     )
-                } else if let (Some(command_endpoint), Some(response_endpoint)) =
-                    (worker_zmq_command_endpoint, worker_zmq_response_endpoint)
-                {
+                }
+                ReticulumdEventPollTransport::Zmq => {
+                    let (Some(command_endpoint), Some(response_endpoint)) =
+                        (worker_zmq_command_endpoint, worker_zmq_response_endpoint)
+                    else {
+                        return Ok(ReticulumdEventWorkerReport { next_cursor: None });
+                    };
                     process_lxmf_zmq_event_worker_tick(
                         &worker_state,
                         command_endpoint.as_str(),
@@ -2533,7 +2547,8 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
                         worker_source.as_str(),
                         worker_cursor,
                     )
-                } else {
+                }
+                ReticulumdEventPollTransport::None => {
                     Ok(ReticulumdEventWorkerReport { next_cursor: None })
                 }
             })
@@ -2688,6 +2703,43 @@ fn lxmf_zmq_event_poll_enabled() -> bool {
             "1" | "true" | "yes" | "on"
         )
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReticulumdEventPollTransport {
+    None,
+    Rpc,
+    Zmq,
+}
+
+impl ReticulumdEventPollTransport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Rpc => "rpc",
+            Self::Zmq => "zmq",
+        }
+    }
+}
+
+fn select_reticulumd_event_poll_transport(
+    rpc_endpoint: Option<&str>,
+    zmq_command_endpoint: Option<&str>,
+    zmq_response_endpoint: Option<&str>,
+    zmq_event_poll_enabled: bool,
+) -> ReticulumdEventPollTransport {
+    let rpc_configured = rpc_endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty());
+    let zmq_configured = zmq_command_endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty())
+        && zmq_response_endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty());
+    if zmq_event_poll_enabled && zmq_configured {
+        ReticulumdEventPollTransport::Zmq
+    } else if rpc_configured {
+        ReticulumdEventPollTransport::Rpc
+    } else if zmq_configured {
+        ReticulumdEventPollTransport::Zmq
+    } else {
+        ReticulumdEventPollTransport::None
+    }
 }
 
 pub fn shutdown_runtime_for_exit(state: &AppState) -> Result<(), String> {
@@ -9516,7 +9568,7 @@ fn runtime_services_payload(state: &AppState) -> Value {
         },
         {
             "name": "reticulumd_inbound_worker",
-            "configured": state.reticulumd_rpc_endpoint.is_some() && state.reticulumd_source.is_some(),
+            "configured": reticulumd_inbound_worker_configured(state),
             "status": if state
                 .reticulumd_inbound_worker_stats
                 .read()
@@ -9524,7 +9576,7 @@ fn runtime_services_payload(state: &AppState) -> Value {
                 .unwrap_or(false)
             {
                 "running"
-            } else if state.reticulumd_rpc_endpoint.is_some() && state.reticulumd_source.is_some() {
+            } else if reticulumd_inbound_worker_configured(state) {
                 "stopped"
             } else {
                 "not_configured"
@@ -9558,10 +9610,43 @@ fn outbound_retry_worker_diagnostics(state: &AppState) -> Value {
     }
 }
 
+fn reticulumd_inbound_rpc_configured(state: &AppState) -> bool {
+    state.reticulumd_rpc_endpoint.is_some() && state.reticulumd_source.is_some()
+}
+
+fn reticulumd_inbound_zmq_event_poll_configured(state: &AppState) -> bool {
+    state.lxmf_zmq_command_endpoint.is_some()
+        && state.lxmf_zmq_response_endpoint.is_some()
+        && state.reticulumd_source.is_some()
+}
+
+fn reticulumd_inbound_worker_configured(state: &AppState) -> bool {
+    reticulumd_inbound_rpc_configured(state) || reticulumd_inbound_zmq_event_poll_configured(state)
+}
+
 fn reticulumd_inbound_worker_diagnostics(state: &AppState) -> Value {
+    let rpc_configured = reticulumd_inbound_rpc_configured(state);
+    let zmq_event_poll_configured = reticulumd_inbound_zmq_event_poll_configured(state);
+    let zmq_event_poll_enabled = lxmf_zmq_event_poll_enabled();
+    let event_poll_transport = select_reticulumd_event_poll_transport(
+        state.reticulumd_rpc_endpoint.as_deref().map(String::as_str),
+        state
+            .lxmf_zmq_command_endpoint
+            .as_deref()
+            .map(String::as_str),
+        state
+            .lxmf_zmq_response_endpoint
+            .as_deref()
+            .map(String::as_str),
+        zmq_event_poll_enabled,
+    );
     match state.reticulumd_inbound_worker_stats.read() {
         Ok(stats) => json!({
-            "configured": state.reticulumd_rpc_endpoint.is_some() && state.reticulumd_source.is_some(),
+            "configured": reticulumd_inbound_worker_configured(state),
+            "rpc_configured": rpc_configured,
+            "zmq_event_poll_configured": zmq_event_poll_configured,
+            "zmq_event_poll_enabled": zmq_event_poll_enabled,
+            "event_poll_transport": event_poll_transport.as_str(),
             "running": stats.running,
             "poll_interval_ms": stats.poll_interval_ms,
             "polls_total": stats.polls_total,
@@ -9590,7 +9675,11 @@ fn reticulumd_inbound_worker_diagnostics(state: &AppState) -> Value {
             "last_error": stats.last_error,
         }),
         Err(error) => json!({
-            "configured": state.reticulumd_rpc_endpoint.is_some() && state.reticulumd_source.is_some(),
+            "configured": reticulumd_inbound_worker_configured(state),
+            "rpc_configured": rpc_configured,
+            "zmq_event_poll_configured": zmq_event_poll_configured,
+            "zmq_event_poll_enabled": zmq_event_poll_enabled,
+            "event_poll_transport": event_poll_transport.as_str(),
             "running": false,
             "error": error.to_string(),
         }),
@@ -44496,6 +44585,56 @@ mod tests {
     }
 
     #[test]
+    fn reticulumd_event_poll_transport_prefers_zmq_when_enabled_with_rpc_fallback() {
+        assert_eq!(
+            crate::select_reticulumd_event_poll_transport(
+                Some("127.0.0.1:4243"),
+                Some("tcp://127.0.0.1:9100"),
+                Some("tcp://127.0.0.1:9101"),
+                true,
+            ),
+            crate::ReticulumdEventPollTransport::Zmq
+        );
+        assert_eq!(
+            crate::select_reticulumd_event_poll_transport(
+                Some("127.0.0.1:4243"),
+                Some("tcp://127.0.0.1:9100"),
+                Some("tcp://127.0.0.1:9101"),
+                false,
+            ),
+            crate::ReticulumdEventPollTransport::Rpc
+        );
+        assert_eq!(
+            crate::select_reticulumd_event_poll_transport(
+                Some("127.0.0.1:4243"),
+                Some("tcp://127.0.0.1:9100"),
+                None,
+                true,
+            ),
+            crate::ReticulumdEventPollTransport::Rpc
+        );
+    }
+
+    #[test]
+    fn reticulumd_inbound_diagnostics_reports_zmq_event_poll_configuration() {
+        let state = crate::AppState::default()
+            .with_reticulumd_rpc("127.0.0.1:4243", "source-destination")
+            .with_lxmf_zmq_sdk(
+                "tcp://127.0.0.1:9100",
+                "tcp://127.0.0.1:9101",
+                "source-destination",
+            );
+
+        let diagnostics = crate::runtime_diagnostics_payload(&state).expect("diagnostics");
+        let inbound = &diagnostics["reticulumd_inbound"];
+
+        assert_eq!(inbound["configured"], true);
+        assert_eq!(inbound["rpc_configured"], true);
+        assert_eq!(inbound["zmq_event_poll_configured"], true);
+        assert_eq!(inbound["event_poll_transport"], "rpc");
+    }
+
+    #[test]
     fn outbound_diagnostics_excludes_not_configured_from_actionable_queue_depth() {
         let state = crate::AppState::default();
         state
@@ -45067,6 +45206,8 @@ mod tests {
 
         let mut final_state = None;
         for _ in 0..poll_attempts {
+            let _ =
+                crate::process_outbound_delivery_worker_tick(&state).expect("outbound worker tick");
             let _ = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
             let current = state
                 .messages
@@ -45076,19 +45217,24 @@ mod tests {
                 .find(|message| message.message_id == message_id)
                 .expect("message")
                 .clone();
-            let receipt_settled = current
+            let receipt_is_not_pending = current
                 .delivery_metadata
                 .get("receipt_pending")
                 .and_then(serde_json::Value::as_bool)
-                == Some(false)
-                && current
-                    .delivery_metadata
-                    .get("receipt_status")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|status| !status.trim().is_empty());
+                == Some(false);
+            let receipt_status = receipt_is_not_pending
+                .then(|| {
+                    current
+                        .delivery_metadata
+                        .get("receipt_status")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .flatten();
+            let receipt_terminal = receipt_status
+                .is_some_and(|status| status == "delivered" || status.starts_with("failed"));
             if current.delivery_state == "delivered"
                 || current.delivery_state == "failed"
-                || receipt_settled
+                || receipt_terminal
             {
                 final_state = Some(current);
                 break;
@@ -45315,6 +45461,8 @@ mod tests {
 
         let mut final_state = None;
         for _ in 0..poll_attempts {
+            let _ =
+                crate::process_outbound_delivery_worker_tick(&state).expect("outbound worker tick");
             let _ = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
             let current = state
                 .messages
@@ -45361,6 +45509,59 @@ mod tests {
             "delivery_receipt"
         );
 
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn live_reticulumd_zmq_event_poll_succeeds_when_configured() {
+        let command_endpoint = match std::env::var("R3AKT_LXMF_ZMQ_COMMAND_ENDPOINT") {
+            Ok(value) if !value.trim().is_empty() => value,
+            _ => {
+                eprintln!(
+                    "skipping live ZeroMQ event poll test: R3AKT_LXMF_ZMQ_COMMAND_ENDPOINT is unset"
+                );
+                return;
+            }
+        };
+        let response_endpoint = match std::env::var("R3AKT_LXMF_ZMQ_RESPONSE_ENDPOINT") {
+            Ok(value) if !value.trim().is_empty() => value,
+            _ => {
+                eprintln!(
+                    "skipping live ZeroMQ event poll test: R3AKT_LXMF_ZMQ_RESPONSE_ENDPOINT is unset"
+                );
+                return;
+            }
+        };
+        let source = std::env::var("R3AKT_RETICULUMD_SOURCE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "r3akt-live-source".to_string());
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-live-reticulumd-zmq-events-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_lxmf_zmq_sdk(
+                command_endpoint.clone(),
+                response_endpoint.clone(),
+                source.clone(),
+            );
+
+        let report = crate::process_lxmf_zmq_event_worker_tick(
+            &state,
+            command_endpoint.as_str(),
+            response_endpoint.as_str(),
+            source.as_str(),
+            None,
+        )
+        .expect("ZeroMQ event poll");
+
+        let diagnostics = crate::runtime_diagnostics_payload(&state).expect("diagnostics");
+        let inbound = &diagnostics["reticulumd_inbound"];
+        assert_eq!(inbound["event_polls_total"], 1);
+        assert!(inbound["event_poll_errors_total"].as_u64().unwrap_or(1) == 0);
+        assert!(report.next_cursor.is_some());
         let _ = std::fs::remove_file(db_path);
     }
 

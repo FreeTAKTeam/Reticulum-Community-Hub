@@ -6,7 +6,8 @@ param(
     [int]$TimeoutSeconds = 90,
     [int]$DiscoverySettleSeconds = 3,
     [int]$ReceiptPollAttempts = 120,
-    [int]$ReceiptPollDelayMs = 500
+    [int]$ReceiptPollDelayMs = 500,
+    [switch]$IncludeZmqEventPoll
 )
 
 $ErrorActionPreference = "Stop"
@@ -87,6 +88,17 @@ function Write-NodeConfig {
 
 $tempRoot = Join-Path $env:TEMP ("r3akt-local-reticulum-live-" + [guid]::NewGuid().ToString("N"))
 $processes = @()
+$savedEnv = @{
+    R3AKT_RETICULUMD_RPC_ENDPOINT = [Environment]::GetEnvironmentVariable("R3AKT_RETICULUMD_RPC_ENDPOINT")
+    R3AKT_RETICULUMD_SOURCE = [Environment]::GetEnvironmentVariable("R3AKT_RETICULUMD_SOURCE")
+    R3AKT_RETICULUMD_RECEIPT_DESTINATION = [Environment]::GetEnvironmentVariable("R3AKT_RETICULUMD_RECEIPT_DESTINATION")
+    R3AKT_RETICULUMD_FANOUT_DESTINATIONS = [Environment]::GetEnvironmentVariable("R3AKT_RETICULUMD_FANOUT_DESTINATIONS")
+    R3AKT_RETICULUMD_RECEIPT_POLL_ATTEMPTS = [Environment]::GetEnvironmentVariable("R3AKT_RETICULUMD_RECEIPT_POLL_ATTEMPTS")
+    R3AKT_RETICULUMD_RECEIPT_POLL_DELAY_MS = [Environment]::GetEnvironmentVariable("R3AKT_RETICULUMD_RECEIPT_POLL_DELAY_MS")
+    R3AKT_LXMF_ZMQ_COMMAND_ENDPOINT = [Environment]::GetEnvironmentVariable("R3AKT_LXMF_ZMQ_COMMAND_ENDPOINT")
+    R3AKT_LXMF_ZMQ_RESPONSE_ENDPOINT = [Environment]::GetEnvironmentVariable("R3AKT_LXMF_ZMQ_RESPONSE_ENDPOINT")
+    R3AKT_ENABLE_ZMQ_EVENT_POLL = [Environment]::GetEnvironmentVariable("R3AKT_ENABLE_ZMQ_EVENT_POLL")
+}
 
 try {
     New-Item -ItemType Directory -Path $tempRoot | Out-Null
@@ -100,6 +112,12 @@ try {
         for ($idx = 0; $idx -lt $NodeCount; $idx++) {
             $transportPorts += Get-FreeTcpPort
         }
+    }
+    $zmqCommandEndpoint = $null
+    $zmqResponseEndpoint = $null
+    if ($IncludeZmqEventPoll) {
+        $zmqCommandEndpoint = "tcp://127.0.0.1:$(Get-FreeTcpPort)"
+        $zmqResponseEndpoint = "tcp://127.0.0.1:$(Get-FreeTcpPort)"
     }
 
     for ($idx = 0; $idx -lt $NodeCount; $idx++) {
@@ -122,6 +140,9 @@ try {
         if ([string]::IsNullOrWhiteSpace($ExternalConfigPath)) {
             $args += @("--transport", "127.0.0.1:$($transportPorts[$idx])")
         }
+        if ($IncludeZmqEventPoll -and $idx -eq 0) {
+            $args += @("--zmq-rpc-command", $zmqCommandEndpoint)
+        }
         $args += @("--config", $configPath)
         $processes += Start-Process -FilePath $ReticulumdExe `
             -ArgumentList $args `
@@ -141,6 +162,9 @@ try {
     for ($idx = 0; $idx -lt $NodeCount; $idx++) {
         Write-Host "  node-$idx rpc=127.0.0.1:$($rpcPorts[$idx]) delivery=$($destinations[$idx])"
     }
+    if ($IncludeZmqEventPoll) {
+        Write-Host "  node-0 zmq-command=$zmqCommandEndpoint zmq-response=$zmqResponseEndpoint"
+    }
 
     Start-Sleep -Seconds $DiscoverySettleSeconds
 
@@ -150,6 +174,11 @@ try {
     $env:R3AKT_RETICULUMD_FANOUT_DESTINATIONS = ($destinations[1..($NodeCount - 1)] -join ",")
     $env:R3AKT_RETICULUMD_RECEIPT_POLL_ATTEMPTS = "$ReceiptPollAttempts"
     $env:R3AKT_RETICULUMD_RECEIPT_POLL_DELAY_MS = "$ReceiptPollDelayMs"
+    if ($IncludeZmqEventPoll) {
+        $env:R3AKT_LXMF_ZMQ_COMMAND_ENDPOINT = $zmqCommandEndpoint
+        $env:R3AKT_LXMF_ZMQ_RESPONSE_ENDPOINT = $zmqResponseEndpoint
+        $env:R3AKT_ENABLE_ZMQ_EVENT_POLL = "1"
+    }
 
     cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_direct_send_receipt_is_delivered_when_configured -- --nocapture
     if ($LASTEXITCODE -ne 0) {
@@ -160,11 +189,21 @@ try {
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
+
+    if ($IncludeZmqEventPoll) {
+        cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_zmq_event_poll_succeeds_when_configured -- --nocapture
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    }
 } finally {
     foreach ($process in $processes) {
         if ($process -and -not $process.HasExited) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
+    }
+    foreach ($name in $savedEnv.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $savedEnv[$name])
     }
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
