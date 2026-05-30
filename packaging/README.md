@@ -16,7 +16,12 @@ The server-only alpha gate remains `scripts/release-readiness.ps1
 -ServerOnlyAlpha`. Full release packaging is handled by
 `.github/workflows/rust-release.yml`, which mirrors the Python release workflow
 shape: manual workflow artifacts on `workflow_dispatch` and file attachment
-when a GitHub release is published.
+when a GitHub release is published. Server package names include the resolved
+release version, for example
+`rch-rust-full-windows-x64-v3.0.0-preview.0.zip`; the same version, Git ref,
+and commit SHA are written into `release-manifest.json` inside the archive.
+Manual workflow runs default to `v3.0.0-preview.0` and can override that label
+with the `release_version` input.
 
 Pull request quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. It runs Rust 1.85 formatting, clippy,

@@ -1,5 +1,6 @@
 param(
     [Parameter(Mandatory = $true)] [string] $PackageName,
+    [string] $ReleaseVersion,
     [string] $OutputDir = "dist",
     [string] $ServerBinaryPath,
     [string] $TakServiceBinaryPath,
@@ -99,7 +100,10 @@ if ($IncludeUi) {
 
 $manifest = [ordered]@{
     package_name = $PackageName
+    release_version = $ReleaseVersion
     generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+    git_ref = [Environment]::GetEnvironmentVariable("GITHUB_REF_NAME")
+    git_sha = [Environment]::GetEnvironmentVariable("GITHUB_SHA")
     includes_server = $true
     includes_tak_service = [bool]$IncludeTakService
     includes_ui = [bool]$IncludeUi

@@ -2,6 +2,11 @@ name: Build Rust Release Packages
 
 on:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Version label to embed in manually built artifacts"
+        required: false
+        default: "v3.0.0-preview.0"
   release:
     types: [published]
   push:
@@ -72,12 +77,31 @@ jobs:
           cargo build --release -p r3akt-rch-server
           cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service
 
+      - name: Resolve release package name
+        id: package
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.release.tag_name }}"
+          if ([string]::IsNullOrWhiteSpace($version) -and "${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.release_version }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = "${{ github.ref_name }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Unable to resolve release version for package naming."
+          }
+          $safeVersion = $version -replace '[^0-9A-Za-z._+-]', '-'
+          "release_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "package_name=${{ matrix.artifact }}-$safeVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Assemble full server package
         shell: pwsh
         working-directory: rch
         run: |
           ./scripts/build-rust-release-package.ps1 `
-            -PackageName "${{ matrix.artifact }}" `
+            -PackageName "${{ steps.package.outputs.package_name }}" `
+            -ReleaseVersion "${{ steps.package.outputs.release_version }}" `
             -OutputDir dist `
             -ServerBinaryPath "${{ matrix.server_binary }}" `
             -TakServiceBinaryPath "${{ matrix.tak_binary }}" `
@@ -89,9 +113,9 @@ jobs:
         if: github.event_name != 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
+          name: ${{ steps.package.outputs.package_name }}
           path: |
-            rch/dist/${{ matrix.artifact }}.*
+            rch/dist/${{ steps.package.outputs.package_name }}.*
           if-no-files-found: error
 
       - name: Attach server package to GitHub release
@@ -99,7 +123,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            rch/dist/${{ matrix.artifact }}.*
+            rch/dist/${{ steps.package.outputs.package_name }}.*
           fail_on_unmatched_files: true
 
   desktop-package:
