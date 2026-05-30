@@ -72,9 +72,10 @@ use r3akt_rch_core::{
 #[cfg(test)]
 use r3akt_transport_rns::MessageBus;
 use r3akt_transport_rns::{
-    LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, list_reticulumd_announces,
-    poll_lxmf_zmq_events, poll_reticulumd_events, reticulumd_event_to_envelope,
-    reticulumd_message_to_envelope, send_lxmf_zmq_outbound_message,
+    LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage, LxmfSdkOutboundMessage,
+    ReticulumdAnnounceRecord, list_reticulumd_announces, poll_lxmf_zmq_events,
+    poll_reticulumd_events, reticulumd_event_to_envelope, reticulumd_message_to_envelope,
+    send_lxmf_zmq_outbound_batch, send_lxmf_zmq_outbound_message,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -2728,17 +2729,29 @@ fn select_reticulumd_event_poll_transport(
     zmq_response_endpoint: Option<&str>,
     zmq_event_poll_enabled: bool,
 ) -> ReticulumdEventPollTransport {
-    let rpc_configured = rpc_endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty());
     let zmq_configured = zmq_command_endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty())
         && zmq_response_endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty());
-    if zmq_event_poll_enabled && zmq_configured {
-        ReticulumdEventPollTransport::Zmq
-    } else if rpc_configured {
-        ReticulumdEventPollTransport::Rpc
-    } else if zmq_configured {
-        ReticulumdEventPollTransport::Zmq
-    } else {
-        ReticulumdEventPollTransport::None
+    #[cfg(test)]
+    {
+        let rpc_configured = rpc_endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty());
+        if zmq_event_poll_enabled && zmq_configured {
+            ReticulumdEventPollTransport::Zmq
+        } else if rpc_configured {
+            ReticulumdEventPollTransport::Rpc
+        } else if zmq_configured {
+            ReticulumdEventPollTransport::Zmq
+        } else {
+            ReticulumdEventPollTransport::None
+        }
+    }
+    #[cfg(not(test))]
+    {
+        let _ = (rpc_endpoint, zmq_event_poll_enabled);
+        if zmq_configured {
+            ReticulumdEventPollTransport::Zmq
+        } else {
+            ReticulumdEventPollTransport::None
+        }
     }
 }
 
@@ -12690,10 +12703,21 @@ fn dispatch_outbound_message(
 ) -> Result<DispatchReport, ApiError> {
     let has_zmq_endpoint =
         state.lxmf_zmq_command_endpoint.is_some() && state.lxmf_zmq_response_endpoint.is_some();
-    let has_rpc_endpoint = state.reticulumd_rpc_endpoint.is_some();
-    if !has_zmq_endpoint && !has_rpc_endpoint {
+    if !has_zmq_endpoint {
+        #[cfg(test)]
+        {
+            if state.reticulumd_rpc_endpoint.is_some() {
+                return dispatch_outbound_message_legacy_rpc_for_tests(state, message);
+            }
+        }
         return Ok(DispatchReport::default());
     }
+    let (Some(command_endpoint), Some(response_endpoint)) = (
+        state.lxmf_zmq_command_endpoint.as_deref(),
+        state.lxmf_zmq_response_endpoint.as_deref(),
+    ) else {
+        return Ok(DispatchReport::default());
+    };
     let source = state
         .reticulumd_source
         .as_ref()
@@ -12701,6 +12725,137 @@ fn dispatch_outbound_message(
     let destinations = outbound_destinations(state, message)?;
     let fanout_destination_count = destinations.len();
     let fanout_requires_child_ids = fanout_destination_count > 1;
+    let mut report = DispatchReport::default();
+    if fanout_destination_count > 1 {
+        let batch_id = format!(
+            "{}-fanout-{}",
+            message.message_id,
+            outbound_attempts(message)
+        );
+        let mut batch_messages = Vec::with_capacity(fanout_destination_count);
+        for (index, destination) in destinations.iter().enumerate() {
+            let message_id = outbound_dispatch_message_id(
+                message,
+                destination,
+                index,
+                fanout_requires_child_ids,
+            );
+            let mut dispatch_message = message.clone();
+            dispatch_message.message_id.clone_from(&message_id);
+            dispatch_message.destination = Some(destination.clone());
+            let fields = outbound_lxmf_fields(
+                &dispatch_message,
+                message
+                    .delivery_metadata
+                    .get("lxmf_fields")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            );
+            batch_messages.push(LxmfSdkOutboundBatchMessage {
+                destination: destination.clone(),
+                title: outbound_lxmf_title(&dispatch_message).to_string(),
+                content: outbound_lxmf_content(&dispatch_message).to_string(),
+                fields,
+                delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
+                try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
+                correlation_id: message_id,
+            });
+        }
+        let results = send_lxmf_zmq_outbound_batch(
+            command_endpoint,
+            response_endpoint,
+            LxmfSdkOutboundBatch {
+                batch_id,
+                source: source.to_string(),
+                messages: batch_messages,
+            },
+        )
+        .map_err(|error| {
+            let error = error.to_string();
+            if message.delivery_method == "direct"
+                && direct_failure_error_should_trigger_cooldown(error.as_str())
+            {
+                for destination in &destinations {
+                    let _ = mark_direct_delivery_failure(state, destination.as_str());
+                }
+            }
+            ApiError::ServiceUnavailable(error)
+        })?;
+        for result in results {
+            report.count += 1;
+            report.receipts.push(ReticulumdReceiptTarget {
+                message_id: result.message_id,
+                destination: result.destination,
+                status: None,
+            });
+        }
+        return Ok(report);
+    }
+
+    for (index, destination) in destinations.into_iter().enumerate() {
+        let message_id =
+            outbound_dispatch_message_id(message, &destination, index, fanout_requires_child_ids);
+        let mut dispatch_message = message.clone();
+        dispatch_message.message_id.clone_from(&message_id);
+        dispatch_message.destination = Some(destination.clone());
+        let fields = outbound_lxmf_fields(
+            &dispatch_message,
+            message
+                .delivery_metadata
+                .get("lxmf_fields")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        );
+        let dispatch_result = send_lxmf_zmq_outbound_message(
+            command_endpoint,
+            response_endpoint,
+            LxmfSdkOutboundMessage {
+                source: source.to_string(),
+                destination: destination.clone(),
+                title: outbound_lxmf_title(&dispatch_message).to_string(),
+                content: outbound_lxmf_content(&dispatch_message).to_string(),
+                fields,
+                delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
+                try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
+                correlation_id: message_id.clone(),
+            },
+        )
+        .map_err(|error| error.to_string());
+        let reticulumd_message_id = match dispatch_result {
+            Ok(reticulumd_message_id) => reticulumd_message_id,
+            Err(error) => {
+                if message.delivery_method == "direct"
+                    && direct_failure_error_should_trigger_cooldown(error.as_str())
+                {
+                    mark_direct_delivery_failure(state, destination.as_str())?;
+                }
+                return Err(ApiError::ServiceUnavailable(error));
+            }
+        };
+        report.count += 1;
+        report.receipts.push(ReticulumdReceiptTarget {
+            message_id: reticulumd_message_id,
+            destination,
+            status: None,
+        });
+    }
+    Ok(report)
+}
+
+#[cfg(test)]
+fn dispatch_outbound_message_legacy_rpc_for_tests(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+) -> Result<DispatchReport, ApiError> {
+    let Some(endpoint) = &state.reticulumd_rpc_endpoint else {
+        return Ok(DispatchReport::default());
+    };
+    let source = state
+        .reticulumd_source
+        .as_ref()
+        .map_or("r3akt-rch-server", |value| value.as_str());
+    let destinations = outbound_destinations(state, message)?;
+    let fanout_requires_child_ids = destinations.len() > 1;
     let mut report = DispatchReport::default();
     for (index, destination) in destinations.into_iter().enumerate() {
         let message_id =
@@ -12723,50 +12878,23 @@ fn dispatch_outbound_message(
             "destination": destination,
             "title": outbound_lxmf_title(&dispatch_message),
             "content": outbound_lxmf_content(&dispatch_message),
-            "fields": fields.clone(),
+            "fields": fields,
             "method": message.delivery_method,
         })
         .to_string();
-        let dispatch_result = if let (Some(command_endpoint), Some(response_endpoint)) = (
-            &state.lxmf_zmq_command_endpoint,
-            &state.lxmf_zmq_response_endpoint,
-        ) {
-            send_lxmf_zmq_outbound_message(
-                command_endpoint.as_str(),
-                response_endpoint.as_str(),
-                LxmfSdkOutboundMessage {
-                    source: source.to_string(),
-                    destination: destination.clone(),
-                    title: outbound_lxmf_title(&dispatch_message).to_string(),
-                    content: outbound_lxmf_content(&dispatch_message).to_string(),
-                    fields,
-                    delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
-                    try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
-                    correlation_id: message_id.clone(),
-                },
-            )
-            .map_err(|error| error.to_string())
-        } else if let Some(endpoint) = &state.reticulumd_rpc_endpoint {
-            r3akt_rch_bridge::handle_outbound_json_request_with_reticulumd(
-                endpoint.as_str(),
-                &request,
-            )
-            .map(|_| message_id.clone())
-            .map_err(|error| error.to_string())
-        } else {
-            Ok(message_id.clone())
-        };
-        let reticulumd_message_id = match dispatch_result {
-            Ok(reticulumd_message_id) => reticulumd_message_id,
-            Err(error) => {
-                if message.delivery_method == "direct"
-                    && direct_failure_error_should_trigger_cooldown(error.as_str())
-                {
-                    mark_direct_delivery_failure(state, destination.as_str())?;
-                }
-                return Err(ApiError::ServiceUnavailable(error));
+        let reticulumd_message_id = r3akt_rch_bridge::handle_outbound_json_request_with_reticulumd(
+            endpoint.as_str(),
+            &request,
+        )
+        .map(|_| message_id.clone())
+        .map_err(|error| {
+            if message.delivery_method == "direct"
+                && direct_failure_error_should_trigger_cooldown(error.to_string().as_str())
+            {
+                let _ = mark_direct_delivery_failure(state, destination.as_str());
             }
-        };
+            ApiError::ServiceUnavailable(error.to_string())
+        })?;
         report.count += 1;
         report.receipts.push(ReticulumdReceiptTarget {
             message_id: reticulumd_message_id,
@@ -23662,6 +23790,7 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use crate::BASE64_STANDARD;
+    use std::collections::HashSet;
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpListener as StdTcpListener};
     use std::thread;
@@ -23676,8 +23805,9 @@ mod tests {
     use r3akt_rch_bridge::{ReticulumdRpcError, ReticulumdRpcRequest, ReticulumdRpcResponse};
     use r3akt_rch_core::{FileAttachmentRecord, RchCore, RchSqliteStore};
     use r3akt_transport_rns::{
-        LxmfRsTransport, ReticulumdAnnounceRecord, ReticulumdRpcLxmfRsAdapter,
-        ReticulumdRpcTransport,
+        LxmfRsTransport, LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, ReticulumdEventBatch,
+        ReticulumdEventRecord, ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport,
+        poll_lxmf_zmq_events, send_lxmf_zmq_outbound_message,
     };
     use serde::Serialize;
     use serde_json::{Value, json};
@@ -44585,7 +44715,7 @@ mod tests {
     }
 
     #[test]
-    fn reticulumd_event_poll_transport_prefers_zmq_when_enabled_with_rpc_fallback() {
+    fn reticulumd_event_poll_transport_prefers_zmq_when_enabled_with_rpc_test_fallback() {
         assert_eq!(
             crate::select_reticulumd_event_poll_transport(
                 Some("127.0.0.1:4243"),
@@ -45563,6 +45693,349 @@ mod tests {
         assert!(inbound["event_poll_errors_total"].as_u64().unwrap_or(1) == 0);
         assert!(report.next_cursor.is_some());
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    #[ignore = "requires a local reticulumd mesh with ZeroMQ command endpoints"]
+    fn live_reticulumd_zmq_load_delivers_to_local_clients_when_configured() {
+        let command_endpoints = match live_env_list("R3AKT_ZMQ_LOAD_COMMAND_ENDPOINTS") {
+            Some(value) if value.len() >= 2 => value,
+            _ => {
+                eprintln!(
+                    "skipping live ZeroMQ load test: R3AKT_ZMQ_LOAD_COMMAND_ENDPOINTS is unset"
+                );
+                return;
+            }
+        };
+        let destinations = match live_env_list("R3AKT_ZMQ_LOAD_DESTINATIONS") {
+            Some(value) if value.len() == command_endpoints.len() => value,
+            _ => {
+                eprintln!("skipping live ZeroMQ load test: R3AKT_ZMQ_LOAD_DESTINATIONS is unset");
+                return;
+            }
+        };
+        let sender_response_endpoints = match live_env_list(
+            "R3AKT_ZMQ_LOAD_SENDER_RESPONSE_ENDPOINTS",
+        ) {
+            Some(value) if !value.is_empty() => value,
+            _ => {
+                eprintln!(
+                    "skipping live ZeroMQ load test: R3AKT_ZMQ_LOAD_SENDER_RESPONSE_ENDPOINTS is unset"
+                );
+                return;
+            }
+        };
+        let receiver_response_endpoints = match live_env_list(
+            "R3AKT_ZMQ_LOAD_RECEIVER_RESPONSE_ENDPOINTS",
+        ) {
+            Some(value) if !value.is_empty() => value,
+            _ => {
+                eprintln!(
+                    "skipping live ZeroMQ load test: R3AKT_ZMQ_LOAD_RECEIVER_RESPONSE_ENDPOINTS is unset"
+                );
+                return;
+            }
+        };
+
+        let requested_messages = live_env_usize("R3AKT_ZMQ_LOAD_MESSAGES", 1_000).max(1);
+        let sender_clients = live_env_usize("R3AKT_ZMQ_LOAD_SENDER_CLIENTS", 4)
+            .max(1)
+            .min(sender_response_endpoints.len());
+        let receiver_count = live_env_usize("R3AKT_ZMQ_LOAD_RECEIVER_COUNT", 2)
+            .max(1)
+            .min(command_endpoints.len().saturating_sub(1))
+            .min(receiver_response_endpoints.len());
+        assert!(
+            receiver_count > 0,
+            "load test requires at least one receiver"
+        );
+
+        let poll_attempts = live_env_usize("R3AKT_ZMQ_LOAD_POLL_ATTEMPTS", 240);
+        let poll_delay_ms = live_env_u64("R3AKT_ZMQ_LOAD_POLL_DELAY_MS", 250);
+        let run_id = Uuid::new_v4().to_string();
+        let expected_by_receiver =
+            load_expected_content_by_receiver(&run_id, requested_messages, receiver_count);
+        let poll_started = Instant::now();
+        let mut receiver_threads = Vec::with_capacity(receiver_count);
+        for receiver_index in 0..receiver_count {
+            let command_endpoint = command_endpoints[receiver_index + 1].clone();
+            let response_endpoint = receiver_response_endpoints[receiver_index].clone();
+            let expected = expected_by_receiver[receiver_index].clone();
+            receiver_threads.push(thread::spawn(move || {
+                poll_zmq_load_receiver(
+                    receiver_index,
+                    command_endpoint,
+                    response_endpoint,
+                    expected,
+                    poll_attempts,
+                    poll_delay_ms,
+                )
+            }));
+        }
+        thread::sleep(Duration::from_millis(250));
+
+        let send_started = Instant::now();
+        let mut sender_threads = Vec::with_capacity(sender_clients);
+        for (sender_index, response_endpoint) in sender_response_endpoints
+            .iter()
+            .take(sender_clients)
+            .cloned()
+            .enumerate()
+        {
+            let command_endpoint = command_endpoints[0].clone();
+            let source = destinations[0].clone();
+            let destinations = destinations[1..=receiver_count].to_vec();
+            let run_id = run_id.clone();
+            sender_threads.push(thread::spawn(move || {
+                send_zmq_load_messages(
+                    sender_index,
+                    sender_clients,
+                    requested_messages,
+                    receiver_count,
+                    command_endpoint,
+                    response_endpoint,
+                    source,
+                    destinations,
+                    run_id,
+                )
+            }));
+        }
+
+        let mut accepted_count = 0usize;
+        let mut first_send_error = None;
+        for sender in sender_threads {
+            let result = sender.join().expect("join ZeroMQ load sender");
+            accepted_count = accepted_count.saturating_add(result.accepted);
+            first_send_error = first_send_error.or(result.first_error);
+        }
+        let send_elapsed = send_started.elapsed();
+
+        let mut receiver_results = Vec::with_capacity(receiver_count);
+        for receiver in receiver_threads {
+            receiver_results.push(receiver.join().expect("join ZeroMQ load receiver"));
+        }
+        let full_elapsed = poll_started.elapsed();
+        let received_total = receiver_results
+            .iter()
+            .map(|result| result.received)
+            .sum::<usize>();
+        let per_client = receiver_results
+            .iter()
+            .map(|result| format!("client{}={}", result.receiver_index + 1, result.received))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!(
+            "live_zmq_load_result status={} requested={} accepted={} received={} per_client={} send_elapsed_ms={} full_elapsed_ms={} send_messages_per_sec={:.1} e2e_messages_per_sec={:.1}",
+            if accepted_count == requested_messages && received_total == requested_messages {
+                "completed"
+            } else {
+                "incomplete"
+            },
+            requested_messages,
+            accepted_count,
+            received_total,
+            per_client,
+            send_elapsed.as_millis(),
+            full_elapsed.as_millis(),
+            messages_per_second(requested_messages, send_elapsed),
+            messages_per_second(requested_messages, full_elapsed)
+        );
+
+        assert_eq!(
+            accepted_count, requested_messages,
+            "accepted send count mismatch; first error: {:?}",
+            first_send_error
+        );
+        for result in &receiver_results {
+            assert!(
+                result.remaining_samples.is_empty(),
+                "receiver {} missed {} messages; samples={:?}; last_error={:?}",
+                result.receiver_index + 1,
+                result.expected.saturating_sub(result.received),
+                result.remaining_samples,
+                result.last_error
+            );
+        }
+        assert_eq!(received_total, requested_messages);
+    }
+
+    #[derive(Debug)]
+    struct ZmqLoadSendResult {
+        accepted: usize,
+        first_error: Option<String>,
+    }
+
+    #[derive(Debug)]
+    struct ZmqLoadReceiverResult {
+        receiver_index: usize,
+        expected: usize,
+        received: usize,
+        remaining_samples: Vec<String>,
+        last_error: Option<String>,
+    }
+
+    fn live_env_list(name: &str) -> Option<Vec<String>> {
+        std::env::var(name).ok().map(|value| {
+            value
+                .split([',', ';', '\n', '\r', '\t'])
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+    }
+
+    fn live_env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(default)
+    }
+
+    fn live_env_u64(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(default)
+    }
+
+    fn messages_per_second(count: usize, elapsed: Duration) -> f64 {
+        f64::from(u32::try_from(count).expect("message count fits in u32")) / elapsed.as_secs_f64()
+    }
+
+    fn load_content(run_id: &str, sequence: usize, receiver_index: usize) -> String {
+        format!(
+            "load-{run_id}-{sequence:05}-to-{}",
+            receiver_index.saturating_add(1)
+        )
+    }
+
+    fn load_expected_content_by_receiver(
+        run_id: &str,
+        requested_messages: usize,
+        receiver_count: usize,
+    ) -> Vec<HashSet<String>> {
+        let mut expected = (0..receiver_count)
+            .map(|_| HashSet::new())
+            .collect::<Vec<_>>();
+        for sequence in 0..requested_messages {
+            let receiver_index = sequence % receiver_count;
+            expected[receiver_index].insert(load_content(run_id, sequence, receiver_index));
+        }
+        expected
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_zmq_load_messages(
+        sender_index: usize,
+        sender_clients: usize,
+        requested_messages: usize,
+        receiver_count: usize,
+        command_endpoint: String,
+        response_endpoint: String,
+        source: String,
+        destinations: Vec<String>,
+        run_id: String,
+    ) -> ZmqLoadSendResult {
+        let mut accepted = 0usize;
+        let mut first_error = None;
+        for sequence in (sender_index..requested_messages).step_by(sender_clients) {
+            let receiver_index = sequence % receiver_count;
+            let content = load_content(&run_id, sequence, receiver_index);
+            let result = send_lxmf_zmq_outbound_message(
+                command_endpoint.clone(),
+                response_endpoint.clone(),
+                LxmfSdkOutboundMessage {
+                    source: source.clone(),
+                    destination: destinations[receiver_index].clone(),
+                    title: "RCH load".to_string(),
+                    content,
+                    fields: json!({
+                        "load_run_id": run_id.clone(),
+                        "load_sequence": sequence,
+                        "load_receiver_index": receiver_index,
+                    }),
+                    delivery_method: Some("direct".to_string()),
+                    try_propagation_on_fail: false,
+                    correlation_id: format!("load-{run_id}-{sequence:05}"),
+                },
+            );
+            match result {
+                Ok(_) => accepted = accepted.saturating_add(1),
+                Err(error) => {
+                    first_error.get_or_insert_with(|| format!("sequence {sequence}: {error}"));
+                }
+            }
+        }
+        ZmqLoadSendResult {
+            accepted,
+            first_error,
+        }
+    }
+
+    fn poll_zmq_load_receiver(
+        receiver_index: usize,
+        command_endpoint: String,
+        response_endpoint: String,
+        mut expected: HashSet<String>,
+        poll_attempts: usize,
+        poll_delay_ms: u64,
+    ) -> ZmqLoadReceiverResult {
+        let expected_count = expected.len();
+        let mut cursor = None;
+        let mut last_error = None;
+        for _ in 0..poll_attempts {
+            match poll_lxmf_zmq_events(
+                command_endpoint.clone(),
+                response_endpoint.clone(),
+                cursor.clone(),
+                crate::RETICULUMD_EVENT_POLL_MAX,
+            ) {
+                Ok(batch) => {
+                    cursor = batch.next_cursor.clone();
+                    remove_seen_load_messages(&mut expected, &batch);
+                    if expected.is_empty() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                }
+            }
+            thread::sleep(Duration::from_millis(poll_delay_ms));
+        }
+        let received = expected_count.saturating_sub(expected.len());
+        let remaining_samples = expected.into_iter().take(5).collect::<Vec<_>>();
+        ZmqLoadReceiverResult {
+            receiver_index,
+            expected: expected_count,
+            received,
+            remaining_samples,
+            last_error,
+        }
+    }
+
+    fn remove_seen_load_messages(expected: &mut HashSet<String>, batch: &ReticulumdEventBatch) {
+        for event in &batch.events {
+            if !matches!(
+                event.event_type.as_str(),
+                "inbound" | "InboundMessageReceived"
+            ) {
+                continue;
+            }
+            if let Some(content) = load_event_content(event) {
+                expected.remove(content);
+            }
+        }
+    }
+
+    fn load_event_content(event: &ReticulumdEventRecord) -> Option<&str> {
+        event
+            .payload
+            .get("message")
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .or_else(|| event.payload.get("content").and_then(Value::as_str))
     }
 
     #[tokio::test]

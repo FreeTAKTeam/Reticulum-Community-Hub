@@ -587,6 +587,29 @@ pub struct LxmfSdkOutboundMessage {
     pub correlation_id: String,
 }
 
+pub struct LxmfSdkOutboundBatch {
+    pub batch_id: String,
+    pub source: String,
+    pub messages: Vec<LxmfSdkOutboundBatchMessage>,
+}
+
+pub struct LxmfSdkOutboundBatchMessage {
+    pub destination: String,
+    pub title: String,
+    pub content: String,
+    pub fields: JsonValue,
+    pub delivery_method: Option<String>,
+    pub try_propagation_on_fail: bool,
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LxmfSdkOutboundBatchResult {
+    pub id: String,
+    pub message_id: String,
+    pub destination: String,
+}
+
 pub fn send_lxmf_zmq_outbound_message(
     command_endpoint: impl Into<String>,
     response_endpoint: impl Into<String>,
@@ -595,6 +618,16 @@ pub fn send_lxmf_zmq_outbound_message(
     let mut config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
     config.request_timeout = LXMF_ZMQ_SEND_REQUEST_TIMEOUT;
     send_lxmf_zmq_outbound_message_via_actor(&config, message)
+}
+
+pub fn send_lxmf_zmq_outbound_batch(
+    command_endpoint: impl Into<String>,
+    response_endpoint: impl Into<String>,
+    batch: LxmfSdkOutboundBatch,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    let mut config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
+    config.request_timeout = LXMF_ZMQ_SEND_REQUEST_TIMEOUT;
+    send_lxmf_zmq_outbound_batch_via_actor(&config, batch)
 }
 
 pub fn poll_lxmf_zmq_events(
@@ -754,9 +787,14 @@ fn send_lxmf_zmq_outbound_message_direct(
         })
 }
 
+enum ZmqSdkActorPayload {
+    Single(LxmfSdkOutboundMessage),
+    Batch(LxmfSdkOutboundBatch),
+}
+
 struct ZmqSdkActorRequest {
-    message: LxmfSdkOutboundMessage,
-    response: mpsc::Sender<Result<String, TransportError>>,
+    payload: ZmqSdkActorPayload,
+    response: mpsc::Sender<Result<Vec<LxmfSdkOutboundBatchResult>, TransportError>>,
 }
 
 struct ZmqSdkActorSession {
@@ -774,7 +812,51 @@ fn send_lxmf_zmq_outbound_message_via_actor(
     let (response_tx, response_rx) = mpsc::channel();
     sender
         .try_send(ZmqSdkActorRequest {
-            message,
+            payload: ZmqSdkActorPayload::Single(message),
+            response: response_tx,
+        })
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
+                "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
+            )),
+            mpsc::TrySendError::Disconnected(_) => {
+                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+            }
+        })?;
+    response_rx
+        .recv_timeout(
+            config
+                .request_timeout
+                .saturating_add(Duration::from_secs(1)),
+        )
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
+                "LXMF-rs ZeroMQ SDK actor timed out waiting for send result".to_string(),
+            ),
+            mpsc::RecvTimeoutError::Disconnected => {
+                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+            }
+        })??
+        .into_iter()
+        .next()
+        .map(|result| result.message_id)
+        .ok_or_else(|| {
+            TransportError::Send("LXMF-rs ZeroMQ SDK response missing message_id".to_string())
+        })
+}
+
+fn send_lxmf_zmq_outbound_batch_via_actor(
+    config: &ZmqPipelineBackendConfig,
+    batch: LxmfSdkOutboundBatch,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    if batch.messages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sender = zmq_sdk_actor_sender(config)?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .try_send(ZmqSdkActorRequest {
+            payload: ZmqSdkActorPayload::Batch(batch),
             response: response_tx,
         })
         .map_err(|error| match error {
@@ -859,10 +941,10 @@ fn run_zmq_sdk_actor(
             )));
             continue;
         };
-        let result = runtime.block_on(send_lxmf_zmq_actor_message(
+        let result = runtime.block_on(send_lxmf_zmq_actor_request(
             active_session,
             &config,
-            request.message,
+            request.payload,
         ));
         if result.is_err() {
             session = None;
@@ -924,7 +1006,26 @@ async fn open_zmq_sdk_actor_session(
     })
 }
 
-async fn send_lxmf_zmq_actor_message(
+async fn send_lxmf_zmq_actor_request(
+    session: &mut ZmqSdkActorSession,
+    config: &ZmqPipelineBackendConfig,
+    payload: ZmqSdkActorPayload,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    match payload {
+        ZmqSdkActorPayload::Single(message) => {
+            let destination = message.destination.clone();
+            let result = send_lxmf_zmq_actor_single_message(session, config, message).await?;
+            Ok(vec![LxmfSdkOutboundBatchResult {
+                id: result.clone(),
+                message_id: result,
+                destination,
+            }])
+        }
+        ZmqSdkActorPayload::Batch(batch) => send_lxmf_zmq_actor_batch(session, config, batch).await,
+    }
+}
+
+async fn send_lxmf_zmq_actor_single_message(
     session: &mut ZmqSdkActorSession,
     config: &ZmqPipelineBackendConfig,
     message: LxmfSdkOutboundMessage,
@@ -948,6 +1049,74 @@ async fn send_lxmf_zmq_actor_message(
         .ok_or_else(|| {
             TransportError::Send("LXMF-rs ZeroMQ SDK response missing message_id".to_string())
         })
+}
+
+async fn send_lxmf_zmq_actor_batch(
+    session: &mut ZmqSdkActorSession,
+    config: &ZmqPipelineBackendConfig,
+    batch: LxmfSdkOutboundBatch,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    let request_id = session.next_request_id;
+    session.next_request_id = session.next_request_id.saturating_add(1);
+    let destinations = batch
+        .messages
+        .iter()
+        .map(|message| (message.correlation_id.clone(), message.destination.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let result = lxmf_zmq_rpc_call(
+        &mut session.command,
+        &mut session.responses,
+        config,
+        session.session_id.as_str(),
+        request_id,
+        "sdk_send_batch_v2",
+        Some(lxmf_sdk_outbound_batch_params(batch)),
+    )
+    .await?;
+    if result
+        .get("rejected_count")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(0)
+        > 0
+    {
+        return Err(TransportError::Send(format!(
+            "LXMF-rs ZeroMQ SDK batch rejected {} messages",
+            result
+                .get("rejected_count")
+                .and_then(JsonValue::as_u64)
+                .unwrap_or(0)
+        )));
+    }
+    let items = result
+        .get("results")
+        .and_then(JsonValue::as_array)
+        .ok_or_else(|| {
+            TransportError::Send("LXMF-rs ZeroMQ SDK batch response missing results".to_string())
+        })?;
+    let mut output = Vec::with_capacity(items.len());
+    for item in items {
+        let id = item
+            .get("id")
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| {
+                TransportError::Send("LXMF-rs ZeroMQ SDK batch item missing id".to_string())
+            })?
+            .to_string();
+        let message_id = item
+            .get("message_id")
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| {
+                TransportError::Send("LXMF-rs ZeroMQ SDK batch item missing message_id".to_string())
+            })?
+            .to_string();
+        let destination = destinations.get(&id).cloned().unwrap_or_default();
+        output.push(LxmfSdkOutboundBatchResult {
+            id,
+            message_id,
+            destination,
+        });
+    }
+    Ok(output)
 }
 
 fn lxmf_sdk_outbound_send_params(message: LxmfSdkOutboundMessage) -> JsonValue {
@@ -981,6 +1150,51 @@ fn lxmf_sdk_outbound_send_params(message: LxmfSdkOutboundMessage) -> JsonValue {
         "fields": fields,
         "method": message.delivery_method,
         "try_propagation_on_fail": message.try_propagation_on_fail,
+    })
+}
+
+fn lxmf_sdk_outbound_batch_params(batch: LxmfSdkOutboundBatch) -> JsonValue {
+    let messages = batch
+        .messages
+        .into_iter()
+        .map(|message| {
+            let correlation_id = message.correlation_id;
+            let mut fields = match message.fields {
+                JsonValue::Object(map) => JsonValue::Object(map),
+                other => serde_json::json!({ "fields": other }),
+            };
+            if let JsonValue::Object(map) = &mut fields {
+                map.insert(
+                    "title".to_string(),
+                    JsonValue::String(message.title.clone()),
+                );
+                map.insert(
+                    "content".to_string(),
+                    JsonValue::String(message.content.clone()),
+                );
+                map.insert(
+                    "_sdk".to_string(),
+                    serde_json::json!({
+                        "correlation_id": correlation_id.clone(),
+                        "idempotency_key": correlation_id.clone(),
+                    }),
+                );
+            }
+            serde_json::json!({
+                "id": correlation_id,
+                "destination": message.destination,
+                "title": message.title,
+                "content": message.content,
+                "fields": fields,
+                "method": message.delivery_method,
+                "try_propagation_on_fail": message.try_propagation_on_fail,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "batch_id": batch.batch_id,
+        "source": batch.source,
+        "messages": messages,
     })
 }
 
@@ -2494,8 +2708,89 @@ mod tests {
         })
     }
 
+    fn spawn_zmq_single_send_load_server(
+        command_endpoint: String,
+        expected_message_count: usize,
+        captured_methods: Arc<Mutex<Vec<String>>>,
+    ) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+            runtime.block_on(async move {
+                let mut commands = PullSocket::new();
+                commands
+                    .bind(command_endpoint.as_str())
+                    .await
+                    .expect("bind command endpoint");
+                let mut response_socket = None;
+                let mut sent_messages = 0usize;
+                for _ in 0..=expected_message_count {
+                    let Some(envelope) = recv_zmq_request_envelope(&mut commands).await else {
+                        return;
+                    };
+                    let request: ReticulumdRpcRequest =
+                        decode_frame(&envelope.payload).expect("decode rpc request");
+                    let method = request.method.clone();
+                    captured_methods
+                        .lock()
+                        .expect("captured methods")
+                        .push(method.clone());
+                    let result = match method.as_str() {
+                        "sdk_negotiate_v2" => serde_json::json!({
+                            "accepted_contract_version": 2,
+                            "effective_capabilities": [],
+                            "runtime_id": "test-runtime",
+                            "profile": "desktop-local-runtime",
+                            "limits": {},
+                            "config_revision": 1,
+                            "features": {},
+                        }),
+                        "sdk_send_v2" => {
+                            let message_id = format!("daemon-message-{sent_messages:05}");
+                            sent_messages += 1;
+                            serde_json::json!({ "message_id": message_id })
+                        }
+                        other => panic!("unexpected ZeroMQ SDK method: {other}"),
+                    };
+                    let rpc_response = ReticulumdRpcResponse {
+                        id: envelope.request_id,
+                        result: Some(result),
+                        error: None,
+                    };
+                    let response_payload = encode_frame(&rpc_response).expect("encode response");
+                    if response_socket.is_none() {
+                        let mut socket = PushSocket::new();
+                        socket
+                            .connect(
+                                envelope
+                                    .response_endpoint
+                                    .as_deref()
+                                    .expect("response endpoint"),
+                            )
+                            .await
+                            .expect("connect response endpoint");
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        response_socket = Some(socket);
+                    }
+                    response_socket
+                        .as_mut()
+                        .expect("response socket")
+                        .send(ZmqMessage::from(
+                            zmq::encode_envelope(&ZmqRpcEnvelope::response(
+                                envelope.session_id,
+                                envelope.request_id,
+                                response_payload,
+                            ))
+                            .expect("encode zmq envelope"),
+                        ))
+                        .await
+                        .expect("send response");
+                }
+            });
+        })
+    }
+
     async fn recv_zmq_request_envelope(commands: &mut PullSocket) -> Option<ZmqRpcEnvelope> {
-        let message = tokio::time::timeout(Duration::from_secs(2), commands.recv())
+        let message = tokio::time::timeout(Duration::from_secs(30), commands.recv())
             .await
             .ok()?
             .ok()?;
@@ -2608,6 +2903,103 @@ mod tests {
         );
         assert_eq!(request.payload["r3akt_payload_b64"], "AQIDBA==");
         assert_eq!(request.correlation_id.as_deref(), Some("r3akt-transport-1"));
+    }
+
+    #[test]
+    fn lxmf_zmq_batch_params_preserve_order_and_correlation_ids() {
+        let params = lxmf_sdk_outbound_batch_params(LxmfSdkOutboundBatch {
+            batch_id: "batch-1".to_string(),
+            source: "source-destination".to_string(),
+            messages: vec![
+                LxmfSdkOutboundBatchMessage {
+                    destination: "dst-a".to_string(),
+                    title: "RCH".to_string(),
+                    content: "one".to_string(),
+                    fields: serde_json::json!({ "kind": "a" }),
+                    delivery_method: Some("direct".to_string()),
+                    try_propagation_on_fail: true,
+                    correlation_id: "message-a".to_string(),
+                },
+                LxmfSdkOutboundBatchMessage {
+                    destination: "dst-b".to_string(),
+                    title: "RCH".to_string(),
+                    content: "two".to_string(),
+                    fields: serde_json::json!({ "kind": "b" }),
+                    delivery_method: Some("propagated".to_string()),
+                    try_propagation_on_fail: false,
+                    correlation_id: "message-b".to_string(),
+                },
+            ],
+        });
+
+        assert_eq!(params["batch_id"], "batch-1");
+        assert_eq!(params["source"], "source-destination");
+        let messages = params["messages"].as_array().expect("messages");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["id"], "message-a");
+        assert_eq!(messages[0]["destination"], "dst-a");
+        assert_eq!(messages[0]["fields"]["_sdk"]["correlation_id"], "message-a");
+        assert_eq!(messages[1]["id"], "message-b");
+        assert_eq!(messages[1]["destination"], "dst-b");
+        assert_eq!(messages[1]["method"], "propagated");
+    }
+
+    #[test]
+    fn lxmf_zmq_outbound_ten_thousand_regular_single_messages_complete() {
+        const MESSAGE_COUNT: usize = 10_000;
+
+        let command_endpoint = unused_zmq_endpoint_v4();
+        let response_endpoint = unused_zmq_endpoint_v4();
+        let captured_methods = Arc::new(Mutex::new(Vec::new()));
+        let server = spawn_zmq_single_send_load_server(
+            command_endpoint.clone(),
+            MESSAGE_COUNT,
+            Arc::clone(&captured_methods),
+        );
+
+        let started = std::time::Instant::now();
+        let mut config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
+        config.request_timeout = Duration::from_secs(10);
+        for index in 0..MESSAGE_COUNT {
+            let message_id = send_lxmf_zmq_outbound_message_via_actor(
+                &config,
+                LxmfSdkOutboundMessage {
+                    source: "source-destination".to_string(),
+                    destination: format!("destination-{index:05}"),
+                    title: "RCH".to_string(),
+                    content: format!("payload {index}"),
+                    fields: serde_json::json!({ "bulk_index": index }),
+                    delivery_method: Some("propagated".to_string()),
+                    try_propagation_on_fail: false,
+                    correlation_id: format!("bulk-message-{index:05}"),
+                },
+            )
+            .unwrap_or_else(|error| panic!("message {index} failed: {error}"));
+            assert_eq!(message_id, format!("daemon-message-{index:05}"));
+        }
+        let elapsed = started.elapsed();
+        server.join().expect("join zmq load server");
+
+        let captured_methods = captured_methods.lock().expect("captured methods");
+        let sdk_send_count = captured_methods
+            .iter()
+            .filter(|method| method.as_str() == "sdk_send_v2")
+            .count();
+        println!(
+            "10k_zmq_single_messages_result status=completed requested={} sdk_send_v2={} rpc_requests_captured={} elapsed_ms={} messages_per_sec={:.1}",
+            MESSAGE_COUNT,
+            sdk_send_count,
+            captured_methods.len(),
+            elapsed.as_millis(),
+            f64::from(u32::try_from(MESSAGE_COUNT).expect("message count fits in u32"))
+                / elapsed.as_secs_f64()
+        );
+        assert_eq!(
+            captured_methods.first().map(String::as_str),
+            Some("sdk_negotiate_v2")
+        );
+        assert_eq!(sdk_send_count, MESSAGE_COUNT);
+        assert_eq!(captured_methods.len(), MESSAGE_COUNT + 1);
     }
 
     #[test]

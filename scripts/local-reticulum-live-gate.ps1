@@ -7,13 +7,39 @@ param(
     [int]$DiscoverySettleSeconds = 3,
     [int]$ReceiptPollAttempts = 120,
     [int]$ReceiptPollDelayMs = 500,
-    [switch]$IncludeZmqEventPoll
+    [switch]$IncludeZmqEventPoll,
+    [switch]$IncludeZmqLoad,
+    [switch]$ZmqLoadOnly,
+    [int]$LoadMessages = 1000,
+    [int]$LoadSenderClients = 4,
+    [int]$LoadReceiverCount = 0,
+    [int]$LoadPollAttempts = 240,
+    [int]$LoadPollDelayMs = 250
 )
 
 $ErrorActionPreference = "Stop"
 
+if ($ZmqLoadOnly) {
+    $IncludeZmqLoad = $true
+}
+
 if ($NodeCount -lt 3) {
     throw "NodeCount must be at least 3 for direct receipt plus two-recipient fanout validation."
+}
+
+if ($IncludeZmqLoad) {
+    if ($LoadMessages -lt 1) {
+        throw "LoadMessages must be at least 1."
+    }
+    if ($LoadSenderClients -lt 1) {
+        throw "LoadSenderClients must be at least 1."
+    }
+    if ($LoadReceiverCount -eq 0) {
+        $LoadReceiverCount = $NodeCount - 1
+    }
+    if ($LoadReceiverCount -lt 1 -or $LoadReceiverCount -gt ($NodeCount - 1)) {
+        throw "LoadReceiverCount must be in the range 1..NodeCount-1."
+    }
 }
 
 if (-not (Test-Path -LiteralPath $ReticulumdExe)) {
@@ -98,6 +124,15 @@ $savedEnv = @{
     R3AKT_LXMF_ZMQ_COMMAND_ENDPOINT = [Environment]::GetEnvironmentVariable("R3AKT_LXMF_ZMQ_COMMAND_ENDPOINT")
     R3AKT_LXMF_ZMQ_RESPONSE_ENDPOINT = [Environment]::GetEnvironmentVariable("R3AKT_LXMF_ZMQ_RESPONSE_ENDPOINT")
     R3AKT_ENABLE_ZMQ_EVENT_POLL = [Environment]::GetEnvironmentVariable("R3AKT_ENABLE_ZMQ_EVENT_POLL")
+    R3AKT_ZMQ_LOAD_COMMAND_ENDPOINTS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_COMMAND_ENDPOINTS")
+    R3AKT_ZMQ_LOAD_DESTINATIONS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_DESTINATIONS")
+    R3AKT_ZMQ_LOAD_SENDER_RESPONSE_ENDPOINTS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_SENDER_RESPONSE_ENDPOINTS")
+    R3AKT_ZMQ_LOAD_RECEIVER_RESPONSE_ENDPOINTS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_RECEIVER_RESPONSE_ENDPOINTS")
+    R3AKT_ZMQ_LOAD_MESSAGES = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_MESSAGES")
+    R3AKT_ZMQ_LOAD_SENDER_CLIENTS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_SENDER_CLIENTS")
+    R3AKT_ZMQ_LOAD_RECEIVER_COUNT = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_RECEIVER_COUNT")
+    R3AKT_ZMQ_LOAD_POLL_ATTEMPTS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_POLL_ATTEMPTS")
+    R3AKT_ZMQ_LOAD_POLL_DELAY_MS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_POLL_DELAY_MS")
 }
 
 try {
@@ -113,11 +148,25 @@ try {
             $transportPorts += Get-FreeTcpPort
         }
     }
-    $zmqCommandEndpoint = $null
+    $zmqCommandEndpoints = @()
     $zmqResponseEndpoint = $null
+    $zmqSenderResponseEndpoints = @()
+    $zmqReceiverResponseEndpoints = @()
+    if ($IncludeZmqEventPoll -or $IncludeZmqLoad) {
+        for ($idx = 0; $idx -lt $NodeCount; $idx++) {
+            $zmqCommandEndpoints += "tcp://127.0.0.1:$(Get-FreeTcpPort)"
+        }
+    }
     if ($IncludeZmqEventPoll) {
-        $zmqCommandEndpoint = "tcp://127.0.0.1:$(Get-FreeTcpPort)"
         $zmqResponseEndpoint = "tcp://127.0.0.1:$(Get-FreeTcpPort)"
+    }
+    if ($IncludeZmqLoad) {
+        for ($idx = 0; $idx -lt $LoadSenderClients; $idx++) {
+            $zmqSenderResponseEndpoints += "tcp://127.0.0.1:$(Get-FreeTcpPort)"
+        }
+        for ($idx = 0; $idx -lt $LoadReceiverCount; $idx++) {
+            $zmqReceiverResponseEndpoints += "tcp://127.0.0.1:$(Get-FreeTcpPort)"
+        }
     }
 
     for ($idx = 0; $idx -lt $NodeCount; $idx++) {
@@ -140,8 +189,8 @@ try {
         if ([string]::IsNullOrWhiteSpace($ExternalConfigPath)) {
             $args += @("--transport", "127.0.0.1:$($transportPorts[$idx])")
         }
-        if ($IncludeZmqEventPoll -and $idx -eq 0) {
-            $args += @("--zmq-rpc-command", $zmqCommandEndpoint)
+        if ($IncludeZmqEventPoll -or $IncludeZmqLoad) {
+            $args += @("--zmq-rpc-command", $zmqCommandEndpoints[$idx])
         }
         $args += @("--config", $configPath)
         $processes += Start-Process -FilePath $ReticulumdExe `
@@ -163,7 +212,13 @@ try {
         Write-Host "  node-$idx rpc=127.0.0.1:$($rpcPorts[$idx]) delivery=$($destinations[$idx])"
     }
     if ($IncludeZmqEventPoll) {
-        Write-Host "  node-0 zmq-command=$zmqCommandEndpoint zmq-response=$zmqResponseEndpoint"
+        Write-Host "  node-0 zmq-command=$($zmqCommandEndpoints[0]) zmq-response=$zmqResponseEndpoint"
+    }
+    if ($IncludeZmqLoad) {
+        Write-Host "  zmq-load messages=$LoadMessages sender-clients=$LoadSenderClients receivers=$LoadReceiverCount"
+        for ($idx = 0; $idx -lt $NodeCount; $idx++) {
+            Write-Host "  node-$idx zmq-command=$($zmqCommandEndpoints[$idx])"
+        }
     }
 
     Start-Sleep -Seconds $DiscoverySettleSeconds
@@ -175,23 +230,43 @@ try {
     $env:R3AKT_RETICULUMD_RECEIPT_POLL_ATTEMPTS = "$ReceiptPollAttempts"
     $env:R3AKT_RETICULUMD_RECEIPT_POLL_DELAY_MS = "$ReceiptPollDelayMs"
     if ($IncludeZmqEventPoll) {
-        $env:R3AKT_LXMF_ZMQ_COMMAND_ENDPOINT = $zmqCommandEndpoint
+        $env:R3AKT_LXMF_ZMQ_COMMAND_ENDPOINT = $zmqCommandEndpoints[0]
         $env:R3AKT_LXMF_ZMQ_RESPONSE_ENDPOINT = $zmqResponseEndpoint
         $env:R3AKT_ENABLE_ZMQ_EVENT_POLL = "1"
     }
-
-    cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_direct_send_receipt_is_delivered_when_configured -- --nocapture
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    if ($IncludeZmqLoad) {
+        $env:R3AKT_ZMQ_LOAD_COMMAND_ENDPOINTS = ($zmqCommandEndpoints -join ",")
+        $env:R3AKT_ZMQ_LOAD_DESTINATIONS = ($destinations -join ",")
+        $env:R3AKT_ZMQ_LOAD_SENDER_RESPONSE_ENDPOINTS = ($zmqSenderResponseEndpoints -join ",")
+        $env:R3AKT_ZMQ_LOAD_RECEIVER_RESPONSE_ENDPOINTS = ($zmqReceiverResponseEndpoints -join ",")
+        $env:R3AKT_ZMQ_LOAD_MESSAGES = "$LoadMessages"
+        $env:R3AKT_ZMQ_LOAD_SENDER_CLIENTS = "$LoadSenderClients"
+        $env:R3AKT_ZMQ_LOAD_RECEIVER_COUNT = "$LoadReceiverCount"
+        $env:R3AKT_ZMQ_LOAD_POLL_ATTEMPTS = "$LoadPollAttempts"
+        $env:R3AKT_ZMQ_LOAD_POLL_DELAY_MS = "$LoadPollDelayMs"
     }
 
-    cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_topic_fanout_receipts_are_delivered_when_configured -- --nocapture
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    if (-not $ZmqLoadOnly) {
+        cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_direct_send_receipt_is_delivered_when_configured -- --nocapture
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+
+        cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_topic_fanout_receipts_are_delivered_when_configured -- --nocapture
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
     }
 
-    if ($IncludeZmqEventPoll) {
+    if ($IncludeZmqEventPoll -and -not $ZmqLoadOnly) {
         cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_zmq_event_poll_succeeds_when_configured -- --nocapture
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    }
+
+    if ($IncludeZmqLoad) {
+        cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_zmq_load_delivers_to_local_clients_when_configured -- --ignored --nocapture
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
         }
