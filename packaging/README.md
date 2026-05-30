@@ -26,6 +26,15 @@ GitHub does not expose `workflow_dispatch` for workflows that only exist on
 `rust-next`, so the release workflow also runs on relevant `rust-next` pushes
 to validate packaging before the default-branch cutover.
 
+Latest staging evidence: `Build Rust Release Packages` run `26695643653`
+passed on commit `676028a7f1184df7873400240db547e077cec2bc`. It uploaded
+`rch-rust-full-windows-x64-rust-next`, `rch-rust-full-linux-x64-rust-next`,
+`rch-desktop-windows-x64-nsis`, and `rch-desktop-linux-x64-appimage`; downloaded
+artifacts matched their SHA-256 sidecars.
+
+Draft notes for the first Rust preview are in
+`docs/release-notes-v3.0.0-preview.0.md`.
+
 Pull request quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. It runs Rust 1.85 formatting, clippy,
 locked workspace tests, release builds for the server and TAK service, and

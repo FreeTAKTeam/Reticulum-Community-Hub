@@ -114,6 +114,14 @@ Validated during the root Rust import and refreshed on 2026-05-11:
 - `.github/workflows/rust.yml`: now invokes the committed release gate runner
   with `-ServerOnlyAlpha`; Tauri desktop bundling is outside the initial alpha
   release workflow.
+- The `Rust workspace` CI run `26695643652` passed on commit
+  `676028a7f1184df7873400240db547e077cec2bc`, proving the committed
+  `ServerOnlyAlpha` verifier on Rust 1.85 for the current staging branch.
+- The `Build Rust Release Packages` CI run `26695643653` passed on the same
+  commit, producing Windows/Linux server archives plus Windows NSIS and Linux
+  AppImage desktop artifacts. Downloaded artifacts verified against their
+  sidecar SHA-256 files, and both server archive manifests record
+  `release_version=rust-next`, `git_ref=rust-next`, and the same commit SHA.
 - `npm ci`, `npm audit --audit-level=moderate`, `npm run lint`,
   `npm run test`, and `npm run build` in `ui/`: passed, including zero audited
   UI vulnerabilities after the lockfile refresh and 23 Vitest files / 70 tests.
@@ -184,14 +192,10 @@ Release blockers cleared in the latest parity pass:
 
 The Rust edition preserves the RCH northbound contract as the compatibility
 target. Remaining external validation should be tracked explicitly, especially
-final validation against the target TAK server profile and broader real-network
-Reticulum validation outside the local multi-daemon harness. The latest
-configured target TAK keepalive/reconnect attempts on 2026-05-11 failed because
-the TCP endpoint actively refused the connection, so this remains an external
-release blocker rather than a local Rust test failure. A Python-equivalent
-`COT_URL` socket probe against the same `TAK_PROTO=0` profile also returned
-WinError 10061, confirming that PyTAK and Rust select the same TCP endpoint for
-that configuration.
+broader real-network Reticulum validation outside the local multi-daemon
+harness. After the target TAK server was restarted on 2026-05-11, the configured
+`tcp://137.184.101.250:8087` profile passed keepalive, reconnect, and
+bidirectional inbound relay validation through the standalone TAK service.
 
 Use `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` for the local
 server-only alpha release gate set. Use
