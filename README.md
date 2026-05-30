@@ -122,10 +122,9 @@ Crates:
   When configured with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and
   `--reticulumd-source`, outbound delivery uses the LXMF-rs ZeroMQ SDK
   pipeline. For the initial server package, ZeroMQ is mandatory for southbound
-  command dispatch; `reticulumd` HTTP RPC may still be configured as the
-  conservative daemon event/receipt polling fallback. The opt-in
-  `R3AKT_ENABLE_ZMQ_EVENT_POLL=1` path now prefers the LXMF-rs ZeroMQ event
-  stream when both ZeroMQ endpoints are configured.
+  command dispatch and daemon event polling. Multi-destination fanout is sent
+  to the daemon as one `sdk_send_batch_v2` ZeroMQ request, so the server no
+  longer performs one daemon send per recipient.
   Remaining backend service contracts should continue to be ported in small
   contract-tested slices.
 - `r3akt-tak-connector`: dedicated Rust TAK connector crate and service
@@ -176,16 +175,16 @@ at `crates/libs/lxmf-core`, `lxmf-sdk`, `reticulum-rs-transport`,
 MessagePack for LXMF payloads and exposes `WireMessage` packing, unpacking,
 message IDs, signing, and verification. This milestone does not invent a
 Reticulum/LXMF implementation. `r3akt-transport-rns` now includes a ZeroMQ
-SDK-backed adapter for R3AKT MessagePack envelopes and normal RCH outbound
-LXMF field payloads, while retaining the older `reticulumd` RPC adapter as a
-test and migration fallback.
+SDK-backed adapter for R3AKT MessagePack envelopes, normal RCH outbound LXMF
+field payloads, and batched multi-recipient sends. The older `reticulumd` RPC
+adapter remains in the crate for legacy tests and migration tooling, but the
+Rust server runtime no longer uses it for southbound dispatch or event polling.
 
 Gap: the ZeroMQ SDK path has unit coverage for outbound payload mapping and
 inbound SDK event conversion, plus local live-daemon validation for
 `sdk_poll_events_v2` over ZeroMQ. The default server package path requires
-ZeroMQ for outbound commands, but still allows HTTP RPC as the conservative
-daemon event/receipt polling fallback. Keep HTTP RPC available until external
-Reticulum and REM phone evidence also pass with ZeroMQ event polling enabled.
+ZeroMQ endpoints for outbound commands and event polling; external Reticulum
+and REM phone evidence should keep validating the ZeroMQ-only path.
 
 ### Reticulum Mobile Emergency Management
 
@@ -839,6 +838,28 @@ Run the repeatable local Reticulum receipt/fanout/ZeroMQ event-poll harness when
   -DiscoverySettleSeconds 10 `
   -ReceiptPollAttempts 180
 ```
+
+Run the same local mesh with a daemon-involved ZeroMQ load check. This sends
+normal individual `sdk_send_v2` messages from node 0 to the local receiver
+daemons and confirms delivery through receiver-side `sdk_poll_events_v2`:
+
+```powershell
+.\scripts\local-reticulum-live-gate.ps1 `
+  -IncludeZmqLoad `
+  -LoadMessages 1000 `
+  -LoadSenderClients 4 `
+  -DiscoverySettleSeconds 10
+```
+
+Use `-ZmqLoadOnly` to run only the load check while tuning daemon delivery
+throughput.
+
+The Rust daemon delivery path now uses a bounded persistent scheduler rather
+than spawning one delivery runtime per message. Tune burst capacity with the
+daemon environment variables `LXMD_DELIVERY_QUEUE_CAPACITY`,
+`LXMD_DELIVERY_GLOBAL_CONCURRENCY`, and `LXMD_DELIVERY_PER_PEER_IN_FLIGHT`.
+Use `daemon_status_ex`, `sdk_snapshot_v2`, or `sdk_status_v2` to inspect the
+`delivery_pipeline` counters while running `-ZmqLoadOnly`.
 
 Run the same harness against a controlled external Reticulum/RMAP profile by
 passing a `reticulumd` TOML config:

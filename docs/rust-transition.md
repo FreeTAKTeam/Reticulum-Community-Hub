@@ -127,6 +127,20 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   The refreshed gate runs both `r3akt-rch-server` live Reticulum receipt/fanout
   tests through the outbound worker path, then validates `sdk_poll_events_v2`
   over the LXMF-rs ZeroMQ RPC loop.
+- Local daemon-involved ZeroMQ load validation is available through
+  `scripts/local-reticulum-live-gate.ps1 -ZmqLoadOnly -LoadMessages <count>`.
+  It sends normal individual `sdk_send_v2` requests from one local daemon to
+  local receiver daemons and verifies receiver-side `sdk_poll_events_v2`
+  inbound events. A 2-message sanity run passed on 2026-05-30; 10-message
+  burst runs accepted all sends but exposed incomplete receiver delivery,
+  confirming the remaining bottleneck is daemon/network delivery rather than
+  RCH-side request construction.
+- The daemon-side scalability fix is a persistent bounded delivery scheduler in
+  `reticulumd`: accepted messages enter one runtime-backed queue, direct links
+  are reused instead of reset per message, per-peer delivery defaults to ordered
+  single in-flight work, and burst receipt events are drained without one wakeup
+  per receipt. Inspect `delivery_pipeline` in `daemon_status_ex`,
+  `sdk_snapshot_v2`, or `sdk_status_v2` while running the load gate.
 - Controlled external RMAP Reticulum validation: the same script passed on
   2026-05-11 with `-ExternalConfigPath` pointing at the local RMAP testnet
   config, using three temporary controlled identities connected through public
@@ -153,9 +167,12 @@ Release blockers cleared in the latest parity pass:
   an additional feature on top of LXMF chat, not as a separate voice-only
   routing class.
 - The transport crate now has ZeroMQ SDK adapter coverage for R3AKT frame
-  sends, normal RCH LXMF field payload sends, and inbound SDK event conversion.
-- Direct-send compatibility tests still cover the legacy RPC fallback while the
-  server runtime moves release traffic to the ZeroMQ SDK pipeline.
+  sends, normal RCH LXMF field payload sends, batched fanout payloads, and
+  inbound SDK event conversion. Server runtime southbound traffic uses the
+  ZeroMQ SDK pipeline only.
+- Multi-recipient dispatch now uses `sdk_send_batch_v2` over ZeroMQ so a topic
+  fanout enters `reticulumd` as one bounded batch request instead of one RPC
+  call per recipient.
 - `assignment_asset_link_fanout_uses_python_generic_markdown_shape` proves the
   generic LXMF fanout path for assignment asset links renders Python-style
   markdown with resolved mission, checklist task, and asset names.
