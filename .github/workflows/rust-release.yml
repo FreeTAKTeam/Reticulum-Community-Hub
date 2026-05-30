@@ -10,10 +10,20 @@ on:
   release:
     types: [published]
   push:
+    branches: ["rust-next"]
     tags:
       - "v3.0.0-alpha.*"
       - "v3.0.0-preview.*"
       - "v3.*"
+    paths:
+      - ".github/workflows/rust-release.yml"
+      - "scripts/build-rust-release-package.ps1"
+      - "packaging/**"
+      - "apps/rch-desktop/**"
+      - "ui/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
 
 permissions:
   contents: write

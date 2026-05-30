@@ -21,7 +21,10 @@ release version, for example
 `rch-rust-full-windows-x64-v3.0.0-preview.0.zip`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
 Manual workflow runs default to `v3.0.0-preview.0` and can override that label
-with the `release_version` input.
+with the `release_version` input. While `main` remains the default branch,
+GitHub does not expose `workflow_dispatch` for workflows that only exist on
+`rust-next`, so the release workflow also runs on relevant `rust-next` pushes
+to validate packaging before the default-branch cutover.
 
 Pull request quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. It runs Rust 1.85 formatting, clippy,
