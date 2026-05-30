@@ -1,7 +1,8 @@
 # RCH Rust v3.0.0-preview.0 Release Notes
 
-Draft status: prepared from `rust-next` commit
-`676028a7f1184df7873400240db547e077cec2bc`.
+Draft status: prepared after green staging evidence from `rust-next` commit
+`8dc69773af38ced251138c007c6f0bdc9543ea02`. The published prerelease tag and
+its release workflow run are the authoritative artifact source.
 
 This is the first Rust RCH preview package line. Python `2.9.x` maintenance
 continues from the `rch-python` branch; this preview does not replace the Python
@@ -16,8 +17,8 @@ stable line.
 
 ## Release Artifacts
 
-The staging packaging run `26695643653` passed on commit
-`676028a7f1184df7873400240db547e077cec2bc` and produced:
+The staging packaging run `26696071364` passed on commit
+`8dc69773af38ced251138c007c6f0bdc9543ea02` and produced:
 
 - `rch-rust-full-windows-x64-rust-next.zip`
 - `rch-rust-full-linux-x64-rust-next.tar.gz`
@@ -30,9 +31,9 @@ server archive names and `release-manifest.json`.
 
 ## Validation
 
-- `Rust workspace` run `26695643652` passed the committed
+- `Rust workspace` run `26696071362` passed the committed
   `scripts/release-readiness.ps1 -ServerOnlyAlpha` gate on Rust 1.85.
-- `Build Rust Release Packages` run `26695643653` passed all server and desktop
+- `Build Rust Release Packages` run `26696071364` passed all server and desktop
   packaging jobs.
 - Downloaded CI artifacts matched their SHA-256 sidecar files.
 - Server archive manifests recorded the package name, release label, Git ref,

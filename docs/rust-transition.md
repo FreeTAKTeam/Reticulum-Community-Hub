@@ -114,10 +114,10 @@ Validated during the root Rust import and refreshed on 2026-05-11:
 - `.github/workflows/rust.yml`: now invokes the committed release gate runner
   with `-ServerOnlyAlpha`; Tauri desktop bundling is outside the initial alpha
   release workflow.
-- The `Rust workspace` CI run `26695643652` passed on commit
-  `676028a7f1184df7873400240db547e077cec2bc`, proving the committed
+- The `Rust workspace` CI run `26696071362` passed on commit
+  `8dc69773af38ced251138c007c6f0bdc9543ea02`, proving the committed
   `ServerOnlyAlpha` verifier on Rust 1.85 for the current staging branch.
-- The `Build Rust Release Packages` CI run `26695643653` passed on the same
+- The `Build Rust Release Packages` CI run `26696071364` passed on the same
   commit, producing Windows/Linux server archives plus Windows NSIS and Linux
   AppImage desktop artifacts. Downloaded artifacts verified against their
   sidecar SHA-256 files, and both server archive manifests record

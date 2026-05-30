@@ -26,8 +26,8 @@ GitHub does not expose `workflow_dispatch` for workflows that only exist on
 `rust-next`, so the release workflow also runs on relevant `rust-next` pushes
 to validate packaging before the default-branch cutover.
 
-Latest staging evidence: `Build Rust Release Packages` run `26695643653`
-passed on commit `676028a7f1184df7873400240db547e077cec2bc`. It uploaded
+Latest staging evidence: `Build Rust Release Packages` run `26696071364`
+passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. It uploaded
 `rch-rust-full-windows-x64-rust-next`, `rch-rust-full-linux-x64-rust-next`,
 `rch-desktop-windows-x64-nsis`, and `rch-desktop-linux-x64-appimage`; downloaded
 artifacts matched their SHA-256 sidecars.
