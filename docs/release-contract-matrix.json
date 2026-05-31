@@ -256,6 +256,8 @@
       "kind": "migration",
       "description": "Install-over-Python migration path for Python config, identity, Reticulum identity, SQLite DB, telemetry DB, files, images, LXMF data, and first-start prompt behavior.",
       "evidence": [
+        "scripts/import-python-rch-production.ps1",
+        "scripts/import-python-rch-production.Tests.ps1",
         "scripts/migrate-python-rch.ps1",
         "crates/r3akt-rch-core/src/python_migration.rs",
         "crates/r3akt-rch-server/src/main.rs --prompt-python-import"

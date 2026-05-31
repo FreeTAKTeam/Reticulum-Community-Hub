@@ -42,16 +42,33 @@ locked workspace tests, release builds for the server and TAK service, and
 
 ## Python Store Migration
 
-Rust packages can be installed over an existing Python RCH data directory by
-running the migration wrapper before the Rust server starts:
+Rust v3 packages use an offline, local-only production migration wrapper before
+the Rust server starts. Run a dry run first to inventory the Python store,
+Reticulum identity/config inputs, runtime file directories, and target paths:
 
 ```powershell
-scripts\migrate-python-rch.ps1 -SourceStore RCH_Store -TargetDataDir RTH_Store
+scripts\import-python-rch-production.ps1 -SourceRoot . -LegacyStore RTH_Store -TargetDir target\production-rch-3 -DryRun
 ```
 
-The wrapper copies `config.ini`, `identity`, `telemetry.db`, files, images, and
-LXMF runtime data, then converts `rth_api.sqlite` into the Rust
-`rch_state.sqlite3` snapshot database. The Rust converter is available as:
+The dry run writes `migration-plan.json` without copying data or running the
+Rust database converter. The apply run copies `config.ini`, `identity`,
+Reticulum transport identity/config, `telemetry.db`, root `telemetry.db`, files,
+images, and LXMF runtime data, then converts `rth_api.sqlite` into the Rust
+`rch_state.sqlite3` snapshot database:
+
+```powershell
+scripts\import-python-rch-production.ps1 -SourceRoot . -LegacyStore RTH_Store -TargetDir target\production-rch-3
+```
+
+If `rch_state.sqlite3` already exists, the script stops unless `-Force` is
+provided. `-Force` backs up the existing database to
+`rch_state.sqlite3.before-v3-migration.<timestamp>` before replacing it. The
+apply run writes `rust-migration-report.json`, `migration-plan.json`,
+`migration-manifest.json`, and a compatibility `MANIFEST.txt` in the target
+directory.
+
+`scripts\migrate-python-rch.ps1` remains available as a lightweight local
+developer wrapper. The Rust converter is available directly as:
 
 ```powershell
 cargo run -p r3akt-rch-core --bin migrate_python_rch -- --legacy-db RCH_Store\rth_api.sqlite --target-db RTH_Store\rch_state.sqlite3 --legacy-config RCH_Store\config.ini
