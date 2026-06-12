@@ -145,6 +145,9 @@ source venv_linux/bin/activate   # Linux/macOS
 # Install dependencies
 python -m pip install -e .
 
+# Helper launcher (creates `.venv`, installs deps, starts hub with TAK CoT service)
+./run_server.sh
+
 # Run the hub (LXMF only)
 python -m reticulum_telemetry_hub.reticulum_server --storage_dir ./RCH_Store --display_name "RCH"
 
@@ -163,6 +166,7 @@ rch --data-dir ./RCH_Store --port 8000 stop
 ./run_server_ui.sh           # Linux/macOS local bind (127.0.0.1 defaults)
 run_server_ui.bat            # Windows local bind (127.0.0.1 defaults)
 ./run_server_ui_remote.sh    # Linux remote-friendly bind; requires RTH_API_KEY
+VITE_RTH_WS_BASE_URL=ws://<host-or-ip>:8000 ./run_server_ui_remote.sh
 
 # Remote-access gateway bind (LAN/WAN)
 python -m reticulum_telemetry_hub.northbound.gateway --data-dir ./RCH_Store --api-host 0.0.0.0 --port 8000
@@ -187,6 +191,12 @@ npm install
 
 # Development mode
 npm run dev
+
+# Cross-platform wrapper from repo root
+pwsh ./build-electron.ps1
+pwsh ./build-electron.ps1 -Targets win
+pwsh ./build-electron.ps1 -Targets macos
+pwsh ./build-electron.ps1 -Targets pi
 
 # Build all
 npm run dist
@@ -217,6 +227,10 @@ pytest --cov=reticulum_telemetry_hub --cov-report=html
 # Windows helpers (activate venv + run tests)
 test_hub.bat
 test_hu_ui.bat
+
+# Rust-selected parity suites
+.\.venv\Scripts\python.exe -m pytest -o addopts='' -q --rch-backend=rust
+.\.venv\Scripts\python.exe -m pytest --no-cov -m rust_bridge --rch-backend=rust -q
 ```
 
 ### Linting
@@ -386,9 +400,10 @@ The hub uses `config.ini` in the storage directory. Key sections:
 - `[app]` - Application metadata
 - `[hub]` - Hub behavior (announce intervals, logging)
 - `[announce.capabilities]` - Capability announcement settings
+- `[rust_runtime]` - Optional Rust R3AKT bridge (`enabled`, `bridge_path`, `db_path`, `reticulumd_rpc_endpoint`)
 - `[reticulum]` - Reticulum transport settings
 - `[interfaces]` - Network interface configuration
-- `[propagation]` - LXMF propagation node settings
+- `[propagation]` - LXMF propagation node settings (`propagation_sync_interval_minutes` defaults to `10`)
 - `[TAK]` - TAK server integration
 - `[telemetry]` - Telemetry sensor enablement
 
@@ -702,6 +717,8 @@ with self.storage.session() as session:
 ## Documentation References
 
 - `docs/architecture.md` - System architecture and data flows
+- `docs/supportedCommands.md` - LXMF command inventory
+- `docs/southbound.md` - LXMF southbound contract and delivery-envelope rules
 - `docs/userManual.md` - User and operator guide
 - `docs/remoteAccess.md` - LAN/WAN access and `systemd` deployment guide
 - `docs/internal-api.md` - Internal API contract
