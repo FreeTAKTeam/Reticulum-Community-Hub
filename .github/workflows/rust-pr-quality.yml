@@ -155,4 +155,7 @@ jobs:
 
       - name: Audit locked dependency graph
         working-directory: rch
-        run: cargo audit --deny warnings
+        run: |
+          # time >=0.3.47 resolves RUSTSEC-2026-0009 but requires Rust 1.88.
+          # Keep the Rust 1.85 transition baseline until the workspace MSRV moves.
+          cargo audit --deny warnings --ignore RUSTSEC-2026-0009
