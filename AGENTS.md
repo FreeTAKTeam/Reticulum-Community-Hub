@@ -85,3 +85,8 @@ npm --prefix apps/rch-desktop run build
   `.playwright-mcp/`, and generated local files.
 - Do not mutate `rch-python` from this branch. Python maintenance belongs on
   the `rch-python` branch.
+
+## Documentation References
+
+- `docs/rust-transition.md` - Branch roles, migration status, and Rust surface
+- `docs/rem-southbound-interface.md` - Rust-side REM southbound contract notes
