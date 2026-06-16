@@ -72,8 +72,9 @@ use r3akt_rch_core::{
 #[cfg(test)]
 use r3akt_transport_rns::MessageBus;
 use r3akt_transport_rns::{
-    LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage, LxmfSdkOutboundMessage,
-    ReticulumdAnnounceRecord, list_reticulumd_announces, poll_lxmf_zmq_events,
+    LxmfDeliverySnapshot, LxmfDeliveryState, LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage,
+    LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, delivery_snapshot_from_status_result,
+    delivery_snapshot_receipt_status, list_reticulumd_announces, poll_lxmf_zmq_events,
     poll_reticulumd_events, reticulumd_event_to_envelope, reticulumd_message_to_envelope,
     send_lxmf_zmq_outbound_batch, send_lxmf_zmq_outbound_message,
 };
@@ -9174,6 +9175,7 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
         "reticulumd_source_configured": state.reticulumd_source.is_some(),
         "services": runtime_services_payload(&state),
         "outbound_delivery": outbound_delivery,
+        "lxmf_sdk": lxmf_sdk_diagnostics_payload(state, &outbound_delivery)?,
         "reticulumd_inbound": reticulumd_inbound_worker_diagnostics(state),
         "persistence": persistence_diagnostics(&state)?,
         "mission_change_fanout_cache": mission_change_fanout_cache_diagnostics(&state)?,
@@ -9186,6 +9188,87 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
         "started_at": iso8601_from_unix_ms(control.started_ts_ms),
         "last_start_at": control.last_start_ts_ms.map(iso8601_from_unix_ms),
         "last_stop_at": control.last_stop_ts_ms.map(iso8601_from_unix_ms),
+    }))
+}
+
+fn lxmf_sdk_diagnostics_payload(
+    state: &AppState,
+    outbound_delivery: &Value,
+) -> Result<Value, ApiError> {
+    let inbound = reticulumd_inbound_worker_diagnostics(state);
+    let mut delivery_states: HashMap<String, u64> = HashMap::new();
+    let mut terminal_count = 0_u64;
+    let mut recent_reconciliation_errors = Vec::new();
+    {
+        let messages = state
+            .messages
+            .read()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        for message in messages.iter() {
+            if let Some(state) = message
+                .delivery_metadata
+                .get("sdk_delivery_state")
+                .and_then(Value::as_str)
+            {
+                *delivery_states.entry(state.to_string()).or_default() += 1;
+            }
+            if message
+                .delivery_metadata
+                .get("sdk_terminal")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                terminal_count = terminal_count.saturating_add(1);
+            }
+            if let Some(error) = message
+                .delivery_metadata
+                .get("sdk_reconciliation_error")
+                .and_then(Value::as_str)
+            {
+                recent_reconciliation_errors.push(json!({
+                    "message_id": message.message_id,
+                    "error": error,
+                }));
+            }
+        }
+    }
+    if recent_reconciliation_errors.len() > 10 {
+        recent_reconciliation_errors =
+            recent_reconciliation_errors.split_off(recent_reconciliation_errors.len() - 10);
+    }
+    Ok(json!({
+        "configured": state.lxmf_zmq_command_endpoint.is_some()
+            && state.lxmf_zmq_response_endpoint.is_some(),
+        "transport": "zeromq",
+        "contract": {
+            "version": 2,
+            "release": "sdk-v2",
+            "capabilities": [
+                "delivery_status",
+                "delivery_events",
+                "peer_directory",
+                "peer_lifecycle",
+                "propagation_status"
+            ]
+        },
+        "event_cursor": {
+            "cursor": inbound["last_event_cursor"].clone(),
+            "stream_gaps_total": inbound["stream_gaps_total"].clone(),
+            "event_polls_total": inbound["event_polls_total"].clone(),
+            "event_poll_errors_total": inbound["event_poll_errors_total"].clone(),
+        },
+        "delivery_queue": {
+            "queued": outbound_delivery["queued"].clone(),
+            "pending_dispatches": outbound_delivery["pending_dispatches"].clone(),
+            "pending_receipts": outbound_delivery["pending_receipts"].clone(),
+            "states": delivery_states,
+            "terminal_count": terminal_count,
+        },
+        "propagation": {
+            "fallback_total": outbound_delivery["propagation_fallback_total"].clone(),
+            "propagated": outbound_delivery["propagated"].clone(),
+        },
+        "recent_reconciliation_errors": recent_reconciliation_errors,
     }))
 }
 
@@ -10018,13 +10101,14 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
         mark_reticulumd_receipt_poll_attempt(state, &message_id, now_ms)?;
         let mut statuses = Vec::new();
         for target in &targets {
-            if let Some(receipt_status) =
+            if let Some(delivery_status) =
                 reticulumd_delivery_status(&mut client, &target.message_id)
             {
                 statuses.push(ReticulumdReceiptTarget {
                     message_id: target.message_id.clone(),
                     destination: target.destination.clone(),
-                    status: Some(receipt_status),
+                    status: Some(delivery_status.receipt_status),
+                    sdk_snapshot: Some(delivery_status.snapshot),
                 });
             }
         }
@@ -10035,18 +10119,26 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
         if statuses.len() == targets.len()
             && statuses.iter().all(|target| {
                 target
-                    .status
-                    .as_deref()
-                    .is_some_and(|status| status.eq_ignore_ascii_case("delivered"))
+                    .sdk_snapshot
+                    .as_ref()
+                    .is_some_and(sdk_status_delivered_terminal)
+                    || target
+                        .status
+                        .as_deref()
+                        .is_some_and(|status| status.eq_ignore_ascii_case("delivered"))
             })
         {
             mark_reticulumd_status_delivery_receipt(state, &message_id, "delivered")?;
         } else if statuses.len() == targets.len()
             && statuses.iter().all(|target| {
                 target
-                    .status
-                    .as_deref()
-                    .is_some_and(terminal_reticulumd_sent_status)
+                    .sdk_snapshot
+                    .as_ref()
+                    .is_some_and(sdk_status_sent_terminal)
+                    || target
+                        .status
+                        .as_deref()
+                        .is_some_and(terminal_reticulumd_sent_status)
             })
         {
             let receipt_status = statuses
@@ -10059,8 +10151,16 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
                 .status
                 .as_deref()
                 .filter(|status| terminal_reticulumd_failure_status(status))
+                .map(ToString::to_string)
+                .or_else(|| {
+                    target
+                        .sdk_snapshot
+                        .as_ref()
+                        .filter(|snapshot| sdk_status_failure_terminal(snapshot))
+                        .map(delivery_snapshot_receipt_status)
+                })
         }) {
-            mark_reticulumd_status_delivery_failure(state, &message_id, failed)?;
+            mark_reticulumd_status_delivery_failure(state, &message_id, &failed)?;
         }
     }
     Ok(())
@@ -10089,11 +10189,12 @@ fn mark_reticulumd_receipt_poll_attempt(
     persist_outbound_message_row(state, &message)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct ReticulumdReceiptTarget {
     message_id: String,
     destination: String,
     status: Option<String>,
+    sdk_snapshot: Option<LxmfDeliverySnapshot>,
 }
 
 fn reticulumd_receipt_targets_for_message(
@@ -10126,6 +10227,7 @@ fn reticulumd_receipt_targets_for_message(
                             .map(str::trim)
                             .filter(|status| !status.is_empty())
                             .map(ToString::to_string),
+                        sdk_snapshot: None,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -10136,6 +10238,7 @@ fn reticulumd_receipt_targets_for_message(
             message_id: message.message_id.clone(),
             destination: message.destination.clone().unwrap_or_default(),
             status: None,
+            sdk_snapshot: None,
         });
     }
     targets
@@ -10162,12 +10265,20 @@ fn update_reticulumd_receipt_target_statuses(
             .find(|target| target.message_id == status.message_id)
         {
             target.status.clone_from(&status.status);
+            target.sdk_snapshot.clone_from(&status.sdk_snapshot);
         }
     }
+    let sdk_metadata = statuses
+        .iter()
+        .filter_map(|target| target.sdk_snapshot.as_ref())
+        .max_by_key(|snapshot| snapshot.last_updated_ms)
+        .map(sdk_delivery_snapshot_metadata_json)
+        .unwrap_or_else(|| json!({}));
     merge_delivery_metadata(
         &mut message.delivery_metadata,
         json!({ "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&targets) }),
     );
+    merge_delivery_metadata(&mut message.delivery_metadata, sdk_metadata);
     let message = message.clone();
     drop(messages);
     persist_outbound_message_row(state, &message)
@@ -10178,20 +10289,33 @@ fn reticulumd_receipt_targets_json(targets: &[ReticulumdReceiptTarget]) -> Value
         targets
             .iter()
             .map(|target| {
-                json!({
+                let mut value = json!({
                     "message_id": target.message_id,
                     "destination": target.destination,
                     "status": target.status.as_deref().unwrap_or("pending"),
-                })
+                });
+                if let Some(snapshot) = &target.sdk_snapshot {
+                    merge_delivery_metadata(
+                        &mut value,
+                        sdk_delivery_snapshot_metadata_json(snapshot),
+                    );
+                }
+                value
             })
             .collect(),
     )
 }
 
+#[derive(Clone, Debug)]
+struct ReticulumdDeliveryStatus {
+    receipt_status: String,
+    snapshot: LxmfDeliverySnapshot,
+}
+
 fn reticulumd_delivery_status(
     client: &mut ReticulumdRpcClient,
     message_id: &str,
-) -> Option<String> {
+) -> Option<ReticulumdDeliveryStatus> {
     for candidate in reticulumd_status_message_id_candidates(message_id) {
         if let Some(status) = reticulumd_delivery_status_for_message_id(client, &candidate) {
             return Some(status);
@@ -10212,22 +10336,79 @@ fn reticulumd_status_message_id_candidates(message_id: &str) -> Vec<String> {
 fn reticulumd_delivery_status_for_message_id(
     client: &mut ReticulumdRpcClient,
     message_id: &str,
-) -> Option<String> {
+) -> Option<ReticulumdDeliveryStatus> {
     let response = client
         .call("sdk_status_v2", Some(json!({ "message_id": message_id })))
         .ok()?;
     if response.error.is_some() {
         return None;
     }
-    response
-        .result
-        .as_ref()
-        .and_then(|result| result.get("message"))
-        .and_then(|message| message.get("receipt_status"))
+    let result = response.result.as_ref()?;
+    let snapshot = delivery_snapshot_from_status_result(result, message_id)
+        .ok()
+        .flatten()?;
+    let receipt_status = raw_reticulumd_receipt_status(result)
+        .unwrap_or_else(|| delivery_snapshot_receipt_status(&snapshot));
+    Some(ReticulumdDeliveryStatus {
+        receipt_status,
+        snapshot,
+    })
+}
+
+fn raw_reticulumd_receipt_status(result: &Value) -> Option<String> {
+    result
+        .get("message")
+        .unwrap_or(result)
+        .get("receipt_status")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|status| !status.is_empty())
         .map(str::to_string)
+}
+
+fn sdk_delivery_snapshot_metadata_json(snapshot: &LxmfDeliverySnapshot) -> Value {
+    json!({
+        "sdk_message_id": snapshot.message_id.to_string(),
+        "sdk_delivery_state": sdk_delivery_state_name(&snapshot.state),
+        "sdk_terminal": snapshot.terminal,
+        "sdk_attempts": snapshot.attempts,
+        "sdk_reason_code": snapshot.reason_code,
+        "sdk_last_updated_ms": snapshot.last_updated_ms,
+    })
+}
+
+fn sdk_delivery_state_name(state: &LxmfDeliveryState) -> &'static str {
+    match state {
+        LxmfDeliveryState::Queued => "queued",
+        LxmfDeliveryState::Dispatching => "dispatching",
+        LxmfDeliveryState::InFlight => "in_flight",
+        LxmfDeliveryState::Sent => "sent",
+        LxmfDeliveryState::Delivered => "delivered",
+        LxmfDeliveryState::Failed => "failed",
+        LxmfDeliveryState::Cancelled => "cancelled",
+        LxmfDeliveryState::Expired => "expired",
+        LxmfDeliveryState::Rejected => "rejected",
+        _ => "unknown",
+    }
+}
+
+fn sdk_status_delivered_terminal(snapshot: &LxmfDeliverySnapshot) -> bool {
+    snapshot.terminal && snapshot.state == LxmfDeliveryState::Delivered
+}
+
+fn sdk_status_sent_terminal(snapshot: &LxmfDeliverySnapshot) -> bool {
+    snapshot.terminal && snapshot.state == LxmfDeliveryState::Sent
+}
+
+fn sdk_status_failure_terminal(snapshot: &LxmfDeliverySnapshot) -> bool {
+    snapshot.terminal
+        && matches!(
+            snapshot.state,
+            LxmfDeliveryState::Failed
+                | LxmfDeliveryState::Cancelled
+                | LxmfDeliveryState::Expired
+                | LxmfDeliveryState::Rejected
+        )
 }
 
 fn terminal_reticulumd_failure_status(status: &str) -> bool {
@@ -12787,6 +12968,7 @@ fn dispatch_outbound_message(
                 message_id: result.message_id,
                 destination: result.destination,
                 status: None,
+                sdk_snapshot: None,
             });
         }
         return Ok(report);
@@ -12837,6 +13019,7 @@ fn dispatch_outbound_message(
             message_id: reticulumd_message_id,
             destination,
             status: None,
+            sdk_snapshot: None,
         });
     }
     Ok(report)
@@ -12900,6 +13083,7 @@ fn dispatch_outbound_message_legacy_rpc_for_tests(
             message_id: reticulumd_message_id,
             destination,
             status: None,
+            sdk_snapshot: None,
         });
     }
     Ok(report)
@@ -18169,6 +18353,12 @@ fn rem_peer_registry_payload_from_records(
                 "client_type": record.client_type.trim().to_ascii_lowercase(),
                 "registered_mode": rem_modes.get(&identity).cloned().unwrap_or_else(|| "autonomous".to_string()),
                 "last_seen": iso8601_from_unix_ms(record.last_seen_ts_ms),
+                "last_seen_ts_ms": record.last_seen_ts_ms,
+                "online": true,
+                "name_source": source,
+                "trust_level": Value::Null,
+                "bootstrap": false,
+                "delivery_readiness": "fresh",
                 "status": "active",
             })
         })
@@ -31395,6 +31585,12 @@ mod tests {
         assert_eq!(items[0]["client_type"], "rem");
         assert_eq!(items[0]["registered_mode"], "connected");
         assert_eq!(items[0]["status"], "active");
+        assert_eq!(items[0]["online"], true);
+        assert!(items[0]["last_seen_ts_ms"].as_i64().is_some());
+        assert_eq!(items[0]["name_source"], "destination");
+        assert_eq!(items[0]["trust_level"], Value::Null);
+        assert_eq!(items[0]["bootstrap"], false);
+        assert_eq!(items[0]["delivery_readiness"], "fresh");
         assert!(
             items[0]["last_seen"]
                 .as_str()
@@ -44709,6 +44905,100 @@ mod tests {
         assert_eq!(
             snapshot.messages[0].delivery_metadata["receipt_timeout"],
             false
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_diagnostics_persists_typed_sdk_delivery_snapshot() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
+            "message": {
+                "message_id": "sdk-typed-message",
+                "state": "delivered",
+                "terminal": true,
+                "last_updated_ms": 1_700_000_000_000_u64,
+                "attempts": 2,
+                "reason_code": null
+            }
+        })]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-status-poll-typed-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state
+            .outbound_delivery_policy
+            .write()
+            .expect("policy")
+            .mark_presence("target-destination", crate::unix_now_ms());
+        let message = crate::record_outbound_message(
+            &state,
+            "typed status poll delivered",
+            None,
+            Some("target-destination".to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "sent",
+            json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": [{
+                    "message_id": "sdk-typed-message",
+                    "destination": "target-destination",
+                    "status": "pending"
+                }],
+                "receipt_pending": true,
+                "receipt_registered_ts_ms": crate::unix_now_ms(),
+                "receipt_deadline_ts_ms": crate::unix_now_ms() + 30_000,
+            }),
+        )
+        .expect("mark pending receipt");
+        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["pending_receipts"], 0);
+        assert_eq!(diagnostics["failed"], 0);
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "sdk_status_v2");
+        assert_eq!(
+            requests[0].params.as_ref().expect("params")["message_id"],
+            "sdk-typed-message"
+        );
+
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_status"],
+            "delivered"
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["sdk_message_id"],
+            "sdk-typed-message"
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["sdk_delivery_state"],
+            "delivered"
+        );
+        assert_eq!(snapshot.messages[0].delivery_metadata["sdk_terminal"], true);
+        assert_eq!(snapshot.messages[0].delivery_metadata["sdk_attempts"], 2);
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["sdk_last_updated_ms"],
+            1_700_000_000_000_u64
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["sdk_reason_code"],
+            Value::Null
         );
 
         let _ = std::fs::remove_file(db_path);

@@ -29,6 +29,7 @@ use zeromq::{PullSocket, PushSocket, Socket, SocketRecv, SocketSend, ZmqMessage}
 
 pub type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send + 'a>>;
+pub use lxmf_sdk::{DeliverySnapshot as LxmfDeliverySnapshot, DeliveryState as LxmfDeliveryState};
 
 const RETICULUMD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 // Match RCH's outbound dispatch deadline so a stuck ZeroMQ SDK response cannot
@@ -630,6 +631,16 @@ pub fn send_lxmf_zmq_outbound_batch(
     send_lxmf_zmq_outbound_batch_via_actor(&config, batch)
 }
 
+pub fn lxmf_zmq_delivery_status(
+    command_endpoint: impl Into<String>,
+    response_endpoint: impl Into<String>,
+    message_id: impl Into<String>,
+) -> Result<Option<LxmfDeliverySnapshot>, TransportError> {
+    let mut config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
+    config.request_timeout = LXMF_ZMQ_SEND_REQUEST_TIMEOUT;
+    lxmf_zmq_delivery_status_via_actor(&config, message_id.into())
+}
+
 pub fn poll_lxmf_zmq_events(
     command_endpoint: impl Into<String>,
     response_endpoint: impl Into<String>,
@@ -713,6 +724,154 @@ pub fn send_lxmf_sdk_outbound_message_with_runtime(
     runtime.send(request)
 }
 
+pub fn delivery_snapshot_from_status_result(
+    result: &JsonValue,
+    requested_message_id: &str,
+) -> Result<Option<LxmfDeliverySnapshot>, TransportError> {
+    let message = result.get("message").unwrap_or(result);
+    if message.is_null() {
+        return Ok(None);
+    }
+    if message.as_object().is_none_or(serde_json::Map::is_empty) {
+        return Ok(None);
+    }
+    let message_id = message
+        .get("message_id")
+        .or_else(|| message.get("id"))
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(requested_message_id);
+    let mut normalized = message.clone();
+    let Some(object) = normalized.as_object_mut() else {
+        return Ok(None);
+    };
+    object.insert(
+        "message_id".to_string(),
+        JsonValue::String(message_id.to_string()),
+    );
+    if !object.contains_key("state") {
+        let receipt_status = object
+            .get("receipt_status")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        object.insert(
+            "state".to_string(),
+            JsonValue::String(delivery_state_name_from_receipt_status(&receipt_status).to_string()),
+        );
+        if !object.contains_key("reason_code") {
+            object.insert(
+                "reason_code".to_string(),
+                delivery_reason_code_from_receipt_status(&receipt_status)
+                    .map_or(JsonValue::Null, JsonValue::String),
+            );
+        }
+    }
+    let state = object
+        .get("state")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown");
+    if !object.contains_key("terminal") {
+        let terminal = object
+            .get("receipt_status")
+            .and_then(JsonValue::as_str)
+            .map_or_else(
+                || delivery_state_name_terminal(state),
+                legacy_receipt_status_terminal,
+            );
+        object.insert("terminal".to_string(), JsonValue::Bool(terminal));
+    }
+    if !object.contains_key("last_updated_ms") {
+        let last_updated_ms = object
+            .get("updated_ts_ms")
+            .or_else(|| object.get("ts_ms"))
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        object.insert(
+            "last_updated_ms".to_string(),
+            JsonValue::from(last_updated_ms),
+        );
+    }
+    if !object.contains_key("attempts") {
+        object.insert("attempts".to_string(), JsonValue::from(0_u32));
+    }
+    if !object.contains_key("reason_code") {
+        object.insert("reason_code".to_string(), JsonValue::Null);
+    }
+    serde_json::from_value::<LxmfDeliverySnapshot>(normalized)
+        .map(Some)
+        .map_err(|error| {
+            TransportError::Receive(format!("LXMF-rs ZeroMQ SDK delivery status: {error}"))
+        })
+}
+
+#[must_use]
+pub fn delivery_snapshot_receipt_status(snapshot: &LxmfDeliverySnapshot) -> String {
+    match snapshot.state {
+        LxmfDeliveryState::Queued => "queued".to_string(),
+        LxmfDeliveryState::Dispatching | LxmfDeliveryState::InFlight => "sending".to_string(),
+        LxmfDeliveryState::Sent => "sent".to_string(),
+        LxmfDeliveryState::Delivered => "delivered".to_string(),
+        LxmfDeliveryState::Failed => snapshot.reason_code.as_deref().map_or_else(
+            || "failed".to_string(),
+            |reason| format!("failed: {reason}"),
+        ),
+        LxmfDeliveryState::Cancelled => "cancelled".to_string(),
+        LxmfDeliveryState::Expired => "expired".to_string(),
+        LxmfDeliveryState::Rejected => "rejected".to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn delivery_state_name_from_receipt_status(status: &str) -> &'static str {
+    let normalized = status.trim().to_ascii_lowercase();
+    if normalized == "delivered" {
+        "delivered"
+    } else if normalized.starts_with("failed") {
+        "failed"
+    } else if normalized.starts_with("sent") {
+        "sent"
+    } else if normalized.starts_with("sending") || normalized.starts_with("dispatch") {
+        "dispatching"
+    } else if matches!(normalized.as_str(), "cancelled" | "expired" | "rejected") {
+        match normalized.as_str() {
+            "cancelled" => "cancelled",
+            "expired" => "expired",
+            "rejected" => "rejected",
+            _ => "unknown",
+        }
+    } else if normalized == "queued" {
+        "queued"
+    } else {
+        "unknown"
+    }
+}
+
+fn delivery_reason_code_from_receipt_status(status: &str) -> Option<String> {
+    let (prefix, reason) = status.split_once(':')?;
+    prefix
+        .trim()
+        .eq_ignore_ascii_case("failed")
+        .then(|| reason.trim().to_ascii_lowercase().replace(' ', "_"))
+        .filter(|reason| !reason.is_empty())
+}
+
+fn legacy_receipt_status_terminal(status: &str) -> bool {
+    let normalized = status.trim().to_ascii_lowercase();
+    normalized == "delivered"
+        || normalized.starts_with("failed")
+        || normalized.starts_with("sent")
+        || matches!(normalized.as_str(), "cancelled" | "expired" | "rejected")
+}
+
+fn delivery_state_name_terminal(state: &str) -> bool {
+    matches!(
+        state.trim().to_ascii_lowercase().as_str(),
+        "delivered" | "failed" | "cancelled" | "expired" | "rejected"
+    )
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 fn send_lxmf_zmq_outbound_message_direct(
@@ -790,11 +949,17 @@ fn send_lxmf_zmq_outbound_message_direct(
 enum ZmqSdkActorPayload {
     Single(LxmfSdkOutboundMessage),
     Batch(LxmfSdkOutboundBatch),
+    Status(String),
+}
+
+enum ZmqSdkActorResponse {
+    Batch(Vec<LxmfSdkOutboundBatchResult>),
+    Status(Option<LxmfDeliverySnapshot>),
 }
 
 struct ZmqSdkActorRequest {
     payload: ZmqSdkActorPayload,
-    response: mpsc::Sender<Result<Vec<LxmfSdkOutboundBatchResult>, TransportError>>,
+    response: mpsc::Sender<Result<ZmqSdkActorResponse, TransportError>>,
 }
 
 struct ZmqSdkActorSession {
@@ -823,7 +988,7 @@ fn send_lxmf_zmq_outbound_message_via_actor(
                 TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
             }
         })?;
-    response_rx
+    let response = response_rx
         .recv_timeout(
             config
                 .request_timeout
@@ -836,7 +1001,13 @@ fn send_lxmf_zmq_outbound_message_via_actor(
             mpsc::RecvTimeoutError::Disconnected => {
                 TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
             }
-        })??
+        })??;
+    let ZmqSdkActorResponse::Batch(results) = response else {
+        return Err(TransportError::Receive(
+            "LXMF-rs ZeroMQ SDK actor returned non-send response".to_string(),
+        ));
+    };
+    results
         .into_iter()
         .next()
         .map(|result| result.message_id)
@@ -881,6 +1052,53 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
                 TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
             }
         })?
+        .and_then(|response| match response {
+            ZmqSdkActorResponse::Batch(results) => Ok(results),
+            ZmqSdkActorResponse::Status(_) => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ SDK actor returned non-batch response".to_string(),
+            )),
+        })
+}
+
+fn lxmf_zmq_delivery_status_via_actor(
+    config: &ZmqPipelineBackendConfig,
+    message_id: String,
+) -> Result<Option<LxmfDeliverySnapshot>, TransportError> {
+    let sender = zmq_sdk_actor_sender(config)?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .try_send(ZmqSdkActorRequest {
+            payload: ZmqSdkActorPayload::Status(message_id),
+            response: response_tx,
+        })
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
+                "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
+            )),
+            mpsc::TrySendError::Disconnected(_) => {
+                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+            }
+        })?;
+    response_rx
+        .recv_timeout(
+            config
+                .request_timeout
+                .saturating_add(Duration::from_secs(1)),
+        )
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
+                "LXMF-rs ZeroMQ SDK actor timed out waiting for status result".to_string(),
+            ),
+            mpsc::RecvTimeoutError::Disconnected => {
+                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+            }
+        })?
+        .and_then(|response| match response {
+            ZmqSdkActorResponse::Status(snapshot) => Ok(snapshot),
+            ZmqSdkActorResponse::Batch(_) => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ SDK actor returned non-status response".to_string(),
+            )),
+        })
 }
 
 fn zmq_sdk_actor_sender(
@@ -1010,18 +1228,27 @@ async fn send_lxmf_zmq_actor_request(
     session: &mut ZmqSdkActorSession,
     config: &ZmqPipelineBackendConfig,
     payload: ZmqSdkActorPayload,
-) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+) -> Result<ZmqSdkActorResponse, TransportError> {
     match payload {
         ZmqSdkActorPayload::Single(message) => {
             let destination = message.destination.clone();
             let result = send_lxmf_zmq_actor_single_message(session, config, message).await?;
-            Ok(vec![LxmfSdkOutboundBatchResult {
-                id: result.clone(),
-                message_id: result,
-                destination,
-            }])
+            Ok(ZmqSdkActorResponse::Batch(vec![
+                LxmfSdkOutboundBatchResult {
+                    id: result.clone(),
+                    message_id: result,
+                    destination,
+                },
+            ]))
         }
-        ZmqSdkActorPayload::Batch(batch) => send_lxmf_zmq_actor_batch(session, config, batch).await,
+        ZmqSdkActorPayload::Batch(batch) => send_lxmf_zmq_actor_batch(session, config, batch)
+            .await
+            .map(ZmqSdkActorResponse::Batch),
+        ZmqSdkActorPayload::Status(message_id) => {
+            send_lxmf_zmq_actor_status(session, config, &message_id)
+                .await
+                .map(ZmqSdkActorResponse::Status)
+        }
     }
 }
 
@@ -1117,6 +1344,26 @@ async fn send_lxmf_zmq_actor_batch(
         });
     }
     Ok(output)
+}
+
+async fn send_lxmf_zmq_actor_status(
+    session: &mut ZmqSdkActorSession,
+    config: &ZmqPipelineBackendConfig,
+    message_id: &str,
+) -> Result<Option<LxmfDeliverySnapshot>, TransportError> {
+    let request_id = session.next_request_id;
+    session.next_request_id = session.next_request_id.saturating_add(1);
+    let result = lxmf_zmq_rpc_call(
+        &mut session.command,
+        &mut session.responses,
+        config,
+        session.session_id.as_str(),
+        request_id,
+        "sdk_status_v2",
+        Some(serde_json::json!({ "message_id": message_id })),
+    )
+    .await?;
+    delivery_snapshot_from_status_result(&result, message_id)
 }
 
 fn lxmf_sdk_outbound_send_params(message: LxmfSdkOutboundMessage) -> JsonValue {
@@ -3190,6 +3437,105 @@ mod tests {
             captured[1].response_endpoint.as_deref(),
             Some(response_endpoint.as_str())
         );
+    }
+
+    #[test]
+    fn delivery_status_parser_accepts_typed_sdk_snapshot() {
+        let snapshot = delivery_snapshot_from_status_result(
+            &serde_json::json!({
+                "message": {
+                    "message_id": "sdk-message-1",
+                    "state": "delivered",
+                    "terminal": true,
+                    "last_updated_ms": 1_700_000_000_000_u64,
+                    "attempts": 2,
+                    "reason_code": null
+                }
+            }),
+            "sdk-message-1",
+        )
+        .expect("parse status")
+        .expect("snapshot");
+
+        assert_eq!(
+            snapshot.message_id,
+            lxmf_sdk::MessageId("sdk-message-1".to_string())
+        );
+        assert_eq!(snapshot.state, LxmfDeliveryState::Delivered);
+        assert!(snapshot.terminal);
+        assert_eq!(snapshot.last_updated_ms, 1_700_000_000_000);
+        assert_eq!(snapshot.attempts, 2);
+        assert_eq!(delivery_snapshot_receipt_status(&snapshot), "delivered");
+    }
+
+    #[test]
+    fn delivery_status_parser_maps_legacy_receipt_status() {
+        let snapshot = delivery_snapshot_from_status_result(
+            &serde_json::json!({
+                "message": {
+                    "id": "sdk-message-legacy",
+                    "receipt_status": "failed: peer not announced"
+                }
+            }),
+            "sdk-message-legacy",
+        )
+        .expect("parse status")
+        .expect("snapshot");
+
+        assert_eq!(
+            snapshot.message_id,
+            lxmf_sdk::MessageId("sdk-message-legacy".to_string())
+        );
+        assert_eq!(snapshot.state, LxmfDeliveryState::Failed);
+        assert!(snapshot.terminal);
+        assert_eq!(snapshot.reason_code.as_deref(), Some("peer_not_announced"));
+        assert_eq!(
+            delivery_snapshot_receipt_status(&snapshot),
+            "failed: peer_not_announced"
+        );
+    }
+
+    #[test]
+    fn lxmf_zmq_delivery_status_uses_negotiated_sdk_status_rpc() {
+        let command_endpoint = unused_zmq_endpoint_v4();
+        let response_endpoint = unused_zmq_endpoint_v4();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let server = spawn_zmq_sequence_server(
+            command_endpoint.clone(),
+            vec![
+                serde_json::json!({"runtime_id": "runtime-rch-zmq"}),
+                serde_json::json!({
+                    "message": {
+                        "message_id": "sdk-message-1",
+                        "state": "delivered",
+                        "terminal": true,
+                        "last_updated_ms": 1_700_000_000_000_u64,
+                        "attempts": 2,
+                        "reason_code": null
+                    }
+                }),
+            ],
+            Arc::clone(&captured),
+        );
+
+        let snapshot =
+            lxmf_zmq_delivery_status(command_endpoint, response_endpoint, "sdk-message-1")
+                .expect("status")
+                .expect("snapshot");
+        server.join().expect("server joined");
+
+        assert_eq!(
+            snapshot.message_id,
+            lxmf_sdk::MessageId("sdk-message-1".to_string())
+        );
+        assert_eq!(snapshot.state, LxmfDeliveryState::Delivered);
+        assert!(snapshot.terminal);
+        assert_eq!(snapshot.attempts, 2);
+        let captured = captured.lock().expect("captured requests");
+        assert_eq!(captured.len(), 2);
+        assert_eq!(captured[0].method, "sdk_negotiate_v2");
+        assert_eq!(captured[1].method, "sdk_status_v2");
+        assert_eq!(captured[1].params["message_id"], "sdk-message-1");
     }
 
     #[test]

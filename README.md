@@ -169,6 +169,11 @@ Crates:
 Found at `C:\Users\broth\Documents\work\ATAK\src\LXMF-rs`, remote
 `https://github.com/FreeTAKTeam/LXMF-rs`.
 
+Current Rust RCH verification targets the LXMF-rs `v0.4.0` release commit
+`2393131d5729f50cbe74a7a9bfeff11d2d5d499e`. The sibling dependency packages
+resolved by `r3akt-transport-rns` are `lxmf-wire` `0.2.0`, `lxmf-sdk` `0.2.1`,
+`reticulum-rs-rpc` `0.3.0`, and their `lxmf-reference` `0.1.0` dependency.
+
 It contains real Rust Reticulum/LXMF crates, including the `lxmf-wire` package
 at `crates/libs/lxmf-core`, `lxmf-sdk`, `reticulum-rs-transport`,
 `reticulum-rs-rpc`, and the `reticulumd` app. The `lxmf-wire` crate already uses
