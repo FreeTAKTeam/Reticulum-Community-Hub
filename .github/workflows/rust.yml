@@ -23,7 +23,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: FreeTAKTeam/LXMF-rs
-          ref: codex/remove-serde-cbor-audit-finding
           path: LXMF-rs
 
       - name: Install Rust
