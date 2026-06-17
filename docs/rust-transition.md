@@ -63,12 +63,13 @@ capabilities.
 - Initial alpha server gates are built from `r3akt-rch-server` and still use
   `scripts/release-readiness.ps1 -ServerOnlyAlpha`.
 - Full GitHub release packaging is handled by
-  `.github/workflows/rust-release.yml`. It builds Windows and Linux server
-  archives containing `r3akt-rch-server`, `r3akt-tak-service`, the shared UI
-  bundle, service helpers, templates, and checksums. Server archive filenames
-  include the resolved release version from the GitHub release tag, pushed tag,
-  or manual workflow input, and `release-manifest.json` records that version
-  with the Git ref and commit SHA used for the build.
+  `.github/workflows/rust-release.yml`. It builds Windows x64, macOS x64,
+  macOS arm64, Linux AMD64, and Linux Raspberry Pi 64 server archives
+  containing `r3akt-rch-server`, `r3akt-tak-service`, the shared UI bundle,
+  service helpers, templates, and checksums. Server archive filenames include
+  the resolved release version from the GitHub release tag, pushed tag, or
+  manual workflow input, and `release-manifest.json` records that version with
+  the Git ref and commit SHA used for the build.
 - Desktop packages are built from `apps/rch-desktop` with Tauri. The app loads
   the shared Vue UI and starts `r3akt-rch-server` as a managed sidecar on
   `127.0.0.1:8000`; CI currently emits Windows x64 NSIS and Linux x64 AppImage

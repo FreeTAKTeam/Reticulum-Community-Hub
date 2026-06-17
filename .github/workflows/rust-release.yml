@@ -42,9 +42,27 @@ jobs:
             archive_format: zip
             server_binary: target/release/r3akt-rch-server.exe
             tak_binary: target/release/r3akt-tak-service.exe
-          - platform: Linux x64
+          - platform: macOS x64
+            os: macos-15-intel
+            artifact: rch-rust-full-macos-x64
+            archive_format: tar.gz
+            server_binary: target/release/r3akt-rch-server
+            tak_binary: target/release/r3akt-tak-service
+          - platform: macOS arm64
+            os: macos-latest
+            artifact: rch-rust-full-macos-arm64
+            archive_format: tar.gz
+            server_binary: target/release/r3akt-rch-server
+            tak_binary: target/release/r3akt-tak-service
+          - platform: Linux AMD64
             os: ubuntu-latest
-            artifact: rch-rust-full-linux-x64
+            artifact: rch-rust-full-linux-amd64
+            archive_format: tar.gz
+            server_binary: target/release/r3akt-rch-server
+            tak_binary: target/release/r3akt-tak-service
+          - platform: Linux Raspberry Pi 64
+            os: ubuntu-24.04-arm
+            artifact: rch-rust-full-linux-rpi64
             archive_format: tar.gz
             server_binary: target/release/r3akt-rch-server
             tak_binary: target/release/r3akt-tak-service

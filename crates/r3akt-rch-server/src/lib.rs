@@ -73,10 +73,11 @@ use r3akt_rch_core::{
 use r3akt_transport_rns::MessageBus;
 use r3akt_transport_rns::{
     LxmfDeliverySnapshot, LxmfDeliveryState, LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage,
-    LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, delivery_snapshot_from_status_result,
-    delivery_snapshot_receipt_status, list_reticulumd_announces, poll_lxmf_zmq_events,
-    poll_reticulumd_events, reticulumd_event_to_envelope, reticulumd_message_to_envelope,
-    send_lxmf_zmq_outbound_batch, send_lxmf_zmq_outbound_message,
+    LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, announce_lxmf_zmq_identity,
+    delivery_snapshot_from_status_result, delivery_snapshot_receipt_status,
+    list_reticulumd_announces, poll_lxmf_zmq_events, poll_reticulumd_events,
+    reticulumd_event_to_envelope, reticulumd_message_to_envelope, send_lxmf_zmq_outbound_batch,
+    send_lxmf_zmq_outbound_message,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -21428,19 +21429,28 @@ fn start_runtime_services(state: &AppState) -> Result<(), ApiError> {
 }
 
 async fn control_announce(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    let Some(endpoint) = &state.reticulumd_rpc_endpoint else {
+    let announce_id = if let Some(endpoint) = &state.reticulumd_rpc_endpoint {
+        let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint.as_str());
+        let response = control_announce_call_with_fallback(&mut client)?;
+        response
+            .result
+            .as_ref()
+            .and_then(|result| result.get("announce_id"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    } else if let (Some(command_endpoint), Some(response_endpoint)) = (
+        &state.lxmf_zmq_command_endpoint,
+        &state.lxmf_zmq_response_endpoint,
+    ) {
+        announce_lxmf_zmq_identity(command_endpoint.as_str(), response_endpoint.as_str())
+            .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?
+            .map(Value::String)
+            .unwrap_or(Value::Null)
+    } else {
         return Err(ApiError::ServiceUnavailable(
             "Announce unavailable".to_string(),
         ));
     };
-    let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint.as_str());
-    let response = control_announce_call_with_fallback(&mut client)?;
-    let announce_id = response
-        .result
-        .as_ref()
-        .and_then(|result| result.get("announce_id"))
-        .cloned()
-        .unwrap_or(Value::Null);
     let _ = record_system_event(
         &state,
         "control_announce_requested",

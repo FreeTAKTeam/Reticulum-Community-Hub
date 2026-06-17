@@ -4,7 +4,9 @@ The Rust packaging line now has two release package shapes:
 
 - Server package: deployable `r3akt-rch-server` binary, `r3akt-tak-service`
   binary, mandatory ZeroMQ southbound configuration, shared UI bundle, service
-  helper files, config templates, and checksums.
+  helper files, config templates, and checksums. Current release CI builds
+  Windows x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64
+  server archives.
 - Desktop packages: Tauri bundles from `apps/rch-desktop` with the Rust server
   and TAK service sidecars. Current CI builds Windows x64 NSIS and Linux x64
   AppImage artifacts.
@@ -26,7 +28,8 @@ GitHub does not expose `workflow_dispatch` for workflows that only exist on
 `rust-next`, so the release workflow also runs on relevant `rust-next` pushes
 to validate packaging before the default-branch cutover.
 
-Latest staging evidence: `Build Rust Release Packages` run `26696071364`
+Latest staging evidence before the macOS and Raspberry Pi 64 matrix expansion:
+`Build Rust Release Packages` run `26696071364`
 passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. It uploaded
 `rch-rust-full-windows-x64-rust-next`, `rch-rust-full-linux-x64-rust-next`,
 `rch-desktop-windows-x64-nsis`, and `rch-desktop-linux-x64-appimage`; downloaded
