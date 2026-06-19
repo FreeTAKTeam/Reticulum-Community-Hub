@@ -10744,12 +10744,19 @@ fn direct_status_failure_should_retry_propagated(
         return false;
     }
     let status = receipt_status.trim().to_ascii_lowercase();
-    status.starts_with("failed") && status.contains("link activation timed out")
+    reticulumd_status_is_retryable_link_failure(status.as_str())
 }
 
 fn rem_auto_status_failure_is_retryable(status: &str) -> bool {
+    reticulumd_status_is_retryable_link_failure(status)
+        || (status.starts_with("failed") && status.contains("peer not announced"))
+}
+
+fn reticulumd_status_is_retryable_link_failure(status: &str) -> bool {
     status.starts_with("failed")
-        && (status.contains("link activation timed out") || status.contains("peer not announced"))
+        && (status.contains("link activation timed out")
+            || status.contains("attempting to create a link")
+            || status.contains("failed to create a link"))
 }
 
 fn rem_auto_status_failure_retry_reason(receipt_status: &str) -> &'static str {
@@ -50249,6 +50256,80 @@ mod tests {
         let stored = messages
             .iter()
             .find(|message| message.message_id == "pending-generic-direct")
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(stored.delivery_method, "propagated");
+        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
+        assert_eq!(
+            stored.delivery_metadata["fallback_reason"],
+            "direct_status_failure"
+        );
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        drop(messages);
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            Some(generic_destination),
+        )
+        .expect("generic decision");
+        assert_eq!(decision.method, "propagated");
+        assert_eq!(decision.reason, "direct_cooldown");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn reticulumd_direct_link_create_failure_queues_generic_propagation_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-generic-status-link-create-failure-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let generic_destination = "fb4c70e20cfac047b899ca2f3671b50a";
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: generic_destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("Field Unit".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: vec!["lxmf".to_string()],
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - 60_000,
+            last_seen_ts_ms: now,
+        }];
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "pending-generic-link-create".to_string(),
+            topic_id: None,
+            destination: Some(generic_destination.to_string()),
+            sender: "northbound".to_string(),
+            content: "pending generic direct".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "fresh_presence".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "receipt_pending": true,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        crate::mark_reticulumd_status_delivery_failure(
+            &state,
+            "pending-generic-link-create",
+            "failed attempting to create a link",
+        )
+        .expect("mark failure");
+
+        let messages = state.messages.read().expect("messages");
+        let stored = messages
+            .iter()
+            .find(|message| message.message_id == "pending-generic-link-create")
             .expect("stored message");
         assert_eq!(stored.delivery_state, "queued");
         assert_eq!(stored.delivery_method, "propagated");
