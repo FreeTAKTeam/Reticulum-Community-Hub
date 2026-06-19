@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="mission-logs-workspace">
     <div class="registry-shell">
       <CosmicTopStatus title="Mission Logbook" />
@@ -24,30 +24,11 @@
             <BaseButton variant="secondary" size="sm" icon-left="refresh" @click="loadWorkspace">
               Refresh
             </BaseButton>
-            <div class="feed-tabs">
-              <button
-                type="button"
-                class="feed-tab"
-                :class="{ active: feedTab === 'entries' }"
-                @click="feedTab = 'entries'"
-              >
-                Log Entries
-              </button>
-              <button
-                type="button"
-                class="feed-tab"
-                :class="{ active: feedTab === 'events' }"
-                @click="feedTab = 'events'"
-              >
-                Domain Events
-              </button>
-            </div>
           </div>
         </div>
         <div class="control-meta">
           <span>Scope: {{ selectedMissionLabel }}</span>
           <span>Entries: {{ formatNumber(filteredLogEntries.length) }}</span>
-          <span>Events: {{ formatNumber(filteredDomainEvents.length) }}</span>
         </div>
       </section>
 
@@ -75,10 +56,29 @@
               <span>Client Time (optional)</span>
               <input v-model="editor.client_time" type="datetime-local" />
             </label>
-            <label class="field-control full">
-              <span>Content</span>
-              <textarea v-model="editor.content" rows="7" maxlength="2000" required></textarea>
-            </label>
+            <div class="mecp-compose">
+              <BaseSelect v-model="mecpDraft.severity" label="Severity" :options="mecpSeverityOptions" />
+              <BaseSelect v-model="mecpDraft.category" label="Category" :options="mecpCategoryOptions" />
+              <BaseSelect v-model="mecpDraft.eventCode" label="Event" :options="mecpEventOptions" />
+              <label class="field-control full">
+                <span>{{ mecpEnabled ? "Details" : "Text" }}</span>
+                <textarea
+                  v-model="editor.content"
+                  rows="7"
+                  maxlength="2000"
+                  :placeholder="mecpEnabled ? 'Poco' : 'Canonical log text'"
+                  required
+                ></textarea>
+              </label>
+              <div v-if="mecpEnabled" class="mecp-preview">
+                <span>MECP Preview</span>
+                <strong>{{ mecpPreview }}</strong>
+              </div>
+              <div v-else class="mecp-preview canonical-preview">
+                <span>Canonical Text</span>
+                <strong>Saved as plain mission log content</strong>
+              </div>
+            </div>
             <div class="editor-actions">
               <BaseButton type="button" variant="ghost" size="sm" icon-left="undo" @click="resetEditor">
                 Reset
@@ -98,23 +98,19 @@
         <section class="panel registry-main">
           <div class="panel-header">
             <div>
-              <div class="panel-title">{{ feedTab === "entries" ? "Mission Log Entries" : "Mission Domain Events" }}</div>
-              <div class="panel-subtitle">
-                {{ feedTab === "entries" ? "Narrative log stream with mission context" : "Registry/event-sourcing activity feed" }}
-              </div>
+              <div class="panel-title">Mission Log Entries</div>
+              <div class="panel-subtitle">Narrative log stream with mission context</div>
             </div>
+            <BaseSelect v-model="logQuickFilter" label="Filter" :options="logQuickFilters" />
           </div>
 
           <div v-if="loading" class="panel-empty">Loading mission logs...</div>
-          <div v-else-if="feedTab === 'entries' && !filteredLogEntries.length" class="panel-empty">
+          <div v-else-if="!filteredLogEntries.length" class="panel-empty">
             No log entries found for current filters.
           </div>
-          <div v-else-if="feedTab === 'events' && !filteredDomainEvents.length" class="panel-empty">
-            No domain events found for current filters.
-          </div>
 
-          <div v-else-if="feedTab === 'entries'" class="entry-list cui-scrollbar">
-            <article v-for="entry in filteredLogEntries" :key="entry.entry_uid" class="entry-card">
+          <div v-else class="entry-list cui-scrollbar">
+            <article v-for="entry in filteredLogEntries" :key="entry.entry_uid" class="entry-card" :class="{ 'entry-card-mecp': entry.mecp }">
               <div class="entry-head">
                 <div>
                   <h4>{{ missionLabel(entry.mission_uid) }}</h4>
@@ -130,24 +126,40 @@
                 </div>
               </div>
               <p class="entry-content">{{ entry.content }}</p>
+              <div v-if="entry.mecp" class="mecp-summary" :class="`mecp-summary-${entry.mecp.severityStatus}`">
+                <div class="mecp-summary-head">
+                  <span class="mecp-badge">MECP</span>
+                  <span class="mecp-field-id">FIELD_EVENT 0x0D</span>
+                </div>
+                <div class="mecp-decoder-grid">
+                  <div class="mecp-decoder-cell">
+                    <span>Severity</span>
+                    <strong class="mecp-severity">{{ entry.mecp.severityLabel }}</strong>
+                  </div>
+                  <div class="mecp-decoder-cell">
+                    <span>Category</span>
+                    <strong>{{ entry.mecp.categoryLabel }}</strong>
+                  </div>
+                  <div class="mecp-decoder-cell">
+                    <span>Event</span>
+                    <strong>{{ entry.mecp.codeLabels[0] || "MECP Event" }}</strong>
+                  </div>
+                  <div class="mecp-decoder-cell">
+                    <span>Details</span>
+                    <strong>{{ entry.mecp.details || "-" }}</strong>
+                  </div>
+                </div>
+                <div v-if="entry.mecp.extraLabels.length" class="mecp-extra-list">
+                  <span v-for="extra in entry.mecp.extraLabels" :key="extra">{{ extra }}</span>
+                </div>
+                <p class="mecp-details">{{ entry.mecp.raw || entry.content }}</p>
+                <p v-if="entry.mecp.warnings.length" class="mecp-warning">{{ entry.mecp.warnings.join(" ") }}</p>
+              </div>
               <div class="entry-meta">
                 <span>ID: {{ entry.entry_uid }}</span>
                 <span v-if="entry.callsign">Callsign: {{ entry.callsign }}</span>
                 <span v-if="entry.keywords.length">Keywords: {{ entry.keywords.join(", ") }}</span>
               </div>
-            </article>
-          </div>
-
-          <div v-else class="event-list cui-scrollbar">
-            <article v-for="event in filteredDomainEvents" :key="event.event_uid" class="event-card">
-              <div class="event-head">
-                <h4>{{ event.event_type }}</h4>
-                <span>{{ formatTimestamp(event.created_at) }}</span>
-              </div>
-              <p class="event-meta">
-                Aggregate: {{ event.aggregate_type || "-" }} / {{ event.aggregate_uid || "-" }}
-              </p>
-              <pre class="event-payload">{{ event.payload_summary }}</pre>
             </article>
           </div>
         </section>
@@ -166,6 +178,8 @@ import CosmicTopStatus from "../../../components/cosmic/CosmicTopStatus.vue";
 import BaseSelect from "../../../components/BaseSelect.vue";
 import { useToastStore } from "../../../stores/toasts";
 import { formatNumber, formatTimestamp } from "../../../utils/format";
+import { encodeMecpLogContent } from "../../../utils/mecp-compose";
+import { normalizeMecpDisplay, type MecpDisplay } from "../../../utils/mecp-display";
 
 interface MissionRaw {
   uid?: string;
@@ -180,15 +194,7 @@ interface LogEntryRaw {
   server_time?: string | null;
   client_time?: string | null;
   keywords?: unknown;
-}
-
-interface DomainEventRaw {
-  event_uid?: string;
-  aggregate_type?: string | null;
-  aggregate_uid?: string | null;
-  event_type?: string | null;
-  payload?: unknown;
-  created_at?: string | null;
+  mecp?: unknown;
 }
 
 interface LogEntryView {
@@ -199,18 +205,106 @@ interface LogEntryView {
   server_time: string;
   client_time: string;
   keywords: string[];
+  mecp: MecpDisplay | null;
 }
 
-interface DomainEventView {
-  event_uid: string;
-  aggregate_type: string;
-  aggregate_uid: string;
-  event_type: string;
-  created_at: string;
-  payload_summary: string;
+type LogQuickFilter = "all" | "mecp" | "urgent" | "safety";
+
+interface SelectOption {
+  value: string;
+  label: string;
 }
 
-type FeedTab = "entries" | "events";
+const mecpSeverityOptions: SelectOption[] = [
+  { value: "0", label: "Mayday - Critical" },
+  { value: "1", label: "Urgent - Challenge" },
+  { value: "2", label: "Safety - OK" },
+  { value: "3", label: "Routine - Normal" }
+];
+
+const mecpCategoryOptions: SelectOption[] = [
+  { value: "M", label: "Medical" },
+  { value: "T", label: "Terrain / Infrastructure" },
+  { value: "W", label: "Weather / Environment" },
+  { value: "S", label: "Supplies" },
+  { value: "P", label: "Position / Movement" },
+  { value: "C", label: "Coordination" },
+  { value: "R", label: "Response" },
+  { value: "D", label: "Drill / Test" },
+  { value: "L", label: "Life / Leisure" },
+  { value: "X", label: "Threat / Security" },
+  { value: "H", label: "Have / Offer Resources" },
+  { value: "B", label: "Beacon" }
+];
+
+const mecpEventsByCategory: Record<string, SelectOption[]> = {
+  M: [
+    { value: "M01", label: "M01 Injury" },
+    { value: "M06", label: "M06 Severe bleeding" },
+    { value: "M14", label: "M14 Persons located alive" }
+  ],
+  T: [
+    { value: "T01", label: "T01 Road blocked" },
+    { value: "T02", label: "T02 Bridge out" },
+    { value: "T06", label: "T06 Power out" },
+    { value: "T16", label: "T16 Vehicle accident" }
+  ],
+  W: [
+    { value: "W01", label: "W01 Storm approaching" },
+    { value: "W02", label: "W02 Visibility zero" },
+    { value: "W05", label: "W05 Air quality danger" }
+  ],
+  S: [
+    { value: "S01", label: "S01 Need water" },
+    { value: "S02", label: "S02 Need food" },
+    { value: "S03", label: "S03 Need medication" },
+    { value: "S04", label: "S04 Need battery / power" }
+  ],
+  P: [
+    { value: "P01", label: "P01 Stranded / stuck" },
+    { value: "P02", label: "P02 Evacuating toward" },
+    { value: "P03", label: "P03 Sheltering in place" },
+    { value: "P05", label: "P05 At GPS coordinates" }
+  ],
+  C: [
+    { value: "C01", label: "C01 Send rescue" },
+    { value: "C04", label: "C04 Confirm received" },
+    { value: "C08", label: "C08 Rendezvous at" }
+  ],
+  R: [
+    { value: "R01", label: "R01 Acknowledged" },
+    { value: "R02", label: "R02 Help coming" },
+    { value: "R03", label: "R03 ETA [minutes]" }
+  ],
+  D: [
+    { value: "D01", label: "D01 This is a drill" },
+    { value: "D02", label: "D02 This is a test" }
+  ],
+  L: [
+    { value: "L07", label: "L07 Good signal here" },
+    { value: "L20", label: "L20 Node test / ping" }
+  ],
+  X: [
+    { value: "X01", label: "X01 Dangerous person / threat nearby" },
+    { value: "X02", label: "X02 Area unsafe - avoid" }
+  ],
+  H: [
+    { value: "H01", label: "H01 Have water available" },
+    { value: "H04", label: "H04 Have power / charging" },
+    { value: "H08", label: "H08 Have transport / vehicle" }
+  ],
+  B: [
+    { value: "B01", label: "B01 Automated distress beacon active" },
+    { value: "B03", label: "B03 Cancel beacon - I am OK" }
+  ]
+};
+
+const logQuickFilters: Array<{ value: LogQuickFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "mecp", label: "MECP" },
+  { value: "urgent", label: "Urgent" },
+  { value: "safety", label: "Safety" }
+];
 
 const route = useRoute();
 const router = useRouter();
@@ -219,11 +313,12 @@ const MISSION_WRITE_TIMEOUT_MS = 30000;
 
 const missions = ref<MissionRaw[]>([]);
 const logEntries = ref<LogEntryRaw[]>([]);
-const domainEvents = ref<DomainEventRaw[]>([]);
 
-const selectedMissionUid = ref("");
+const queryText = (value: unknown): string =>
+  Array.isArray(value) ? String(value[0] ?? "").trim() : String(value ?? "").trim();
+const selectedMissionUid = ref(queryText(route.query.mission_uid));
 const searchQuery = ref("");
-const feedTab = ref<FeedTab>("entries");
+const logQuickFilter = ref<LogQuickFilter>("all");
 const loading = ref(false);
 const submitting = ref(false);
 const lastRefreshedAt = ref("");
@@ -247,6 +342,12 @@ const editor = ref({
   client_time: toNowDateTimeLocal()
 });
 
+const mecpDraft = ref({
+  severity: "1",
+  category: "S",
+  eventCode: ""
+});
+
 const toArray = <T>(value: unknown): T[] => {
   if (Array.isArray(value)) {
     return value as T[];
@@ -256,8 +357,6 @@ const toArray = <T>(value: unknown): T[] => {
   }
   return [];
 };
-const queryText = (value: unknown): string =>
-  Array.isArray(value) ? String(value[0] ?? "").trim() : String(value ?? "").trim();
 const toStringList = (value: unknown): string[] =>
   Array.isArray(value)
     ? value.map((item) => String(item ?? "").trim()).filter((item) => item.length > 0)
@@ -296,6 +395,24 @@ const editorMissionOptions = computed(() => [
   ...missionSelectOptionsWithoutAll.value
 ]);
 
+const mecpEventOptions = computed(() => [
+  { value: "", label: "No MECP event" },
+  ...(mecpEventsByCategory[mecpDraft.value.category] ?? [])
+]);
+
+const mecpEnabled = computed(() => mecpDraft.value.eventCode.trim().length > 0);
+
+const mecpPreview = computed(() => {
+  if (!mecpEnabled.value) {
+    return editor.value.content.trim();
+  }
+  return encodeMecpLogContent({
+    severity: mecpDraft.value.severity,
+    eventCode: mecpDraft.value.eventCode,
+    details: editor.value.content
+  });
+});
+
 const selectedMissionLabel = computed(() => {
   if (!selectedMissionUid.value) {
     return "All Missions";
@@ -318,16 +435,41 @@ const filteredLogEntries = computed<LogEntryView[]>(() => {
         content: String(entry.content ?? ""),
         server_time: String(entry.server_time ?? ""),
         client_time: String(entry.client_time ?? ""),
-        keywords: toStringList(entry.keywords)
+        keywords: toStringList(entry.keywords),
+        mecp: normalizeMecpDisplay(entry.mecp, entry.content)
       };
     })
     .filter((entry): entry is LogEntryView => entry !== null)
     .filter((entry) => !selectedMissionUid.value || entry.mission_uid === selectedMissionUid.value)
     .filter((entry) => {
+      if (logQuickFilter.value === "all") {
+        return true;
+      }
+      if (logQuickFilter.value === "mecp") {
+        return Boolean(entry.mecp);
+      }
+      if (logQuickFilter.value === "urgent") {
+        return entry.mecp?.severityLabel === "Urgent";
+      }
+      if (logQuickFilter.value === "safety") {
+        return entry.mecp?.severityLabel === "Safety";
+      }
+      return true;
+    })
+    .filter((entry) => {
       if (!search) {
         return true;
       }
-      return [entry.entry_uid, entry.callsign, entry.content, entry.mission_uid, entry.keywords.join(" ")].join(" ").toLowerCase().includes(search);
+      return [
+        entry.entry_uid,
+        entry.callsign,
+        entry.content,
+        entry.mission_uid,
+        entry.keywords.join(" "),
+        entry.mecp?.categoryLabel ?? "",
+        entry.mecp?.severityLabel ?? "",
+        entry.mecp?.codeLabels.join(" ") ?? ""
+      ].join(" ").toLowerCase().includes(search);
     })
     .sort((left, right) => {
       const leftTime = Date.parse(left.server_time || left.client_time || "");
@@ -336,62 +478,32 @@ const filteredLogEntries = computed<LogEntryView[]>(() => {
     });
 });
 
-const filteredDomainEvents = computed<DomainEventView[]>(() => {
-  const search = searchQuery.value.trim().toLowerCase();
-  return domainEvents.value
-    .map((entry) => {
-      const uid = String(entry.event_uid ?? "").trim();
-      if (!uid) {
-        return null;
-      }
-      const payloadSummary = summarizePayload(entry.payload);
-      return {
-        event_uid: uid,
-        aggregate_type: String(entry.aggregate_type ?? ""),
-        aggregate_uid: String(entry.aggregate_uid ?? ""),
-        event_type: String(entry.event_type ?? ""),
-        created_at: String(entry.created_at ?? ""),
-        payload_summary: payloadSummary
-      };
-    })
-    .filter((entry): entry is DomainEventView => entry !== null)
-    .filter((entry) => {
-      if (!selectedMissionUid.value) {
-        return true;
-      }
-      return entry.aggregate_uid === selectedMissionUid.value || entry.payload_summary.includes(selectedMissionUid.value);
-    })
-    .filter((entry) => {
-      if (!search) {
-        return true;
-      }
-      return [entry.event_type, entry.aggregate_uid, entry.payload_summary].join(" ").toLowerCase().includes(search);
-    })
-    .sort((left, right) => {
-      const leftTime = Date.parse(left.created_at);
-      const rightTime = Date.parse(right.created_at);
-      return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
-    });
-});
-
 const editorTitle = computed(() => (editor.value.entry_uid ? "Edit Log Entry" : "Write Log Entry"));
 
-const summarizePayload = (payload: unknown): string => {
-  if (payload === null || payload === undefined) {
-    return "{}";
-  }
-  if (typeof payload === "string") {
-    return payload.length > 260 ? `${payload.slice(0, 260)}...` : payload;
-  }
-  try {
-    const text = JSON.stringify(payload, null, 2);
-    return text.length > 900 ? `${text.slice(0, 900)}...` : text;
-  } catch (error) {
-    return String(payload);
-  }
-};
-
 const missionLabel = (missionUid: string) => missionByUid.value.get(missionUid) ?? missionUid;
+
+const restoreMecpDraftFromContent = (content: string) => {
+  const match = /^MECP\/([0-3])\/(.+)$/i.exec(content.trim());
+  if (!match) {
+    mecpDraft.value = {
+      severity: "1",
+      category: "S",
+      eventCode: ""
+    };
+    return content;
+  }
+
+  const tokens = match[2].trim().split(/\s+/).filter((token) => token.length > 0);
+  const eventCode = String(tokens[0] ?? "").toUpperCase();
+  const detailsStart = tokens.findIndex((token) => !/^[A-Z][0-9]{2}$/i.test(token));
+  const details = detailsStart >= 0 ? tokens.slice(detailsStart).join(" ") : "";
+  mecpDraft.value = {
+    severity: match[1],
+    category: eventCode.slice(0, 1) || "S",
+    eventCode
+  };
+  return details;
+};
 
 const resetEditor = () => {
   editor.value = {
@@ -402,14 +514,20 @@ const resetEditor = () => {
     keywords: "",
     client_time: toNowDateTimeLocal()
   };
+  mecpDraft.value = {
+    severity: "1",
+    category: "S",
+    eventCode: ""
+  };
 };
 
 const editEntry = (entry: LogEntryView) => {
+  const content = restoreMecpDraftFromContent(entry.content);
   editor.value = {
     entry_uid: entry.entry_uid,
     mission_uid: entry.mission_uid,
     callsign: entry.callsign,
-    content: entry.content,
+    content,
     keywords: entry.keywords.join(", "),
     client_time: toDateTimeLocal(entry.client_time || entry.server_time)
   };
@@ -434,7 +552,7 @@ const toDateTimeLocal = (value?: string): string => {
 const saveLogEntry = async () => {
   const missionUid = editor.value.mission_uid.trim();
   const callsign = editor.value.callsign.trim();
-  const content = editor.value.content.trim();
+  const content = mecpEnabled.value ? mecpPreview.value : editor.value.content.trim();
   if (!content) {
     toastStore.push("Log content cannot be empty", "warning");
     return;
@@ -505,14 +623,19 @@ const buildLogEntriesPath = () => {
 const loadWorkspace = async () => {
   loading.value = true;
   try {
-    const [missionData, logEntryData, eventData] = await Promise.all([
+    const [missionData, logEntryData] = await Promise.all([
       get<MissionRaw[]>(endpoints.r3aktMissions),
-      get<LogEntryRaw[]>(buildLogEntriesPath()),
-      get<DomainEventRaw[]>(endpoints.r3aktEvents)
+      get<LogEntryRaw[]>(buildLogEntriesPath())
     ]);
     missions.value = toArray<MissionRaw>(missionData);
     logEntries.value = toArray<LogEntryRaw>(logEntryData);
-    domainEvents.value = toArray<DomainEventRaw>(eventData);
+    const routeMissionUid = queryText(route.query.mission_uid);
+    if (
+      routeMissionUid &&
+      missions.value.some((entry) => String(entry.uid ?? "").trim() === routeMissionUid)
+    ) {
+      selectedMissionUid.value = routeMissionUid;
+    }
     lastRefreshedAt.value = new Date().toISOString();
     if (!editor.value.mission_uid) {
       editor.value.mission_uid = selectedMissionUid.value || "";
@@ -571,9 +694,22 @@ watch(selectedMissionUid, (missionUid) => {
 });
 
 watch(
+  () => mecpDraft.value.category,
+  (category) => {
+    if (!mecpDraft.value.eventCode) {
+      return;
+    }
+    const options = mecpEventsByCategory[category] ?? [];
+    if (!options.some((option) => option.value === mecpDraft.value.eventCode)) {
+      mecpDraft.value.eventCode = options[0]?.value ?? "";
+    }
+  }
+);
+
+watch(
   missions,
   (entries) => {
-    if (!selectedMissionUid.value) {
+    if (!selectedMissionUid.value || !entries.length) {
       return;
     }
     const hasSelected = entries.some((entry) => String(entry.uid ?? "").trim() === selectedMissionUid.value);
@@ -591,7 +727,3 @@ onMounted(() => {
 </script>
 
 <style scoped src="../../styles/MissionLogsPage.css"></style>
-
-
-
-

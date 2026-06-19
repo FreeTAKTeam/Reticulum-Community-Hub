@@ -1,0 +1,35 @@
+[package]
+name = "r3akt-rch-server"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+axum.workspace = true
+base64.workspace = true
+futures-util.workspace = true
+r3akt-protocol.workspace = true
+r3akt-profile-rch.workspace = true
+r3akt-rch-bridge.workspace = true
+r3akt-rch-core.workspace = true
+r3akt-transport-rns.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+rusqlite.workspace = true
+tokio-tungstenite.workspace = true
+tower.workspace = true
+
+[lints]
+workspace = true

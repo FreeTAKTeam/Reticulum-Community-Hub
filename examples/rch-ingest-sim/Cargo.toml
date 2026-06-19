@@ -1,0 +1,21 @@
+[package]
+name = "rch-ingest-sim"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+r3akt-identity.workspace = true
+r3akt-node.workspace = true
+r3akt-profile-rch.workspace = true
+r3akt-protocol.workspace = true
+r3akt-rch-core.workspace = true
+r3akt-router.workspace = true
+r3akt-store.workspace = true
+r3akt-transport-rns.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

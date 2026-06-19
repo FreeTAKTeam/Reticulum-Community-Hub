@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="about-cosmos">
     <div class="about-shell">
       <header class="about-top">
@@ -229,6 +229,3 @@ onMounted(async () => {
 </script>
 
 <style scoped src="./styles/AboutPage.css"></style>
-
-
-

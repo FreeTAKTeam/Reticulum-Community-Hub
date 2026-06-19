@@ -52,33 +52,6 @@
   font-size: 12px;
 }
 
-.feed-tabs {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 999px;
-  border: 1px solid rgba(55, 242, 255, 0.28);
-  background: rgba(7, 18, 26, 0.82);
-}
-
-.feed-tab {
-  border: 1px solid transparent;
-  background: transparent;
-  color: rgba(209, 251, 255, 0.6);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  cursor: pointer;
-}
-
-.feed-tab.active {
-  border-color: rgba(55, 242, 255, 0.65);
-  color: #e0feff;
-  background: rgba(55, 242, 255, 0.12);
-}
-
 .control-meta {
   margin-top: 10px;
   display: flex;
@@ -96,6 +69,44 @@
   gap: 10px;
 }
 
+.mecp-compose {
+  border: 1px solid rgba(55, 242, 255, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(55, 242, 255, 0.08), transparent 42%),
+    rgba(3, 12, 20, 0.72);
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.mecp-preview {
+  border: 1px solid rgba(55, 242, 255, 0.28);
+  border-radius: 8px;
+  background: rgba(1, 8, 14, 0.72);
+  display: grid;
+  gap: 5px;
+  padding: 8px 10px;
+}
+
+.mecp-preview span {
+  color: rgba(196, 246, 255, 0.66);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mecp-preview strong {
+  color: #86ffe7;
+  font-family: "Chakra Petch", "Rajdhani", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.canonical-preview strong {
+  color: rgba(210, 251, 255, 0.72);
+}
 
 .editor-actions {
   display: flex;
@@ -120,8 +131,7 @@
   color: rgba(210, 251, 255, 0.68);
 }
 
-.entry-list,
-.event-list {
+.entry-list {
   display: grid;
   gap: 10px;
   max-height: 64vh;
@@ -129,8 +139,7 @@
   padding-right: 4px;
 }
 
-.entry-card,
-.event-card {
+.entry-card {
   border: 1px solid rgba(55, 242, 255, 0.24);
   border-radius: 10px;
   background: rgba(7, 18, 28, 0.68);
@@ -139,24 +148,28 @@
   gap: 8px;
 }
 
-.entry-head,
-.event-head {
+.entry-card-mecp {
+  border-color: rgba(100, 190, 255, 0.42);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(100, 190, 255, 0.12), transparent 34%),
+    rgba(7, 18, 28, 0.78);
+}
+
+.entry-head {
   display: flex;
   justify-content: space-between;
   gap: 10px;
   align-items: flex-start;
 }
 
-.entry-head h4,
-.event-head h4 {
+.entry-head h4 {
   margin: 0;
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
-.entry-head p,
-.event-head span {
+.entry-head p {
   margin: 4px 0 0;
   font-size: 11px;
   color: rgba(201, 248, 255, 0.72);
@@ -176,6 +189,105 @@
   line-height: 1.45;
 }
 
+.mecp-summary {
+  border: 1px solid rgba(55, 242, 255, 0.26);
+  border-radius: 8px;
+  background: rgba(4, 14, 22, 0.62);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.mecp-summary-head,
+.mecp-extra-list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.mecp-summary-head {
+  justify-content: space-between;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #dffcff;
+}
+
+.mecp-field-id {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.mecp-badge {
+  border: 1px solid rgba(55, 242, 255, 0.5);
+  border-radius: 8px;
+  color: #86ffe7;
+  padding: 3px 7px;
+}
+
+.mecp-decoder-grid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.mecp-decoder-cell {
+  border-left: 2px solid rgba(55, 242, 255, 0.34);
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 8px;
+}
+
+.mecp-decoder-cell span {
+  color: rgba(196, 246, 255, 0.62);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mecp-decoder-cell strong {
+  color: #def1ff;
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.mecp-severity,
+.mecp-extra-list span {
+  border: 1px solid rgba(55, 242, 255, 0.24);
+  border-radius: 8px;
+  padding: 3px 6px;
+  background: rgba(55, 242, 255, 0.08);
+}
+
+.mecp-summary-red .mecp-severity {
+  border-color: rgba(255, 96, 96, 0.55);
+  color: #ffb0a8;
+}
+
+.mecp-summary-yellow .mecp-severity {
+  border-color: rgba(255, 214, 102, 0.55);
+  color: #ffe29a;
+}
+
+.mecp-summary-green .mecp-severity {
+  border-color: rgba(92, 224, 135, 0.55);
+  color: #a7f3bd;
+}
+
+.mecp-details,
+.mecp-warning {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mecp-warning {
+  color: #ffe29a;
+}
+
 .entry-meta {
   display: flex;
   gap: 10px;
@@ -184,27 +296,6 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: rgba(196, 246, 255, 0.72);
-}
-
-.event-meta {
-  margin: 0;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: rgba(196, 246, 255, 0.72);
-}
-
-.event-payload {
-  margin: 0;
-  font-size: 11px;
-  border: 1px solid rgba(55, 242, 255, 0.2);
-  border-radius: 8px;
-  background: rgba(4, 14, 22, 0.82);
-  padding: 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 240px;
-  overflow: auto;
 }
 
 @media (max-width: 1250px) {
@@ -218,6 +309,10 @@
 
   .registry-grid {
     grid-template-columns: 1fr;
+  }
+
+  .mecp-decoder-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "RCH Desktop",
+  "version": "3.0.0-preview.2",
+  "identifier": "org.freetakteam.rch",
+  "build": {
+    "frontendDist": "../../../ui/dist",
+    "devUrl": "http://localhost:5173"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "RCH Desktop",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "appimage"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "externalBin": ["binaries/r3akt-rch-server", "binaries/r3akt-tak-service"],
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
+    }
+  }
+}

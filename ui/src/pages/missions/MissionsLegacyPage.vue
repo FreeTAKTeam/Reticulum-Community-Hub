@@ -861,6 +861,7 @@ interface DomainEventRaw {
   aggregate_uid?: string | null;
   event_type?: string | null;
   payload?: unknown;
+  payload_summary?: unknown;
   created_at?: string | null;
 }
 
@@ -890,6 +891,9 @@ interface LogEntryRaw {
 interface ZoneRaw {
   zone_id?: string;
   name?: string;
+  points?: Array<{ lat?: number | null; lon?: number | null }>;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 interface TemplateRaw {
@@ -941,6 +945,38 @@ const toStringList = (value: unknown): string[] => {
   return value
     .map((item) => String(item ?? "").trim())
     .filter((item) => item.length > 0);
+};
+
+const toMissionRecord = (entry: MissionRaw): Mission | null => {
+  const uid = String(entry.uid ?? "").trim();
+  if (!uid) {
+    return null;
+  }
+  return {
+    uid,
+    mission_name: String(entry.mission_name ?? uid),
+    description: String(entry.description ?? ""),
+    topic: String(entry.topic_id ?? "unscoped"),
+    status: normalizeMissionStatus(entry.mission_status),
+    zone_ids: toStringList(entry.zones),
+    path: String(entry.path ?? ""),
+    classification: String(entry.classification ?? ""),
+    tool: String(entry.tool ?? ""),
+    keywords: toStringList(entry.keywords),
+    parent_uid: String(entry.parent_uid ?? ""),
+    feeds: toStringList(entry.feeds),
+    default_role: String(entry.default_role ?? ""),
+    mission_priority: (() => {
+      const parsed = Number(entry.mission_priority);
+      return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+    })(),
+    owner_role: String(entry.owner_role ?? ""),
+    token: String(entry.token ?? ""),
+    invite_only: Boolean(entry.invite_only),
+    expiration: String(entry.expiration ?? ""),
+    mission_rde_role: String(entry.mission_rde_role ?? ""),
+    asset_uids: toStringList(entry.asset_uids)
+  };
 };
 
 const splitCommaSeparated = (value: string): string[] =>
@@ -1174,7 +1210,7 @@ const formatDueRelativeMinutesLabel = (value?: number | null): string => {
 };
 
 const formatDomainEventMessage = (event: DomainEventRaw): string => {
-  const payload = asRecord(event.payload);
+  const payload = asRecord(event.payload ?? event.payload_summary);
   const name = payload.name;
   if (typeof name === "string" && name.trim()) {
     return name.trim();
@@ -1429,6 +1465,168 @@ const upsertChecklistRecord = (record: ChecklistRaw) => {
     next.push(record);
   }
   checklistRecords.value = next;
+};
+
+const removeChecklistRecord = (checklistUid: string) => {
+  const uid = String(checklistUid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  checklistRecords.value = checklistRecords.value.filter((entry) => String(entry.uid ?? "").trim() !== uid);
+};
+
+const selectChecklistRecord = (record: ChecklistRaw) => {
+  upsertChecklistRecord(record);
+  const uid = String(record.uid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  selectedChecklistUid.value = uid;
+  checklistDetailUid.value = uid;
+};
+
+const upsertMissionRecord = (record: MissionRaw) => {
+  const mission = toMissionRecord(record);
+  if (!mission) {
+    return;
+  }
+  const next = [...missions.value];
+  const index = next.findIndex((entry) => entry.uid === mission.uid);
+  if (index >= 0) {
+    next[index] = mission;
+  } else {
+    next.push(mission);
+  }
+  missions.value = next;
+};
+
+const updateMissionZoneIds = (missionUid: string, zoneIds: string[]) => {
+  const uid = String(missionUid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  missions.value = missions.value.map((mission) =>
+    mission.uid === uid ? { ...mission, zone_ids: [...new Set(zoneIds)] } : mission
+  );
+};
+
+const upsertTeamRecord = (record: TeamRaw) => {
+  const uid = String(record.uid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  const next = [...teamRecords.value];
+  const index = next.findIndex((entry) => String(entry.uid ?? "").trim() === uid);
+  if (index >= 0) {
+    next[index] = record;
+  } else {
+    next.push(record);
+  }
+  teamRecords.value = next;
+};
+
+const updateTeamMissionLink = (teamUid: string, missionUid: string, linked: boolean) => {
+  const normalizedTeamUid = String(teamUid ?? "").trim();
+  const normalizedMissionUid = String(missionUid ?? "").trim();
+  if (!normalizedTeamUid || !normalizedMissionUid) {
+    return;
+  }
+  teamRecords.value = teamRecords.value.map((entry) => {
+    if (String(entry.uid ?? "").trim() !== normalizedTeamUid) {
+      return entry;
+    }
+    const missionUids = new Set(toStringList(entry.mission_uids));
+    const primaryMissionUid = String(entry.mission_uid ?? "").trim();
+    if (primaryMissionUid) {
+      missionUids.add(primaryMissionUid);
+    }
+    if (linked) {
+      missionUids.add(normalizedMissionUid);
+    } else {
+      missionUids.delete(normalizedMissionUid);
+    }
+    const nextMissionUids = [...missionUids];
+    return {
+      ...entry,
+      mission_uid: nextMissionUids[0] ?? null,
+      mission_uids: nextMissionUids
+    };
+  });
+};
+
+const upsertMemberRecord = (record: TeamMemberRaw) => {
+  const uid = String(record.uid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  const next = [...memberRecords.value];
+  const index = next.findIndex((entry) => String(entry.uid ?? "").trim() === uid);
+  if (index >= 0) {
+    next[index] = record;
+  } else {
+    next.push(record);
+  }
+  memberRecords.value = next;
+};
+
+const upsertAssetRecord = (record: AssetRaw) => {
+  const uid = String(record.asset_uid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  const next = [...assetRecords.value];
+  const index = next.findIndex((entry) => String(entry.asset_uid ?? "").trim() === uid);
+  if (index >= 0) {
+    next[index] = record;
+  } else {
+    next.push(record);
+  }
+  assetRecords.value = next;
+};
+
+const upsertAssignmentRecord = (record: AssignmentRaw) => {
+  const uid = String(record.assignment_uid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  const next = [...assignmentRecords.value];
+  const index = next.findIndex((entry) => String(entry.assignment_uid ?? "").trim() === uid);
+  if (index >= 0) {
+    next[index] = record;
+  } else {
+    next.push(record);
+  }
+  assignmentRecords.value = next;
+};
+
+const upsertMissionChangeRecord = (record: MissionChangeRaw) => {
+  const uid = String(record.uid ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  const next = [...missionChanges.value];
+  const index = next.findIndex((entry) => String(entry.uid ?? "").trim() === uid);
+  if (index >= 0) {
+    next[index] = record;
+  } else {
+    next.push(record);
+  }
+  missionChanges.value = next;
+};
+
+const upsertZoneRecord = (record: ZoneRaw) => {
+  const uid = String(record.zone_id ?? "").trim();
+  if (!uid) {
+    return;
+  }
+  const next = [...zoneRecords.value];
+  const index = next.findIndex((entry) => String(entry.zone_id ?? "").trim() === uid);
+  if (index >= 0) {
+    next[index] = record;
+  } else {
+    next.push(record);
+  }
+  zoneRecords.value = next;
 };
 
 const hydrateChecklistRecord = async (checklistUid: string): Promise<ChecklistRaw | null> => {
@@ -2846,7 +3044,7 @@ const missionAudit = computed<AuditEvent[]>(() => {
       if (String(entry.aggregate_type ?? "").trim() === "checklist" && missionChecklistUids.has(aggregateUid)) {
         return true;
       }
-      const payload = asRecord(entry.payload);
+      const payload = asRecord(entry.payload ?? entry.payload_summary);
       const payloadMissionUid = String(payload.mission_uid ?? payload.mission_id ?? "").trim();
       if (payloadMissionUid && payloadMissionUid === missionUid) {
         return true;
@@ -2857,7 +3055,7 @@ const missionAudit = computed<AuditEvent[]>(() => {
     .map((entry) => {
       const createdAt = String(entry.created_at ?? "");
       const eventType = String(entry.event_type ?? "domain.event").trim();
-      const payload = asRecord(entry.payload);
+      const payload = asRecord(entry.payload ?? entry.payload_summary);
       return {
         uid: String(entry.event_uid ?? `${entry.event_type}-${createdAt}`),
         mission_uid: missionUid,
@@ -3202,6 +3400,7 @@ const deleteChecklistFromDetail = async () => {
   checklistDeleteBusy.value = true;
   try {
     await deleteRequest(`${endpoints.checklists}/${checklistUid}`);
+    removeChecklistRecord(checklistUid);
     if (selectedChecklistUid.value === checklistUid) {
       selectedChecklistUid.value = "";
     }
@@ -3209,7 +3408,6 @@ const deleteChecklistFromDetail = async () => {
       checklistDetailUid.value = "";
     }
     checklistLinkMissionModalOpen.value = false;
-    await loadWorkspace();
     toastStore.push("Checklist removed", "success");
   } catch (error) {
     handleApiError(error, "Unable to remove checklist");
@@ -3234,17 +3432,10 @@ const submitChecklistMissionLink = async () => {
   checklistLinkMissionSubmitting.value = true;
   const missionUid = checklistLinkMissionSelectionUid.value.trim();
   try {
-    await patchRequest(`${endpoints.checklists}/${checklistUid}`, {
+    const updated = await patchRequest<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}`, {
       patch: { mission_uid: missionUid || null }
     });
-    await loadWorkspace();
-    selectedChecklistUid.value = checklistUid;
-    checklistDetailUid.value = checklistUid;
-    try {
-      await hydrateChecklistRecord(checklistUid);
-    } catch (error) {
-      handleApiError(error, "Checklist mission link saved but detail refresh failed");
-    }
+    selectChecklistRecord(updated);
     checklistLinkMissionModalOpen.value = false;
     toastStore.push(missionUid ? "Checklist linked to mission" : "Checklist mission link cleared", "success");
   } catch (error) {
@@ -3264,15 +3455,15 @@ const addChecklistTaskFromDetail = async () => {
   try {
     const nextNumber = checklistDetailRows.value.reduce((max, row) => Math.max(max, row.number), 0) + 1;
     const payload: Record<string, unknown> = { number: nextNumber };
-    const dueDraft = checklistTaskDueDraft.value.trim();
+    const dueDraft = String(checklistTaskDueDraft.value ?? "").trim();
     if (dueDraft.length > 0) {
       const parsedDue = Number(dueDraft);
       if (Number.isFinite(parsedDue)) {
         payload.due_relative_minutes = Math.trunc(parsedDue);
       }
     }
-    await post(`${endpoints.checklists}/${checklist.uid}/tasks`, payload);
-    await loadWorkspace();
+    const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/tasks`, payload);
+    selectChecklistRecord(updated);
     toastStore.push("Checklist task added", "success");
   } catch (error) {
     handleApiError(error, "Unable to add checklist task");
@@ -3296,11 +3487,11 @@ const toggleChecklistTaskDone = async (row: { task_uid: string; done: boolean })
   };
   try {
     const userStatus = row.done ? "PENDING" : "COMPLETE";
-    await post(`${endpoints.checklists}/${checklistUid}/tasks/${taskUid}/status`, {
+    const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks/${taskUid}/status`, {
       user_status: userStatus,
       changed_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
     });
-    await loadWorkspace();
+    selectChecklistRecord(updated);
     toastStore.push("Task status updated", "success");
   } catch (error) {
     handleApiError(error, "Unable to update task status");
@@ -3426,37 +3617,7 @@ const loadWorkspace = async () => {
     }
 
     missions.value = toArray<MissionRaw>(missionData)
-      .map((entry) => {
-        const uid = String(entry.uid ?? "").trim();
-        if (!uid) {
-          return null;
-        }
-        return {
-          uid,
-          mission_name: String(entry.mission_name ?? uid),
-          description: String(entry.description ?? ""),
-          topic: String(entry.topic_id ?? "unscoped"),
-          status: normalizeMissionStatus(entry.mission_status),
-          zone_ids: toStringList(entry.zones),
-          path: String(entry.path ?? ""),
-          classification: String(entry.classification ?? ""),
-          tool: String(entry.tool ?? ""),
-          keywords: toStringList(entry.keywords),
-          parent_uid: String(entry.parent_uid ?? ""),
-          feeds: toStringList(entry.feeds),
-          default_role: String(entry.default_role ?? ""),
-          mission_priority: (() => {
-            const parsed = Number(entry.mission_priority);
-            return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
-          })(),
-          owner_role: String(entry.owner_role ?? ""),
-          token: String(entry.token ?? ""),
-          invite_only: Boolean(entry.invite_only),
-          expiration: String(entry.expiration ?? ""),
-          mission_rde_role: String(entry.mission_rde_role ?? ""),
-          asset_uids: toStringList(entry.asset_uids)
-        };
-      })
+      .map(toMissionRecord)
       .filter((entry): entry is Mission => entry !== null);
 
     topicRecords.value = toArray<TopicRaw>(topicData);
@@ -3616,8 +3777,14 @@ const assignExistingTeamToMission = async () => {
   }
   teamAllocationSubmitting.value = true;
   try {
-    await put(`${endpoints.r3aktTeams}/${encodeURIComponent(teamUid)}/missions/${encodeURIComponent(missionUid)}`);
-    await loadWorkspace();
+    const updated = await put<TeamRaw>(
+      `${endpoints.r3aktTeams}/${encodeURIComponent(teamUid)}/missions/${encodeURIComponent(missionUid)}`
+    );
+    if (updated?.uid) {
+      upsertTeamRecord(updated);
+    } else {
+      updateTeamMissionLink(teamUid, missionUid, true);
+    }
     teamAllocationModalOpen.value = false;
     toastStore.push("Team linked to mission", "success");
   } catch (error) {
@@ -3635,13 +3802,13 @@ const createMissionTeamFromModal = async () => {
   }
   teamAllocationSubmitting.value = true;
   try {
-    await post<TeamRaw>(endpoints.r3aktTeams, {
+    const created = await post<TeamRaw>(endpoints.r3aktTeams, {
       mission_uid: missionUid,
       mission_uids: [missionUid],
       team_name: teamName,
       team_description: teamAllocationNewTeamDescription.value.trim() || "Created from Mission workspace"
     });
-    await loadWorkspace();
+    upsertTeamRecord(created);
     teamAllocationModalOpen.value = false;
     toastStore.push("Mission team created", "success");
   } catch (error) {
@@ -3693,7 +3860,7 @@ const assignExistingMemberToTeam = async () => {
 
   memberAllocationSubmitting.value = true;
   try {
-    await post<TeamMemberRaw>(endpoints.r3aktTeamMembers, {
+    const updated = await post<TeamMemberRaw>(endpoints.r3aktTeamMembers, {
       uid: selectedMemberUid,
       team_uid: teamUid,
       rns_identity: identity,
@@ -3701,7 +3868,7 @@ const assignExistingMemberToTeam = async () => {
       role: selectedMember.role ?? "TEAM_MEMBER",
       callsign: selectedMember.callsign ?? null
     });
-    await loadWorkspace();
+    upsertMemberRecord(updated);
     memberAllocationModalOpen.value = false;
     toastStore.push("Team member assigned", "success");
   } catch (error) {
@@ -3759,13 +3926,11 @@ const ensureChecklistTaskContext = async (): Promise<{ checklistUid: string; tas
   let taskUid = toArray<ChecklistTaskRaw>(checklist.tasks).find((task) => String(task.task_uid ?? "").trim().length > 0)
     ?.task_uid;
   if (!taskUid) {
-    await post(`${endpoints.checklists}/${checklistUid}/tasks`, {
+    const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks`, {
       number: 1
     });
-    await loadWorkspace();
-    checklist =
-      checklistRecords.value.find((entry) => String(entry.uid ?? "").trim() === checklistUid) ??
-      resolveMissionChecklistRaw(missionUid);
+    selectChecklistRecord(updated);
+    checklist = updated ?? resolveMissionChecklistRaw(missionUid);
     taskUid = toArray<ChecklistTaskRaw>(checklist?.tasks).find((task) => String(task.task_uid ?? "").trim().length > 0)
       ?.task_uid;
   }
@@ -3785,8 +3950,8 @@ const deployAssetAction = async () => {
   if (member?.uid) {
     payload.team_member_uid = member.uid;
   }
-  await post<AssetRaw>(endpoints.r3aktAssets, payload);
-  await loadWorkspace();
+  const created = await post<AssetRaw>(endpoints.r3aktAssets, payload);
+  upsertAssetRecord(created);
 };
 
 const ensureAssetForMission = async (): Promise<string> => {
@@ -3913,16 +4078,24 @@ const syncMissionReferenceLinks = async (missionUid: string) => {
   ];
 
   await Promise.all([...teamLinkOperations, ...zoneOperations]);
+
+  if (selectedTeamUid) {
+    updateTeamMissionLink(selectedTeamUid, missionUid, true);
+  }
+  linkedTeamUids
+    .filter((uid) => uid !== selectedTeamUid)
+    .forEach((uid) => updateTeamMissionLink(uid, missionUid, false));
+  updateMissionZoneIds(missionUid, [...selectedZones]);
 };
 
 const createMissionAction = async () => {
   const payload = buildMissionDraftPayload();
   const created = await post<MissionRaw>(endpoints.r3aktMissions, payload);
   const createdUid = String(created.uid ?? "").trim();
+  upsertMissionRecord(created);
   if (createdUid) {
     await syncMissionReferenceLinks(createdUid);
   }
-  await loadWorkspace();
   if (createdUid) {
     selectedMissionUid.value = createdUid;
   }
@@ -3931,16 +4104,16 @@ const createMissionAction = async () => {
 const updateMissionAction = async () => {
   const missionUid = ensureMissionSelected();
   const payload = buildMissionDraftPayload();
-  await patchRequest(`${endpoints.r3aktMissions}/${encodeURIComponent(missionUid)}`, {
+  const updated = await patchRequest<MissionRaw>(`${endpoints.r3aktMissions}/${encodeURIComponent(missionUid)}`, {
     patch: payload
   });
+  upsertMissionRecord(updated);
   await syncMissionReferenceLinks(missionUid);
-  await loadWorkspace();
 };
 
 const broadcastMissionAction = async () => {
   const missionUid = ensureMissionSelected();
-  await post<MissionChangeRaw>(endpoints.r3aktMissionChanges, {
+  const change = await post<MissionChangeRaw>(endpoints.r3aktMissionChanges, {
     mission_uid: missionUid,
     name: "Mission broadcast",
     change_type: "ADD_CONTENT",
@@ -3948,7 +4121,7 @@ const broadcastMissionAction = async () => {
     team_member_rns_identity: DEFAULT_SOURCE_IDENTITY,
     timestamp: new Date().toISOString()
   });
-  await loadWorkspace();
+  upsertMissionChangeRecord(change);
 };
 
 const createChecklistAction = async () => {
@@ -3957,22 +4130,28 @@ const createChecklistAction = async () => {
   const suffix = new Date().toISOString().slice(11, 19).replace(/:/g, "");
   const checklistName = `${missionName} Checklist ${suffix}`;
   const firstTemplate = templateRecords.value.find((entry) => String(entry.uid ?? "").trim().length > 0);
+  let created: ChecklistRaw;
   if (firstTemplate?.uid) {
-    await post<ChecklistRaw>(endpoints.checklists, {
+    created = await post<ChecklistRaw>(endpoints.checklists, {
       template_uid: firstTemplate.uid,
       mission_uid: missionUid,
       name: checklistName,
       source_identity: DEFAULT_SOURCE_IDENTITY
     });
   } else {
-    await post<ChecklistRaw>(resolveChecklistCreateEndpoint(checklistCreateOfflineDraft.value), {
+    created = await post<ChecklistRaw>(resolveChecklistCreateEndpoint(checklistCreateOfflineDraft.value), {
       mission_uid: missionUid,
       name: checklistName,
       origin_type: "BLANK_TEMPLATE",
       source_identity: DEFAULT_SOURCE_IDENTITY
     });
   }
-  await loadWorkspace();
+  upsertChecklistRecord(created);
+  const createdUid = String(created.uid ?? "").trim();
+  if (createdUid) {
+    selectedChecklistUid.value = createdUid;
+    checklistDetailUid.value = createdUid;
+  }
 };
 
 const toSortedChecklistColumns = (columns: ChecklistColumnRaw[]): ChecklistColumnRaw[] => {
@@ -4071,53 +4250,21 @@ const createChecklistFromCsvImportAction = async (
   if (!sourceColumns.length) {
     throw new Error("Selected CSV template has no columns");
   }
-
-  const created = await post<ChecklistRaw>(endpoints.checklists, {
-    mission_uid: missionUid,
-    name: checklistName,
-    origin_type: "RCH_TEMPLATE",
-    source_identity: DEFAULT_SOURCE_IDENTITY,
-    columns: toChecklistColumnPayload(sourceColumns)
-  });
-
-  const createdChecklistUid = String(created.uid ?? "").trim();
-  if (!createdChecklistUid) {
-    throw new Error("Checklist creation failed");
-  }
-
-  const createdColumns = toSortedChecklistColumns(toArray<ChecklistColumnRaw>(created.columns));
-  const sourceColumnUidByOrder = new Map<number, string>();
+  const sourceColumnOrderByUid = new Map<string, number>();
   sourceColumns.forEach((column, index) => {
     const columnUid = String(column.column_uid ?? "").trim();
     if (!columnUid) {
       return;
     }
-    sourceColumnUidByOrder.set(index + 1, columnUid);
-  });
-  const targetColumnUidByOrder = new Map<number, string>();
-  createdColumns.forEach((column, index) => {
-    const columnUid = String(column.column_uid ?? "").trim();
-    if (!columnUid) {
-      return;
-    }
-    targetColumnUidByOrder.set(index + 1, columnUid);
-  });
-  const sourceToTargetColumnUid = new Map<string, string>();
-  sourceColumnUidByOrder.forEach((sourceColumnUid, order) => {
-    const targetColumnUid = targetColumnUidByOrder.get(order);
-    if (!targetColumnUid) {
-      return;
-    }
-    sourceToTargetColumnUid.set(sourceColumnUid, targetColumnUid);
+    const order = index + 1;
+    sourceColumnOrderByUid.set(columnUid, order);
   });
 
   const sourceDueColumnUid = findDueColumnUid(sourceColumns);
   const sourceTasks = [...toArray<ChecklistTaskRaw>(sourceChecklist.tasks)].sort(
     (left, right) => Number(left.number ?? 0) - Number(right.number ?? 0)
   );
-
-  for (let index = 0; index < sourceTasks.length; index += 1) {
-    const sourceTask = sourceTasks[index];
+  const tasks = sourceTasks.map((sourceTask, index) => {
     const taskNumber = index + 1;
     const dueRelativeMinutes = parseDueRelativeMinutes(sourceTask, sourceDueColumnUid);
     const taskPayload: Record<string, unknown> = { number: taskNumber };
@@ -4128,37 +4275,40 @@ const createChecklistFromCsvImportAction = async (
     if (dueRelativeMinutes !== undefined) {
       taskPayload.due_relative_minutes = dueRelativeMinutes;
     }
-    const taskCreated = await post<ChecklistRaw>(`${endpoints.checklists}/${createdChecklistUid}/tasks`, taskPayload);
-    const createdTaskUid = String(
-      toArray<ChecklistTaskRaw>(taskCreated.tasks).find((task) => Number(task.number ?? 0) === taskNumber)?.task_uid ?? ""
-    ).trim();
-    if (!createdTaskUid) {
-      continue;
-    }
-
-    const sourceCells = toArray<ChecklistCellRaw>(sourceTask.cells);
-    for (const sourceCell of sourceCells) {
-      const sourceColumnUid = String(sourceCell.column_uid ?? "").trim();
-      const targetColumnUid = sourceToTargetColumnUid.get(sourceColumnUid);
-      const value = String(sourceCell.value ?? "").trim();
-      if (!sourceColumnUid || !targetColumnUid || !value) {
-        continue;
-      }
-      if (sourceColumnUid === sourceDueColumnUid) {
-        continue;
-      }
-      await patchRequest(
-        `${endpoints.checklists}/${createdChecklistUid}/tasks/${createdTaskUid}/cells/${targetColumnUid}`,
-        {
+    taskPayload.cells = toArray<ChecklistCellRaw>(sourceTask.cells)
+      .map((sourceCell) => {
+        const sourceColumnUid = String(sourceCell.column_uid ?? "").trim();
+        const sourceColumnOrder = sourceColumnOrderByUid.get(sourceColumnUid);
+        const value = String(sourceCell.value ?? "").trim();
+        if (!sourceColumnUid || !sourceColumnOrder || !value || sourceColumnUid === sourceDueColumnUid) {
+          return null;
+        }
+        return {
+          column_order: sourceColumnOrder,
           value,
           updated_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
-        }
-      );
-    }
+        };
+      })
+      .filter((cell): cell is { column_order: number; value: string; updated_by_team_member_rns_identity: string } => cell !== null);
+    return taskPayload;
+  });
+
+  const created = await post<ChecklistRaw>(endpoints.checklists, {
+    mission_uid: missionUid,
+    name: checklistName,
+    origin_type: "RCH_TEMPLATE",
+    source_identity: DEFAULT_SOURCE_IDENTITY,
+    columns: toChecklistColumnPayload(sourceColumns),
+    tasks
+  });
+
+  const createdChecklistUid = String(created.uid ?? "").trim();
+  if (!createdChecklistUid) {
+    throw new Error("Checklist creation failed");
   }
 
-  const hydrated = await hydrateChecklistRecord(createdChecklistUid);
-  return hydrated ?? created;
+  upsertChecklistRecord(created);
+  return created;
 };
 
 const buildChecklistDraftName = (): string => {
@@ -4219,17 +4369,12 @@ const createChecklistFromSelectedTemplateAction = async () => {
           missionUid,
           checklistCreateOfflineDraft.value
         );
-  await loadWorkspace();
   const createdUid = String(created.uid ?? "").trim();
   if (createdUid) {
+    upsertChecklistRecord(created);
     selectedChecklistUid.value = createdUid;
     checklistDetailUid.value = createdUid;
     checklistWorkspaceView.value = "active";
-    try {
-      await hydrateChecklistRecord(createdUid);
-    } catch (error) {
-      handleApiError(error, "Checklist run created but detail refresh failed");
-    }
   }
 };
 
@@ -4261,34 +4406,27 @@ const importChecklistAction = async () => {
   const missionUid = selectedMissionUid.value || undefined;
   const baseName = (csvImportFilename.value || "Checklist CSV").replace(/\.csv$/i, "").trim() || "Checklist CSV";
   const imported = await createChecklistFromUploadedCsvAction(baseName, missionUid);
-  await loadWorkspace();
   const importedUid = String(imported.uid ?? "").trim();
   if (importedUid) {
-    selectedChecklistUid.value = importedUid;
-    checklistDetailUid.value = importedUid;
+    selectChecklistRecord(imported);
     checklistWorkspaceView.value = "active";
-    try {
-      await hydrateChecklistRecord(importedUid);
-    } catch (error) {
-      handleApiError(error, "Checklist imported but detail refresh failed");
-    }
   }
 };
 
 const joinChecklistAction = async () => {
   const checklist = ensureChecklistSelected();
-  await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/join`, {
+  const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/join`, {
     source_identity: DEFAULT_SOURCE_IDENTITY
   });
-  await loadWorkspace();
+  selectChecklistRecord(updated);
 };
 
 const uploadChecklistAction = async () => {
   const checklist = ensureChecklistSelected();
-  await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/upload`, {
+  const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklist.uid}/upload`, {
     source_identity: DEFAULT_SOURCE_IDENTITY
   });
-  await loadWorkspace();
+  selectChecklistRecord(updated);
 };
 
 const publishChecklistAction = async () => {
@@ -4298,15 +4436,15 @@ const publishChecklistAction = async () => {
     String(checklist.mode ?? "").toUpperCase() === "OFFLINE" &&
     String(checklist.sync_state ?? "").toUpperCase() !== "SYNCED"
   ) {
-    await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/upload`, {
+    const uploaded = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/upload`, {
       source_identity: DEFAULT_SOURCE_IDENTITY
     });
+    selectChecklistRecord(uploaded);
   }
   const missionFeedUid = selectedMissionUid.value || "mission-feed";
   await post(`${endpoints.checklists}/${checklistUid}/feeds/${encodeURIComponent(missionFeedUid)}`, {
     source_identity: DEFAULT_SOURCE_IDENTITY
   });
-  await loadWorkspace();
 };
 
 const setChecklistTaskStatusAction = async () => {
@@ -4315,36 +4453,46 @@ const setChecklistTaskStatusAction = async () => {
   const tasks = toArray<ChecklistTaskRaw>(checklist.tasks);
   const firstTask = tasks.find((task) => String(task.task_uid ?? "").trim().length > 0);
   if (!firstTask?.task_uid) {
-    await post(`${endpoints.checklists}/${checklistUid}/tasks`, {
+    const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks`, {
       number: 1
     });
-    await loadWorkspace();
+    selectChecklistRecord(updated);
     return;
   }
   const userStatus = String(firstTask.user_status ?? "PENDING").toUpperCase() === "COMPLETE" ? "PENDING" : "COMPLETE";
-  await post(`${endpoints.checklists}/${checklistUid}/tasks/${firstTask.task_uid}/status`, {
+  const updated = await post<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks/${firstTask.task_uid}/status`, {
     user_status: userStatus,
     changed_by_team_member_rns_identity: DEFAULT_SOURCE_IDENTITY
   });
-  await loadWorkspace();
+  selectChecklistRecord(updated);
 };
 
 const createZoneAction = async () => {
   const baseOffset = zoneRecords.value.length * 0.02;
   const lat = 34.0 + baseOffset;
   const lon = -118.0 + baseOffset;
-  const created = await post<{ zone_id?: string }>(endpoints.zones, {
-    name: `Mission Zone ${zoneRecords.value.length + 1}`,
-    points: [
+  const name = `Mission Zone ${zoneRecords.value.length + 1}`;
+  const points = [
       { lat, lon },
       { lat: lat + 0.01, lon },
       { lat: lat + 0.01, lon: lon + 0.01 },
       { lat, lon: lon + 0.01 }
-    ]
+    ];
+  const created = await post<ZoneRaw>(endpoints.zones, {
+    name,
+    points
   });
 
   const missionUid = selectedMissionUid.value;
   const zoneUid = String(created.zone_id ?? "").trim();
+  if (zoneUid) {
+    upsertZoneRecord({
+      ...created,
+      zone_id: zoneUid,
+      name: String(created.name ?? name),
+      points: created.points ?? points
+    });
+  }
   if (missionUid && zoneUid) {
     const next = new Set(selectedZoneIds.value);
     next.add(zoneUid);
@@ -4353,8 +4501,6 @@ const createZoneAction = async () => {
       [missionUid]: [...next]
     };
   }
-
-  await loadWorkspace();
 };
 
 const commitZonesAction = async () => {
@@ -4373,7 +4519,7 @@ const commitZonesAction = async () => {
   const nextDraft = { ...zoneDraftByMission.value };
   delete nextDraft[missionUid];
   zoneDraftByMission.value = nextDraft;
-  await loadWorkspace();
+  updateMissionZoneIds(missionUid, [...selected]);
 };
 
 const assignTaskAction = async () => {
@@ -4399,8 +4545,8 @@ const assignTaskAction = async () => {
   if (existing?.assignment_uid) {
     payload.assignment_uid = String(existing.assignment_uid);
   }
-  await post<AssignmentRaw>(endpoints.r3aktAssignments, payload);
-  await loadWorkspace();
+  const assignment = await post<AssignmentRaw>(endpoints.r3aktAssignments, payload);
+  upsertAssignmentRecord(assignment);
 };
 
 const reassignTaskAction = async () => {
@@ -4443,8 +4589,8 @@ const reassignTaskAction = async () => {
   if (assignment.assignment_uid) {
     payload.assignment_uid = String(assignment.assignment_uid);
   }
-  await post<AssignmentRaw>(endpoints.r3aktAssignments, payload);
-  await loadWorkspace();
+  const updated = await post<AssignmentRaw>(endpoints.r3aktAssignments, payload);
+  upsertAssignmentRecord(updated);
 };
 
 const revokeAssignmentAction = async () => {
@@ -4462,7 +4608,7 @@ const revokeAssignmentAction = async () => {
   if (!missionUid || !taskUid || !memberIdentity) {
     throw new Error("Assignment payload is incomplete");
   }
-  await post<AssignmentRaw>(endpoints.r3aktAssignments, {
+  const updated = await post<AssignmentRaw>(endpoints.r3aktAssignments, {
     assignment_uid: String(assignment.assignment_uid ?? ""),
     mission_uid: missionUid,
     task_uid: taskUid,
@@ -4471,7 +4617,7 @@ const revokeAssignmentAction = async () => {
     status: "REVOKED",
     notes: "Revoked from Mission workspace"
   });
-  await loadWorkspace();
+  upsertAssignmentRecord(updated);
 };
 
 const editChecklistCellAction = async () => {
@@ -4495,11 +4641,11 @@ const editChecklistCellAction = async () => {
     throw new Error("Checklist has no editable column");
   }
   const member = await ensureMemberIdentityForMission();
-  await patchRequest(`${endpoints.checklists}/${checklistUid}/tasks/${taskUid}/cells/${columnUid}`, {
+  const updated = await patchRequest<ChecklistRaw>(`${endpoints.checklists}/${checklistUid}/tasks/${taskUid}/cells/${columnUid}`, {
     value: `Updated @ ${new Date().toISOString()}`,
     updated_by_team_member_rns_identity: member.identity
   });
-  await loadWorkspace();
+  selectChecklistRecord(updated);
 };
 
 const validateChecklistAction = async () => {

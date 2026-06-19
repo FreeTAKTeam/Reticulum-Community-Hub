@@ -1,0 +1,16 @@
+[Unit]
+Description=Reticulum Community Hub TAK Bridge Service
+After=network-online.target rch-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rch
+Group=rch
+EnvironmentFile=/etc/rch/r3akt-tak-service.env
+ExecStart=/opt/rch/bin/r3akt-tak-service
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,166 @@
+name: Rust PR Quality Control
+
+on:
+  pull_request:
+    branches: ["rust-next", "main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-pr-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+          ref: v0.5.0
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+          components: rustfmt
+
+      - name: Check Rust formatting
+        working-directory: rch
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+          ref: v0.5.0
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+          components: clippy
+
+      - name: Check locked dependencies
+        working-directory: rch
+        run: cargo fetch --locked
+
+      - name: Run clippy
+        working-directory: rch
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  tests:
+    name: Workspace Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+          ref: v0.5.0
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Check locked dependencies
+        working-directory: rch
+        run: cargo fetch --locked
+
+      - name: Run workspace tests
+        working-directory: rch
+        run: cargo test --workspace -- --test-threads=1
+
+  release-builds:
+    name: Release Builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+          ref: v0.5.0
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Check locked dependencies
+        working-directory: rch
+        run: cargo fetch --locked
+
+      - name: Build server release binary
+        working-directory: rch
+        run: cargo build --release -p r3akt-rch-server
+
+      - name: Build TAK service release binary
+        working-directory: rch
+        run: cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service
+
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+          ref: v0.5.0
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Audit locked dependency graph
+        working-directory: rch
+        run: |
+          # time >=0.3.47 resolves RUSTSEC-2026-0009 but requires Rust 1.88.
+          # Keep the Rust 1.85 transition baseline until the workspace MSRV moves.
+          cargo audit --deny warnings --ignore RUSTSEC-2026-0009

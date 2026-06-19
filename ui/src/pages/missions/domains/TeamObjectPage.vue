@@ -11,5 +11,3 @@
 <script setup lang="ts">
 import MissionDomainRecordPage from "../components/MissionDomainRecordPage.vue";
 </script>
-
-

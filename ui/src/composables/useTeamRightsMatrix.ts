@@ -87,6 +87,7 @@ export const useTeamRightsMatrix = (options: UseTeamRightsMatrixOptions) => {
   const subjects = ref<RightsSubjectRecord[]>([]);
   const selectedTeamUid = ref("");
   const selectedMissionUid = ref("");
+  const selectedRoleBundle = ref("");
   const scopeMode = ref<ScopeMode>("mission");
   const memberFilter = ref("");
   const operationFilter = ref("");
@@ -97,6 +98,21 @@ export const useTeamRightsMatrix = (options: UseTeamRightsMatrixOptions) => {
 
   const operationList = computed(() => definitions.value?.operations ?? []);
   const missionRoleBundles = computed(() => definitions.value?.mission_role_bundles ?? {});
+  const roleBundleByRole = computed(() => {
+    const map = new Map<string, { label: string; scopeTypes: string[]; operations: string[] }>();
+    (definitions.value?.role_bundles ?? []).forEach((bundle) => {
+      const role = normalizeText(bundle.role);
+      const label = normalizeText(bundle.label);
+      if (role) {
+        map.set(role, {
+          label: label || role.replaceAll("_", " "),
+          scopeTypes: Array.isArray(bundle.scope_types) ? bundle.scope_types.map(normalizeText) : [],
+          operations: Array.isArray(bundle.operations) ? bundle.operations.map(normalizeText).filter(Boolean) : []
+        });
+      }
+    });
+    return map;
+  });
   const subjectById = computed(() => {
     const map = new Map<string, RightsSubjectRecord>();
     subjects.value.forEach((subject) => {
@@ -149,9 +165,22 @@ export const useTeamRightsMatrix = (options: UseTeamRightsMatrixOptions) => {
   const roleOptions = computed(() => [
     { label: "No bundle", value: "" },
     ...Object.keys(missionRoleBundles.value).map((role) => ({
-      label: role.replaceAll("_", " "),
+      label: roleBundleByRole.value.get(role)?.label ?? role.replaceAll("_", " "),
       value: role
     }))
+  ]);
+
+  const roleBundleOptions = computed(() => [
+    { label: "Select bundle", value: "" },
+    ...(definitions.value?.role_bundles ?? [])
+      .filter((bundle) => {
+        const scopes = Array.isArray(bundle.scope_types) ? bundle.scope_types.map(normalizeText) : [];
+        return scopes.includes(scopeMode.value);
+      })
+      .map((bundle) => ({
+        label: normalizeText(bundle.label) || normalizeText(bundle.role).replaceAll("_", " "),
+        value: normalizeText(bundle.role)
+      }))
   ]);
 
   const teamOptions = computed(() => [
@@ -319,6 +348,27 @@ export const useTeamRightsMatrix = (options: UseTeamRightsMatrixOptions) => {
       return;
     }
     operationDraftByCell.value[key] = nextValue;
+  };
+
+  const applySelectedRoleBundle = () => {
+    const role = normalizeText(selectedRoleBundle.value);
+    if (!role) {
+      return;
+    }
+    const bundleOperations = roleBundleByRole.value.get(role)?.operations ?? missionRoleBundles.value[role] ?? [];
+    filteredMembers.value.forEach((member) => {
+      if (scopeMode.value === "mission" && missionRoleBundles.value[role]) {
+        setMissionRole(member.subjectId, role);
+        return;
+      }
+      bundleOperations.forEach((operation) => {
+        const key = operationKey(member.subjectId, operation);
+        if (operationDraftByCell.value[key] === true) {
+          return;
+        }
+        operationDraftByCell.value[key] = true;
+      });
+    });
   };
 
   const revokeVisible = () => {
@@ -545,6 +595,16 @@ export const useTeamRightsMatrix = (options: UseTeamRightsMatrixOptions) => {
     { immediate: true }
   );
 
+  watch(
+    () => [scopeMode.value, roleBundleOptions.value.map((option) => option.value).join("|")],
+    () => {
+      const current = normalizeText(selectedRoleBundle.value);
+      if (current && !roleBundleOptions.value.some((option) => option.value === current)) {
+        selectedRoleBundle.value = "";
+      }
+    }
+  );
+
   watch(scopeMode, (mode) => {
     if (mode === "global") {
       resetDraft();
@@ -588,6 +648,7 @@ export const useTeamRightsMatrix = (options: UseTeamRightsMatrixOptions) => {
     definitions,
     selectedTeamUid,
     selectedMissionUid,
+    selectedRoleBundle,
     scopeMode,
     memberFilter,
     operationFilter,
@@ -595,12 +656,14 @@ export const useTeamRightsMatrix = (options: UseTeamRightsMatrixOptions) => {
     hasDraftChanges,
     missionOptions,
     roleOptions,
+    roleBundleOptions,
     teamOptions,
     visibleOperations,
     cellEnabled,
     cellSource,
     getRoleDraft,
     refresh,
+    applySelectedRoleBundle,
     applyChanges,
     resetDraft,
     revokeVisible,

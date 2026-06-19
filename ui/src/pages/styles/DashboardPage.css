@@ -718,6 +718,11 @@
   table-layout: fixed;
 }
 
+.hud-events-pagination {
+  margin-top: 8px;
+  padding: 0 4px 2px;
+}
+
 .hud-events-table thead th {
   text-align: left;
   font-size: 0.55rem;
@@ -895,6 +900,19 @@
 
 .hud-control-meta {
   font-family: "JetBrains Mono", "Cascadia Mono", monospace;
+}
+
+.hud-control-result {
+  margin-top: 10px;
+  border: 1px solid rgba(56, 244, 255, 0.22);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: "JetBrains Mono", "Cascadia Mono", monospace;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: rgba(210, 238, 242, 0.88);
+  background: rgba(4, 18, 24, 0.55);
+  overflow-wrap: anywhere;
 }
 
 .hud-control-actions {

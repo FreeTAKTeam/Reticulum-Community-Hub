@@ -1,22 +1,39 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
-import type { EventEntry } from "../api/types";
-import type { StatusResponse } from "../api/types";
+import type { EventEntry, StatusResponse, TeamMemberRecord } from "../api/types";
 import type { MissionRaw } from "../types/missions/raw";
+import { buildEventCallsignLookup } from "../utils/event-feed";
 import { useConnectionStore } from "./connection";
+import { useUsersStore } from "./users";
 
 type StatusApiPayload = StatusResponse & {
   uptime_seconds?: number;
 };
 
 type EventApiPayload = {
+  id?: string;
   timestamp?: string;
+  created_at?: string;
   type?: string;
+  category?: string;
   message?: string;
+  level?: string;
   metadata?: Record<string, unknown>;
 };
+
+export const EVENT_FEED_MAX_EVENTS = 200;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+
+const toKeyPart = (value: unknown): string =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase();
 
 const normalizeStatus = (payload: StatusApiPayload): StatusResponse => {
   const uptime = payload.uptime ?? payload.uptime_seconds;
@@ -34,13 +51,36 @@ const normalizeStatus = (payload: StatusApiPayload): StatusResponse => {
 };
 
 const normalizeEvent = (payload: EventApiPayload): EventEntry => ({
-  id: payload.timestamp ?? `${Date.now()}`,
-  created_at: payload.timestamp,
+  id: payload.id,
+  created_at: payload.created_at ?? payload.timestamp,
   message: payload.message,
-  level: "info",
-  category: payload.type,
+  level: payload.level ?? "info",
+  category: payload.category ?? payload.type,
   metadata: payload.metadata ?? {}
 });
+
+const eventTime = (event: EventEntry): number => {
+  const parsed = Date.parse(event.created_at ?? "");
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+export const eventEntryKey = (event: EventEntry): string => {
+  const id = toKeyPart(event.id);
+  if (id) {
+    return id;
+  }
+  return [event.created_at, event.category, event.message].map(toKeyPart).join("|");
+};
+
+const mergeEventLists = (current: EventEntry[], incoming: EventEntry[]): EventEntry[] => {
+  const merged = new Map<string, EventEntry>();
+  for (const event of [...current, ...incoming]) {
+    merged.set(eventEntryKey(event), event);
+  }
+  return [...merged.values()]
+    .sort((left, right) => eventTime(right) - eventTime(left))
+    .slice(0, EVENT_FEED_MAX_EVENTS);
+};
 
 const normalizeMissionStatus = (value: unknown): string => {
   const token = String(value ?? "")
@@ -61,32 +101,41 @@ const isActiveMission = (mission: MissionRaw): boolean => {
 };
 
 export const useDashboardStore = defineStore("dashboard", () => {
+  const usersStore = useUsersStore();
   const status = ref<StatusResponse | null>(null);
   const activeMissions = ref<number | null>(null);
   const events = ref<EventEntry[]>([]);
+  const teamMembers = ref<TeamMemberRecord[]>([]);
   const loading = ref(false);
+  const eventCallsignLookup = computed(() =>
+    buildEventCallsignLookup({
+      teamMembers: teamMembers.value,
+      clients: usersStore.clients,
+      identities: usersStore.identities,
+      remPeers: usersStore.remPeers
+    })
+  );
 
   const refresh = async () => {
     loading.value = true;
     const connectionStore = useConnectionStore();
     try {
       const response = await get<StatusApiPayload>(endpoints.status);
-      status.value = normalizeStatus(response);
+      status.value = normalizeStatus(isRecord(response) ? response : {});
 
-      const [eventResponse, missionResponse] = await Promise.allSettled([
-        get<EventApiPayload[]>(endpoints.events),
-        get<MissionRaw[]>(endpoints.r3aktMissions)
+      const [missionResponse, teamMemberResponse] = await Promise.allSettled([
+        get<MissionRaw[]>(endpoints.r3aktMissions),
+        get<TeamMemberRecord[]>(endpoints.r3aktTeamMembers),
+        usersStore.fetchUsers()
       ]);
 
-      if (eventResponse.status !== "fulfilled") {
-        throw eventResponse.reason;
-      }
-      events.value = eventResponse.value.map(normalizeEvent);
-
       if (missionResponse.status === "fulfilled") {
-        activeMissions.value = missionResponse.value.filter(isActiveMission).length;
+        activeMissions.value = toArray<MissionRaw>(missionResponse.value).filter(isActiveMission).length;
       } else {
         activeMissions.value = null;
+      }
+      if (teamMemberResponse.status === "fulfilled") {
+        teamMembers.value = toArray<TeamMemberRecord>(teamMemberResponse.value);
       }
       connectionStore.setOnline();
     } finally {
@@ -96,7 +145,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
 
   const pushEvent = (event: EventApiPayload | EventEntry) => {
     const mapped = "timestamp" in event || "type" in event ? normalizeEvent(event as EventApiPayload) : (event as EventEntry);
-    events.value = [mapped, ...events.value].slice(0, 50);
+    events.value = mergeEventLists(events.value, [mapped]);
   };
 
   const updateStatus = (payload: StatusApiPayload) => {
@@ -107,6 +156,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
     status,
     activeMissions,
     events,
+    eventCallsignLookup,
     loading,
     refresh,
     pushEvent,

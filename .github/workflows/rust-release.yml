@@ -1,0 +1,262 @@
+name: Build Rust Release Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Version label to embed in manually built artifacts"
+        required: false
+        default: "v3.0.0-preview.2"
+  release:
+    types: [published]
+  push:
+    branches: ["rust-next"]
+    tags:
+      - "v3.0.0-alpha.*"
+      - "v3.0.0-preview.*"
+      - "v3.*"
+    paths:
+      - ".github/workflows/rust-release.yml"
+      - "scripts/build-rust-release-package.ps1"
+      - "packaging/**"
+      - "apps/rch-desktop/**"
+      - "ui/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+
+permissions:
+  contents: write
+
+jobs:
+  server-package:
+    name: Full server package (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Windows x64
+            os: windows-latest
+            artifact: rch-rust-full-windows-x64
+            archive_format: zip
+            server_binary: target/release/r3akt-rch-server.exe
+            tak_binary: target/release/r3akt-tak-service.exe
+          - platform: macOS x64
+            os: macos-15-intel
+            artifact: rch-rust-full-macos-x64
+            archive_format: tar.gz
+            server_binary: target/release/r3akt-rch-server
+            tak_binary: target/release/r3akt-tak-service
+          - platform: macOS arm64
+            os: macos-latest
+            artifact: rch-rust-full-macos-arm64
+            archive_format: tar.gz
+            server_binary: target/release/r3akt-rch-server
+            tak_binary: target/release/r3akt-tak-service
+          - platform: Linux AMD64
+            os: ubuntu-latest
+            artifact: rch-rust-full-linux-amd64
+            archive_format: tar.gz
+            server_binary: target/release/r3akt-rch-server
+            tak_binary: target/release/r3akt-tak-service
+          - platform: Linux Raspberry Pi 64
+            os: ubuntu-24.04-arm
+            artifact: rch-rust-full-linux-rpi64
+            archive_format: tar.gz
+            server_binary: target/release/r3akt-rch-server
+            tak_binary: target/release/r3akt-tak-service
+
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+          ref: v0.5.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: rch/ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: rch
+        run: npm --prefix ui ci
+
+      - name: Build UI
+        working-directory: rch
+        run: npm --prefix ui run build
+
+      - name: Build server and TAK service
+        working-directory: rch
+        run: |
+          cargo build --release -p r3akt-rch-server
+          cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service
+
+      - name: Resolve release package name
+        id: package
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.release.tag_name }}"
+          if ([string]::IsNullOrWhiteSpace($version) -and "${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.release_version }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = "${{ github.ref_name }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Unable to resolve release version for package naming."
+          }
+          $safeVersion = $version -replace '[^0-9A-Za-z._+-]', '-'
+          "release_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "package_name=${{ matrix.artifact }}-$safeVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Assemble full server package
+        shell: pwsh
+        working-directory: rch
+        run: |
+          ./scripts/build-rust-release-package.ps1 `
+            -PackageName "${{ steps.package.outputs.package_name }}" `
+            -ReleaseVersion "${{ steps.package.outputs.release_version }}" `
+            -OutputDir dist `
+            -ServerBinaryPath "${{ matrix.server_binary }}" `
+            -TakServiceBinaryPath "${{ matrix.tak_binary }}" `
+            -IncludeTakService `
+            -IncludeUi `
+            -ArchiveFormat "${{ matrix.archive_format }}"
+
+      - name: Upload server package artifact
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.package_name }}
+          path: |
+            rch/dist/${{ steps.package.outputs.package_name }}.*
+          if-no-files-found: error
+
+      - name: Attach server package to GitHub release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            rch/dist/${{ steps.package.outputs.package_name }}.*
+          fail_on_unmatched_files: true
+
+  desktop-package:
+    name: Desktop package (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Windows x64 NSIS
+            os: windows-latest
+            artifact: rch-desktop-windows-x64-nsis
+            bundle_glob: apps/rch-desktop/src-tauri/target/release/bundle/nsis/*.exe
+          - platform: Linux x64 AppImage
+            os: ubuntu-latest
+            artifact: rch-desktop-linux-x64-appimage
+            bundle_glob: apps/rch-desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+          ref: v0.5.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            rch/ui/package-lock.json
+            rch/apps/rch-desktop/package-lock.json
+
+      - name: Install Linux desktop packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            librsvg2-dev \
+            patchelf \
+            wget
+
+      - name: Install UI dependencies
+        working-directory: rch
+        run: npm --prefix ui ci
+
+      - name: Install desktop dependencies
+        working-directory: rch
+        run: npm --prefix apps/rch-desktop ci
+
+      - name: Build Tauri desktop package
+        working-directory: rch
+        run: npm --prefix apps/rch-desktop run build
+
+      - name: Stage desktop package files
+        shell: pwsh
+        working-directory: rch
+        run: |
+          $dist = "dist/desktop/${{ matrix.artifact }}"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $files = Get-ChildItem -Path "${{ matrix.bundle_glob }}"
+          if (-not $files) {
+            throw "No desktop artifacts matched ${{ matrix.bundle_glob }}"
+          }
+          foreach ($file in $files) {
+            Copy-Item -LiteralPath $file.FullName -Destination $dist -Force
+          }
+          Get-ChildItem -LiteralPath $dist -File | ForEach-Object {
+            $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
+            "$($hash.Hash)  $($_.Name)" | Set-Content -LiteralPath "$($_.FullName).sha256" -Encoding ascii
+          }
+
+      - name: Upload desktop package artifact
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            rch/dist/desktop/${{ matrix.artifact }}/*
+          if-no-files-found: error
+
+      - name: Attach desktop package to GitHub release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            rch/dist/desktop/${{ matrix.artifact }}/*
+          fail_on_unmatched_files: true

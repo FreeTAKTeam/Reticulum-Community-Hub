@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="users-registry">
     <div class="registry-shell">
       <CosmicTopStatus title="User Registry" />
@@ -240,7 +240,7 @@
               >
                 <div class="registry-card-header">
                   <div>
-                    <div class="registry-card-title">{{ resolveIdentityLabel(peer.display_name, peer.identity) }}</div>
+                    <div class="registry-card-title">{{ remPeerDisplayName(peer) }}</div>
                     <div class="registry-card-subtitle mono">{{ peer.identity || "Unknown identity" }}</div>
                   </div>
                   <div class="registry-card-tag">{{ peer.status || "Unknown" }}</div>
@@ -248,7 +248,7 @@
                 <div class="registry-card-meta">
                   <div><span>Destination</span><span class="mono">{{ peer.destination_hash || "-" }}</span></div>
                   <div><span>Last Seen</span><span>{{ formatTimestamp(peer.last_seen) }}</span></div>
-                  <div><span>Capabilities</span><span>{{ toStringList(peer.announce_capabilities).join(", ") || "-" }}</span></div>
+                  <div><span>Capabilities</span><span>{{ remPeerCapabilitiesLabel(peer) }}</span></div>
                 </div>
                 <div class="registry-card-badges">
                   <BaseBadge :tone="peer.client_type === 'rem' ? 'success' : 'neutral'">
@@ -258,6 +258,16 @@
                   <BaseBadge :tone="usersStore.remConnectedMode ? 'danger' : 'neutral'">
                     {{ usersStore.remConnectedMode ? "Connected Mode Enabled" : "Passive Mode" }}
                   </BaseBadge>
+                </div>
+                <div class="registry-card-actions">
+                  <BaseButton
+                    variant="secondary"
+                    icon-left="plus"
+                    :disabled="isIdentityJoined(peer.identity)"
+                    @click="joinIdentity(peer.identity)"
+                  >
+                    {{ isIdentityJoined(peer.identity) ? "Added" : "Add User" }}
+                  </BaseButton>
                 </div>
               </div>
               <div v-if="sortedRemPeers.length === 0" class="panel-empty">No active REM peers match the current filter.</div>
@@ -499,6 +509,7 @@ import type { ApiError } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import { del as deleteRequest, get, post, put } from "../api/client";
 import type { MissionRecord } from "../api/types";
+import type { RemPeerEntry } from "../api/types";
 import type { TeamMemberRecord } from "../api/types";
 import type { TeamRecord } from "../api/types";
 import { useUsersStore } from "../stores/users";
@@ -514,6 +525,58 @@ const toStringList = (value: unknown): string[] =>
   Array.isArray(value)
     ? value.map((item) => String(item ?? "").trim()).filter((item) => item.length > 0)
     : [];
+
+const remPeerCallsignFromText = (value?: string): string | undefined => {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return undefined;
+  }
+  const match = text.match(/(?:^|[;,])\s*name\s*=\s*([^;,]+)/i);
+  return match?.[1]?.trim() || undefined;
+};
+
+const remPeerCallsign = (peer: RemPeerEntry): string | undefined => {
+  const displayCallsign = remPeerCallsignFromText(peer.display_name);
+  if (displayCallsign) {
+    return displayCallsign;
+  }
+  return toStringList(peer.announce_capabilities)
+    .map(remPeerCallsignFromText)
+    .find((value): value is string => Boolean(value));
+};
+
+const remPeerDisplayName = (peer: RemPeerEntry): string => {
+  const callsign = remPeerCallsign(peer);
+  if (callsign) {
+    return callsign;
+  }
+  const displayName = String(peer.display_name ?? "").trim();
+  if (displayName && !displayName.includes(";") && !displayName.includes(",")) {
+    return displayName;
+  }
+  return resolveIdentityLabel(undefined, peer.identity);
+};
+
+const remPeerCapabilityLabel = (capability: string): string => {
+  const normalized = capability.trim().toLowerCase();
+  if (normalized === "r3akt") {
+    return "R3AKT";
+  }
+  if (normalized === "emergencymessages") {
+    return "Emergency Messages";
+  }
+  if (normalized === "telemetry") {
+    return "Telemetry";
+  }
+  return capability.trim();
+};
+
+const remPeerCapabilities = (peer: RemPeerEntry): string[] =>
+  toStringList(peer.announce_capabilities)
+    .filter((capability) => !remPeerCallsignFromText(capability))
+    .map(remPeerCapabilityLabel);
+
+const remPeerCapabilitiesLabel = (peer: RemPeerEntry): string => remPeerCapabilities(peer).join(", ") || "-";
 
 const toCsv = (value: unknown): string => toStringList(value).join(",");
 const splitCsv = (value: string): string[] =>
@@ -686,10 +749,10 @@ const filteredRemPeers = computed(() => {
     return usersStore.remPeers;
   }
   return usersStore.remPeers.filter((peer) => {
-    const displayName = String(peer.display_name ?? "").toLowerCase();
+    const displayName = remPeerDisplayName(peer).toLowerCase();
     const identity = String(peer.identity ?? "").toLowerCase();
     const mode = String(peer.registered_mode ?? "").toLowerCase();
-    const capabilities = toStringList(peer.announce_capabilities).join(" ").toLowerCase();
+    const capabilities = remPeerCapabilities(peer).join(" ").toLowerCase();
     return (
       displayName.includes(filter) ||
       identity.includes(filter) ||
@@ -1098,6 +1161,11 @@ const teamColorOptions = [
 const teamRoleOptions = [
   { label: "Team Member", value: "TEAM_MEMBER" },
   { label: "Team Lead", value: "TEAM_LEAD" },
+  { label: "Field Operator", value: "FIELD_OPERATOR" },
+  { label: "Incident Commander", value: "INCIDENT_COMMANDER" },
+  { label: "Logistics/resource Manager", value: "LOGISTICS_RESOURCE_MANAGER" },
+  { label: "Communications Operator", value: "COMMUNICATIONS_OPERATOR" },
+  { label: "System Admin", value: "SYSTEM_ADMIN" },
   { label: "HQ", value: "HQ" },
   { label: "Sniper", value: "SNIPER" },
   { label: "Medic", value: "MEDIC" },
@@ -1133,7 +1201,7 @@ const clientTag = (lastSeenAt?: string) => {
 };
 
 const clientTypeLabel = (clientType?: string, isRemCapable?: boolean): string => {
-  return isRemCapable || clientType === "rem" ? "REM" : "Generic LXMF";
+  return isRemCapable || clientType === "rem" ? "REM Client" : "Generic LXMF";
 };
 
 type IdentityWithAnnounce = {
@@ -1652,7 +1720,3 @@ onMounted(() => {
 </script>
 
 <style scoped src="./styles/UsersPage.css"></style>
-
-
-
-

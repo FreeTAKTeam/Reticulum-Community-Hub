@@ -109,7 +109,7 @@ const recordsByKey = computed(() => {
         if (aggregateUid === selectedMissionUid) {
           return true;
         }
-        const payloadText = JSON.stringify(entry.payload ?? "");
+        const payloadText = JSON.stringify(entry.payload ?? entry.payload_summary ?? "");
         return payloadText.includes(selectedMissionUid);
       });
     case "missionChanges":

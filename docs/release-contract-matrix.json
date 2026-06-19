@@ -1,0 +1,317 @@
+{
+  "schema_version": 1,
+  "title": "RCH Python Parity Plus Rust Release Capability Contract Matrix",
+  "baseline": {
+    "python_branch": "rch-python",
+    "rust_branch": "rust-next",
+    "compatibility_rule": "Match Python where Python exposes an external contract; require Rust additive capabilities where the Rust edition intentionally goes beyond Python."
+  },
+  "classifications": {
+    "must-match-python": "Externally observable Python RCH 2.9.x behavior that Rust must preserve.",
+    "rust-additive-required": "Rust release capability with no required Python equivalent.",
+    "intentional-difference": "Architecture difference that is acceptable when public behavior is equivalent or improved."
+  },
+  "contracts": [
+    {
+      "id": "python-northbound-http-routes",
+      "classification": "must-match-python",
+      "kind": "http-route",
+      "description": "Python northbound HTTP and WebSocket route inventory exposed by Rust OpenAPI.",
+      "evidence": [
+        "crates/r3akt-rch-server/tests/release_contract_matrix.rs",
+        "crates/r3akt-rch-server/src/lib.rs::openapi_covers_python_northbound_route_inventory"
+      ],
+      "routes": [
+        { "path": "/Chat/Attachment", "method": "post" },
+        { "path": "/Chat/Message", "method": "post" },
+        { "path": "/Chat/Messages", "method": "get" },
+        { "path": "/Client", "method": "get" },
+        { "path": "/Client/{identity}/Ban", "method": "post" },
+        { "path": "/Client/{identity}/Blackhole", "method": "post" },
+        { "path": "/Client/{identity}/Unban", "method": "post" },
+        { "path": "/Command/DumpRouting", "method": "get" },
+        { "path": "/Command/FlushTelemetry", "method": "post" },
+        { "path": "/Command/ReloadConfig", "method": "post" },
+        { "path": "/Config", "method": "get" },
+        { "path": "/Config", "method": "put" },
+        { "path": "/Config/Rollback", "method": "post" },
+        { "path": "/Config/Validate", "method": "post" },
+        { "path": "/Control/Announce", "method": "post" },
+        { "path": "/Control/Start", "method": "post" },
+        { "path": "/Control/Status", "method": "get" },
+        { "path": "/Control/Stop", "method": "post" },
+        { "path": "/Control/Sync", "method": "post" },
+        { "path": "/Diagnostics/Runtime", "method": "get" },
+        { "path": "/Events", "method": "get" },
+        { "path": "/Examples", "method": "get" },
+        { "path": "/File", "method": "get" },
+        { "path": "/File/{file_id}", "method": "delete" },
+        { "path": "/File/{file_id}", "method": "get" },
+        { "path": "/File/{file_id}", "method": "patch" },
+        { "path": "/File/{file_id}/raw", "method": "get" },
+        { "path": "/Help", "method": "get" },
+        { "path": "/Identities", "method": "get" },
+        { "path": "/Image", "method": "get" },
+        { "path": "/Image/{file_id}", "method": "delete" },
+        { "path": "/Image/{file_id}", "method": "get" },
+        { "path": "/Image/{file_id}", "method": "patch" },
+        { "path": "/Image/{file_id}/raw", "method": "get" },
+        { "path": "/Message", "method": "post" },
+        { "path": "/RCH", "method": "post" },
+        { "path": "/RCH", "method": "put" },
+        { "path": "/RTH", "method": "post" },
+        { "path": "/RTH", "method": "put" },
+        { "path": "/Reticulum/Config", "method": "get" },
+        { "path": "/Reticulum/Config", "method": "put" },
+        { "path": "/Reticulum/Config/Rollback", "method": "post" },
+        { "path": "/Reticulum/Config/Validate", "method": "post" },
+        { "path": "/Reticulum/Discovery", "method": "get" },
+        { "path": "/Reticulum/Interfaces/Capabilities", "method": "get" },
+        { "path": "/Status", "method": "get" },
+        { "path": "/Subscriber", "method": "delete" },
+        { "path": "/Subscriber", "method": "get" },
+        { "path": "/Subscriber", "method": "patch" },
+        { "path": "/Subscriber", "method": "post" },
+        { "path": "/Subscriber/Add", "method": "post" },
+        { "path": "/Subscriber/{subscriber_id}", "method": "get" },
+        { "path": "/Telemetry", "method": "get" },
+        { "path": "/Topic", "method": "delete" },
+        { "path": "/Topic", "method": "get" },
+        { "path": "/Topic", "method": "patch" },
+        { "path": "/Topic", "method": "post" },
+        { "path": "/Topic/Associate", "method": "post" },
+        { "path": "/Topic/Subscribe", "method": "post" },
+        { "path": "/Topic/{topic_id}", "method": "get" },
+        { "path": "/api/EmergencyActionMessage", "method": "get" },
+        { "path": "/api/EmergencyActionMessage", "method": "post" },
+        { "path": "/api/EmergencyActionMessage/latest/{team_member_uid}", "method": "get" },
+        { "path": "/api/EmergencyActionMessage/team/{team_uid}/summary", "method": "get" },
+        { "path": "/api/EmergencyActionMessage/{callsign}", "method": "delete" },
+        { "path": "/api/EmergencyActionMessage/{callsign}", "method": "get" },
+        { "path": "/api/EmergencyActionMessage/{callsign}", "method": "put" },
+        { "path": "/api/markers", "method": "get" },
+        { "path": "/api/markers", "method": "post" },
+        { "path": "/api/markers/symbols", "method": "get" },
+        { "path": "/api/markers/{object_destination_hash}", "method": "delete" },
+        { "path": "/api/markers/{object_destination_hash}", "method": "patch" },
+        { "path": "/api/markers/{object_destination_hash}/position", "method": "patch" },
+        { "path": "/api/r3akt/assets", "method": "get" },
+        { "path": "/api/r3akt/assets", "method": "post" },
+        { "path": "/api/r3akt/assets/{asset_uid}", "method": "delete" },
+        { "path": "/api/r3akt/assets/{asset_uid}", "method": "get" },
+        { "path": "/api/r3akt/assignments", "method": "get" },
+        { "path": "/api/r3akt/assignments", "method": "post" },
+        { "path": "/api/r3akt/assignments/{assignment_uid}/assets", "method": "put" },
+        { "path": "/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}", "method": "delete" },
+        { "path": "/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}", "method": "put" },
+        { "path": "/api/r3akt/capabilities/{identity}", "method": "get" },
+        { "path": "/api/r3akt/capabilities/{identity}/{capability}", "method": "delete" },
+        { "path": "/api/r3akt/capabilities/{identity}/{capability}", "method": "put" },
+        { "path": "/api/r3akt/events", "method": "get" },
+        { "path": "/api/r3akt/log-entries", "method": "get" },
+        { "path": "/api/r3akt/log-entries", "method": "post" },
+        { "path": "/api/r3akt/mission-changes", "method": "get" },
+        { "path": "/api/r3akt/mission-changes", "method": "post" },
+        { "path": "/api/r3akt/missions", "method": "get" },
+        { "path": "/api/r3akt/missions", "method": "post" },
+        { "path": "/api/r3akt/missions/{mission_uid}", "method": "delete" },
+        { "path": "/api/r3akt/missions/{mission_uid}", "method": "get" },
+        { "path": "/api/r3akt/missions/{mission_uid}", "method": "patch" },
+        { "path": "/api/r3akt/missions/{mission_uid}/markers", "method": "get" },
+        { "path": "/api/r3akt/missions/{mission_uid}/markers/{marker_id}", "method": "delete" },
+        { "path": "/api/r3akt/missions/{mission_uid}/markers/{marker_id}", "method": "put" },
+        { "path": "/api/r3akt/missions/{mission_uid}/parent", "method": "put" },
+        { "path": "/api/r3akt/missions/{mission_uid}/rde", "method": "get" },
+        { "path": "/api/r3akt/missions/{mission_uid}/rde", "method": "put" },
+        { "path": "/api/r3akt/missions/{mission_uid}/zones", "method": "get" },
+        { "path": "/api/r3akt/missions/{mission_uid}/zones/{zone_id}", "method": "delete" },
+        { "path": "/api/r3akt/missions/{mission_uid}/zones/{zone_id}", "method": "put" },
+        { "path": "/api/r3akt/rights/definitions", "method": "get" },
+        { "path": "/api/r3akt/rights/grants", "method": "delete" },
+        { "path": "/api/r3akt/rights/grants", "method": "get" },
+        { "path": "/api/r3akt/rights/grants", "method": "put" },
+        { "path": "/api/r3akt/rights/mission-access", "method": "delete" },
+        { "path": "/api/r3akt/rights/mission-access", "method": "get" },
+        { "path": "/api/r3akt/rights/mission-access", "method": "put" },
+        { "path": "/api/r3akt/rights/subjects", "method": "get" },
+        { "path": "/api/r3akt/skills", "method": "get" },
+        { "path": "/api/r3akt/skills", "method": "post" },
+        { "path": "/api/r3akt/snapshots", "method": "get" },
+        { "path": "/api/r3akt/task-skill-requirements", "method": "get" },
+        { "path": "/api/r3akt/task-skill-requirements", "method": "post" },
+        { "path": "/api/r3akt/team-member-skills", "method": "get" },
+        { "path": "/api/r3akt/team-member-skills", "method": "post" },
+        { "path": "/api/r3akt/team-members", "method": "get" },
+        { "path": "/api/r3akt/team-members", "method": "post" },
+        { "path": "/api/r3akt/team-members/{team_member_uid}", "method": "delete" },
+        { "path": "/api/r3akt/team-members/{team_member_uid}", "method": "get" },
+        { "path": "/api/r3akt/team-members/{team_member_uid}/clients", "method": "get" },
+        { "path": "/api/r3akt/team-members/{team_member_uid}/clients/{client_identity}", "method": "delete" },
+        { "path": "/api/r3akt/team-members/{team_member_uid}/clients/{client_identity}", "method": "put" },
+        { "path": "/api/r3akt/teams", "method": "get" },
+        { "path": "/api/r3akt/teams", "method": "post" },
+        { "path": "/api/r3akt/teams/{team_uid}", "method": "delete" },
+        { "path": "/api/r3akt/teams/{team_uid}", "method": "get" },
+        { "path": "/api/r3akt/teams/{team_uid}/missions", "method": "get" },
+        { "path": "/api/r3akt/teams/{team_uid}/missions/{mission_uid}", "method": "delete" },
+        { "path": "/api/r3akt/teams/{team_uid}/missions/{mission_uid}", "method": "put" },
+        { "path": "/api/rem/peers", "method": "get" },
+        { "path": "/api/v1/app/info", "method": "get" },
+        { "path": "/api/v1/auth/validate", "method": "get" },
+        { "path": "/api/zones", "method": "get" },
+        { "path": "/api/zones", "method": "post" },
+        { "path": "/api/zones/{zone_id}", "method": "delete" },
+        { "path": "/api/zones/{zone_id}", "method": "patch" },
+        { "path": "/checklists", "method": "get" },
+        { "path": "/checklists", "method": "post" },
+        { "path": "/checklists/import/csv", "method": "post" },
+        { "path": "/checklists/offline", "method": "post" },
+        { "path": "/checklists/templates", "method": "get" },
+        { "path": "/checklists/templates", "method": "post" },
+        { "path": "/checklists/templates/{template_id}", "method": "delete" },
+        { "path": "/checklists/templates/{template_id}", "method": "get" },
+        { "path": "/checklists/templates/{template_id}", "method": "patch" },
+        { "path": "/checklists/templates/{template_id}/clone", "method": "post" },
+        { "path": "/checklists/{checklist_id}", "method": "delete" },
+        { "path": "/checklists/{checklist_id}", "method": "get" },
+        { "path": "/checklists/{checklist_id}", "method": "patch" },
+        { "path": "/checklists/{checklist_id}/feeds/{feed_id}", "method": "post" },
+        { "path": "/checklists/{checklist_id}/join", "method": "post" },
+        { "path": "/checklists/{checklist_id}/tasks", "method": "post" },
+        { "path": "/checklists/{checklist_id}/tasks/{task_id}", "method": "delete" },
+        { "path": "/checklists/{checklist_id}/tasks/{task_id}/cells/{column_id}", "method": "patch" },
+        { "path": "/checklists/{checklist_id}/tasks/{task_id}/row-style", "method": "patch" },
+        { "path": "/checklists/{checklist_id}/tasks/{task_id}/status", "method": "post" },
+        { "path": "/checklists/{checklist_id}/upload", "method": "post" },
+        { "path": "/diagnostics/runtime", "method": "get" },
+        { "path": "/events/system", "method": "get" },
+        { "path": "/messages/stream", "method": "get" },
+        { "path": "/openapi.yaml", "method": "get" },
+        { "path": "/telemetry/stream", "method": "get" }
+      ]
+    },
+    {
+      "id": "python-lxmf-legacy-command-surface",
+      "classification": "must-match-python",
+      "kind": "lxmf-legacy-command",
+      "description": "Legacy/plugin command names, aliases, admin commands, telemetry request, and attachment commands documented by Python RCH.",
+      "evidence": [
+        "docs/supportedCommands.md",
+        "crates/r3akt-rch-server/src/lib.rs::LEGACY_SOUTHBOUND_COMMANDS"
+      ]
+    },
+    {
+      "id": "python-mission-checklist-command-surface",
+      "classification": "must-match-python",
+      "kind": "field-command-envelope",
+      "description": "Mission-sync and checklist command envelope lifecycle, capabilities, result/rejection shape, and persisted state.",
+      "evidence": [
+        "crates/r3akt-rch-core/src/lib.rs::apply_command",
+        "crates/r3akt-rch-core tests"
+      ]
+    },
+    {
+      "id": "python-tak-compatible-behavior",
+      "classification": "must-match-python",
+      "kind": "tak-behavior",
+      "description": "TAK CoT XML/protobuf profile selection, keepalive, reconnect, inbound marker mapping, chat/location relay, and compatible config fields.",
+      "evidence": [
+        "crates/r3akt-tak-connector tests",
+        "scripts/release-readiness.ps1"
+      ]
+    },
+    {
+      "id": "rust-additive-rem-compatibility",
+      "classification": "rust-additive-required",
+      "kind": "rem-compatibility",
+      "description": "REM connected/autonomous/semi-autonomous behavior, peer registry, EAM command fanout, checklist command fanout, replay, markdown fallback, and duplicate suppression.",
+      "evidence": [
+        "crates/r3akt-rch-core/src/lib.rs::apply_rem_registry_command",
+        "crates/r3akt-rch-server REM fanout tests"
+      ]
+    },
+    {
+      "id": "rust-additive-reticulumd-runtime",
+      "classification": "rust-additive-required",
+      "kind": "reticulum-runtime",
+      "description": "LXMF-rs reticulumd RPC/event-cursor runtime for direct send, topic fanout, receipts, retries, inbound relay, attachments, telemetry, announces, and diagnostics.",
+      "evidence": [
+        "scripts/local-reticulum-live-gate.ps1",
+        "crates/r3akt-rch-server live reticulumd tests"
+      ]
+    },
+    {
+      "id": "rust-additive-runtime-diagnostics",
+      "classification": "rust-additive-required",
+      "kind": "diagnostics",
+      "description": "Richer /diagnostics/runtime inventory for persistence, workers, reticulumd RPC/process state, queues, counters, receipts, and schema version.",
+      "evidence": [
+        "crates/r3akt-rch-server/src/lib.rs::runtime_diagnostics",
+        "runtime_diagnostics_report_sqlite_schema_version"
+      ]
+    },
+    {
+      "id": "rust-additive-python-install-import",
+      "classification": "rust-additive-required",
+      "kind": "migration",
+      "description": "Install-over-Python migration path for Python config, identity, Reticulum identity, SQLite DB, telemetry DB, files, images, LXMF data, and first-start prompt behavior.",
+      "evidence": [
+        "scripts/import-python-rch-production.ps1",
+        "scripts/import-python-rch-production.Tests.ps1",
+        "scripts/migrate-python-rch.ps1",
+        "crates/r3akt-rch-core/src/python_migration.rs",
+        "crates/r3akt-rch-server/src/main.rs --prompt-python-import"
+      ]
+    },
+    {
+      "id": "rust-additive-standalone-tak-service",
+      "classification": "rust-additive-required",
+      "kind": "tak-service",
+      "description": "Standalone r3akt-tak-service boundary with sidecar packaging, service diagnostics, queue drain, retry, and failure reporting.",
+      "evidence": [
+        "crates/r3akt-tak-connector/src/bin/r3akt-tak-service.rs",
+        "docs/rust-transition.md"
+      ]
+    },
+    {
+      "id": "rust-additive-tauri-sidecars",
+      "classification": "rust-additive-required",
+      "kind": "packaging",
+      "description": "Tauri desktop sidecar packaging for Rust server and standalone TAK service without reintroducing Electron on rust-next.",
+      "evidence": [
+        "apps/rch-desktop",
+        "packaging/README.md"
+      ]
+    },
+    {
+      "id": "rust-additive-release-gates",
+      "classification": "rust-additive-required",
+      "kind": "release-gate",
+      "description": "Rust release gate runner, local/external Reticulum gates, coverage/report evidence, and workspace checks.",
+      "evidence": [
+        "scripts/release-readiness.ps1",
+        "docs/release-readiness-audit.md"
+      ]
+    },
+    {
+      "id": "intentional-rust-reticulum-runtime-boundary",
+      "classification": "intentional-difference",
+      "kind": "architecture",
+      "description": "Python embedded RNS/LXMF runtime is replaced by managed LXMF-rs reticulumd RPC/event-cursor runtime; public delivery and route outcomes must remain Python-compatible.",
+      "evidence": [
+        "docs/rust-transition.md",
+        "scripts/local-reticulum-live-gate.ps1"
+      ]
+    },
+    {
+      "id": "intentional-rust-tak-service-boundary",
+      "classification": "intentional-difference",
+      "kind": "architecture",
+      "description": "TAK socket lifecycle is owned by standalone r3akt-tak-service instead of the Rust HTTP server; northbound behavior and CoT semantics remain compatible.",
+      "evidence": [
+        "crates/r3akt-tak-connector/src/bin/r3akt-tak-service.rs",
+        "docs/release-readiness-audit.md"
+      ]
+    }
+  ]
+}

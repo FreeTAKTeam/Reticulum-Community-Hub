@@ -131,7 +131,7 @@ const requestRaw = async (path: string, options: RequestOptions = {}): Promise<R
         connectionStore.setAuthStatus("unauthenticated", "Authentication required.");
       } else if (apiError.status === 403) {
         connectionStore.setAuthStatus("forbidden", "Access denied.");
-      } else if (!apiError.status) {
+      } else if (!apiError.status && (requestInit.method ?? "GET").toUpperCase() === "GET") {
         connectionStore.setOffline(apiError.message || "Unable to reach the hub");
       }
       if (attempt < maxRetries && shouldRetry(requestInit.method ?? "GET", apiError)) {

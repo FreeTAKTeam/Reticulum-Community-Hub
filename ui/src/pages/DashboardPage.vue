@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="dashboard-hud">
     <section class="hud-banner">
       <div class="hud-brand">
@@ -139,6 +139,9 @@
               Announce
             </BaseButton>
           </div>
+          <div v-if="lastSyncMessage" class="hud-control-result">
+            {{ lastSyncMessage }}
+          </div>
         </div>
       </aside>
 
@@ -212,55 +215,62 @@
             <div class="hud-panel-title">Event Feed</div>
             <span class="hud-panel-subtitle">Realtime system activity</span>
           </div>
-          <LoadingSkeleton v-if="dashboard.loading" />
-          <div v-else class="hud-events-body">
+          <div class="hud-events-body">
             <div v-if="!dashboard.events.length" class="hud-empty">No events yet.</div>
-            <table v-else class="hud-events-table">
-              <thead>
-                <tr>
-                  <th>Event</th>
-                  <th>Type</th>
-                  <th>Time</th>
-                  <th class="hud-events-cell--action">Details</th>
-                </tr>
-              </thead>
-              <tbody>
-                <template v-for="(event, index) in dashboard.events" :key="eventRowKey(event, index)">
-                  <tr class="hud-events-row">
-                    <td class="hud-events-cell hud-events-cell--message">
-                      <span class="hud-event-title">{{ event.message }}</span>
-                    </td>
-                    <td class="hud-events-cell hud-events-cell--meta">
-                      <span class="hud-event-tag">{{ event.category }}</span>
-                    </td>
-                    <td class="hud-events-cell hud-events-cell--time">
-                      {{ formatTimestamp(event.created_at) }}
-                    </td>
-                    <td class="hud-events-cell hud-events-cell--action">
-                      <button
-                        type="button"
-                        class="hud-events-toggle"
-                        :disabled="!hasMetadata(event.metadata)"
-                        @click="toggleEventDetails(eventRowKey(event, index))"
-                      >
-                        <span>{{ isEventExpanded(eventRowKey(event, index)) ? "Hide" : "Details" }}</span>
-                        <span
-                          class="hud-events-toggle-icon"
-                          :class="{ 'hud-events-toggle-icon--open': isEventExpanded(eventRowKey(event, index)) }"
-                        />
-                      </button>
-                    </td>
+            <template v-else>
+              <table class="hud-events-table">
+                <thead>
+                  <tr>
+                    <th>Event</th>
+                    <th>Type</th>
+                    <th>Time</th>
+                    <th class="hud-events-cell--action">Details</th>
                   </tr>
-                  <tr v-if="isEventExpanded(eventRowKey(event, index))" class="hud-events-details-row">
-                    <td colspan="4">
-                      <div class="hud-events-details">
-                        <BaseFormattedOutput class="hud-event-json" :value="event.metadata" />
-                      </div>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  <template v-for="event in pagedEvents" :key="eventRowKey(event)">
+                    <tr class="hud-events-row">
+                      <td class="hud-events-cell hud-events-cell--message">
+                        <span class="hud-event-title">{{ eventFeedMessage(event) }}</span>
+                      </td>
+                      <td class="hud-events-cell hud-events-cell--meta">
+                        <span class="hud-event-tag">{{ event.category }}</span>
+                      </td>
+                      <td class="hud-events-cell hud-events-cell--time">
+                        {{ formatTimestamp(event.created_at) }}
+                      </td>
+                      <td class="hud-events-cell hud-events-cell--action">
+                        <button
+                          type="button"
+                          class="hud-events-toggle"
+                          :disabled="!hasMetadata(event.metadata)"
+                          @click="toggleEventDetails(eventRowKey(event))"
+                        >
+                          <span>{{ isEventExpanded(eventRowKey(event)) ? "Hide" : "Details" }}</span>
+                          <span
+                            class="hud-events-toggle-icon"
+                            :class="{ 'hud-events-toggle-icon--open': isEventExpanded(eventRowKey(event)) }"
+                          />
+                        </button>
+                      </td>
+                    </tr>
+                    <tr v-if="isEventExpanded(eventRowKey(event))" class="hud-events-details-row">
+                      <td colspan="4">
+                        <div class="hud-events-details">
+                          <BaseFormattedOutput class="hud-event-json" :value="event.metadata" />
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <BasePagination
+                v-model:page="eventPage"
+                class="hud-events-pagination"
+                :page-size="EVENT_PAGE_SIZE"
+                :total="dashboard.events.length"
+              />
+            </template>
           </div>
         </div>
       </main>
@@ -293,19 +303,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import BaseButton from "../components/BaseButton.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
-import LoadingSkeleton from "../components/LoadingSkeleton.vue";
+import BasePagination from "../components/BasePagination.vue";
 import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { get, post } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import { WsClient } from "../api/ws";
-import { useDashboardStore } from "../stores/dashboard";
+import { EVENT_FEED_MAX_EVENTS, eventEntryKey, useDashboardStore } from "../stores/dashboard";
 import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
 import { formatNumber } from "../utils/format";
 import { formatTimestamp } from "../utils/format";
+import { resolveEventFeedMessage } from "../utils/event-feed";
 import ReticulumClock from "../components/ReticulumClock.vue";
 import type { EventEntry } from "../api/types";
 
@@ -317,18 +328,34 @@ const wsClient = ref<WsClient | null>(null);
 const telemetryWsClient = ref<WsClient | null>(null);
 const controlStatus = ref<ControlStatus | null>(null);
 const controlBusy = ref(false);
+const lastSyncMessage = ref("");
 let telemetryTickId: number | undefined;
 let sparklineTickId: number | undefined;
 let brandTraceFrameId: number | undefined;
 let brandTraceLastFrameAt = 0;
 const telemetrySubscribed = ref(false);
 const expandedEvents = ref<Record<string, boolean>>({});
+const eventPage = ref(1);
 
 interface ControlStatus {
   status?: string;
   pid?: number;
   port?: number;
   uptime_seconds?: number;
+}
+
+interface PropagationFetchResult {
+  available_count?: number;
+  fetched_count?: number;
+  imported_count?: number;
+  result?: PropagationFetchResult;
+  status?: string;
+  error?: string;
+}
+
+interface ControlSyncResponse {
+  status?: string;
+  fetch_result?: PropagationFetchResult;
 }
 
 interface TelemetryBucket {
@@ -343,6 +370,7 @@ const BUCKET_MINUTES = 15;
 const BUCKET_MS = BUCKET_MINUTES * 60 * 1000;
 const BUCKET_COUNT = (HOURS_RANGE * 60) / BUCKET_MINUTES;
 const RANGE_MS = HOURS_RANGE * 60 * 60 * 1000;
+const EVENT_PAGE_SIZE = 12;
 
 const bucketCount = BUCKET_COUNT;
 const telemetryBuckets = ref<TelemetryBucket[]>([]);
@@ -586,12 +614,22 @@ const hasMetadata = (value?: Record<string, unknown>) => {
   return Object.keys(value).length > 0;
 };
 
-const eventRowKey = (event: EventEntry, index: number) => {
-  const base = event.id ?? event.created_at ?? "event";
-  const category = event.category ?? "unknown";
-  const createdAt = event.created_at ?? "no-time";
-  return `${base}-${category}-${createdAt}-${index}`;
-};
+const eventRowKey = (event: EventEntry) => eventEntryKey(event);
+
+const eventPageCount = computed(() => Math.max(1, Math.ceil(dashboard.events.length / EVENT_PAGE_SIZE)));
+
+const pagedEvents = computed(() => {
+  const start = (eventPage.value - 1) * EVENT_PAGE_SIZE;
+  return dashboard.events.slice(start, start + EVENT_PAGE_SIZE);
+});
+
+watch(eventPageCount, (pageCount) => {
+  if (eventPage.value > pageCount) {
+    eventPage.value = pageCount;
+  }
+});
+
+const eventFeedMessage = (event: EventEntry) => resolveEventFeedMessage(event, dashboard.eventCallsignLookup);
 
 const isEventExpanded = (key: string) => Boolean(expandedEvents.value[key]);
 
@@ -790,13 +828,28 @@ const sendAnnounce = async () => {
   }
 };
 
+const propagationFetchToast = (response?: ControlSyncResponse): string => {
+  const fetchResult = response?.fetch_result?.result ?? response?.fetch_result;
+  if (fetchResult?.error) {
+    return `Propagation sync requested; fetch failed: ${fetchResult.error}`;
+  }
+  if (typeof fetchResult?.imported_count === "number") {
+    const fetched = typeof fetchResult.fetched_count === "number" ? fetchResult.fetched_count : 0;
+    const available = typeof fetchResult.available_count === "number" ? fetchResult.available_count : fetched;
+    return `Propagation sync requested; fetched ${fetched}/${available}, imported ${fetchResult.imported_count}`;
+  }
+  return response?.status === "sync_requested" ? "Propagation sync requested" : response?.status ?? "Propagation sync requested";
+};
+
 const syncBackend = async () => {
   controlBusy.value = true;
   try {
-    const response = await post<{ status?: string }>(endpoints.controlSync);
-    const message = response?.status === "sync_requested" ? "Propagation sync requested" : response?.status;
-    toastStore.push(message ?? "Propagation sync requested", "success");
+    const response = await post<ControlSyncResponse>(endpoints.controlSync);
+    const message = propagationFetchToast(response);
+    lastSyncMessage.value = message;
+    toastStore.push(message, "success");
   } catch (error) {
+    lastSyncMessage.value = "Propagation sync failed";
     toastStore.push("Propagation sync failed", "danger");
   } finally {
     controlBusy.value = false;
@@ -807,16 +860,30 @@ onMounted(async () => {
   await dashboard.refresh();
   await refreshControlStatus();
   resetBuckets(Date.now());
-  const ws = new WsClient("/events/system", (payload) => {
-    if (payload.type === "system.status") {
-      dashboard.updateStatus(payload.data as any);
+  const ws = new WsClient(
+    "/events/system",
+    (payload) => {
+      if (payload.type === "system.status") {
+        dashboard.updateStatus(payload.data as any);
+      }
+      if (payload.type === "system.event") {
+        dashboard.pushEvent(payload.data as any);
+      }
+    },
+    () => {
+      wsClient.value?.send({
+        type: "system.subscribe",
+        ts: new Date().toISOString(),
+        data: {
+          include_status: true,
+          include_events: true,
+          events_limit: EVENT_FEED_MAX_EVENTS
+        }
+      });
     }
-    if (payload.type === "system.event") {
-      dashboard.pushEvent(payload.data as any);
-    }
-  });
-  ws.connect();
+  );
   wsClient.value = ws;
+  ws.connect();
 
   const telemetryWs = new WsClient(
     "/telemetry/stream",
@@ -889,5 +956,3 @@ onUnmounted(() => {
 </script>
 
 <style scoped src="./styles/DashboardPage.css"></style>
-
-

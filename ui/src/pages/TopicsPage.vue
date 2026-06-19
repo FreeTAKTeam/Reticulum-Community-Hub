@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="topics-registry">
     <div class="registry-shell">
       <CosmicTopStatus title="Topic Registry" />
@@ -899,7 +899,3 @@ onMounted(() => {
 </script>
 
 <style scoped src="./styles/TopicsPage.css"></style>
-
-
-
-

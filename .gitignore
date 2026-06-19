@@ -1,196 +1,177 @@
-# tmp
-tmp1/
-tmp2/
-lxmf_storage/
-.vscode/
-telemetry.db
-RTH_Store/
-RCH_Store/
-.desloppify/subagents/runs/
-.desloppify/review_packets
+# ------------------------------------------------------------
+# Rust
+# ------------------------------------------------------------
 
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
+# Rust build output
 target/
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Cargo lock:
+# Keep Cargo.lock for applications.
+# Ignore it only for libraries if you intentionally want that.
+# Cargo.lock
 
-# IPython
-profile_default/
-ipython_config.py
+# Rust backup files
+**/*.rs.bk
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
+# Rust profiling / coverage
+*.profraw
+*.profdata
+coverage/
+tarpaulin-report.html
+lcov.info
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
+# ------------------------------------------------------------
+# Node / Vue / Vite
+# ------------------------------------------------------------
 
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
+# Dependencies
+node_modules/
 
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#pdm.lock
-#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
-#   in version control.
-#   https://pdm.fming.dev/latest/usage/project/#working-with-version-control
-.pdm.toml
-.pdm-python
-.pdm-build/
+# Package manager caches / state
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
+# Keep this if using Yarn Berry and you want reproducible installs:
+# !.yarn/cache/
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+# Vue / Vite build output
+dist/
+dist-ssr/
+.vite/
+.cache/
 
-# SageMath parsed files
-*.sage.py
+# Nuxt, if used
+.nuxt/
+.output/
 
-# Environments
+# VuePress / VitePress, if used
+.vuepress/dist/
+.vitepress/dist/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Test output
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+cypress/videos/
+cypress/screenshots/
+
+# ------------------------------------------------------------
+# Environment / secrets
+# ------------------------------------------------------------
+
 .env
-.venv
-env/
+.env.*
+!.env.example
+!.env.sample
+
+# Local config
+*.local
+
+# ------------------------------------------------------------
+# Logs
+# ------------------------------------------------------------
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------------------------------------------
+# Editors / IDEs
+# ------------------------------------------------------------
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+.idea/
+*.iml
+
+# Vim / swap files
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------
+# OS files
+# ------------------------------------------------------------
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ------------------------------------------------------------
+# Windows / WSL noise
+# ------------------------------------------------------------
+
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ------------------------------------------------------------
+# Python helper tooling, if repo uses scripts
+# ------------------------------------------------------------
+
+.venv/
 venv/
 venv_linux/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
+__pycache__/
+*.pyc
+.pytest_cache/
 .mypy_cache/
-.dmypy.json
-dmypy.json
+.ruff_cache/
+.coverage
+.coverage.*
 
-# Pyre type checker
-.pyre/
+# ------------------------------------------------------------
+# Docker / local runtime
+# ------------------------------------------------------------
 
-# pytype static type analyzer
-.pytype/
+docker-compose.override.yml
+tmp/
+temp/
 
-# Cython debug symbols
-cython_debug/
+# ------------------------------------------------------------
+# App-specific generated files
+# ------------------------------------------------------------
 
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
-docs/example_telemetry.json
+*.sqlite
+*.sqlite3
+*.db
+*.pid
+*.seed
+*.tmp
 
-# UI artifacts
-ui/node_modules/
-ui/dist/
-electron/node_modules/
-electron/dist/
-electron/dist-release/
+# RCH runtime stores and local operator/test artifacts
+RCH_Store/
+RTH_Store/
+files/
+images/
+screenshots/
+.playwright-mcp/
+.tmp_internal_ws_smoke/
+
+# Local analysis output
+.desloppify/
+
+# Legacy Electron build/release output kept out of rust-next
 electron/backend/build/
-electron/backend/rch-backend*
-electron/backend/*.spec
-telemetry.db-wal
-telemetry.db-shm
-docs/architecture/108241603-de648380-7100-11eb-9b26-40fe98b5d148.gif
-.gitignore
-docs/architecture/68747470733a2f2f692e67697068792e636f6d2f336f365a7436684e484f64336b56783461592e676966.gif
-RCH_Store/rth_api.sqlite
-RCH_Store/rth_api.sqlite
-RCH_Store/lxmf/outbound_stamp_costs
-RCH_Store/lxmf/outbound_stamp_costs
-RCH_Store/rth_api.sqlite
-RCH_Store/rth_api.sqlite-wal
+electron/backend/rch-backend.exe
+electron/backend/rch-backend.spec
+electron/dist-release/
+
+# Tauri desktop generated binaries and metadata
+apps/rch-desktop/src-tauri/binaries/r3akt-rch-server-*
+apps/rch-desktop/src-tauri/binaries/r3akt-tak-service-*
+apps/rch-desktop/src-tauri/gen/

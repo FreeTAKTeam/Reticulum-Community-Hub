@@ -138,6 +138,7 @@ export interface DomainEventRaw {
   aggregate_uid?: string | null;
   event_type?: string | null;
   payload?: unknown;
+  payload_summary?: unknown;
   created_at?: string | null;
 }
 

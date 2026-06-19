@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="configure-console">
     <div class="configure-shell">
       <header class="configure-top">
@@ -316,5 +316,3 @@ onMounted(async () => {
 </script>
 
 <style scoped src="./styles/ConfigurePage.css"></style>
-
-

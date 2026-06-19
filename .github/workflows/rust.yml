@@ -1,0 +1,38 @@
+name: Rust workspace
+
+on:
+  push:
+    branches: ["rust-next", "main"]
+  pull_request:
+    branches: ["rust-next", "main"]
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Check out LXMF-rs
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          path: LXMF-rs
+          ref: v0.5.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+          components: rustfmt, clippy
+
+      - name: Run release readiness gates
+        shell: pwsh
+        working-directory: rch
+        run: ./scripts/release-readiness.ps1 -ServerOnlyAlpha
