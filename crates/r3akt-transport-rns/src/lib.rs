@@ -508,7 +508,7 @@ impl LxmfSdkLxmfRsAdapter<LxmfSdkClient<ZmqPipelineBackendClient>> {
         command_endpoint: impl Into<String>,
         response_endpoint: impl Into<String>,
     ) -> Result<Self, TransportError> {
-        let mut config = ZmqPipelineBackendConfig::local_tcp(command_endpoint, response_endpoint);
+        let mut config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
         config.request_timeout = LXMF_ZMQ_SEND_REQUEST_TIMEOUT;
         Self::from_zmq_config(source, config)
     }
@@ -518,15 +518,25 @@ impl LxmfSdkLxmfRsAdapter<LxmfSdkClient<ZmqPipelineBackendClient>> {
         config: ZmqPipelineBackendConfig,
     ) -> Result<Self, TransportError> {
         let source = source.into();
+        let command_endpoint = config.command_endpoint.clone();
+        let response_endpoint = config.response_endpoint.clone();
         run_zmq_sdk_operation(move || {
             let backend = ZmqPipelineBackendClient::new(config)
-                .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
+                .map_err(|error| {
+                    TransportError::Send(format!(
+                        "LXMF-rs ZeroMQ SDK command_endpoint={command_endpoint} response_endpoint={response_endpoint}: {error}"
+                    ))
+                })?;
             let client = LxmfSdkClient::new(backend);
             LxmfSdk::start(
                 &client,
                 LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
             )
-            .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK start: {error}")))?;
+            .map_err(|error| {
+                TransportError::Send(format!(
+                    "LXMF-rs ZeroMQ SDK start command_endpoint={command_endpoint} response_endpoint={response_endpoint}: {error}"
+                ))
+            })?;
             Ok(Self::new(source, client))
         })
     }
@@ -657,29 +667,7 @@ pub fn poll_lxmf_zmq_events(
     max: usize,
 ) -> Result<ReticulumdEventBatch, TransportError> {
     let config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
-    run_zmq_sdk_operation(move || {
-        let backend = ZmqPipelineBackendClient::new(config)
-            .map_err(|error| TransportError::Receive(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
-        let client = LxmfSdkClient::new(backend);
-        LxmfSdk::start(
-            &client,
-            LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
-        )
-        .map_err(|error| TransportError::Receive(format!("LXMF-rs ZeroMQ SDK start: {error}")))?;
-        let batch =
-            LxmfSdk::poll_events(&client, cursor.map(LxmfSdkEventCursor), max.clamp(1, 256))
-                .map_err(|error| TransportError::Receive(format!("LXMF-rs ZeroMQ SDK: {error}")))?;
-        Ok(ReticulumdEventBatch {
-            events: batch
-                .events
-                .into_iter()
-                .map(lxmf_sdk_event_to_reticulumd_event_record)
-                .collect(),
-            next_cursor: Some(batch.next_cursor.0),
-            dropped_count: batch.dropped_count,
-            snapshot_high_watermark_seq_no: batch.snapshot_high_watermark_seq_no,
-        })
-    })
+    poll_lxmf_zmq_events_via_actor(&config, cursor, max)
 }
 
 fn rch_local_zmq_pipeline_config(
@@ -967,12 +955,14 @@ enum ZmqSdkActorPayload {
     Batch(LxmfSdkOutboundBatch),
     Status(String),
     Announce,
+    PollEvents { cursor: Option<String>, max: usize },
 }
 
 enum ZmqSdkActorResponse {
     Batch(Vec<LxmfSdkOutboundBatchResult>),
     Status(Option<LxmfDeliverySnapshot>),
     Announce(Option<String>),
+    Events(ReticulumdEventBatch),
 }
 
 struct ZmqSdkActorRequest {
@@ -1072,11 +1062,11 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
         })?
         .and_then(|response| match response {
             ZmqSdkActorResponse::Batch(results) => Ok(results),
-            ZmqSdkActorResponse::Status(_) | ZmqSdkActorResponse::Announce(_) => {
-                Err(TransportError::Receive(
-                    "LXMF-rs ZeroMQ SDK actor returned non-batch response".to_string(),
-                ))
-            }
+            ZmqSdkActorResponse::Status(_)
+            | ZmqSdkActorResponse::Announce(_)
+            | ZmqSdkActorResponse::Events(_) => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ SDK actor returned non-batch response".to_string(),
+            )),
         })
 }
 
@@ -1115,11 +1105,11 @@ fn lxmf_zmq_delivery_status_via_actor(
         })?
         .and_then(|response| match response {
             ZmqSdkActorResponse::Status(snapshot) => Ok(snapshot),
-            ZmqSdkActorResponse::Batch(_) | ZmqSdkActorResponse::Announce(_) => {
-                Err(TransportError::Receive(
-                    "LXMF-rs ZeroMQ SDK actor returned non-status response".to_string(),
-                ))
-            }
+            ZmqSdkActorResponse::Batch(_)
+            | ZmqSdkActorResponse::Announce(_)
+            | ZmqSdkActorResponse::Events(_) => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ SDK actor returned non-status response".to_string(),
+            )),
         })
 }
 
@@ -1157,11 +1147,55 @@ fn announce_lxmf_zmq_identity_via_actor(
         })?
         .and_then(|response| match response {
             ZmqSdkActorResponse::Announce(announce_id) => Ok(announce_id),
-            ZmqSdkActorResponse::Batch(_) | ZmqSdkActorResponse::Status(_) => {
-                Err(TransportError::Receive(
-                    "LXMF-rs ZeroMQ SDK actor returned non-announce response".to_string(),
-                ))
+            ZmqSdkActorResponse::Batch(_)
+            | ZmqSdkActorResponse::Status(_)
+            | ZmqSdkActorResponse::Events(_) => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ SDK actor returned non-announce response".to_string(),
+            )),
+        })
+}
+
+fn poll_lxmf_zmq_events_via_actor(
+    config: &ZmqPipelineBackendConfig,
+    cursor: Option<String>,
+    max: usize,
+) -> Result<ReticulumdEventBatch, TransportError> {
+    let sender = zmq_sdk_actor_sender(config)?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .try_send(ZmqSdkActorRequest {
+            payload: ZmqSdkActorPayload::PollEvents { cursor, max },
+            response: response_tx,
+        })
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
+                "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
+            )),
+            mpsc::TrySendError::Disconnected(_) => {
+                TransportError::Receive("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
             }
+        })?;
+    response_rx
+        .recv_timeout(
+            config
+                .request_timeout
+                .saturating_add(Duration::from_secs(1)),
+        )
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
+                "LXMF-rs ZeroMQ SDK actor timed out waiting for event poll result".to_string(),
+            ),
+            mpsc::RecvTimeoutError::Disconnected => {
+                TransportError::Receive("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+            }
+        })?
+        .and_then(|response| match response {
+            ZmqSdkActorResponse::Events(batch) => Ok(batch),
+            ZmqSdkActorResponse::Batch(_)
+            | ZmqSdkActorResponse::Status(_)
+            | ZmqSdkActorResponse::Announce(_) => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ SDK actor returned non-event-poll response".to_string(),
+            )),
         })
 }
 
@@ -1316,6 +1350,11 @@ async fn send_lxmf_zmq_actor_request(
         ZmqSdkActorPayload::Announce => send_lxmf_zmq_actor_announce(session, config)
             .await
             .map(ZmqSdkActorResponse::Announce),
+        ZmqSdkActorPayload::PollEvents { cursor, max } => {
+            send_lxmf_zmq_actor_poll_events(session, config, cursor, max)
+                .await
+                .map(ZmqSdkActorResponse::Events)
+        }
     }
 }
 
@@ -1453,6 +1492,48 @@ async fn send_lxmf_zmq_actor_announce(
         .get("announce_id")
         .and_then(JsonValue::as_str)
         .map(str::to_string))
+}
+
+async fn send_lxmf_zmq_actor_poll_events(
+    session: &mut ZmqSdkActorSession,
+    config: &ZmqPipelineBackendConfig,
+    cursor: Option<String>,
+    max: usize,
+) -> Result<ReticulumdEventBatch, TransportError> {
+    let request_id = session.next_request_id;
+    session.next_request_id = session.next_request_id.saturating_add(1);
+    let result = lxmf_zmq_rpc_call(
+        &mut session.command,
+        &mut session.responses,
+        config,
+        session.session_id.as_str(),
+        request_id,
+        "sdk_poll_events_v2",
+        Some(serde_json::json!({
+            "cursor": cursor,
+            "max": max.clamp(1, 256),
+        })),
+    )
+    .await?;
+    let batch: LxmfSdkEventBatch = serde_json::from_value(result).map_err(|error| {
+        TransportError::Receive(format!("LXMF-rs ZeroMQ SDK event batch: {error}"))
+    })?;
+    Ok(lxmf_sdk_event_batch_to_reticulumd_event_batch(batch))
+}
+
+fn lxmf_sdk_event_batch_to_reticulumd_event_batch(
+    batch: LxmfSdkEventBatch,
+) -> ReticulumdEventBatch {
+    ReticulumdEventBatch {
+        events: batch
+            .events
+            .into_iter()
+            .map(lxmf_sdk_event_to_reticulumd_event_record)
+            .collect(),
+        next_cursor: Some(batch.next_cursor.0),
+        dropped_count: batch.dropped_count,
+        snapshot_high_watermark_seq_no: batch.snapshot_high_watermark_seq_no,
+    }
 }
 
 fn lxmf_sdk_outbound_send_params(message: LxmfSdkOutboundMessage) -> JsonValue {
@@ -3524,6 +3605,133 @@ mod tests {
         );
         assert_eq!(
             captured[1].response_endpoint.as_deref(),
+            Some(response_endpoint.as_str())
+        );
+    }
+
+    #[test]
+    fn poll_lxmf_zmq_events_preserves_explicit_loopback_response_endpoint() {
+        let command_endpoint = unused_zmq_endpoint_v4();
+        let response_endpoint = unused_zmq_endpoint_v4();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let server = spawn_zmq_sequence_server(
+            command_endpoint.clone(),
+            vec![
+                serde_json::json!({
+                    "runtime_id": "runtime-rch-zmq",
+                    "active_contract_version": 2,
+                    "effective_capabilities": [
+                        "sdk.capability.cursor_replay",
+                        "sdk.capability.receipt_terminality",
+                        "sdk.capability.config_revision_cas",
+                        "sdk.capability.idempotency_ttl"
+                    ],
+                    "effective_limits": {
+                        "max_poll_events": 64,
+                        "max_event_bytes": 32768,
+                        "max_batch_bytes": 1_048_576,
+                        "max_extension_keys": 32,
+                        "idempotency_ttl_ms": 60000
+                    },
+                    "contract_release": "v2",
+                    "schema_namespace": "sdk.v2"
+                }),
+                serde_json::json!({
+                    "events": [],
+                    "next_cursor": "cursor-idle",
+                    "dropped_count": 0
+                }),
+            ],
+            Arc::clone(&captured),
+        );
+
+        let batch = poll_lxmf_zmq_events(
+            command_endpoint,
+            response_endpoint.clone(),
+            Some("cursor-0".to_string()),
+            32,
+        )
+        .expect("poll");
+        server.join().expect("server joined");
+
+        assert!(batch.events.is_empty());
+        assert_eq!(batch.next_cursor.as_deref(), Some("cursor-idle"));
+        let captured = captured.lock().expect("captured requests");
+        assert_eq!(captured.len(), 2);
+        assert_eq!(captured[0].method, "sdk_negotiate_v2");
+        assert_eq!(captured[1].method, "sdk_poll_events_v2");
+        assert_eq!(
+            captured[0].response_endpoint.as_deref(),
+            Some(response_endpoint.as_str())
+        );
+        assert_eq!(
+            captured[1].response_endpoint.as_deref(),
+            Some(response_endpoint.as_str())
+        );
+    }
+
+    #[test]
+    fn poll_lxmf_zmq_events_reuses_actor_response_socket_after_outbound_send() {
+        let command_endpoint = unused_zmq_endpoint_v4();
+        let response_endpoint = unused_zmq_endpoint_v4();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let server = spawn_zmq_sequence_server(
+            command_endpoint.clone(),
+            vec![
+                serde_json::json!({"runtime_id": "runtime-rch-zmq"}),
+                serde_json::json!({"message_id": "sdk-zmq-rch-1"}),
+                serde_json::json!({
+                    "events": [],
+                    "next_cursor": "cursor-idle",
+                    "dropped_count": 0,
+                    "snapshot_high_watermark_seq_no": null
+                }),
+            ],
+            Arc::clone(&captured),
+        );
+
+        let message_id = send_lxmf_zmq_outbound_message(
+            command_endpoint.clone(),
+            response_endpoint.clone(),
+            LxmfSdkOutboundMessage {
+                source: "source-destination".to_string(),
+                destination: "target-destination".to_string(),
+                title: "RCH".to_string(),
+                content: "cmd".to_string(),
+                fields: serde_json::json!({}),
+                delivery_method: Some("direct".to_string()),
+                try_propagation_on_fail: false,
+                correlation_id: "message-1".to_string(),
+            },
+        )
+        .expect("send");
+        let batch = poll_lxmf_zmq_events(
+            command_endpoint,
+            response_endpoint.clone(),
+            Some("cursor-0".to_string()),
+            32,
+        )
+        .expect("poll");
+        server.join().expect("server joined");
+
+        assert_eq!(message_id, "sdk-zmq-rch-1");
+        assert!(batch.events.is_empty());
+        assert_eq!(batch.next_cursor.as_deref(), Some("cursor-idle"));
+        let captured = captured.lock().expect("captured requests");
+        assert_eq!(captured.len(), 3);
+        assert_eq!(captured[0].method, "sdk_negotiate_v2");
+        assert_eq!(captured[1].method, "sdk_send_v2");
+        assert_eq!(captured[2].method, "sdk_poll_events_v2");
+        assert_eq!(
+            captured[0].response_endpoint.as_deref(),
+            Some(response_endpoint.as_str())
+        );
+        assert_eq!(
+            captured[1].response_endpoint.as_deref(),
+            Some(response_endpoint.as_str())
+        );
+        assert_eq!(
+            captured[2].response_endpoint.as_deref(),
             Some(response_endpoint.as_str())
         );
     }

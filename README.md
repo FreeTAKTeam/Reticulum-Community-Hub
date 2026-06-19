@@ -169,8 +169,8 @@ Crates:
 Found at `C:\Users\broth\Documents\work\ATAK\src\LXMF-rs`, remote
 `https://github.com/FreeTAKTeam/LXMF-rs`.
 
-Current Rust RCH verification targets the LXMF-rs `v0.4.0` release commit
-`2393131d5729f50cbe74a7a9bfeff11d2d5d499e`. The sibling dependency packages
+Current Rust RCH verification targets the LXMF-rs `v0.5.0` release commit
+`2a74b84b50a7ac1cde16eb1e3b3380bc358231c1`. The sibling dependency packages
 resolved by `r3akt-transport-rns` are `lxmf-wire` `0.2.0`, `lxmf-sdk` `0.2.1`,
 `reticulum-rs-rpc` `0.3.0`, and their `lxmf-reference` `0.1.0` dependency.
 
@@ -760,7 +760,7 @@ Current local verification snapshot, refreshed on 2026-05-11:
   `C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\apps\rch-desktop`
   passed, including shared UI build,
   Tauri sidecar preparation, optimized desktop build, and Windows x64 NSIS
-  installer generation for `RCH Desktop_3.0.0-preview.0_x64-setup.exe`.
+  installer generation for `RCH Desktop_3.0.0-preview.2_x64-setup.exe`.
 - A local Rust-backend UI smoke against the built `ui/dist` passed: `/`,
   `/missions/workspace`, and HTML `/checklists` served the SPA, while
   `/Status`, `/api/v1/app/info`, `/checklists`, `/Telemetry?since=0`, and

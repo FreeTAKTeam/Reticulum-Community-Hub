@@ -8,8 +8,8 @@ Generated: 2026-05-13T08:21:13.0613693-03:00
 - Python baseline commit: `a520574ecbc243841a1a215b616b6792452de2a1`
 - Rust branch: `rust-next`
 - Rust commit: `a897761046072c9b2f07d0afb6b6911077e31e3b`
-- LXMF-rs sibling baseline: `v0.4.0`
-  (`2393131d5729f50cbe74a7a9bfeff11d2d5d499e`), updated 2026-06-14
+- LXMF-rs sibling baseline: `v0.5.0`
+  (`2a74b84b50a7ac1cde16eb1e3b3380bc358231c1`), updated 2026-06-19
 - LXMF-rs resolved package tuple: `lxmf-wire` `0.2.0`, `lxmf-sdk` `0.2.1`,
   `reticulum-rs-rpc` `0.3.0`, `lxmf-reference` `0.1.0`
 - Contract matrix: `docs/release-contract-matrix.json`
