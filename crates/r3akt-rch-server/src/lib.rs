@@ -10454,10 +10454,12 @@ fn mark_reticulumd_status_delivery_receipt(
             "delivery_receipt"
         };
         message.delivery_state = delivered_state.to_string();
+        clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
         merge_delivery_metadata(
             &mut message.delivery_metadata,
             json!({
                 "acked": true,
+                "dispatch_status": "accepted",
                 "receipt_pending": false,
                 "receipt_ack_ts_ms": now_ms,
                 "acknowledgement_type": acknowledgement_type,
@@ -10519,6 +10521,7 @@ fn mark_reticulumd_status_sent(
             return Ok(());
         };
         message.delivery_state = delivery_success_state(message).to_string();
+        clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
         merge_delivery_metadata(
             &mut message.delivery_metadata,
             json!({
@@ -13550,6 +13553,16 @@ fn merge_delivery_metadata(target: &mut Value, update: Value) {
             target_object.insert(key, value);
         }
     }
+}
+
+fn clear_success_superseded_delivery_metadata(metadata: &mut Value) {
+    let Some(object) = metadata.as_object_mut() else {
+        return;
+    };
+    object.remove("dispatch_timeout");
+    object.remove("dispatch_timed_out_at_ts_ms");
+    object.remove("error");
+    object.remove("retry_reason");
 }
 
 fn outbound_delivery_decision(
@@ -47236,6 +47249,72 @@ mod tests {
             .expect("retry event");
         assert_eq!(retry_event.metadata["retry_reason"], "send_timeout");
         drop(events);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn delivered_receipt_clears_stale_dispatch_timeout_metadata() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-timeout-cleared-by-receipt-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let destination = "target-destination";
+        state
+            .outbound_delivery_policy
+            .write()
+            .expect("policy")
+            .mark_presence(destination, crate::unix_now_ms());
+        let message = crate::record_outbound_message(
+            &state,
+            "late delivery receipt",
+            None,
+            Some(destination.to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        let now_ms = crate::unix_now_ms();
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 0,
+                "max_attempts": 2,
+                "backoff_ms": 500,
+                "dispatch_status": "in_progress",
+                "dispatch_started_ts_ms": now_ms - 60_000,
+                "dispatch_deadline_ts_ms": now_ms - 1,
+                "retry_scheduled": false,
+            }),
+        )
+        .expect("mark stale dispatch");
+        let _ = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+
+        crate::mark_reticulumd_status_delivery_receipt(&state, &message.message_id, "delivered")
+            .expect("mark delivered");
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "delivered");
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "accepted");
+        assert_eq!(updated.delivery_metadata["receipt_status"], "delivered");
+        assert_eq!(updated.delivery_metadata["acked"], true);
+        assert!(updated.delivery_metadata.get("dispatch_timeout").is_none());
+        assert!(
+            updated
+                .delivery_metadata
+                .get("dispatch_timed_out_at_ts_ms")
+                .is_none()
+        );
+        assert!(updated.delivery_metadata.get("error").is_none());
+        assert!(updated.delivery_metadata.get("retry_reason").is_none());
+        drop(messages);
 
         let _ = std::fs::remove_file(db_path);
     }
