@@ -594,6 +594,8 @@ pub struct LxmfSdkOutboundMessage {
     pub content: String,
     pub fields: JsonValue,
     pub delivery_method: Option<String>,
+    pub stamp_cost: Option<u32>,
+    pub include_ticket: Option<bool>,
     pub try_propagation_on_fail: bool,
     pub correlation_id: String,
 }
@@ -610,6 +612,8 @@ pub struct LxmfSdkOutboundBatchMessage {
     pub content: String,
     pub fields: JsonValue,
     pub delivery_method: Option<String>,
+    pub stamp_cost: Option<u32>,
+    pub include_ticket: Option<bool>,
     pub try_propagation_on_fail: bool,
     pub correlation_id: String,
 }
@@ -639,6 +643,15 @@ pub fn send_lxmf_zmq_outbound_batch(
     let mut config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
     config.request_timeout = LXMF_ZMQ_SEND_REQUEST_TIMEOUT;
     send_lxmf_zmq_outbound_batch_via_actor(&config, batch)
+}
+
+pub fn enqueue_lxmf_zmq_outbound_batch(
+    command_endpoint: impl Into<String>,
+    response_endpoint: impl Into<String>,
+    batch: LxmfSdkOutboundBatch,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    let config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
+    enqueue_lxmf_zmq_outbound_batch_via_actor(&config, batch)
 }
 
 pub fn lxmf_zmq_delivery_status(
@@ -725,6 +738,22 @@ pub fn send_lxmf_sdk_outbound_message_with_runtime(
     let request = LxmfSdkSendRequest::new(message.source, message.destination, payload)
         .with_correlation_id(message.correlation_id.clone())
         .with_idempotency_key(message.correlation_id);
+    let request = if let Some(method) = message.delivery_method {
+        request.with_delivery_method(method)
+    } else {
+        request
+    };
+    let request = if let Some(stamp_cost) = message.stamp_cost {
+        request.with_stamp_cost(stamp_cost)
+    } else {
+        request
+    };
+    let request = if let Some(include_ticket) = message.include_ticket {
+        request.with_include_ticket(include_ticket)
+    } else {
+        request
+    };
+    let request = request.with_try_propagation_on_fail(message.try_propagation_on_fail);
     runtime.send(request)
 }
 
@@ -953,6 +982,7 @@ fn send_lxmf_zmq_outbound_message_direct(
 enum ZmqSdkActorPayload {
     Single(LxmfSdkOutboundMessage),
     Batch(LxmfSdkOutboundBatch),
+    EnqueueBatch(LxmfSdkOutboundBatch),
     Status(String),
     Announce,
     PollEvents { cursor: Option<String>, max: usize },
@@ -1068,6 +1098,41 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
                 "LXMF-rs ZeroMQ SDK actor returned non-batch response".to_string(),
             )),
         })
+}
+
+fn enqueue_lxmf_zmq_outbound_batch_via_actor(
+    config: &ZmqPipelineBackendConfig,
+    batch: LxmfSdkOutboundBatch,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    if batch.messages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let expected_results = batch
+        .messages
+        .iter()
+        .map(|message| LxmfSdkOutboundBatchResult {
+            id: message.correlation_id.clone(),
+            message_id: message.correlation_id.clone(),
+            destination: message.destination.clone(),
+        })
+        .collect::<Vec<_>>();
+    let sender = zmq_sdk_actor_sender(config)?;
+    let (response_tx, response_rx) = mpsc::channel();
+    drop(response_rx);
+    sender
+        .try_send(ZmqSdkActorRequest {
+            payload: ZmqSdkActorPayload::EnqueueBatch(batch),
+            response: response_tx,
+        })
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
+                "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
+            )),
+            mpsc::TrySendError::Disconnected(_) => {
+                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+            }
+        })?;
+    Ok(expected_results)
 }
 
 fn lxmf_zmq_delivery_status_via_actor(
@@ -1342,6 +1407,11 @@ async fn send_lxmf_zmq_actor_request(
         ZmqSdkActorPayload::Batch(batch) => send_lxmf_zmq_actor_batch(session, config, batch)
             .await
             .map(ZmqSdkActorResponse::Batch),
+        ZmqSdkActorPayload::EnqueueBatch(batch) => {
+            send_lxmf_zmq_actor_enqueue_batch(session, config, batch)
+                .await
+                .map(ZmqSdkActorResponse::Batch)
+        }
         ZmqSdkActorPayload::Status(message_id) => {
             send_lxmf_zmq_actor_status(session, config, &message_id)
                 .await
@@ -1450,6 +1520,46 @@ async fn send_lxmf_zmq_actor_batch(
         });
     }
     Ok(output)
+}
+
+async fn send_lxmf_zmq_actor_enqueue_batch(
+    session: &mut ZmqSdkActorSession,
+    config: &ZmqPipelineBackendConfig,
+    batch: LxmfSdkOutboundBatch,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    let expected_results = batch
+        .messages
+        .iter()
+        .map(|message| LxmfSdkOutboundBatchResult {
+            id: message.correlation_id.clone(),
+            message_id: message.correlation_id.clone(),
+            destination: message.destination.clone(),
+        })
+        .collect::<Vec<_>>();
+    let request_id = session.next_request_id;
+    session.next_request_id = session.next_request_id.saturating_add(1);
+    let rpc_request = ReticulumdRpcRequest {
+        id: request_id,
+        method: "sdk_send_batch_v2".to_string(),
+        params: Some(lxmf_sdk_outbound_batch_params(batch)),
+    };
+    let payload =
+        encode_frame(&rpc_request).map_err(|error| TransportError::Send(error.to_string()))?;
+    let envelope = ZmqRpcEnvelope::request(
+        session.session_id.clone(),
+        request_id,
+        config.response_endpoint.clone(),
+        payload,
+        None,
+    );
+    let encoded = zmq::encode_envelope(&envelope)
+        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ envelope: {error}")))?;
+    session
+        .command
+        .send(ZmqMessage::from(encoded))
+        .await
+        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ command: {error}")))?;
+    Ok(expected_results)
 }
 
 async fn send_lxmf_zmq_actor_status(
@@ -1566,6 +1676,8 @@ fn lxmf_sdk_outbound_send_params(message: LxmfSdkOutboundMessage) -> JsonValue {
         "content": message.content,
         "fields": fields,
         "method": message.delivery_method,
+        "stamp_cost": message.stamp_cost,
+        "include_ticket": message.include_ticket,
         "try_propagation_on_fail": message.try_propagation_on_fail,
     })
 }
@@ -1604,6 +1716,8 @@ fn lxmf_sdk_outbound_batch_params(batch: LxmfSdkOutboundBatch) -> JsonValue {
                 "content": message.content,
                 "fields": fields,
                 "method": message.delivery_method,
+                "stamp_cost": message.stamp_cost,
+                "include_ticket": message.include_ticket,
                 "try_propagation_on_fail": message.try_propagation_on_fail,
             })
         })
@@ -3334,6 +3448,8 @@ mod tests {
                     content: "one".to_string(),
                     fields: serde_json::json!({ "kind": "a" }),
                     delivery_method: Some("direct".to_string()),
+                    stamp_cost: None,
+                    include_ticket: None,
                     try_propagation_on_fail: true,
                     correlation_id: "message-a".to_string(),
                 },
@@ -3343,6 +3459,8 @@ mod tests {
                     content: "two".to_string(),
                     fields: serde_json::json!({ "kind": "b" }),
                     delivery_method: Some("propagated".to_string()),
+                    stamp_cost: Some(16),
+                    include_ticket: Some(true),
                     try_propagation_on_fail: false,
                     correlation_id: "message-b".to_string(),
                 },
@@ -3359,6 +3477,8 @@ mod tests {
         assert_eq!(messages[1]["id"], "message-b");
         assert_eq!(messages[1]["destination"], "dst-b");
         assert_eq!(messages[1]["method"], "propagated");
+        assert_eq!(messages[1]["stamp_cost"], 16);
+        assert_eq!(messages[1]["include_ticket"], true);
     }
 
     #[test]
@@ -3387,6 +3507,8 @@ mod tests {
                     content: format!("payload {index}"),
                     fields: serde_json::json!({ "bulk_index": index }),
                     delivery_method: Some("propagated".to_string()),
+                    stamp_cost: None,
+                    include_ticket: None,
                     try_propagation_on_fail: false,
                     correlation_id: format!("bulk-message-{index:05}"),
                 },
@@ -3494,6 +3616,8 @@ mod tests {
                     "custom": "value"
                 }),
                 delivery_method: Some("direct".to_string()),
+                stamp_cost: None,
+                include_ticket: None,
                 try_propagation_on_fail: true,
                 correlation_id: "message-1".to_string(),
             },
@@ -3539,6 +3663,8 @@ mod tests {
                     "9": [{"command_type": "checklist.create.online"}],
                 }),
                 delivery_method: Some("propagated".to_string()),
+                stamp_cost: Some(16),
+                include_ticket: Some(true),
                 try_propagation_on_fail: false,
                 correlation_id: "message-1".to_string(),
             },
@@ -3554,6 +3680,8 @@ mod tests {
         assert_eq!(captured[1].params["source"], "source-destination");
         assert_eq!(captured[1].params["destination"], "target-destination");
         assert_eq!(captured[1].params["method"], "propagated");
+        assert_eq!(captured[1].params["stamp_cost"], 16);
+        assert_eq!(captured[1].params["include_ticket"], true);
         assert_eq!(captured[1].params["try_propagation_on_fail"], false);
         assert_eq!(
             captured[1].params["fields"]["9"][0]["command_type"],
@@ -3589,6 +3717,8 @@ mod tests {
                 content: "cmd".to_string(),
                 fields: serde_json::json!({}),
                 delivery_method: Some("direct".to_string()),
+                stamp_cost: None,
+                include_ticket: None,
                 try_propagation_on_fail: false,
                 correlation_id: "message-1".to_string(),
             },
@@ -3700,6 +3830,8 @@ mod tests {
                 content: "cmd".to_string(),
                 fields: serde_json::json!({}),
                 delivery_method: Some("direct".to_string()),
+                stamp_cost: None,
+                include_ticket: None,
                 try_propagation_on_fail: false,
                 correlation_id: "message-1".to_string(),
             },
