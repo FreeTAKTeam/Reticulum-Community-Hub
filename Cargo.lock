@@ -1416,6 +1416,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "log",
  "lxmf-reference",
  "rand_core 0.6.4",
  "rmp-serde",
