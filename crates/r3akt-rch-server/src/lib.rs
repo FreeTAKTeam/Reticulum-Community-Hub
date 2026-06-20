@@ -12877,8 +12877,11 @@ fn topic_subscriber_destinations(
 }
 
 fn outbound_target_destinations(message: &OutboundMessageRecord) -> Option<Vec<String>> {
-    let destinations = message
-        .delivery_metadata
+    outbound_target_destinations_from_metadata(&message.delivery_metadata)
+}
+
+fn outbound_target_destinations_from_metadata(delivery_metadata: &Value) -> Option<Vec<String>> {
+    let destinations = delivery_metadata
         .get("target_destinations")
         .and_then(Value::as_array)?
         .iter()
@@ -12967,11 +12970,13 @@ fn record_outbound_message_with_metadata_mode(
 ) -> Result<OutboundMessageRecord, ApiError> {
     let delivery_mode = classify_delivery_mode(topic_id.as_deref(), destination.as_deref())
         .map_err(|error| ApiError::BadRequest(python_delivery_error_detail(&error)))?;
-    let mut delivery_decision = outbound_delivery_decision(
+    let target_destinations = outbound_target_destinations_from_metadata(&delivery_metadata);
+    let mut delivery_decision = outbound_delivery_decision_for_targets(
         state,
         delivery_mode,
         topic_id.as_deref(),
         destination.as_deref(),
+        target_destinations.as_deref(),
     )?;
     let is_rem_command = delivery_metadata
         .get("fanout_channel")
@@ -13895,14 +13900,25 @@ fn delivery_state_clears_error_metadata(delivery_state: &str) -> bool {
     matches!(delivery_state, "sent" | "delivered" | "propagated")
 }
 
+#[cfg(test)]
 fn outbound_delivery_decision(
     state: &AppState,
     delivery_mode: DeliveryMode,
     topic_id: Option<&str>,
     destination: Option<&str>,
 ) -> Result<r3akt_rch_core::OutboundDeliveryDecision, ApiError> {
+    outbound_delivery_decision_for_targets(state, delivery_mode, topic_id, destination, None)
+}
+
+fn outbound_delivery_decision_for_targets(
+    state: &AppState,
+    delivery_mode: DeliveryMode,
+    topic_id: Option<&str>,
+    destination: Option<&str>,
+    target_destinations: Option<&[String]>,
+) -> Result<r3akt_rch_core::OutboundDeliveryDecision, ApiError> {
     if delivery_mode == DeliveryMode::Broadcast {
-        if outbound_route_has_unannounced_destinations(state, delivery_mode, None)? {
+        if outbound_route_has_unannounced_destinations(state, delivery_mode, None, None)? {
             return Ok(r3akt_rch_core::OutboundDeliveryDecision {
                 method: "propagated".to_string(),
                 reason: "broadcast_unannounced".to_string(),
@@ -13914,7 +13930,12 @@ fn outbound_delivery_decision(
         });
     }
     if delivery_mode == DeliveryMode::Fanout {
-        if outbound_route_has_unannounced_destinations(state, delivery_mode, topic_id)? {
+        if outbound_route_has_unannounced_destinations(
+            state,
+            delivery_mode,
+            topic_id,
+            target_destinations,
+        )? {
             return Ok(r3akt_rch_core::OutboundDeliveryDecision {
                 method: "propagated".to_string(),
                 reason: "topic_unannounced".to_string(),
@@ -14037,10 +14058,24 @@ fn outbound_route_has_unannounced_destinations(
     state: &AppState,
     delivery_mode: DeliveryMode,
     topic_id: Option<&str>,
+    target_destinations: Option<&[String]>,
 ) -> Result<bool, ApiError> {
     let destinations = match delivery_mode {
         DeliveryMode::Targeted => return Ok(false),
         DeliveryMode::Fanout => {
+            if let Some(target_destinations) = target_destinations {
+                let destinations = target_destinations
+                    .iter()
+                    .filter_map(|destination| normalize_identity_key(destination))
+                    .collect::<Vec<_>>();
+                if !destinations.is_empty() {
+                    return outbound_destinations_have_unannounced_route(
+                        state,
+                        delivery_mode,
+                        destinations,
+                    );
+                }
+            }
             let Some(topic_id) = topic_id else {
                 return Ok(false);
             };
@@ -14051,6 +14086,14 @@ fn outbound_route_has_unannounced_destinations(
             .map(|client| client.identity)
             .collect(),
     };
+    outbound_destinations_have_unannounced_route(state, delivery_mode, destinations)
+}
+
+fn outbound_destinations_have_unannounced_route(
+    state: &AppState,
+    delivery_mode: DeliveryMode,
+    destinations: Vec<String>,
+) -> Result<bool, ApiError> {
     if destinations.is_empty() || state.sqlite_path.is_none() {
         return Ok(false);
     }
@@ -26573,7 +26616,7 @@ mod tests {
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].method, "list_messages");
-        assert_eq!(requests[1].method, "sdk_send_v2");
+        assert_eq!(requests[1].method, "send_message_v2");
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["source"], "local-destination");
         assert_eq!(params["destination"], "peer-charlie");
@@ -26676,7 +26719,7 @@ mod tests {
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].method, "list_messages");
-        assert_eq!(requests[1].method, "sdk_send_v2");
+        assert_eq!(requests[1].method, "send_message_v2");
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["destination"], "peer-bravo");
         assert_eq!(params["content"], "[topic:direct]\nphone to phone");
@@ -26921,7 +26964,7 @@ mod tests {
 
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 2);
-        assert_eq!(requests[1].method, "send_message_v2");
+        assert_eq!(requests[1].method, "sdk_send_v2");
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["destination"], fresh_subscriber);
         assert_ne!(params["destination"], stale_subscriber);
@@ -26942,6 +26985,8 @@ mod tests {
             relay.delivery_metadata["target_destinations"],
             json!([fresh_subscriber])
         );
+        assert_eq!(relay.delivery_method, "direct");
+        assert_eq!(relay.delivery_policy_reason, "topic_direct");
 
         std::fs::remove_file(db_path).expect("cleanup db");
     }
