@@ -10939,7 +10939,9 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
         }
         let attempts = outbound_attempts(message).saturating_add(1);
         let max_attempts = outbound_effective_max_attempts_for_retry(message, false);
-        if message.delivery_method != "propagated" && attempts < max_attempts {
+        if (message.delivery_method != "propagated" || is_rem_command_message(message))
+            && attempts < max_attempts
+        {
             let next_attempt_at_ts_ms = now_ms.saturating_add(
                 outbound_backoff_ms(message)
                     .saturating_mul(i64::try_from(attempts).unwrap_or(i64::MAX)),
@@ -11033,7 +11035,9 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
         }
         let attempts = outbound_attempts(message).saturating_add(1);
         let max_attempts = outbound_effective_max_attempts_for_retry(message, false);
-        if message.delivery_method != "propagated" && attempts < max_attempts {
+        if (message.delivery_method != "propagated" || is_rem_command_message(message))
+            && attempts < max_attempts
+        {
             let next_attempt_at_ts_ms = now_ms.saturating_add(
                 outbound_backoff_ms(message).saturating_mul(i64::try_from(attempts).unwrap_or(1)),
             );
@@ -12881,7 +12885,7 @@ fn record_outbound_message_with_metadata_mode(
     } else {
         dispatch_mode
     };
-    if is_rem_command {
+    if is_rem_command && delivery_decision.method != "propagated" {
         delivery_decision.method = "auto".to_string();
         delivery_decision.reason = "rem_auto".to_string();
     }
@@ -44964,8 +44968,8 @@ mod tests {
         )
         .expect("record REM command");
 
-        assert_eq!(message.delivery_method, "auto");
-        assert_eq!(message.delivery_policy_reason, "rem_auto");
+        assert_eq!(message.delivery_method, "propagated");
+        assert_eq!(message.delivery_policy_reason, "no_fresh_presence");
         assert_eq!(message.delivery_state, "queued");
         assert_eq!(
             message.delivery_metadata["dispatch_status"],
@@ -48875,6 +48879,16 @@ mod tests {
             }),
         )
         .expect("mark expired receipt");
+        {
+            let messages = state.messages.read().expect("messages");
+            let pending = messages.first().expect("message");
+            assert_eq!(pending.delivery_method, "propagated");
+            assert_eq!(
+                pending.delivery_metadata["fanout_channel"],
+                "rem_checklist_command"
+            );
+            assert!(crate::is_rem_command_message(pending));
+        }
 
         crate::finalize_expired_delivery_receipts(&state).expect("finalize receipts");
 
@@ -51971,7 +51985,47 @@ mod tests {
     }
 
     #[test]
-    fn rem_command_message_uses_auto_delivery_even_when_direct_cooldown_exists() {
+    fn rem_command_to_unannounced_target_is_recorded_for_propagation() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-rem-command-unannounced-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let destination = "6521979f1165965b24731061ef4a6906";
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message_with_metadata(
+            &state,
+            "Task Pixel fallback completed",
+            None,
+            Some(destination.to_string()),
+            Vec::new(),
+            false,
+            json!({
+                "fanout_channel": "rem_checklist_command",
+                "lxmf_fields": { crate::FIELD_COMMANDS.to_string(): [{
+                    "command_type": "checklist.task.status.set",
+                    "args": {
+                        "checklist_uid": "checklist-pixel",
+                        "task_uid": "task-pixel",
+                        "user_status": "COMPLETE"
+                    }
+                }] }
+            }),
+        )
+        .expect("record rem command message");
+
+        assert_eq!(message.delivery_method, "propagated");
+        assert_eq!(message.delivery_policy_reason, "no_fresh_presence");
+        assert_eq!(
+            crate::lxmf_sdk_delivery_method(&message),
+            Some("propagated")
+        );
+        assert!(!crate::lxmf_sdk_try_propagation_on_fail(&message));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn rem_command_message_uses_propagation_when_direct_cooldown_exists() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-command-direct-cooldown-{}.db",
             Uuid::new_v4()
@@ -52036,8 +52090,8 @@ mod tests {
         )
         .expect("record rem command message");
 
-        assert_eq!(message.delivery_method, "auto");
-        assert_eq!(message.delivery_policy_reason, "rem_auto");
+        assert_eq!(message.delivery_method, "propagated");
+        assert_eq!(message.delivery_policy_reason, "rem_direct_cooldown");
 
         let _ = std::fs::remove_file(db_path);
     }
