@@ -13115,10 +13115,7 @@ fn dispatch_outbound_message(
             source: source.to_string(),
             messages: batch_messages,
         };
-        let batch_result = if should_enqueue_fanout_without_waiting_for_zmq_response(
-            message,
-            fanout_destination_count,
-        ) {
+        let batch_result = if should_enqueue_without_waiting_for_zmq_response(message) {
             enqueue_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
         } else {
             send_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
@@ -13160,6 +13157,40 @@ fn dispatch_outbound_message(
                 .cloned()
                 .unwrap_or_else(|| json!({})),
         );
+        if should_enqueue_without_waiting_for_zmq_response(message) {
+            let batch = LxmfSdkOutboundBatch {
+                batch_id: format!(
+                    "{}-single-{}",
+                    message.message_id,
+                    outbound_attempts(message)
+                ),
+                source: source.to_string(),
+                messages: vec![LxmfSdkOutboundBatchMessage {
+                    destination: destination.clone(),
+                    title: outbound_lxmf_title(&dispatch_message).to_string(),
+                    content: outbound_lxmf_content(&dispatch_message).to_string(),
+                    fields,
+                    delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
+                    stamp_cost: lxmf_sdk_stamp_cost(message),
+                    include_ticket: lxmf_sdk_include_ticket(message),
+                    try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
+                    correlation_id: message_id,
+                }],
+            };
+            let results =
+                enqueue_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
+                    .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+            for result in results {
+                report.count += 1;
+                report.receipts.push(ReticulumdReceiptTarget {
+                    message_id: result.message_id,
+                    destination: result.destination,
+                    status: None,
+                    sdk_snapshot: None,
+                });
+            }
+            continue;
+        }
         let dispatch_result = send_lxmf_zmq_outbound_message(
             command_endpoint,
             response_endpoint,
@@ -13199,11 +13230,8 @@ fn dispatch_outbound_message(
     Ok(report)
 }
 
-fn should_enqueue_fanout_without_waiting_for_zmq_response(
-    message: &OutboundMessageRecord,
-    fanout_destination_count: usize,
-) -> bool {
-    fanout_destination_count > 1 && message.delivery_method == "propagated"
+fn should_enqueue_without_waiting_for_zmq_response(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "propagated"
 }
 
 #[cfg(test)]
@@ -52604,7 +52632,7 @@ mod tests {
     }
 
     #[test]
-    fn propagated_fanout_enqueues_zmq_batch_without_waiting_for_response() {
+    fn propagated_delivery_enqueues_zmq_batch_without_waiting_for_response() {
         let now = crate::unix_now_ms();
         let propagated = crate::OutboundMessageRecord {
             message_id: "propagated-fanout".to_string(),
@@ -52626,9 +52654,55 @@ mod tests {
             ..propagated.clone()
         };
 
-        assert!(crate::should_enqueue_fanout_without_waiting_for_zmq_response(&propagated, 2));
-        assert!(!crate::should_enqueue_fanout_without_waiting_for_zmq_response(&propagated, 1));
-        assert!(!crate::should_enqueue_fanout_without_waiting_for_zmq_response(&direct, 2));
+        assert!(crate::should_enqueue_without_waiting_for_zmq_response(
+            &propagated
+        ));
+        assert!(!crate::should_enqueue_without_waiting_for_zmq_response(
+            &direct
+        ));
+    }
+
+    #[test]
+    fn propagated_single_dispatch_enqueues_zmq_without_waiting_for_response() {
+        let state = crate::AppState::default().with_lxmf_zmq_sdk(
+            unused_zmq_endpoint_for_rch_test(),
+            unused_zmq_endpoint_for_rch_test(),
+            "source-destination",
+        );
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-single".to_string(),
+            topic_id: None,
+            destination: Some("target-destination".to_string()),
+            sender: "northbound".to_string(),
+            content: "propagated single".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "direct_cooldown".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+
+        let started = Instant::now();
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+        let elapsed = started.elapsed();
+
+        assert_eq!(report.count, 1);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "propagated dispatch waited for a ZeroMQ response: {elapsed:?}"
+        );
+        assert_eq!(report.receipts.len(), 1);
+        assert_eq!(report.receipts[0].message_id, "propagated-single");
+        assert_eq!(report.receipts[0].destination, "target-destination");
+    }
+
+    fn unused_zmq_endpoint_for_rch_test() -> String {
+        let listener = StdTcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        format!("tcp://127.0.0.1:{port}")
     }
 
     #[tokio::test]
