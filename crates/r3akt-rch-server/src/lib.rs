@@ -3899,21 +3899,20 @@ fn relay_reticulumd_inbound_topic_message(
     let default_direct_relay = relay_destinations.is_empty() && is_direct_topic;
     let mut direct_active_relay = false;
     if is_direct_topic {
-        let active_destinations = active_generic_lxmf_relay_destinations(state, source.as_str())?;
-        if !active_destinations.is_empty() {
-            relay_destinations.retain(|destination| {
-                active_destinations
-                    .iter()
-                    .any(|active| active == destination)
-            });
+        let active_subscribers = active_direct_subscriber_relay_destinations(
+            state,
+            source.as_str(),
+            &relay_destinations,
+        )?;
+        if !active_subscribers.is_empty() {
+            relay_destinations = active_subscribers;
             direct_active_relay = true;
-        }
-        for destination in active_destinations {
-            if !relay_destinations
-                .iter()
-                .any(|existing| existing == &destination)
-            {
-                relay_destinations.push(destination);
+        } else {
+            let active_destinations =
+                active_generic_lxmf_relay_destinations(state, source.as_str())?;
+            if !active_destinations.is_empty() {
+                relay_destinations = active_destinations;
+                direct_active_relay = true;
             }
         }
     }
@@ -3977,6 +3976,30 @@ fn active_generic_lxmf_relay_destinations(
             let last_seen = unix_ms_from_iso8601(client.last_seen.as_str())?;
             (last_seen >= now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS)
                 .then_some(identity)
+        })
+        .collect::<Vec<_>>();
+    destinations.sort();
+    destinations.dedup();
+    Ok(destinations)
+}
+
+fn active_direct_subscriber_relay_destinations(
+    state: &AppState,
+    source: &str,
+    subscribers: &[String],
+) -> Result<Vec<String>, ApiError> {
+    let now = unix_now_ms();
+    let source = normalize_identity_key(source);
+    let announces = load_identity_announces_for_state(state)?;
+    let mut destinations = subscribers
+        .iter()
+        .filter_map(|destination| normalize_identity_key(destination))
+        .filter(|destination| source.as_deref() != Some(destination.as_str()))
+        .filter(|destination| {
+            announces.iter().any(|record| {
+                record.last_seen_ts_ms >= now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS
+                    && identity_announce_matches_destination(record, destination)
+            })
         })
         .collect::<Vec<_>>();
     destinations.sort();
@@ -26545,6 +26568,137 @@ mod tests {
         assert_eq!(
             relay.delivery_metadata["reticulumd_inbound_default_direct_relay"],
             false
+        );
+
+        std::fs::remove_file(db_path).expect("cleanup db");
+    }
+
+    #[tokio::test]
+    async fn reticulumd_inbound_direct_topic_prefers_fresh_announced_subscriber() {
+        let source = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let fresh_subscriber = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let stale_subscriber = "cccccccccccccccccccccccccccccccc";
+        let unrelated_active = "dddddddddddddddddddddddddddddddd";
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(r3akt_protocol::Topic::new("direct")),
+            r3akt_protocol::Topic::new("direct"),
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "phone to fresh subscriber".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: Some("direct-relay-fresh-sub-1".to_string()),
+                attachments: Vec::new(),
+            }),
+        );
+        let payload_b64 = BASE64_STANDARD.encode(envelope.encode_msgpack().expect("msgpack"));
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "messages": [{
+                    "id": "lxmf-inbound-direct-fresh-sub-1",
+                    "destination": "local-destination",
+                    "fields": {
+                        "r3akt_payload_b64": payload_b64
+                    }
+                }]
+            }),
+            json!({
+                "message_id": "direct-fresh-sub-accepted"
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-reticulumd-inbound-direct-fresh-sub-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let now = crate::unix_now_ms();
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.subscribers = vec![
+            r3akt_rch_core::SubscriberRecord {
+                node_id: stale_subscriber.to_string(),
+                topic_id: "direct".to_string(),
+                reject_tests: None,
+                metadata: json!({ "source": "old_phone_hil" }),
+                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            },
+            r3akt_rch_core::SubscriberRecord {
+                node_id: fresh_subscriber.to_string(),
+                topic_id: "direct".to_string(),
+                reject_tests: None,
+                metadata: json!({ "source": "sideband_hil" }),
+                first_seen_ts_ms: now,
+                last_seen_ts_ms: now,
+            },
+        ];
+        snapshot.identity_announces = vec![
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: stale_subscriber.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("stale phone".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: Vec::new(),
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            },
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: fresh_subscriber.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("fresh phone".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: Vec::new(),
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now,
+                last_seen_ts_ms: now,
+            },
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        drop(store);
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint.clone(), "local-destination");
+        state.clients.write().expect("clients").insert(
+            unrelated_active.to_string(),
+            crate::ClientRecord::new(unrelated_active.to_string(), now),
+        );
+        let adapter = ReticulumdRpcLxmfRsAdapter::new(
+            "local-destination",
+            ReticulumdRpcTransport::new(endpoint),
+        );
+        let mut transport = LxmfRsTransport::new(adapter);
+
+        crate::process_reticulumd_inbound_worker_tick(
+            &state,
+            &mut transport,
+            Duration::from_millis(50),
+        )
+        .await
+        .expect("inbound tick")
+        .expect("envelope");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1].method, "send_message_v2");
+        let params = requests[1].params.as_ref().expect("relay params");
+        assert_eq!(params["destination"], fresh_subscriber);
+        assert_ne!(params["destination"], stale_subscriber);
+        assert_ne!(params["destination"], unrelated_active);
+
+        let messages = state.messages.read().expect("messages");
+        let relay = messages
+            .iter()
+            .find(|message| {
+                message
+                    .delivery_metadata
+                    .get("reticulumd_inbound_direct_active_relay")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+            .expect("active direct relay");
+        assert_eq!(
+            relay.delivery_metadata["target_destinations"],
+            json!([fresh_subscriber])
         );
 
         std::fs::remove_file(db_path).expect("cleanup db");
