@@ -10655,6 +10655,7 @@ fn mark_reticulumd_status_delivery_failure(
                 } else {
                     "direct_failure_fallback".to_string()
                 };
+                clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
                 merge_delivery_metadata(
                     &mut message.delivery_metadata,
                     json!({
@@ -13648,6 +13649,25 @@ fn clear_success_superseded_delivery_metadata(metadata: &mut Value) {
     object.remove("dispatch_timed_out_at_ts_ms");
     object.remove("error");
     object.remove("retry_reason");
+}
+
+fn clear_retry_superseded_delivery_metadata(metadata: &mut Value) {
+    clear_success_superseded_delivery_metadata(metadata);
+    let Some(object) = metadata.as_object_mut() else {
+        return;
+    };
+    object.remove("dispatch_started_ts_ms");
+    object.remove("dispatch_deadline_ts_ms");
+    object.remove("receipt_deadline_ts_ms");
+    object.remove("receipt_last_poll_ts_ms");
+    object.remove("receipt_registered_ts_ms");
+    object.remove("reticulumd_receipt_targets");
+    object.remove("sdk_attempts");
+    object.remove("sdk_delivery_state");
+    object.remove("sdk_last_updated_ms");
+    object.remove("sdk_message_id");
+    object.remove("sdk_reason_code");
+    object.remove("sdk_terminal");
 }
 
 fn delivery_state_clears_error_metadata(delivery_state: &str) -> bool {
@@ -50829,13 +50849,26 @@ mod tests {
             delivery_state: "sent".to_string(),
             delivery_metadata: json!({
                 "dispatch_status": "accepted",
+                "dispatch_started_ts_ms": now - 10_000,
+                "dispatch_deadline_ts_ms": now - 1,
                 "reticulumd_dispatch_count": 1,
                 "reticulumd_receipt_targets": [{
                     "message_id": "sdk-target-peer-not-announced",
                     "destination": generic_destination,
+                    "sdk_delivery_state": "failed",
+                    "sdk_message_id": "sdk-target-peer-not-announced",
+                    "sdk_reason_code": "peer_not_announced",
+                    "sdk_terminal": true,
                     "status": "failed: peer not announced"
                 }],
+                "sdk_delivery_state": "failed",
+                "sdk_message_id": "sdk-target-peer-not-announced",
+                "sdk_reason_code": "peer_not_announced",
+                "sdk_terminal": true,
                 "receipt_pending": true,
+                "receipt_deadline_ts_ms": now - 1,
+                "receipt_last_poll_ts_ms": now - 5_000,
+                "receipt_registered_ts_ms": now - 10_000,
             }),
             created_ts_ms: now,
             attachments: Vec::new(),
@@ -50870,6 +50903,23 @@ mod tests {
                 .iter()
                 .any(|value| value.as_str() == Some(generic_destination))
         );
+        for cleared_key in [
+            "dispatch_started_ts_ms",
+            "dispatch_deadline_ts_ms",
+            "receipt_deadline_ts_ms",
+            "receipt_last_poll_ts_ms",
+            "receipt_registered_ts_ms",
+            "reticulumd_receipt_targets",
+            "sdk_delivery_state",
+            "sdk_message_id",
+            "sdk_reason_code",
+            "sdk_terminal",
+        ] {
+            assert!(
+                stored.delivery_metadata.get(cleared_key).is_none(),
+                "stale direct metadata key should be cleared: {cleared_key}"
+            );
+        }
         drop(messages);
 
         let _ = std::fs::remove_file(db_path);
