@@ -594,6 +594,8 @@ pub struct LxmfSdkOutboundMessage {
     pub content: String,
     pub fields: JsonValue,
     pub delivery_method: Option<String>,
+    pub stamp_cost: Option<u32>,
+    pub include_ticket: Option<bool>,
     pub try_propagation_on_fail: bool,
     pub correlation_id: String,
 }
@@ -610,6 +612,8 @@ pub struct LxmfSdkOutboundBatchMessage {
     pub content: String,
     pub fields: JsonValue,
     pub delivery_method: Option<String>,
+    pub stamp_cost: Option<u32>,
+    pub include_ticket: Option<bool>,
     pub try_propagation_on_fail: bool,
     pub correlation_id: String,
 }
@@ -725,6 +729,22 @@ pub fn send_lxmf_sdk_outbound_message_with_runtime(
     let request = LxmfSdkSendRequest::new(message.source, message.destination, payload)
         .with_correlation_id(message.correlation_id.clone())
         .with_idempotency_key(message.correlation_id);
+    let request = if let Some(method) = message.delivery_method {
+        request.with_delivery_method(method)
+    } else {
+        request
+    };
+    let request = if let Some(stamp_cost) = message.stamp_cost {
+        request.with_stamp_cost(stamp_cost)
+    } else {
+        request
+    };
+    let request = if let Some(include_ticket) = message.include_ticket {
+        request.with_include_ticket(include_ticket)
+    } else {
+        request
+    };
+    let request = request.with_try_propagation_on_fail(message.try_propagation_on_fail);
     runtime.send(request)
 }
 
@@ -1566,6 +1586,8 @@ fn lxmf_sdk_outbound_send_params(message: LxmfSdkOutboundMessage) -> JsonValue {
         "content": message.content,
         "fields": fields,
         "method": message.delivery_method,
+        "stamp_cost": message.stamp_cost,
+        "include_ticket": message.include_ticket,
         "try_propagation_on_fail": message.try_propagation_on_fail,
     })
 }
@@ -1604,6 +1626,8 @@ fn lxmf_sdk_outbound_batch_params(batch: LxmfSdkOutboundBatch) -> JsonValue {
                 "content": message.content,
                 "fields": fields,
                 "method": message.delivery_method,
+                "stamp_cost": message.stamp_cost,
+                "include_ticket": message.include_ticket,
                 "try_propagation_on_fail": message.try_propagation_on_fail,
             })
         })
@@ -3334,6 +3358,8 @@ mod tests {
                     content: "one".to_string(),
                     fields: serde_json::json!({ "kind": "a" }),
                     delivery_method: Some("direct".to_string()),
+                    stamp_cost: None,
+                    include_ticket: None,
                     try_propagation_on_fail: true,
                     correlation_id: "message-a".to_string(),
                 },
@@ -3343,6 +3369,8 @@ mod tests {
                     content: "two".to_string(),
                     fields: serde_json::json!({ "kind": "b" }),
                     delivery_method: Some("propagated".to_string()),
+                    stamp_cost: Some(16),
+                    include_ticket: Some(true),
                     try_propagation_on_fail: false,
                     correlation_id: "message-b".to_string(),
                 },
@@ -3359,6 +3387,8 @@ mod tests {
         assert_eq!(messages[1]["id"], "message-b");
         assert_eq!(messages[1]["destination"], "dst-b");
         assert_eq!(messages[1]["method"], "propagated");
+        assert_eq!(messages[1]["stamp_cost"], 16);
+        assert_eq!(messages[1]["include_ticket"], true);
     }
 
     #[test]
@@ -3387,6 +3417,8 @@ mod tests {
                     content: format!("payload {index}"),
                     fields: serde_json::json!({ "bulk_index": index }),
                     delivery_method: Some("propagated".to_string()),
+                    stamp_cost: None,
+                    include_ticket: None,
                     try_propagation_on_fail: false,
                     correlation_id: format!("bulk-message-{index:05}"),
                 },
@@ -3494,6 +3526,8 @@ mod tests {
                     "custom": "value"
                 }),
                 delivery_method: Some("direct".to_string()),
+                stamp_cost: None,
+                include_ticket: None,
                 try_propagation_on_fail: true,
                 correlation_id: "message-1".to_string(),
             },
@@ -3539,6 +3573,8 @@ mod tests {
                     "9": [{"command_type": "checklist.create.online"}],
                 }),
                 delivery_method: Some("propagated".to_string()),
+                stamp_cost: Some(16),
+                include_ticket: Some(true),
                 try_propagation_on_fail: false,
                 correlation_id: "message-1".to_string(),
             },
@@ -3554,6 +3590,8 @@ mod tests {
         assert_eq!(captured[1].params["source"], "source-destination");
         assert_eq!(captured[1].params["destination"], "target-destination");
         assert_eq!(captured[1].params["method"], "propagated");
+        assert_eq!(captured[1].params["stamp_cost"], 16);
+        assert_eq!(captured[1].params["include_ticket"], true);
         assert_eq!(captured[1].params["try_propagation_on_fail"], false);
         assert_eq!(
             captured[1].params["fields"]["9"][0]["command_type"],
@@ -3589,6 +3627,8 @@ mod tests {
                 content: "cmd".to_string(),
                 fields: serde_json::json!({}),
                 delivery_method: Some("direct".to_string()),
+                stamp_cost: None,
+                include_ticket: None,
                 try_propagation_on_fail: false,
                 correlation_id: "message-1".to_string(),
             },
@@ -3700,6 +3740,8 @@ mod tests {
                 content: "cmd".to_string(),
                 fields: serde_json::json!({}),
                 delivery_method: Some("direct".to_string()),
+                stamp_cost: None,
+                include_ticket: None,
                 try_propagation_on_fail: false,
                 correlation_id: "message-1".to_string(),
             },

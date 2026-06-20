@@ -97,6 +97,7 @@ const OUTBOUND_RETRY_WORKER_POLL_MS: u64 = 500;
 const OUTBOUND_RETRY_BACKOFF_MS: i64 = 500;
 const OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS: i64 = 65_000;
 const OUTBOUND_RETRY_MAX_ATTEMPTS: u64 = 2;
+const OUTBOUND_PROPAGATION_STAMP_COST: u32 = 16;
 const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
 const RETICULUMD_INBOUND_WORKER_POLL_MS: u64 = 1_000;
 const RETICULUMD_LIST_MESSAGE_POLL_MS: u64 = 5_000;
@@ -13032,6 +13033,8 @@ fn dispatch_outbound_message(
                 content: outbound_lxmf_content(&dispatch_message).to_string(),
                 fields,
                 delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
+                stamp_cost: lxmf_sdk_stamp_cost(message),
+                include_ticket: lxmf_sdk_include_ticket(message),
                 try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
                 correlation_id: message_id,
             });
@@ -13092,6 +13095,8 @@ fn dispatch_outbound_message(
                 content: outbound_lxmf_content(&dispatch_message).to_string(),
                 fields,
                 delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
+                stamp_cost: lxmf_sdk_stamp_cost(message),
+                include_ticket: lxmf_sdk_include_ticket(message),
                 try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
                 correlation_id: message_id.clone(),
             },
@@ -13194,6 +13199,15 @@ fn lxmf_sdk_delivery_method(message: &OutboundMessageRecord) -> Option<&str> {
         "paper" => Some("paper"),
         _ => None,
     }
+}
+
+fn lxmf_sdk_stamp_cost(message: &OutboundMessageRecord) -> Option<u32> {
+    matches!(lxmf_sdk_delivery_method(message), Some("propagated"))
+        .then_some(OUTBOUND_PROPAGATION_STAMP_COST)
+}
+
+fn lxmf_sdk_include_ticket(message: &OutboundMessageRecord) -> Option<bool> {
+    matches!(lxmf_sdk_delivery_method(message), Some("propagated")).then_some(true)
 }
 
 fn lxmf_sdk_try_propagation_on_fail(message: &OutboundMessageRecord) -> bool {
@@ -46597,6 +46611,8 @@ mod tests {
                         "load_receiver_index": receiver_index,
                     }),
                     delivery_method: Some("direct".to_string()),
+                    stamp_cost: None,
+                    include_ticket: None,
                     try_propagation_on_fail: false,
                     correlation_id: format!("load-{run_id}-{sequence:05}"),
                 },
