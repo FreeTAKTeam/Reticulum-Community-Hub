@@ -12823,8 +12823,12 @@ fn record_outbound_message_with_metadata_mode(
 ) -> Result<OutboundMessageRecord, ApiError> {
     let delivery_mode = classify_delivery_mode(topic_id.as_deref(), destination.as_deref())
         .map_err(|error| ApiError::BadRequest(python_delivery_error_detail(&error)))?;
-    let mut delivery_decision =
-        outbound_delivery_decision(state, delivery_mode, destination.as_deref())?;
+    let mut delivery_decision = outbound_delivery_decision(
+        state,
+        delivery_mode,
+        topic_id.as_deref(),
+        destination.as_deref(),
+    )?;
     let is_rem_command = delivery_metadata
         .get("fanout_channel")
         .and_then(Value::as_str)
@@ -13700,15 +13704,28 @@ fn delivery_state_clears_error_metadata(delivery_state: &str) -> bool {
 fn outbound_delivery_decision(
     state: &AppState,
     delivery_mode: DeliveryMode,
+    topic_id: Option<&str>,
     destination: Option<&str>,
 ) -> Result<r3akt_rch_core::OutboundDeliveryDecision, ApiError> {
     if delivery_mode == DeliveryMode::Broadcast {
+        if outbound_route_has_unannounced_destinations(state, delivery_mode, None)? {
+            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+                method: "propagated".to_string(),
+                reason: "broadcast_unannounced".to_string(),
+            });
+        }
         return Ok(r3akt_rch_core::OutboundDeliveryDecision {
             method: "direct".to_string(),
             reason: "broadcast_direct".to_string(),
         });
     }
     if delivery_mode == DeliveryMode::Fanout {
+        if outbound_route_has_unannounced_destinations(state, delivery_mode, topic_id)? {
+            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+                method: "propagated".to_string(),
+                reason: "topic_unannounced".to_string(),
+            });
+        }
         return Ok(r3akt_rch_core::OutboundDeliveryDecision {
             method: "direct".to_string(),
             reason: "topic_direct".to_string(),
@@ -13725,6 +13742,16 @@ fn outbound_delivery_decision(
             destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
         let has_live_connection =
             destination.is_some_and(|identity| has_live_client(state, identity, now));
+        if destination
+            .map(|identity| outbound_destination_has_stale_known_announce(state, identity))
+            .transpose()?
+            .unwrap_or(false)
+        {
+            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+                method: "propagated".to_string(),
+                reason: "rem_no_fresh_presence".to_string(),
+            });
+        }
         if destination
             .and_then(|identity| latest_failed_direct_delivery_ts_ms(state, identity))
             .is_some_and(|failed_at| announce_last_seen.is_none_or(|seen_at| failed_at >= seen_at))
@@ -13761,6 +13788,17 @@ fn outbound_delivery_decision(
         destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
     if delivery_mode == DeliveryMode::Targeted
         && destination
+            .map(|identity| outbound_destination_has_stale_known_announce(state, identity))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+            method: "propagated".to_string(),
+            reason: "no_fresh_presence".to_string(),
+        });
+    }
+    if delivery_mode == DeliveryMode::Targeted
+        && destination
             .and_then(|identity| latest_failed_direct_delivery_ts_ms(state, identity))
             .is_some_and(|failed_at| announce_last_seen.is_none_or(|seen_at| failed_at >= seen_at))
     {
@@ -13782,6 +13820,106 @@ fn outbound_delivery_decision(
         has_live_connection,
         now,
     ))
+}
+
+fn outbound_route_has_unannounced_destinations(
+    state: &AppState,
+    delivery_mode: DeliveryMode,
+    topic_id: Option<&str>,
+) -> Result<bool, ApiError> {
+    let destinations = match delivery_mode {
+        DeliveryMode::Targeted => return Ok(false),
+        DeliveryMode::Fanout => {
+            let Some(topic_id) = topic_id else {
+                return Ok(false);
+            };
+            topic_subscriber_destinations(state, topic_id)?
+        }
+        DeliveryMode::Broadcast => broadcast_client_records_for_state(state)?
+            .into_iter()
+            .map(|client| client.identity)
+            .collect(),
+    };
+    if destinations.is_empty() || state.sqlite_path.is_none() {
+        return Ok(false);
+    }
+    let routing_context = outbound_destination_routing_context(state)?;
+    Ok(destinations.into_iter().any(|destination| {
+        let delivery_destination = outbound_destination_for_message_with_context_for_mode(
+            delivery_mode,
+            &destination,
+            &routing_context,
+            false,
+        );
+        outbound_destination_has_stale_known_announce_for_any(
+            state,
+            &[destination.as_str(), delivery_destination.as_str()],
+        )
+        .unwrap_or(false)
+    }))
+}
+
+fn outbound_destination_has_known_announce(
+    state: &AppState,
+    destination: &str,
+) -> Result<bool, ApiError> {
+    let Some(destination) = normalize_identity_key(destination) else {
+        return Ok(false);
+    };
+    Ok(load_identity_announces_for_state(state)?
+        .into_iter()
+        .any(|record| identity_announce_matches_destination(&record, destination.as_str())))
+}
+
+fn outbound_destination_has_stale_known_announce(
+    state: &AppState,
+    destination: &str,
+) -> Result<bool, ApiError> {
+    outbound_destination_has_stale_known_announce_for_any(state, &[destination])
+}
+
+fn outbound_destination_has_stale_known_announce_for_any(
+    state: &AppState,
+    destinations: &[&str],
+) -> Result<bool, ApiError> {
+    Ok(destinations.iter().any(|destination| {
+        outbound_destination_has_known_announce(state, destination).unwrap_or(false)
+    }) && !outbound_destination_has_fresh_announce_for_any(state, destinations)?)
+}
+
+fn outbound_destination_has_fresh_announce_for_any(
+    state: &AppState,
+    destinations: &[&str],
+) -> Result<bool, ApiError> {
+    let now = unix_now_ms();
+    let normalized = destinations
+        .iter()
+        .filter_map(|destination| normalize_identity_key(destination))
+        .collect::<HashSet<_>>();
+    if normalized.is_empty() {
+        return Ok(false);
+    }
+    Ok(load_identity_announces_for_state(state)?
+        .into_iter()
+        .any(|record| {
+            record.last_seen_ts_ms >= now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS
+                && normalized
+                    .iter()
+                    .any(|destination| identity_announce_matches_destination(&record, destination))
+        }))
+}
+
+fn identity_announce_matches_destination(
+    record: &r3akt_rch_core::IdentityAnnounceRecord,
+    destination: &str,
+) -> bool {
+    normalize_identity_key(&record.destination_hash).as_deref() == Some(destination)
+        || record
+            .announced_identity_hash
+            .as_deref()
+            .and_then(normalize_identity_key)
+            .as_deref()
+            == Some(destination)
 }
 
 fn mark_direct_delivery_failure(state: &AppState, identity: &str) -> Result<(), ApiError> {
@@ -14240,12 +14378,26 @@ fn outbound_destination_for_message_with_context(
     destination: &str,
     routing_context: &OutboundDestinationRoutingContext,
 ) -> String {
+    outbound_destination_for_message_with_context_for_mode(
+        message.delivery_mode,
+        destination,
+        routing_context,
+        preserves_requested_outbound_destination(message),
+    )
+}
+
+fn outbound_destination_for_message_with_context_for_mode(
+    delivery_mode: DeliveryMode,
+    destination: &str,
+    routing_context: &OutboundDestinationRoutingContext,
+    preserve_requested_destination: bool,
+) -> String {
     let normalized =
         normalize_identity_key(destination).unwrap_or_else(|| destination.trim().to_string());
-    if preserves_requested_outbound_destination(message) {
+    if preserve_requested_destination {
         return normalized;
     }
-    if message.delivery_mode == DeliveryMode::Broadcast
+    if delivery_mode == DeliveryMode::Broadcast
         && routing_context
             .rem_app_destinations
             .contains(normalized.as_str())
@@ -50416,12 +50568,14 @@ mod tests {
         let app_destination = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some("4bede2a6ecab26f234aac9bb894a441a"),
         )
         .expect("app destination decision");
         let delivery_destination = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some("1123c2623132bf9899ae5d3b28d9f79e"),
         )
         .expect("delivery destination decision");
@@ -50430,6 +50584,96 @@ mod tests {
         assert_eq!(app_destination.reason, "rem_direct");
         assert_eq!(delivery_destination.method, "direct");
         assert_eq!(delivery_destination.reason, "fresh_presence");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn targeted_delivery_uses_propagation_for_stale_known_lxmf_announce() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-stale-known-target-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "52118fa6f1240342cb730dabdf1d4ca1";
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("Pixel Sideband".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state.clients.write().expect("clients").insert(
+            destination.to_string(),
+            crate::ClientRecord::new(destination.to_string(), now),
+        );
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            None,
+            Some(destination),
+        )
+        .expect("delivery decision");
+
+        assert_eq!(decision.method, "propagated");
+        assert_eq!(decision.reason, "no_fresh_presence");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn topic_delivery_uses_propagation_when_subscriber_is_not_freshly_announced() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-topic-stale-subscriber-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "7f08e12b3f25f23e62f3a15288303c95";
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("S8 stale Sideband".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state.subscribers.write().expect("subscribers").insert(
+            "stale-s8".to_string(),
+            crate::SubscriberRecord {
+                subscriber_id: "stale-s8".to_string(),
+                destination: destination.to_string(),
+                topic_id: "direct".to_string(),
+                reject_tests: None,
+                metadata: json!({}),
+            },
+        );
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Fanout,
+            Some("direct"),
+            None,
+        )
+        .expect("topic decision");
+
+        assert_eq!(decision.method, "propagated");
+        assert_eq!(decision.reason, "topic_unannounced");
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -50464,6 +50708,7 @@ mod tests {
         let fresh = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("fresh rem decision");
@@ -50474,6 +50719,7 @@ mod tests {
         let cooldown = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("cooldown rem decision");
@@ -50530,6 +50776,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("rem decision");
@@ -50586,6 +50833,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("rem decision");
@@ -50643,6 +50891,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("rem decision");
@@ -50695,6 +50944,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(generic_destination),
         )
         .expect("generic decision");
@@ -50769,6 +51019,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(generic_destination),
         )
         .expect("generic decision");
@@ -50843,6 +51094,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(generic_destination),
         )
         .expect("generic decision");
