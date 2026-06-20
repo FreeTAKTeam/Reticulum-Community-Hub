@@ -3890,10 +3890,15 @@ fn relay_reticulumd_inbound_topic_message(
 ) -> Result<Option<OutboundMessageRecord>, ApiError> {
     let topic_id = envelope.topic.to_string();
     let source = envelope.source.to_string();
-    let relay_destinations = topic_subscriber_destinations(state, topic_id.as_str())?
+    let mut relay_destinations = topic_subscriber_destinations(state, topic_id.as_str())?
         .into_iter()
         .filter(|destination| destination != &source)
         .collect::<Vec<_>>();
+    let default_direct_relay =
+        relay_destinations.is_empty() && topic_id.trim().eq_ignore_ascii_case("direct");
+    if default_direct_relay {
+        relay_destinations = active_generic_lxmf_relay_destinations(state, source.as_str())?;
+    }
     if relay_destinations.is_empty() {
         return Ok(None);
     }
@@ -3906,10 +3911,12 @@ fn relay_reticulumd_inbound_topic_message(
         true,
         json!({
             "reticulumd_inbound_relay": true,
+            "reticulumd_inbound_default_direct_relay": default_direct_relay,
             "inbound_message_id": inbound_record.message_id,
-            "source": source,
+            "source": source.clone(),
             "direction": "outbound",
-            "exclude_destinations": [source],
+            "exclude_destinations": [source.clone()],
+            "target_destinations": if default_direct_relay { json!(relay_destinations.clone()) } else { Value::Null },
             "content_type": message.content_type,
             "correlation_id": message.correlation_id,
         }),
@@ -3928,6 +3935,35 @@ fn relay_reticulumd_inbound_topic_message(
         }),
     )?;
     Ok(Some(relay))
+}
+
+fn active_generic_lxmf_relay_destinations(
+    state: &AppState,
+    source: &str,
+) -> Result<Vec<String>, ApiError> {
+    let now = unix_now_ms();
+    let source = normalize_identity_key(source);
+    let mut destinations = client_records_for_state(state)?
+        .into_iter()
+        .filter(|client| {
+            client
+                .client_type
+                .trim()
+                .eq_ignore_ascii_case("generic_lxmf")
+        })
+        .filter_map(|client| {
+            let identity = normalize_identity_key(client.identity.as_str())?;
+            if source.as_deref() == Some(identity.as_str()) {
+                return None;
+            }
+            let last_seen = unix_ms_from_iso8601(client.last_seen.as_str())?;
+            (last_seen >= now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS)
+                .then_some(identity)
+        })
+        .collect::<Vec<_>>();
+    destinations.sort();
+    destinations.dedup();
+    Ok(destinations)
 }
 
 fn process_reticulumd_inbound_command(
@@ -12651,6 +12687,18 @@ fn topic_subscriber_destinations(
         .collect())
 }
 
+fn outbound_target_destinations(message: &OutboundMessageRecord) -> Option<Vec<String>> {
+    let destinations = message
+        .delivery_metadata
+        .get("target_destinations")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(normalize_identity_key)
+        .collect::<Vec<_>>();
+    Some(destinations)
+}
+
 fn record_outbound_message(
     state: &AppState,
     content: &str,
@@ -13946,7 +13994,11 @@ fn outbound_destinations(
     let mut seen_destinations = HashSet::new();
     let routing_context = outbound_destination_routing_context(state)?;
     if let Some(topic_id) = message.topic_id.as_deref() {
-        for destination in topic_subscriber_destinations(state, topic_id)? {
+        let topic_destinations = match outbound_target_destinations(message) {
+            Some(destinations) => destinations,
+            None => topic_subscriber_destinations(state, topic_id)?,
+        };
+        for destination in topic_destinations {
             let delivery_destination = outbound_destination_for_message_with_context(
                 message,
                 &destination,
@@ -26038,6 +26090,104 @@ mod tests {
             outbound[0]["DeliveryMetadata"]["reticulumd_inbound_relay"],
             true
         );
+        std::fs::remove_file(db_path).expect("cleanup db");
+    }
+
+    #[tokio::test]
+    async fn reticulumd_inbound_direct_topic_relays_to_active_generic_lxmf_clients() {
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new("peer-alpha"),
+            r3akt_protocol::Destination::Topic(r3akt_protocol::Topic::new("direct")),
+            r3akt_protocol::Topic::new("direct"),
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "phone to phone".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: Some("direct-relay-corr-1".to_string()),
+                attachments: Vec::new(),
+            }),
+        );
+        let payload_b64 = BASE64_STANDARD.encode(envelope.encode_msgpack().expect("msgpack"));
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "messages": [{
+                    "id": "lxmf-inbound-direct-relay-1",
+                    "destination": "local-destination",
+                    "fields": {
+                        "r3akt_payload_b64": payload_b64
+                    }
+                }]
+            }),
+            json!({
+                "message_id": "direct-relay-accepted"
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-reticulumd-inbound-direct-relay-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint.clone(), "local-destination");
+        let now = crate::unix_now_ms();
+        {
+            let mut clients = state.clients.write().expect("clients");
+            clients.insert(
+                "peer-bravo".to_string(),
+                crate::ClientRecord::new("peer-bravo".to_string(), now),
+            );
+            clients.insert(
+                "peer-stale".to_string(),
+                crate::ClientRecord::new(
+                    "peer-stale".to_string(),
+                    now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 1_000,
+                ),
+            );
+        }
+        let adapter = ReticulumdRpcLxmfRsAdapter::new(
+            "local-destination",
+            ReticulumdRpcTransport::new(endpoint),
+        );
+        let mut transport = LxmfRsTransport::new(adapter);
+
+        let received = crate::process_reticulumd_inbound_worker_tick(
+            &state,
+            &mut transport,
+            Duration::from_millis(50),
+        )
+        .await
+        .expect("inbound tick")
+        .expect("envelope");
+
+        assert_eq!(received.source.to_string(), "peer-alpha");
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "list_messages");
+        assert_eq!(requests[1].method, "sdk_send_v2");
+        let params = requests[1].params.as_ref().expect("relay params");
+        assert_eq!(params["destination"], "peer-bravo");
+        assert_eq!(params["content"], "[topic:direct]\nphone to phone");
+
+        let messages = state.messages.read().expect("messages");
+        let relay = messages
+            .iter()
+            .find(|message| {
+                message
+                    .delivery_metadata
+                    .get("reticulumd_inbound_default_direct_relay")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+            .expect("default direct relay");
+        assert_eq!(
+            relay.delivery_metadata["target_destinations"],
+            json!(["peer-bravo"])
+        );
+        assert_eq!(
+            relay.delivery_metadata["exclude_destinations"],
+            json!(["peer-alpha"])
+        );
+        drop(messages);
+
         std::fs::remove_file(db_path).expect("cleanup db");
     }
 
