@@ -3904,16 +3904,16 @@ fn relay_reticulumd_inbound_topic_message(
             source.as_str(),
             &relay_destinations,
         )?;
-        if !active_subscribers.is_empty() {
-            relay_destinations = active_subscribers;
-            direct_active_relay = true;
-        } else {
+        if active_subscribers.is_empty() {
             let active_destinations =
                 active_generic_lxmf_relay_destinations(state, source.as_str())?;
             if !active_destinations.is_empty() {
                 relay_destinations = active_destinations;
                 direct_active_relay = true;
             }
+        } else {
+            relay_destinations = active_subscribers;
+            direct_active_relay = true;
         }
     }
     if relay_destinations.is_empty() {
@@ -13829,6 +13829,20 @@ fn outbound_delivery_decision(
     let now = unix_now_ms();
     let announce_last_seen =
         destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
+    let has_live_connection =
+        destination.is_some_and(|identity| has_live_client(state, identity, now));
+    if delivery_mode == DeliveryMode::Targeted
+        && has_live_connection
+        && destination
+            .map(|identity| outbound_destination_lacks_fresh_announce_for_any(state, &[identity]))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+            method: "propagated".to_string(),
+            reason: "no_fresh_presence".to_string(),
+        });
+    }
     if delivery_mode == DeliveryMode::Targeted
         && destination
             .map(|identity| outbound_destination_has_stale_known_announce(state, identity))
@@ -13850,8 +13864,6 @@ fn outbound_delivery_decision(
             reason: "direct_cooldown".to_string(),
         });
     }
-    let has_live_connection =
-        destination.is_some_and(|identity| has_live_client(state, identity, now));
     let mut policy = state
         .outbound_delivery_policy
         .write()
@@ -13894,7 +13906,7 @@ fn outbound_route_has_unannounced_destinations(
             &routing_context,
             false,
         );
-        outbound_destination_has_stale_known_announce_for_any(
+        outbound_destination_lacks_fresh_announce_for_any(
             state,
             &[destination.as_str(), delivery_destination.as_str()],
         )
@@ -13928,6 +13940,19 @@ fn outbound_destination_has_stale_known_announce_for_any(
     Ok(destinations.iter().any(|destination| {
         outbound_destination_has_known_announce(state, destination).unwrap_or(false)
     }) && !outbound_destination_has_fresh_announce_for_any(state, destinations)?)
+}
+
+fn outbound_destination_lacks_fresh_announce_for_any(
+    state: &AppState,
+    destinations: &[&str],
+) -> Result<bool, ApiError> {
+    if state.sqlite_path.is_none() {
+        return Ok(false);
+    }
+    Ok(!outbound_destination_has_fresh_announce_for_any(
+        state,
+        destinations,
+    )?)
 }
 
 fn outbound_destination_has_fresh_announce_for_any(
@@ -26312,6 +26337,33 @@ mod tests {
                 .expect("subscriber response");
             assert_eq!(subscriber.status(), StatusCode::OK);
         }
+        let now = crate::unix_now_ms();
+        crate::persist_identity_announce_records(
+            &state,
+            &[
+                r3akt_rch_core::IdentityAnnounceRecord {
+                    destination_hash: "peer-alpha".to_string(),
+                    announced_identity_hash: None,
+                    display_name: Some("peer alpha".to_string()),
+                    source_interface: Some("reticulumd".to_string()),
+                    announce_capabilities: Vec::new(),
+                    client_type: "generic_lxmf".to_string(),
+                    first_seen_ts_ms: now,
+                    last_seen_ts_ms: now,
+                },
+                r3akt_rch_core::IdentityAnnounceRecord {
+                    destination_hash: "peer-charlie".to_string(),
+                    announced_identity_hash: None,
+                    display_name: Some("peer charlie".to_string()),
+                    source_interface: Some("reticulumd".to_string()),
+                    announce_capabilities: Vec::new(),
+                    client_type: "generic_lxmf".to_string(),
+                    first_seen_ts_ms: now,
+                    last_seen_ts_ms: now,
+                },
+            ],
+        )
+        .expect("persist fresh relay announce");
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
             "local-destination",
             ReticulumdRpcTransport::new(endpoint),
@@ -27237,6 +27289,21 @@ mod tests {
                 .expect("setup response");
             assert_eq!(response.status(), StatusCode::OK, "{uri}");
         }
+        let now = crate::unix_now_ms();
+        crate::persist_identity_announce_records(
+            &state,
+            &[r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: "peer-mission-source".to_string(),
+                announced_identity_hash: None,
+                display_name: Some("mission source".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: Vec::new(),
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now,
+                last_seen_ts_ms: now,
+            }],
+        )
+        .expect("persist fresh mission source announce");
 
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
             "local-destination",
@@ -50915,6 +50982,33 @@ mod tests {
     }
 
     #[test]
+    fn targeted_delivery_uses_propagation_for_live_client_without_announce() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-unannounced-live-target-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let destination = "4f79a98e20b9b8d58d412dbeef60f98d";
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state.clients.write().expect("clients").insert(
+            destination.to_string(),
+            crate::ClientRecord::new(destination.to_string(), crate::unix_now_ms()),
+        );
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            None,
+            Some(destination),
+        )
+        .expect("delivery decision");
+
+        assert_eq!(decision.method, "propagated");
+        assert_eq!(decision.reason, "no_fresh_presence");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
     fn topic_delivery_uses_propagation_when_subscriber_is_not_freshly_announced() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-topic-stale-subscriber-propagation-{}.db",
@@ -50941,6 +51035,39 @@ mod tests {
             "stale-s8".to_string(),
             crate::SubscriberRecord {
                 subscriber_id: "stale-s8".to_string(),
+                destination: destination.to_string(),
+                topic_id: "direct".to_string(),
+                reject_tests: None,
+                metadata: json!({}),
+            },
+        );
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Fanout,
+            Some("direct"),
+            None,
+        )
+        .expect("topic decision");
+
+        assert_eq!(decision.method, "propagated");
+        assert_eq!(decision.reason, "topic_unannounced");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn topic_delivery_uses_propagation_when_subscriber_has_no_announce() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-topic-unannounced-subscriber-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let destination = "13b9e446f104d2a38f7e793a94cb1b1d";
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state.subscribers.write().expect("subscribers").insert(
+            "unannounced-pixel".to_string(),
+            crate::SubscriberRecord {
+                subscriber_id: "unannounced-pixel".to_string(),
                 destination: destination.to_string(),
                 topic_id: "direct".to_string(),
                 reject_tests: None,
