@@ -10781,6 +10781,7 @@ fn direct_status_failure_should_retry_propagated(
     }
     let status = receipt_status.trim().to_ascii_lowercase();
     reticulumd_status_is_retryable_link_failure(status.as_str())
+        || (status.starts_with("failed") && status.contains("peer not announced"))
 }
 
 fn rem_auto_status_failure_is_retryable(status: &str) -> bool {
@@ -50756,6 +50757,74 @@ mod tests {
         .expect("generic decision");
         assert_eq!(decision.method, "propagated");
         assert_eq!(decision.reason, "direct_cooldown");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn reticulumd_direct_peer_not_announced_queues_generic_propagation_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-generic-status-peer-not-announced-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let generic_destination = "7f08e12b3f25f23e62f3a15288303c95";
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "pending-generic-peer-not-announced".to_string(),
+            topic_id: Some("direct".to_string()),
+            destination: Some(generic_destination.to_string()),
+            sender: "northbound".to_string(),
+            content: "pending generic direct".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "fanout_route".to_string(),
+            delivery_state: "sent".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "receipt_pending": true,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        crate::mark_reticulumd_status_delivery_failure(
+            &state,
+            "pending-generic-peer-not-announced",
+            "failed: peer not announced",
+        )
+        .expect("mark failure");
+
+        let messages = state.messages.read().expect("messages");
+        let stored = messages
+            .iter()
+            .find(|message| message.message_id == "pending-generic-peer-not-announced")
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(stored.delivery_method, "propagated");
+        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
+        assert_eq!(
+            stored.delivery_metadata["fallback_reason"],
+            "direct_status_failure"
+        );
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        drop(messages);
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            Some(generic_destination),
+        )
+        .expect("generic decision");
+        assert_eq!(decision.method, "propagated");
+        assert!(
+            matches!(decision.reason.as_str(), "direct_cooldown" | "no_fresh_presence"),
+            "unexpected propagation reason: {}",
+            decision.reason
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
