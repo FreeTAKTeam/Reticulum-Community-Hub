@@ -10161,6 +10161,7 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
             })
             .map(|message| {
                 (
+                    message.clone(),
                     message.message_id.clone(),
                     reticulumd_receipt_targets_for_message(message),
                 )
@@ -10172,7 +10173,7 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
     }
 
     let mut client = ReticulumdRpcClient::new(endpoint.as_str());
-    for (message_id, targets) in pending_messages {
+    for (message, message_id, targets) in pending_messages {
         if targets.is_empty() {
             continue;
         }
@@ -10224,6 +10225,27 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
                 .and_then(|target| target.status.as_deref())
                 .unwrap_or("sent");
             mark_reticulumd_status_sent(state, &message_id, receipt_status)?;
+        } else if statuses.len() == targets.len() {
+            if let Some(receipt_status) =
+                propagated_fanout_partial_success_status(&message, &statuses)
+            {
+                mark_reticulumd_status_sent(state, &message_id, receipt_status.as_str())?;
+            } else if let Some(failed) = statuses.iter().find_map(|target| {
+                target
+                    .status
+                    .as_deref()
+                    .filter(|status| terminal_reticulumd_failure_status(status))
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        target
+                            .sdk_snapshot
+                            .as_ref()
+                            .filter(|snapshot| sdk_status_failure_terminal(snapshot))
+                            .map(delivery_snapshot_receipt_status)
+                    })
+            }) {
+                mark_reticulumd_status_delivery_failure(state, &message_id, &failed)?;
+            }
         } else if let Some(failed) = statuses.iter().find_map(|target| {
             target
                 .status
@@ -10489,6 +10511,52 @@ fn sdk_status_failure_terminal(snapshot: &LxmfDeliverySnapshot) -> bool {
         )
 }
 
+fn reticulumd_receipt_target_success_terminal(target: &ReticulumdReceiptTarget) -> bool {
+    target.sdk_snapshot.as_ref().is_some_and(|snapshot| {
+        sdk_status_delivered_terminal(snapshot) || sdk_status_sent_terminal(snapshot)
+    }) || target.status.as_deref().is_some_and(|status| {
+        status.eq_ignore_ascii_case("delivered") || terminal_reticulumd_sent_status(status)
+    })
+}
+
+fn reticulumd_receipt_target_failure_terminal(target: &ReticulumdReceiptTarget) -> bool {
+    target
+        .status
+        .as_deref()
+        .is_some_and(terminal_reticulumd_failure_status)
+        || target
+            .sdk_snapshot
+            .as_ref()
+            .is_some_and(sdk_status_failure_terminal)
+}
+
+fn propagated_fanout_partial_success_status(
+    message: &OutboundMessageRecord,
+    statuses: &[ReticulumdReceiptTarget],
+) -> Option<String> {
+    if message.delivery_method != "propagated" || message.delivery_mode != DeliveryMode::Fanout {
+        return None;
+    }
+    let has_success = statuses
+        .iter()
+        .any(reticulumd_receipt_target_success_terminal);
+    let has_failure = statuses
+        .iter()
+        .any(reticulumd_receipt_target_failure_terminal);
+    let all_terminal = statuses.iter().all(|target| {
+        reticulumd_receipt_target_success_terminal(target)
+            || reticulumd_receipt_target_failure_terminal(target)
+    });
+    if !has_success || !has_failure || !all_terminal {
+        return None;
+    }
+    statuses
+        .iter()
+        .find(|target| reticulumd_receipt_target_success_terminal(target))
+        .and_then(|target| target.status.clone())
+        .or_else(|| Some("sent".to_string()))
+}
+
 fn terminal_reticulumd_failure_status(status: &str) -> bool {
     let normalized = status.trim().to_ascii_lowercase();
     normalized.starts_with("failed")
@@ -10599,22 +10667,49 @@ fn mark_reticulumd_status_sent(
         };
         message.delivery_state = delivery_success_state(message).to_string();
         clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
+        let mut metadata = json!({
+            "acked": false,
+            "dispatch_status": "accepted",
+            "receipt_pending": false,
+            "receipt_status": receipt_status,
+            "receipt_sent_ts_ms": now_ms,
+            "receipt_timeout": false,
+        });
         merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "acked": false,
-                "dispatch_status": "accepted",
-                "receipt_pending": false,
-                "receipt_status": receipt_status,
-                "receipt_sent_ts_ms": now_ms,
-                "receipt_timeout": false,
-            }),
+            &mut metadata,
+            propagated_fanout_partial_success_metadata(message),
         );
+        merge_delivery_metadata(&mut message.delivery_metadata, metadata);
         message.clone()
     };
     persist_outbound_message_row(state, &message)?;
     broadcast_message_event(state, &message);
     Ok(())
+}
+
+fn propagated_fanout_partial_success_metadata(message: &OutboundMessageRecord) -> Value {
+    if message.delivery_method != "propagated" || message.delivery_mode != DeliveryMode::Fanout {
+        return json!({});
+    }
+    let targets = reticulumd_receipt_targets_for_message(message);
+    let failed_destinations = targets
+        .iter()
+        .filter(|target| reticulumd_receipt_target_failure_terminal(target))
+        .filter_map(|target| normalize_identity_key(target.destination.as_str()))
+        .collect::<Vec<_>>();
+    let propagated_destinations = targets
+        .iter()
+        .filter(|target| reticulumd_receipt_target_success_terminal(target))
+        .filter_map(|target| normalize_identity_key(target.destination.as_str()))
+        .collect::<Vec<_>>();
+    if failed_destinations.is_empty() || propagated_destinations.is_empty() {
+        return json!({});
+    }
+    json!({
+        "partial_delivery": true,
+        "failed_destinations": failed_destinations,
+        "propagated_destinations": propagated_destinations,
+    })
 }
 
 fn mark_reticulumd_status_delivery_failure(
@@ -45877,6 +45972,102 @@ mod tests {
             targets
                 .iter()
                 .all(|target| target["sdk_delivery_state"] == "delivered")
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn propagated_fanout_partial_peer_not_announced_stays_propagated() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "message": {
+                    "message_id": "sdk-target-propagated",
+                    "state": "sent",
+                    "terminal": true,
+                    "last_updated_ms": 1_700_000_000_001_u64,
+                    "attempts": 0,
+                    "reason_code": null,
+                    "receipt_status": "sent: propagated resource"
+                }
+            }),
+            json!({
+                "message": {
+                    "message_id": "sdk-target-stale",
+                    "state": "failed",
+                    "terminal": true,
+                    "last_updated_ms": 1_700_000_000_002_u64,
+                    "attempts": 0,
+                    "reason_code": "peer_not_announced",
+                    "receipt_status": "failed: peer not announced"
+                }
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-fanout-partial-peer-not-announced-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "propagated-fanout-partial".to_string(),
+            topic_id: Some("direct".to_string()),
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "[topic:direct]\nhello".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "topic_unannounced".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 2,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-target-propagated",
+                        "destination": "live-destination",
+                        "status": "pending"
+                    },
+                    {
+                        "message_id": "sdk-target-stale",
+                        "destination": "stale-destination",
+                        "status": "pending"
+                    }
+                ],
+                "receipt_pending": false,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let stored = snapshot
+            .messages
+            .iter()
+            .find(|message| message.message_id == "propagated-fanout-partial")
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "propagated");
+        assert_eq!(stored.delivery_metadata["dispatch_status"], "accepted");
+        assert_eq!(
+            stored.delivery_metadata["receipt_status"],
+            "sent: propagated resource"
+        );
+        assert_eq!(stored.delivery_metadata["partial_delivery"], true);
+        assert_eq!(
+            stored.delivery_metadata["failed_destinations"],
+            json!(["stale-destination"])
         );
 
         let _ = std::fs::remove_file(db_path);
