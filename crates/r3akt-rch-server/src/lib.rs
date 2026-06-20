@@ -3895,14 +3895,33 @@ fn relay_reticulumd_inbound_topic_message(
         .into_iter()
         .filter(|destination| destination != &source)
         .collect::<Vec<_>>();
-    let default_direct_relay =
-        relay_destinations.is_empty() && topic_id.trim().eq_ignore_ascii_case("direct");
-    if default_direct_relay {
-        relay_destinations = active_generic_lxmf_relay_destinations(state, source.as_str())?;
+    let is_direct_topic = topic_id.trim().eq_ignore_ascii_case("direct");
+    let default_direct_relay = relay_destinations.is_empty() && is_direct_topic;
+    let mut direct_active_relay = false;
+    if is_direct_topic {
+        let active_destinations = active_generic_lxmf_relay_destinations(state, source.as_str())?;
+        if !active_destinations.is_empty() {
+            relay_destinations.retain(|destination| {
+                active_destinations
+                    .iter()
+                    .any(|active| active == destination)
+            });
+            direct_active_relay = true;
+        }
+        for destination in active_destinations {
+            if !relay_destinations
+                .iter()
+                .any(|existing| existing == &destination)
+            {
+                relay_destinations.push(destination);
+            }
+        }
     }
     if relay_destinations.is_empty() {
         return Ok(None);
     }
+    relay_destinations.sort();
+    relay_destinations.dedup();
     let relay = record_outbound_message_with_metadata(
         state,
         &format!("[topic:{topic_id}]\n{}", message.body),
@@ -3913,11 +3932,12 @@ fn relay_reticulumd_inbound_topic_message(
         json!({
             "reticulumd_inbound_relay": true,
             "reticulumd_inbound_default_direct_relay": default_direct_relay,
+            "reticulumd_inbound_direct_active_relay": direct_active_relay,
             "inbound_message_id": inbound_record.message_id,
             "source": source.clone(),
             "direction": "outbound",
             "exclude_destinations": [source.clone()],
-            "target_destinations": if default_direct_relay { json!(relay_destinations.clone()) } else { Value::Null },
+            "target_destinations": if is_direct_topic { json!(relay_destinations.clone()) } else { Value::Null },
             "content_type": message.content_type,
             "correlation_id": message.correlation_id,
         }),
@@ -26416,6 +26436,116 @@ mod tests {
             json!(["peer-alpha"])
         );
         drop(messages);
+
+        std::fs::remove_file(db_path).expect("cleanup db");
+    }
+
+    #[tokio::test]
+    async fn reticulumd_inbound_direct_topic_prunes_stale_subscribers_when_active_clients_exist() {
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new("peer-alpha"),
+            r3akt_protocol::Destination::Topic(r3akt_protocol::Topic::new("direct")),
+            r3akt_protocol::Topic::new("direct"),
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "phone to active phone".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: Some("direct-relay-active-1".to_string()),
+                attachments: Vec::new(),
+            }),
+        );
+        let payload_b64 = BASE64_STANDARD.encode(envelope.encode_msgpack().expect("msgpack"));
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "messages": [{
+                    "id": "lxmf-inbound-direct-active-relay-1",
+                    "destination": "local-destination",
+                    "fields": {
+                        "r3akt_payload_b64": payload_b64
+                    }
+                }]
+            }),
+            json!({
+                "message_id": "direct-active-relay-accepted"
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-reticulumd-inbound-direct-active-relay-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let now = crate::unix_now_ms();
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.subscribers = vec![r3akt_rch_core::SubscriberRecord {
+            node_id: "peer-stale".to_string(),
+            topic_id: "direct".to_string(),
+            reject_tests: None,
+            metadata: json!({ "source": "old_phone_hil" }),
+            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+        }];
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: "peer-stale".to_string(),
+            announced_identity_hash: None,
+            display_name: Some("stale phone".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        drop(store);
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint.clone(), "local-destination");
+        state.clients.write().expect("clients").insert(
+            "peer-bravo".to_string(),
+            crate::ClientRecord::new("peer-bravo".to_string(), now),
+        );
+        let adapter = ReticulumdRpcLxmfRsAdapter::new(
+            "local-destination",
+            ReticulumdRpcTransport::new(endpoint),
+        );
+        let mut transport = LxmfRsTransport::new(adapter);
+
+        let received = crate::process_reticulumd_inbound_worker_tick(
+            &state,
+            &mut transport,
+            Duration::from_millis(50),
+        )
+        .await
+        .expect("inbound tick")
+        .expect("envelope");
+
+        assert_eq!(received.source.to_string(), "peer-alpha");
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "list_messages");
+        assert_eq!(requests[1].method, "send_message_v2");
+        let params = requests[1].params.as_ref().expect("relay params");
+        assert_eq!(params["destination"], "peer-bravo");
+        assert_ne!(params["destination"], "peer-stale");
+
+        let messages = state.messages.read().expect("messages");
+        let relay = messages
+            .iter()
+            .find(|message| {
+                message
+                    .delivery_metadata
+                    .get("reticulumd_inbound_direct_active_relay")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+            .expect("active direct relay");
+        assert_eq!(
+            relay.delivery_metadata["target_destinations"],
+            json!(["peer-bravo"])
+        );
+        assert_eq!(
+            relay.delivery_metadata["reticulumd_inbound_default_direct_relay"],
+            false
+        );
 
         std::fs::remove_file(db_path).expect("cleanup db");
     }
