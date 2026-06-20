@@ -11191,14 +11191,6 @@ fn reticulumd_status_poll_candidate(message: &OutboundMessageRecord) -> bool {
     ) {
         return false;
     }
-    if message
-        .delivery_metadata
-        .get("delivery_receipt_required")
-        .and_then(Value::as_bool)
-        == Some(false)
-    {
-        return false;
-    }
     if delivery_receipt_pending(message) {
         return true;
     }
@@ -45090,6 +45082,114 @@ mod tests {
             snapshot.messages[0].delivery_metadata["receipt_timeout"],
             false
         );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn status_poll_reconciles_fanout_targets_without_required_receipt() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "message": {
+                    "message_id": "sdk-target-a",
+                    "state": "delivered",
+                    "terminal": true,
+                    "last_updated_ms": 1_700_000_000_001_u64,
+                    "attempts": 0,
+                    "reason_code": null,
+                    "receipt_status": "delivered"
+                }
+            }),
+            json!({
+                "message": {
+                    "message_id": "sdk-target-b",
+                    "state": "delivered",
+                    "terminal": true,
+                    "last_updated_ms": 1_700_000_000_002_u64,
+                    "attempts": 0,
+                    "reason_code": null,
+                    "receipt_status": "delivered"
+                }
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-fanout-status-no-required-receipt-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message(
+            &state,
+            "fanout status poll",
+            Some("direct".to_string()),
+            None,
+            vec![],
+            true,
+        )
+        .expect("record message");
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "sent",
+            json!({
+                "dispatch_status": "accepted",
+                "delivery_receipt_required": false,
+                "reticulumd_dispatch_count": 2,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-target-a",
+                        "destination": "destination-a",
+                        "status": "pending"
+                    },
+                    {
+                        "message_id": "sdk-target-b",
+                        "destination": "destination-b",
+                        "status": "pending"
+                    }
+                ],
+                "receipt_pending": false,
+            }),
+        )
+        .expect("mark fanout pending statuses");
+        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "sdk_status_v2");
+        assert_eq!(
+            requests[0].params.as_ref().expect("params")["message_id"],
+            "sdk-target-a"
+        );
+        assert_eq!(requests[1].method, "sdk_status_v2");
+        assert_eq!(
+            requests[1].params.as_ref().expect("params")["message_id"],
+            "sdk-target-b"
+        );
+
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
+        assert_eq!(snapshot.messages[0].delivery_metadata["acked"], true);
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_pending"],
+            false
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_status"],
+            "delivered"
+        );
+        let targets = snapshot.messages[0].delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("targets");
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().all(|target| target["status"] == "delivered"));
+        assert!(targets
+            .iter()
+            .all(|target| target["sdk_delivery_state"] == "delivered"));
 
         let _ = std::fs::remove_file(db_path);
     }
