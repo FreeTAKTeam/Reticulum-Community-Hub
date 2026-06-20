@@ -10648,6 +10648,7 @@ fn mark_reticulumd_status_delivery_failure(
             let direct_fallback_destinations =
                 direct_status_failure_propagation_destinations(message, receipt_status);
             if !direct_fallback_destinations.is_empty() {
+                let delivered_destinations = delivered_reticulumd_receipt_destinations(message);
                 let attempts = outbound_attempts(message).saturating_add(1);
                 message.delivery_state = "queued".to_string();
                 message.delivery_method = "propagated".to_string();
@@ -10657,24 +10658,32 @@ fn mark_reticulumd_status_delivery_failure(
                     "direct_failure_fallback".to_string()
                 };
                 clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
-                merge_delivery_metadata(
-                    &mut message.delivery_metadata,
-                    json!({
-                        "acked": false,
-                        "attempts": attempts,
-                        "direct_failure_status": receipt_status,
-                        "direct_failed_at_ts_ms": now_ms,
-                        "dispatch_status": "queued",
-                        "error": receipt_status,
-                        "fallback_reason": "direct_status_failure",
-                        "receipt_pending": false,
-                        "receipt_status": receipt_status,
-                        "retry_reason": "direct_status_failure",
-                        "retry_scheduled": true,
-                        "next_attempt_at_ts_ms": now_ms,
-                        "target_destinations": direct_fallback_destinations,
-                    }),
-                );
+                let mut fallback_metadata = json!({
+                    "acked": false,
+                    "attempts": attempts,
+                    "direct_failure_status": receipt_status,
+                    "direct_failed_at_ts_ms": now_ms,
+                    "dispatch_status": "queued",
+                    "error": receipt_status,
+                    "fallback_reason": "direct_status_failure",
+                    "receipt_pending": false,
+                    "receipt_status": receipt_status,
+                    "retry_reason": "direct_status_failure",
+                    "retry_scheduled": true,
+                    "next_attempt_at_ts_ms": now_ms,
+                    "target_destinations": direct_fallback_destinations,
+                });
+                if !delivered_destinations.is_empty() {
+                    merge_delivery_metadata(
+                        &mut fallback_metadata,
+                        json!({
+                            "delivered_destinations": delivered_destinations.clone(),
+                            "exclude_destinations": delivered_destinations,
+                            "partial_delivery": true,
+                        }),
+                    );
+                }
+                merge_delivery_metadata(&mut message.delivery_metadata, fallback_metadata);
                 (message.clone(), true)
             } else {
                 message.delivery_state = "failed".to_string();
@@ -50936,6 +50945,101 @@ mod tests {
                 "stale direct metadata key should be cleared: {cleared_key}"
             );
         }
+        drop(messages);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn reticulumd_fanout_peer_not_announced_preserves_delivered_targets_for_propagation_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-fanout-partial-peer-not-announced-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let delivered_destination = "52118fa6f1240342cb730dabdf1d4ca1";
+        let unannounced_destination = "7f08e12b3f25f23e62f3a15288303c95";
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "pending-fanout-partial-peer-not-announced".to_string(),
+            topic_id: Some("direct".to_string()),
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "fanout partial direct".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "fanout_route".to_string(),
+            delivery_state: "sent".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 2,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-target-delivered",
+                        "destination": delivered_destination,
+                        "sdk_delivery_state": "delivered",
+                        "sdk_message_id": "sdk-target-delivered",
+                        "sdk_reason_code": null,
+                        "sdk_terminal": true,
+                        "status": "delivered"
+                    },
+                    {
+                        "message_id": "sdk-target-peer-not-announced",
+                        "destination": unannounced_destination,
+                        "sdk_delivery_state": "failed",
+                        "sdk_message_id": "sdk-target-peer-not-announced",
+                        "sdk_reason_code": "peer_not_announced",
+                        "sdk_terminal": true,
+                        "status": "failed: peer not announced"
+                    }
+                ],
+                "receipt_pending": true,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        crate::mark_reticulumd_status_delivery_failure(
+            &state,
+            "pending-fanout-partial-peer-not-announced",
+            "failed: peer not announced",
+        )
+        .expect("mark failure");
+
+        let messages = state.messages.read().expect("messages");
+        let stored = messages
+            .iter()
+            .find(|message| message.message_id == "pending-fanout-partial-peer-not-announced")
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(stored.delivery_method, "propagated");
+        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
+        assert_eq!(
+            stored.delivery_metadata["fallback_reason"],
+            "direct_status_failure"
+        );
+        assert_eq!(
+            stored.delivery_metadata["target_destinations"],
+            json!([unannounced_destination])
+        );
+        assert_eq!(
+            stored.delivery_metadata["exclude_destinations"],
+            json!([delivered_destination])
+        );
+        assert_eq!(
+            stored.delivery_metadata["delivered_destinations"],
+            json!([delivered_destination])
+        );
+        assert_eq!(stored.delivery_metadata["partial_delivery"], true);
+        assert!(
+            stored
+                .delivery_metadata
+                .get("reticulumd_receipt_targets")
+                .is_none()
+        );
         drop(messages);
 
         let _ = std::fs::remove_file(db_path);
