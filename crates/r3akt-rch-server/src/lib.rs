@@ -75,9 +75,9 @@ use r3akt_transport_rns::{
     LxmfDeliverySnapshot, LxmfDeliveryState, LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage,
     LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, announce_lxmf_zmq_identity,
     delivery_snapshot_from_status_result, delivery_snapshot_receipt_status,
-    list_reticulumd_announces, poll_lxmf_zmq_events, poll_reticulumd_events,
-    reticulumd_event_to_envelope, reticulumd_message_to_envelope, send_lxmf_zmq_outbound_batch,
-    send_lxmf_zmq_outbound_message,
+    enqueue_lxmf_zmq_outbound_batch, list_reticulumd_announces, poll_lxmf_zmq_events,
+    poll_reticulumd_events, reticulumd_event_to_envelope, reticulumd_message_to_envelope,
+    send_lxmf_zmq_outbound_batch, send_lxmf_zmq_outbound_message,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -12880,6 +12880,17 @@ fn record_outbound_message_with_metadata_mode(
         .get("fanout_channel")
         .and_then(Value::as_str)
         .is_some_and(is_rem_command_channel);
+    if is_rem_command
+        && delivery_decision.method != "propagated"
+        && destination
+            .as_deref()
+            .map(|identity| rem_command_destination_should_propagate(state, identity))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        delivery_decision.method = "propagated".to_string();
+        delivery_decision.reason = "no_fresh_presence".to_string();
+    }
     let effective_dispatch_mode = if is_rem_command {
         OutboundDispatchMode::Deferred
     } else {
@@ -13099,16 +13110,20 @@ fn dispatch_outbound_message(
                 correlation_id: message_id,
             });
         }
-        let results = send_lxmf_zmq_outbound_batch(
-            command_endpoint,
-            response_endpoint,
-            LxmfSdkOutboundBatch {
-                batch_id,
-                source: source.to_string(),
-                messages: batch_messages,
-            },
-        )
-        .map_err(|error| {
+        let batch = LxmfSdkOutboundBatch {
+            batch_id,
+            source: source.to_string(),
+            messages: batch_messages,
+        };
+        let batch_result = if should_enqueue_fanout_without_waiting_for_zmq_response(
+            message,
+            fanout_destination_count,
+        ) {
+            enqueue_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
+        } else {
+            send_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
+        };
+        let results = batch_result.map_err(|error| {
             let error = error.to_string();
             if message.delivery_method == "direct"
                 && direct_failure_error_should_trigger_cooldown(error.as_str())
@@ -13182,6 +13197,13 @@ fn dispatch_outbound_message(
         });
     }
     Ok(report)
+}
+
+fn should_enqueue_fanout_without_waiting_for_zmq_response(
+    message: &OutboundMessageRecord,
+    fanout_destination_count: usize,
+) -> bool {
+    fanout_destination_count > 1 && message.delivery_method == "propagated"
 }
 
 #[cfg(test)]
@@ -13472,7 +13494,7 @@ fn schedule_outbound_retry_after_failure(
     message: &OutboundMessageRecord,
     error_text: String,
 ) -> Result<Option<OutboundMessageRecord>, ApiError> {
-    if message.delivery_method == "propagated" {
+    if message.delivery_method == "propagated" && !is_rem_command_message(message) {
         return Ok(None);
     }
     let attempts = outbound_attempts(message).saturating_add(1);
@@ -13789,10 +13811,15 @@ fn outbound_delivery_decision(
             destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
         let has_live_connection =
             destination.is_some_and(|identity| has_live_client(state, identity, now));
-        if destination
-            .map(|identity| outbound_destination_has_stale_known_announce(state, identity))
+        let freshness_destinations = destination
+            .map(|identity| outbound_delivery_freshness_destinations(state, identity))
             .transpose()?
-            .unwrap_or(false)
+            .unwrap_or_default();
+        if destination.is_some()
+            && outbound_destination_has_stale_known_announce_for_strings(
+                state,
+                &freshness_destinations,
+            )?
         {
             return Ok(r3akt_rch_core::OutboundDeliveryDecision {
                 method: "propagated".to_string(),
@@ -13937,6 +13964,14 @@ fn outbound_destination_has_stale_known_announce(
     outbound_destination_has_stale_known_announce_for_any(state, &[destination])
 }
 
+fn outbound_destination_has_stale_known_announce_for_strings(
+    state: &AppState,
+    destinations: &[String],
+) -> Result<bool, ApiError> {
+    let destinations = destinations.iter().map(String::as_str).collect::<Vec<_>>();
+    outbound_destination_has_stale_known_announce_for_any(state, &destinations)
+}
+
 fn outbound_destination_has_stale_known_announce_for_any(
     state: &AppState,
     destinations: &[&str],
@@ -13994,6 +14029,20 @@ fn identity_announce_matches_destination(
             == Some(destination)
 }
 
+fn outbound_delivery_freshness_destinations(
+    state: &AppState,
+    destination: &str,
+) -> Result<Vec<String>, ApiError> {
+    let Some(destination) = normalize_identity_key(destination) else {
+        return Ok(Vec::new());
+    };
+    let mut destinations = vec![destination.clone()];
+    if let Some(alias) = chat_delivery_destination_aliases_for_state(state)?.get(&destination) {
+        destinations.push(alias.clone());
+    }
+    Ok(destinations)
+}
+
 fn mark_direct_delivery_failure(state: &AppState, identity: &str) -> Result<(), ApiError> {
     let mut policy = state
         .outbound_delivery_policy
@@ -14020,6 +14069,18 @@ fn latest_failed_direct_delivery_ts_ms(state: &AppState, identity: &str) -> Opti
         })
         .filter_map(failed_direct_delivery_observed_ts_ms)
         .max()
+}
+
+fn rem_command_destination_should_propagate(
+    state: &AppState,
+    destination: &str,
+) -> Result<bool, ApiError> {
+    if outbound_destination_has_stale_known_announce(state, destination)? {
+        return Ok(true);
+    }
+    let announce_last_seen = announce_last_seen_ts_ms(state, destination);
+    Ok(latest_failed_direct_delivery_ts_ms(state, destination)
+        .is_some_and(|failed_at| announce_last_seen.is_none_or(|seen_at| failed_at >= seen_at)))
 }
 
 fn failed_direct_delivery_observed_ts_ms(message: &OutboundMessageRecord) -> Option<i64> {
@@ -50954,6 +51015,119 @@ mod tests {
     }
 
     #[test]
+    fn rem_chat_uses_fresh_lxmf_alias_when_rem_app_announce_is_stale() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-rem-chat-stale-alias-fresh-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let rem_destination = "4bede2a6ecab26f234aac9bb894a441a";
+        let lxmf_destination = "1123c2623132bf9899ae5d3b28d9f79e";
+        snapshot.identity_announces = vec![
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: rem_destination.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: vec!["r3akt".to_string(), "name=poco".to_string()],
+                client_type: "rem".to_string(),
+                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+            },
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: lxmf_destination.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("Poco".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: vec!["lxmf".to_string()],
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now - 60_000,
+                last_seen_ts_ms: now,
+            },
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            None,
+            Some(rem_destination),
+        )
+        .expect("rem chat decision");
+
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "rem_direct");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn rem_command_preserves_propagation_when_rem_app_is_stale_even_with_fresh_chat_alias() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-rem-command-stale-app-alias-fresh-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let rem_destination = "4bede2a6ecab26f234aac9bb894a441a";
+        let lxmf_destination = "1123c2623132bf9899ae5d3b28d9f79e";
+        snapshot.identity_announces = vec![
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: rem_destination.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: vec!["r3akt".to_string(), "name=poco".to_string()],
+                client_type: "rem".to_string(),
+                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+            },
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: lxmf_destination.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("Poco".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: vec!["lxmf".to_string()],
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now - 60_000,
+                last_seen_ts_ms: now,
+            },
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message_with_metadata(
+            &state,
+            "Task Pixel fallback completed",
+            None,
+            Some(rem_destination.to_string()),
+            Vec::new(),
+            false,
+            json!({
+                "fanout_channel": "rem_checklist_command",
+                "lxmf_fields": { crate::FIELD_COMMANDS.to_string(): [{
+                    "command_type": "checklist.task.status.set",
+                    "args": {
+                        "checklist_uid": "checklist-poco",
+                        "task_uid": "task-poco",
+                        "user_status": "COMPLETE"
+                    }
+                }] }
+            }),
+        )
+        .expect("record rem command message");
+
+        assert_eq!(message.delivery_method, "propagated");
+        assert_eq!(message.delivery_policy_reason, "no_fresh_presence");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
     fn targeted_delivery_uses_propagation_for_stale_known_lxmf_announce() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-stale-known-target-propagation-{}.db",
@@ -52097,6 +52271,61 @@ mod tests {
     }
 
     #[test]
+    fn propagated_rem_command_send_error_uses_rem_retry_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-rem-command-send-error-retry-{}.db",
+            Uuid::new_v4()
+        ));
+        let destination = "6521979f1165965b24731061ef4a6906";
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-rem-send-error".to_string(),
+            topic_id: None,
+            destination: Some(destination.to_string()),
+            sender: "northbound".to_string(),
+            content: "Task Pixel fallback completed".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "no_fresh_presence".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "fanout_channel": "rem_checklist_command",
+                "lxmf_fields": { crate::FIELD_COMMANDS.to_string(): [{
+                    "command_type": "checklist.task.status.set",
+                    "args": {
+                        "checklist_uid": "checklist-pixel",
+                        "task_uid": "task-pixel",
+                        "user_status": "COMPLETE"
+                    }
+                }] }
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &message,
+            "LXMF-rs ZeroMQ SDK request timed out waiting for correlated response".to_string(),
+        )
+        .expect("schedule retry")
+        .expect("propagated REM command should retry");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(retry.delivery_metadata["attempts"], json!(1));
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
     fn next_rem_command_attempt_uses_global_queue_spacing() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-command-global-spacing-{}.db",
@@ -52372,6 +52601,34 @@ mod tests {
                 .count(),
             100
         );
+    }
+
+    #[test]
+    fn propagated_fanout_enqueues_zmq_batch_without_waiting_for_response() {
+        let now = crate::unix_now_ms();
+        let propagated = crate::OutboundMessageRecord {
+            message_id: "propagated-fanout".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "propagated fanout".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_unannounced".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        let direct = crate::OutboundMessageRecord {
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "broadcast_direct".to_string(),
+            ..propagated.clone()
+        };
+
+        assert!(crate::should_enqueue_fanout_without_waiting_for_zmq_response(&propagated, 2));
+        assert!(!crate::should_enqueue_fanout_without_waiting_for_zmq_response(&propagated, 1));
+        assert!(!crate::should_enqueue_fanout_without_waiting_for_zmq_response(&direct, 2));
     }
 
     #[tokio::test]

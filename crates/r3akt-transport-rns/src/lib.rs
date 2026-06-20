@@ -645,6 +645,15 @@ pub fn send_lxmf_zmq_outbound_batch(
     send_lxmf_zmq_outbound_batch_via_actor(&config, batch)
 }
 
+pub fn enqueue_lxmf_zmq_outbound_batch(
+    command_endpoint: impl Into<String>,
+    response_endpoint: impl Into<String>,
+    batch: LxmfSdkOutboundBatch,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    let config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
+    enqueue_lxmf_zmq_outbound_batch_via_actor(&config, batch)
+}
+
 pub fn lxmf_zmq_delivery_status(
     command_endpoint: impl Into<String>,
     response_endpoint: impl Into<String>,
@@ -973,6 +982,7 @@ fn send_lxmf_zmq_outbound_message_direct(
 enum ZmqSdkActorPayload {
     Single(LxmfSdkOutboundMessage),
     Batch(LxmfSdkOutboundBatch),
+    EnqueueBatch(LxmfSdkOutboundBatch),
     Status(String),
     Announce,
     PollEvents { cursor: Option<String>, max: usize },
@@ -1088,6 +1098,41 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
                 "LXMF-rs ZeroMQ SDK actor returned non-batch response".to_string(),
             )),
         })
+}
+
+fn enqueue_lxmf_zmq_outbound_batch_via_actor(
+    config: &ZmqPipelineBackendConfig,
+    batch: LxmfSdkOutboundBatch,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    if batch.messages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let expected_results = batch
+        .messages
+        .iter()
+        .map(|message| LxmfSdkOutboundBatchResult {
+            id: message.correlation_id.clone(),
+            message_id: message.correlation_id.clone(),
+            destination: message.destination.clone(),
+        })
+        .collect::<Vec<_>>();
+    let sender = zmq_sdk_actor_sender(config)?;
+    let (response_tx, response_rx) = mpsc::channel();
+    drop(response_rx);
+    sender
+        .try_send(ZmqSdkActorRequest {
+            payload: ZmqSdkActorPayload::EnqueueBatch(batch),
+            response: response_tx,
+        })
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
+                "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
+            )),
+            mpsc::TrySendError::Disconnected(_) => {
+                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+            }
+        })?;
+    Ok(expected_results)
 }
 
 fn lxmf_zmq_delivery_status_via_actor(
@@ -1362,6 +1407,11 @@ async fn send_lxmf_zmq_actor_request(
         ZmqSdkActorPayload::Batch(batch) => send_lxmf_zmq_actor_batch(session, config, batch)
             .await
             .map(ZmqSdkActorResponse::Batch),
+        ZmqSdkActorPayload::EnqueueBatch(batch) => {
+            send_lxmf_zmq_actor_enqueue_batch(session, config, batch)
+                .await
+                .map(ZmqSdkActorResponse::Batch)
+        }
         ZmqSdkActorPayload::Status(message_id) => {
             send_lxmf_zmq_actor_status(session, config, &message_id)
                 .await
@@ -1470,6 +1520,46 @@ async fn send_lxmf_zmq_actor_batch(
         });
     }
     Ok(output)
+}
+
+async fn send_lxmf_zmq_actor_enqueue_batch(
+    session: &mut ZmqSdkActorSession,
+    config: &ZmqPipelineBackendConfig,
+    batch: LxmfSdkOutboundBatch,
+) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+    let expected_results = batch
+        .messages
+        .iter()
+        .map(|message| LxmfSdkOutboundBatchResult {
+            id: message.correlation_id.clone(),
+            message_id: message.correlation_id.clone(),
+            destination: message.destination.clone(),
+        })
+        .collect::<Vec<_>>();
+    let request_id = session.next_request_id;
+    session.next_request_id = session.next_request_id.saturating_add(1);
+    let rpc_request = ReticulumdRpcRequest {
+        id: request_id,
+        method: "sdk_send_batch_v2".to_string(),
+        params: Some(lxmf_sdk_outbound_batch_params(batch)),
+    };
+    let payload =
+        encode_frame(&rpc_request).map_err(|error| TransportError::Send(error.to_string()))?;
+    let envelope = ZmqRpcEnvelope::request(
+        session.session_id.clone(),
+        request_id,
+        config.response_endpoint.clone(),
+        payload,
+        None,
+    );
+    let encoded = zmq::encode_envelope(&envelope)
+        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ envelope: {error}")))?;
+    session
+        .command
+        .send(ZmqMessage::from(encoded))
+        .await
+        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ command: {error}")))?;
+    Ok(expected_results)
 }
 
 async fn send_lxmf_zmq_actor_status(
