@@ -14069,7 +14069,7 @@ fn outbound_route_has_unannounced_destinations(
                     .filter_map(|destination| normalize_identity_key(destination))
                     .collect::<Vec<_>>();
                 if !destinations.is_empty() {
-                    return outbound_destinations_have_unannounced_route(
+                    return outbound_explicit_targets_have_unannounced_route(
                         state,
                         delivery_mode,
                         destinations,
@@ -14110,6 +14110,33 @@ fn outbound_destinations_have_unannounced_route(
             &[destination.as_str(), delivery_destination.as_str()],
         )
         .unwrap_or(false)
+    }))
+}
+
+fn outbound_explicit_targets_have_unannounced_route(
+    state: &AppState,
+    delivery_mode: DeliveryMode,
+    destinations: Vec<String>,
+) -> Result<bool, ApiError> {
+    if destinations.is_empty() || state.sqlite_path.is_none() {
+        return Ok(false);
+    }
+    let now = unix_now_ms();
+    let routing_context = outbound_destination_routing_context(state)?;
+    Ok(destinations.into_iter().any(|destination| {
+        let delivery_destination = outbound_destination_for_message_with_context_for_mode(
+            delivery_mode,
+            &destination,
+            &routing_context,
+            false,
+        );
+        let candidates = [destination.as_str(), delivery_destination.as_str()];
+        let has_fresh_announce =
+            outbound_destination_has_fresh_announce_for_any(state, &candidates).unwrap_or(false);
+        let has_live_presence = candidates
+            .iter()
+            .any(|candidate| has_live_client(state, candidate, now));
+        !has_fresh_announce && !has_live_presence
     }))
 }
 
@@ -26616,7 +26643,7 @@ mod tests {
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].method, "list_messages");
-        assert_eq!(requests[1].method, "send_message_v2");
+        assert_eq!(requests[1].method, "sdk_send_v2");
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["source"], "local-destination");
         assert_eq!(params["destination"], "peer-charlie");
@@ -26719,7 +26746,7 @@ mod tests {
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].method, "list_messages");
-        assert_eq!(requests[1].method, "send_message_v2");
+        assert_eq!(requests[1].method, "sdk_send_v2");
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["destination"], "peer-bravo");
         assert_eq!(params["content"], "[topic:direct]\nphone to phone");
@@ -26743,6 +26770,8 @@ mod tests {
             relay.delivery_metadata["exclude_destinations"],
             json!(["peer-alpha"])
         );
+        assert_eq!(relay.delivery_method, "direct");
+        assert_eq!(relay.delivery_policy_reason, "topic_direct");
         drop(messages);
 
         std::fs::remove_file(db_path).expect("cleanup db");
@@ -26830,7 +26859,7 @@ mod tests {
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].method, "list_messages");
-        assert_eq!(requests[1].method, "send_message_v2");
+        assert_eq!(requests[1].method, "sdk_send_v2");
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["destination"], "peer-bravo");
         assert_ne!(params["destination"], "peer-stale");
@@ -26854,6 +26883,8 @@ mod tests {
             relay.delivery_metadata["reticulumd_inbound_default_direct_relay"],
             false
         );
+        assert_eq!(relay.delivery_method, "direct");
+        assert_eq!(relay.delivery_policy_reason, "topic_direct");
 
         std::fs::remove_file(db_path).expect("cleanup db");
     }
