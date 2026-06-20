@@ -10837,7 +10837,9 @@ fn direct_status_failure_propagation_destinations(
     message: &OutboundMessageRecord,
     receipt_status: &str,
 ) -> Vec<String> {
-    if message.delivery_method != "direct" || message.destination.is_none() {
+    if !matches!(message.delivery_method.as_str(), "auto" | "direct")
+        || message.destination.is_none()
+    {
         if message.delivery_method != "direct"
             || message.delivery_mode != DeliveryMode::Fanout
             || is_rem_command_message(message)
@@ -51652,6 +51654,71 @@ mod tests {
         .expect("generic decision");
         assert_eq!(decision.method, "propagated");
         assert_eq!(decision.reason, "direct_cooldown");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn reticulumd_auto_direct_status_failure_queues_generic_propagation_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-generic-auto-status-direct-cooldown-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let generic_destination = "fb4c70e20cfac047b899ca2f3671b50a";
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: generic_destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("Pixel".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: vec!["pixel".to_string()],
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - 60_000,
+            last_seen_ts_ms: now,
+        }];
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "pending-generic-auto-direct".to_string(),
+            topic_id: None,
+            destination: Some(generic_destination.to_string()),
+            sender: "northbound".to_string(),
+            content: "pending generic auto direct".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "auto".to_string(),
+            delivery_policy_reason: "fresh_presence".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "receipt_pending": true,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        crate::mark_reticulumd_status_delivery_failure(
+            &state,
+            "pending-generic-auto-direct",
+            "failed: link activation timed out",
+        )
+        .expect("mark failure");
+
+        let messages = state.messages.read().expect("messages");
+        let stored = messages
+            .iter()
+            .find(|message| message.message_id == "pending-generic-auto-direct")
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(stored.delivery_method, "propagated");
+        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
+        assert_eq!(
+            stored.delivery_metadata["fallback_reason"],
+            "direct_status_failure"
+        );
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        drop(messages);
 
         let _ = std::fs::remove_file(db_path);
     }
