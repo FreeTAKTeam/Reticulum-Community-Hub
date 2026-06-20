@@ -3943,14 +3943,11 @@ fn active_generic_lxmf_relay_destinations(
 ) -> Result<Vec<String>, ApiError> {
     let now = unix_now_ms();
     let source = normalize_identity_key(source);
-    let mut destinations = client_records_for_state(state)?
-        .into_iter()
-        .filter(|client| {
-            client
-                .client_type
-                .trim()
-                .eq_ignore_ascii_case("generic_lxmf")
-        })
+    let mut destinations = state
+        .clients
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .values()
         .filter_map(|client| {
             let identity = normalize_identity_key(client.identity.as_str())?;
             if source.as_deref() == Some(identity.as_str()) {
