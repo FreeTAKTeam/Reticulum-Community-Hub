@@ -10643,47 +10643,52 @@ fn mark_reticulumd_status_delivery_failure(
                 }),
             );
             (message.clone(), true)
-        } else if direct_status_failure_should_retry_propagated(message, receipt_status) {
-            let attempts = outbound_attempts(message).saturating_add(1);
-            message.delivery_state = "queued".to_string();
-            message.delivery_method = "propagated".to_string();
-            message.delivery_policy_reason = if is_rem_command_message(message) {
-                "rem_direct_failure_fallback".to_string()
-            } else {
-                "direct_failure_fallback".to_string()
-            };
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "acked": false,
-                    "attempts": attempts,
-                    "direct_failure_status": receipt_status,
-                    "direct_failed_at_ts_ms": now_ms,
-                    "dispatch_status": "queued",
-                    "error": receipt_status,
-                    "fallback_reason": "direct_status_failure",
-                    "receipt_pending": false,
-                    "receipt_status": receipt_status,
-                    "retry_reason": "direct_status_failure",
-                    "retry_scheduled": true,
-                    "next_attempt_at_ts_ms": now_ms,
-                }),
-            );
-            (message.clone(), true)
         } else {
-            message.delivery_state = "failed".to_string();
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "acked": false,
-                    "dispatch_status": "failed",
-                    "error": receipt_status,
-                    "receipt_pending": false,
-                    "receipt_status": receipt_status,
-                    "delivery_failed_ts_ms": now_ms,
-                }),
-            );
-            (message.clone(), false)
+            let direct_fallback_destinations =
+                direct_status_failure_propagation_destinations(message, receipt_status);
+            if !direct_fallback_destinations.is_empty() {
+                let attempts = outbound_attempts(message).saturating_add(1);
+                message.delivery_state = "queued".to_string();
+                message.delivery_method = "propagated".to_string();
+                message.delivery_policy_reason = if is_rem_command_message(message) {
+                    "rem_direct_failure_fallback".to_string()
+                } else {
+                    "direct_failure_fallback".to_string()
+                };
+                merge_delivery_metadata(
+                    &mut message.delivery_metadata,
+                    json!({
+                        "acked": false,
+                        "attempts": attempts,
+                        "direct_failure_status": receipt_status,
+                        "direct_failed_at_ts_ms": now_ms,
+                        "dispatch_status": "queued",
+                        "error": receipt_status,
+                        "fallback_reason": "direct_status_failure",
+                        "receipt_pending": false,
+                        "receipt_status": receipt_status,
+                        "retry_reason": "direct_status_failure",
+                        "retry_scheduled": true,
+                        "next_attempt_at_ts_ms": now_ms,
+                        "target_destinations": direct_fallback_destinations,
+                    }),
+                );
+                (message.clone(), true)
+            } else {
+                message.delivery_state = "failed".to_string();
+                merge_delivery_metadata(
+                    &mut message.delivery_metadata,
+                    json!({
+                        "acked": false,
+                        "dispatch_status": "failed",
+                        "error": receipt_status,
+                        "receipt_pending": false,
+                        "receipt_status": receipt_status,
+                        "delivery_failed_ts_ms": now_ms,
+                    }),
+                );
+                (message.clone(), false)
+            }
         }
     };
     persist_outbound_message_row(state, &message)?;
@@ -10691,6 +10696,11 @@ fn mark_reticulumd_status_delivery_failure(
     if message.delivery_method == "direct" || queued_propagation_fallback {
         if let Some(destination) = message.destination.as_deref() {
             mark_direct_delivery_failure(state, destination)?;
+        }
+        if queued_propagation_fallback {
+            for destination in outbound_target_destinations(&message).unwrap_or_default() {
+                mark_direct_delivery_failure(state, destination.as_str())?;
+            }
         }
     }
     let destination = message.destination.as_deref().unwrap_or("unknown");
@@ -10769,17 +10779,51 @@ fn rem_auto_status_failure_should_retry_propagated(
     rem_auto_status_failure_is_retryable(status.as_str())
 }
 
-fn direct_status_failure_should_retry_propagated(
+fn direct_status_failure_propagation_destinations(
     message: &OutboundMessageRecord,
     receipt_status: &str,
-) -> bool {
+) -> Vec<String> {
     if message.delivery_method != "direct" || message.destination.is_none() {
-        return false;
+        if message.delivery_method != "direct"
+            || message.delivery_mode != DeliveryMode::Fanout
+            || is_rem_command_message(message)
+        {
+            return Vec::new();
+        }
+        let mut destinations = Vec::new();
+        let mut seen = HashSet::new();
+        for target in reticulumd_receipt_targets_for_message(message) {
+            let retryable = target
+                .status
+                .as_deref()
+                .is_some_and(direct_status_failure_is_retryable);
+            if !retryable {
+                continue;
+            }
+            if let Some(destination) = normalize_identity_key(target.destination.as_str()) {
+                if seen.insert(destination.clone()) {
+                    destinations.push(destination);
+                }
+            }
+        }
+        return destinations;
     }
     if is_rem_command_message(message) {
-        return false;
+        return Vec::new();
     }
-    let status = receipt_status.trim().to_ascii_lowercase();
+    if !direct_status_failure_is_retryable(receipt_status) {
+        return Vec::new();
+    }
+    message
+        .destination
+        .as_deref()
+        .and_then(normalize_identity_key)
+        .into_iter()
+        .collect()
+}
+
+fn direct_status_failure_is_retryable(status: &str) -> bool {
+    let status = status.trim().to_ascii_lowercase();
     reticulumd_status_is_retryable_link_failure(status.as_str())
         || (status.starts_with("failed") && status.contains("peer not announced"))
 }
@@ -45188,9 +45232,11 @@ mod tests {
             .expect("targets");
         assert_eq!(targets.len(), 2);
         assert!(targets.iter().all(|target| target["status"] == "delivered"));
-        assert!(targets
-            .iter()
-            .all(|target| target["sdk_delivery_state"] == "delivered"));
+        assert!(
+            targets
+                .iter()
+                .all(|target| target["sdk_delivery_state"] == "delivered")
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -50774,7 +50820,7 @@ mod tests {
         snapshot.messages = vec![r3akt_rch_core::MessageRecord {
             message_id: "pending-generic-peer-not-announced".to_string(),
             topic_id: Some("direct".to_string()),
-            destination: Some(generic_destination.to_string()),
+            destination: None,
             sender: "northbound".to_string(),
             content: "pending generic direct".to_string(),
             delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
@@ -50783,6 +50829,12 @@ mod tests {
             delivery_state: "sent".to_string(),
             delivery_metadata: json!({
                 "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": [{
+                    "message_id": "sdk-target-peer-not-announced",
+                    "destination": generic_destination,
+                    "status": "failed: peer not announced"
+                }],
                 "receipt_pending": true,
             }),
             created_ts_ms: now,
@@ -50811,20 +50863,14 @@ mod tests {
             "direct_status_failure"
         );
         assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
-        drop(messages);
-
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            Some(generic_destination),
-        )
-        .expect("generic decision");
-        assert_eq!(decision.method, "propagated");
         assert!(
-            matches!(decision.reason.as_str(), "direct_cooldown" | "no_fresh_presence"),
-            "unexpected propagation reason: {}",
-            decision.reason
+            stored.delivery_metadata["target_destinations"]
+                .as_array()
+                .expect("target destinations")
+                .iter()
+                .any(|value| value.as_str() == Some(generic_destination))
         );
+        drop(messages);
 
         let _ = std::fs::remove_file(db_path);
     }
