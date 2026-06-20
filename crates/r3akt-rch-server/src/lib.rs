@@ -10647,7 +10647,21 @@ fn mark_reticulumd_status_delivery_failure(
         } else {
             let direct_fallback_destinations =
                 direct_status_failure_propagation_destinations(message, receipt_status);
-            if !direct_fallback_destinations.is_empty() {
+            if direct_fallback_destinations.is_empty() {
+                message.delivery_state = "failed".to_string();
+                merge_delivery_metadata(
+                    &mut message.delivery_metadata,
+                    json!({
+                        "acked": false,
+                        "dispatch_status": "failed",
+                        "error": receipt_status,
+                        "receipt_pending": false,
+                        "receipt_status": receipt_status,
+                        "delivery_failed_ts_ms": now_ms,
+                    }),
+                );
+                (message.clone(), false)
+            } else {
                 let delivered_destinations = delivered_reticulumd_receipt_destinations(message);
                 let attempts = outbound_attempts(message).saturating_add(1);
                 message.delivery_state = "queued".to_string();
@@ -10685,20 +10699,6 @@ fn mark_reticulumd_status_delivery_failure(
                 }
                 merge_delivery_metadata(&mut message.delivery_metadata, fallback_metadata);
                 (message.clone(), true)
-            } else {
-                message.delivery_state = "failed".to_string();
-                merge_delivery_metadata(
-                    &mut message.delivery_metadata,
-                    json!({
-                        "acked": false,
-                        "dispatch_status": "failed",
-                        "error": receipt_status,
-                        "receipt_pending": false,
-                        "receipt_status": receipt_status,
-                        "delivery_failed_ts_ms": now_ms,
-                    }),
-                );
-                (message.clone(), false)
             }
         }
     };
