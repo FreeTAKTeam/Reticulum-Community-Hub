@@ -13535,6 +13535,9 @@ fn update_outbound_delivery_state(
         return Ok(());
     };
     message.delivery_state = delivery_state.to_string();
+    if delivery_state_clears_error_metadata(delivery_state) {
+        clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
+    }
     merge_delivery_metadata(&mut message.delivery_metadata, delivery_metadata);
     let message = message.clone();
     drop(messages);
@@ -13563,6 +13566,10 @@ fn clear_success_superseded_delivery_metadata(metadata: &mut Value) {
     object.remove("dispatch_timed_out_at_ts_ms");
     object.remove("error");
     object.remove("retry_reason");
+}
+
+fn delivery_state_clears_error_metadata(delivery_state: &str) -> bool {
+    matches!(delivery_state, "sent" | "delivered" | "propagated")
 }
 
 fn outbound_delivery_decision(
@@ -47305,6 +47312,80 @@ mod tests {
         assert_eq!(updated.delivery_metadata["dispatch_status"], "accepted");
         assert_eq!(updated.delivery_metadata["receipt_status"], "delivered");
         assert_eq!(updated.delivery_metadata["acked"], true);
+        assert!(updated.delivery_metadata.get("dispatch_timeout").is_none());
+        assert!(
+            updated
+                .delivery_metadata
+                .get("dispatch_timed_out_at_ts_ms")
+                .is_none()
+        );
+        assert!(updated.delivery_metadata.get("error").is_none());
+        assert!(updated.delivery_metadata.get("retry_reason").is_none());
+        drop(messages);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn successful_dispatch_clears_stale_dispatch_timeout_metadata() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-timeout-cleared-by-dispatch-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let destination = "target-destination";
+        state
+            .outbound_delivery_policy
+            .write()
+            .expect("policy")
+            .mark_presence(destination, crate::unix_now_ms());
+        let message = crate::record_outbound_message(
+            &state,
+            "late successful dispatch",
+            None,
+            Some(destination.to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        let now_ms = crate::unix_now_ms();
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 1,
+                "max_attempts": 2,
+                "dispatch_status": "queued",
+                "dispatch_timeout": true,
+                "dispatch_timed_out_at_ts_ms": now_ms - 1_000,
+                "error": "sqlite operation failed: database is locked",
+                "retry_reason": "send_error",
+                "retry_scheduled": true,
+            }),
+        )
+        .expect("mark stale dispatch metadata");
+
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "sent",
+            json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 1,
+                "receipt_pending": false,
+            }),
+        )
+        .expect("mark successful dispatch");
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "sent");
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "accepted");
+        assert_eq!(updated.delivery_metadata["reticulumd_dispatch_count"], 1);
         assert!(updated.delivery_metadata.get("dispatch_timeout").is_none());
         assert!(
             updated
