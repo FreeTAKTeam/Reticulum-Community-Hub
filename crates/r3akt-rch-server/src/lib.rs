@@ -914,6 +914,14 @@ impl AppState {
             .write()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         if let Some(peer_key) = telemetry_identity_key(&record.peer_destination) {
+            if let Some(existing) = records.iter().find(|existing| {
+                telemetry_identity_key(&existing.peer_destination)
+                    .is_some_and(|existing_key| existing_key == peer_key)
+            }) {
+                if existing.timestamp_s > record.timestamp_s {
+                    return Ok(existing.clone());
+                }
+            }
             records.retain(|existing| {
                 telemetry_identity_key(&existing.peer_destination)
                     .is_none_or(|existing_key| existing_key != peer_key)
@@ -25337,6 +25345,7 @@ mod tests {
         ReticulumdEventRecord, ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport,
         poll_lxmf_zmq_events, send_lxmf_zmq_outbound_message,
     };
+    use rusqlite::Connection;
     use serde::Serialize;
     use serde_json::{Value, json};
     use sha2::{Digest, Sha256};
@@ -55017,6 +55026,11 @@ mod tests {
         state
             .record_telemetry("peer-a", json!({"battery":{"percent": 95}}), 12, None)
             .expect("record latest telemetry");
+        let stale = state
+            .record_telemetry("peer-a", json!({"battery":{"percent": 10}}), 9, None)
+            .expect("ignore stale telemetry");
+        assert_eq!(stale.timestamp_s, 12);
+        assert_eq!(stale.telemetry["battery"]["percent"], 95);
 
         let records = state.telemetry_records.read().expect("telemetry records");
         assert_eq!(records.len(), 2);
@@ -55027,6 +55041,16 @@ mod tests {
         assert_eq!(peer_a.timestamp_s, 12);
         assert_eq!(peer_a.telemetry["battery"]["percent"], 95);
         drop(records);
+
+        let connection = Connection::open(&db_path).expect("sqlite connection");
+        let peer_a_rows: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM rch_telemetry_records WHERE peer_destination = 'peer-a'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("peer-a row count");
+        assert_eq!(peer_a_rows, 1);
 
         let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
         let restored_records = restored
