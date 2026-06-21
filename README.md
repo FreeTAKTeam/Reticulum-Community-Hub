@@ -169,8 +169,8 @@ Crates:
 Found at `C:\Users\broth\Documents\work\ATAK\src\LXMF-rs`, remote
 `https://github.com/FreeTAKTeam/LXMF-rs`.
 
-Current Rust RCH verification targets the LXMF-rs `v0.5.0` release commit
-`2a74b84b50a7ac1cde16eb1e3b3380bc358231c1`. The sibling dependency packages
+Current Rust RCH verification targets the LXMF-rs `v0.5.1` release commit
+`81acffc1409a760aeb9d7b09dc9a76b4be304a59`. The sibling dependency packages
 resolved by `r3akt-transport-rns` are `lxmf-wire` `0.2.0`, `lxmf-sdk` `0.2.1`,
 `reticulum-rs-rpc` `0.3.0`, and their `lxmf-reference` `0.1.0` dependency.
 
