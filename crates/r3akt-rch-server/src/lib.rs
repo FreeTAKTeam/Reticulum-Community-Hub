@@ -1249,8 +1249,21 @@ impl ClientRecord {
     }
 
     fn apply_rem_annotation(&mut self, annotation: &RemIdentityAnnotation) {
-        self.first_seen = iso8601_from_unix_ms(annotation.first_seen_ts_ms);
-        self.last_seen = iso8601_from_unix_ms(annotation.last_seen_ts_ms);
+        let first_seen_ts_ms = unix_ms_from_iso8601(&self.first_seen)
+            .map_or(annotation.first_seen_ts_ms, |current| {
+                current.min(annotation.first_seen_ts_ms)
+            });
+        let last_seen_ts_ms = [
+            unix_ms_from_iso8601(&self.last_seen),
+            Some(annotation.last_seen_ts_ms),
+            self.last_chat_ts_ms,
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(annotation.last_seen_ts_ms);
+        self.first_seen = iso8601_from_unix_ms(first_seen_ts_ms);
+        self.last_seen = iso8601_from_unix_ms(last_seen_ts_ms);
         self.display_name.clone_from(&annotation.display_name);
         self.client_type.clone_from(&annotation.client_type);
         self.announce_capabilities
@@ -1262,8 +1275,8 @@ impl ClientRecord {
                 "destination_hash": annotation.destination_hash.clone(),
                 "announced_identity_hash": annotation.announced_identity_hash.clone(),
                 "source_interface": annotation.source_interface.clone(),
-                "first_seen": iso8601_from_unix_ms(annotation.first_seen_ts_ms),
-                "last_seen": iso8601_from_unix_ms(annotation.last_seen_ts_ms),
+                "first_seen": iso8601_from_unix_ms(first_seen_ts_ms),
+                "last_seen": iso8601_from_unix_ms(last_seen_ts_ms),
             }
         });
     }
@@ -3640,7 +3653,7 @@ fn process_reticulumd_inbound_envelope(
         return Ok(());
     }
 
-    touch_reticulumd_inbound_client(state, envelope.source.to_string().as_str())?;
+    touch_reticulumd_inbound_client(state, envelope.source.to_string().as_str(), false)?;
 
     match &envelope.payload {
         Payload::TopicMessage(message) => {
@@ -3676,6 +3689,7 @@ fn process_reticulumd_inbound_envelope(
             };
             let inbound_record =
                 record_inbound_topic_message(state, envelope, message, sanitized_body.as_str())?;
+            touch_reticulumd_inbound_client(state, envelope.source.to_string().as_str(), true)?;
             relay_reticulumd_inbound_topic_message(state, envelope, message, &inbound_record)?;
             record_system_event(
                 state,
@@ -4050,9 +4064,14 @@ fn relay_reticulumd_inbound_topic_message(
     }
     relay_destinations.sort();
     relay_destinations.dedup();
+    let relay_content = format!(
+        "{} > {}",
+        relay_sender_display_name(state, source.as_str())?,
+        inbound_record.content
+    );
     let relay = record_outbound_message_with_metadata(
         state,
-        &format!("[topic:{topic_id}]\n{}", inbound_record.content),
+        relay_content.as_str(),
         Some(topic_id.clone()),
         None,
         Vec::new(),
@@ -4084,6 +4103,85 @@ fn relay_reticulumd_inbound_topic_message(
         }),
     )?;
     Ok(Some(relay))
+}
+
+fn relay_sender_display_name(state: &AppState, source: &str) -> Result<String, ApiError> {
+    let source_key = normalize_identity_key(source);
+    if let Some(source_key) = source_key.as_deref() {
+        if let Some(name) = state
+            .clients
+            .read()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .get(source_key)
+            .and_then(client_relay_display_name)
+        {
+            return Ok(name);
+        }
+    }
+    if let Some(source_key) = source_key.as_deref() {
+        let announced_name = load_identity_announces_for_state(state)?
+            .into_iter()
+            .filter(|record| identity_announce_matches_destination(record, source_key))
+            .max_by_key(|record| record.last_seen_ts_ms)
+            .and_then(|record| relay_display_name_from_announce(&record));
+        if let Some(name) = announced_name {
+            return Ok(name);
+        }
+    }
+    Ok(short_identity(source))
+}
+
+fn client_relay_display_name(client: &ClientRecord) -> Option<String> {
+    client
+        .nickname
+        .as_deref()
+        .and_then(relay_display_name_from_text)
+        .or_else(|| {
+            client
+                .display_name
+                .as_deref()
+                .and_then(relay_display_name_from_text)
+        })
+}
+
+fn relay_display_name_from_announce(
+    record: &r3akt_rch_core::IdentityAnnounceRecord,
+) -> Option<String> {
+    record
+        .announce_capabilities
+        .iter()
+        .find_map(|capability| capability.strip_prefix("name="))
+        .and_then(relay_display_name_from_text)
+        .or_else(|| {
+            record
+                .display_name
+                .as_deref()
+                .and_then(relay_display_name_from_text)
+        })
+}
+
+fn relay_display_name_from_text(value: &str) -> Option<String> {
+    let value = value
+        .rsplit_once(";name=")
+        .map_or(value, |(_, name)| name)
+        .trim()
+        .replace("%20", " ");
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(
+        value
+            .chars()
+            .map(|character| {
+                if character.is_control() && !matches!(character, '\t') {
+                    '?'
+                } else {
+                    character
+                }
+            })
+            .collect(),
+    )
 }
 
 fn active_generic_lxmf_relay_destinations(
@@ -4145,7 +4243,7 @@ fn process_reticulumd_inbound_command(
     command: &r3akt_protocol::Command,
 ) -> Result<(), ApiError> {
     let source = envelope.source.to_string();
-    touch_reticulumd_inbound_client(state, source.as_str())?;
+    touch_reticulumd_inbound_client(state, source.as_str(), false)?;
     let command_name = command.name.trim().to_ascii_lowercase();
     match command_name.as_str() {
         command_name if is_join_command_name(command_name) => {
@@ -4600,7 +4698,11 @@ fn mission_uid_from_response_fields(
         .map(ToString::to_string)
 }
 
-fn touch_reticulumd_inbound_client(state: &AppState, source: &str) -> Result<(), ApiError> {
+fn touch_reticulumd_inbound_client(
+    state: &AppState,
+    source: &str,
+    chat_activity: bool,
+) -> Result<(), ApiError> {
     if source.trim().is_empty() {
         return Ok(());
     }
@@ -4617,8 +4719,17 @@ fn touch_reticulumd_inbound_client(state: &AppState, source: &str) -> Result<(),
             .entry(source.to_string())
             .and_modify(|client| {
                 client.last_seen = iso8601_from_unix_ms(now_ms);
+                if chat_activity {
+                    client.last_chat_ts_ms = Some(now_ms);
+                }
             })
-            .or_insert_with(|| ClientRecord::new(source.to_string(), now_ms))
+            .or_insert_with(|| {
+                let mut client = ClientRecord::new(source.to_string(), now_ms);
+                if chat_activity {
+                    client.last_chat_ts_ms = Some(now_ms);
+                }
+                client
+            })
             .clone()
     };
     {
@@ -13550,6 +13661,22 @@ fn record_outbound_message_with_metadata_mode(
         .get("fanout_channel")
         .and_then(Value::as_str)
         .is_some_and(is_rem_command_channel);
+    if delivery_mode == DeliveryMode::Targeted
+        && !is_rem_command
+        && delivery_decision.method == "propagated"
+        && delivery_decision.reason == "no_fresh_presence"
+        && destination
+            .as_deref()
+            .map(|identity| outbound_targeted_destination_should_reject_stale(state, identity))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        let destination = destination.as_deref().unwrap_or("unknown");
+        return Err(ApiError::BadRequest(format!(
+            "destination {} is not currently reachable; wait for a fresh announce or recent chat before sending",
+            short_identity(destination)
+        )));
+    }
     if is_rem_command
         && delivery_decision.method != "propagated"
         && destination
@@ -13744,6 +13871,7 @@ fn dispatch_outbound_message(
         .reticulumd_source
         .as_ref()
         .map_or("r3akt-rch-server", |value| value.as_str());
+    ensure_outbound_propagation_node_selected(state, message)?;
     let destinations = outbound_destinations(state, message)?;
     let fanout_destination_count = destinations.len();
     let fanout_requires_child_ids = fanout_destination_count > 1;
@@ -13910,6 +14038,67 @@ fn dispatch_outbound_message(
         });
     }
     Ok(report)
+}
+
+fn ensure_outbound_propagation_node_selected(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+) -> Result<(), ApiError> {
+    if message.delivery_method != "propagated" {
+        return Ok(());
+    }
+    let Some(endpoint) = state.reticulumd_rpc_endpoint.as_deref() else {
+        return Ok(());
+    };
+
+    let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint);
+    let selected = client
+        .call("get_outbound_propagation_node", None)
+        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+    if let Some(error) = selected.error {
+        return Err(ApiError::ServiceUnavailable(reticulumd_rpc_error_text(
+            &error,
+        )));
+    }
+    if selected
+        .result
+        .as_ref()
+        .and_then(|result| result.get("peer"))
+        .and_then(Value::as_str)
+        .is_some_and(|peer| !peer.trim().is_empty())
+    {
+        return Ok(());
+    }
+
+    let propagation_nodes = client
+        .call("list_propagation_nodes", None)
+        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+    if let Some(error) = propagation_nodes.error {
+        return Err(ApiError::ServiceUnavailable(reticulumd_rpc_error_text(
+            &error,
+        )));
+    }
+    let peer = propagation_nodes
+        .result
+        .as_ref()
+        .and_then(first_reticulumd_propagation_node)
+        .ok_or_else(|| ApiError::ServiceUnavailable("No reachable propagation node".to_string()))?;
+    let selected = client
+        .call(
+            "set_outbound_propagation_node",
+            Some(json!({ "peer": peer })),
+        )
+        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+    if let Some(error) = selected.error {
+        return Err(ApiError::ServiceUnavailable(reticulumd_rpc_error_text(
+            &error,
+        )));
+    }
+    Ok(())
+}
+
+fn reticulumd_rpc_error_text(error: &r3akt_rch_bridge::ReticulumdRpcError) -> String {
+    format!("{}: {}", error.code, error.message)
 }
 
 fn should_enqueue_without_waiting_for_zmq_response(message: &OutboundMessageRecord) -> bool {
@@ -14626,28 +14815,31 @@ fn outbound_delivery_decision_for_targets(
         destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
     let has_live_connection =
         destination.is_some_and(|identity| has_live_client(state, identity, now));
-    if delivery_mode == DeliveryMode::Targeted
-        && has_live_connection
-        && destination
-            .map(|identity| outbound_destination_lacks_fresh_announce_for_any(state, &[identity]))
+    if delivery_mode == DeliveryMode::Targeted {
+        let freshness_destinations = destination
+            .map(|identity| outbound_delivery_freshness_destinations(state, identity))
             .transpose()?
-            .unwrap_or(false)
-    {
-        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-            method: "propagated".to_string(),
-            reason: "no_fresh_presence".to_string(),
-        });
-    }
-    if delivery_mode == DeliveryMode::Targeted
-        && destination
-            .map(|identity| outbound_destination_has_stale_known_announce(state, identity))
-            .transpose()?
-            .unwrap_or(false)
-    {
-        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-            method: "propagated".to_string(),
-            reason: "no_fresh_presence".to_string(),
-        });
+            .unwrap_or_default();
+        let freshness_destination_refs = freshness_destinations
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        if destination.is_some()
+            && outbound_destination_has_stale_known_announce_for_any(
+                state,
+                &freshness_destination_refs,
+            )?
+            && !outbound_destination_has_recent_client_presence_for_any(
+                state,
+                &freshness_destination_refs,
+                now,
+            )?
+        {
+            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+                method: "propagated".to_string(),
+                reason: "no_fresh_presence".to_string(),
+            });
+        }
     }
     if delivery_mode == DeliveryMode::Targeted
         && destination
@@ -14699,7 +14891,7 @@ fn outbound_route_has_unannounced_destinations(
             };
             topic_subscriber_destinations(state, topic_id)?
         }
-        DeliveryMode::Broadcast => broadcast_client_records_for_state(state)?
+        DeliveryMode::Broadcast => broadcast_outbound_client_records_for_state(state)?
             .into_iter()
             .map(|client| client.identity)
             .collect(),
@@ -14715,6 +14907,7 @@ fn outbound_destinations_have_unannounced_route(
     if destinations.is_empty() || state.sqlite_path.is_none() {
         return Ok(false);
     }
+    let now = unix_now_ms();
     let routing_context = outbound_destination_routing_context(state)?;
     Ok(destinations.into_iter().any(|destination| {
         let delivery_destination = outbound_destination_for_message_with_context_for_mode(
@@ -14723,11 +14916,13 @@ fn outbound_destinations_have_unannounced_route(
             &routing_context,
             false,
         );
-        outbound_destination_lacks_fresh_announce_for_any(
-            state,
-            &[destination.as_str(), delivery_destination.as_str()],
-        )
-        .unwrap_or(false)
+        let candidates = [destination.as_str(), delivery_destination.as_str()];
+        let has_fresh_announce =
+            outbound_destination_has_fresh_announce_for_any(state, &candidates).unwrap_or(false);
+        let has_recent_client_presence =
+            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)
+                .unwrap_or(false);
+        !has_fresh_announce && !has_recent_client_presence
     }))
 }
 
@@ -14751,10 +14946,10 @@ fn outbound_explicit_targets_have_unannounced_route(
         let candidates = [destination.as_str(), delivery_destination.as_str()];
         let has_fresh_announce =
             outbound_destination_has_fresh_announce_for_any(state, &candidates).unwrap_or(false);
-        let has_live_presence = candidates
-            .iter()
-            .any(|candidate| has_live_client(state, candidate, now));
-        !has_fresh_announce && !has_live_presence
+        let has_recent_client_presence =
+            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)
+                .unwrap_or(false);
+        !has_fresh_announce && !has_recent_client_presence
     }))
 }
 
@@ -14794,17 +14989,24 @@ fn outbound_destination_has_stale_known_announce_for_any(
     }) && !outbound_destination_has_fresh_announce_for_any(state, destinations)?)
 }
 
-fn outbound_destination_lacks_fresh_announce_for_any(
+fn outbound_targeted_destination_should_reject_stale(
     state: &AppState,
-    destinations: &[&str],
+    destination: &str,
 ) -> Result<bool, ApiError> {
-    if state.sqlite_path.is_none() {
+    let destinations = outbound_delivery_freshness_destinations(state, destination)?;
+    if destinations.is_empty() {
         return Ok(false);
     }
-    Ok(!outbound_destination_has_fresh_announce_for_any(
-        state,
-        destinations,
-    )?)
+    let destination_refs = destinations.iter().map(String::as_str).collect::<Vec<_>>();
+    let now = unix_now_ms();
+    Ok(
+        outbound_destination_has_stale_known_announce_for_any(state, &destination_refs)?
+            && !outbound_destination_has_recent_client_presence_for_any(
+                state,
+                &destination_refs,
+                now,
+            )?,
+    )
 }
 
 fn outbound_destination_has_fresh_announce_for_any(
@@ -14950,10 +15152,50 @@ fn has_live_client(state: &AppState, identity: &str, now_ts_ms: i64) -> bool {
     };
     clients
         .get(identity.as_str())
-        .and_then(|client| unix_ms_from_iso8601(client.last_seen.as_str()))
-        .is_some_and(|last_seen| {
-            last_seen >= now_ts_ms - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS
-        })
+        .is_some_and(|client| client_has_recent_presence(client, now_ts_ms))
+}
+
+fn client_presence_ts_ms(client: &ClientRecord) -> Option<i64> {
+    [
+        unix_ms_from_iso8601(client.last_seen.as_str()),
+        unix_ms_from_iso8601(client.first_seen.as_str()),
+        client.last_chat_ts_ms,
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+}
+
+fn client_has_recent_presence(client: &ClientRecord, now_ts_ms: i64) -> bool {
+    client_presence_ts_ms(client).is_some_and(|last_seen| {
+        last_seen >= now_ts_ms - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS
+    })
+}
+
+fn outbound_destination_has_recent_client_presence_for_any(
+    state: &AppState,
+    destinations: &[&str],
+    now_ts_ms: i64,
+) -> Result<bool, ApiError> {
+    let normalized = destinations
+        .iter()
+        .filter_map(|destination| normalize_identity_key(destination))
+        .collect::<HashSet<_>>();
+    if normalized.is_empty() {
+        return Ok(false);
+    }
+    Ok(state
+        .clients
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .iter()
+        .any(|(identity, client)| {
+            (normalize_identity_key(identity)
+                .is_some_and(|identity| normalized.contains(&identity))
+                || normalize_identity_key(&client.identity)
+                    .is_some_and(|identity| normalized.contains(&identity)))
+                && client_has_recent_presence(client, now_ts_ms)
+        }))
 }
 
 fn client_records_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiError> {
@@ -15122,6 +15364,45 @@ fn broadcast_client_records_for_state(state: &AppState) -> Result<Vec<ClientReco
     Ok(records)
 }
 
+fn broadcast_outbound_client_records_for_state(
+    state: &AppState,
+) -> Result<Vec<ClientRecord>, ApiError> {
+    let now = unix_now_ms();
+    let routing_context = outbound_destination_routing_context(state)?;
+    Ok(broadcast_client_records_for_state(state)?
+        .into_iter()
+        .filter(|client| {
+            let delivery_destination = outbound_destination_for_message_with_context_for_mode(
+                DeliveryMode::Broadcast,
+                &client.identity,
+                &routing_context,
+                false,
+            );
+            broadcast_client_is_active_for_outbound(
+                state,
+                client,
+                delivery_destination.as_str(),
+                now,
+            )
+        })
+        .collect())
+}
+
+fn broadcast_client_is_active_for_outbound(
+    state: &AppState,
+    client: &ClientRecord,
+    delivery_destination: &str,
+    now_ts_ms: i64,
+) -> bool {
+    if client_has_recent_presence(client, now_ts_ms) {
+        return true;
+    }
+    let candidates = [client.identity.as_str(), delivery_destination];
+    outbound_destination_has_recent_client_presence_for_any(state, &candidates, now_ts_ms)
+        .unwrap_or(false)
+        || outbound_destination_has_fresh_announce_for_any(state, &candidates).unwrap_or(false)
+}
+
 fn client_has_network_announce(_record: &ClientRecord) -> bool {
     true
 }
@@ -15176,7 +15457,7 @@ fn outbound_destinations(
             }
         }
     } else {
-        for client in broadcast_client_records_for_state(state)? {
+        for client in broadcast_outbound_client_records_for_state(state)? {
             let delivery_destination = outbound_destination_for_message_with_context(
                 message,
                 &client.identity,
@@ -27353,7 +27634,7 @@ mod tests {
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["source"], "local-destination");
         assert_eq!(params["destination"], "peer-charlie");
-        assert_eq!(params["content"], "[topic:ops]\nRelay this");
+        assert_eq!(params["content"], "peer alpha > Relay this");
         assert!(params.get("method").is_none());
         let outbound_response = app
             .oneshot(
@@ -27375,7 +27656,7 @@ mod tests {
         let outbound: serde_json::Value =
             serde_json::from_slice(&outbound_body).expect("outbound json");
         assert_eq!(outbound[0]["Direction"], "outbound");
-        assert_eq!(outbound[0]["Content"], "[topic:ops]\nRelay this");
+        assert_eq!(outbound[0]["Content"], "peer alpha > Relay this");
         assert_eq!(
             outbound[0]["DeliveryMetadata"]["reticulumd_inbound_relay"],
             true
@@ -27421,6 +27702,9 @@ mod tests {
         let now = crate::unix_now_ms();
         {
             let mut clients = state.clients.write().expect("clients");
+            let mut source = crate::ClientRecord::new("peer-alpha".to_string(), now);
+            source.nickname = Some("Alpha_1".to_string());
+            clients.insert("peer-alpha".to_string(), source);
             clients.insert(
                 "peer-bravo".to_string(),
                 crate::ClientRecord::new("peer-bravo".to_string(), now),
@@ -27455,7 +27739,7 @@ mod tests {
         assert_eq!(requests[1].method, "sdk_send_v2");
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["destination"], "peer-bravo");
-        assert_eq!(params["content"], "[topic:direct]\nphone to phone");
+        assert_eq!(params["content"], "Alpha_1 > phone to phone");
 
         let messages = state.messages.read().expect("messages");
         let relay = messages
@@ -27478,6 +27762,7 @@ mod tests {
         );
         assert_eq!(relay.delivery_method, "direct");
         assert_eq!(relay.delivery_policy_reason, "topic_direct");
+        assert_eq!(relay.content, "Alpha_1 > phone to phone");
         drop(messages);
 
         std::fs::remove_file(db_path).expect("cleanup db");
@@ -51611,6 +51896,42 @@ mod tests {
     }
 
     #[test]
+    fn inbound_plain_lxmf_chat_updates_last_chat_timestamp() {
+        let state = crate::AppState::default();
+        let source = "77b2539b72259af927e48c0f90721767";
+        let topic = r3akt_protocol::Topic::new("direct");
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic,
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "hello from lxmf".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        );
+
+        crate::process_reticulumd_inbound_envelope(&state, &envelope).expect("process chat");
+
+        let client = state
+            .clients
+            .read()
+            .expect("clients")
+            .get(source)
+            .cloned()
+            .expect("client");
+        assert!(client.last_chat_ts_ms.is_some());
+        assert!(
+            crate::unix_ms_from_iso8601(&client.last_seen).is_some_and(|last_seen| {
+                client
+                    .last_chat_ts_ms
+                    .is_some_and(|last_chat| last_seen >= last_chat)
+            })
+        );
+    }
+
+    #[test]
     fn inbound_plain_lxmf_chat_is_sanitized_and_capped_before_fanout() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(2);
         let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "hub-source");
@@ -51660,7 +51981,7 @@ mod tests {
         );
         assert_eq!(
             requests[0].params.as_ref().expect("params")["content"],
-            "[topic:direct]\nhello?[31m"
+            "77b2539b > hello?[31m"
         );
         assert_eq!(
             requests[1].params.as_ref().expect("params")["destination"],
@@ -52713,6 +53034,103 @@ mod tests {
     }
 
     #[test]
+    fn broadcast_delivery_uses_recent_roster_presence_without_fresh_announces() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-broadcast-roster-presence-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let now = crate::unix_now_ms();
+        let fresh_seen = "22c8ba9c883e06c7e540ed6dc87ceecf";
+        let fresh_chat = "77b2539b72259af927e48c0f90721767";
+        let stale_import = "7f08e12b3f25f23e62f3a15288303c95";
+        let stale_ts_ms = now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 10_000;
+        {
+            let mut clients = state.clients.write().expect("clients");
+            clients.insert(
+                fresh_seen.to_string(),
+                crate::ClientRecord::new(fresh_seen.to_string(), now - 10_000),
+            );
+            let mut chat_record = crate::ClientRecord::new(fresh_chat.to_string(), stale_ts_ms);
+            chat_record.last_chat_ts_ms = Some(now - 5_000);
+            clients.insert(fresh_chat.to_string(), chat_record);
+            clients.insert(
+                stale_import.to_string(),
+                crate::ClientRecord::new(stale_import.to_string(), stale_ts_ms),
+            );
+        }
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Broadcast,
+            None,
+            None,
+        )
+        .expect("broadcast decision");
+
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "broadcast_direct");
+
+        let broadcast = crate::OutboundMessageRecord {
+            message_id: "broadcast-roster-presence".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: decision.method,
+            delivery_policy_reason: decision.reason,
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        let mut destinations =
+            crate::outbound_destinations(&state, &broadcast).expect("broadcast destinations");
+        destinations.sort();
+
+        assert_eq!(
+            destinations,
+            vec![fresh_seen.to_string(), fresh_chat.to_string()]
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn rem_annotation_merge_preserves_roster_first_seen_and_latest_activity() {
+        let now = crate::unix_now_ms();
+        let mut record =
+            crate::ClientRecord::new("47ff8b43fea7df9082f6fc1e2b8c954b".to_string(), now - 90_000);
+        record.first_seen = crate::iso8601_from_unix_ms(now - 120_000);
+        record.last_chat_ts_ms = Some(now - 1_000);
+        let annotation = crate::RemIdentityAnnotation {
+            destination_hash: record.identity.clone(),
+            announced_identity_hash: None,
+            display_name: Some("Pixel".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: vec!["r3akt".to_string()],
+            client_type: "rem".to_string(),
+            rem_mode: None,
+            is_rem_capable: true,
+            first_seen_ts_ms: now - 30_000,
+            last_seen_ts_ms: now - 60_000,
+        };
+
+        record.apply_rem_annotation(&annotation);
+
+        assert_eq!(
+            crate::unix_ms_from_iso8601(&record.first_seen),
+            Some(now - 120_000)
+        );
+        assert_eq!(
+            crate::unix_ms_from_iso8601(&record.last_seen),
+            Some(now - 1_000)
+        );
+        assert_eq!(record.last_chat_ts_ms, Some(now - 1_000));
+    }
+
+    #[test]
     fn targeted_delivery_uses_propagation_for_stale_known_lxmf_announce() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-stale-known-target-propagation-{}.db",
@@ -52737,7 +53155,10 @@ mod tests {
         let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
         state.clients.write().expect("clients").insert(
             destination.to_string(),
-            crate::ClientRecord::new(destination.to_string(), now),
+            crate::ClientRecord::new(
+                destination.to_string(),
+                now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 1_000,
+            ),
         );
 
         let decision = crate::outbound_delivery_decision(
@@ -52755,9 +53176,68 @@ mod tests {
     }
 
     #[test]
-    fn targeted_delivery_uses_propagation_for_live_client_without_announce() {
+    fn targeted_delivery_uses_direct_for_recent_chat_with_stale_announce() {
         let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-unannounced-live-target-propagation-{}.db",
+            "r3akt-rch-stale-known-target-recent-chat-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "0a8b3de98049dd594054d1a49d46f490";
+        let stale_ts_ms = now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000;
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("recent chat Sideband".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let mut client = crate::ClientRecord::new(destination.to_string(), stale_ts_ms);
+        client.last_chat_ts_ms = Some(now - 5_000);
+        state
+            .clients
+            .write()
+            .expect("clients")
+            .insert(destination.to_string(), client);
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            None,
+            Some(destination),
+        )
+        .expect("delivery decision");
+
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "live_connection");
+
+        let message = crate::record_outbound_message(
+            &state,
+            "recent chat targeted chat",
+            None,
+            Some(destination.to_string()),
+            Vec::new(),
+            false,
+        )
+        .expect("recent chat destination should be accepted");
+
+        assert_eq!(message.delivery_method, "direct");
+        assert_eq!(message.delivery_policy_reason, "live_connection");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn targeted_delivery_uses_direct_for_recent_client_without_fresh_announce() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-unannounced-live-target-direct-{}.db",
             Uuid::new_v4()
         ));
         let destination = "4f79a98e20b9b8d58d412dbeef60f98d";
@@ -52775,8 +53255,59 @@ mod tests {
         )
         .expect("delivery decision");
 
-        assert_eq!(decision.method, "propagated");
-        assert_eq!(decision.reason, "no_fresh_presence");
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "live_connection");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn targeted_chat_rejects_stale_unreachable_destination_before_dispatch() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-stale-target-reject-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "cb1489405fcba9f15ec63c7ec09ad9f7";
+        let stale_ts_ms = now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000;
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("stale columba peer".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+        }];
+        snapshot.clients = vec![r3akt_rch_core::ClientRecord {
+            identity: destination.to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let error = crate::record_outbound_message(
+            &state,
+            "stale targeted chat",
+            None,
+            Some(destination.to_string()),
+            Vec::new(),
+            false,
+        )
+        .expect_err("stale destination should be rejected");
+
+        assert!(matches!(error, crate::ApiError::BadRequest(_)));
+        assert!(error.to_string().contains("not currently reachable"));
+        assert!(state.messages.read().expect("messages").is_empty());
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -54318,6 +54849,56 @@ mod tests {
         assert_eq!(report.receipts.len(), 1);
         assert_eq!(report.receipts[0].message_id, "propagated-single");
         assert_eq!(report.receipts[0].destination, "target-destination");
+    }
+
+    #[test]
+    fn propagated_dispatch_selects_propagation_node_before_zmq_enqueue() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({ "peer": null }),
+            json!({
+                "nodes": [
+                    {
+                        "peer": "propagation-node",
+                        "name": "Propagation Node"
+                    }
+                ]
+            }),
+            json!({ "peer": "propagation-node" }),
+        ]);
+        let state = crate::AppState::default()
+            .with_reticulumd_rpc(endpoint, "source-destination")
+            .with_lxmf_zmq_sdk(
+                unused_zmq_endpoint_for_rch_test(),
+                unused_zmq_endpoint_for_rch_test(),
+                "source-destination",
+            );
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-select-node".to_string(),
+            topic_id: None,
+            destination: Some("target-destination".to_string()),
+            sender: "northbound".to_string(),
+            content: "propagated select node".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "direct_failure_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+
+        assert_eq!(report.count, 1);
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].method, "get_outbound_propagation_node");
+        assert_eq!(requests[1].method, "list_propagation_nodes");
+        assert_eq!(requests[2].method, "set_outbound_propagation_node");
+        assert_eq!(
+            requests[2].params,
+            Some(json!({ "peer": "propagation-node" }))
+        );
     }
 
     fn unused_zmq_endpoint_for_rch_test() -> String {
