@@ -4215,6 +4215,16 @@ fn process_reticulumd_inbound_command(
             )?;
             Ok(())
         }
+        "help" | "commands" | "mission.help" => {
+            send_reticulumd_inbound_text_reply(
+                state,
+                source.as_str(),
+                envelope.topic.to_string().as_str(),
+                command,
+                plain_lxmf_help_reply(),
+            )?;
+            Ok(())
+        }
         "subscribetopic" | "subscribe_topic" | "topic.subscribe" => {
             let topic_id = command_topic_id(command)
                 .ok_or_else(|| ApiError::BadRequest("TopicID is required".to_string()))?;
@@ -4683,6 +4693,18 @@ fn roster_users_reply(state: &AppState) -> Result<String, ApiError> {
         .collect::<Vec<_>>()
         .join(", ");
     Ok(format!("users: {users}"))
+}
+
+fn plain_lxmf_help_reply() -> &'static str {
+    "RCH commands:\n\
+/join - join chat and replay recent messages\n\
+/leave - leave chat\n\
+/pause - stop receiving group relays\n\
+/resume - receive group relays again\n\
+/nick <name> - set your display name\n\
+/users - list joined users\n\
+/help - show this help\n\
+Legacy backslash commands still work, for example \\join or \\help."
 }
 
 fn short_identity(identity: &str) -> String {
@@ -51455,6 +51477,49 @@ mod tests {
             .expect("client");
         assert_eq!(client.nickname.as_deref(), Some("Alpha_1"));
         assert!(!client.paused);
+    }
+
+    #[test]
+    fn plain_lxmf_help_lists_roster_commands_and_legacy_escape() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
+        let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "hub-source");
+        let source = "77b2539b72259af927e48c0f90721767";
+        let topic = r3akt_protocol::Topic::new("direct");
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic,
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "\\help".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        );
+
+        crate::process_reticulumd_inbound_envelope(&state, &envelope).expect("process help");
+
+        let request = rpc_server.join().expect("rpc server");
+        let params = request.params.expect("params");
+        assert_eq!(params["destination"], source);
+        let content = params["content"].as_str().expect("help content");
+        for expected in [
+            "RCH commands:",
+            "/join",
+            "/leave",
+            "/pause",
+            "/resume",
+            "/nick <name>",
+            "/users",
+            "/help",
+            "\\join",
+            "\\help",
+        ] {
+            assert!(
+                content.contains(expected),
+                "help reply missing {expected}: {content}"
+            );
+        }
     }
 
     #[test]
