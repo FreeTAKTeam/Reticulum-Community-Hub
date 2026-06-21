@@ -1847,6 +1847,10 @@ impl RchSqliteStore {
     ) -> Result<(), RchCoreError> {
         let transaction = self.connection.transaction()?;
         transaction.execute(
+            "DELETE FROM rch_telemetry_records WHERE lower(peer_destination) = lower(?1)",
+            params![record.peer_destination],
+        )?;
+        transaction.execute(
             "INSERT INTO rch_telemetry_records (peer_destination, timestamp_s, payload)
              VALUES (?1, ?2, ?3)",
             params![
@@ -1855,10 +1859,33 @@ impl RchSqliteStore {
                 encode_msgpack(record)?
             ],
         )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn prune_telemetry_records(
+        &mut self,
+        excluded_peer_destination: Option<&str>,
+    ) -> Result<(), RchCoreError> {
+        let transaction = self.connection.transaction()?;
+        if let Some(destination) = excluded_peer_destination {
+            transaction.execute(
+                "DELETE FROM rch_telemetry_records WHERE lower(peer_destination) = lower(?1)",
+                params![destination],
+            )?;
+        }
         transaction.execute(
             "DELETE FROM rch_telemetry_records
              WHERE id NOT IN (
-                 SELECT id FROM rch_telemetry_records ORDER BY id DESC LIMIT 1000
+                 SELECT keep.id
+                 FROM rch_telemetry_records AS keep
+                 WHERE keep.id = (
+                     SELECT candidate.id
+                     FROM rch_telemetry_records AS candidate
+                     WHERE lower(candidate.peer_destination) = lower(keep.peer_destination)
+                     ORDER BY candidate.timestamp_s DESC, candidate.id DESC
+                     LIMIT 1
+                 )
              )",
             [],
         )?;
@@ -2393,9 +2420,7 @@ impl RchSqliteStore {
         let system_events = self.load_payload_rows::<SystemEventRecord>(
             "SELECT payload FROM rch_system_events ORDER BY id",
         )?;
-        let telemetry_records = self.load_payload_rows::<TelemetryRecord>(
-            "SELECT payload FROM rch_telemetry_records ORDER BY peer_destination, timestamp_s",
-        )?;
+        let telemetry_records = self.load_latest_telemetry_records()?;
         let markers = self.load_payload_rows::<MarkerRecord>(
             "SELECT payload FROM rch_markers ORDER BY object_destination_hash",
         )?;
@@ -2863,6 +2888,21 @@ impl RchSqliteStore {
             records.push(decode_msgpack(&row?)?);
         }
         Ok(records)
+    }
+
+    fn load_latest_telemetry_records(&self) -> Result<Vec<TelemetryRecord>, RchCoreError> {
+        self.load_payload_rows::<TelemetryRecord>(
+            "SELECT payload
+             FROM rch_telemetry_records AS keep
+             WHERE keep.id = (
+                 SELECT candidate.id
+                 FROM rch_telemetry_records AS candidate
+                 WHERE lower(candidate.peer_destination) = lower(keep.peer_destination)
+                 ORDER BY candidate.timestamp_s DESC, candidate.id DESC
+                 LIMIT 1
+             )
+             ORDER BY lower(keep.peer_destination), keep.timestamp_s",
+        )
     }
 
     pub fn setting_value(&self, key: &str) -> Result<Option<String>, RchCoreError> {
