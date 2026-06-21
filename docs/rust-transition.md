@@ -128,7 +128,7 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   UI vulnerabilities after the lockfile refresh and 23 Vitest files / 70 tests.
 - `npm run build` in `apps/rch-desktop/`: passed, including shared UI build,
   Tauri sidecar preparation, optimized desktop build, and Windows x64 NSIS
-  installer generation for `RCH Desktop_3.0.0-preview.2_x64-setup.exe`.
+  installer generation for `RCH Desktop_3.0.0-preview.4_x64-setup.exe`.
 - Release-binary smoke test with a temporary SQLite database: passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and

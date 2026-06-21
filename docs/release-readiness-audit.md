@@ -87,7 +87,7 @@ stable `v3.0.0`:
 - Run the external RMAP Reticulum profile again after the latest ZeroMQ event
   polling refresh, if public testnet evidence is required for the release notes.
 - Publish a tagged preview or alpha release so the packaging workflow embeds a
-  semantic release tag such as `v3.0.0-preview.2` instead of the staging branch
+  semantic release tag such as `v3.0.0-preview.4` instead of the staging branch
   label `rust-next`.
 - Continue broad parity hardening for less common Python edge cases listed in
   `README.md` and `docs/release-contract-matrix.json`.
