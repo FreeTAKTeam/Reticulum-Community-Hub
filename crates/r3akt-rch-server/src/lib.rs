@@ -14755,16 +14755,31 @@ fn outbound_delivery_decision_for_targets(
         destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
     let has_live_connection =
         destination.is_some_and(|identity| has_live_client(state, identity, now));
-    if delivery_mode == DeliveryMode::Targeted
-        && destination
-            .map(|identity| outbound_destination_has_stale_known_announce(state, identity))
+    if delivery_mode == DeliveryMode::Targeted {
+        let freshness_destinations = destination
+            .map(|identity| outbound_delivery_freshness_destinations(state, identity))
             .transpose()?
-            .unwrap_or(false)
-    {
-        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-            method: "propagated".to_string(),
-            reason: "no_fresh_presence".to_string(),
-        });
+            .unwrap_or_default();
+        let freshness_destination_refs = freshness_destinations
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        if destination.is_some()
+            && outbound_destination_has_stale_known_announce_for_any(
+                state,
+                &freshness_destination_refs,
+            )?
+            && !outbound_destination_has_recent_client_presence_for_any(
+                state,
+                &freshness_destination_refs,
+                now,
+            )?
+        {
+            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+                method: "propagated".to_string(),
+                reason: "no_fresh_presence".to_string(),
+            });
+        }
     }
     if delivery_mode == DeliveryMode::Targeted
         && destination
@@ -53027,7 +53042,10 @@ mod tests {
         let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
         state.clients.write().expect("clients").insert(
             destination.to_string(),
-            crate::ClientRecord::new(destination.to_string(), now),
+            crate::ClientRecord::new(
+                destination.to_string(),
+                now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 1_000,
+            ),
         );
 
         let decision = crate::outbound_delivery_decision(
@@ -53040,6 +53058,65 @@ mod tests {
 
         assert_eq!(decision.method, "propagated");
         assert_eq!(decision.reason, "no_fresh_presence");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn targeted_delivery_uses_direct_for_recent_chat_with_stale_announce() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-stale-known-target-recent-chat-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "0a8b3de98049dd594054d1a49d46f490";
+        let stale_ts_ms = now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000;
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("recent chat Sideband".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let mut client = crate::ClientRecord::new(destination.to_string(), stale_ts_ms);
+        client.last_chat_ts_ms = Some(now - 5_000);
+        state
+            .clients
+            .write()
+            .expect("clients")
+            .insert(destination.to_string(), client);
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            None,
+            Some(destination),
+        )
+        .expect("delivery decision");
+
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "live_connection");
+
+        let message = crate::record_outbound_message(
+            &state,
+            "recent chat targeted chat",
+            None,
+            Some(destination.to_string()),
+            Vec::new(),
+            false,
+        )
+        .expect("recent chat destination should be accepted");
+
+        assert_eq!(message.delivery_method, "direct");
+        assert_eq!(message.delivery_policy_reason, "live_connection");
 
         let _ = std::fs::remove_file(db_path);
     }
