@@ -13606,6 +13606,17 @@ fn record_outbound_message_with_metadata_mode(
         .get("fanout_channel")
         .and_then(Value::as_str)
         .is_some_and(is_rem_command_channel);
+    if delivery_mode == DeliveryMode::Targeted
+        && !is_rem_command
+        && delivery_decision.method == "propagated"
+        && delivery_decision.reason == "no_fresh_presence"
+    {
+        let destination = destination.as_deref().unwrap_or("unknown");
+        return Err(ApiError::BadRequest(format!(
+            "destination {} is not currently reachable; wait for a fresh announce or recent chat before sending",
+            short_identity(destination)
+        )));
+    }
     if is_rem_command
         && delivery_decision.method != "propagated"
         && destination
@@ -14745,18 +14756,6 @@ fn outbound_delivery_decision_for_targets(
     let has_live_connection =
         destination.is_some_and(|identity| has_live_client(state, identity, now));
     if delivery_mode == DeliveryMode::Targeted
-        && has_live_connection
-        && destination
-            .map(|identity| outbound_destination_lacks_fresh_announce_for_any(state, &[identity]))
-            .transpose()?
-            .unwrap_or(false)
-    {
-        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-            method: "propagated".to_string(),
-            reason: "no_fresh_presence".to_string(),
-        });
-    }
-    if delivery_mode == DeliveryMode::Targeted
         && destination
             .map(|identity| outbound_destination_has_stale_known_announce(state, identity))
             .transpose()?
@@ -14913,19 +14912,6 @@ fn outbound_destination_has_stale_known_announce_for_any(
     Ok(destinations.iter().any(|destination| {
         outbound_destination_has_known_announce(state, destination).unwrap_or(false)
     }) && !outbound_destination_has_fresh_announce_for_any(state, destinations)?)
-}
-
-fn outbound_destination_lacks_fresh_announce_for_any(
-    state: &AppState,
-    destinations: &[&str],
-) -> Result<bool, ApiError> {
-    if state.sqlite_path.is_none() {
-        return Ok(false);
-    }
-    Ok(!outbound_destination_has_fresh_announce_for_any(
-        state,
-        destinations,
-    )?)
 }
 
 fn outbound_destination_has_fresh_announce_for_any(
@@ -53059,9 +53045,9 @@ mod tests {
     }
 
     #[test]
-    fn targeted_delivery_uses_propagation_for_live_client_without_announce() {
+    fn targeted_delivery_uses_direct_for_recent_client_without_fresh_announce() {
         let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-unannounced-live-target-propagation-{}.db",
+            "r3akt-rch-unannounced-live-target-direct-{}.db",
             Uuid::new_v4()
         ));
         let destination = "4f79a98e20b9b8d58d412dbeef60f98d";
@@ -53079,8 +53065,59 @@ mod tests {
         )
         .expect("delivery decision");
 
-        assert_eq!(decision.method, "propagated");
-        assert_eq!(decision.reason, "no_fresh_presence");
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "live_connection");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn targeted_chat_rejects_stale_unreachable_destination_before_dispatch() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-stale-target-reject-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "cb1489405fcba9f15ec63c7ec09ad9f7";
+        let stale_ts_ms = now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000;
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("stale columba peer".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+        }];
+        snapshot.clients = vec![r3akt_rch_core::ClientRecord {
+            identity: destination.to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let error = crate::record_outbound_message(
+            &state,
+            "stale targeted chat",
+            None,
+            Some(destination.to_string()),
+            Vec::new(),
+            false,
+        )
+        .expect_err("stale destination should be rejected");
+
+        assert!(matches!(error, crate::ApiError::BadRequest(_)));
+        assert!(error.to_string().contains("not currently reachable"));
+        assert!(state.messages.read().expect("messages").is_empty());
 
         let _ = std::fs::remove_file(db_path);
     }
