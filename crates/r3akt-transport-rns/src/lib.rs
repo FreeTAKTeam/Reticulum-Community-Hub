@@ -606,6 +606,56 @@ pub struct LxmfSdkOutboundBatch {
     pub messages: Vec<LxmfSdkOutboundBatchMessage>,
 }
 
+pub struct LxmfSdkSharedPayload {
+    pub bytes: Option<String>,
+    pub title: String,
+    pub content: String,
+    pub fields: JsonValue,
+}
+
+pub struct LxmfSdkSharedOutboundBatch {
+    pub batch_id: String,
+    pub source: String,
+    pub common_payload: LxmfSdkSharedPayload,
+    pub recipients: Vec<LxmfSdkSharedRecipient>,
+}
+
+pub struct LxmfSdkSharedRecipient {
+    pub destination: String,
+    pub delivery_method: Option<String>,
+    pub stamp_cost: Option<u32>,
+    pub include_ticket: Option<bool>,
+    pub try_propagation_on_fail: bool,
+    pub correlation_id: String,
+    pub text_only: bool,
+}
+
+#[must_use]
+pub fn lxmf_shared_batch_to_legacy_batch(
+    batch: LxmfSdkSharedOutboundBatch,
+) -> LxmfSdkOutboundBatch {
+    let messages = batch
+        .recipients
+        .into_iter()
+        .map(|recipient| LxmfSdkOutboundBatchMessage {
+            destination: recipient.destination,
+            title: batch.common_payload.title.clone(),
+            content: batch.common_payload.content.clone(),
+            fields: batch.common_payload.fields.clone(),
+            delivery_method: recipient.delivery_method,
+            stamp_cost: recipient.stamp_cost,
+            include_ticket: recipient.include_ticket,
+            try_propagation_on_fail: recipient.try_propagation_on_fail,
+            correlation_id: recipient.correlation_id,
+        })
+        .collect();
+    LxmfSdkOutboundBatch {
+        batch_id: batch.batch_id,
+        source: batch.source,
+        messages,
+    }
+}
+
 pub struct LxmfSdkOutboundBatchMessage {
     pub destination: String,
     pub title: String,
@@ -1726,6 +1776,37 @@ fn lxmf_sdk_outbound_batch_params(batch: LxmfSdkOutboundBatch) -> JsonValue {
         "batch_id": batch.batch_id,
         "source": batch.source,
         "messages": messages,
+    })
+}
+
+#[must_use]
+pub fn lxmf_sdk_shared_outbound_batch_params(batch: LxmfSdkSharedOutboundBatch) -> JsonValue {
+    let recipients = batch
+        .recipients
+        .into_iter()
+        .map(|recipient| {
+            serde_json::json!({
+                "id": recipient.correlation_id,
+                "destination": recipient.destination,
+                "method": recipient.delivery_method,
+                "stamp_cost": recipient.stamp_cost,
+                "include_ticket": recipient.include_ticket,
+                "try_propagation_on_fail": recipient.try_propagation_on_fail,
+                "text_only": recipient.text_only,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "method": "sdk_send_shared_batch_v1",
+        "batch_id": batch.batch_id,
+        "source": batch.source,
+        "common_payload": {
+            "bytes": batch.common_payload.bytes,
+            "title": batch.common_payload.title,
+            "content": batch.common_payload.content,
+            "fields": batch.common_payload.fields,
+        },
+        "recipients": recipients,
     })
 }
 
@@ -3479,6 +3560,101 @@ mod tests {
         assert_eq!(messages[1]["method"], "propagated");
         assert_eq!(messages[1]["stamp_cost"], 16);
         assert_eq!(messages[1]["include_ticket"], true);
+    }
+
+    #[test]
+    fn lxmf_zmq_shared_batch_params_keep_common_payload_once() {
+        let params = lxmf_sdk_shared_outbound_batch_params(LxmfSdkSharedOutboundBatch {
+            batch_id: "shared-1".to_string(),
+            source: "source-destination".to_string(),
+            common_payload: LxmfSdkSharedPayload {
+                bytes: Some("c2hhcmVkLWJsb2I=".to_string()),
+                title: "RCH".to_string(),
+                content: "shared body".to_string(),
+                fields: serde_json::json!({ "content": "shared body", "topic": "direct" }),
+            },
+            recipients: vec![
+                LxmfSdkSharedRecipient {
+                    destination: "dst-a".to_string(),
+                    delivery_method: Some("direct".to_string()),
+                    stamp_cost: None,
+                    include_ticket: Some(false),
+                    try_propagation_on_fail: false,
+                    correlation_id: "message-a".to_string(),
+                    text_only: false,
+                },
+                LxmfSdkSharedRecipient {
+                    destination: "dst-b".to_string(),
+                    delivery_method: Some("propagated".to_string()),
+                    stamp_cost: Some(16),
+                    include_ticket: Some(true),
+                    try_propagation_on_fail: true,
+                    correlation_id: "message-b".to_string(),
+                    text_only: true,
+                },
+            ],
+        });
+
+        assert_eq!(params["method"], "sdk_send_shared_batch_v1");
+        assert_eq!(params["batch_id"], "shared-1");
+        assert_eq!(params["source"], "source-destination");
+        assert_eq!(params["common_payload"]["bytes"], "c2hhcmVkLWJsb2I=");
+        assert_eq!(params["common_payload"]["content"], "shared body");
+        let recipients = params["recipients"].as_array().expect("recipients");
+        assert_eq!(recipients.len(), 2);
+        assert_eq!(recipients[0]["id"], "message-a");
+        assert_eq!(recipients[0]["destination"], "dst-a");
+        assert!(recipients[0].get("content").is_none());
+        assert_eq!(recipients[1]["text_only"], true);
+        assert_eq!(recipients[1]["stamp_cost"], 16);
+    }
+
+    #[test]
+    fn lxmf_shared_batch_legacy_fallback_expands_only_at_transport_boundary() {
+        let legacy = lxmf_shared_batch_to_legacy_batch(LxmfSdkSharedOutboundBatch {
+            batch_id: "shared-legacy".to_string(),
+            source: "source-destination".to_string(),
+            common_payload: LxmfSdkSharedPayload {
+                bytes: Some("c2hhcmVkLWJsb2I=".to_string()),
+                title: "RCH".to_string(),
+                content: "shared body".to_string(),
+                fields: serde_json::json!({ "content": "shared body", "topic": "direct" }),
+            },
+            recipients: vec![
+                LxmfSdkSharedRecipient {
+                    destination: "dst-a".to_string(),
+                    delivery_method: Some("direct".to_string()),
+                    stamp_cost: None,
+                    include_ticket: None,
+                    try_propagation_on_fail: false,
+                    correlation_id: "message-a".to_string(),
+                    text_only: false,
+                },
+                LxmfSdkSharedRecipient {
+                    destination: "dst-b".to_string(),
+                    delivery_method: Some("propagated".to_string()),
+                    stamp_cost: Some(16),
+                    include_ticket: Some(true),
+                    try_propagation_on_fail: true,
+                    correlation_id: "message-b".to_string(),
+                    text_only: true,
+                },
+            ],
+        });
+
+        assert_eq!(legacy.batch_id, "shared-legacy");
+        assert_eq!(legacy.source, "source-destination");
+        assert_eq!(legacy.messages.len(), 2);
+        assert_eq!(legacy.messages[0].destination, "dst-a");
+        assert_eq!(legacy.messages[1].destination, "dst-b");
+        assert_eq!(legacy.messages[0].content, "shared body");
+        assert_eq!(legacy.messages[1].content, "shared body");
+        assert_eq!(legacy.messages[0].fields, legacy.messages[1].fields);
+        assert_eq!(legacy.messages[0].correlation_id, "message-a");
+        assert_eq!(legacy.messages[1].correlation_id, "message-b");
+        assert_eq!(legacy.messages[1].stamp_cost, Some(16));
+        assert_eq!(legacy.messages[1].include_ticket, Some(true));
+        assert!(legacy.messages[1].try_propagation_on_fail);
     }
 
     #[test]
