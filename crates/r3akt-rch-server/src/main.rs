@@ -205,64 +205,14 @@ fn build_runtime_state(
     let mut state = match args.db_path {
         Some(ref path) => {
             println!("r3akt-rch-server using SQLite state at {}", path.display());
-            let mut state = r3akt_rch_server::AppState::from_sqlite_path(path)?
-                .with_optional_api_key(api_key)
-                .with_optional_system_status_fanout_mode(system_status_fanout_mode)
-                .with_outbound_identity_allowlist(args.outbound_allowlist.clone());
-            if let Some(path) = &args.config_path {
-                state = state.with_config_path(path);
-            }
-            if let Some(path) = &args.reticulum_config_path {
-                state = state.with_reticulum_config_path(path);
-            }
-            if let Some(endpoint) = &args.reticulumd_rpc {
-                let source = args
-                    .reticulumd_source
-                    .as_deref()
-                    .ok_or("--reticulumd-source is required with --reticulumd-rpc")?;
-                state = state.with_reticulumd_rpc(endpoint.as_str(), source);
-            }
-            if let (Some(command), Some(response)) =
-                (&args.lxmf_zmq_command, &args.lxmf_zmq_response)
-            {
-                let source = args
-                    .reticulumd_source
-                    .as_deref()
-                    .ok_or("--reticulumd-source is required with --lxmf-zmq-command")?;
-                state = state.with_lxmf_zmq_sdk(command.as_str(), response.as_str(), source);
-            }
-            state
+            r3akt_rch_server::AppState::from_sqlite_path_with_reticulumd_source(
+                path,
+                args.reticulumd_source.as_deref(),
+            )?
         }
-        None => {
-            let mut state = r3akt_rch_server::AppState::default()
-                .with_optional_api_key(api_key)
-                .with_optional_system_status_fanout_mode(system_status_fanout_mode)
-                .with_outbound_identity_allowlist(args.outbound_allowlist.clone());
-            if let Some(path) = &args.config_path {
-                state = state.with_config_path(path);
-            }
-            if let Some(path) = &args.reticulum_config_path {
-                state = state.with_reticulum_config_path(path);
-            }
-            if let Some(endpoint) = &args.reticulumd_rpc {
-                let source = args
-                    .reticulumd_source
-                    .as_deref()
-                    .ok_or("--reticulumd-source is required with --reticulumd-rpc")?;
-                state = state.with_reticulumd_rpc(endpoint.as_str(), source);
-            }
-            if let (Some(command), Some(response)) =
-                (&args.lxmf_zmq_command, &args.lxmf_zmq_response)
-            {
-                let source = args
-                    .reticulumd_source
-                    .as_deref()
-                    .ok_or("--reticulumd-source is required with --lxmf-zmq-command")?;
-                state = state.with_lxmf_zmq_sdk(command.as_str(), response.as_str(), source);
-            }
-            state
-        }
+        None => r3akt_rch_server::AppState::default(),
     };
+    state = apply_runtime_config(state, args, api_key, system_status_fanout_mode)?;
     if let Some(command_endpoint) = managed_reticulumd_launch.zmq_command.clone() {
         if let Some(exe) = managed_reticulumd_launch.exe.as_ref() {
             state = state
@@ -291,6 +241,39 @@ fn build_runtime_state(
                 )
                 .with_managed_reticulumd_transport(managed_reticulumd_launch.transport.clone());
         }
+    }
+    Ok(state)
+}
+
+fn apply_runtime_config(
+    mut state: r3akt_rch_server::AppState,
+    args: &ServerArgs,
+    api_key: Option<String>,
+    system_status_fanout_mode: Option<String>,
+) -> Result<r3akt_rch_server::AppState, Box<dyn std::error::Error>> {
+    state = state
+        .with_optional_api_key(api_key)
+        .with_optional_system_status_fanout_mode(system_status_fanout_mode)
+        .with_outbound_identity_allowlist(args.outbound_allowlist.clone());
+    if let Some(path) = &args.config_path {
+        state = state.with_config_path(path);
+    }
+    if let Some(path) = &args.reticulum_config_path {
+        state = state.with_reticulum_config_path(path);
+    }
+    if let Some(endpoint) = &args.reticulumd_rpc {
+        let source = args
+            .reticulumd_source
+            .as_deref()
+            .ok_or("--reticulumd-source is required with --reticulumd-rpc")?;
+        state = state.with_reticulumd_rpc(endpoint.as_str(), source);
+    }
+    if let (Some(command), Some(response)) = (&args.lxmf_zmq_command, &args.lxmf_zmq_response) {
+        let source = args
+            .reticulumd_source
+            .as_deref()
+            .ok_or("--reticulumd-source is required with --lxmf-zmq-command")?;
+        state = state.with_lxmf_zmq_sdk(command.as_str(), response.as_str(), source);
     }
     Ok(state)
 }

@@ -477,8 +477,10 @@ impl AppState {
         endpoint: impl Into<String>,
         source: impl Into<String>,
     ) -> Self {
+        let source = source.into();
         self.reticulumd_rpc_endpoint = Some(Arc::new(endpoint.into()));
-        self.reticulumd_source = Some(Arc::new(source.into()));
+        self.reticulumd_source = Some(Arc::new(source.clone()));
+        self.prune_telemetry_for_local_source(&source);
         self
     }
 
@@ -539,9 +541,11 @@ impl AppState {
         response_endpoint: impl Into<String>,
         source: impl Into<String>,
     ) -> Self {
+        let source = source.into();
         self.lxmf_zmq_command_endpoint = Some(Arc::new(command_endpoint.into()));
         self.lxmf_zmq_response_endpoint = Some(Arc::new(response_endpoint.into()));
-        self.reticulumd_source = Some(Arc::new(source.into()));
+        self.reticulumd_source = Some(Arc::new(source.clone()));
+        self.prune_telemetry_for_local_source(&source);
         self
     }
 
@@ -678,8 +682,16 @@ impl AppState {
     pub fn from_sqlite_path(
         path: impl AsRef<FsPath>,
     ) -> Result<Self, r3akt_rch_core::RchCoreError> {
+        Self::from_sqlite_path_with_reticulumd_source(path, None)
+    }
+
+    pub fn from_sqlite_path_with_reticulumd_source(
+        path: impl AsRef<FsPath>,
+        reticulumd_source: Option<&str>,
+    ) -> Result<Self, r3akt_rch_core::RchCoreError> {
         let path = path.as_ref().to_path_buf();
-        let store = RchSqliteStore::open(&path)?;
+        let mut store = RchSqliteStore::open_admin(&path)?;
+        store.prune_telemetry_records(reticulumd_source)?;
         let snapshot = store.load_snapshot()?;
         let mut state = Self {
             messages: Arc::default(),
@@ -758,6 +770,27 @@ impl AppState {
             state.telemetry_records = Arc::new(RwLock::new(snapshot.telemetry_records));
         }
         Ok(state)
+    }
+
+    fn prune_telemetry_for_local_source(&self, source: &str) {
+        let Some(source_key) = telemetry_identity_key(source) else {
+            return;
+        };
+        if let Ok(mut records) = self.telemetry_records.write() {
+            let retained = latest_telemetry_records_for_identities(
+                std::mem::take(&mut *records),
+                Some(source_key.as_str()),
+            );
+            *records = retained;
+        }
+        if let Some(path) = &self.sqlite_path {
+            match RchSqliteStore::open_admin(path.as_ref())
+                .and_then(|mut store| store.prune_telemetry_records(Some(source)))
+            {
+                Ok(()) => {}
+                Err(error) => eprintln!("failed to prune local telemetry source: {error}"),
+            }
+        }
     }
 
     #[cfg(test)]
@@ -857,22 +890,44 @@ impl AppState {
         display_name: Option<String>,
     ) -> Result<TelemetryRecord, ApiError> {
         let display_name = normalize_optional_text(display_name);
+        let peer_destination = peer_destination.into();
         let record = TelemetryRecord {
-            peer_destination: peer_destination.into(),
+            peer_destination: peer_destination.clone(),
             timestamp_s,
             telemetry,
             identity_label: display_name.clone(),
             display_name,
         };
+        if self
+            .reticulumd_source
+            .as_deref()
+            .and_then(|source| telemetry_identity_key(source))
+            .is_some_and(|source_key| {
+                telemetry_identity_key(&peer_destination)
+                    .is_some_and(|peer_key| peer_key == source_key)
+            })
+        {
+            return Ok(record);
+        }
         let mut records = self
             .telemetry_records
             .write()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        records.push(record.clone());
-        if records.len() > 1000 {
-            let overflow = records.len() - 1000;
-            records.drain(0..overflow);
+        if let Some(peer_key) = telemetry_identity_key(&record.peer_destination) {
+            if let Some(existing) = records.iter().find(|existing| {
+                telemetry_identity_key(&existing.peer_destination)
+                    .is_some_and(|existing_key| existing_key == peer_key)
+            }) {
+                if existing.timestamp_s > record.timestamp_s {
+                    return Ok(existing.clone());
+                }
+            }
+            records.retain(|existing| {
+                telemetry_identity_key(&existing.peer_destination)
+                    .is_none_or(|existing_key| existing_key != peer_key)
+            });
         }
+        records.push(record.clone());
         drop(records);
         persist_telemetry_record_row(self, &record)?;
         broadcast_telemetry_event(self, &record);
@@ -24532,6 +24587,38 @@ fn normalize_identity_key(identity: &str) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
+fn telemetry_identity_key(identity: &str) -> Option<String> {
+    normalize_identity_key(identity)
+}
+
+fn latest_telemetry_records_for_identities(
+    records: Vec<TelemetryRecord>,
+    excluded_identity: Option<&str>,
+) -> Vec<TelemetryRecord> {
+    let mut latest = HashMap::<String, TelemetryRecord>::new();
+    for record in records {
+        let Some(identity) = telemetry_identity_key(&record.peer_destination) else {
+            continue;
+        };
+        if excluded_identity.is_some_and(|excluded| identity == excluded) {
+            continue;
+        }
+        let replace = latest
+            .get(&identity)
+            .is_none_or(|existing| record.timestamp_s >= existing.timestamp_s);
+        if replace {
+            latest.insert(identity, record);
+        }
+    }
+    let mut records = latest.into_values().collect::<Vec<_>>();
+    records.sort_by(|left, right| {
+        left.peer_destination
+            .cmp(&right.peer_destination)
+            .then_with(|| left.timestamp_s.cmp(&right.timestamp_s))
+    });
+    records
+}
+
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|value| {
         let value = value.trim().to_string();
@@ -25258,6 +25345,7 @@ mod tests {
         ReticulumdEventRecord, ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport,
         poll_lxmf_zmq_events, send_lxmf_zmq_outbound_message,
     };
+    use rusqlite::Connection;
     use serde::Serialize;
     use serde_json::{Value, json};
     use sha2::{Digest, Sha256};
@@ -35223,7 +35311,7 @@ mod tests {
             .load_snapshot()
             .expect("load snapshot")
             .expect("snapshot exists");
-        assert_eq!(snapshot.telemetry_records.len(), 5);
+        assert_eq!(snapshot.telemetry_records.len(), 2);
         assert!(
             snapshot
                 .system_events
@@ -54919,6 +55007,153 @@ mod tests {
                 .expect("restored telemetry")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn telemetry_records_keep_only_latest_snapshot_per_identity() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-telemetry-latest-per-peer-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+
+        state
+            .record_telemetry("peer-a", json!({"battery":{"percent": 50}}), 10, None)
+            .expect("record first telemetry");
+        state
+            .record_telemetry("peer-b", json!({"battery":{"percent": 80}}), 11, None)
+            .expect("record other telemetry");
+        state
+            .record_telemetry("peer-a", json!({"battery":{"percent": 95}}), 12, None)
+            .expect("record latest telemetry");
+        let stale = state
+            .record_telemetry("peer-a", json!({"battery":{"percent": 10}}), 9, None)
+            .expect("ignore stale telemetry");
+        assert_eq!(stale.timestamp_s, 12);
+        assert_eq!(stale.telemetry["battery"]["percent"], 95);
+
+        let records = state.telemetry_records.read().expect("telemetry records");
+        assert_eq!(records.len(), 2);
+        let peer_a = records
+            .iter()
+            .find(|record| record.peer_destination == "peer-a")
+            .expect("peer-a telemetry");
+        assert_eq!(peer_a.timestamp_s, 12);
+        assert_eq!(peer_a.telemetry["battery"]["percent"], 95);
+        drop(records);
+
+        let connection = Connection::open(&db_path).expect("sqlite connection");
+        let peer_a_rows: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM rch_telemetry_records WHERE peer_destination = 'peer-a'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("peer-a row count");
+        assert_eq!(peer_a_rows, 1);
+
+        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        let restored_records = restored
+            .telemetry_records
+            .read()
+            .expect("restored telemetry");
+        assert_eq!(restored_records.len(), 2);
+        assert_eq!(
+            restored_records
+                .iter()
+                .filter(|record| record.peer_destination == "peer-a")
+                .count(),
+            1
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn telemetry_records_ignore_configured_local_source() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-telemetry-ignore-source-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc("127.0.0.1:14243", "local-source");
+
+        state
+            .record_telemetry("local-source", json!({"time":{"timestamp": 10}}), 10, None)
+            .expect("ignore local telemetry");
+
+        assert!(
+            state
+                .telemetry_records
+                .read()
+                .expect("telemetry records")
+                .is_empty()
+        );
+        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        assert!(
+            restored
+                .telemetry_records
+                .read()
+                .expect("restored telemetry")
+                .is_empty()
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn attaching_local_source_prunes_existing_self_and_duplicate_telemetry_rows() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-telemetry-prune-source-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.telemetry_records = vec![
+            r3akt_rch_core::TelemetryRecord {
+                peer_destination: "local-source".to_string(),
+                timestamp_s: 1,
+                telemetry: json!({"self": true}),
+                identity_label: None,
+                display_name: None,
+            },
+            r3akt_rch_core::TelemetryRecord {
+                peer_destination: "peer-a".to_string(),
+                timestamp_s: 2,
+                telemetry: json!({"battery":{"percent": 20}}),
+                identity_label: None,
+                display_name: None,
+            },
+            r3akt_rch_core::TelemetryRecord {
+                peer_destination: "peer-a".to_string(),
+                timestamp_s: 3,
+                telemetry: json!({"battery":{"percent": 30}}),
+                identity_label: None,
+                display_name: None,
+            },
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc("127.0.0.1:14243", "local-source");
+        let records = state.telemetry_records.read().expect("telemetry records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].peer_destination, "peer-a");
+        assert_eq!(records[0].timestamp_s, 3);
+        drop(records);
+
+        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        let restored_records = restored
+            .telemetry_records
+            .read()
+            .expect("restored telemetry");
+        assert_eq!(restored_records.len(), 1);
+        assert_eq!(restored_records[0].peer_destination, "peer-a");
+        assert_eq!(restored_records[0].timestamp_s, 3);
+
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
