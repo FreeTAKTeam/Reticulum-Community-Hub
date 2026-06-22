@@ -12760,12 +12760,12 @@ async fn internal_delivery_failure(
         .unwrap_or("delivery_failed");
     let now_ms = unix_now_ms();
     let message = {
-        let mut messages = state
+        let messages = state
             .messages
-            .write()
+            .read()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let message = messages
-            .iter_mut()
+        messages
+            .iter()
             .find(|message| {
                 payload
                     .message_id
@@ -12776,6 +12776,39 @@ async fn internal_delivery_failure(
                             && delivery_receipt_pending(message)
                     })
             })
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound("Pending delivery receipt not found".to_string()))?
+    };
+    if delivery_failure_callback_should_retry(&message) {
+        if let Some(retry_message) =
+            schedule_outbound_retry_after_failure(&state, &message, reason.to_string())?
+        {
+            let destination = retry_message.destination.as_deref().unwrap_or("unknown");
+            let event = record_system_event(
+                &state,
+                "message_delivery_retrying",
+                &format!("Retrying message delivery to {destination}"),
+                outbound_delivery_callback_metadata(
+                    outbound_delivery_retry_metadata(&retry_message, reason),
+                    "delivery_failure",
+                ),
+            )?;
+            return Ok(Json(json!({
+                "status": "retry_scheduled",
+                "message": retry_message,
+                "event": event,
+            })));
+        }
+    }
+    let target_message_id = message.message_id.clone();
+    let message = {
+        let mut messages = state
+            .messages
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let message = messages
+            .iter_mut()
+            .find(|message| message.message_id == target_message_id)
             .ok_or_else(|| ApiError::NotFound("Pending delivery receipt not found".to_string()))?;
         message.delivery_state = "failed".to_string();
         merge_delivery_metadata(
@@ -14510,6 +14543,12 @@ fn retry_reason_for_error(error_text: &str) -> &'static str {
     } else {
         "send_error"
     }
+}
+
+fn delivery_failure_callback_should_retry(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "propagated"
+        && (is_rem_command_message(message)
+            || propagated_multi_recipient_allows_partial_success(message))
 }
 
 fn outbound_attempts(message: &OutboundMessageRecord) -> u64 {
@@ -49143,6 +49182,107 @@ mod tests {
             .find(|event| event.event_type == "message_delivery_failed")
             .expect("delivery failure event");
         assert_eq!(failed_event.metadata["failure_reason"], "delivery_failed");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn internal_delivery_failure_retries_propagated_broadcast_fallback_send_error() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-failure-callback-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_api_key("secret");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-failure-callback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback callback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "attempts": 4,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 4,
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        crate::persist_outbound_message_row(&state, &message).expect("persist message");
+        let app = crate::create_app_with_state(state.clone());
+
+        let failure = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/internal/delivery-failure")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "MessageID": message.message_id,
+                            "Reason": "send_error"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("failure response");
+
+        assert_eq!(failure.status(), StatusCode::OK);
+        let body = failure
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["status"], "retry_scheduled");
+        assert_eq!(payload["message"]["delivery_state"], "queued");
+        assert_eq!(payload["message"]["delivery_method"], "propagated");
+        assert_eq!(
+            payload["message"]["delivery_policy_reason"],
+            "broadcast_direct_timeout_fallback"
+        );
+        assert_eq!(
+            payload["message"]["delivery_metadata"]["retry_scheduled"],
+            true
+        );
+        assert_eq!(payload["message"]["delivery_metadata"]["attempts"], 5);
+        assert_eq!(
+            payload["message"]["delivery_metadata"]["retry_reason"],
+            "send_error"
+        );
+        assert_eq!(payload["event"]["event_type"], "message_delivery_retrying");
+        assert_eq!(
+            payload["event"]["metadata"]["callback_type"],
+            "delivery_failure"
+        );
+
+        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot exists");
+        assert_eq!(snapshot.messages[0].delivery_state, "queued");
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["retry_scheduled"],
+            true
+        );
+        assert_eq!(snapshot.messages[0].delivery_metadata["attempts"], 5);
 
         let _ = std::fs::remove_file(db_path);
     }

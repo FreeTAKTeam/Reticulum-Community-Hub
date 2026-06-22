@@ -1364,6 +1364,35 @@ Remaining retest:
   dispatch against the connected phones/decks. The current expected state while
   rate-limited is queued with delayed retry, not failed.
 
+## Propagated Broadcast Failure Callback Retest
+
+Time: `2026-06-22T23:12Z`.
+
+Reported failure:
+
+- Message ID `2a2892b3227b427487308d53712dd163`.
+- UI showed `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`,
+  `Failure Reason=send_error`, and `Route Type=broadcast`.
+
+Result:
+
+- The live SQLite row had recovered to `delivery_state=propagated`,
+  `dispatch_status=accepted`, `attempts=5`, and a future retry timestamp, so
+  the propagation fallback path was still active.
+- Root cause in code: `/internal/delivery-failure` marked callbacks terminal
+  failed without consulting the retry scheduler used by outbound dispatch.
+- Added a server regression for a propagated broadcast fallback `send_error`
+  callback. The callback now returns `retry_scheduled`, stores
+  `delivery_state=queued`, preserves `delivery_method=propagated`, and records
+  `retry_reason=send_error` instead of surfacing terminal failure.
+
+Remaining retest:
+
+- Restart the manual server with the callback fix, repeat broadcast canaries
+  against the phones/decks, and confirm retry-eligible propagated fallback
+  callbacks no longer appear as terminal `failed/send_error` in the UI.
+
 ## Config And Reticulum Path Retest
 
 Time: `2026-06-22T22:41Z` to `2026-06-22T22:49Z`.
@@ -1399,3 +1428,38 @@ Remaining retest:
 - Exercise controlled apply/rollback against a temporary backup path or an
   operator-approved config edit before marking the full RCH-US-007 behavior
   complete.
+
+## Controlled Config Apply/Rollback Retest
+
+Time: `2026-06-22T22:53Z` to `2026-06-22T23:00Z`.
+
+Runtime:
+
+- Primary manual server remained running on `http://127.0.0.1:18080/`.
+- Isolated temp server ran on `http://127.0.0.1:18081/`, PID `6576`, with
+  temp hub and Reticulum config files under `%TEMP%` and API key `config-test`.
+- No Reticulum daemon was attached to the isolated server; this retest only
+  exercised file-backed config read, apply, backup, rollback, and UI state.
+
+Result:
+
+- `/Config` and `/Reticulum/Config` `PUT` created backup files and persisted
+  temp edits.
+- No-body rollback restored both temp files through the same endpoint shape used
+  by the UI. PowerShell `Invoke-RestMethod` shaped one empty POST in a way that
+  the endpoint rejected, but `curl.exe` and browser fetch no-body rollback
+  succeeded.
+- Hub Configure UI apply showed `Apply Result` and the backup path without
+  console errors.
+- Initial Hub UI rollback restored the file but left the editor showing the
+  pre-rollback edited text and the status biased toward the earlier apply.
+- After the UI store fix, Hub UI rollback refreshed the editor to the restored
+  file text, showed `Rollback Result`, and changed the status pill to
+  `Restored`.
+
+Remaining retest:
+
+- The Reticulum config API apply/rollback path passed, and the Reticulum store
+  now reloads after rollback, but the Reticulum form toggle/apply/rollback path
+  still needs a clean browser interaction pass. Direct switch interaction timed
+  out in the current browser harness.
