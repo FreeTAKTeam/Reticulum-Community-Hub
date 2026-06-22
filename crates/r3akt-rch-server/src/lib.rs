@@ -98,6 +98,7 @@ const OUTBOUND_RETRY_WORKER_POLL_MS: u64 = 500;
 const OUTBOUND_RETRY_BACKOFF_MS: i64 = 500;
 const OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS: i64 = 65_000;
 const OUTBOUND_RETRY_MAX_ATTEMPTS: u64 = 2;
+const OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS: u64 = 5;
 const OUTBOUND_PROPAGATION_STAMP_COST: u32 = 16;
 const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
 const RETICULUMD_INBOUND_WORKER_POLL_MS: u64 = 1_000;
@@ -11710,6 +11711,38 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
             }
         }
         let attempts = outbound_attempts(message).saturating_add(1);
+        if direct_broadcast_dispatch_timeout_should_propagate(message) {
+            message.delivery_state = "queued".to_string();
+            message.delivery_method = "propagated".to_string();
+            message.delivery_policy_reason = "broadcast_direct_timeout_fallback".to_string();
+            clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
+            merge_delivery_metadata(
+                &mut message.delivery_metadata,
+                json!({
+                    "acked": false,
+                    "attempts": 0,
+                    "direct_attempts": attempts,
+                    "dispatch_status": "queued",
+                    "dispatch_timeout": true,
+                    "dispatch_timed_out_at_ts_ms": now_ms,
+                    "error": "send_timeout",
+                    "fallback_reason": "direct_dispatch_timeout",
+                    "max_attempts": OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
+                    "previous_delivery_method": "direct",
+                    "receipt_pending": false,
+                    "retry_reason": "send_timeout",
+                    "retry_scheduled": true,
+                    "next_attempt_at_ts_ms": now_ms,
+                }),
+            );
+            changed_messages.push(message.clone());
+            system_events.push((
+                "message_propagation_queued",
+                "Direct broadcast timed out; queued message for propagation".to_string(),
+                outbound_delivery_propagation_metadata(message, "direct_dispatch_timeout"),
+            ));
+            continue;
+        }
         let max_attempts = outbound_effective_max_attempts_for_retry(message, false);
         if (message.delivery_method != "propagated"
             || is_rem_command_message(message)
@@ -11792,6 +11825,12 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
         let _ = record_system_event(state, event_type, &message, metadata)?;
     }
     Ok(())
+}
+
+fn direct_broadcast_dispatch_timeout_should_propagate(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "direct"
+        && message.delivery_mode == DeliveryMode::Broadcast
+        && !is_rem_command_message(message)
 }
 
 fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
@@ -14513,7 +14552,7 @@ fn outbound_effective_max_attempts_for_retry(
         || rate_limited
         || propagated_multi_recipient_allows_partial_success(message)
     {
-        max_attempts = max_attempts.max(5);
+        max_attempts = max_attempts.max(OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS);
     }
     max_attempts
 }
@@ -50085,6 +50124,122 @@ mod tests {
         .expect("record next message");
         assert_eq!(next_message.delivery_method, "propagated");
         assert_eq!(next_message.delivery_policy_reason, "direct_cooldown");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn direct_broadcast_dispatch_timeout_falls_back_to_propagation() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-broadcast-timeout-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let now_ms = crate::unix_now_ms();
+        let first_client = "22c8ba9c883e06c7e540ed6dc87ceecf";
+        let second_client = "77b2539b72259af927e48c0f90721767";
+        {
+            let mut clients = state.clients.write().expect("clients");
+            clients.insert(
+                first_client.to_string(),
+                crate::ClientRecord::new(first_client.to_string(), now_ms - 1_000),
+            );
+            clients.insert(
+                second_client.to_string(),
+                crate::ClientRecord::new(second_client.to_string(), now_ms - 1_000),
+            );
+        }
+
+        let message = crate::record_outbound_message(
+            &state,
+            "broadcast should fallback",
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .expect("record broadcast");
+        assert_eq!(
+            message.delivery_mode,
+            r3akt_rch_core::DeliveryMode::Broadcast
+        );
+        assert_eq!(message.delivery_method, "direct");
+        assert_eq!(message.delivery_policy_reason, "broadcast_direct");
+
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 3,
+                "max_attempts": 1,
+                "dispatch_status": "in_progress",
+                "dispatch_started_ts_ms": now_ms - 60_000,
+                "dispatch_deadline_ts_ms": now_ms - 1,
+                "retry_scheduled": false,
+            }),
+        )
+        .expect("mark stale dispatch");
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["pending_dispatches"], 0);
+        assert_eq!(diagnostics["queued"], 1);
+        assert_eq!(diagnostics["failed"], 0);
+        assert_eq!(diagnostics["timeout_total"], 1);
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "queued");
+        assert_eq!(updated.delivery_method, "propagated");
+        assert_eq!(
+            updated.delivery_policy_reason,
+            "broadcast_direct_timeout_fallback"
+        );
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(updated.delivery_metadata["dispatch_timeout"], true);
+        assert_eq!(updated.delivery_metadata["error"], "send_timeout");
+        assert_eq!(updated.delivery_metadata["attempts"], 0);
+        assert_eq!(updated.delivery_metadata["direct_attempts"], 4);
+        assert_eq!(
+            updated.delivery_metadata["max_attempts"],
+            crate::OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            updated.delivery_metadata["fallback_reason"],
+            "direct_dispatch_timeout"
+        );
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
+        let updated_for_retry = updated.clone();
+        drop(messages);
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &updated_for_retry,
+            "outbound request failed: No connection could be made because the target machine actively refused it. (os error 10061)".to_string(),
+        )
+        .expect("schedule propagated retry")
+        .expect("fallback broadcast send_error should retry");
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(retry.delivery_metadata["attempts"], 1);
+        assert_eq!(retry.delivery_metadata["direct_attempts"], 4);
+        assert_eq!(retry.delivery_metadata["retry_reason"], "send_error");
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], true);
+
+        let events = state.system_events.read().expect("events");
+        let propagation_event = events
+            .iter()
+            .find(|event| event.event_type == "message_propagation_queued")
+            .expect("propagation event");
+        assert_eq!(
+            propagation_event.metadata["fallback_reason"],
+            "direct_dispatch_timeout"
+        );
+        assert_eq!(propagation_event.metadata["route_type"], "broadcast");
+        drop(events);
 
         let _ = std::fs::remove_file(db_path);
     }
