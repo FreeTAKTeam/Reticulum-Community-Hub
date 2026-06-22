@@ -3246,18 +3246,28 @@ mod tests {
         (endpoint, server)
     }
 
-    fn unused_zmq_endpoint() -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
-        let port = listener.local_addr().expect("local addr").port();
-        drop(listener);
-        format!("tcp://localhost:{port}")
+    fn unused_zmq_endpoint_pair() -> (String, String) {
+        let command = TcpListener::bind("127.0.0.1:0").expect("reserve command tcp port");
+        let response = TcpListener::bind("127.0.0.1:0").expect("reserve response tcp port");
+        let command_port = command.local_addr().expect("command local addr").port();
+        let response_port = response.local_addr().expect("response local addr").port();
+        drop((command, response));
+        (
+            format!("tcp://localhost:{command_port}"),
+            format!("tcp://localhost:{response_port}"),
+        )
     }
 
-    fn unused_zmq_endpoint_v4() -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
-        let port = listener.local_addr().expect("local addr").port();
-        drop(listener);
-        format!("tcp://127.0.0.1:{port}")
+    fn unused_zmq_endpoint_pair_v4() -> (String, String) {
+        let command = TcpListener::bind("127.0.0.1:0").expect("reserve command tcp port");
+        let response = TcpListener::bind("127.0.0.1:0").expect("reserve response tcp port");
+        let command_port = command.local_addr().expect("command local addr").port();
+        let response_port = response.local_addr().expect("response local addr").port();
+        drop((command, response));
+        (
+            format!("tcp://127.0.0.1:{command_port}"),
+            format!("tcp://127.0.0.1:{response_port}"),
+        )
     }
 
     fn spawn_zmq_sequence_server(
@@ -3661,8 +3671,7 @@ mod tests {
     fn lxmf_zmq_outbound_ten_thousand_regular_single_messages_complete() {
         const MESSAGE_COUNT: usize = 10_000;
 
-        let command_endpoint = unused_zmq_endpoint_v4();
-        let response_endpoint = unused_zmq_endpoint_v4();
+        let (command_endpoint, response_endpoint) = unused_zmq_endpoint_pair_v4();
         let captured_methods = Arc::new(Mutex::new(Vec::new()));
         let server = spawn_zmq_single_send_load_server(
             command_endpoint.clone(),
@@ -3815,8 +3824,7 @@ mod tests {
 
     #[test]
     fn lxmf_zmq_outbound_message_sends_delivery_options_over_sdk_rpc() {
-        let command_endpoint = unused_zmq_endpoint();
-        let response_endpoint = unused_zmq_endpoint();
+        let (command_endpoint, response_endpoint) = unused_zmq_endpoint_pair();
         let captured = Arc::new(Mutex::new(Vec::new()));
         let server = spawn_zmq_sequence_server(
             command_endpoint.clone(),
@@ -3871,8 +3879,7 @@ mod tests {
 
     #[test]
     fn lxmf_zmq_outbound_message_preserves_explicit_loopback_response_endpoint() {
-        let command_endpoint = unused_zmq_endpoint_v4();
-        let response_endpoint = unused_zmq_endpoint_v4();
+        let (command_endpoint, response_endpoint) = unused_zmq_endpoint_pair_v4();
         let captured = Arc::new(Mutex::new(Vec::new()));
         let server = spawn_zmq_sequence_server(
             command_endpoint.clone(),
@@ -3917,8 +3924,7 @@ mod tests {
 
     #[test]
     fn poll_lxmf_zmq_events_preserves_explicit_loopback_response_endpoint() {
-        let command_endpoint = unused_zmq_endpoint_v4();
-        let response_endpoint = unused_zmq_endpoint_v4();
+        let (command_endpoint, response_endpoint) = unused_zmq_endpoint_pair_v4();
         let captured = Arc::new(Mutex::new(Vec::new()));
         let server = spawn_zmq_sequence_server(
             command_endpoint.clone(),
@@ -3978,8 +3984,7 @@ mod tests {
 
     #[test]
     fn poll_lxmf_zmq_events_reuses_actor_response_socket_after_outbound_send() {
-        let command_endpoint = unused_zmq_endpoint_v4();
-        let response_endpoint = unused_zmq_endpoint_v4();
+        let (command_endpoint, response_endpoint) = unused_zmq_endpoint_pair_v4();
         let captured = Arc::new(Mutex::new(Vec::new()));
         let server = spawn_zmq_sequence_server(
             command_endpoint.clone(),
@@ -4054,8 +4059,7 @@ mod tests {
 
     #[test]
     fn announce_lxmf_zmq_identity_uses_sdk_identity_announce_rpc() {
-        let command_endpoint = unused_zmq_endpoint_v4();
-        let response_endpoint = unused_zmq_endpoint_v4();
+        let (command_endpoint, response_endpoint) = unused_zmq_endpoint_pair_v4();
         let captured = Arc::new(Mutex::new(Vec::new()));
         let server = spawn_zmq_sequence_server(
             command_endpoint.clone(),
@@ -4137,8 +4141,7 @@ mod tests {
 
     #[test]
     fn lxmf_zmq_delivery_status_uses_negotiated_sdk_status_rpc() {
-        let command_endpoint = unused_zmq_endpoint_v4();
-        let response_endpoint = unused_zmq_endpoint_v4();
+        let (command_endpoint, response_endpoint) = unused_zmq_endpoint_pair_v4();
         let captured = Arc::new(Mutex::new(Vec::new()));
         let server = spawn_zmq_sequence_server(
             command_endpoint.clone(),
