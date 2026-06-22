@@ -5,7 +5,7 @@ use r3akt_rch_core::{MissionSyncResponse, RchCore, RchCoreError, RchSqliteStore}
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -588,8 +588,13 @@ fn rpc_call_with_timeout(
 ) -> Result<ReticulumdRpcResponse, BridgeError> {
     let frame = encode_frame(request).map_err(|error| BridgeError::Outbound(error.to_string()))?;
     let http_request = build_http_post("/rpc", endpoint, &frame);
-    let mut stream =
-        TcpStream::connect(endpoint).map_err(|error| BridgeError::Outbound(error.to_string()))?;
+    let address = endpoint
+        .to_socket_addrs()
+        .map_err(|error| BridgeError::Outbound(error.to_string()))?
+        .next()
+        .ok_or_else(|| BridgeError::Outbound(format!("could not resolve endpoint {endpoint}")))?;
+    let mut stream = TcpStream::connect_timeout(&address, timeout)
+        .map_err(|error| BridgeError::Outbound(error.to_string()))?;
     stream
         .set_read_timeout(Some(timeout))
         .map_err(|error| BridgeError::Outbound(error.to_string()))?;
