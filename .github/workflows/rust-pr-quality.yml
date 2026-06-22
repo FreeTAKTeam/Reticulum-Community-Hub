@@ -32,10 +32,10 @@ jobs:
           path: LXMF-rs
           ref: v0.5.1
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
           components: rustfmt
 
       - name: Check Rust formatting
@@ -58,10 +58,10 @@ jobs:
           path: LXMF-rs
           ref: v0.5.1
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
           components: clippy
 
       - name: Check locked dependencies
@@ -88,10 +88,10 @@ jobs:
           path: LXMF-rs
           ref: v0.5.1
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
 
       - name: Check locked dependencies
         working-directory: rch
@@ -117,10 +117,10 @@ jobs:
           path: LXMF-rs
           ref: v0.5.1
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
 
       - name: Check locked dependencies
         working-directory: rch
@@ -150,17 +150,14 @@ jobs:
           path: LXMF-rs
           ref: v0.5.1
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
 
       - name: Audit locked dependency graph
         working-directory: rch
-        run: |
-          # time >=0.3.47 resolves RUSTSEC-2026-0009 but requires Rust 1.88.
-          # Keep the Rust 1.85 transition baseline until the workspace MSRV moves.
-          cargo audit --deny warnings --ignore RUSTSEC-2026-0009
+        run: cargo audit --deny warnings
