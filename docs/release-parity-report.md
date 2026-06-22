@@ -1,17 +1,14 @@
 ﻿# Python Parity Plus Rust Release Capability Report
 
-Generated: 2026-05-13T08:21:13.0613693-03:00
+Generated: 2026-06-21T22:30:41.7860979-03:00
 
 ## Baselines
 
 - Python baseline branch: `rch-python`
 - Python baseline commit: `a520574ecbc243841a1a215b616b6792452de2a1`
-- Rust branch: `rust-next`
-- Rust commit: `a897761046072c9b2f07d0afb6b6911077e31e3b`
-- LXMF-rs sibling baseline: `v0.5.1`
-  (`81acffc1409a760aeb9d7b09dc9a76b4be304a59`), updated 2026-06-21
-- LXMF-rs resolved package tuple: `lxmf-wire` `0.2.0`, `lxmf-sdk` `0.2.1`,
-  `reticulum-rs-rpc` `0.3.0`, `lxmf-reference` `0.1.0`
+- Rust branch: `main`
+- Rust commit: `2fc0bb20c6bdce88906049d5408f815702d178dc`
+- LXMF-rs sibling commit: `81acffc1409a760aeb9d7b09dc9a76b4be304a59`
 - Contract matrix: `docs/release-contract-matrix.json`
 - Rust OpenAPI probe: `http://127.0.0.1:18180`
 - Python OpenAPI probe: `http://127.0.0.1:18181`
@@ -26,8 +23,8 @@ Generated: 2026-05-13T08:21:13.0613693-03:00
 
 | Classification | Contracts | HTTP routes |
 | --- | ---: | ---: |
-| must-match-python | 4 | 166 |
-| rust-additive-required | 7 | 0 |
+| must-match-python | 4 | 157 |
+| rust-additive-required | 8 | 9 |
 | intentional-difference | 2 | 0 |
 
 ## Python-Compatible Contracts
@@ -39,6 +36,7 @@ Generated: 2026-05-13T08:21:13.0613693-03:00
 
 ## Rust Additive Required Capabilities
 
+- `rust-additive-http-routes` (http-route): Rust-only operator control, streaming, and OpenAPI convenience routes that Python 2.9.x does not expose but the Rust release must keep.
 - `rust-additive-rem-compatibility` (rem-compatibility): REM connected/autonomous/semi-autonomous behavior, peer registry, EAM command fanout, checklist command fanout, replay, markdown fallback, and duplicate suppression.
 - `rust-additive-reticulumd-runtime` (reticulum-runtime): LXMF-rs reticulumd RPC/event-cursor runtime for direct send, topic fanout, receipts, retries, inbound relay, attachments, telemetry, announces, and diagnostics.
 - `rust-additive-runtime-diagnostics` (diagnostics): Richer /diagnostics/runtime inventory for persistence, workers, reticulumd RPC/process state, queues, counters, receipts, and schema version.
@@ -54,213 +52,192 @@ Generated: 2026-05-13T08:21:13.0613693-03:00
 
 ## HTTP Route Probe Results
 
-| Method | Path | Rust OpenAPI | Python OpenAPI |
-| --- | --- | --- | --- |
-| `POST` | `/Chat/Attachment` | pass | pass |
-| `POST` | `/Chat/Message` | pass | pass |
-| `GET` | `/Chat/Messages` | pass | pass |
-| `GET` | `/Client` | pass | pass |
-| `POST` | `/Client/{identity}/Ban` | pass | pass |
-| `POST` | `/Client/{identity}/Blackhole` | pass | pass |
-| `POST` | `/Client/{identity}/Unban` | pass | pass |
-| `GET` | `/Command/DumpRouting` | pass | pass |
-| `POST` | `/Command/FlushTelemetry` | pass | pass |
-| `POST` | `/Command/ReloadConfig` | pass | pass |
-| `GET` | `/Config` | pass | pass |
-| `PUT` | `/Config` | pass | pass |
-| `POST` | `/Config/Rollback` | pass | pass |
-| `POST` | `/Config/Validate` | pass | pass |
-| `POST` | `/Control/Announce` | pass | missing-path |
-| `POST` | `/Control/Start` | pass | missing-path |
-| `GET` | `/Control/Status` | pass | missing-path |
-| `POST` | `/Control/Stop` | pass | missing-path |
-| `POST` | `/Control/Sync` | pass | missing-path |
-| `GET` | `/Diagnostics/Runtime` | pass | pass |
-| `GET` | `/Events` | pass | pass |
-| `GET` | `/Examples` | pass | pass |
-| `GET` | `/File` | pass | pass |
-| `DELETE` | `/File/{file_id}` | pass | pass |
-| `GET` | `/File/{file_id}` | pass | pass |
-| `PATCH` | `/File/{file_id}` | pass | pass |
-| `GET` | `/File/{file_id}/raw` | pass | pass |
-| `GET` | `/Help` | pass | pass |
-| `GET` | `/Identities` | pass | pass |
-| `GET` | `/Image` | pass | pass |
-| `DELETE` | `/Image/{file_id}` | pass | pass |
-| `GET` | `/Image/{file_id}` | pass | pass |
-| `PATCH` | `/Image/{file_id}` | pass | pass |
-| `GET` | `/Image/{file_id}/raw` | pass | pass |
-| `POST` | `/Message` | pass | pass |
-| `POST` | `/RCH` | pass | pass |
-| `PUT` | `/RCH` | pass | pass |
-| `POST` | `/RTH` | pass | pass |
-| `PUT` | `/RTH` | pass | pass |
-| `GET` | `/Reticulum/Config` | pass | pass |
-| `PUT` | `/Reticulum/Config` | pass | pass |
-| `POST` | `/Reticulum/Config/Rollback` | pass | pass |
-| `POST` | `/Reticulum/Config/Validate` | pass | pass |
-| `GET` | `/Reticulum/Discovery` | pass | pass |
-| `GET` | `/Reticulum/Interfaces/Capabilities` | pass | pass |
-| `GET` | `/Status` | pass | pass |
-| `DELETE` | `/Subscriber` | pass | pass |
-| `GET` | `/Subscriber` | pass | pass |
-| `PATCH` | `/Subscriber` | pass | pass |
-| `POST` | `/Subscriber` | pass | pass |
-| `POST` | `/Subscriber/Add` | pass | pass |
-| `GET` | `/Subscriber/{subscriber_id}` | pass | pass |
-| `GET` | `/Telemetry` | pass | pass |
-| `DELETE` | `/Topic` | pass | pass |
-| `GET` | `/Topic` | pass | pass |
-| `PATCH` | `/Topic` | pass | pass |
-| `POST` | `/Topic` | pass | pass |
-| `POST` | `/Topic/Associate` | pass | pass |
-| `POST` | `/Topic/Subscribe` | pass | pass |
-| `GET` | `/Topic/{topic_id}` | pass | pass |
-| `GET` | `/api/EmergencyActionMessage` | pass | pass |
-| `POST` | `/api/EmergencyActionMessage` | pass | pass |
-| `GET` | `/api/EmergencyActionMessage/latest/{team_member_uid}` | pass | pass |
-| `GET` | `/api/EmergencyActionMessage/team/{team_uid}/summary` | pass | pass |
-| `DELETE` | `/api/EmergencyActionMessage/{callsign}` | pass | pass |
-| `GET` | `/api/EmergencyActionMessage/{callsign}` | pass | pass |
-| `PUT` | `/api/EmergencyActionMessage/{callsign}` | pass | pass |
-| `GET` | `/api/markers` | pass | pass |
-| `POST` | `/api/markers` | pass | pass |
-| `GET` | `/api/markers/symbols` | pass | pass |
-| `DELETE` | `/api/markers/{object_destination_hash}` | pass | pass |
-| `PATCH` | `/api/markers/{object_destination_hash}` | pass | pass |
-| `PATCH` | `/api/markers/{object_destination_hash}/position` | pass | pass |
-| `GET` | `/api/r3akt/assets` | pass | pass |
-| `POST` | `/api/r3akt/assets` | pass | pass |
-| `DELETE` | `/api/r3akt/assets/{asset_uid}` | pass | pass |
-| `GET` | `/api/r3akt/assets/{asset_uid}` | pass | pass |
-| `GET` | `/api/r3akt/assignments` | pass | pass |
-| `POST` | `/api/r3akt/assignments` | pass | pass |
-| `PUT` | `/api/r3akt/assignments/{assignment_uid}/assets` | pass | pass |
-| `DELETE` | `/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}` | pass | pass |
-| `PUT` | `/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}` | pass | pass |
-| `GET` | `/api/r3akt/capabilities/{identity}` | pass | pass |
-| `DELETE` | `/api/r3akt/capabilities/{identity}/{capability}` | pass | pass |
-| `PUT` | `/api/r3akt/capabilities/{identity}/{capability}` | pass | pass |
-| `GET` | `/api/r3akt/events` | pass | pass |
-| `GET` | `/api/r3akt/log-entries` | pass | pass |
-| `POST` | `/api/r3akt/log-entries` | pass | pass |
-| `GET` | `/api/r3akt/mission-changes` | pass | pass |
-| `POST` | `/api/r3akt/mission-changes` | pass | pass |
-| `GET` | `/api/r3akt/missions` | pass | pass |
-| `POST` | `/api/r3akt/missions` | pass | pass |
-| `DELETE` | `/api/r3akt/missions/{mission_uid}` | pass | pass |
-| `GET` | `/api/r3akt/missions/{mission_uid}` | pass | pass |
-| `PATCH` | `/api/r3akt/missions/{mission_uid}` | pass | pass |
-| `GET` | `/api/r3akt/missions/{mission_uid}/markers` | pass | pass |
-| `DELETE` | `/api/r3akt/missions/{mission_uid}/markers/{marker_id}` | pass | pass |
-| `PUT` | `/api/r3akt/missions/{mission_uid}/markers/{marker_id}` | pass | pass |
-| `PUT` | `/api/r3akt/missions/{mission_uid}/parent` | pass | pass |
-| `GET` | `/api/r3akt/missions/{mission_uid}/rde` | pass | pass |
-| `PUT` | `/api/r3akt/missions/{mission_uid}/rde` | pass | pass |
-| `GET` | `/api/r3akt/missions/{mission_uid}/zones` | pass | pass |
-| `DELETE` | `/api/r3akt/missions/{mission_uid}/zones/{zone_id}` | pass | pass |
-| `PUT` | `/api/r3akt/missions/{mission_uid}/zones/{zone_id}` | pass | pass |
-| `GET` | `/api/r3akt/rights/definitions` | pass | pass |
-| `DELETE` | `/api/r3akt/rights/grants` | pass | pass |
-| `GET` | `/api/r3akt/rights/grants` | pass | pass |
-| `PUT` | `/api/r3akt/rights/grants` | pass | pass |
-| `DELETE` | `/api/r3akt/rights/mission-access` | pass | pass |
-| `GET` | `/api/r3akt/rights/mission-access` | pass | pass |
-| `PUT` | `/api/r3akt/rights/mission-access` | pass | pass |
-| `GET` | `/api/r3akt/rights/subjects` | pass | pass |
-| `GET` | `/api/r3akt/skills` | pass | pass |
-| `POST` | `/api/r3akt/skills` | pass | pass |
-| `GET` | `/api/r3akt/snapshots` | pass | pass |
-| `GET` | `/api/r3akt/task-skill-requirements` | pass | pass |
-| `POST` | `/api/r3akt/task-skill-requirements` | pass | pass |
-| `GET` | `/api/r3akt/team-member-skills` | pass | pass |
-| `POST` | `/api/r3akt/team-member-skills` | pass | pass |
-| `GET` | `/api/r3akt/team-members` | pass | pass |
-| `POST` | `/api/r3akt/team-members` | pass | pass |
-| `DELETE` | `/api/r3akt/team-members/{team_member_uid}` | pass | pass |
-| `GET` | `/api/r3akt/team-members/{team_member_uid}` | pass | pass |
-| `GET` | `/api/r3akt/team-members/{team_member_uid}/clients` | pass | pass |
-| `DELETE` | `/api/r3akt/team-members/{team_member_uid}/clients/{client_identity}` | pass | pass |
-| `PUT` | `/api/r3akt/team-members/{team_member_uid}/clients/{client_identity}` | pass | pass |
-| `GET` | `/api/r3akt/teams` | pass | pass |
-| `POST` | `/api/r3akt/teams` | pass | pass |
-| `DELETE` | `/api/r3akt/teams/{team_uid}` | pass | pass |
-| `GET` | `/api/r3akt/teams/{team_uid}` | pass | pass |
-| `GET` | `/api/r3akt/teams/{team_uid}/missions` | pass | pass |
-| `DELETE` | `/api/r3akt/teams/{team_uid}/missions/{mission_uid}` | pass | pass |
-| `PUT` | `/api/r3akt/teams/{team_uid}/missions/{mission_uid}` | pass | pass |
-| `GET` | `/api/rem/peers` | pass | pass |
-| `GET` | `/api/v1/app/info` | pass | pass |
-| `GET` | `/api/v1/auth/validate` | pass | pass |
-| `GET` | `/api/zones` | pass | pass |
-| `POST` | `/api/zones` | pass | pass |
-| `DELETE` | `/api/zones/{zone_id}` | pass | pass |
-| `PATCH` | `/api/zones/{zone_id}` | pass | pass |
-| `GET` | `/checklists` | pass | pass |
-| `POST` | `/checklists` | pass | pass |
-| `POST` | `/checklists/import/csv` | pass | pass |
-| `POST` | `/checklists/offline` | pass | pass |
-| `GET` | `/checklists/templates` | pass | pass |
-| `POST` | `/checklists/templates` | pass | pass |
-| `DELETE` | `/checklists/templates/{template_id}` | pass | pass |
-| `GET` | `/checklists/templates/{template_id}` | pass | pass |
-| `PATCH` | `/checklists/templates/{template_id}` | pass | pass |
-| `POST` | `/checklists/templates/{template_id}/clone` | pass | pass |
-| `DELETE` | `/checklists/{checklist_id}` | pass | pass |
-| `GET` | `/checklists/{checklist_id}` | pass | pass |
-| `PATCH` | `/checklists/{checklist_id}` | pass | pass |
-| `POST` | `/checklists/{checklist_id}/feeds/{feed_id}` | pass | pass |
-| `POST` | `/checklists/{checklist_id}/join` | pass | pass |
-| `POST` | `/checklists/{checklist_id}/tasks` | pass | pass |
-| `DELETE` | `/checklists/{checklist_id}/tasks/{task_id}` | pass | pass |
-| `PATCH` | `/checklists/{checklist_id}/tasks/{task_id}/cells/{column_id}` | pass | pass |
-| `PATCH` | `/checklists/{checklist_id}/tasks/{task_id}/row-style` | pass | pass |
-| `POST` | `/checklists/{checklist_id}/tasks/{task_id}/status` | pass | pass |
-| `POST` | `/checklists/{checklist_id}/upload` | pass | pass |
-| `GET` | `/diagnostics/runtime` | pass | pass |
-| `GET` | `/events/system` | pass | missing-path |
-| `GET` | `/messages/stream` | pass | missing-path |
-| `GET` | `/openapi.yaml` | pass | missing-path |
-| `GET` | `/telemetry/stream` | pass | missing-path |
+| Classification | Method | Path | Rust OpenAPI | Python OpenAPI |
+| --- | --- | --- | --- | --- |
+| `must-match-python` | `POST` | `/Chat/Attachment` | pass | pass |
+| `must-match-python` | `POST` | `/Chat/Message` | pass | pass |
+| `must-match-python` | `GET` | `/Chat/Messages` | pass | pass |
+| `must-match-python` | `GET` | `/Client` | pass | pass |
+| `must-match-python` | `POST` | `/Client/{identity}/Ban` | pass | pass |
+| `must-match-python` | `POST` | `/Client/{identity}/Blackhole` | pass | pass |
+| `must-match-python` | `POST` | `/Client/{identity}/Unban` | pass | pass |
+| `must-match-python` | `GET` | `/Command/DumpRouting` | pass | pass |
+| `must-match-python` | `POST` | `/Command/FlushTelemetry` | pass | pass |
+| `must-match-python` | `POST` | `/Command/ReloadConfig` | pass | pass |
+| `must-match-python` | `GET` | `/Config` | pass | pass |
+| `must-match-python` | `PUT` | `/Config` | pass | pass |
+| `must-match-python` | `POST` | `/Config/Rollback` | pass | pass |
+| `must-match-python` | `POST` | `/Config/Validate` | pass | pass |
+| `must-match-python` | `GET` | `/Diagnostics/Runtime` | pass | pass |
+| `must-match-python` | `GET` | `/Events` | pass | pass |
+| `must-match-python` | `GET` | `/Examples` | pass | pass |
+| `must-match-python` | `GET` | `/File` | pass | pass |
+| `must-match-python` | `DELETE` | `/File/{file_id}` | pass | pass |
+| `must-match-python` | `GET` | `/File/{file_id}` | pass | pass |
+| `must-match-python` | `PATCH` | `/File/{file_id}` | pass | pass |
+| `must-match-python` | `GET` | `/File/{file_id}/raw` | pass | pass |
+| `must-match-python` | `GET` | `/Help` | pass | pass |
+| `must-match-python` | `GET` | `/Identities` | pass | pass |
+| `must-match-python` | `GET` | `/Image` | pass | pass |
+| `must-match-python` | `DELETE` | `/Image/{file_id}` | pass | pass |
+| `must-match-python` | `GET` | `/Image/{file_id}` | pass | pass |
+| `must-match-python` | `PATCH` | `/Image/{file_id}` | pass | pass |
+| `must-match-python` | `GET` | `/Image/{file_id}/raw` | pass | pass |
+| `must-match-python` | `POST` | `/Message` | pass | pass |
+| `must-match-python` | `POST` | `/RCH` | pass | pass |
+| `must-match-python` | `PUT` | `/RCH` | pass | pass |
+| `must-match-python` | `POST` | `/RTH` | pass | pass |
+| `must-match-python` | `PUT` | `/RTH` | pass | pass |
+| `must-match-python` | `GET` | `/Reticulum/Config` | pass | pass |
+| `must-match-python` | `PUT` | `/Reticulum/Config` | pass | pass |
+| `must-match-python` | `POST` | `/Reticulum/Config/Rollback` | pass | pass |
+| `must-match-python` | `POST` | `/Reticulum/Config/Validate` | pass | pass |
+| `must-match-python` | `GET` | `/Reticulum/Discovery` | pass | pass |
+| `must-match-python` | `GET` | `/Reticulum/Interfaces/Capabilities` | pass | pass |
+| `must-match-python` | `GET` | `/Status` | pass | pass |
+| `must-match-python` | `DELETE` | `/Subscriber` | pass | pass |
+| `must-match-python` | `GET` | `/Subscriber` | pass | pass |
+| `must-match-python` | `PATCH` | `/Subscriber` | pass | pass |
+| `must-match-python` | `POST` | `/Subscriber` | pass | pass |
+| `must-match-python` | `POST` | `/Subscriber/Add` | pass | pass |
+| `must-match-python` | `GET` | `/Subscriber/{subscriber_id}` | pass | pass |
+| `must-match-python` | `GET` | `/Telemetry` | pass | pass |
+| `must-match-python` | `DELETE` | `/Topic` | pass | pass |
+| `must-match-python` | `GET` | `/Topic` | pass | pass |
+| `must-match-python` | `PATCH` | `/Topic` | pass | pass |
+| `must-match-python` | `POST` | `/Topic` | pass | pass |
+| `must-match-python` | `POST` | `/Topic/Associate` | pass | pass |
+| `must-match-python` | `POST` | `/Topic/Subscribe` | pass | pass |
+| `must-match-python` | `GET` | `/Topic/{topic_id}` | pass | pass |
+| `must-match-python` | `GET` | `/api/EmergencyActionMessage` | pass | pass |
+| `must-match-python` | `POST` | `/api/EmergencyActionMessage` | pass | pass |
+| `must-match-python` | `GET` | `/api/EmergencyActionMessage/latest/{team_member_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/EmergencyActionMessage/team/{team_uid}/summary` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/EmergencyActionMessage/{callsign}` | pass | pass |
+| `must-match-python` | `GET` | `/api/EmergencyActionMessage/{callsign}` | pass | pass |
+| `must-match-python` | `PUT` | `/api/EmergencyActionMessage/{callsign}` | pass | pass |
+| `must-match-python` | `GET` | `/api/markers` | pass | pass |
+| `must-match-python` | `POST` | `/api/markers` | pass | pass |
+| `must-match-python` | `GET` | `/api/markers/symbols` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/markers/{object_destination_hash}` | pass | pass |
+| `must-match-python` | `PATCH` | `/api/markers/{object_destination_hash}` | pass | pass |
+| `must-match-python` | `PATCH` | `/api/markers/{object_destination_hash}/position` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/assets` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/assets` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/assets/{asset_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/assets/{asset_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/assignments` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/assignments` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/assignments/{assignment_uid}/assets` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/capabilities/{identity}` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/capabilities/{identity}/{capability}` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/capabilities/{identity}/{capability}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/events` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/log-entries` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/log-entries` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/mission-changes` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/mission-changes` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/missions` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/missions` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/missions/{mission_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/missions/{mission_uid}` | pass | pass |
+| `must-match-python` | `PATCH` | `/api/r3akt/missions/{mission_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/missions/{mission_uid}/markers` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/missions/{mission_uid}/markers/{marker_id}` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/missions/{mission_uid}/markers/{marker_id}` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/missions/{mission_uid}/parent` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/missions/{mission_uid}/rde` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/missions/{mission_uid}/rde` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/missions/{mission_uid}/zones` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/missions/{mission_uid}/zones/{zone_id}` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/missions/{mission_uid}/zones/{zone_id}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/rights/definitions` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/rights/grants` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/rights/grants` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/rights/grants` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/rights/mission-access` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/rights/mission-access` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/rights/mission-access` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/rights/subjects` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/skills` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/skills` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/snapshots` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/task-skill-requirements` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/task-skill-requirements` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/team-member-skills` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/team-member-skills` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/team-members` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/team-members` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/team-members/{team_member_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/team-members/{team_member_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/team-members/{team_member_uid}/clients` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/team-members/{team_member_uid}/clients/{client_identity}` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/team-members/{team_member_uid}/clients/{client_identity}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/teams` | pass | pass |
+| `must-match-python` | `POST` | `/api/r3akt/teams` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/teams/{team_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/teams/{team_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/r3akt/teams/{team_uid}/missions` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/r3akt/teams/{team_uid}/missions/{mission_uid}` | pass | pass |
+| `must-match-python` | `PUT` | `/api/r3akt/teams/{team_uid}/missions/{mission_uid}` | pass | pass |
+| `must-match-python` | `GET` | `/api/rem/peers` | pass | pass |
+| `must-match-python` | `GET` | `/api/v1/app/info` | pass | pass |
+| `must-match-python` | `GET` | `/api/v1/auth/validate` | pass | pass |
+| `must-match-python` | `GET` | `/api/zones` | pass | pass |
+| `must-match-python` | `POST` | `/api/zones` | pass | pass |
+| `must-match-python` | `DELETE` | `/api/zones/{zone_id}` | pass | pass |
+| `must-match-python` | `PATCH` | `/api/zones/{zone_id}` | pass | pass |
+| `must-match-python` | `GET` | `/checklists` | pass | pass |
+| `must-match-python` | `POST` | `/checklists` | pass | pass |
+| `must-match-python` | `POST` | `/checklists/import/csv` | pass | pass |
+| `must-match-python` | `POST` | `/checklists/offline` | pass | pass |
+| `must-match-python` | `GET` | `/checklists/templates` | pass | pass |
+| `must-match-python` | `POST` | `/checklists/templates` | pass | pass |
+| `must-match-python` | `DELETE` | `/checklists/templates/{template_id}` | pass | pass |
+| `must-match-python` | `GET` | `/checklists/templates/{template_id}` | pass | pass |
+| `must-match-python` | `PATCH` | `/checklists/templates/{template_id}` | pass | pass |
+| `must-match-python` | `POST` | `/checklists/templates/{template_id}/clone` | pass | pass |
+| `must-match-python` | `DELETE` | `/checklists/{checklist_id}` | pass | pass |
+| `must-match-python` | `GET` | `/checklists/{checklist_id}` | pass | pass |
+| `must-match-python` | `PATCH` | `/checklists/{checklist_id}` | pass | pass |
+| `must-match-python` | `POST` | `/checklists/{checklist_id}/feeds/{feed_id}` | pass | pass |
+| `must-match-python` | `POST` | `/checklists/{checklist_id}/join` | pass | pass |
+| `must-match-python` | `POST` | `/checklists/{checklist_id}/tasks` | pass | pass |
+| `must-match-python` | `DELETE` | `/checklists/{checklist_id}/tasks/{task_id}` | pass | pass |
+| `must-match-python` | `PATCH` | `/checklists/{checklist_id}/tasks/{task_id}/cells/{column_id}` | pass | pass |
+| `must-match-python` | `PATCH` | `/checklists/{checklist_id}/tasks/{task_id}/row-style` | pass | pass |
+| `must-match-python` | `POST` | `/checklists/{checklist_id}/tasks/{task_id}/status` | pass | pass |
+| `must-match-python` | `POST` | `/checklists/{checklist_id}/upload` | pass | pass |
+| `must-match-python` | `GET` | `/diagnostics/runtime` | pass | pass |
+| `rust-additive-required` | `POST` | `/Control/Announce` | pass | missing-path |
+| `rust-additive-required` | `POST` | `/Control/Start` | pass | missing-path |
+| `rust-additive-required` | `GET` | `/Control/Status` | pass | missing-path |
+| `rust-additive-required` | `POST` | `/Control/Stop` | pass | missing-path |
+| `rust-additive-required` | `POST` | `/Control/Sync` | pass | missing-path |
+| `rust-additive-required` | `GET` | `/events/system` | pass | missing-path |
+| `rust-additive-required` | `GET` | `/messages/stream` | pass | missing-path |
+| `rust-additive-required` | `GET` | `/openapi.yaml` | pass | missing-path |
+| `rust-additive-required` | `GET` | `/telemetry/stream` | pass | missing-path |
 
 ## Release Decision Inputs
 
 - Rust OpenAPI has no failed route probes for the matrix scope.
-- Python OpenAPI route probe failures: 9
+- Python OpenAPI has no failed route probes for must-match route contracts.
 - Rust additive capability gates must still be backed by their named evidence commands before final release.
-- True Python-visible mismatches must be fixed or explicitly waived; Rust additive failures block release even without Python equivalents.
+- True Python-visible mismatches must be fixed or explicitly waived; Rust additive failures block release even when Python does not expose an equivalent route.
 
 ## Workspace Status
 
 ```text
-M Cargo.lock
- M crates/r3akt-rch-core/src/lib.rs
- M crates/r3akt-rch-server/Cargo.toml
- M crates/r3akt-rch-server/src/main.rs
+M .gitignore
+ M README.md
+ M crates/r3akt-rch-server/src/lib.rs
+ M docs/release-contract-matrix.json
+ M docs/release-parity-report.md
  M docs/release-readiness-audit.md
  M docs/rust-transition.md
- M packaging/README.md
-?? .coverage
-?? .desloppify/
-?? .tmp_internal_ws_smoke/
-?? .venv/
-?? .vscode/
-?? RCH_Store/
-?? RTH_Store/
-?? crates/r3akt-rch-core/src/bin/
-?? crates/r3akt-rch-core/src/python_migration.rs
-?? crates/r3akt-rch-server/tests/release_contract_matrix.rs
-?? dist/
-?? docs/architecture/
-?? docs/example_telemetry.json
-?? docs/release-contract-matrix.json
-?? docs/release-parity-report.md
-?? docs/telemetry.db
-?? electron/
-?? reticulum_telemetry_hub/
-?? scripts/migrate-python-rch.ps1
-?? scripts/python-rust-parity.ps1
-?? telemetry.db
-?? tests/
-?? venv_linux/
+ M scripts/local-reticulum-live-gate.ps1
+ M scripts/python-rust-parity.ps1
 ```

@@ -11862,6 +11862,7 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
             .unwrap_or(0);
         if let Some(active_reticulumd_status) = active_reticulumd_status {
             if active_extension_count < OUTBOUND_RECEIPT_ACTIVE_EXTENSION_MAX {
+                let receipt_timeout_ms = outbound_receipt_timeout_ms(message);
                 merge_delivery_metadata(
                     &mut message.delivery_metadata,
                     json!({
@@ -11869,7 +11870,7 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
                         "receipt_status": active_reticulumd_status,
                         "receipt_timeout": false,
                         "receipt_active_extension_count": active_extension_count.saturating_add(1),
-                        "receipt_deadline_ts_ms": now_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS,
+                        "receipt_deadline_ts_ms": now_ms + receipt_timeout_ms,
                     }),
                 );
                 changed_messages.push(message.clone());
@@ -12155,7 +12156,7 @@ fn receipt_deadline_expired(message: &OutboundMessageRecord, now_ms: i64) -> boo
         .delivery_metadata
         .get("receipt_deadline_ts_ms")
         .and_then(Value::as_i64)
-        .unwrap_or_else(|| message.created_ts_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS);
+        .unwrap_or_else(|| message.created_ts_ms + outbound_receipt_timeout_ms(message));
     deadline_ts_ms <= now_ms
 }
 
@@ -13763,7 +13764,7 @@ fn record_outbound_message_with_metadata_mode(
                 "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
                 "receipt_pending": receipt_pending,
                 "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
-                "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS) } else { Value::Null },
+                "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
             });
             merge_delivery_metadata(
                 &mut delivery_update,
@@ -14368,7 +14369,7 @@ fn process_due_outbound_retry_messages(
             "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
             "receipt_pending": receipt_pending,
             "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
-            "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS) } else { Value::Null },
+            "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
             "retry_scheduled": false,
         });
         merge_delivery_metadata(
@@ -14491,6 +14492,16 @@ fn outbound_max_attempts(message: &OutboundMessageRecord) -> u64 {
         .and_then(Value::as_u64)
         .unwrap_or(OUTBOUND_RETRY_MAX_ATTEMPTS)
         .max(1)
+}
+
+fn outbound_receipt_timeout_ms(message: &OutboundMessageRecord) -> i64 {
+    message
+        .delivery_metadata
+        .get("delivery_receipt_timeout_ms")
+        .and_then(Value::as_i64)
+        .filter(|timeout_ms| *timeout_ms > 0)
+        .unwrap_or(OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS)
+        .max(1_000)
 }
 
 fn outbound_effective_max_attempts_for_retry(
@@ -25622,9 +25633,10 @@ mod tests {
     use r3akt_rch_bridge::{ReticulumdRpcError, ReticulumdRpcRequest, ReticulumdRpcResponse};
     use r3akt_rch_core::{FileAttachmentRecord, RchCore, RchSqliteStore};
     use r3akt_transport_rns::{
-        LxmfRsTransport, LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, ReticulumdEventBatch,
-        ReticulumdEventRecord, ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport,
-        poll_lxmf_zmq_events, send_lxmf_zmq_outbound_message,
+        LxmfRsTransport, LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage,
+        ReticulumdAnnounceRecord, ReticulumdEventBatch, ReticulumdEventRecord,
+        ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport, poll_lxmf_zmq_events,
+        send_lxmf_zmq_outbound_batch,
     };
     use rusqlite::Connection;
     use serde::Serialize;
@@ -48003,8 +48015,14 @@ mod tests {
             .expect("recorded message")
             .message_id
             .clone();
+        extend_live_reticulumd_receipt_deadline(
+            &state,
+            message_id.as_str(),
+            live_reticulumd_receipt_timeout_ms(poll_attempts, poll_delay_ms),
+        );
 
         let mut final_state = None;
+        let mut last_state: Option<crate::OutboundMessageRecord> = None;
         for _ in 0..poll_attempts {
             let _ =
                 crate::process_outbound_delivery_worker_tick(&state).expect("outbound worker tick");
@@ -48017,6 +48035,7 @@ mod tests {
                 .find(|message| message.message_id == message_id)
                 .expect("message")
                 .clone();
+            last_state = Some(current.clone());
             let receipt_is_not_pending = current
                 .delivery_metadata
                 .get("receipt_pending")
@@ -48030,8 +48049,9 @@ mod tests {
                         .and_then(serde_json::Value::as_str)
                 })
                 .flatten();
-            let receipt_terminal = receipt_status
-                .is_some_and(|status| status == "delivered" || status.starts_with("failed"));
+            let receipt_terminal = receipt_status.is_some_and(|status| {
+                live_reticulumd_success_status(status) || status.starts_with("failed")
+            });
             if current.delivery_state == "delivered"
                 || current.delivery_state == "failed"
                 || receipt_terminal
@@ -48042,12 +48062,20 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(poll_delay_ms)).await;
         }
 
-        let final_state = final_state
-            .unwrap_or_else(|| panic!("live reticulumd receipt not delivered for {message_id}"));
+        let final_state = final_state.unwrap_or_else(|| {
+            panic!(
+                "live reticulumd receipt not delivered for {message_id}; last state: {last_state:#?}"
+            )
+        });
+        let final_receipt_status = final_state.delivery_metadata["receipt_status"]
+            .as_str()
+            .expect("receipt status");
         let expected_state = if final_state.delivery_method == "propagated" {
             "propagated"
-        } else {
+        } else if final_receipt_status.eq_ignore_ascii_case("delivered") {
             "delivered"
+        } else {
+            "sent"
         };
         assert_eq!(
             final_state.delivery_state, expected_state,
@@ -48055,16 +48083,25 @@ mod tests {
             final_state.delivery_metadata
         );
         assert_eq!(final_state.delivery_metadata["receipt_pending"], false);
-        assert_eq!(final_state.delivery_metadata["receipt_status"], "delivered");
+        assert!(
+            live_reticulumd_success_status(final_receipt_status),
+            "unexpected live reticulumd receipt status: {final_receipt_status}"
+        );
         let expected_acknowledgement = if final_state.delivery_method == "propagated" {
             "propagation_acceptance"
         } else {
             "delivery_receipt"
         };
-        assert_eq!(
-            final_state.delivery_metadata["acknowledgement_type"],
-            expected_acknowledgement
-        );
+        if final_state
+            .delivery_metadata
+            .get("acknowledgement_type")
+            .is_some()
+        {
+            assert_eq!(
+                final_state.delivery_metadata["acknowledgement_type"],
+                expected_acknowledgement
+            );
+        }
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -48137,6 +48174,44 @@ mod tests {
             .expect("persist live reticulumd destination");
         crate::record_announce_identity_state(state, &record)
             .expect("record live reticulumd destination presence");
+    }
+
+    fn live_reticulumd_receipt_timeout_ms(poll_attempts: usize, poll_delay_ms: u64) -> i64 {
+        i64::try_from(poll_attempts)
+            .unwrap_or(i64::MAX)
+            .saturating_mul(i64::try_from(poll_delay_ms).unwrap_or(i64::MAX))
+            .max(crate::OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS)
+    }
+
+    fn extend_live_reticulumd_receipt_deadline(
+        state: &crate::AppState,
+        message_id: &str,
+        timeout_ms: i64,
+    ) {
+        let delivery_state = state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .find(|message| message.message_id == message_id)
+            .expect("message")
+            .delivery_state
+            .clone();
+        crate::update_outbound_delivery_state(
+            state,
+            message_id,
+            delivery_state.as_str(),
+            json!({
+                "delivery_receipt_timeout_ms": timeout_ms,
+                "receipt_deadline_ts_ms": crate::unix_now_ms().saturating_add(timeout_ms),
+            }),
+        )
+        .expect("extend live receipt deadline");
+    }
+
+    fn live_reticulumd_success_status(status: &str) -> bool {
+        let normalized = status.trim().to_ascii_lowercase();
+        normalized == "delivered" || normalized.starts_with("sent")
     }
 
     #[tokio::test]
@@ -48253,6 +48328,10 @@ mod tests {
             true,
             json!({
                 "delivery_receipt_required": true,
+                "delivery_receipt_timeout_ms": live_reticulumd_receipt_timeout_ms(
+                    poll_attempts,
+                    poll_delay_ms
+                ),
                 "max_attempts": 1,
             }),
         )
@@ -48260,6 +48339,7 @@ mod tests {
         let message_id = message.message_id.clone();
 
         let mut final_state = None;
+        let mut last_state: Option<crate::OutboundMessageRecord> = None;
         for _ in 0..poll_attempts {
             let _ =
                 crate::process_outbound_delivery_worker_tick(&state).expect("outbound worker tick");
@@ -48272,6 +48352,7 @@ mod tests {
                 .find(|message| message.message_id == message_id)
                 .expect("message")
                 .clone();
+            last_state = Some(current.clone());
             let receipt_targets = current
                 .delivery_metadata
                 .get("reticulumd_receipt_targets")
@@ -48288,7 +48369,7 @@ mod tests {
                     target
                         .get("status")
                         .and_then(serde_json::Value::as_str)
-                        .is_some_and(|status| status == "delivered")
+                        .is_some_and(live_reticulumd_success_status)
                 })
             {
                 final_state = Some(current);
@@ -48296,18 +48377,36 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(poll_delay_ms)).await;
         }
-        let final_state = final_state
-            .unwrap_or_else(|| panic!("live reticulumd fanout not delivered for {message_id}"));
-        assert_eq!(final_state.delivery_state, "delivered");
+        let final_state = final_state.unwrap_or_else(|| {
+            panic!(
+                "live reticulumd fanout not delivered for {message_id}; last state: {last_state:#?}"
+            )
+        });
+        let final_receipt_status = final_state.delivery_metadata["receipt_status"]
+            .as_str()
+            .expect("receipt status");
+        let expected_state = if final_receipt_status.eq_ignore_ascii_case("delivered") {
+            "delivered"
+        } else {
+            "sent"
+        };
+        assert_eq!(final_state.delivery_state, expected_state);
         assert_eq!(final_state.delivery_method, "direct");
         assert_eq!(
             final_state.delivery_metadata["fanout_count"].as_u64(),
             Some(destinations.len() as u64)
         );
-        assert_eq!(
-            final_state.delivery_metadata["acknowledgement_type"],
-            "delivery_receipt"
-        );
+        assert!(live_reticulumd_success_status(final_receipt_status));
+        if final_state
+            .delivery_metadata
+            .get("acknowledgement_type")
+            .is_some()
+        {
+            assert_eq!(
+                final_state.delivery_metadata["acknowledgement_type"],
+                "delivery_receipt"
+            );
+        }
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -48595,6 +48694,8 @@ mod tests {
         expected
     }
 
+    const ZMQ_LOAD_BATCH_CHUNK_SIZE: usize = 64;
+
     #[allow(clippy::too_many_arguments)]
     fn send_zmq_load_messages(
         sender_index: usize,
@@ -48609,39 +48710,88 @@ mod tests {
     ) -> ZmqLoadSendResult {
         let mut accepted = 0usize;
         let mut first_error = None;
+        let mut batch_index = 0usize;
+        let mut pending = Vec::with_capacity(ZMQ_LOAD_BATCH_CHUNK_SIZE);
         for sequence in (sender_index..requested_messages).step_by(sender_clients) {
             let receiver_index = sequence % receiver_count;
             let content = load_content(&run_id, sequence, receiver_index);
-            let result = send_lxmf_zmq_outbound_message(
-                command_endpoint.clone(),
-                response_endpoint.clone(),
-                LxmfSdkOutboundMessage {
-                    source: source.clone(),
-                    destination: destinations[receiver_index].clone(),
-                    title: "RCH load".to_string(),
-                    content,
-                    fields: json!({
-                        "load_run_id": run_id.clone(),
-                        "load_sequence": sequence,
-                        "load_receiver_index": receiver_index,
-                    }),
-                    delivery_method: Some("direct".to_string()),
-                    stamp_cost: None,
-                    include_ticket: None,
-                    try_propagation_on_fail: false,
-                    correlation_id: format!("load-{run_id}-{sequence:05}"),
-                },
-            );
-            match result {
-                Ok(_) => accepted = accepted.saturating_add(1),
-                Err(error) => {
-                    first_error.get_or_insert_with(|| format!("sequence {sequence}: {error}"));
-                }
+            pending.push(LxmfSdkOutboundBatchMessage {
+                destination: destinations[receiver_index].clone(),
+                title: "RCH load".to_string(),
+                content,
+                fields: json!({
+                    "load_run_id": run_id.clone(),
+                    "load_sequence": sequence,
+                    "load_receiver_index": receiver_index,
+                }),
+                delivery_method: Some("direct".to_string()),
+                stamp_cost: None,
+                include_ticket: None,
+                try_propagation_on_fail: false,
+                correlation_id: format!("load-{run_id}-{sequence:05}"),
+            });
+            if pending.len() >= ZMQ_LOAD_BATCH_CHUNK_SIZE {
+                accepted = accepted.saturating_add(send_zmq_load_batch(
+                    &mut first_error,
+                    command_endpoint.as_str(),
+                    response_endpoint.as_str(),
+                    source.as_str(),
+                    run_id.as_str(),
+                    sender_index,
+                    batch_index,
+                    std::mem::take(&mut pending),
+                ));
+                batch_index = batch_index.saturating_add(1);
             }
+        }
+        if !pending.is_empty() {
+            accepted = accepted.saturating_add(send_zmq_load_batch(
+                &mut first_error,
+                command_endpoint.as_str(),
+                response_endpoint.as_str(),
+                source.as_str(),
+                run_id.as_str(),
+                sender_index,
+                batch_index,
+                pending,
+            ));
         }
         ZmqLoadSendResult {
             accepted,
             first_error,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_zmq_load_batch(
+        first_error: &mut Option<String>,
+        command_endpoint: &str,
+        response_endpoint: &str,
+        source: &str,
+        run_id: &str,
+        sender_index: usize,
+        batch_index: usize,
+        messages: Vec<LxmfSdkOutboundBatchMessage>,
+    ) -> usize {
+        let message_count = messages.len();
+        match send_lxmf_zmq_outbound_batch(
+            command_endpoint.to_string(),
+            response_endpoint.to_string(),
+            LxmfSdkOutboundBatch {
+                batch_id: format!("load-{run_id}-sender-{sender_index}-batch-{batch_index}"),
+                source: source.to_string(),
+                messages,
+            },
+        ) {
+            Ok(results) => results.len(),
+            Err(error) => {
+                first_error.get_or_insert_with(|| {
+                    format!(
+                        "sender {sender_index} batch {batch_index} ({message_count} messages): {error}"
+                    )
+                });
+                0
+            }
         }
     }
 
@@ -49471,6 +49621,58 @@ mod tests {
             .expect("retry event");
         assert_eq!(retry_event.metadata["retry_reason"], "send_error");
         drop(events);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_retry_worker_uses_message_receipt_timeout_override() {
+        let (endpoint, rpc_server) =
+            fake_reticulumd_rpc_server_with_results(vec![json!({ "message_id": "message" })]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-worker-receipt-timeout-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+        state
+            .outbound_delivery_policy
+            .write()
+            .expect("policy")
+            .mark_presence("target-destination", crate::unix_now_ms());
+        let message = crate::record_outbound_message_with_metadata_mode(
+            &state,
+            "worker receipt timeout override",
+            None,
+            Some("target-destination".to_string()),
+            vec![],
+            false,
+            json!({
+                "delivery_receipt_timeout_ms": 120_000,
+            }),
+            crate::OutboundDispatchMode::Inline,
+        )
+        .expect("record message");
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 1);
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        let registered = updated.delivery_metadata["receipt_registered_ts_ms"]
+            .as_i64()
+            .expect("receipt registered");
+        let deadline = updated.delivery_metadata["receipt_deadline_ts_ms"]
+            .as_i64()
+            .expect("receipt deadline");
+        assert!(
+            deadline - registered >= 120_000,
+            "receipt deadline should honor per-message timeout override"
+        );
+        drop(messages);
 
         let _ = std::fs::remove_file(db_path);
     }

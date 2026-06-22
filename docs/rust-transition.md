@@ -141,12 +141,14 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   over the LXMF-rs ZeroMQ RPC loop.
 - Local daemon-involved ZeroMQ load validation is available through
   `scripts/local-reticulum-live-gate.ps1 -ZmqLoadOnly -LoadMessages <count>`.
-  It sends normal individual `sdk_send_v2` requests from one local daemon to
-  local receiver daemons and verifies receiver-side `sdk_poll_events_v2`
-  inbound events. A 2-message sanity run passed on 2026-05-30; 10-message
-  burst runs accepted all sends but exposed incomplete receiver delivery,
-  confirming the remaining bottleneck is daemon/network delivery rather than
-  RCH-side request construction.
+  It sends chunked `sdk_send_batch_v2` requests from one local daemon to local
+  receiver daemons and verifies receiver-side `sdk_poll_events_v2` inbound
+  events. The default 500-message run passed on 2026-06-22 with 500 accepted
+  and 500 received, balanced across two local receiver daemons; larger
+  `-LoadMessages` values remain useful explicit saturation tests for the
+  daemon/network delivery layer. A 1,000-message saturation run across four
+  receiver daemons also passed on 2026-06-22 with 1,000 accepted and 1,000
+  received.
 - The daemon-side scalability fix is a persistent bounded delivery scheduler in
   `reticulumd`: accepted messages enter one runtime-backed queue, direct links
   are reused instead of reset per message, per-peer delivery defaults to ordered
