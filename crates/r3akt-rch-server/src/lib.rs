@@ -5679,6 +5679,11 @@ fn openapi_operation(
     Value::Object(operation)
 }
 
+fn openapi_operation_aliases(mut operation: Value, aliases: &[&str]) -> Value {
+    operation["x-rch-aliases"] = json!(aliases);
+    operation
+}
+
 fn openapi_schema_response_with_503_operation(
     parameters: Vec<Value>,
     schema: &str,
@@ -8335,18 +8340,14 @@ fn openapi_document() -> Value {
             "/Status": {
                 "get": openapi_schema_response_operation(Vec::new(), "Status", "Status snapshot.")
             },
-            "/diagnostics/runtime": {
-                "get": openapi_schema_response_operation(
-                    Vec::new(),
-                    "RuntimeDiagnostics",
-                    "Runtime diagnostics snapshot."
-                )
-            },
             "/Diagnostics/Runtime": {
-                "get": openapi_schema_response_operation(
-                    Vec::new(),
-                    "RuntimeDiagnostics",
-                    "Runtime diagnostics snapshot."
+                "get": openapi_operation_aliases(
+                    openapi_schema_response_operation(
+                        Vec::new(),
+                        "RuntimeDiagnostics",
+                        "Runtime diagnostics snapshot."
+                    ),
+                    &["/diagnostics/runtime"]
                 )
             },
             "/api/v1/auth/validate": {
@@ -30913,13 +30914,20 @@ mod tests {
             );
         }
 
-        for path in ["/diagnostics/runtime", "/Diagnostics/Runtime"] {
-            assert_eq!(
-                paths[path]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
-                "#/components/schemas/RuntimeDiagnostics",
-                "{path} diagnostics response"
-            );
-        }
+        assert_eq!(
+            paths["/Diagnostics/Runtime"]["get"]["responses"]["200"]["content"]["application/json"]
+                ["schema"]["$ref"],
+            "#/components/schemas/RuntimeDiagnostics",
+            "diagnostics response"
+        );
+        assert_eq!(
+            paths["/Diagnostics/Runtime"]["get"]["x-rch-aliases"][0],
+            "/diagnostics/runtime"
+        );
+        assert!(
+            paths["/diagnostics/runtime"].is_null(),
+            "case-only diagnostic alias must not be a separate OpenAPI path"
+        );
 
         let chat_messages = &paths["/Chat/Messages"]["get"];
         let chat_params = chat_messages["parameters"]
@@ -31287,6 +31295,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openapi_paths_are_case_insensitive_tooling_safe() {
+        let app = crate::create_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/openapi.json")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        let paths = payload["paths"].as_object().expect("openapi paths");
+        let mut normalized_paths = std::collections::BTreeMap::<String, &str>::new();
+        for path in paths.keys() {
+            let normalized = path.to_ascii_lowercase();
+            let existing = normalized_paths.insert(normalized, path);
+            assert!(
+                existing.is_none(),
+                "OpenAPI path {path} collides case-insensitively with {}",
+                existing.unwrap_or("<missing>")
+            );
+        }
+        assert_eq!(
+            paths["/Diagnostics/Runtime"]["get"]["x-rch-aliases"][0],
+            "/diagnostics/runtime"
+        );
+    }
+
+    #[tokio::test]
     async fn openapi_covers_python_northbound_route_inventory() {
         let app = crate::create_app();
 
@@ -31521,12 +31568,19 @@ mod tests {
         ];
 
         for (path, method) in PYTHON_NORTHBOUND_ROUTES {
-            let methods = paths
+            let exact_path_has_method = paths
                 .get(*path)
                 .and_then(|value| value.as_object())
-                .unwrap_or_else(|| panic!("Python northbound route {path} is missing"));
+                .is_some_and(|methods| methods.contains_key(*method));
+            let alias_path_has_method = paths.values().any(|path_item| {
+                path_item
+                    .get(*method)
+                    .and_then(|operation| operation.get("x-rch-aliases"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|aliases| aliases.iter().any(|alias| alias == *path))
+            });
             assert!(
-                methods.contains_key(*method),
+                exact_path_has_method || alias_path_has_method,
                 "Python northbound route {method} {path} is missing"
             );
         }
