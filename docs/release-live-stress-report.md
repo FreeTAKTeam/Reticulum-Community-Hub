@@ -1322,3 +1322,40 @@ Post-build UI verification:
   - API auth failures: none confirmed in app route content;
   - app runtime errors: `0`;
   - captured console/network errors: `0`.
+
+## Broadcast Timeout Fallback Retest
+
+Time: `2026-06-22T22:06Z` to `2026-06-22T22:18Z`.
+
+Runtime:
+
+- RCH server: `target\release\r3akt-rch-server.exe`, PID `14024` after the
+  final rebuild.
+- State/config: `RTH_Store\rch_state.sqlite3` and `RTH_Store\config.ini`.
+- Reticulumd RPC: `127.0.0.1:14243`.
+- LXMF ZMQ command/response:
+  `tcp://127.0.0.1:19100` / `tcp://127.0.0.1:19101`.
+
+Observed messages:
+
+| Message ID | Result |
+| --- | --- |
+| `2a2892b3227b427487308d53712dd163` | User saw a transient `failed/send_error` after direct-timeout propagation fallback. Live DB later showed current state `propagated`, method `propagated`, policy `broadcast_direct_timeout_fallback`, `reticulumd_dispatch_count=13`, six child rows with `sent: propagated resource`, and seven still `sending`. |
+| `d3a43d4ff4844ccb9cb692d56a7b157c` | Post-retry-budget patch canary reproduced the remaining bug: direct broadcast stayed terminal `failed` with `error=send_timeout` instead of queueing propagation. |
+| `89101f6a0bb04916b68aed1b31b1e21c` | After the direct-timeout fallback patch, direct broadcast timeout changed to queued `propagated` with policy `broadcast_direct_timeout_fallback`, `fallback_reason=direct_dispatch_timeout`, and no terminal failed state. Subsequent propagated attempts hit `SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded`, so the message stayed queued with retry scheduled. |
+
+Fixes added:
+
+- Worker-side direct broadcast/fanout dispatch timeouts now queue the same
+  parent message for propagation instead of marking it failed after the direct
+  retry budget is exhausted.
+- Propagated broadcast/fanout fallback retries now allow the fifth propagated
+  attempt before terminal failure, matching the observed daemon retry behavior.
+- Runtime diagnostics now count worker direct-timeout propagation fallback under
+  `propagation_fallback_total`.
+
+Remaining retest:
+
+- Wait for the LXMF SDK rate-limit window to clear, then send another broadcast
+  canary and confirm the queued propagated fallback reaches accepted propagated
+  dispatch against the connected phones/decks.
