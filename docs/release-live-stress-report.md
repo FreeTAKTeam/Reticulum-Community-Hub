@@ -1363,3 +1363,39 @@ Remaining retest:
   canary and confirm the queued propagated fallback reaches accepted propagated
   dispatch against the connected phones/decks. The current expected state while
   rate-limited is queued with delayed retry, not failed.
+
+## Config And Reticulum Path Retest
+
+Time: `2026-06-22T22:41Z` to `2026-06-22T22:49Z`.
+
+Runtime:
+
+- RCH server: `target\release\r3akt-rch-server.exe`, PID `18500` after the
+  final rebuild.
+- State/config: `RTH_Store\rch_state.sqlite3` and `RTH_Store\config.ini`.
+- Launch intentionally omitted `--reticulum-config-path` to verify
+  `[hub].reticulum_config_path` fallback from the hub config.
+
+Result:
+
+- `/Config` returned the 1,162-byte hub config and `/Config/Validate` returned
+  `valid=true`.
+- Invalid hub config text returned `valid=false` with parser errors instead of
+  mutating files.
+- Before the fix, `/api/v1/app/info.reticulum_config_path` was empty and
+  `/Reticulum/Config` returned an empty text payload even though
+  `RTH_Store\config.ini` contained
+  `reticulum_config_path = ~/.reticulum/config`.
+- After the fix, `/api/v1/app/info.reticulum_config_path` resolved to
+  `C:\Users\broth\.reticulum/config`, `/Reticulum/Config` returned the
+  640-byte real Reticulum config, and `/Reticulum/Config/Validate` returned
+  `valid=true`.
+- The Configure page loaded without console errors. The Reticulum tab showed
+  real values including `rmap` and `rmap.world`, and its header no longer showed
+  the stale 1,162-byte Hub payload size while the Reticulum module was active.
+
+Remaining retest:
+
+- Exercise controlled apply/rollback against a temporary backup path or an
+  operator-approved config edit before marking the full RCH-US-007 behavior
+  complete.
