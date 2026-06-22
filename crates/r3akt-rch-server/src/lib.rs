@@ -11739,7 +11739,10 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
             system_events.push((
                 "message_propagation_queued",
                 "Direct broadcast timed out; queued message for propagation".to_string(),
-                outbound_delivery_propagation_metadata(message, "direct_dispatch_timeout"),
+                outbound_delivery_callback_metadata(
+                    outbound_delivery_propagation_metadata(message, "direct_dispatch_timeout"),
+                    "propagation_fallback",
+                ),
             ));
             continue;
         }
@@ -50282,8 +50285,19 @@ mod tests {
             propagation_event.metadata["fallback_reason"],
             "direct_dispatch_timeout"
         );
+        assert_eq!(
+            propagation_event.metadata["callback_source"],
+            "reticulumd_internal_adapter"
+        );
+        assert_eq!(
+            propagation_event.metadata["callback_type"],
+            "propagation_fallback"
+        );
         assert_eq!(propagation_event.metadata["route_type"], "broadcast");
         drop(events);
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["propagation_fallback_total"], 1);
 
         let _ = std::fs::remove_file(db_path);
     }
