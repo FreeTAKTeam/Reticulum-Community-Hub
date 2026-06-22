@@ -97,6 +97,7 @@ const OUTBOUND_DISPATCH_TIMEOUT_MS: i64 = 30_000;
 const OUTBOUND_RETRY_WORKER_POLL_MS: u64 = 500;
 const OUTBOUND_RETRY_BACKOFF_MS: i64 = 500;
 const OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS: i64 = 65_000;
+const OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS: u64 = 30;
 const OUTBOUND_RETRY_MAX_ATTEMPTS: u64 = 2;
 const OUTBOUND_PROPAGATION_STAMP_COST: u32 = 16;
 const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
@@ -14543,11 +14544,12 @@ fn outbound_effective_max_attempts_for_retry(
     rate_limited: bool,
 ) -> u64 {
     let mut max_attempts = outbound_max_attempts(message);
-    if is_rem_command_message(message)
-        || rate_limited
-        || propagated_multi_recipient_allows_partial_success(message)
+    if is_rem_command_message(message) || propagated_multi_recipient_allows_partial_success(message)
     {
         max_attempts = max_attempts.max(5);
+    }
+    if rate_limited {
+        max_attempts = max_attempts.max(OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS);
     }
     max_attempts
 }
@@ -54962,6 +54964,65 @@ mod tests {
         )
         .expect("schedule exhausted retry");
         assert!(exhausted.is_none());
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn propagated_broadcast_fallback_rate_limit_extends_retry_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-rate-limit-retry-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-rate-limited".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "retry_scheduled": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        let before_retry = crate::unix_now_ms();
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &message,
+            "SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded".to_string(),
+        )
+        .expect("schedule retry")
+        .expect("rate-limited propagated broadcast should remain queued");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(retry.delivery_metadata["attempts"], json!(6));
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(
+            retry.delivery_metadata["retry_reason"],
+            json!("rate_limited")
+        );
+        assert!(
+            retry.delivery_metadata["next_attempt_at_ts_ms"]
+                .as_i64()
+                .expect("next attempt")
+                >= before_retry + crate::OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS - 1_000
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
