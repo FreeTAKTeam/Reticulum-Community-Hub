@@ -845,19 +845,35 @@ Run the repeatable local Reticulum receipt/fanout/ZeroMQ event-poll harness when
 ```
 
 Run the same local mesh with a daemon-involved ZeroMQ load check. This sends
-normal individual `sdk_send_v2` messages from node 0 to the local receiver
-daemons and confirms delivery through receiver-side `sdk_poll_events_v2`:
+chunked `sdk_send_batch_v2` traffic from node 0 to the local receiver daemons
+and confirms delivery through receiver-side `sdk_poll_events_v2`. The default
+500-message run is the repeatable local release-candidate stress gate; use
+larger `-LoadMessages` values for explicit saturation tests:
 
 ```powershell
 .\scripts\local-reticulum-live-gate.ps1 `
   -IncludeZmqLoad `
-  -LoadMessages 1000 `
   -LoadSenderClients 4 `
   -DiscoverySettleSeconds 10
 ```
 
 Use `-ZmqLoadOnly` to run only the load check while tuning daemon delivery
 throughput.
+
+For a heavier local saturation check, spread 1,000 messages across four
+temporary receiver daemons:
+
+```powershell
+.\scripts\local-reticulum-live-gate.ps1 `
+  -ZmqLoadOnly `
+  -NodeCount 5 `
+  -LoadReceiverCount 4 `
+  -LoadMessages 1000 `
+  -LoadSenderClients 4 `
+  -DiscoverySettleSeconds 10 `
+  -LoadPollAttempts 480 `
+  -LoadPollDelayMs 250
+```
 
 The Rust daemon delivery path now uses a bounded persistent scheduler rather
 than spawning one delivery runtime per message. Tune burst capacity with the

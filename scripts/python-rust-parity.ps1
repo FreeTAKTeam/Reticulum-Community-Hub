@@ -199,7 +199,9 @@ $mustMatchContracts = @($contracts | Where-Object { $_.classification -eq "must-
 $rustAdditiveContracts = @($contracts | Where-Object { $_.classification -eq "rust-additive-required" })
 $differenceContracts = @($contracts | Where-Object { $_.classification -eq "intentional-difference" })
 $routeFailures = @($routeResults | Where-Object { $_.rust -notin @("pass", "not-run") })
-$pythonRouteFailures = @($routeResults | Where-Object { $_.python -notin @("pass", "not-run") })
+$pythonRouteFailures = @($routeResults | Where-Object {
+        $_.classification -eq "must-match-python" -and $_.python -notin @("pass", "not-run")
+    })
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("# Python Parity Plus Rust Release Capability Report")
@@ -254,10 +256,10 @@ $lines.Add("")
 if ($routeResults.Count -eq 0) {
     $lines.Add("No HTTP route contracts were present in the matrix.")
 } else {
-    $lines.Add("| Method | Path | Rust OpenAPI | Python OpenAPI |")
-    $lines.Add("| --- | --- | --- | --- |")
+    $lines.Add("| Classification | Method | Path | Rust OpenAPI | Python OpenAPI |")
+    $lines.Add("| --- | --- | --- | --- | --- |")
     foreach ($result in $routeResults) {
-        $lines.Add(("| ``{0}`` | ``{1}`` | {2} | {3} |" -f $result.method, $result.path, $result.rust, $result.python))
+        $lines.Add(("| ``{0}`` | ``{1}`` | ``{2}`` | {3} | {4} |" -f $result.classification, $result.method, $result.path, $result.rust, $result.python))
     }
 }
 $lines.Add("")
@@ -269,12 +271,12 @@ if ($routeFailures.Count -eq 0) {
     $lines.Add("- Rust OpenAPI route probe failures: $($routeFailures.Count)")
 }
 if ($pythonRouteFailures.Count -eq 0) {
-    $lines.Add("- Python OpenAPI has no failed route probes for the matrix scope.")
+    $lines.Add("- Python OpenAPI has no failed route probes for must-match route contracts.")
 } else {
-    $lines.Add("- Python OpenAPI route probe failures: $($pythonRouteFailures.Count)")
+    $lines.Add("- Python OpenAPI must-match route probe failures: $($pythonRouteFailures.Count)")
 }
 $lines.Add("- Rust additive capability gates must still be backed by their named evidence commands before final release.")
-$lines.Add("- True Python-visible mismatches must be fixed or explicitly waived; Rust additive failures block release even without Python equivalents.")
+$lines.Add("- True Python-visible mismatches must be fixed or explicitly waived; Rust additive failures block release even when Python does not expose an equivalent route.")
 $lines.Add("")
 $lines.Add("## Workspace Status")
 $lines.Add("")

@@ -36,11 +36,6 @@
         { "path": "/Config", "method": "put" },
         { "path": "/Config/Rollback", "method": "post" },
         { "path": "/Config/Validate", "method": "post" },
-        { "path": "/Control/Announce", "method": "post" },
-        { "path": "/Control/Start", "method": "post" },
-        { "path": "/Control/Status", "method": "get" },
-        { "path": "/Control/Stop", "method": "post" },
-        { "path": "/Control/Sync", "method": "post" },
         { "path": "/Diagnostics/Runtime", "method": "get" },
         { "path": "/Events", "method": "get" },
         { "path": "/Examples", "method": "get" },
@@ -183,11 +178,7 @@
         { "path": "/checklists/{checklist_id}/tasks/{task_id}/row-style", "method": "patch" },
         { "path": "/checklists/{checklist_id}/tasks/{task_id}/status", "method": "post" },
         { "path": "/checklists/{checklist_id}/upload", "method": "post" },
-        { "path": "/diagnostics/runtime", "method": "get" },
-        { "path": "/events/system", "method": "get" },
-        { "path": "/messages/stream", "method": "get" },
-        { "path": "/openapi.yaml", "method": "get" },
-        { "path": "/telemetry/stream", "method": "get" }
+        { "path": "/diagnostics/runtime", "method": "get" }
       ]
     },
     {
@@ -218,6 +209,28 @@
       "evidence": [
         "crates/r3akt-tak-connector tests",
         "scripts/release-readiness.ps1"
+      ]
+    },
+    {
+      "id": "rust-additive-http-routes",
+      "classification": "rust-additive-required",
+      "kind": "http-route",
+      "description": "Rust-only operator control, streaming, and OpenAPI convenience routes that Python 2.9.x does not expose but the Rust release must keep.",
+      "evidence": [
+        "crates/r3akt-rch-server/src/lib.rs",
+        "crates/r3akt-rch-server/tests/release_contract_matrix.rs",
+        "scripts/python-rust-parity.ps1"
+      ],
+      "routes": [
+        { "path": "/Control/Announce", "method": "post" },
+        { "path": "/Control/Start", "method": "post" },
+        { "path": "/Control/Status", "method": "get" },
+        { "path": "/Control/Stop", "method": "post" },
+        { "path": "/Control/Sync", "method": "post" },
+        { "path": "/events/system", "method": "get" },
+        { "path": "/messages/stream", "method": "get" },
+        { "path": "/openapi.yaml", "method": "get" },
+        { "path": "/telemetry/stream", "method": "get" }
       ]
     },
     {
