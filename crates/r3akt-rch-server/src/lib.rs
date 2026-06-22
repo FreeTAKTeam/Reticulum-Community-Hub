@@ -13911,7 +13911,9 @@ fn dispatch_outbound_message(
         .reticulumd_source
         .as_ref()
         .map_or("r3akt-rch-server", |value| value.as_str());
-    ensure_outbound_propagation_node_selected(state, message)?;
+    if should_select_outbound_propagation_node(message) {
+        ensure_outbound_propagation_node_selected(state, message)?;
+    }
     let destinations = outbound_destinations(state, message)?;
     let fanout_destination_count = destinations.len();
     let fanout_requires_child_ids = fanout_destination_count > 1;
@@ -14135,6 +14137,14 @@ fn ensure_outbound_propagation_node_selected(
         )));
     }
     Ok(())
+}
+
+fn should_select_outbound_propagation_node(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "propagated"
+        && !matches!(
+            message.delivery_mode,
+            DeliveryMode::Broadcast | DeliveryMode::Fanout
+        )
 }
 
 fn reticulumd_rpc_error_text(error: &r3akt_rch_bridge::ReticulumdRpcError) -> String {
@@ -15408,7 +15418,16 @@ fn refresh_reticulumd_announces_for_state(state: &AppState) {
 }
 
 fn broadcast_client_records_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiError> {
-    refresh_reticulumd_announces_for_state(state);
+    broadcast_client_records_for_state_with_refresh(state, true)
+}
+
+fn broadcast_client_records_for_state_with_refresh(
+    state: &AppState,
+    refresh_announces: bool,
+) -> Result<Vec<ClientRecord>, ApiError> {
+    if refresh_announces {
+        refresh_reticulumd_announces_for_state(state);
+    }
     let mut records = client_records_for_state(state)?;
     records.sort_by(|left, right| left.identity.cmp(&right.identity));
     Ok(records)
@@ -15417,9 +15436,34 @@ fn broadcast_client_records_for_state(state: &AppState) -> Result<Vec<ClientReco
 fn broadcast_outbound_client_records_for_state(
     state: &AppState,
 ) -> Result<Vec<ClientRecord>, ApiError> {
+    broadcast_outbound_client_records_for_state_with_refresh(state, true)
+}
+
+fn broadcast_outbound_client_records_for_message(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+) -> Result<Vec<ClientRecord>, ApiError> {
+    if should_enqueue_without_waiting_for_zmq_response(message) {
+        return broadcast_client_records_for_state_with_refresh(state, false);
+    }
+    broadcast_outbound_client_records_for_state_with_refresh(
+        state,
+        !should_enqueue_without_waiting_for_zmq_response(message),
+    )
+}
+
+fn broadcast_outbound_client_records_for_state_with_refresh(
+    state: &AppState,
+    refresh_announces: bool,
+) -> Result<Vec<ClientRecord>, ApiError> {
     let now = unix_now_ms();
     let routing_context = outbound_destination_routing_context(state)?;
-    Ok(broadcast_client_records_for_state(state)?
+    let records = if refresh_announces {
+        broadcast_client_records_for_state(state)?
+    } else {
+        broadcast_client_records_for_state_with_refresh(state, false)?
+    };
+    Ok(records
         .into_iter()
         .filter(|client| {
             let delivery_destination = outbound_destination_for_message_with_context_for_mode(
@@ -15507,7 +15551,7 @@ fn outbound_destinations(
             }
         }
     } else {
-        for client in broadcast_outbound_client_records_for_state(state)? {
+        for client in broadcast_outbound_client_records_for_message(state, message)? {
             let delivery_destination = outbound_destination_for_message_with_context(
                 message,
                 &client.identity,
@@ -55206,6 +55250,145 @@ mod tests {
         assert_eq!(report.receipts.len(), 1);
         assert_eq!(report.receipts[0].message_id, "propagated-single");
         assert_eq!(report.receipts[0].destination, "target-destination");
+    }
+
+    #[test]
+    fn propagated_broadcast_dispatch_skips_slow_node_selection_before_zmq_enqueue() {
+        let state = crate::AppState::default()
+            .with_reticulumd_rpc("127.0.0.1:1", "source-destination")
+            .with_lxmf_zmq_sdk(
+                unused_zmq_endpoint_for_rch_test(),
+                unused_zmq_endpoint_for_rch_test(),
+                "source-destination",
+            );
+        let now = crate::unix_now_ms();
+        for identity in [
+            "22c8ba9c883e06c7e540ed6dc87ceecf",
+            "77b2539b72259af927e48c0f90721767",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), now),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "propagated broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+
+        assert_eq!(report.count, 2);
+        assert_eq!(report.receipts.len(), 2);
+        assert!(
+            report
+                .receipts
+                .iter()
+                .any(|receipt| receipt.destination == "22c8ba9c883e06c7e540ed6dc87ceecf")
+        );
+        assert!(
+            report
+                .receipts
+                .iter()
+                .any(|receipt| receipt.destination == "77b2539b72259af927e48c0f90721767")
+        );
+    }
+
+    #[test]
+    fn propagated_broadcast_dispatch_skips_announce_refresh_before_zmq_enqueue() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            vec![empty_reticulumd_announce_response()],
+            Duration::from_millis(200),
+        );
+        let state = crate::AppState::default()
+            .with_reticulumd_rpc(endpoint, "source-destination")
+            .with_lxmf_zmq_sdk(
+                unused_zmq_endpoint_for_rch_test(),
+                unused_zmq_endpoint_for_rch_test(),
+                "source-destination",
+            );
+        let now = crate::unix_now_ms();
+        for identity in [
+            "22c8ba9c883e06c7e540ed6dc87ceecf",
+            "77b2539b72259af927e48c0f90721767",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), now),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-no-refresh".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "propagated broadcast no refresh".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+
+        assert_eq!(report.count, 2);
+        let requests = rpc_server.join().expect("rpc server");
+        assert!(
+            requests.is_empty(),
+            "propagated broadcast dispatch refreshed announces before enqueue: {requests:?}"
+        );
+    }
+
+    #[test]
+    fn propagated_broadcast_dispatch_includes_stale_known_clients() {
+        let state = crate::AppState::default().with_lxmf_zmq_sdk(
+            unused_zmq_endpoint_for_rch_test(),
+            unused_zmq_endpoint_for_rch_test(),
+            "source-destination",
+        );
+        let now = crate::unix_now_ms();
+        let stale_ts_ms = now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 10_000;
+        for identity in [
+            "22c8ba9c883e06c7e540ed6dc87ceecf",
+            "77b2539b72259af927e48c0f90721767",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), stale_ts_ms),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-stale-clients".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "propagated broadcast stale clients".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+
+        assert_eq!(report.count, 2);
+        assert_eq!(report.receipts.len(), 2);
     }
 
     #[test]
