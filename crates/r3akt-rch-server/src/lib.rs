@@ -10636,7 +10636,9 @@ fn outbound_delivery_diagnostics_with_refresh(
             .delivery_metadata
             .get("fallback_reason")
             .and_then(Value::as_str)
-            .is_some_and(|reason| reason == "direct_delivery_failed")
+            .is_some_and(|reason| {
+                matches!(reason, "direct_delivery_failed" | "direct_dispatch_timeout")
+            })
             || message
                 .delivery_metadata
                 .get("local_propagation_fallback")
@@ -14473,7 +14475,9 @@ fn schedule_outbound_retry_after_failure(
     let attempts = outbound_attempts(message).saturating_add(1);
     let rate_limited = outbound_error_is_rate_limited(error_text.as_str());
     let max_attempts = outbound_effective_max_attempts_for_retry(message, rate_limited);
-    if attempts >= max_attempts {
+    if attempts >= max_attempts
+        && !propagated_broadcast_fallback_should_retry_transport_failure(message, &error_text)
+    {
         return Ok(None);
     }
     let retry_reason = retry_reason_for_error(error_text.as_str());
@@ -14519,6 +14523,23 @@ fn outbound_error_is_rate_limited(error_text: &str) -> bool {
     normalized.contains("sdk_security_rate_limited")
         || normalized.contains("rate limit")
         || normalized.contains("rate_limited")
+}
+
+fn propagated_broadcast_fallback_should_retry_transport_failure(
+    message: &OutboundMessageRecord,
+    error_text: &str,
+) -> bool {
+    message.delivery_method == "propagated"
+        && message.delivery_mode == DeliveryMode::Broadcast
+        && message.delivery_policy_reason == "broadcast_direct_timeout_fallback"
+        && outbound_error_is_local_transport_unavailable(error_text)
+}
+
+fn outbound_error_is_local_transport_unavailable(error_text: &str) -> bool {
+    let normalized = error_text.trim().to_ascii_lowercase();
+    normalized.contains("connection refused")
+        || normalized.contains("actively refused")
+        || normalized.contains("os error 10061")
 }
 
 fn retry_reason_for_error(error_text: &str) -> &'static str {
@@ -50275,6 +50296,47 @@ mod tests {
         assert_eq!(retry.delivery_metadata["direct_attempts"], 4);
         assert_eq!(retry.delivery_metadata["retry_reason"], "send_error");
         assert_eq!(retry.delivery_metadata["retry_scheduled"], true);
+
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": crate::OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
+                "dispatch_status": "queued",
+                "retry_scheduled": true,
+                "next_attempt_at_ts_ms": crate::unix_now_ms() - 1,
+            }),
+        )
+        .expect("mark fallback at propagated retry budget");
+        let exhausted_for_retry = state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .cloned()
+            .expect("exhausted message");
+        let exhausted_retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &exhausted_for_retry,
+            "outbound request failed: No connection could be made because the target machine actively refused it. (os error 10061)".to_string(),
+        )
+        .expect("schedule transport-unavailable propagated retry")
+        .expect("transport-unavailable fallback broadcast should stay queued");
+        assert_eq!(exhausted_retry.delivery_state, "queued");
+        assert_eq!(exhausted_retry.delivery_method, "propagated");
+        assert!(
+            exhausted_retry.delivery_metadata["attempts"]
+                .as_u64()
+                .expect("attempts")
+                > crate::OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            exhausted_retry.delivery_metadata["retry_reason"],
+            "send_error"
+        );
+        assert_eq!(exhausted_retry.delivery_metadata["retry_scheduled"], true);
 
         let events = state.system_events.read().expect("events");
         let propagation_event = events
