@@ -1393,6 +1393,50 @@ Remaining retest:
   against the phones/decks, and confirm retry-eligible propagated fallback
   callbacks no longer appear as terminal `failed/send_error` in the UI.
 
+## Propagated Broadcast Rate-Limit Budget Retest
+
+Time: `2026-06-22T23:21Z` to `2026-06-22T23:43Z`.
+
+Runtime:
+
+- RCH server restarted from `target\release\r3akt-rch-server.exe` on
+  `http://127.0.0.1:18080/`, PID `13732`, using `RTH_Store\rch_state.sqlite3`
+  and `RTH_Store\config.ini`.
+- Diagnostics confirmed `status=running`, outbound retry worker running,
+  Reticulumd RPC configured, and LXMF SDK ZeroMQ configured.
+- USB phones were attached as `Pixel_7` (`35031FDH2003N8`) and `SM_G950W`
+  (`988b9b344135304639`). Both had `network.reticulum.emergency` version
+  `1.1.2`; both apps were launched after the first canary because no PID was
+  initially present.
+- `/Client` still listed embedded peers `silkedeck`, `raphydeck`, and
+  `corvodeck`, but the current announce evidence is stale for `silkedeck` and
+  `raphydeck`; `corvodeck` was last seen earlier on `2026-06-22`.
+
+Result:
+
+- Canary `3fc2f131af65410c82badf99d5ec44a8` reproduced the remaining failure:
+  direct broadcast timed out into `propagated` /
+  `broadcast_direct_timeout_fallback`, hit SDK rate limiting, then a later
+  `send_timeout` marked the message terminal `failed` at attempt 7.
+- Root cause: the rate-limit path extended the current retry attempt, but a
+  later non-rate-limit timeout recalculated max attempts from the smaller
+  normal propagated fallback budget.
+- Added a regression for this sequence and fixed retry metadata to persist
+  `rate_limit_retry_budget=true` once SDK rate limiting has been encountered.
+- After rebuilding and restarting, canary
+  `dc8c20bc041b47f78c313f77eea916c1` stayed `queued` as `propagated` /
+  `broadcast_direct_timeout_fallback` through attempt 8 with
+  `retry_scheduled=true`, `rate_limit_retry_budget=true`, and global failed
+  count flat at `37`.
+
+Remaining retest:
+
+- The queue no longer collapses to terminal `failed/send_error`, but live
+  propagation is still blocked by `SDK_SECURITY_RATE_LIMITED: per-ip request
+  rate limit exceeded`. Continue after the rate-limit window clears and confirm
+  the queued propagated canary reaches accepted/sent propagation and appears on
+  the phones/decks.
+
 ## Config And Reticulum Path Retest
 
 Time: `2026-06-22T22:41Z` to `2026-06-22T22:49Z`.

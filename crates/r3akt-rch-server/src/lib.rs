@@ -14488,6 +14488,7 @@ fn schedule_outbound_retry_after_failure(
     }
     let attempts = outbound_attempts(message).saturating_add(1);
     let rate_limited = outbound_error_is_rate_limited(error_text.as_str());
+    let rate_limit_retry_budget = rate_limited || outbound_rate_limit_retry_budget_active(message);
     let max_attempts = outbound_effective_max_attempts_for_retry(message, rate_limited);
     if !outbound_retry_attempt_allowed(message, attempts, max_attempts) {
         return Ok(None);
@@ -14520,6 +14521,7 @@ fn schedule_outbound_retry_after_failure(
             "receipt_pending": false,
             "retry_reason": retry_reason,
             "retry_scheduled": true,
+            "rate_limit_retry_budget": rate_limit_retry_budget,
             "next_attempt_at_ts_ms": next_attempt_at_ts_ms,
         }),
     );
@@ -14587,10 +14589,28 @@ fn outbound_effective_max_attempts_for_retry(
     {
         max_attempts = max_attempts.max(5);
     }
-    if rate_limited {
+    if rate_limited || outbound_rate_limit_retry_budget_active(message) {
         max_attempts = max_attempts.max(OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS);
     }
     max_attempts
+}
+
+fn outbound_rate_limit_retry_budget_active(message: &OutboundMessageRecord) -> bool {
+    message
+        .delivery_metadata
+        .get("rate_limit_retry_budget")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || message
+            .delivery_metadata
+            .get("retry_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason == "rate_limited")
+        || message
+            .delivery_metadata
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(outbound_error_is_rate_limited)
 }
 
 fn outbound_retry_attempt_allowed(
@@ -55162,6 +55182,26 @@ mod tests {
                 .as_i64()
                 .expect("next attempt")
                 >= before_retry + crate::OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS - 1_000
+        );
+
+        let later_timeout = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &retry,
+            "LXMF-rs ZeroMQ SDK request timed out waiting for correlated response".to_string(),
+        )
+        .expect("schedule timeout retry")
+        .expect("propagated broadcast should keep extended retry budget after rate limit");
+
+        assert_eq!(later_timeout.delivery_state, "queued");
+        assert_eq!(later_timeout.delivery_method, "propagated");
+        assert_eq!(later_timeout.delivery_metadata["attempts"], json!(7));
+        assert_eq!(
+            later_timeout.delivery_metadata["retry_scheduled"],
+            json!(true)
+        );
+        assert_eq!(
+            later_timeout.delivery_metadata["retry_reason"],
+            json!("send_error")
         );
 
         let _ = std::fs::remove_file(db_path);
