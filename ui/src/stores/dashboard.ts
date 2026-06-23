@@ -109,6 +109,17 @@ const isDeliveryRecoveryEvent = (event: EventEntry): boolean => {
   return deliveryMessageId(event) !== "" && toKeyPart(event.metadata?.State) !== "failed";
 };
 
+const isTerminalDeliveryRecoveryEvent = (event: EventEntry): boolean => {
+  const category = toKeyPart(event.category);
+  if (supersedesDeliveryFailure(event)) {
+    return true;
+  }
+  if (!["message_delivered", "message_propagated"].includes(category)) {
+    return false;
+  }
+  return deliveryMessageId(event) !== "" && toKeyPart(event.metadata?.State) !== "failed";
+};
+
 export const eventEntryKey = (event: EventEntry): string => {
   const id = toKeyPart(event.id);
   if (id) {
@@ -123,6 +134,12 @@ const mergeEventLists = (current: EventEntry[], incoming: EventEntry[]): EventEn
     const messageId = deliveryMessageId(event);
     const currentEventTime = eventTime(event);
     if (isDeliveryFailureEvent(event) && messageId) {
+      const terminallyRecovered = [...merged.values()].some(
+        (existing) => isTerminalDeliveryRecoveryEvent(existing) && deliveryMessageId(existing) === messageId
+      );
+      if (terminallyRecovered) {
+        continue;
+      }
       const alreadyRecovered = [...merged.values()].some(
         (existing) =>
           isDeliveryRecoveryEvent(existing) &&
@@ -140,7 +157,7 @@ const mergeEventLists = (current: EventEntry[], incoming: EventEntry[]): EventEn
           if (
             isDeliveryFailureEvent(existing) &&
             deliveryMessageId(existing) === messageId &&
-            eventTime(existing) <= currentEventTime
+            (isTerminalDeliveryRecoveryEvent(event) || eventTime(existing) <= currentEventTime)
           ) {
             merged.delete(key);
           }
