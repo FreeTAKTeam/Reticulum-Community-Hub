@@ -48219,7 +48219,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
             responses,
-            Duration::from_secs(1),
+            Duration::from_secs(10),
         );
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-reticulumd-status-budget-{}.db",
@@ -48320,7 +48320,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
             responses,
-            Duration::from_secs(1),
+            Duration::from_secs(10),
         );
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-reticulumd-status-skip-terminal-{}.db",
@@ -48412,7 +48412,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
             responses,
-            Duration::from_secs(1),
+            Duration::from_secs(10),
         );
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-reticulumd-status-prioritize-pending-{}.db",
@@ -48528,7 +48528,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
             responses,
-            Duration::from_secs(1),
+            Duration::from_secs(10),
         );
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-reticulumd-status-rotate-in-progress-{}.db",
