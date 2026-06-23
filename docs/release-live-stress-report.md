@@ -1723,3 +1723,43 @@ Remaining retest:
 - The environment is still hitting `SDK_SECURITY_RATE_LIMITED`, so continue
   live phone/deck stress after the rate-limit window clears and confirm queued
   repaired fallbacks reach accepted/sent propagation.
+
+## Emergency Action Message API Retest
+
+Time: `2026-06-23T02:00Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `16648`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Created disposable team `codex-eam-team-1782179686` and EAM callsign
+  `Codex EAM 1782179686`.
+- `POST /api/EmergencyActionMessage` persisted the EAM and computed
+  `overall_status=Yellow` from mixed Green/Yellow member status fields.
+- Filtered list `GET /api/EmergencyActionMessage?team_uid=...&overall_status=yellow`
+  returned the created EAM.
+- `GET /api/EmergencyActionMessage/latest/{team_member_uid}` and
+  `GET /api/EmergencyActionMessage/{callsign}` returned the same active record.
+- `GET /api/EmergencyActionMessage/team/{team_uid}/summary` reported
+  `total=1`, `active_total=1`, and `yellow_total=1`.
+- `PUT /api/EmergencyActionMessage/{callsign}` changed medical status to Red
+  and recomputed `overall_status=Red`.
+- Validation checks passed: mismatched path/body callsign returned `400` with
+  `callsign in body must match the path callsign`; confidence `1.1` returned
+  `422` with `less_than_equal`.
+- `DELETE /api/EmergencyActionMessage/{callsign}` returned the deleted record;
+  follow-up get returned `404`; team summary reported `active_total=0` and
+  `deleted_total=1`.
+- Cleanup deleted the disposable team. Follow-up API checks showed
+  `activeEamMatches=0` and `teamMatches=0`. The SQLite EAM tombstone remains
+  with `deleted_ts_ms`, which is expected for summary/history semantics.
+
+Remaining retest:
+
+- Browser proof for the embedded mission/member EAM controls remains open; the
+  route/API behavior itself passed against the live configured server.
