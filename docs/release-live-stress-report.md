@@ -4259,10 +4259,18 @@ Fresh broadcast canary:
 Receipt target polling:
 
 - Polled `DeliveryMetadata.reticulumd_receipt_targets` for three minutes.
-- All 18 polls stayed:
+- The first 18 polls stayed:
   - six targets `sending`.
   - SDK state `dispatching`.
   - no SDK reason code.
+- A later follow-up poll showed all six current targets reached
+  `sent: propagated resource`:
+  - `Peregrine` (`11a7907d67c457911c15206ec647ad33`).
+  - `silkedeck` (`1335df70880114d149c3ad8d63fb5dcd`).
+  - `Corvo` (`22c8ba9c883e06c7e540ed6dc87ceecf`).
+  - `raphydeck` (`279797db68f81ae8555a73cd12620240`).
+  - `corvodeck` (`441f217e9a51029edc58c1fe898c6c0b`).
+  - `pixel` (`77b2539b72259af927e48c0f90721767`).
 - Runtime status after the poll:
   - `queue_depth=0`.
   - `pending_dispatches=0`.
@@ -4285,8 +4293,77 @@ Phone evidence:
 Result:
 
 - Pass for current RCH behavior: the broadcast was persisted, expanded to six
-  current targets, accepted by reticulumd propagation, and did not regress into
-  `failed/send_error`.
-- RC blocker remains downstream receipt: phones did not fetch/import the
-  canary, and RCH did not observe terminal receipt-target progress beyond
-  `sending` / SDK `dispatching`.
+  current targets, accepted by reticulumd propagation, and later recorded
+  `sent: propagated resource` for all six current target rows.
+- RC blocker remains downstream phone/deck inbox receipt: phones did not
+  fetch/import the canary even though RCH and reticulumd completed publication
+  to the current target roster.
+
+## 2026-06-23 Repeated Broadcast Error Live Recheck
+
+Setup:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+
+User-reported message:
+
+- The operator again reported message `2a2892b3227b427487308d53712dd163` as:
+  - `State=failed`.
+  - `Delivery Method=propagated`.
+  - `Delivery Policy Reason=broadcast_direct_timeout_fallback`.
+  - `Failure Reason=send_error`.
+  - `Route Type=broadcast`.
+- Direct SQLite state for the row was:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `attempts=5`.
+- `/Chat/Messages?limit=250&direction=outbound` returned the same row as:
+  - `State=propagated`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=500` returned no event for that message ID.
+
+Fresh broadcast canary:
+
+- Sent body `RCH RC broadcast fallback canary 20260623T190756Z`.
+- Stored message ID: `984a023ebff0440191ba52d0cdcd147a`.
+- Initial response:
+  - `State=queued`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_unannounced`.
+  - `dispatch_status=queued_deferred`.
+- First poll result:
+  - `State=propagated`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=6`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=500` contained one `message_propagated` event for the canary
+  with `acknowledgement_type=propagation_acceptance`.
+- The in-app browser loaded `http://127.0.0.1:18080/chat` and contained the
+  canary text after reload.
+
+Follow-up:
+
+- The canary stayed `propagated` / `accepted` for the two-minute poll window.
+- All six current targets remained `sending` during that short follow-up.
+- Runtime queue state remained clear:
+  - `queue_depth=0`.
+  - `pending_dispatches=0`.
+  - `pending_receipts=0`.
+
+Result:
+
+- No new terminal RCH `send_error` state was found.
+- The repeated `2a289...` failure card is stale relative to current DB/API
+  state.
+- The remaining RC blocker is downstream target receipt or phone/deck inbox
+  import, not current RCH propagation fallback state.
