@@ -2519,3 +2519,49 @@ Remaining release gate:
 - This does not prove the hosted release workflow matrix. Run
   `Build Rust Release Packages` before publishing the RC and verify uploaded or
   attached artifacts plus checksums for all matrix entries.
+
+## 2026-06-23 Release Gate and Main Merge
+
+Context:
+
+- PR #201 targeted `main`; after `origin/main` advanced to include PR #200,
+  GitHub reported no checks and `mergeStateStatus=DIRTY`.
+- A non-mutating merge preview showed one conflict in
+  `crates/r3akt-rch-server/src/lib.rs` around broadcast fallback retry
+  scheduling.
+
+Resolution:
+
+- Merged `origin/main`.
+- Preserved this branch's retryable propagated fallback behavior and retained
+  `main`'s local-transport retry helper in the retry scheduler predicate.
+- Removed the duplicate broadcast-only timeout propagation path from `main` in
+  favor of this branch's generalized broadcast/fanout direct-timeout propagation
+  path, with the metadata cleanup and `direct_attempts` field folded in.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server propagated_broadcast` passed 10 focused
+  propagated broadcast fallback tests.
+- `cargo fmt --all -- --check` passed.
+- `scripts\release-readiness.ps1 -ServerOnlyAlpha -SkipClippy
+  -SkipWorkspaceTests -Bind 127.0.0.1:18082 -ApiKey codex-release-gate
+  -LxmfZmqCommand tcp://localhost:9100 -LxmfZmqResponse
+  tcp://localhost:9101 -ReticulumdSource codex-release-gate` passed.
+
+Runtime note:
+
+- The first post-merge release gate attempt failed because the manual
+  DB/config-backed server was running from `target\release\r3akt-rch-server.exe`
+  and Windows denied Cargo replacing the locked binary.
+- Stopped the manual server briefly, reran the gate, and restarted the manual
+  server on `http://127.0.0.1:18080/` with PID `26344`, using
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, Reticulum RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints
+  `tcp://127.0.0.1:19100` / `tcp://127.0.0.1:19101`.
+
+Remaining release gate:
+
+- Push the merge and wait for GitHub to report checks for PR #201.
+- Full clippy/workspace tests were not rerun in this local gate; rely on
+  GitHub PR quality checks or run them locally before marking the PR ready.
