@@ -776,13 +776,16 @@ impl AppState {
                     })
                     .collect(),
             ));
-            state.messages = Arc::new(RwLock::new(
-                snapshot
-                    .messages
-                    .into_iter()
-                    .map(OutboundMessageRecord::from)
-                    .collect(),
-            ));
+            let mut messages = snapshot
+                .messages
+                .into_iter()
+                .map(OutboundMessageRecord::from)
+                .collect::<Vec<_>>();
+            let repaired_messages = repair_success_superseded_outbound_metadata(&mut messages);
+            for message in repaired_messages {
+                store.upsert_message(&CoreMessageRecord::from(message))?;
+            }
+            state.messages = Arc::new(RwLock::new(messages));
             state.system_events = Arc::new(RwLock::new(snapshot.system_events));
             state.telemetry_records = Arc::new(RwLock::new(snapshot.telemetry_records));
         }
@@ -1664,6 +1667,23 @@ impl From<OutboundMessageRecord> for CoreMessageRecord {
             attachments: message.attachments,
         }
     }
+}
+
+fn repair_success_superseded_outbound_metadata(
+    messages: &mut [OutboundMessageRecord],
+) -> Vec<OutboundMessageRecord> {
+    let mut repaired = Vec::new();
+    for message in messages {
+        if !delivery_state_clears_error_metadata(message.delivery_state.as_str()) {
+            continue;
+        }
+        let original = message.delivery_metadata.clone();
+        clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
+        if message.delivery_metadata != original {
+            repaired.push(message.clone());
+        }
+    }
+    repaired
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -20298,10 +20318,11 @@ fn mark_recovered_delivery_failure_event(state: &AppState, payload: &mut Value) 
                 .unwrap_or(Value::Null),
         );
         metadata.insert("State".to_string(), json!(current.delivery_state.clone()));
-        metadata.insert(
-            "DeliveryMetadata".to_string(),
-            current.delivery_metadata.clone(),
-        );
+        let mut delivery_metadata = current.delivery_metadata.clone();
+        if delivery_state_clears_error_metadata(current.delivery_state.as_str()) {
+            clear_success_superseded_delivery_metadata(&mut delivery_metadata);
+        }
+        metadata.insert("DeliveryMetadata".to_string(), delivery_metadata);
         metadata.insert(
             "delivery_method".to_string(),
             json!(current.delivery_method.clone()),
@@ -57818,6 +57839,7 @@ mod tests {
             delivery_state: "propagated".to_string(),
             delivery_metadata: json!({
                 "dispatch_status": "accepted",
+                "last_attempt_failed_at_ts_ms": crate::unix_now_ms() - 250,
                 "retry_reason": "send_error",
                 "fallback_reason": "direct_dispatch_timeout",
             }),
@@ -57879,6 +57901,113 @@ mod tests {
         assert_eq!(events[0]["metadata"]["current_state"], "propagated");
         assert_eq!(events[0]["metadata"]["current_dispatch_status"], "accepted");
         assert_eq!(events[0]["metadata"]["State"], "propagated");
+        let delivery_metadata = events[0]["metadata"]["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!delivery_metadata.contains_key("error"));
+        assert!(!delivery_metadata.contains_key("retry_reason"));
+        assert!(!delivery_metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[test]
+    fn sqlite_load_repairs_success_superseded_delivery_metadata() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-success-metadata-repair-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(crate::OutboundMessageRecord {
+                message_id: "persisted-recovered-broadcast".to_string(),
+                topic_id: None,
+                destination: None,
+                sender: "northbound".to_string(),
+                content: "persisted recovered broadcast".to_string(),
+                delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+                delivery_method: "propagated".to_string(),
+                delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+                delivery_state: "propagated".to_string(),
+                delivery_metadata: json!({
+                    "dispatch_status": "accepted",
+                    "error": "send_error",
+                    "fallback_reason": "direct_dispatch_timeout",
+                    "last_attempt_failed_at_ts_ms": crate::unix_now_ms() - 500,
+                    "retry_reason": "send_error",
+                    "reticulumd_dispatch_count": 13,
+                }),
+                created_ts_ms: crate::unix_now_ms(),
+                attachments: Vec::new(),
+            });
+        state.persist().expect("persist stale metadata");
+
+        let repaired_state = crate::AppState::from_sqlite_path(&db_path).expect("reload state");
+        let repaired_message = repaired_state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .find(|message| message.message_id == "persisted-recovered-broadcast")
+            .cloned()
+            .expect("message");
+        assert_eq!(repaired_message.delivery_state, "propagated");
+        assert!(
+            !repaired_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("error")
+        );
+        assert!(
+            !repaired_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("retry_reason")
+        );
+        assert!(
+            !repaired_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("last_attempt_failed_at_ts_ms")
+        );
+
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let persisted_message = snapshot
+            .messages
+            .iter()
+            .find(|message| message.message_id == "persisted-recovered-broadcast")
+            .expect("persisted message");
+        assert!(
+            !persisted_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("error")
+        );
+        assert!(
+            !persisted_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("retry_reason")
+        );
+        assert!(
+            !persisted_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("last_attempt_failed_at_ts_ms")
+        );
+
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]

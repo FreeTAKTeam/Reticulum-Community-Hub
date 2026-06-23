@@ -3623,3 +3623,64 @@ Result:
   `/api/rem/peers` is empty and the propagated targets have not proven
   downstream import. The remaining issue is downstream propagation fetch or
   identity/roster alignment, not a current RCH queue-state failure.
+
+## 2026-06-23 Persisted Stale Failure Metadata Repair
+
+Setup:
+
+- Rebuilt and restarted the DB/config-backed local server on
+  `http://127.0.0.1:18080/` as PID `21368`.
+- Runtime arguments:
+  - `--db-path RTH_Store\rch_state.sqlite3`.
+  - `--config-path RTH_Store\config.ini`.
+  - `--api-key manual-test`.
+  - `--reticulumd-rpc 127.0.0.1:14243`.
+  - `--reticulumd-source 4fa9359ec3ea68185d4dd03b23073244`.
+  - LXMF ZMQ command/response endpoints
+    `tcp://127.0.0.1:19100` and `tcp://127.0.0.1:19101`.
+
+Reported message:
+
+- User again reported `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+- Before this fix, the canonical row was already `propagated` / `accepted`, but
+  the persisted MessagePack delivery metadata still carried an old
+  `last_attempt_failed_at_ts_ms`.
+
+Fix:
+
+- Successful outbound rows are repaired during SQLite snapshot load:
+  superseded failure metadata is cleared and the repaired row is written back to
+  SQLite.
+- Superseded `message_delivery_failed` events now expose scrubbed current
+  delivery metadata when `/Events` reconciles them against a successful current
+  message row.
+
+Verification:
+
+- Direct SQLite decode after restart shows:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `reticulumd_dispatch_count=13`.
+  - no `error`.
+  - no `retry_reason`.
+  - no `last_attempt_failed_at_ts_ms`.
+  - six receipt targets `sent`, seven receipt targets `dispatching`.
+- `/Chat/Messages?limit=500` returns the message as `State=propagated` and has
+  no `send_error`.
+- `/Events?limit=500` has no current event for the ID and no `send_error`.
+- Focused regressions passed:
+  - `cargo test -p r3akt-rch-server sqlite_load_repairs_success_superseded_delivery_metadata -- --nocapture`.
+  - `cargo test -p r3akt-rch-server events_route_marks_recovered_delivery_failures_superseded -- --nocapture`.
+- `cargo fmt --all -- --check` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+
+Result:
+
+- Pass for stale failure cleanup. The repeated `send_error` card cannot be
+  sourced from the current DB/API state for `2a289...` after restart.
+- Still blocked for final RC phone/deck receipt proof: six propagated targets
+  are `sent`, while seven historical roster identities remain `dispatching`.
