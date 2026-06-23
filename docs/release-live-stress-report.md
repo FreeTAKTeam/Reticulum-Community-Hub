@@ -3741,3 +3741,45 @@ Result:
   the seven February-April historical identities.
 - Still open for final phone/deck receipt: after a receipt poll, the six current
   targets remained `sending`, so downstream inbox import is not proven yet.
+
+## 2026-06-23 Literal Send Timeout Retry Label Retest
+
+Trigger:
+
+- The operator reported broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `Failure Reason=send_error`.
+- Live DB decode after the retry worker ran showed the current row is not
+  terminally failed:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `attempts=5`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- The row is an older pre-roster-filter broadcast, so it still has 13 targets:
+  six current targets are `sent: propagated resource`, and seven historical
+  targets remain `sending`.
+
+Fix:
+
+- Preserved a literal `send_timeout` from retry scheduling as
+  `retry_reason=send_timeout` instead of relabeling it as `send_error`.
+- Kept generic transport failures, including correlated-response timeout text,
+  as `send_error`; this change only affects the explicit `send_timeout` reason.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server retry_reason_for_error_preserves_literal_send_timeout -- --nocapture`.
+- `cargo test -p r3akt-rch-server propagated_broadcast_fallback_send_timeout_stays_queued_after_rate_limit_budget -- --nocapture`.
+- `cargo test -p r3akt-rch-server internal_delivery_failure_retries_propagated_broadcast_fallback_send_error -- --nocapture`.
+- `cargo test -p r3akt-rch-server failed_direct_broadcast_send_timeout_queues_propagation_repair -- --nocapture`.
+
+Result:
+
+- Pass for timeout-label accuracy: a legitimate `send_timeout` propagation
+  retry now remains visible as `send_timeout`.
+- The user-reported message is accepted in the current DB state, not terminal
+  `failed`; final RC gate remains downstream phone/deck receipt proof.

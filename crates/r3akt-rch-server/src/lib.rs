@@ -14984,7 +14984,9 @@ fn outbound_error_is_local_transport_unavailable(error_text: &str) -> bool {
 }
 
 fn retry_reason_for_error(error_text: &str) -> &'static str {
-    if outbound_error_is_rate_limited(error_text) {
+    if error_text.trim().eq_ignore_ascii_case("send_timeout") {
+        "send_timeout"
+    } else if outbound_error_is_rate_limited(error_text) {
         "rate_limited"
     } else {
         "send_error"
@@ -56961,13 +56963,40 @@ mod tests {
         assert_eq!(retry.delivery_method, "propagated");
         assert_eq!(retry.delivery_metadata["attempts"], json!(31));
         assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
-        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
+        assert_eq!(
+            retry.delivery_metadata["retry_reason"],
+            json!("send_timeout")
+        );
         assert_eq!(
             retry.delivery_metadata["rate_limit_retry_budget"],
             json!(true)
         );
 
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn retry_reason_for_error_preserves_literal_send_timeout() {
+        assert_eq!(
+            crate::retry_reason_for_error("send_timeout"),
+            "send_timeout"
+        );
+        assert_eq!(
+            crate::retry_reason_for_error(" SEND_TIMEOUT "),
+            "send_timeout"
+        );
+        assert_eq!(
+            crate::retry_reason_for_error(
+                "SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded"
+            ),
+            "rate_limited"
+        );
+        assert_eq!(
+            crate::retry_reason_for_error(
+                "LXMF-rs ZeroMQ SDK request timed out waiting for correlated response"
+            ),
+            "send_error"
+        );
     }
 
     #[test]
