@@ -165,6 +165,47 @@ Remaining gap:
   `3680`. Treat the rendered expand/download proof as blocked by the browser
   harness, not passed.
 
+## TAK Connector RC Retest - 2026-06-23 UTC
+
+Scope:
+
+- Standalone TAK connector crate.
+- Local loopback CoT send/receive coverage.
+- Standalone `r3akt-tak-service` bridge tests.
+- Documented external clear-TCP TAK profile `tcp://137.184.101.250:8087`.
+
+Local tests:
+
+- `cargo test -p r3akt-tak-connector tak_tcp_loopback_validates_bidirectional_cot_workflow`
+  passed.
+- `cargo test -p r3akt-tak-connector tak_proto_tcp_sender_pushes_stream_framed_protobuf_payload`
+  passed.
+- `cargo test -p r3akt-tak-connector service_bridges_rch_telemetry_and_chat_to_tak_cot_socket`
+  passed.
+- `cargo test -p r3akt-tak-connector service_bridges_inbound_tak_cot_to_rch_marker_route`
+  passed.
+- Full `cargo test -p r3akt-tak-connector` passed: 40 library tests and 5
+  service binary tests.
+
+External TCP TAK profile:
+
+- A TCP reachability probe to `137.184.101.250:8087` succeeded.
+- With `R3AKT_TAK_LIVE_COT_URL=tcp://137.184.101.250:8087`,
+  `live_tak_server_accepts_keepalive_when_configured` passed.
+- With the same outbound URL, `live_tak_server_accepts_reconnect_when_configured`
+  passed.
+- With both `R3AKT_TAK_LIVE_COT_URL` and
+  `R3AKT_TAK_LIVE_INBOUND_COT_URL` set to the external TCP profile, the first
+  inbound relay attempt connected but returned no payload after the probe.
+  Rerunning the same configured test passed in 14.29 seconds.
+
+Result:
+
+- RCH-US-026 is current for RC: local loopback, protobuf framing, standalone
+  sidecar bridge behavior, and the documented external clear-TCP TAK target
+  all passed. The no-payload first inbound attempt is recorded as a transient
+  external relay observation; no product code change was needed.
+
 ## Assets, Assignments, And Skills API Retest - 2026-06-23 UTC
 
 Runtime under test:
