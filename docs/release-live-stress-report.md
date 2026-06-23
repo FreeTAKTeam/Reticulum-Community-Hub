@@ -1437,6 +1437,70 @@ Remaining retest:
   the queued propagated canary reaches accepted/sent propagation and appears on
   the phones/decks.
 
+## Propagated Fallback Retry-Ceiling Retest
+
+Time: `2026-06-23T00:30Z` to `2026-06-23T00:42Z`.
+
+Trigger:
+
+- User saw another broadcast failure card with `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`,
+  `Failure Reason=send_error`, and `Route Type=broadcast`.
+
+Evidence:
+
+- `/Events` showed the latest terminal failure was canary
+  `dc8c20bc041b47f78c313f77eea916c1`, not the earlier recovered
+  `2a2892b3227b427487308d53712dd163` row.
+- The event metadata had `rate_limit_retry_budget=true`, `attempts=30`,
+  `delivery_method=propagated`, `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  and `dispatch_timeout=true`. This proved the previous SDK rate-limit extension
+  still allowed a terminal failure once the 30-attempt budget was exhausted.
+- After the first rebuild, fresh canary
+  `d0af7fcf-c651-4ecc-92f8-883845a3cff0` exposed a second ordering issue:
+  the first default-budget direct broadcast `send_timeout` produced
+  `message_delivery_retrying` with `delivery_method=direct` /
+  `delivery_policy_reason=broadcast_direct` instead of immediately switching
+  to propagation.
+
+Fix:
+
+- Direct broadcast/fanout dispatch timeouts now queue propagation before the
+  ordinary direct retry budget is considered.
+- Propagated broadcast/fanout messages that already came from a direct-timeout
+  fallback now receive an extended propagation fallback retry ceiling
+  (`120` attempts). This keeps `send_timeout` and later `send_error` attempts
+  queued for propagation instead of producing a terminal `message_delivery_failed`
+  event while the extended budget remains.
+- Added regressions for:
+  - default-budget direct broadcast timeout fallback ordering;
+  - helper-level propagated broadcast fallback `send_timeout` after attempt 30;
+  - stale propagated broadcast dispatch timeout finalization after attempt 30;
+  - continuing propagated broadcast fallback `send_error` past the previous
+    fifth-attempt ceiling.
+
+Verification:
+
+- `cargo fmt --all -- --check`
+- `cargo test -p r3akt-rch-server propagated_broadcast_fallback_ -- --nocapture`
+- `cargo test -p r3akt-rch-server outbound_diagnostics_queues_broadcast_direct_timeout_for_propagation -- --nocapture`
+- `cargo test -p r3akt-rch-server outbound_diagnostics_keeps_propagated_broadcast_timeout_queued_after_rate_limit_budget -- --nocapture`
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings`
+- Rebuilt and restarted `target\release\r3akt-rch-server.exe` on
+  `http://127.0.0.1:18080/`, PID `10352`, using the live
+  `RTH_Store\rch_state.sqlite3` and `RTH_Store\config.ini`.
+- Fresh canary `996a8718-7aa4-4a7a-bee4-e72c05cbcc66` emitted
+  `message_propagation_queued` on the first direct timeout with
+  `delivery_method=propagated` and `fallback_reason=direct_dispatch_timeout`.
+  A later propagated timeout emitted `message_delivery_retrying` at attempt `2`
+  with `delivery_policy_reason=broadcast_direct_timeout_fallback`; failed count
+  stayed flat at `38`.
+
+Remaining retest:
+
+- Phone/deck receipt remains unproven in this rate-limited environment. Continue
+  watching for accepted/sent propagation once the SDK/RNS path stops timing out.
+
 ## Dashboard Runtime-Control Retest
 
 Time: `2026-06-22T23:47Z` to `2026-06-23T00:18Z`.

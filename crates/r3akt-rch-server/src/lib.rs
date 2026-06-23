@@ -98,6 +98,7 @@ const OUTBOUND_RETRY_WORKER_POLL_MS: u64 = 500;
 const OUTBOUND_RETRY_BACKOFF_MS: i64 = 500;
 const OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS: i64 = 65_000;
 const OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS: u64 = 30;
+const OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS: u64 = 120;
 const OUTBOUND_RETRY_MAX_ATTEMPTS: u64 = 2;
 const OUTBOUND_PROPAGATION_STAMP_COST: u32 = 16;
 const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
@@ -11727,6 +11728,37 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
         }
         let attempts = outbound_attempts(message).saturating_add(1);
         let max_attempts = outbound_effective_max_attempts_for_retry(message, false);
+        if direct_dispatch_timeout_should_queue_propagation(message) {
+            message.delivery_state = "queued".to_string();
+            message.delivery_method = "propagated".to_string();
+            message.delivery_policy_reason =
+                direct_timeout_propagation_policy_reason(message).to_string();
+            merge_delivery_metadata(
+                &mut message.delivery_metadata,
+                json!({
+                    "acked": false,
+                    "attempts": attempts,
+                    "delivery_mode": "propagated",
+                    "dispatch_status": "queued",
+                    "dispatch_timeout": true,
+                    "dispatch_timed_out_at_ts_ms": now_ms,
+                    "error": "send_timeout",
+                    "fallback_reason": "direct_dispatch_timeout",
+                    "previous_delivery_method": "direct",
+                    "receipt_pending": false,
+                    "retry_reason": "send_timeout",
+                    "retry_scheduled": true,
+                    "next_attempt_at_ts_ms": now_ms,
+                }),
+            );
+            changed_messages.push(message.clone());
+            system_events.push((
+                "message_propagation_queued",
+                direct_timeout_propagation_event_message(message).to_string(),
+                outbound_delivery_propagation_metadata(message, "direct_dispatch_timeout"),
+            ));
+            continue;
+        }
         if (message.delivery_method != "propagated"
             || is_rem_command_message(message)
             || propagated_multi_recipient_allows_partial_success(message))
@@ -11762,37 +11794,6 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
                 "message_delivery_retrying",
                 format!("Retrying message delivery to {destination}"),
                 outbound_delivery_retry_metadata(message, "send_timeout"),
-            ));
-            continue;
-        }
-        if direct_dispatch_timeout_should_queue_propagation(message) {
-            message.delivery_state = "queued".to_string();
-            message.delivery_method = "propagated".to_string();
-            message.delivery_policy_reason =
-                direct_timeout_propagation_policy_reason(message).to_string();
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "acked": false,
-                    "attempts": attempts,
-                    "delivery_mode": "propagated",
-                    "dispatch_status": "queued",
-                    "dispatch_timeout": true,
-                    "dispatch_timed_out_at_ts_ms": now_ms,
-                    "error": "send_timeout",
-                    "fallback_reason": "direct_dispatch_timeout",
-                    "previous_delivery_method": "direct",
-                    "receipt_pending": false,
-                    "retry_reason": "send_timeout",
-                    "retry_scheduled": true,
-                    "next_attempt_at_ts_ms": now_ms,
-                }),
-            );
-            changed_messages.push(message.clone());
-            system_events.push((
-                "message_propagation_queued",
-                direct_timeout_propagation_event_message(message).to_string(),
-                outbound_delivery_propagation_metadata(message, "direct_dispatch_timeout"),
             ));
             continue;
         }
@@ -14601,10 +14602,21 @@ fn outbound_effective_max_attempts_for_retry(
     {
         max_attempts = max_attempts.max(5);
     }
+    if propagated_direct_timeout_fallback(message) {
+        max_attempts = max_attempts.max(OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS);
+    }
     if rate_limited || outbound_rate_limit_retry_budget_active(message) {
         max_attempts = max_attempts.max(OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS);
     }
     max_attempts
+}
+
+fn propagated_direct_timeout_fallback(message: &OutboundMessageRecord) -> bool {
+    propagated_multi_recipient_allows_partial_success(message)
+        && matches!(
+            message.delivery_policy_reason.as_str(),
+            "broadcast_direct_timeout_fallback" | "topic_direct_timeout_fallback"
+        )
 }
 
 fn outbound_rate_limit_retry_budget_active(message: &OutboundMessageRecord) -> bool {
@@ -50512,7 +50524,6 @@ mod tests {
             "queued",
             json!({
                 "attempts": 0,
-                "max_attempts": 1,
                 "dispatch_status": "in_progress",
                 "dispatch_started_ts_ms": now_ms - 60_000,
                 "dispatch_deadline_ts_ms": now_ms - 1,
@@ -50554,6 +50565,91 @@ mod tests {
         assert_eq!(
             propagation_event.metadata["fallback_reason"],
             "direct_dispatch_timeout"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "message_delivery_failed")
+        );
+        drop(events);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_diagnostics_keeps_propagated_broadcast_timeout_queued_after_rate_limit_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-timeout-extended-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-timeout-extended".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "rate_limit_retry_budget": true,
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        crate::persist_outbound_message_row(&state, &message).expect("persist message");
+        let now_ms = crate::unix_now_ms();
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "rate_limit_retry_budget": true,
+                "dispatch_status": "in_progress",
+                "dispatch_started_ts_ms": now_ms - 60_000,
+                "dispatch_deadline_ts_ms": now_ms - 1,
+                "retry_scheduled": false,
+            }),
+        )
+        .expect("mark propagated stale dispatch");
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["pending_dispatches"], 0);
+        assert_eq!(diagnostics["retry_total"], 1);
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "queued");
+        assert_eq!(updated.delivery_method, "propagated");
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(updated.delivery_metadata["dispatch_timeout"], true);
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(updated.delivery_metadata["error"], "send_timeout");
+        assert_eq!(updated.delivery_metadata["attempts"], 31);
+        drop(messages);
+
+        let events = state.system_events.read().expect("events");
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == "message_delivery_retrying")
         );
         assert!(
             events
@@ -55118,7 +55214,7 @@ mod tests {
     }
 
     #[test]
-    fn propagated_broadcast_fallback_send_error_allows_fifth_attempt() {
+    fn propagated_broadcast_fallback_send_error_continues_after_fifth_attempt() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-propagated-broadcast-send-error-retry-{}.db",
             Uuid::new_v4()
@@ -55163,13 +55259,22 @@ mod tests {
         assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
         assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
 
-        let exhausted = crate::schedule_outbound_retry_after_failure(
+        let next_retry = crate::schedule_outbound_retry_after_failure(
             &state,
             &retry,
             "outbound request failed: connection refused".to_string(),
         )
-        .expect("schedule exhausted retry");
-        assert!(exhausted.is_none());
+        .expect("schedule next retry")
+        .expect("propagated broadcast fallback should keep trying propagation");
+
+        assert_eq!(next_retry.delivery_state, "queued");
+        assert_eq!(next_retry.delivery_method, "propagated");
+        assert_eq!(next_retry.delivery_metadata["attempts"], json!(6));
+        assert_eq!(next_retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(
+            next_retry.delivery_metadata["retry_reason"],
+            json!("send_error")
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -55248,6 +55353,60 @@ mod tests {
         assert_eq!(
             later_timeout.delivery_metadata["retry_reason"],
             json!("send_error")
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn propagated_broadcast_fallback_send_timeout_stays_queued_after_rate_limit_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-timeout-budget-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-timeout-budget".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "rate_limit_retry_budget": true,
+                "retry_scheduled": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &message,
+            "send_timeout".to_string(),
+        )
+        .expect("schedule timeout retry")
+        .expect("propagated broadcast fallback should remain queued after attempt 30");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(retry.delivery_metadata["attempts"], json!(31));
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
+        assert_eq!(
+            retry.delivery_metadata["rate_limit_retry_budget"],
+            json!(true)
         );
 
         let _ = std::fs::remove_file(db_path);
