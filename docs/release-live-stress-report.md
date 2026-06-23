@@ -2565,3 +2565,39 @@ Remaining release gate:
 - Push the merge and wait for GitHub to report checks for PR #201.
 - Full clippy/workspace tests were not rerun in this local gate; rely on
   GitHub PR quality checks or run them locally before marking the PR ready.
+
+## 2026-06-23 Post-Merge Accepted Propagation Stress Check
+
+Runtime:
+
+- Manual DB/config-backed server restarted on `http://127.0.0.1:18080/` as PID
+  `26344` after the merge/release-gate run.
+- Two USB phones remained attached:
+  - Pixel 7 `35031FDH2003N8`
+  - SM-G950W `988b9b344135304639`
+- `network.reticulum.emergency` was running on both phones.
+
+Message state:
+
+- User-reported `2a2892b3227b427487308d53712dd163` remained canonical
+  `State=propagated`, `dispatch_status=accepted`, attempts `5`, no current
+  `error` or `retry_reason`.
+- Stress probe `2d437d80fbeb4c4cbc36c6fc3f9faeaa` advanced from retrying
+  propagated fallback to `State=propagated`, `dispatch_status=accepted`,
+  attempts `34`, `reticulumd_dispatch_count=13`, no current `error`, and no
+  current `retry_reason`.
+- Runtime diagnostics reported queue depth `0`, pending dispatches `0`,
+  propagated count `29`, and retry worker `running=true`.
+
+Client/deck inventory:
+
+- `/Client` still listed historical deck identities for `raphydeck`,
+  `silkedeck`, and `corvodeck`.
+
+Remaining live gap:
+
+- `2d437...` target statuses were still `sending` across all 13 targets after
+  follow-up polls. This proves accepted propagation dispatch but not final
+  phone/deck receipt.
+- Continue monitoring target statuses and connected device inboxes until the
+  propagated targets report sent/received.
