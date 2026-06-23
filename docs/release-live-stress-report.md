@@ -2047,3 +2047,78 @@ Remaining retest:
 - Browser proof for checklist modals, CSV picker/preview, and delete
   confirmation remains open. The route/API behavior itself passed against the
   live configured server.
+
+## Topic Asset Association API Retest
+
+Time: `2026-06-23T03:49Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `18144`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Created disposable topic `codex-us008-20260623004949` and explicit
+  subscriber `codex-us008-20260623004949-subscriber` with random destination
+  `83146ad350e7429bbd8846c0c80a0a7e`.
+- Uploaded a text file and PNG image through `/Chat/Attachment`.
+- `PATCH /File/{id}` and `PATCH /Image/{id}` with
+  `TopicID=codex-us008-20260623004949` persisted the topic association.
+- `/File` and `/Image` list responses showed the associated `TopicID`.
+- Patching the file with `TopicID=null` detached it.
+- Deleting the topic cleared the still-linked image `TopicID`, covering the
+  cleanup path used when topic cards are removed.
+- Cleanup deleted the subscriber, topic, file, and image. Follow-up list checks
+  showed zero matching disposable topics and subscribers.
+
+Remaining retest:
+
+- Browser proof for the Topics page Manage Assets modal attach/detach feedback
+  and topic/subscriber delete confirmation remains open.
+
+## Dashboard Event Snapshot Reconciliation Retest
+
+Time: `2026-06-23T03:56Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `18144`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Finding and fix:
+
+- User again saw the broadcast delivery card for
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- Live SQLite and `/Chat/Messages?limit=500` both showed exactly one current
+  row for that message: `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, with six propagated child targets already
+  `sent: propagated resource`.
+- `/Events?limit=500` had no current event for `2a289...` and no current
+  `message_delivery_failed` event for the message.
+- The remaining issue was an open-dashboard stale-state gap: a tab that missed
+  a superseded/recovery event could keep the old failure card in memory.
+- Added dashboard store replacement from authoritative `/Events` snapshots.
+  Periodic dashboard refresh now clears in-memory failure rows that are absent
+  from the server event snapshot.
+
+Verification:
+
+- `npm --prefix ui run test -- dashboard` failed before the fix with
+  `dashboard.replaceEvents is not a function`.
+- After adding `replaceEvents` and wiring dashboard refresh to
+  `/Events?limit=200`, `npm --prefix ui run test -- dashboard` passed.
+- `npm --prefix ui run lint`, `npm --prefix ui run test`, and
+  `npm --prefix ui run build` passed. The local server returned `200` for `/`
+  and served the rebuilt `assets/index-D9w_tpHe.js` bundle.
+
+Remaining retest:
+
+- In-app browser navigation to the local UI timed out during this slice, so
+  rendered proof remains open. Refresh the browser tab and confirm the event
+  feed no longer shows the stale `2a289...` failure card.

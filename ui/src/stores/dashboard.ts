@@ -59,6 +59,9 @@ const normalizeEvent = (payload: EventApiPayload): EventEntry => ({
   metadata: payload.metadata ?? {}
 });
 
+const toEventEntry = (event: EventApiPayload | EventEntry): EventEntry =>
+  "timestamp" in event || "type" in event ? normalizeEvent(event as EventApiPayload) : (event as EventEntry);
+
 const eventTime = (event: EventEntry): number => {
   const parsed = Date.parse(event.created_at ?? "");
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -193,9 +196,10 @@ export const useDashboardStore = defineStore("dashboard", () => {
       const response = await get<StatusApiPayload>(endpoints.status);
       status.value = normalizeStatus(isRecord(response) ? response : {});
 
-      const [missionResponse, teamMemberResponse] = await Promise.allSettled([
+      const [missionResponse, teamMemberResponse, eventResponse] = await Promise.allSettled([
         get<MissionRaw[]>(endpoints.r3aktMissions),
         get<TeamMemberRecord[]>(endpoints.r3aktTeamMembers),
+        get<EventApiPayload[]>(`${endpoints.events}?limit=${EVENT_FEED_MAX_EVENTS}`),
         usersStore.fetchUsers()
       ]);
 
@@ -207,6 +211,9 @@ export const useDashboardStore = defineStore("dashboard", () => {
       if (teamMemberResponse.status === "fulfilled") {
         teamMembers.value = toArray<TeamMemberRecord>(teamMemberResponse.value);
       }
+      if (eventResponse.status === "fulfilled") {
+        replaceEvents(toArray<EventApiPayload>(eventResponse.value));
+      }
       connectionStore.setOnline();
     } finally {
       loading.value = false;
@@ -214,8 +221,12 @@ export const useDashboardStore = defineStore("dashboard", () => {
   };
 
   const pushEvent = (event: EventApiPayload | EventEntry) => {
-    const mapped = "timestamp" in event || "type" in event ? normalizeEvent(event as EventApiPayload) : (event as EventEntry);
+    const mapped = toEventEntry(event);
     events.value = mergeEventLists(events.value, [mapped]);
+  };
+
+  const replaceEvents = (incoming: Array<EventApiPayload | EventEntry>) => {
+    events.value = mergeEventLists([], incoming.map(toEventEntry));
   };
 
   const updateStatus = (payload: StatusApiPayload) => {
@@ -230,6 +241,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
     loading,
     refresh,
     pushEvent,
+    replaceEvents,
     updateStatus
   };
 });
