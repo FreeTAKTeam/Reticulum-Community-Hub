@@ -1842,10 +1842,53 @@ Result:
 
 Remaining retest:
 
-- Browser event-feed replay should be refreshed in the open UI so any older
-  retained failure card with the same event ID is replaced by the superseded
-  event payload. Continue live phone/deck stress once the SDK rate-limit window
+- A later pasted card showed the backend fix was not enough for an already-open
+  dashboard event feed. The client-side merge fix is covered in the next
+  section. Continue live phone/deck stress once the SDK rate-limit window
   clears.
+
+## Dashboard Stale Broadcast Failure Card Retest
+
+Time: `2026-06-23T02:58Z`.
+
+Runtime:
+
+- Primary manual server remained on `http://127.0.0.1:18080/`, PID `5748`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- User pasted another dashboard failure card for the same broadcast message
+  `2a2892b3227b427487308d53712dd163`: `Destination=Not set`,
+  `State=failed`, `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`,
+  `Failure Reason=send_error`, `Route Type=broadcast`.
+- Live `/Chat/Messages?limit=500` showed the canonical row is still
+  `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, and 13 propagated receipt targets. Six child
+  rows were `sent: propagated resource`; seven remained `sending`.
+- Live `/Events?limit=500` returned zero current events for that message ID and
+  zero current `message_delivery_failed` rows.
+- Root HTTP serving check returned `200 text/html` from
+  `http://127.0.0.1:18080/`.
+- Added `ui/src/stores/dashboard.spec.ts` for the stale-card scenario and
+  changed the dashboard event merge so a `message_delivery_superseded` event
+  removes older `message_delivery_failed` rows for the same `MessageID`.
+- Rebuilt `ui/dist` so the already-running manual server serves the refreshed
+  dashboard bundle.
+
+Verification:
+
+- `npm --prefix ui run test -- dashboard` passed.
+- `npm --prefix ui run build` passed.
+
+Remaining retest:
+
+- In-app browser control timed out while navigating to the local URL, so the
+  rendered dashboard refresh remains a manual browser proof item. The running
+  server is ready for manual reload at `http://127.0.0.1:18080/`.
 
 ## Emergency Action Message API Retest
 
@@ -1886,3 +1929,38 @@ Remaining retest:
 
 - Browser proof for the embedded mission/member EAM controls remains open; the
   route/API behavior itself passed against the live configured server.
+
+## Team Roster And Rights API Retest
+
+Time: `2026-06-23T02:52Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `5748`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Created disposable mission/team/member run `codex-us015-20260623025150`.
+- Rights definitions exposed `mission.registry.log.read` and role bundles.
+- Team create/update/list/filter/get and team mission link/list/unlink passed.
+- Member create/update/list/filter/get and member client link/list/unlink
+  passed; member update used canonical role token `TEAM_LEAD`.
+- Rights subjects listed the mission team member.
+- Operation right grant/list/revoke passed for `mission.registry.log.read`.
+- Mission access assign/list/revoke passed for `MISSION_OWNER`.
+- Validation probes returned expected statuses: grant query missing
+  `subject_type` returned `400`, missing member clients returned `404`, and
+  display-label role `Team Lead` returned `400`.
+- Cleanup deleted member/team/mission and verified zero active
+  member/team/access rows for the disposable prefix.
+
+Remaining retest:
+
+- Browser proof for `UsersPage`, `TeamRosterPage`, and
+  `TeamRightsMatrixPanel` create/edit/link/revoke feedback remains open.
+- Confirm the UI submits canonical role values such as `TEAM_LEAD` instead of
+  display labels such as `Team Lead`, or add UI mapping/error handling if
+  needed.

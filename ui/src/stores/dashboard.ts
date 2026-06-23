@@ -64,6 +64,30 @@ const eventTime = (event: EventEntry): number => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const metadataString = (metadata: Record<string, unknown> | undefined, key: string): string =>
+  String(metadata?.[key] ?? "").trim();
+
+const deliveryMessageId = (event: EventEntry): string => {
+  const metadata = event.metadata;
+  const directId = metadataString(metadata, "MessageID") || metadataString(metadata, "message_id");
+  if (directId) {
+    return directId;
+  }
+  const deliveryMetadata = metadata?.DeliveryMetadata;
+  if (isRecord(deliveryMetadata)) {
+    return metadataString(deliveryMetadata, "message_id");
+  }
+  return "";
+};
+
+const isDeliveryFailureEvent = (event: EventEntry): boolean =>
+  toKeyPart(event.category) === "message_delivery_failed" ||
+  toKeyPart(event.metadata?.original_event_type) === "message_delivery_failed";
+
+const supersedesDeliveryFailure = (event: EventEntry): boolean =>
+  toKeyPart(event.category) === "message_delivery_superseded" ||
+  event.metadata?.delivery_failure_superseded === true;
+
 export const eventEntryKey = (event: EventEntry): string => {
   const id = toKeyPart(event.id);
   if (id) {
@@ -75,6 +99,16 @@ export const eventEntryKey = (event: EventEntry): string => {
 const mergeEventLists = (current: EventEntry[], incoming: EventEntry[]): EventEntry[] => {
   const merged = new Map<string, EventEntry>();
   for (const event of [...current, ...incoming]) {
+    if (supersedesDeliveryFailure(event)) {
+      const messageId = deliveryMessageId(event);
+      if (messageId) {
+        for (const [key, existing] of merged) {
+          if (isDeliveryFailureEvent(existing) && deliveryMessageId(existing) === messageId) {
+            merged.delete(key);
+          }
+        }
+      }
+    }
     merged.set(eventEntryKey(event), event);
   }
   return [...merged.values()]
