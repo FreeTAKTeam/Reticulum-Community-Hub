@@ -12899,6 +12899,7 @@ async fn internal_delivery_retry(
                 .saturating_add(1)
         });
         message.delivery_state = "queued".to_string();
+        clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
         merge_delivery_metadata(
             &mut message.delivery_metadata,
             json!({
@@ -13109,6 +13110,7 @@ async fn internal_delivery_attempt(
                 .unwrap_or(0)
         });
         message.delivery_state = "queued".to_string();
+        clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
         merge_delivery_metadata(
             &mut message.delivery_metadata,
             json!({
@@ -14576,6 +14578,7 @@ fn failed_propagation_fallback_retry_due(message: &OutboundMessageRecord, now_ms
         .is_some_and(outbound_error_is_rate_limited);
     let max_attempts = outbound_effective_max_attempts_for_retry(message, rate_limited);
     outbound_retry_attempt_allowed(message, attempts, max_attempts)
+        || propagated_direct_timeout_fallback(message)
 }
 
 fn propagated_fallback_has_retryable_error(message: &OutboundMessageRecord) -> bool {
@@ -14596,6 +14599,10 @@ fn propagated_fallback_has_retryable_error(message: &OutboundMessageRecord) -> b
     else {
         return false;
     };
+    propagated_fallback_error_text_is_retryable(error)
+}
+
+fn propagated_fallback_error_text_is_retryable(error: &str) -> bool {
     let normalized = error.to_ascii_lowercase();
     normalized == "send_timeout"
         || outbound_error_is_rate_limited(error)
@@ -14620,7 +14627,10 @@ fn schedule_outbound_retry_after_failure(
     let rate_limited = outbound_error_is_rate_limited(error_text.as_str());
     let rate_limit_retry_budget = rate_limited || outbound_rate_limit_retry_budget_active(message);
     let max_attempts = outbound_effective_max_attempts_for_retry(message, rate_limited);
-    if !outbound_retry_attempt_allowed(message, attempts, max_attempts) {
+    let retry_attempt_allowed = outbound_retry_attempt_allowed(message, attempts, max_attempts);
+    let retryable_propagation_fallback = propagated_direct_timeout_fallback(message)
+        && propagated_fallback_error_text_is_retryable(error_text.as_str());
+    if !(retry_attempt_allowed || retryable_propagation_fallback) {
         return Ok(None);
     }
     let retry_reason = retry_reason_for_error(error_text.as_str());
@@ -14859,6 +14869,7 @@ fn mark_outbound_attempt_started(
         return Ok(());
     };
     message.delivery_state = "queued".to_string();
+    clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
     merge_delivery_metadata(
         &mut message.delivery_metadata,
         json!({
@@ -15009,6 +15020,7 @@ fn clear_success_superseded_delivery_metadata(metadata: &mut Value) {
     object.remove("dispatch_timeout");
     object.remove("dispatch_timed_out_at_ts_ms");
     object.remove("error");
+    object.remove("last_attempt_failed_at_ts_ms");
     object.remove("retry_reason");
 }
 
@@ -19817,6 +19829,9 @@ fn chat_message_payload(message: OutboundMessageRecord) -> Value {
         .map(chat_attachment_to_python_value)
         .collect::<Vec<_>>();
     let mut delivery_metadata = message.delivery_metadata.clone();
+    if delivery_state_clears_error_metadata(state) {
+        clear_success_superseded_delivery_metadata(&mut delivery_metadata);
+    }
     if let Some(metadata) = delivery_metadata.as_object_mut() {
         metadata.remove("lxmf_fields");
     }
@@ -49941,6 +49956,21 @@ mod tests {
             "delivery_attempt"
         );
         assert!(
+            payload["message"]["delivery_metadata"]
+                .get("error")
+                .is_none()
+        );
+        assert!(
+            payload["message"]["delivery_metadata"]
+                .get("retry_reason")
+                .is_none()
+        );
+        assert!(
+            payload["message"]["delivery_metadata"]
+                .get("last_attempt_failed_at_ts_ms")
+                .is_none()
+        );
+        assert!(
             payload["message"]["delivery_metadata"]["last_attempt_at"]
                 .as_str()
                 .is_some_and(|value| value.contains('T'))
@@ -50669,6 +50699,7 @@ mod tests {
                 "dispatch_timeout": true,
                 "dispatch_timed_out_at_ts_ms": now_ms - 1_000,
                 "error": "sqlite operation failed: database is locked",
+                "last_attempt_failed_at_ts_ms": now_ms - 500,
                 "retry_reason": "send_error",
                 "retry_scheduled": true,
             }),
@@ -50704,9 +50735,46 @@ mod tests {
         );
         assert!(updated.delivery_metadata.get("error").is_none());
         assert!(updated.delivery_metadata.get("retry_reason").is_none());
+        assert!(
+            updated
+                .delivery_metadata
+                .get("last_attempt_failed_at_ts_ms")
+                .is_none()
+        );
         drop(messages);
 
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn chat_message_payload_hides_stale_failure_metadata_for_success_state() {
+        let now = crate::unix_now_ms();
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "successful-broadcast-with-stale-failure".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "error": "send_error",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "retry_reason": "send_error",
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
+        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
     }
 
     #[test]
@@ -55749,6 +55817,60 @@ mod tests {
     }
 
     #[test]
+    fn propagated_broadcast_fallback_retryable_error_stays_queued_after_retry_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-post-budget-retry-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-post-budget-retry".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": crate::OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "rate_limit_retry_budget": true,
+                "retry_scheduled": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &message,
+            "outbound request failed: timed out".to_string(),
+        )
+        .expect("schedule post-budget retry")
+        .expect("retryable propagated broadcast fallback should not fail terminally");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(
+            retry.delivery_metadata["attempts"],
+            json!(crate::OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS + 1)
+        );
+        assert_eq!(retry.delivery_metadata["dispatch_status"], json!("queued"));
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
     fn failed_propagated_broadcast_timeout_fallback_is_due_for_repair() {
         let now = crate::unix_now_ms();
         let retryable = crate::OutboundMessageRecord {
@@ -55805,8 +55927,24 @@ mod tests {
             }),
             ..retryable.clone()
         };
+        let exhausted_retry_budget = crate::OutboundMessageRecord {
+            message_id: "exhausted-broadcast-fallback-repair".to_string(),
+            delivery_metadata: json!({
+                "attempts": crate::OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS + 1,
+                "max_attempts": 1,
+                "dispatch_status": "failed",
+                "error": "send_timeout",
+                "fallback_reason": "direct_dispatch_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 0,
+                "retry_reason": "send_timeout",
+                "retry_scheduled": false,
+            }),
+            ..retryable.clone()
+        };
 
         assert!(crate::outbound_retry_due(&retryable, now));
+        assert!(crate::outbound_retry_due(&exhausted_retry_budget, now));
         assert!(!crate::outbound_retry_due(&invalid_destination, now));
         assert!(!crate::outbound_retry_due(&in_progress_repair, now));
         assert!(crate::dispatch_pending(&in_progress_repair));

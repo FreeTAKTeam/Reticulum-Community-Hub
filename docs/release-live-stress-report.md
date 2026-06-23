@@ -2168,3 +2168,71 @@ Remaining retest:
 - Browser proof for MapLibre rendering, marker placement/radial menu, zone
   drawing/edit/delete, mission assignment popovers, icon fallback, and stale
   overlay cleanup after delete remains open.
+
+## Post-Budget Broadcast Fallback Retry Repair
+
+Time: `2026-06-23T04:24Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, restarted from rebuilt
+  release binaries during the retest; final running PID is `3680`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Finding and fix:
+
+- User again reported broadcast message
+  `2a2892b3227b427487308d53712dd163` with `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`, and
+  `Failure Reason=send_error`.
+- Live SQLite and `/Chat/Messages?limit=500` showed the canonical row was not
+  failed: `State=propagated`, `dispatch_status=accepted`,
+  `delivery_method=propagated`, `reticulumd_dispatch_count=13`, and no current
+  `error` or `retry_reason`.
+- The live DB also contained older retryable propagated fallback rows that had
+  exhausted the previous fallback retry ceiling and stayed terminal `failed`
+  under rate-limit/timeout pressure.
+- Changed retry scheduling so retryable propagated broadcast/fanout
+  direct-timeout fallback errors continue as queued propagation even after the
+  previous 120-attempt ceiling instead of falling through to terminal failed.
+- Changed the failed-row repair predicate so already-failed retryable propagated
+  fallback rows are due for repair even after the old retry budget is exceeded.
+- Cleared stale `error`, `retry_reason`, and `last_attempt_failed_at_ts_ms`
+  metadata when a retry attempt starts, and cleared stale failed-at metadata
+  when a later dispatch reaches `sent`, `delivered`, or `propagated`.
+- Sanitized `/Chat/Messages` serialization for already-persisted successful
+  rows so older recovered messages no longer expose stale failure metadata to
+  UI detail renderers.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server
+  propagated_broadcast_fallback_retryable_error_stays_queued_after_retry_budget`
+  failed before the fix because scheduling returned `None`, then passed.
+- `cargo test -p r3akt-rch-server
+  internal_delivery_attempt_clears_retry_scheduled_like_python_callback` failed
+  before the retry-start cleanup because `retry_reason` remained present, then
+  passed.
+- `cargo test -p r3akt-rch-server propagated_broadcast` passed 7 focused
+  propagated broadcast fallback tests.
+- `cargo test -p r3akt-rch-server` passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- After restarting the fixed binary, live rows
+  `dc8c20bc041b47f78c313f77eea916c1` and
+  `991ee56574b04ca59c0a5bd173a4c5b0` moved from terminal failed back to
+  `queued` / `in_progress` propagated fallback retry state.
+- Final `/Chat/Messages?limit=500` verification for
+  `2a2892b3227b427487308d53712dd163` returned `State=propagated`,
+  `method=propagated`, `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  and no serialized `error`, `retry_reason`, or
+  `last_attempt_failed_at_ts_ms`.
+
+Remaining retest:
+
+- The live mesh is still hitting `SDK_SECURITY_RATE_LIMITED`, so phone/deck
+  receipt remains blocked by the SDK/RNS rate-limit window. Continue stress
+  until queued propagated fallbacks reach accepted/sent propagation on the two
+  USB phones and embedded decks.
