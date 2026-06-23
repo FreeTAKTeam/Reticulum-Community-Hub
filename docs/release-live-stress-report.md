@@ -2186,13 +2186,86 @@ Result:
 - Cleanup deleted member/team/mission and verified zero active
   member/team/access rows for the disposable prefix.
 
-Remaining retest:
+Follow-up:
 
-- Browser proof for `UsersPage`, `TeamRosterPage`, and
-  `TeamRightsMatrixPanel` create/edit/link/revoke feedback remains open.
+- Browser proof for `TeamRosterPage` and `TeamRightsMatrixPanel` is covered by
+  the browser retest below.
 - Confirm the UI submits canonical role values such as `TEAM_LEAD` instead of
-  display labels such as `Team Lead`, or add UI mapping/error handling if
-  needed.
+  display labels such as `Team Lead`, or add UI mapping/error handling if new
+  editor flows are added.
+
+## Team Roster And Rights Browser Retest
+
+Time: `2026-06-23T14:50Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `24116`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Setup:
+
+- Created disposable mission/team/member run `codex-ui-us015-20260623145030`.
+- Linked `codex-ui-us015-20260623145030-team` to
+  `codex-ui-us015-20260623145030-mission`.
+- Created team member `codex-ui-us015-20260623145030-member` with callsign
+  `US015-20260623145030`, role `TEAM_LEAD`, and RNS identity
+  `77b2539b72259af927e48c0f90721767`.
+- Granted `mission.registry.log.read` to the team member and assigned mission
+  access role `TEAM_LEAD`.
+
+Rendered roster proof:
+
+- Opened `/users/teams/members?team_uid=codex-ui-us015-20260623145030-team`
+  in the in-app browser.
+- Page identity was `RCH UI` at the expected route.
+- The page had no boot screen, no framework overlay text, and no browser
+  console warnings or errors.
+- The page rendered:
+  - `TEAM MEMBER ASSIGNMENT`.
+  - `Codex UI US015 Team 20260623145030`.
+  - `ROSTER SIZE: 1`.
+  - `Codex UI US015 Mission 20260623145030`.
+  - row `US015-20260623145030`,
+    `77b2539b72259af927e48c0f90721767`, `TEAM_LEAD`,
+    `Codex UI US015 Member 20260623145030`, `AVAILABLE`.
+
+Rendered rights proof:
+
+- Opened `/users?tab=rights`, selected the disposable team and linked mission,
+  and filtered rights to `mission.registry.log.read`.
+- The matrix rendered:
+  - `TEAM RIGHTS MATRIX`.
+  - selected team `Codex UI US015 Team 20260623145030`.
+  - selected mission `Codex UI US015 Mission 20260623145030 (linked)`.
+  - member `US015-20260623145030`.
+  - role `TEAM_LEAD` / `Team lead`.
+  - filtered count `1 RIGHTS`.
+  - cell title `Log Read: Allowed via explicit grant`.
+- Clicked `Revoke Visible`; the cell changed to
+  `Log Read: Denied (draft change)`, `Reset Draft` and `Apply Changes` became
+  enabled, and the mission role draft changed to `No bundle`.
+- Clicked `Apply Changes`; the page showed `Rights assignments updated.`, the
+  cell changed to `Log Read: Denied via explicit revoke`, and `Reset Draft` /
+  `Apply Changes` returned to disabled.
+- Follow-up API checks showed the grant row persisted as `granted=false` and
+  mission access for the member was removed.
+
+Cleanup:
+
+- Deleted the explicit rights grant, mission access, team/mission link, member,
+  team, and mission.
+- Follow-up checks found zero active team/member/mission rows for the
+  disposable prefix.
+
+Result:
+
+- Pass for the rendered RCH-US-015 roster and rights matrix workflow against
+  the DB/config-backed server.
+- Browser screenshot capture timed out once in the in-app browser harness, but
+  DOM, console, API, and interaction evidence all passed.
 
 ## Checklist And Template API Retest
 
