@@ -165,6 +165,7 @@ where
 {
     maybe_prompt_python_import(&args)?;
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
+    let api_bind = listener.local_addr()?;
     let reticulum_config_path = resolve_reticulum_config_path(&args);
     let managed_reticulumd_launch =
         ManagedReticulumdLaunch::from_args(&args, reticulum_config_path.clone());
@@ -173,7 +174,8 @@ where
         &args,
         &managed_reticulumd_launch,
         reticulum_config_path.as_deref(),
-    )?;
+    )?
+    .with_api_bind(api_bind);
     state.start_managed_reticulumd()?;
     let app = create_app_for_runtime(state.clone(), ui_dist_path.as_ref());
     let outbound_worker = r3akt_rch_server::spawn_outbound_delivery_worker(state.clone());

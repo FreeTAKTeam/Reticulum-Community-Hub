@@ -206,6 +206,7 @@ pub struct AppState {
     config_path: Option<Arc<PathBuf>>,
     reticulum_config_path: Option<Arc<PathBuf>>,
     ui_dist_path: Option<Arc<PathBuf>>,
+    api_bind: Option<Arc<SocketAddr>>,
     api_key: Option<Arc<String>>,
     system_status_fanout_mode: SystemStatusFanoutMode,
 }
@@ -384,6 +385,7 @@ impl Default for AppState {
             config_path: None,
             reticulum_config_path: None,
             ui_dist_path: None,
+            api_bind: None,
             api_key: None,
             system_status_fanout_mode: SystemStatusFanoutMode::EventOnly,
         }
@@ -469,6 +471,12 @@ impl AppState {
 
     pub fn with_ui_dist_path(mut self, path: impl AsRef<FsPath>) -> Self {
         self.ui_dist_path = Some(Arc::new(path.as_ref().to_path_buf()));
+        self
+    }
+
+    #[must_use]
+    pub fn with_api_bind(mut self, bind: SocketAddr) -> Self {
+        self.api_bind = Some(Arc::new(bind));
         self
     }
 
@@ -6790,6 +6798,8 @@ fn openapi_components() -> Value {
                 "properties": {
                     "status": { "type": "string" },
                     "pid": { "type": "integer" },
+                    "host": openapi_nullable_string(),
+                    "port": openapi_nullable_integer(),
                     "uptime_seconds": { "type": "integer" },
                     "hub_thread_alive": { "type": "boolean" },
                     "shutdown_requested": { "type": "boolean" }
@@ -9815,6 +9825,8 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
         "runtime": "rust",
         "status": control.status,
         "pid": std::process::id(),
+        "host": state.api_bind.as_ref().map(|bind| bind.ip().to_string()),
+        "port": state.api_bind.as_ref().map(|bind| bind.port()),
         "uptime_seconds": runtime_uptime_seconds(control.started_ts_ms),
         "hub_thread_alive": control.status == "running",
         "shutdown_requested": control.shutdown_requested,
@@ -23327,8 +23339,8 @@ fn control_status_payload(state: &AppState) -> Result<Value, ApiError> {
     Ok(json!({
         "status": control.status,
         "pid": std::process::id(),
-        "host": null,
-        "port": null,
+        "host": state.api_bind.as_ref().map(|bind| bind.ip().to_string()),
+        "port": state.api_bind.as_ref().map(|bind| bind.port()),
         "uptime_seconds": runtime_uptime_seconds(control.started_ts_ms),
         "hub_thread_alive": control.status == "running",
         "shutdown_requested": control.shutdown_requested,
@@ -34268,6 +34280,40 @@ mod tests {
                     .contains("unavailable")
             );
         }
+    }
+
+    #[tokio::test]
+    async fn gateway_control_status_reports_real_api_bind_when_configured() {
+        let bind = "127.0.0.1:18080"
+            .parse::<SocketAddr>()
+            .expect("bind address");
+        let app = crate::create_app_with_state(
+            crate::AppState::default()
+                .with_api_key("secret")
+                .with_api_bind(bind),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/Control/Status")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("status response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["host"], "127.0.0.1");
+        assert_eq!(payload["port"], 18080);
     }
 
     #[tokio::test]

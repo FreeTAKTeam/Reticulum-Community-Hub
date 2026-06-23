@@ -1437,6 +1437,38 @@ Remaining retest:
   the queued propagated canary reaches accepted/sent propagation and appears on
   the phones/decks.
 
+## Dashboard Runtime-Control Retest
+
+Time: `2026-06-22T23:47Z` to `2026-06-23T00:18Z`.
+
+Runtime:
+
+- RCH server rebuilt and restarted from `target\release\r3akt-rch-server.exe`
+  on `http://127.0.0.1:18080/`, PID `5012`, using
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, Reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- The in-app browser loaded the Dashboard from the rebuilt `ui\dist` bundle.
+
+Result:
+
+- Before the fix, `/Control/Status` returned `port=null`; the Dashboard showed
+  `Port: -` even though the server was bound to `127.0.0.1:18080`.
+- `/Control/Announce` returned `announce sent`.
+- `/Control/Sync` legitimately failed because the configured propagation RPC
+  path timed out, but the Dashboard initially showed only a generic
+  `Propagation sync failed` message. A 30-second UI request timeout could also
+  mask the backend's 503 response detail.
+- After the fix, `/Control/Status` includes the bound API host and port.
+  Browser retest showed `PID: 5012` and `Port: 18080`.
+- The Dashboard `Sync` action now waits for the backend propagation sync window
+  and renders the backend error detail:
+  `Propagation sync failed: outbound request failed: ... (os error 10060)`.
+
+Remaining retest:
+
+- No remaining RCH-US-004 issue from this slice. The failed propagation sync is
+  a legitimate environment/runtime failure and is now visible to the operator.
+
 ## Config And Reticulum Path Retest
 
 Time: `2026-06-22T22:41Z` to `2026-06-22T22:49Z`.
