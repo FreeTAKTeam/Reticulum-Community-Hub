@@ -3688,3 +3688,56 @@ Result:
   sourced from the current DB/API state for `2a289...` after restart.
 - Still blocked for final RC phone/deck receipt proof: six propagated targets
   are `sent`, while seven historical roster identities remain `dispatching`.
+
+## 2026-06-23 Stale Roster Target Filter Retest
+
+Root cause:
+
+- Repeated propagated broadcast canaries targeted 13 stored `/Client` rows.
+- Six rows were current enough for the lab devices, with ages around 1-2 days:
+  `Peregrine`, `silkedeck`, `Corvo`, `raphydeck`, `corvodeck`, and `pixel`.
+- Seven rows were historical identities last seen 77-158 days earlier:
+  `corvoS8`, `corvo Pixel`, old `SilkeDeck`, `corvo columba pixel`, `Korvo PC`,
+  `pocorvo`, and `Helio Tablet`.
+- The propagated enqueue fast path intentionally skipped announce refresh, but
+  it also bypassed the existing outbound active-client filter, so stale
+  historical rows kept becoming receipt targets.
+
+Fix:
+
+- Propagated broadcast dispatch now reuses
+  `broadcast_outbound_client_records_for_state_with_refresh(state, false)`.
+  This preserves the no-refresh/no-slow-RPC enqueue behavior while still
+  filtering outbound recipients.
+- Broadcast outbound filtering now accepts a seven-day roster/announce window
+  instead of the one-hour runtime-presence window, so recently known field
+  devices remain eligible while months-old imported identities are excluded.
+
+Verification:
+
+- Focused tests passed:
+  - `cargo test -p r3akt-rch-server propagated_broadcast_dispatch_excludes_stale_known_clients -- --nocapture`.
+  - `cargo test -p r3akt-rch-server broadcast_delivery_uses_recent_roster_presence_without_fresh_announces -- --nocapture`.
+  - `cargo test -p r3akt-rch-server broadcast_destinations -- --nocapture`.
+- `cargo fmt --all -- --check` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+- Rebuilt/restarted the DB/config-backed server on `http://127.0.0.1:18080/`
+  as PID `20544`.
+- Broadcast canary `d804006cb8a34815b3552e1a034cb154` selected propagated
+  delivery with `delivery_policy_reason=broadcast_unannounced`, reached
+  `State=propagated`, `dispatch_status=accepted`, `reticulumd_dispatch_count=6`,
+  no `error`, and no `retry_reason`.
+- The six receipt targets were exactly the current roster identities:
+  `11a7907d67c457911c15206ec647ad33`,
+  `1335df70880114d149c3ad8d63fb5dcd`,
+  `22c8ba9c883e06c7e540ed6dc87ceecf`,
+  `279797db68f81ae8555a73cd12620240`,
+  `441f217e9a51029edc58c1fe898c6c0b`, and
+  `77b2539b72259af927e48c0f90721767`.
+
+Result:
+
+- Pass for stale-target pruning. Current RC broadcasts no longer dispatch to
+  the seven February-April historical identities.
+- Still open for final phone/deck receipt: after a receipt poll, the six current
+  targets remained `sending`, so downstream inbox import is not proven yet.

@@ -116,6 +116,7 @@ const RETICULUMD_EVENT_CURSOR_STREAM_CHECK_MS: u64 = 60_000;
 const RETICULUMD_EVENT_CURSOR_SETTING: &str = "reticulumd_event_cursor";
 const LOCAL_TELEMETRY_SAMPLER_INTERVAL_MS: u64 = 600_000;
 const MISSION_CHANGE_FANOUT_CACHE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
+const OUTBOUND_BROADCAST_ROSTER_WINDOW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 #[cfg(test)]
 const MISSION_CHANGE_AUTONOMOUS_REM_WINDOW_MS: i64 = 30 * 60 * 1000;
 #[cfg(not(test))]
@@ -15688,7 +15689,29 @@ fn outbound_destination_has_fresh_announce_for_any(
     state: &AppState,
     destinations: &[&str],
 ) -> Result<bool, ApiError> {
-    let now = unix_now_ms();
+    outbound_destination_has_announce_since_for_any(
+        state,
+        destinations,
+        unix_now_ms().saturating_sub(r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS),
+    )
+}
+
+fn outbound_destination_has_broadcast_roster_announce_for_any(
+    state: &AppState,
+    destinations: &[&str],
+) -> Result<bool, ApiError> {
+    outbound_destination_has_announce_since_for_any(
+        state,
+        destinations,
+        unix_now_ms().saturating_sub(OUTBOUND_BROADCAST_ROSTER_WINDOW_MS),
+    )
+}
+
+fn outbound_destination_has_announce_since_for_any(
+    state: &AppState,
+    destinations: &[&str],
+    cutoff_ts_ms: i64,
+) -> Result<bool, ApiError> {
     let normalized = destinations
         .iter()
         .filter_map(|destination| normalize_identity_key(destination))
@@ -15699,7 +15722,7 @@ fn outbound_destination_has_fresh_announce_for_any(
     Ok(load_identity_announces_for_state(state)?
         .into_iter()
         .any(|record| {
-            record.last_seen_ts_ms >= now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS
+            record.last_seen_ts_ms >= cutoff_ts_ms
                 && normalized
                     .iter()
                     .any(|destination| identity_announce_matches_destination(&record, destination))
@@ -16059,7 +16082,7 @@ fn broadcast_outbound_client_records_for_message(
     message: &OutboundMessageRecord,
 ) -> Result<Vec<ClientRecord>, ApiError> {
     if should_enqueue_without_waiting_for_zmq_response(message) {
-        return broadcast_client_records_for_state_with_refresh(state, false);
+        return broadcast_outbound_client_records_for_state_with_refresh(state, false);
     }
     broadcast_outbound_client_records_for_state_with_refresh(
         state,
@@ -16106,10 +16129,20 @@ fn broadcast_client_is_active_for_outbound(
     if client_has_recent_presence(client, now_ts_ms) {
         return true;
     }
+    if client_has_broadcast_roster_presence(client, now_ts_ms) {
+        return true;
+    }
     let candidates = [client.identity.as_str(), delivery_destination];
     outbound_destination_has_recent_client_presence_for_any(state, &candidates, now_ts_ms)
         .unwrap_or(false)
-        || outbound_destination_has_fresh_announce_for_any(state, &candidates).unwrap_or(false)
+        || outbound_destination_has_broadcast_roster_announce_for_any(state, &candidates)
+            .unwrap_or(false)
+}
+
+fn client_has_broadcast_roster_presence(client: &ClientRecord, now_ts_ms: i64) -> bool {
+    client_presence_ts_ms(client).is_some_and(|last_seen| {
+        last_seen >= now_ts_ms.saturating_sub(OUTBOUND_BROADCAST_ROSTER_WINDOW_MS)
+    })
 }
 
 fn client_has_network_announce(_record: &ClientRecord) -> bool {
@@ -55276,7 +55309,7 @@ mod tests {
         let fresh_seen = "22c8ba9c883e06c7e540ed6dc87ceecf";
         let fresh_chat = "77b2539b72259af927e48c0f90721767";
         let stale_import = "7f08e12b3f25f23e62f3a15288303c95";
-        let stale_ts_ms = now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 10_000;
+        let stale_ts_ms = now - crate::OUTBOUND_BROADCAST_ROSTER_WINDOW_MS - 10_000;
         {
             let mut clients = state.clients.write().expect("clients");
             clients.insert(
@@ -57587,18 +57620,36 @@ mod tests {
     }
 
     #[test]
-    fn propagated_broadcast_dispatch_includes_stale_known_clients() {
-        let state = crate::AppState::default().with_lxmf_zmq_sdk(
-            unused_zmq_endpoint_for_rch_test(),
-            unused_zmq_endpoint_for_rch_test(),
-            "source-destination",
-        );
+    fn propagated_broadcast_dispatch_excludes_stale_known_clients() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-stale-clients-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
         let now = crate::unix_now_ms();
-        let stale_ts_ms = now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 10_000;
-        for identity in [
-            "22c8ba9c883e06c7e540ed6dc87ceecf",
-            "77b2539b72259af927e48c0f90721767",
-        ] {
+        let stale_ts_ms = now - crate::OUTBOUND_BROADCAST_ROSTER_WINDOW_MS - 10_000;
+        let fresh_identity = "22c8ba9c883e06c7e540ed6dc87ceecf";
+        let stale_identity = "77b2539b72259af927e48c0f90721767";
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: fresh_identity.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("fresh propagated recipient".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: vec!["lxmf".to_string()],
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - 60_000,
+            last_seen_ts_ms: now,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_lxmf_zmq_sdk(
+                unused_zmq_endpoint_for_rch_test(),
+                unused_zmq_endpoint_for_rch_test(),
+                "source-destination",
+            );
+        for identity in [fresh_identity, stale_identity] {
             state.clients.write().expect("clients").insert(
                 identity.to_string(),
                 crate::ClientRecord::new(identity.to_string(), stale_ts_ms),
@@ -57621,8 +57672,11 @@ mod tests {
 
         let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
 
-        assert_eq!(report.count, 2);
-        assert_eq!(report.receipts.len(), 2);
+        assert_eq!(report.count, 1);
+        assert_eq!(report.receipts.len(), 1);
+        assert_eq!(report.receipts[0].destination, fresh_identity);
+
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
