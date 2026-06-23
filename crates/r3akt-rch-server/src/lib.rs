@@ -95,6 +95,7 @@ const OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS: i64 = 30_000;
 const OUTBOUND_RECEIPT_ACTIVE_EXTENSION_MAX: u64 = 10;
 const OUTBOUND_DISPATCH_TIMEOUT_MS: i64 = 30_000;
 const OUTBOUND_RETRY_WORKER_POLL_MS: u64 = 500;
+const OUTBOUND_RETRY_WORKER_TICK_TIMEOUT_MS: u64 = 31_000;
 const OUTBOUND_RETRY_BACKOFF_MS: i64 = 500;
 const OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS: i64 = 65_000;
 const OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS: u64 = 30;
@@ -2462,12 +2463,23 @@ pub fn spawn_outbound_delivery_worker_with_interval(
             }
             set_outbound_retry_worker_running(&state, true, poll_interval);
             let worker_state = state.clone();
-            match tokio::task::spawn_blocking(move || {
+            let worker_task = tokio::task::spawn_blocking(move || {
                 process_outbound_delivery_worker_tick(&worker_state)
-            })
+            });
+            match tokio::time::timeout(
+                Duration::from_millis(OUTBOUND_RETRY_WORKER_TICK_TIMEOUT_MS),
+                worker_task,
+            )
             .await
             {
-                Ok(Ok(_report)) => {}
+                Ok(Ok(Ok(_report))) => {}
+                Ok(Ok(Err(error))) => {
+                    record_outbound_retry_worker_report(
+                        &state,
+                        OutboundRetryWorkerReport::default(),
+                        Some(error.to_string()),
+                    );
+                }
                 Ok(Err(error)) => {
                     record_outbound_retry_worker_report(
                         &state,
@@ -2475,11 +2487,11 @@ pub fn spawn_outbound_delivery_worker_with_interval(
                         Some(error.to_string()),
                     );
                 }
-                Err(error) => {
+                Err(_) => {
                     record_outbound_retry_worker_report(
                         &state,
                         OutboundRetryWorkerReport::default(),
-                        Some(error.to_string()),
+                        Some("outbound retry worker tick timed out".to_string()),
                     );
                 }
             }
@@ -14449,6 +14461,9 @@ fn process_due_outbound_retry_messages(
         let dispatch_report = match dispatch_outbound_message(state, &message) {
             Ok(dispatch_report) => dispatch_report,
             Err(error) => {
+                if !outbound_dispatch_attempt_still_current(state, &message, now_ms)? {
+                    continue;
+                }
                 report.failed += 1;
                 let error_text = error.to_string();
                 if let Some(retry_message) =
@@ -14475,6 +14490,9 @@ fn process_due_outbound_retry_messages(
                 continue;
             }
         };
+        if !outbound_dispatch_attempt_still_current(state, &message, now_ms)? {
+            continue;
+        }
         if dispatch_report.count == 0 {
             continue;
         }
@@ -14965,6 +14983,36 @@ fn mark_outbound_attempt_started(
     persist_outbound_message_row(state, &message)?;
     broadcast_message_event(state, &message);
     Ok(())
+}
+
+fn outbound_dispatch_attempt_still_current(
+    state: &AppState,
+    attempted: &OutboundMessageRecord,
+    started_at_ts_ms: i64,
+) -> Result<bool, ApiError> {
+    let messages = state
+        .messages
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let Some(current) = messages
+        .iter()
+        .find(|message| message.message_id == attempted.message_id)
+    else {
+        return Ok(false);
+    };
+    let current_attempt_started_at = current
+        .delivery_metadata
+        .get("last_attempt_at_ts_ms")
+        .and_then(Value::as_i64);
+    Ok(normalized_delivery_state(current) == "queued"
+        && current.delivery_method == attempted.delivery_method
+        && current.delivery_policy_reason == attempted.delivery_policy_reason
+        && current
+            .delivery_metadata
+            .get("dispatch_status")
+            .and_then(Value::as_str)
+            == Some("in_progress")
+        && current_attempt_started_at == Some(started_at_ts_ms))
 }
 
 fn mark_outbound_dispatch_failed(
@@ -50259,6 +50307,66 @@ mod tests {
             diagnostics["retry_worker"]["last_run_ts_ms"]
                 .as_i64()
                 .is_some()
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn late_direct_dispatch_result_is_ignored_after_timeout_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-stale-direct-dispatch-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "stale-direct-dispatch".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast should fall back".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "broadcast_direct".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "queued",
+                "max_attempts": 1,
+                "retry_scheduled": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        crate::persist_outbound_message_row(&state, &message).expect("persist message");
+        let started_at = crate::unix_now_ms();
+        crate::mark_outbound_attempt_started(&state, &message.message_id, started_at)
+            .expect("mark attempt");
+
+        assert!(
+            crate::outbound_dispatch_attempt_still_current(&state, &message, started_at)
+                .expect("current attempt")
+        );
+
+        let fallback = crate::queue_direct_timeout_for_propagation(
+            &state,
+            &message,
+            started_at + crate::OUTBOUND_DISPATCH_TIMEOUT_MS + 1,
+        )
+        .expect("queue fallback");
+
+        assert_eq!(fallback.delivery_method, "propagated");
+        assert_eq!(
+            fallback.delivery_policy_reason,
+            "broadcast_direct_timeout_fallback"
+        );
+        assert!(
+            !crate::outbound_dispatch_attempt_still_current(&state, &message, started_at)
+                .expect("stale attempt")
         );
 
         let _ = std::fs::remove_file(db_path);

@@ -3029,3 +3029,62 @@ Result:
 - RCH-US-018 can move to `Manual pass`: API/export data, component coverage,
   live rendered details expansion, and live browser download behavior are all
   covered.
+
+## 2026-06-23 Worker-Stall Broadcast Fallback Repair
+
+Trigger:
+
+- The operator again reported a broadcast card showing
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+
+Root-cause evidence:
+
+- Direct SQLite decode showed `2a289...` was still canonical
+  `delivery_state=propagated`, `dispatch_status=accepted`, attempts `5`, with
+  13 propagated receipt targets, no current failed row, and no recent matching
+  system event.
+- A fresh live canary `d89f842351654f6eba0a8d12e59edb26` reproduced a real
+  remaining backend failure mode: it stayed `queued` / `direct` /
+  `in_progress` beyond `dispatch_deadline_ts_ms`.
+- `/diagnostics/runtime` showed one pending dispatch and the retry worker
+  `last_run_at` stopped at the start of that dispatch. The stale-dispatch
+  finalizer was correct, but it ran inside the same worker tick that was
+  blocked in direct dispatch.
+
+Fix:
+
+- Bounded each retry-worker tick with a 31 second timeout so a hung direct
+  dispatch cannot starve timeout finalization.
+- Added a stale-attempt guard so a late direct-dispatch result cannot overwrite
+  a message that has already fallen back to propagation.
+- Added regression coverage:
+  `late_direct_dispatch_result_is_ignored_after_timeout_fallback`.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server` passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+- Restarted the DB/config-backed server as PID `19328` on
+  `http://127.0.0.1:18080/` with `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, Reticulumd RPC
+  `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- The previously stuck canary recovered immediately to `State=propagated`,
+  `method=propagated`, `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`, with no current
+  `error` or `retry_reason`.
+- `/Events?limit=200` showed only `message_propagated` and
+  `message_propagation_queued` for the canary and zero
+  `message_delivery_failed` rows.
+- Rendered dashboard proof showed no `send_error` and no
+  `message_delivery_failed`; queue depth and in-flight dispatches returned to
+  zero.
+
+Result:
+
+- Pass for RCH broadcast fallback semantics under a hung direct dispatch:
+  legitimate direct-send timeout is now converted to propagation even when the
+  original dispatch call stalls the worker tick.
+- Final phone/deck receipt remains open and separate from this fix.
