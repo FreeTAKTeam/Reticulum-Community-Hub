@@ -165,6 +165,43 @@ Remaining gap:
   `3680`. Treat the rendered expand/download proof as blocked by the browser
   harness, not passed.
 
+## Mission Audit UI Regression - 2026-06-23 UTC
+
+Scope:
+
+- The in-app browser controller remained unreliable for local navigation, so
+  this slice added component/composable coverage for the RCH-US-018 UI
+  behaviors that were previously only API-proven.
+- `MissionsLegacyPage.vue` now reuses `useAuditExportActions.ts` instead of
+  maintaining duplicate local blob-download helpers.
+
+Result:
+
+- `MissionOverviewScreen.vue` was mounted with mission audit entries.
+- The rendered `Details` control expanded an audit detail row and `Hide`
+  removed it again.
+- Empty detail rows kept the `Details` control disabled.
+- The visible `Export Log` button emitted the public `Export Log` request
+  action.
+- `useAuditExportActions.ts` downloaded
+  `mission-audit-mission-alpha.json` with the selected audit payload.
+- Snapshot export requested `/api/r3akt/snapshots`, filtered rows to the
+  selected mission UID, and downloaded
+  `mission-snapshots-mission-alpha.json` without unrelated snapshot entries.
+
+Verification:
+
+- `npm --prefix ui run test -- mission-audit-ui` passed with 4 tests.
+- `npm --prefix ui run lint` passed after the test mock cleanup.
+- A full `npm --prefix ui run test` pass also succeeded during this slice with
+  30 files and 99 tests.
+
+Remaining gap:
+
+- This closes automated UI/export contract coverage for RCH-US-018. A clean
+  live in-app browser pass against the DB-backed server is still required
+  before calling the story a manual pass.
+
 ## TAK Connector RC Retest - 2026-06-23 UTC
 
 Scope:

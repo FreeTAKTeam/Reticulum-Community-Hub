@@ -541,6 +541,7 @@ import { toEmergencyActionMessageUpsertPayload } from "./mission-member-status";
 import { toMissionStatusValue } from "./mission-status";
 import { useChecklistTemplateDraft } from "../../composables/useChecklistTemplateDraft";
 import { useChecklistTemplateCrud } from "../../composables/useChecklistTemplateCrud";
+import { useAuditExportActions } from "../../composables/missions/useAuditExportActions";
 import { useToastStore } from "../../stores/toasts";
 import { resolveChecklistCreateEndpoint } from "../../utils/checklist-create";
 import { loadJson, saveJson } from "../../utils/storage";
@@ -923,6 +924,7 @@ interface TaskSkillRequirementRaw {
 const toastStore = useToastStore();
 const route = useRoute();
 const router = useRouter();
+const { buildTimestampTag, downloadJson, downloadText } = useAuditExportActions();
 
 const DEFAULT_SOURCE_IDENTITY = "ui.operator";
 const MISSION_SELECTION_STORAGE_KEY = "rth-ui-missions-selected-mission-uid";
@@ -1230,7 +1232,6 @@ const formatDomainEventMessage = (event: DomainEventRaw): string => {
   return String(event.event_type ?? "domain.event").trim() || "domain.event";
 };
 
-const buildTimestampTag = (): string => new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14);
 const CHECKLIST_TEMPLATE_SELECTION_SEPARATOR = "::";
 const buildChecklistTemplateSelectionKey = (uid: string, sourceType: ChecklistTemplateSourceType): string => {
   const normalizedUid = String(uid ?? "").trim();
@@ -1253,30 +1254,6 @@ const parseChecklistTemplateSelectionKey = (
     return { uid, sourceType };
   }
   return { uid, sourceType: "" };
-};
-
-const downloadJson = (filename: string, payload: unknown) => {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-};
-
-const downloadText = (filename: string, payload: string, contentType = "text/plain") => {
-  const blob = new Blob([payload], { type: contentType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
 };
 
 const parseCsvRows = (payload: string): string[][] => {
