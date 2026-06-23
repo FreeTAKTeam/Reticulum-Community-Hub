@@ -2122,3 +2122,49 @@ Remaining retest:
 - In-app browser navigation to the local UI timed out during this slice, so
   rendered proof remains open. Refresh the browser tab and confirm the event
   feed no longer shows the stale `2a289...` failure card.
+
+## Marker And Zone API Retest
+
+Time: `2026-06-23T04:03Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `18144`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Created disposable mission `codex-us021-20260623040349-mission`.
+- `/api/markers/symbols` included the default `marker` symbol with
+  `mdi=map-marker`.
+- Created marker `623b9d1b7b8b4dfbbebce05aeadf7ca8`, listed it with the
+  expected name and `position={lat:45.5017, lon:-73.5673}`, moved it through
+  `/api/markers/{id}/position`, renamed it through `/api/markers/{id}`, and
+  deleted it during cleanup.
+- Created alias marker `d0c1916c42f540409f014f3023276451` using
+  `type=car` and `symbol=uav`; list output normalized it to
+  `type=vehicle`, `symbol=drone`, and `category=drone`.
+- Unsupported marker type returned `422`.
+- Created zone `7fcf60c32f8146b4a038d4a2be4be0d0`, listed it with three
+  points, patched name and geometry, and deleted it during cleanup.
+- One-point zone creation returned `422`.
+- Linked the zone and marker to the disposable mission with
+  `/api/r3akt/missions/{mission_uid}/zones/{zone_id}` and
+  `/api/r3akt/missions/{mission_uid}/markers/{marker_id}`.
+- Mission link lists returned the expected zone and marker IDs, then unlink
+  routes removed both IDs.
+- `/Events?limit=500` included marker create/update/delete/telemetry events
+  and mission marker/zone link/unlink events for the disposable artifacts.
+- `/Telemetry?since=0` retained the marker deleted telemetry row for
+  `623b9d1b7b8b4dfbbebce05aeadf7ca8`.
+- Cleanup deleted the marker, alias marker, zone, and mission. Follow-up list
+  checks showed zero active disposable markers, zones, or missions, with one
+  expected deleted mission tombstone.
+
+Remaining retest:
+
+- Browser proof for MapLibre rendering, marker placement/radial menu, zone
+  drawing/edit/delete, mission assignment popovers, icon fallback, and stale
+  overlay cleanup after delete remains open.
