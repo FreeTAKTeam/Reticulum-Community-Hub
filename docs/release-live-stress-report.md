@@ -2253,6 +2253,44 @@ Remaining retest:
 - Browser proof for the Topics page Manage Assets modal attach/detach feedback
   and topic/subscriber delete confirmation remains open.
 
+## Topics Page Component Regression
+
+Time: `2026-06-23T06:08Z`.
+
+Scope:
+
+- The in-app browser controller timed out while navigating to the local
+  DB/config-backed server, so rendered browser proof for RCH-US-008 could not
+  be completed in this slice.
+- Added page-level jsdom coverage for `ui/src/pages/TopicsPage.vue` using a
+  memory router, real Pinia stores, and mocked RCH API responses.
+
+Result:
+
+- The test mounts the real Topics page and opens `Manage Assets`.
+- It verifies the modal renders linked and unassigned assets from `/File` and
+  `/Image`.
+- It drives the visible `Library File` selector and `Attach File` button, then
+  verifies `PATCH /File/file-open` receives `TopicID=topic-alpha`.
+- It drives the visible `File` selector and `Remove File` button, then verifies
+  `PATCH /File/file-linked` receives `TopicID=null`.
+- It verifies topic deletion honors a canceled confirmation before calling
+  `DELETE /Topic?id=topic-alpha`.
+- It verifies subscriber deletion honors a canceled confirmation before calling
+  `DELETE /Subscriber?id=sub-alpha`.
+
+Verification:
+
+- `npm --prefix ui run test -- topics-page` passed with 3 tests.
+- `ui/vitest.config.ts` now registers `@vitejs/plugin-vue` so Vue SFC page
+  tests can run under Vitest.
+
+Remaining retest:
+
+- This covers the component-level UI contract for the previously open
+  modal/delete paths. RCH-US-008 still needs a clean in-app browser pass
+  against the live server before it should be marked `Manual pass`.
+
 ## Dashboard Event Snapshot Reconciliation Retest
 
 Time: `2026-06-23T03:56Z`.
