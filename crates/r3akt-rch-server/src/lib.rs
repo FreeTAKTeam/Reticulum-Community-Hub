@@ -21577,6 +21577,12 @@ fn ui_index_response_from_path(ui_dist_path: &FsPath) -> Result<Response, ApiErr
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(
+            header::CACHE_CONTROL,
+            "no-store, no-cache, must-revalidate, max-age=0",
+        )
+        .header(header::PRAGMA, "no-cache")
+        .header(header::EXPIRES, "0")
         .body(Body::from(body))
         .map_err(|error| ApiError::Internal(error.to_string()))
 }
@@ -26222,6 +26228,27 @@ mod tests {
             .await
             .expect("index response");
         assert_eq!(index_response.status(), StatusCode::OK);
+        assert_eq!(
+            index_response
+                .headers()
+                .get(axum::http::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store, no-cache, must-revalidate, max-age=0")
+        );
+        assert_eq!(
+            index_response
+                .headers()
+                .get(axum::http::header::PRAGMA)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-cache")
+        );
+        assert_eq!(
+            index_response
+                .headers()
+                .get(axum::http::header::EXPIRES)
+                .and_then(|value| value.to_str().ok()),
+            Some("0")
+        );
         let index_body = index_response
             .into_body()
             .collect()

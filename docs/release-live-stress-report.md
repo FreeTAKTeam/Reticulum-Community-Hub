@@ -2929,3 +2929,52 @@ Result:
 - Still blocked for release-candidate receipt proof: neither phone/deck path
   proved complete receipt, `/api/rem/peers` is empty, and propagated targets
   remain partly `pending`/`sending`.
+
+## 2026-06-23 Dashboard SPA Cache Refresh Proof
+
+Trigger:
+
+- The operator again saw message `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+
+Backend evidence:
+
+- Restarted the DB/config-backed server with the rebuilt
+  `target/release/r3akt-rch-server.exe` as PID `7516`.
+- `/api/v1/app/info` confirmed display name `RCH Win Test`, database path
+  `RTH_Store\rch_state.sqlite3`, Reticulum destination
+  `4fa9359ec3ea68185d4dd03b23073244`, shared instance connected, and
+  transport enabled.
+- `/Chat/Messages?limit=1000` returned `2a289...` as `State=propagated`,
+  `method=propagated`, `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`, with no current
+  `error` and no current `retry_reason`.
+- `/Events?limit=1000` returned zero events for `2a289...`; the only retained
+  `message_delivery_failed` row was for unrelated targeted message
+  `1dac7c41-7708-47a6-bea3-5f6061a8282d`.
+
+Fix:
+
+- Added no-store/no-cache headers to the served SPA `index.html` response so
+  rebuilt dashboard bundles cannot be hidden behind an old cached app shell:
+  `cache-control: no-store, no-cache, must-revalidate, max-age=0`,
+  `pragma: no-cache`, and `expires: 0`.
+- Added coverage to
+  `ui_dist_fallback_serves_built_spa_without_shadowing_api_routes`.
+
+Rendered proof:
+
+- Loaded a clean disposable Chrome profile against `http://127.0.0.1:18080/`
+  with API key `manual-test`.
+- The rendered event feed had propagated/queued rows only for recent canaries
+  and contained no `2a2892b3227b427487308d53712dd163`, no `send_error`, and no
+  `message_delivery_failed` card.
+- Screenshot saved at
+  `C:\Users\broth\AppData\Local\Temp\rch-dashboard-proof.png`.
+
+Result:
+
+- Pass for stale dashboard-card UX: the repeated pasted error is not backed by
+  current backend state, and a fresh browser shell no longer renders it.
+- Phone/deck receipt remains open and separate from this stale-card fix.
