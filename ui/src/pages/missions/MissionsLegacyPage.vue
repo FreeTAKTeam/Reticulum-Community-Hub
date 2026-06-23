@@ -543,6 +543,7 @@ import { useChecklistTemplateDraft } from "../../composables/useChecklistTemplat
 import { useChecklistTemplateCrud } from "../../composables/useChecklistTemplateCrud";
 import { useAuditExportActions } from "../../composables/missions/useAuditExportActions";
 import { useToastStore } from "../../stores/toasts";
+import { unwrapApiList } from "../../utils/api-list";
 import { resolveChecklistCreateEndpoint } from "../../utils/checklist-create";
 import { loadJson, saveJson } from "../../utils/storage";
 import { resolveTeamMemberPrimaryLabel } from "../../utils/team-members";
@@ -929,7 +930,7 @@ const { buildTimestampTag, downloadJson, downloadText } = useAuditExportActions(
 const DEFAULT_SOURCE_IDENTITY = "ui.operator";
 const MISSION_SELECTION_STORAGE_KEY = "rth-ui-missions-selected-mission-uid";
 
-const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const toArray = unwrapApiList;
 const queryText = (value: unknown): string =>
   Array.isArray(value) ? String(value[0] ?? "").trim() : String(value ?? "").trim();
 

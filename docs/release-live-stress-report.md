@@ -4056,3 +4056,79 @@ Result:
 - Pass for the client-side stale-update path: the UI can no longer turn an
   already accepted propagation fallback into a visible terminal `failed` row
   when an older failure update arrives late.
+
+## 2026-06-23 Emergency Action Message Mission Member Browser Proof
+
+Trigger:
+
+- The RCH-US-024 embedded mission/member EAM control proof was still open.
+- A live in-app browser run against
+  `/missions?mission_uid=codex-ui-us024-20260623124807-mission&screen=missionTeamMembers`
+  initially showed `Total Missions 0` because the legacy mission workspace
+  only accepted bare arrays, while the DB-backed Rust routes return wrapped
+  `{ value, Count }` list responses.
+
+Fix:
+
+- Updated `ui/src/pages/missions/MissionsLegacyPage.vue` to use
+  `unwrapApiList` for the shared list-normalization helper.
+- Added `ui/tests/mission-legacy-wrapped-lists.test.ts` to cover wrapped
+  mission, team, team-member, and EAM responses in the embedded member-status
+  board path.
+
+Live browser proof:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - sibling `reticulumd` PID `13776`.
+- Seeded disposable data:
+  - mission `codex-ui-us024-20260623153318-mission`.
+  - team `codex-ui-us024-20260623153318-team`.
+  - member `codex-ui-us024-20260623153318-member`.
+  - callsign `US024-20260623153318`.
+- Opened the mission URL in the in-app browser, clicked `Team`, expanded
+  `Show Statuses`, and clicked `Security`.
+- The rendered page showed:
+  - `Codex UI US024 Team 20260623153318`.
+  - `US024-20260623153318`.
+  - `Member Status Board`.
+  - expanded six status dimensions.
+  - `Security Green`.
+  - aggregate `17%`.
+- `/api/EmergencyActionMessage/US024-20260623153318` persisted:
+  - `team_member_uid=codex-ui-us024-20260623153318-member`.
+  - `team_uid=codex-ui-us024-20260623153318-team`.
+  - `security_status=Green`.
+  - all other dimension statuses as `Unknown`.
+
+Cleanup:
+
+- Deleted the disposable EAM.
+- Deleted the disposable member.
+- Unlinked the disposable team from the mission.
+- Deleted the disposable team and mission.
+- Follow-up checks found:
+  - `remainingMissions=0`.
+  - `remainingTeams=0`.
+  - `remainingMembers=0`.
+  - `eamExists=false`.
+
+Verification:
+
+- `npm --prefix ui run test -- mission-legacy-wrapped-lists.test.ts` failed
+  before the production fix and passed after the fix.
+- `npm --prefix ui run test -- mission-legacy-wrapped-lists.test.ts chat.spec.ts dashboard.spec.ts`
+  passed.
+- `npm --prefix ui run build` passed and produced the rebuilt
+  `assets/index-pz5N0Okr.js` entry.
+
+Result:
+
+- Pass for the embedded mission/member EAM controls.
+- Fixed a logistical UI error where wrapped Rust/Python-compatible list
+  responses made the legacy mission workspace appear empty even though the live
+  DB records existed.
