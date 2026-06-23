@@ -5,6 +5,7 @@ import { get } from "../api/client";
 import type { EventEntry, StatusResponse, TeamMemberRecord } from "../api/types";
 import type { MissionRaw } from "../types/missions/raw";
 import { buildEventCallsignLookup } from "../utils/event-feed";
+import { unwrapApiList } from "../utils/api-list";
 import { useConnectionStore } from "./connection";
 import { useUsersStore } from "./users";
 
@@ -27,8 +28,6 @@ export const EVENT_FEED_MAX_EVENTS = 200;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
 const toKeyPart = (value: unknown): string =>
   String(value ?? "")
@@ -197,22 +196,22 @@ export const useDashboardStore = defineStore("dashboard", () => {
       status.value = normalizeStatus(isRecord(response) ? response : {});
 
       const [missionResponse, teamMemberResponse, eventResponse] = await Promise.allSettled([
-        get<MissionRaw[]>(endpoints.r3aktMissions),
-        get<TeamMemberRecord[]>(endpoints.r3aktTeamMembers),
-        get<EventApiPayload[]>(`${endpoints.events}?limit=${EVENT_FEED_MAX_EVENTS}`),
+        get<unknown>(endpoints.r3aktMissions),
+        get<unknown>(endpoints.r3aktTeamMembers),
+        get<unknown>(`${endpoints.events}?limit=${EVENT_FEED_MAX_EVENTS}`),
         usersStore.fetchUsers()
       ]);
 
       if (missionResponse.status === "fulfilled") {
-        activeMissions.value = toArray<MissionRaw>(missionResponse.value).filter(isActiveMission).length;
+        activeMissions.value = unwrapApiList<MissionRaw>(missionResponse.value).filter(isActiveMission).length;
       } else {
         activeMissions.value = null;
       }
       if (teamMemberResponse.status === "fulfilled") {
-        teamMembers.value = toArray<TeamMemberRecord>(teamMemberResponse.value);
+        teamMembers.value = unwrapApiList<TeamMemberRecord>(teamMemberResponse.value);
       }
       if (eventResponse.status === "fulfilled") {
-        replaceEvents(toArray<EventApiPayload>(eventResponse.value));
+        replaceEvents(unwrapApiList<EventApiPayload>(eventResponse.value));
       }
       connectionStore.setOnline();
     } finally {

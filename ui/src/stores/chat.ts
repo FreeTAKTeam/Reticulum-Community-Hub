@@ -5,6 +5,7 @@ import { get } from "../api/client";
 import { post } from "../api/client";
 import type { ChatAttachment } from "../api/types";
 import type { ChatMessage } from "../api/types";
+import { unwrapApiList } from "../utils/api-list";
 
 type ChatAttachmentPayload = {
   FileID?: number;
@@ -57,8 +58,8 @@ export const useChatStore = defineStore("chat", () => {
   const fetchMessages = async (limit = 200) => {
     loading.value = true;
     try {
-      const response = await get<ChatMessagePayload[]>(`${endpoints.chatMessages}?limit=${limit}`);
-      messages.value = response.map(fromApiMessage).reverse();
+      const response = await get<unknown>(`${endpoints.chatMessages}?limit=${limit}`);
+      messages.value = unwrapApiList<ChatMessagePayload>(response).map(fromApiMessage).reverse();
     } finally {
       loading.value = false;
     }

@@ -1,10 +1,34 @@
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDashboardStore } from "./dashboard";
+
+vi.mock("../api/client", () => ({
+  get: vi.fn()
+}));
+
+vi.mock("./connection", () => ({
+  useConnectionStore: () => ({
+    setOnline: vi.fn()
+  })
+}));
+
+vi.mock("./users", () => ({
+  useUsersStore: () => ({
+    clients: [],
+    identities: [],
+    remPeers: [],
+    fetchUsers: vi.fn().mockResolvedValue(undefined)
+  })
+}));
+
+import { get } from "../api/client";
+
+const mockedGet = vi.mocked(get);
 
 describe("dashboard event feed", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    mockedGet.mockReset();
   });
 
   it("removes stale failed delivery events when the same message is superseded", () => {
@@ -101,6 +125,59 @@ describe("dashboard event feed", () => {
         }
       }
     ]);
+
+    expect(dashboard.events).toHaveLength(1);
+    expect(dashboard.events[0]?.id).toBe("current-event");
+    expect(dashboard.events[0]?.category).toBe("message_propagated");
+  });
+
+  it("uses wrapped Events snapshots to clear stale in-memory delivery failures", async () => {
+    const dashboard = useDashboardStore();
+
+    dashboard.pushEvent({
+      id: "failed-event",
+      timestamp: "2026-06-23T02:30:00.000Z",
+      type: "message_delivery_failed",
+      message: "Message delivery failed for unknown",
+      metadata: {
+        MessageID: "2a2892b3227b427487308d53712dd163",
+        State: "failed",
+        failure_reason: "send_error"
+      }
+    });
+
+    mockedGet.mockImplementation(async (path: string) => {
+      if (path === "/Status") {
+        return {};
+      }
+      if (path === "/api/r3akt/missions") {
+        return { value: [] };
+      }
+      if (path === "/api/r3akt/team-members") {
+        return { value: [] };
+      }
+      if (path.startsWith("/Events")) {
+        return {
+          value: [
+            {
+              id: "current-event",
+              timestamp: "2026-06-23T02:31:00.000Z",
+              type: "message_propagated",
+              message: "Message accepted for propagation to unknown",
+              metadata: {
+                MessageID: "2a2892b3227b427487308d53712dd163",
+                State: "propagated",
+                delivery_method: "propagated"
+              }
+            }
+          ],
+          Count: 1
+        };
+      }
+      return [];
+    });
+
+    await dashboard.refresh();
 
     expect(dashboard.events).toHaveLength(1);
     expect(dashboard.events[0]?.id).toBe("current-event");

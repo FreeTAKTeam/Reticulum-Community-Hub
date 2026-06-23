@@ -2410,3 +2410,57 @@ Remaining retest:
   receipt remains blocked by the SDK/RNS rate-limit window. Continue stress
   until queued propagated fallbacks reach accepted/sent propagation on the two
   USB phones and embedded decks.
+
+## 2026-06-23 Wrapped List UI Reconciliation
+
+Trigger:
+
+- The operator again saw message `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+
+Live state:
+
+- Direct SQLite inspection of `RTH_Store\rch_state.sqlite3` showed the reported
+  row is still canonical `delivery_state=propagated`,
+  `dispatch_status=accepted`, `attempts=5`.
+- The active stress probe `2d437d80fbeb4c4cbc36c6fc3f9faeaa` remained
+  non-terminal under the SDK/RNS rate-limit window, moving between queued and
+  in-progress propagated fallback retries.
+
+UI finding:
+
+- Raw HTTP checks showed the current local server returns plain arrays for
+  `/Events` and `/Chat/Messages`.
+- The repeated visible card is therefore consistent with a stale browser tab or
+  older loaded bundle, not the current backend row.
+- The dashboard and chat stores were still hardened to accept both raw arrays
+  and Python-style wrapped list responses so future compatibility envelopes
+  cannot prevent authoritative refreshes from replacing stale in-memory state.
+
+Fix:
+
+- Added `ui/src/utils/api-list.ts` to unwrap raw arrays plus `value`, `Value`,
+  `items`, and `Items` list envelopes.
+- Updated the dashboard refresh path to unwrap wrapped `/Events`, mission, and
+  team-member snapshots before replacing in-memory events.
+- Updated the chat history refresh path to unwrap wrapped `/Chat/Messages`
+  before mapping rows.
+
+Verification:
+
+- `npm --prefix ui run lint` passed.
+- `npm --prefix ui run test -- dashboard chat` passed, including a regression
+  where a wrapped `/Events` snapshot clears an older
+  `message_delivery_failed` card for `2a2892b3227b427487308d53712dd163`.
+- `npm --prefix ui run build` passed and the live server returned
+  `200 text/html` serving rebuilt bundle `assets/index-kc7Jg-Vq.js`.
+- In-app browser navigation to `http://127.0.0.1:18080/` timed out before
+  rendered proof could be captured.
+
+Remaining retest:
+
+- Refresh or reload the manual browser tab so it loads the rebuilt bundle.
+- Continue live delivery stress once the SDK/RNS rate-limit window clears and
+  confirm propagated dispatch reaches accepted/sent state on the connected
+  phones/decks.
