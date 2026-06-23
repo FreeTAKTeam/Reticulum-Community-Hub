@@ -46,4 +46,35 @@ describe("chat store", () => {
       scope: "broadcast"
     });
   });
+
+  it("does not downgrade propagated broadcast fallback messages to failed", () => {
+    const chat = useChatStore();
+
+    chat.upsertMessage({
+      message_id: "2a2892b3227b427487308d53712dd163",
+      direction: "outbound",
+      scope: "broadcast",
+      state: "propagated",
+      content: "broadcast",
+      attachments: [],
+      created_at: "2026-06-23T02:00:00.000Z",
+      updated_at: "2026-06-23T02:01:00.000Z"
+    });
+    chat.upsertMessage({
+      message_id: "2a2892b3227b427487308d53712dd163",
+      direction: "outbound",
+      scope: "broadcast",
+      state: "failed",
+      content: "broadcast",
+      attachments: [],
+      created_at: "2026-06-23T02:00:00.000Z",
+      updated_at: "2026-06-23T02:02:00.000Z"
+    });
+
+    expect(chat.messages).toHaveLength(1);
+    expect(chat.messages[0]).toMatchObject({
+      message_id: "2a2892b3227b427487308d53712dd163",
+      state: "propagated"
+    });
+  });
 });

@@ -4015,3 +4015,44 @@ Result:
   canary: all six current targets reached `sent: propagated resource`.
 - Phone inbox receipt remains unproven in this run because ADB had no attached
   phones by the final check, and `/api/rem/peers` remained empty.
+
+## 2026-06-23 Chat Store Propagated State Downgrade Guard
+
+Trigger:
+
+- The operator again reported broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- Live DB and `/Chat/Messages?limit=500` both returned that ID as
+  `State=propagated`, `dispatch_status=accepted`, and
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+- The older `f011f23619fc4d0b9dcd9bf51462629e` report also returned
+  `State=propagated` / `dispatch_status=accepted`.
+
+Fix:
+
+- Added a chat-store merge guard so a late `failed` update for a message ID
+  cannot downgrade an already successful `sent`, `delivered`, or `propagated`
+  chat row.
+- Recovery still works in the other direction: queued/failed rows can still be
+  replaced by later successful delivery states.
+
+Verification:
+
+- `npm --prefix ui run test -- chat.spec.ts` failed before the guard and passed
+  after the fix.
+- `npm --prefix ui run test -- chat.spec.ts dashboard.spec.ts` passed.
+- `npm --prefix ui run build` passed and the running local server served the
+  rebuilt `index-DKA-mRkx.js` entry.
+- Focused backend fallback checks still passed:
+  - `cargo test -p r3akt-rch-server propagated_broadcast_fallback_send_error_continues_after_fifth_attempt`.
+  - `cargo test -p r3akt-rch-server internal_delivery_failure_retries_propagated_broadcast_fallback_send_error`.
+- In-app browser `/chat` loaded the rebuilt bundle and rendered the
+  communications grid without a visible failed delivery state in the broadcast
+  list.
+
+Result:
+
+- Pass for the client-side stale-update path: the UI can no longer turn an
+  already accepted propagation fallback into a visible terminal `failed` row
+  when an older failure update arrives late.

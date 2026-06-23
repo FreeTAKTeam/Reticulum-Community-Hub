@@ -51,6 +51,14 @@ const fromApiMessage = (payload: ChatMessagePayload): ChatMessage => ({
   updated_at: payload.UpdatedAt
 });
 
+const successfulDeliveryStates = new Set(["delivered", "propagated", "sent"]);
+
+const isStaleFailureDowngrade = (current: ChatMessage, incoming: ChatMessage): boolean => {
+  const currentState = String(current.state ?? "").trim().toLowerCase();
+  const incomingState = String(incoming.state ?? "").trim().toLowerCase();
+  return successfulDeliveryStates.has(currentState) && incomingState === "failed";
+};
+
 export const useChatStore = defineStore("chat", () => {
   const messages = ref<ChatMessage[]>([]);
   const loading = ref(false);
@@ -112,6 +120,9 @@ export const useChatStore = defineStore("chat", () => {
     }
     const index = messages.value.findIndex((entry) => entry.message_id === message.message_id);
     if (index >= 0) {
+      if (isStaleFailureDowngrade(messages.value[index], message)) {
+        return;
+      }
       messages.value[index] = { ...messages.value[index], ...message };
     } else {
       messages.value.push(message);
