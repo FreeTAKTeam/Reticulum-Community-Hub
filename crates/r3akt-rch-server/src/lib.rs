@@ -14410,6 +14410,16 @@ fn process_due_outbound_retry_messages(
     };
     for message in due_messages {
         report.processed += 1;
+        if failed_direct_timeout_retry_due(&message, now_ms) {
+            let repair_message = queue_direct_timeout_for_propagation(state, &message, now_ms)?;
+            let _ = record_system_event(
+                state,
+                "message_propagation_queued",
+                direct_timeout_propagation_event_message(&repair_message),
+                outbound_delivery_propagation_metadata(&repair_message, "direct_dispatch_timeout"),
+            )?;
+            continue;
+        }
         mark_outbound_attempt_started(state, &message.message_id, now_ms)?;
         let dispatch_report = match dispatch_outbound_message(state, &message) {
             Ok(dispatch_report) => dispatch_report,
@@ -14492,7 +14502,38 @@ fn outbound_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
             .get("next_attempt_at_ts_ms")
             .and_then(Value::as_i64)
             .is_none_or(|deadline| deadline <= now_ms))
+        || failed_direct_timeout_retry_due(message, now_ms)
         || failed_propagation_fallback_retry_due(message, now_ms)
+}
+
+fn failed_direct_timeout_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
+    if normalized_delivery_state(message) != "failed"
+        || !direct_dispatch_timeout_should_queue_propagation(message)
+        || message
+            .delivery_metadata
+            .get("error")
+            .and_then(Value::as_str)
+            .is_none_or(|error| error != "send_timeout")
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("dispatch_status")
+        .and_then(Value::as_str)
+        != Some("failed")
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("next_attempt_at_ts_ms")
+        .and_then(Value::as_i64)
+        .is_some_and(|deadline| deadline > now_ms)
+    {
+        return false;
+    }
+    true
 }
 
 fn failed_propagation_fallback_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
@@ -14747,6 +14788,50 @@ fn direct_timeout_propagation_event_message(message: &OutboundMessageRecord) -> 
         DeliveryMode::Fanout => "Direct topic fanout timed out; queued message for propagation",
         DeliveryMode::Targeted => "Direct delivery timed out; queued message for propagation",
     }
+}
+
+fn queue_direct_timeout_for_propagation(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+    now_ms: i64,
+) -> Result<OutboundMessageRecord, ApiError> {
+    let mut messages = state
+        .messages
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let Some(stored) = messages
+        .iter_mut()
+        .find(|stored| stored.message_id == message.message_id)
+    else {
+        return Err(ApiError::NotFound("Outbound message not found".to_string()));
+    };
+    let attempts = outbound_attempts(stored).saturating_add(1);
+    stored.delivery_state = "queued".to_string();
+    stored.delivery_method = "propagated".to_string();
+    stored.delivery_policy_reason = direct_timeout_propagation_policy_reason(stored).to_string();
+    merge_delivery_metadata(
+        &mut stored.delivery_metadata,
+        json!({
+            "acked": false,
+            "attempts": attempts,
+            "delivery_mode": "propagated",
+            "dispatch_status": "queued",
+            "dispatch_timeout": true,
+            "dispatch_timed_out_at_ts_ms": now_ms,
+            "error": "send_timeout",
+            "fallback_reason": "direct_dispatch_timeout",
+            "previous_delivery_method": "direct",
+            "receipt_pending": false,
+            "retry_reason": "send_timeout",
+            "retry_scheduled": true,
+            "next_attempt_at_ts_ms": now_ms,
+        }),
+    );
+    let repaired_message = stored.clone();
+    drop(messages);
+    persist_outbound_message_row(state, &repaired_message)?;
+    broadcast_message_event(state, &repaired_message);
+    Ok(repaired_message)
 }
 
 fn outbound_backoff_ms(message: &OutboundMessageRecord) -> i64 {
@@ -55551,6 +55636,76 @@ mod tests {
         assert!(!crate::outbound_retry_due(&invalid_destination, now));
         assert!(!crate::outbound_retry_due(&in_progress_repair, now));
         assert!(crate::dispatch_pending(&in_progress_repair));
+    }
+
+    #[test]
+    fn failed_direct_broadcast_send_timeout_queues_propagation_repair() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-direct-broadcast-timeout-repair-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let now = crate::unix_now_ms();
+        let message = crate::OutboundMessageRecord {
+            message_id: "failed-direct-broadcast-timeout-repair".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast direct timeout".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "broadcast_direct".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 1,
+                "dispatch_status": "failed",
+                "dispatch_timeout": true,
+                "dispatch_timed_out_at_ts_ms": now - 1_000,
+                "error": "send_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 0,
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now - 10_000,
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        crate::persist_outbound_message_row(&state, &message).expect("persist message");
+
+        let report = crate::process_due_outbound_retry_messages(&state).expect("process retries");
+
+        assert_eq!(report.processed, 1);
+        assert_eq!(report.dispatched, 0);
+        let messages = state.messages.read().expect("messages");
+        let repaired = messages.first().expect("message");
+        assert_eq!(repaired.delivery_state, "queued");
+        assert_eq!(repaired.delivery_method, "propagated");
+        assert_eq!(
+            repaired.delivery_policy_reason,
+            "broadcast_direct_timeout_fallback"
+        );
+        assert_eq!(repaired.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(repaired.delivery_metadata["retry_reason"], "send_timeout");
+        assert_eq!(repaired.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(
+            repaired.delivery_metadata["previous_delivery_method"],
+            "direct"
+        );
+        drop(messages);
+
+        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot exists");
+        assert_eq!(snapshot.messages[0].delivery_state, "queued");
+        assert_eq!(snapshot.messages[0].delivery_method, "propagated");
+
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]

@@ -27,6 +27,52 @@ setup was changed to two REM phones.
 - RCH database: `target/manual-test/rch-manual.sqlite3`
 - reticulumd database: `target/manual-test/reticulumd.sqlite3`
 
+## Broadcast Timeout Repair Retest - 2026-06-23 UTC
+
+Runtime under test:
+
+- Branch: `codex/rch-user-story-audit`
+- Server binary: `target/release/r3akt-rch-server.exe`
+- Server URL: `http://127.0.0.1:18080`
+- API key used for manual testing: `manual-test`
+- RCH database: `RTH_Store/rch_state.sqlite3`
+- RCH config: `RTH_Store/config.ini`
+- Server PID after rebuild/restart: `24208`
+
+Observed operator-reported row:
+
+- Message `2a2892b3227b427487308d53712dd163` was reported by the UI as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`. After the existing propagated fallback repair path caught up,
+  the configured SQLite store showed the row as `propagated` with
+  `dispatch_status=accepted`, `delivery_method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`, and
+  `reticulumd_dispatch_count=13`.
+
+New regression and live repair:
+
+- Added a regression for persisted direct broadcast `send_timeout` rows that
+  had already been marked `failed`.
+- Rebuilt and restarted the local release binary against the configured DB and
+  config.
+- Historical failed direct broadcast timeout rows
+  `f011f23619fc4d0b9dcd9bf51462629e` and
+  `d3a43d4ff4844ccb9cb692d56a7b157c` were repaired by the running worker from
+  `failed` / `direct` / `broadcast_direct` to queued propagated retries with
+  `delivery_policy_reason=broadcast_direct_timeout_fallback` and
+  `retry_reason=send_timeout`.
+- A fresh live broadcast probe
+  `096df17c-4569-4204-a11c-871064038b8a` timed out in direct broadcast mode
+  and then converted to queued propagated fallback instead of terminal failure.
+
+Current limitation:
+
+- The local SDK/reticulumd path was rate-limited or slow during the probe, so
+  several propagated fallback rows remained queued or in progress. The
+  release-blocking behavior fixed here is that legitimate broadcast
+  `send_timeout` rows no longer remain terminally failed; they are moved to
+  propagation fallback and retried.
+
 ## UI Coverage
 
 The following routes were exercised through browser automation against the live
