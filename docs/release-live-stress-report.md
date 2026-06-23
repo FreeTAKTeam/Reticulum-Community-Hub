@@ -2601,3 +2601,56 @@ Remaining live gap:
   phone/deck receipt.
 - Continue monitoring target statuses and connected device inboxes until the
   propagated targets report sent/received.
+
+## 2026-06-23 Broadcast Fallback Metadata and CI Pin Follow-Up
+
+Trigger:
+
+- The operator again saw broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- GitHub PR checks for #201 failed after the `origin/main` merge.
+
+Live state:
+
+- The DB/config-backed manual server on `http://127.0.0.1:18080/` still had
+  `2a289...` as canonical `State=propagated`, `dispatch_status=accepted`,
+  `method=propagated`, `policy=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, no current `error`, and no current
+  `retry_reason`.
+- Target status split was six `sent: propagated resource` and seven `sending`.
+  The visible failed card is therefore not the current backend state.
+
+Fixes:
+
+- Direct broadcast/fanout timeout fallback now resets the propagated leg's
+  `attempts` to `0`, preserves the old direct count as `direct_attempts`, and
+  sets `max_attempts` to the propagated multi-recipient retry budget. This
+  prevents direct-only attempt metadata from leaking into propagation fallback
+  state.
+- Timeout-generated `message_propagation_queued` events now include
+  `callback_source=reticulumd_internal_adapter` and
+  `callback_type=propagation_fallback`, matching other delivery callback
+  events.
+- GitHub CI and release workflows now pin the LXMF-rs checkout to commit
+  `ed4a8a1e7921925023ed5583d20f75c7671e3b6e`, whose crate package versions
+  match the committed `Cargo.lock`. The older `v0.5.1` tag contains earlier
+  package versions and made CI try to rewrite the lockfile under
+  `cargo fetch --locked`.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server direct_broadcast_dispatch_timeout_falls_back_to_propagation -- --nocapture`
+  passed.
+- `cargo test -p r3akt-rch-server propagated_broadcast -- --nocapture` passed
+  10 focused propagated broadcast fallback tests.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo fetch --locked` passed locally against the pinned LXMF-rs-compatible
+  lockfile.
+
+Remaining live gap:
+
+- Final phone/deck receipt is still not proven for every propagated target.
+  Continue monitoring target statuses and device inboxes until all targets
+  leave `sending`.

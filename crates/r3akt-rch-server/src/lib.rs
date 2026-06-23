@@ -11739,7 +11739,7 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
                 &mut message.delivery_metadata,
                 json!({
                     "acked": false,
-                    "attempts": attempts,
+                    "attempts": 0,
                     "direct_attempts": attempts,
                     "delivery_mode": "propagated",
                     "dispatch_status": "queued",
@@ -11747,6 +11747,7 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
                     "dispatch_timed_out_at_ts_ms": now_ms,
                     "error": "send_timeout",
                     "fallback_reason": "direct_dispatch_timeout",
+                    "max_attempts": OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
                     "previous_delivery_method": "direct",
                     "receipt_pending": false,
                     "retry_reason": "send_timeout",
@@ -11758,7 +11759,10 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
             system_events.push((
                 "message_propagation_queued",
                 direct_timeout_propagation_event_message(message).to_string(),
-                outbound_delivery_propagation_metadata(message, "direct_dispatch_timeout"),
+                outbound_delivery_callback_metadata(
+                    outbound_delivery_propagation_metadata(message, "direct_dispatch_timeout"),
+                    "propagation_fallback",
+                ),
             ));
             continue;
         }
@@ -14431,7 +14435,13 @@ fn process_due_outbound_retry_messages(
                 state,
                 "message_propagation_queued",
                 direct_timeout_propagation_event_message(&repair_message),
-                outbound_delivery_propagation_metadata(&repair_message, "direct_dispatch_timeout"),
+                outbound_delivery_callback_metadata(
+                    outbound_delivery_propagation_metadata(
+                        &repair_message,
+                        "direct_dispatch_timeout",
+                    ),
+                    "propagation_fallback",
+                ),
             )?;
             continue;
         }
@@ -14855,13 +14865,15 @@ fn queue_direct_timeout_for_propagation(
         &mut stored.delivery_metadata,
         json!({
             "acked": false,
-            "attempts": attempts,
+            "attempts": 0,
+            "direct_attempts": attempts,
             "delivery_mode": "propagated",
             "dispatch_status": "queued",
             "dispatch_timeout": true,
             "dispatch_timed_out_at_ts_ms": now_ms,
             "error": "send_timeout",
             "fallback_reason": "direct_dispatch_timeout",
+            "max_attempts": OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
             "previous_delivery_method": "direct",
             "receipt_pending": false,
             "retry_reason": "send_timeout",
