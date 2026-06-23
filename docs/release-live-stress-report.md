@@ -1469,6 +1469,39 @@ Remaining retest:
 - No remaining RCH-US-004 issue from this slice. The failed propagation sync is
   a legitimate environment/runtime failure and is now visible to the operator.
 
+## Remote Auth And Connection Retest
+
+Time: `2026-06-23T00:20Z` to `2026-06-23T00:31Z`.
+
+Runtime:
+
+- RCH server remained on `http://127.0.0.1:18080/`, PID `5012`, using the live
+  `RTH_Store` DB/config and API key `manual-test`.
+- Browser test used `http://127.0.0.1.nip.io:18080` and
+  `ws://127.0.0.1.nip.io:18080` as remote-looking URLs that resolve to the
+  local RCH instance. This exercises remote-target auth behavior without an
+  external hub.
+
+Result:
+
+- Connect switched from Local Connection Settings to Remote Connection mode and
+  displayed `Remote backend requires authentication.`.
+- While unauthenticated, clicking the protected Chat route redirected to
+  `/connect?redirect=/chat`.
+- API Key mode displayed
+  `API key is required for remote backend authentication.` until an API key was
+  entered.
+- Login with API key `manual-test` reached the live server through the
+  remote-looking URL and redirected back to `/chat`.
+- Settings were restored to `http://127.0.0.1:18080`; Connect returned to Local
+  Connection Settings and showed `Connection settings saved`.
+
+Remaining retest:
+
+- No RCH-US-003 product error found in this browser slice. A real deployed
+  remote hub should still be checked for TLS/DNS/proxy behavior during staging
+  or deployment testing.
+
 ## Config And Reticulum Path Retest
 
 Time: `2026-06-22T22:41Z` to `2026-06-22T22:49Z`.
