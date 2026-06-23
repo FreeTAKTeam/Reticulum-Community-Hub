@@ -109,6 +109,11 @@ Remaining gap:
 - The API/export data path passed. Browser proof is still needed for expanding
   mission audit detail rows and triggering the actual `mission-audit-*.json`
   download from the shared UI.
+- Follow-up in-app browser attempts to open
+  `/missions?mission_uid=codex-us018-20260623014108` and then `/` timed out and
+  reset the browser controller while `/Status` still reported healthy PID
+  `3680`. Treat the rendered expand/download proof as blocked by the browser
+  harness, not passed.
 
 ## Assets, Assignments, And Skills API Retest - 2026-06-23 UTC
 
