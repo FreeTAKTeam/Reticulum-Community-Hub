@@ -38,4 +38,37 @@ describe("dashboard event feed", () => {
     expect(dashboard.events[0]?.id).toBe("superseded-event");
     expect(dashboard.events[0]?.category).toBe("message_delivery_superseded");
   });
+
+  it("removes stale failed delivery events when the same message later propagates", () => {
+    const dashboard = useDashboardStore();
+
+    dashboard.pushEvent({
+      id: "failed-event",
+      timestamp: "2026-06-23T02:30:00.000Z",
+      type: "message_delivery_failed",
+      message: "Message delivery failed for unknown",
+      metadata: {
+        MessageID: "2a2892b3227b427487308d53712dd163",
+        State: "failed",
+        delivery_method: "propagated",
+        failure_reason: "send_error"
+      }
+    });
+    dashboard.pushEvent({
+      id: "propagated-event",
+      timestamp: "2026-06-23T02:31:00.000Z",
+      type: "message_propagated",
+      message: "Message accepted for propagation to unknown",
+      metadata: {
+        message_id: "2a2892b3227b427487308d53712dd163",
+        State: "propagated",
+        delivery_method: "propagated",
+        delivery_policy_reason: "broadcast_direct_timeout_fallback"
+      }
+    });
+
+    expect(dashboard.events).toHaveLength(1);
+    expect(dashboard.events[0]?.id).toBe("propagated-event");
+    expect(dashboard.events[0]?.category).toBe("message_propagated");
+  });
 });

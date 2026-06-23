@@ -88,6 +88,25 @@ const supersedesDeliveryFailure = (event: EventEntry): boolean =>
   toKeyPart(event.category) === "message_delivery_superseded" ||
   event.metadata?.delivery_failure_superseded === true;
 
+const isDeliveryRecoveryEvent = (event: EventEntry): boolean => {
+  const category = toKeyPart(event.category);
+  if (supersedesDeliveryFailure(event)) {
+    return true;
+  }
+  if (
+    ![
+      "message_delivered",
+      "message_delivery_retrying",
+      "message_propagated",
+      "message_propagation_queued",
+      "message_sent"
+    ].includes(category)
+  ) {
+    return false;
+  }
+  return deliveryMessageId(event) !== "" && toKeyPart(event.metadata?.State) !== "failed";
+};
+
 export const eventEntryKey = (event: EventEntry): string => {
   const id = toKeyPart(event.id);
   if (id) {
@@ -99,11 +118,28 @@ export const eventEntryKey = (event: EventEntry): string => {
 const mergeEventLists = (current: EventEntry[], incoming: EventEntry[]): EventEntry[] => {
   const merged = new Map<string, EventEntry>();
   for (const event of [...current, ...incoming]) {
-    if (supersedesDeliveryFailure(event)) {
+    const messageId = deliveryMessageId(event);
+    const currentEventTime = eventTime(event);
+    if (isDeliveryFailureEvent(event) && messageId) {
+      const alreadyRecovered = [...merged.values()].some(
+        (existing) =>
+          isDeliveryRecoveryEvent(existing) &&
+          deliveryMessageId(existing) === messageId &&
+          eventTime(existing) >= currentEventTime
+      );
+      if (alreadyRecovered) {
+        continue;
+      }
+    }
+    if (isDeliveryRecoveryEvent(event)) {
       const messageId = deliveryMessageId(event);
       if (messageId) {
         for (const [key, existing] of merged) {
-          if (isDeliveryFailureEvent(existing) && deliveryMessageId(existing) === messageId) {
+          if (
+            isDeliveryFailureEvent(existing) &&
+            deliveryMessageId(existing) === messageId &&
+            eventTime(existing) <= currentEventTime
+          ) {
             merged.delete(key);
           }
         }
