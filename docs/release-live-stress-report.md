@@ -2878,3 +2878,54 @@ Result:
 - Blocked for final live receipt: phones/decks still do not prove propagated
   message receipt, and the phone-side Reticulum/LXMF transport stack needs
   stabilization or manual refresh before this can be release-ready.
+
+## 2026-06-23 Phone App Refresh Receipt Follow-up
+
+Action:
+
+- Force-stopped and relaunched `network.reticulum.emergency` and
+  `com.lxmf.messenger` on both USB phones:
+  - Pixel 7 `35031FDH2003N8`
+  - SM-G950W `988b9b344135304639`
+- Cleared logcat after restart and verified fresh PIDs for both packages on
+  both phones.
+- Rechecked `/api/rem/peers`, `/Client`, phone logs, and live message state.
+
+Post-refresh canary:
+
+- Sent broadcast `bd1cb3b94daa49e2bef52816a0f292b0` with content
+  `Codex post-phone-refresh broadcast canary 2026-06-23T05:31:14.8089679-03:00`.
+- Polls 1-7 stayed direct `dispatch_status=in_progress`.
+- Poll 8 reached `State=propagated`, `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, no current `error`, no current `retry_reason`,
+  and 13 propagated receipt targets.
+- Polls 8-24 stayed accepted, but target status remained `pending=13`.
+
+Follow-up state:
+
+- Earlier canary `094e12d531db40b79350972e8e34f33b` advanced from all pending
+  to six `sent: propagated resource`, five `sending`, and two `pending`.
+- The repeated user-reported message `2a2892b3227b427487308d53712dd163`
+  remained canonical `propagated` / `accepted`, with six
+  `sent: propagated resource` targets and seven `sending`.
+- New canary `bd1cb3...` remained `propagated` / `accepted`, with all 13
+  targets still `pending`.
+- `/api/rem/peers` remained empty.
+
+Phone evidence after restart:
+
+- Pixel logs showed LXMF announce callbacks and reachable LXMF delivery
+  announces over AutoInterface, but also repeated shared-instance checks
+  reporting no shared Reticulum instance and BLE connection timeouts.
+- Samsung logs showed LXMF announce callbacks, Reticulum propagation sync
+  scheduling/attempts, and BLE traffic. It also continued reporting no shared
+  Reticulum instance at `127.0.0.1:37428`.
+
+Result:
+
+- Partial progress: the app refresh produced live announce/sync activity and
+  one earlier canary advanced to six propagated-resource sends.
+- Still blocked for release-candidate receipt proof: neither phone/deck path
+  proved complete receipt, `/api/rem/peers` is empty, and propagated targets
+  remain partly `pending`/`sending`.
