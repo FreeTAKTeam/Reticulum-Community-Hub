@@ -3224,6 +3224,63 @@ Result:
 - Final phone/deck receipt remains open: the remaining seven targets are still
   `sending`, so this closes RCH starvation but not end-device delivery proof.
 
+## 2026-06-23 Live Propagated Send-Error Recovery Check
+
+Trigger:
+
+- The operator again reported broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- PR #201 also had one CI-only failure in
+  `receipt_status_poll_budget_prioritizes_unseen_pending_targets`.
+
+Findings:
+
+- The live DB/API row for `2a2892b3227b427487308d53712dd163` is still
+  canonical `State=propagated`, `dispatch_status=accepted`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, and has no current `error` or
+  `retry_reason`.
+- The in-app browser loaded the local DB/config-backed dashboard at
+  `http://127.0.0.1:18080/`; its current event feed showed the latest
+  direct-timeout broadcasts as `message_propagation_queued` followed by
+  `message_propagated`, with no visible stale `send_error` row.
+- Fresh live canary `cb60ebf635a84667bbcf8ca58b05a7c0` reproduced the direct
+  broadcast timeout and recovered cleanly:
+  `message_propagation_queued` at `2026-06-23T11:15:54.392Z`, then
+  `message_propagated` at `2026-06-23T11:15:54.558Z`.
+- The canary reached `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, queue depth `0`, pending dispatches `0`,
+  pending receipts `0`, and no current `error`.
+- Receipt polling reached all 13 canary targets; all were `sending` at the
+  last poll, so the RCH queue/fallback path is healthy but final device receipt
+  remains open.
+- Both USB phones were attached and their Columba processes were running.
+  Pixel 7 logs showed active RNS/LXMF announces and propagation sync activity;
+  Samsung logs showed LXMF/BLE churn but no exact canary receipt line.
+
+Fix and verification:
+
+- Stabilized the CI-only receipt-priority regression by using the same
+  one-second fake RPC accept window as the other receipt-budget tests and by
+  asserting persisted target poll timestamps for unseen pending targets.
+- Local checks passed:
+  `cargo test -p r3akt-rch-server receipt_status_poll_budget_`,
+  `cargo test -p r3akt-rch-server`, and
+  `cargo fmt --all -- --check`.
+- Pushed commit `c9f6b7e` to PR #201. GitHub PR Quality checks for Format,
+  Clippy, Workspace Tests, Release Builds, and Dependency Audit are green;
+  the longer `Rust workspace` check is still running at the time of this note.
+
+Result:
+
+- Pass for the user-reported propagated `send_error` recovery path on the
+  current DB/config-backed server: the current row is not failed, and a fresh
+  broadcast timeout was sent to propagation and accepted.
+- Release gate still open for end-device delivery proof: attached phones and
+  deck targets have not yet produced final receipt/inbox evidence for the
+  latest canary.
+
 ## 2026-06-23 WebMap Rendered Marker/Zone Proof
 
 Scope:
