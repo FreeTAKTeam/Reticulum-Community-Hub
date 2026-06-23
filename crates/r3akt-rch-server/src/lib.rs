@@ -104,6 +104,9 @@ const OUTBOUND_RETRY_MAX_ATTEMPTS: u64 = 2;
 const OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS: u64 = 5;
 const OUTBOUND_PROPAGATION_STAMP_COST: u32 = 16;
 const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
+const RETICULUMD_RECEIPT_STATUS_PASS_INTERVAL_MS: i64 = 10_000;
+const RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS: usize = 4;
+const RETICULUMD_SECURITY_RATE_LIMIT_CODE: &str = "SDK_SECURITY_RATE_LIMITED";
 const RETICULUMD_INBOUND_WORKER_POLL_MS: u64 = 1_000;
 const RETICULUMD_LIST_MESSAGE_POLL_MS: u64 = 5_000;
 const RETICULUMD_EVENT_POLL_MAX: usize = 64;
@@ -201,6 +204,7 @@ pub struct AppState {
     outbound_delivery_policy: Arc<RwLock<OutboundDeliveryPolicy>>,
     outbound_retry_worker_stats: Arc<RwLock<OutboundRetryWorkerStats>>,
     reticulumd_inbound_worker_stats: Arc<RwLock<ReticulumdInboundWorkerStats>>,
+    reticulumd_receipt_status_next_poll_ts_ms: Arc<RwLock<i64>>,
     outbound_identity_allowlist: Option<Arc<HashSet<String>>>,
     mission_change_fanout_cache: Arc<RwLock<HashMap<String, i64>>>,
     #[cfg(test)]
@@ -380,6 +384,7 @@ impl Default for AppState {
             outbound_delivery_policy: Arc::default(),
             outbound_retry_worker_stats: Arc::default(),
             reticulumd_inbound_worker_stats: Arc::default(),
+            reticulumd_receipt_status_next_poll_ts_ms: Arc::default(),
             outbound_identity_allowlist: None,
             mission_change_fanout_cache: Arc::default(),
             #[cfg(test)]
@@ -10791,7 +10796,14 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
         return Ok(());
     };
     let now_ms = unix_now_ms();
-    let pending_messages = {
+    let next_poll_ts_ms = *state
+        .reticulumd_receipt_status_next_poll_ts_ms
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    if now_ms < next_poll_ts_ms {
+        return Ok(());
+    }
+    let mut pending_messages = {
         let messages = state
             .messages
             .read()
@@ -10826,24 +10838,52 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
     if pending_messages.is_empty() {
         return Ok(());
     }
+    pending_messages.sort_by(|left, right| right.0.created_ts_ms.cmp(&left.0.created_ts_ms));
+    {
+        let mut next_poll_ts_ms = state
+            .reticulumd_receipt_status_next_poll_ts_ms
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        *next_poll_ts_ms = now_ms.saturating_add(RETICULUMD_RECEIPT_STATUS_PASS_INTERVAL_MS);
+    }
 
     let mut client = ReticulumdRpcClient::new(endpoint.as_str());
+    let mut rpc_budget = RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS;
     for (message, message_id, targets) in pending_messages {
+        if rpc_budget == 0 {
+            break;
+        }
         if targets.is_empty() {
             continue;
         }
         mark_reticulumd_receipt_poll_attempt(state, &message_id, now_ms)?;
         let mut statuses = Vec::new();
         for target in &targets {
-            if let Some(delivery_status) =
-                reticulumd_delivery_status(&mut client, &target.message_id)
-            {
-                statuses.push(ReticulumdReceiptTarget {
-                    message_id: target.message_id.clone(),
-                    destination: target.destination.clone(),
-                    status: Some(delivery_status.receipt_status),
-                    sdk_snapshot: Some(delivery_status.snapshot),
-                });
+            match reticulumd_delivery_status(&mut client, &target.message_id, &mut rpc_budget) {
+                ReticulumdStatusPollResult::Found(delivery_status) => {
+                    statuses.push(ReticulumdReceiptTarget {
+                        message_id: target.message_id.clone(),
+                        destination: target.destination.clone(),
+                        status: Some(delivery_status.receipt_status),
+                        sdk_snapshot: Some(delivery_status.snapshot),
+                    });
+                }
+                ReticulumdStatusPollResult::NotFound => {}
+                ReticulumdStatusPollResult::Stopped { error } => {
+                    if let Some(error) = error {
+                        mark_reticulumd_receipt_poll_reconciliation_error(
+                            state,
+                            &message_id,
+                            now_ms,
+                            &error,
+                        )?;
+                    }
+                    rpc_budget = 0;
+                    break;
+                }
+            }
+            if rpc_budget == 0 {
+                break;
             }
         }
         if statuses.is_empty() {
@@ -10948,6 +10988,34 @@ fn mark_reticulumd_receipt_poll_attempt(
     persist_outbound_message_row(state, &message)
 }
 
+fn mark_reticulumd_receipt_poll_reconciliation_error(
+    state: &AppState,
+    message_id: &str,
+    now_ms: i64,
+    error: &str,
+) -> Result<(), ApiError> {
+    let mut messages = state
+        .messages
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let Some(message) = messages.iter_mut().find(|message| {
+        message.message_id == message_id && reticulumd_status_poll_candidate(message)
+    }) else {
+        return Ok(());
+    };
+    merge_delivery_metadata(
+        &mut message.delivery_metadata,
+        json!({
+            "receipt_last_poll_ts_ms": now_ms,
+            "sdk_reconciliation_error": error,
+            "sdk_reconciliation_error_ts_ms": now_ms,
+        }),
+    );
+    let message = message.clone();
+    drop(messages);
+    persist_outbound_message_row(state, &message)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct ReticulumdReceiptTarget {
     message_id: String,
@@ -11045,6 +11113,10 @@ fn update_reticulumd_receipt_target_statuses(
         json!({ "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&targets) }),
     );
     merge_delivery_metadata(&mut message.delivery_metadata, sdk_metadata);
+    if let Some(object) = message.delivery_metadata.as_object_mut() {
+        object.remove("sdk_reconciliation_error");
+        object.remove("sdk_reconciliation_error_ts_ms");
+    }
     let message = message.clone();
     drop(messages);
     persist_outbound_message_row(state, &message)
@@ -11078,16 +11150,72 @@ struct ReticulumdDeliveryStatus {
     snapshot: LxmfDeliverySnapshot,
 }
 
+#[derive(Debug)]
+enum ReticulumdStatusPollResult {
+    Found(ReticulumdDeliveryStatus),
+    NotFound,
+    Stopped { error: Option<String> },
+}
+
+#[derive(Debug)]
+struct ReticulumdStatusPollError {
+    code: Option<String>,
+    message: String,
+}
+
+impl ReticulumdStatusPollError {
+    fn transport(message: String) -> Self {
+        Self {
+            code: None,
+            message,
+        }
+    }
+
+    fn rpc(error: r3akt_rch_bridge::ReticulumdRpcError) -> Self {
+        let message = if error.message.trim().is_empty() {
+            error.code.clone()
+        } else {
+            format!("{}: {}", error.code, error.message)
+        };
+        Self {
+            code: Some(error.code),
+            message,
+        }
+    }
+
+    fn is_rate_limited(&self) -> bool {
+        self.code
+            .as_deref()
+            .is_some_and(|code| code == RETICULUMD_SECURITY_RATE_LIMIT_CODE)
+    }
+}
+
 fn reticulumd_delivery_status(
     client: &mut ReticulumdRpcClient,
     message_id: &str,
-) -> Option<ReticulumdDeliveryStatus> {
+    rpc_budget: &mut usize,
+) -> ReticulumdStatusPollResult {
     for candidate in reticulumd_status_message_id_candidates(message_id) {
-        if let Some(status) = reticulumd_delivery_status_for_message_id(client, &candidate) {
-            return Some(status);
+        if *rpc_budget == 0 {
+            return ReticulumdStatusPollResult::Stopped { error: None };
+        }
+        *rpc_budget -= 1;
+        match reticulumd_delivery_status_for_message_id(client, &candidate) {
+            Ok(Some(status)) => return ReticulumdStatusPollResult::Found(status),
+            Ok(None) => {}
+            Err(error) if error.is_rate_limited() => {
+                return ReticulumdStatusPollResult::Stopped {
+                    error: Some(error.message),
+                };
+            }
+            Err(error) => {
+                return ReticulumdStatusPollResult::Stopped {
+                    error: Some(error.message),
+                };
+            }
         }
     }
-    None
+    ReticulumdStatusPollResult::NotFound
 }
 
 fn reticulumd_status_message_id_candidates(message_id: &str) -> Vec<String> {
@@ -11102,23 +11230,31 @@ fn reticulumd_status_message_id_candidates(message_id: &str) -> Vec<String> {
 fn reticulumd_delivery_status_for_message_id(
     client: &mut ReticulumdRpcClient,
     message_id: &str,
-) -> Option<ReticulumdDeliveryStatus> {
+) -> Result<Option<ReticulumdDeliveryStatus>, ReticulumdStatusPollError> {
     let response = client
         .call("sdk_status_v2", Some(json!({ "message_id": message_id })))
-        .ok()?;
-    if response.error.is_some() {
-        return None;
+        .map_err(|error| ReticulumdStatusPollError::transport(error.to_string()))?;
+    if let Some(error) = response.error {
+        let error = ReticulumdStatusPollError::rpc(error);
+        if error.is_rate_limited() {
+            return Err(error);
+        }
+        return Ok(None);
     }
-    let result = response.result.as_ref()?;
+    let Some(result) = response.result.as_ref() else {
+        return Ok(None);
+    };
     let snapshot = delivery_snapshot_from_status_result(result, message_id)
-        .ok()
-        .flatten()?;
+        .map_err(|error| ReticulumdStatusPollError::transport(error.to_string()))?;
+    let Some(snapshot) = snapshot else {
+        return Ok(None);
+    };
     let receipt_status = raw_reticulumd_receipt_status(result)
         .unwrap_or_else(|| delivery_snapshot_receipt_status(&snapshot));
-    Some(ReticulumdDeliveryStatus {
+    Ok(Some(ReticulumdDeliveryStatus {
         receipt_status,
         snapshot,
-    })
+    }))
 }
 
 fn raw_reticulumd_receipt_status(result: &Value) -> Option<String> {
@@ -48019,6 +48155,98 @@ mod tests {
         assert!(targets.iter().all(|target| {
             target["status"] != "failed: peer not announced"
                 && target["sdk_delivery_state"] != "failed"
+        }));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn receipt_status_poll_budget_prioritizes_newest_backlog() {
+        let responses = (0..=crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS)
+            .map(|_| json!({}))
+            .collect::<Vec<_>>();
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            responses,
+            Duration::from_millis(200),
+        );
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-reticulumd-status-budget-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let message_with_targets =
+            |message_id: &str, created_ts_ms: i64| r3akt_rch_core::MessageRecord {
+                message_id: message_id.to_string(),
+                topic_id: None,
+                destination: None,
+                sender: "northbound".to_string(),
+                content: format!("budget test {message_id}"),
+                delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+                delivery_method: "propagated".to_string(),
+                delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+                delivery_state: "propagated".to_string(),
+                delivery_metadata: json!({
+                    "dispatch_status": "accepted",
+                    "reticulumd_dispatch_count": 5,
+                    "receipt_last_poll_ts_ms": now - crate::RETICULUMD_RECEIPT_STATUS_POLL_MS,
+                    "reticulumd_receipt_targets": [
+                        {
+                            "message_id": format!("sdk-{message_id}-target-a"),
+                            "destination": "destination-a",
+                            "status": "pending"
+                        },
+                        {
+                            "message_id": format!("sdk-{message_id}-target-b"),
+                            "destination": "destination-b",
+                            "status": "pending"
+                        },
+                        {
+                            "message_id": format!("sdk-{message_id}-target-c"),
+                            "destination": "destination-c",
+                            "status": "pending"
+                        },
+                        {
+                            "message_id": format!("sdk-{message_id}-target-d"),
+                            "destination": "destination-d",
+                            "status": "pending"
+                        },
+                        {
+                            "message_id": format!("sdk-{message_id}-target-e"),
+                            "destination": "destination-e",
+                            "status": "pending"
+                        }
+                    ],
+                    "receipt_pending": false,
+                }),
+                created_ts_ms,
+                attachments: Vec::new(),
+            };
+        snapshot.messages = vec![
+            message_with_targets("older-backlog", now - 10_000),
+            message_with_targets("newest-backlog", now),
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(
+            requests.len(),
+            crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS
+        );
+        assert!(requests.iter().all(|request| {
+            request.method == "sdk_status_v2"
+                && request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("message_id"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message_id| message_id.starts_with("sdk-newest-backlog-"))
         }));
 
         let _ = std::fs::remove_file(db_path);

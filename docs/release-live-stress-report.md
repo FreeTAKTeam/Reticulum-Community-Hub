@@ -3089,6 +3089,78 @@ Result:
   original dispatch call stalls the worker tick.
 - Final phone/deck receipt remains open and separate from this fix.
 
+## 2026-06-23 Receipt-Status Rate-Limit Hardening
+
+Trigger:
+
+- During the continued phone/deck broadcast stress pass, reticulumd logs showed
+  RCH repeatedly calling `sdk_status_v2` across historical propagated fanout
+  targets until reticulumd returned `SDK_SECURITY_RATE_LIMITED`.
+- The operator had just reported another broadcast card as `failed` /
+  `propagated` / `broadcast_direct_timeout_fallback` with `send_error`.
+
+Root-cause evidence:
+
+- The reported `2a2892b3227b427487308d53712dd163` row was no longer terminal
+  failed in the current DB-backed server; direct SQLite projection showed
+  `delivery_state=propagated`, `dispatch_status=accepted`, and attempts `5`.
+- Fresh canary `c5af168eca2a4f4cb93664d054f15fc9` reached propagated
+  acceptance with 13 receipt targets, but the receipt worker then swept old
+  pending fanouts and produced a burst of reticulumd `sdk_status_v2` calls.
+- `RTH_Store\reticulumd-local.out.log` showed repeated
+  `SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded` for
+  `rpc_method=sdk_status_v2`.
+
+Fix:
+
+- `poll_reticulumd_delivery_receipts` now sorts newest messages first, spends
+  a fixed budget of four reticulumd status RPCs per pass, and waits 10 seconds
+  between passes.
+- The poller stops immediately on explicit
+  `SDK_SECURITY_RATE_LIMITED` responses and records a reconciliation diagnostic
+  instead of silently continuing the sweep.
+- Successful later status updates clear stale reconciliation diagnostics.
+- Added regression coverage:
+  `receipt_status_poll_budget_prioritizes_newest_backlog`.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_prioritizes_newest_backlog`
+  passed.
+- `cargo test -p r3akt-rch-server propagated_broadcast_fallback` passed.
+- `cargo test -p r3akt-rch-server failed_propagated_broadcast_timeout_fallback_is_due_for_repair`
+  passed.
+- `cargo test -p r3akt-rch-server` passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+- Restarted the DB/config-backed server as PID `17188` on
+  `http://127.0.0.1:18080/` with `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, Reticulumd RPC
+  `127.0.0.1:14243`, Reticulum source
+  `4fa9359ec3ea68185d4dd03b23073244`, and LXMF ZMQ endpoints.
+- After restart, reticulumd showed four `sdk_status_v2` calls per 10-second
+  receipt pass and no fresh `SDK_SECURITY_RATE_LIMITED` entries.
+- Fresh broadcast canary `b74328dc3e2b4088ab105b4a6690aeb9` moved from
+  direct broadcast to `State=propagated`, `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`, with no current
+  `error` or `retry_reason`.
+- At the follow-up poll, two targets had advanced to `sending` and 11 remained
+  `pending`.
+- USB phones were still attached as Pixel 7 `35031FDH2003N8` and SM-G950W
+  `988b9b344135304639`; saved logcats under
+  `C:\Users\broth\AppData\Local\Temp\rch-phone-logs` contained no exact
+  canary ID or content receipt.
+
+Result:
+
+- Pass for RCH queue/fallback/reconciliation behavior: broadcast direct
+  timeout now falls back to accepted propagation, and receipt-status polling no
+  longer self-rate-limits reticulumd under historical fanout backlog.
+- Final phone/deck receipt remains open: the active canary has not yet been
+  proven in the Columba phone logs or embedded deck inboxes.
+
 ## 2026-06-23 WebMap Rendered Marker/Zone Proof
 
 Scope:
