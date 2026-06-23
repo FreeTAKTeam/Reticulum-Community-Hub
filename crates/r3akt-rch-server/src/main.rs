@@ -318,7 +318,7 @@ fn ini_value(content: &str, target_section: &str, target_key: &str) -> Option<St
     let target_key = target_key.trim().to_ascii_lowercase();
     let mut section = String::new();
     for raw_line in content.lines() {
-        let line = raw_line.trim();
+        let line = raw_line.trim().trim_start_matches('\u{feff}');
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
@@ -1728,6 +1728,27 @@ mod tests {
         std::fs::write(
             &config_path,
             "[hub]\nreticulum_config_path = reticulum/config\n",
+        )
+        .expect("config");
+        let args = test_server_args(Some(config_path), None);
+
+        assert_eq!(
+            super::resolve_reticulum_config_path(&args).as_deref(),
+            Some(data_dir.join("reticulum/config").as_path())
+        );
+
+        std::fs::remove_dir_all(data_dir).expect("cleanup");
+    }
+
+    #[test]
+    fn reticulum_config_path_accepts_utf8_bom_hub_config_file() {
+        let data_dir =
+            std::env::temp_dir().join(format!("r3akt-rch-reticulum-config-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let config_path = data_dir.join("config.ini");
+        std::fs::write(
+            &config_path,
+            "\u{feff}[hub]\nreticulum_config_path = reticulum/config\n",
         )
         .expect("config");
         let args = test_server_args(Some(config_path), None);

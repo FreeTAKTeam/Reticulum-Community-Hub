@@ -1572,3 +1572,45 @@ Remaining retest:
   now reloads after rollback, but the Reticulum form toggle/apply/rollback path
   still needs a clean browser interaction pass. Direct switch interaction timed
   out in the current browser harness.
+
+## Reticulum Form And BOM Config Retest
+
+Time: `2026-06-23T00:34Z` to `2026-06-23T01:05Z`.
+
+Runtime:
+
+- Primary manual server remained on `http://127.0.0.1:18080/`.
+- Isolated temp server ran on `http://127.0.0.1:18081/` with temp hub and
+  Reticulum config files under `%TEMP%`, API key `config-test`, and no
+  Reticulum daemon. Browser access used `127.0.0.1.nip.io:18081` so the UI
+  exercised remote auth while still reaching the temp local server.
+
+Reticulum form result:
+
+- Configure > Reticulum loaded the temp Reticulum file and displayed
+  `test_tcp` with `target_host = example.invalid`.
+- Browser changed the target host to `example.org` and clicked Reticulum
+  `Apply`; the UI showed `Reticulum config applied`.
+- Browser clicked Reticulum `Rollback`; the UI showed `Rollback complete`,
+  refreshed the form back to `example.invalid`, and no stale `example.org`
+  value remained.
+- Direct file check showed `hasRestoredHost=true`, `hasAppliedHost=false`, and
+  `backupCount=1`.
+
+BOM parser result:
+
+- The temp setup exposed a Windows-specific issue: a hub `config.ini` written
+  with PowerShell UTF-8 BOM did not resolve `[hub].reticulum_config_path` when
+  `--reticulum-config-path` was omitted.
+- Fixed `ini_value` to ignore a leading UTF-8 BOM before parsing section
+  headers and added a regression test.
+- Rebuilt the release binary and launched a fresh temp server without explicit
+  `--reticulum-config-path`; `/api/v1/app/info.reticulum_config_path` matched
+  the expected temp Reticulum config path and `/Reticulum/Config` returned the
+  temp file.
+
+Remaining retest:
+
+- No remaining RCH-US-007 issue from this slice. The primary server was
+  restarted after the release rebuild and remained healthy on
+  `http://127.0.0.1:18080/`.
