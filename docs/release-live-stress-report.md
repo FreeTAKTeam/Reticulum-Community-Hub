@@ -2464,3 +2464,58 @@ Remaining retest:
 - Continue live delivery stress once the SDK/RNS rate-limit window clears and
   confirm propagated dispatch reaches accepted/sent state on the connected
   phones/decks.
+
+## 2026-06-23 Packaging and Sidecar RC Smoke
+
+Scope:
+
+- Local Windows validation of the full server package assembly script and Tauri
+  desktop sidecar preparation.
+- CI matrix inspection only for macOS, Linux AMD64, Linux Raspberry Pi 64,
+  Windows NSIS, and Linux AppImage.
+
+Evidence:
+
+- `scripts/build-rust-release-package.ps1` stages server binary, optional TAK
+  service binary, packaging templates, Windows helper scripts, docs, optional
+  `ui/dist`, `release-manifest.json`, an archive, and a `.sha256` sidecar.
+- `.github/workflows/rust-release.yml` builds full server packages for Windows
+  x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64. It also
+  builds desktop artifacts for Windows x64 NSIS and Linux x64 AppImage.
+- `apps/rch-desktop/scripts/prepare-sidecar.mjs` prepares both
+  `r3akt-rch-server` and `r3akt-tak-service` sidecar binaries with the host
+  target triple suffix required by Tauri.
+
+Local run:
+
+- Ran `powershell -ExecutionPolicy Bypass -File
+  scripts\build-rust-release-package.ps1 -PackageName
+  codex-rch-rc-package-smoke -ReleaseVersion codex-rc-smoke-20260623
+  -OutputDir target\rc-package-smoke -ServerBinaryPath
+  target\release\r3akt-rch-server.exe -TakServiceBinaryPath
+  target\release\r3akt-tak-service.exe -IncludeTakService -IncludeUi
+  -ArchiveFormat zip`.
+- Generated `target\rc-package-smoke\codex-rch-rc-package-smoke.zip`
+  (`8,852,114` bytes) and a matching SHA-256 sidecar with hash
+  `173AEC4E75AFC8975D2639A7941A1232008D5786E47B722B65E97EAE8500DA09`.
+- Manifest recorded `includes_server=true`, `includes_tak_service=true`,
+  `includes_ui=true`, and binaries `r3akt-rch-server.exe` plus
+  `r3akt-tak-service.exe`.
+- Archive entries included `bin\r3akt-rch-server.exe`,
+  `bin\r3akt-tak-service.exe`, server and TAK service systemd templates,
+  Windows start/install helpers, and `ui\index.html`.
+- Ran `npm --prefix apps/rch-desktop run prepare:sidecar`; it prepared ignored
+  Windows sidecars `r3akt-rch-server-x86_64-pc-windows-msvc.exe` and
+  `r3akt-tak-service-x86_64-pc-windows-msvc.exe`.
+
+Documentation fix:
+
+- Updated `apps/rch-desktop/README.md` to say both sidecars are prepared and
+  bundled, while the shell currently starts only the RCH server sidecar
+  automatically.
+
+Remaining release gate:
+
+- This does not prove the hosted release workflow matrix. Run
+  `Build Rust Release Packages` before publishing the RC and verify uploaded or
+  attached artifacts plus checksums for all matrix entries.
