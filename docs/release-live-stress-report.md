@@ -3088,3 +3088,56 @@ Result:
   legitimate direct-send timeout is now converted to propagation even when the
   original dispatch call stalls the worker tick.
 - Final phone/deck receipt remains open and separate from this fix.
+
+## 2026-06-23 WebMap Rendered Marker/Zone Proof
+
+Scope:
+
+- DB/config-backed local server on `http://127.0.0.1:18080/webmap` using
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, and API key
+  `manual-test`.
+- Browser plugin setup timed out once while opening `/webmap`, so the pass used
+  direct Playwright fallback against the same in-app browser tab.
+- Screenshots were written outside the repository under
+  `C:\Users\broth\AppData\Local\Temp\rch-webmap-proof`.
+
+Rendered checks:
+
+- Page identity: title `RCH UI`, URL `/webmap`.
+- MapLibre canvas rendered with one `.maplibregl-canvas`.
+- No framework overlay was present.
+- Console warning/error capture was empty during the rendered WebMap pass.
+
+Marker proof:
+
+- Created disposable marker
+  `Codex WebMap Marker 1782207793897`
+  (`e2ca3ae8f58445599ed782daa3a74a9b`).
+- Expanded the marker registry, focused the marker from the visible list, then
+  hovered the centered map marker.
+- The marker radial menu opened with `Edit`, `Move`, `Assign`, and `Delete`.
+- Cleanup deleted the disposable marker with status `200`.
+
+Zone proof:
+
+- Created disposable zone `Codex WebMap Zone 1782207729396`
+  (`3b046778ef3c4934bf891a070276784b`).
+- The zone appeared in the rendered Zones tab with area summary and
+  `Rename`/`Edit`/`Delete` controls.
+- Renamed it to `Codex WebMap Zone 1782207729396 Renamed`.
+- Entered edit mode and saved the zone; the UI emitted `Zone updated`.
+- Deleted the zone through the visible `Delete` control; the UI emitted
+  `Zone deleted`, the row disappeared, and the list count dropped from `1-5 / 5`
+  to `1-4 / 4`.
+
+Cleanup:
+
+- Follow-up API/page checks reported `codexMarkers=0`, `codexZones=0`,
+  `pageHasCodex=false`, and the MapLibre canvas still rendered.
+
+Result:
+
+- RCH-US-021 can move to `Manual pass`: live API coverage already covers
+  marker/zone mission association, validation, telemetry, and event recording;
+  this rendered pass covers the WebMap canvas, marker radial menu, zone
+  create/rename/edit/delete controls, and stale overlay cleanup.
