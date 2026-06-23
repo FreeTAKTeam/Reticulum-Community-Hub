@@ -2808,3 +2808,73 @@ Remaining live gap:
 - Final device/deck receipt is still unproven. Refresh the manual browser tab
   so it loads `index-kc7Jg-Vq.js`, then continue monitoring propagated target
   statuses and phone/deck inboxes until targets leave `sending`.
+
+## 2026-06-23 Repeated Stale Card and Phone Transport Retest
+
+Trigger:
+
+- The operator again saw broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+
+Live canonical state:
+
+- The DB/config-backed manual server was running on
+  `http://127.0.0.1:18080/` as PID `16216`, using
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, Reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints
+  `tcp://127.0.0.1:19100` / `tcp://127.0.0.1:19101`.
+- `/Chat/Messages?limit=500` returned `2a289...` as
+  `State=propagated`, `dispatch_status=accepted`,
+  `method=propagated`, `policy=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, no current `error`, and no current
+  `retry_reason`.
+- `/Events?limit=1000` returned zero events for `2a289...`. The only current
+  `message_delivery_failed` event was an unrelated targeted REM log command
+  to `11a7907d67c457911c15206ec647ad33` with
+  `delivery_receipt_timeout`.
+- The server returned HTTP 200 for `/`, `/Status`, `/Events`,
+  `/Chat/Messages`, `/Client`, `/api/rem/peers`, and the UI assets. The
+  served bundle was `assets/index-CbP9Cn97.js`, and the built asset contains
+  the dashboard stale-failure reconciliation code.
+- In-app browser automation still timed out navigating to
+  `http://127.0.0.1:18080/`; the selected tab reported `about:blank` with
+  title `RCH UI`.
+
+Fresh canary:
+
+- Sent broadcast `094e12d531db40b79350972e8e34f33b` with content
+  `Codex post-stale-card broadcast canary 2026-06-23T05:22:17.6240738-03:00`.
+- Polls 1-14 stayed non-terminal direct broadcast with
+  `dispatch_status=in_progress`.
+- Poll 15 reached `State=propagated`, `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  no current `error`, no current `retry_reason`, and 13 receipt targets.
+- `/Events` contained `message_propagation_queued` followed by
+  `message_propagated` for the canary, and no `message_delivery_failed` for
+  the canary.
+
+Phone evidence:
+
+- USB inventory showed both Pixel 7 `35031FDH2003N8` and SM-G950W
+  `988b9b344135304639` had `network.reticulum.emergency` and
+  `com.lxmf.messenger` installed and running.
+- Four minutes of follow-up polling left all 13 canary receipt targets at
+  `pending`.
+- Pixel logs showed Reticulum/LXMF network instability, including public
+  BackboneInterface DNS failures, AutoInterface multicast warnings, repeated
+  link requests, and link activation timeout retries.
+- Samsung logs showed LXMF Messenger service instability:
+  `ServiceReticulumProtocol` failed to query path table hashes with
+  `android.os.DeadObjectException`, while Columba reported no shared
+  Reticulum instance and zero discovered interfaces.
+
+Result:
+
+- Pass for RCH fallback semantics: the repeated `2a289...` card is not backed
+  by current DB/API/event state, and the fresh canary sent a legitimate direct
+  timeout to propagation without surfacing terminal `failed/send_error`.
+- Blocked for final live receipt: phones/decks still do not prove propagated
+  message receipt, and the phone-side Reticulum/LXMF transport stack needs
+  stabilization or manual refresh before this can be release-ready.
