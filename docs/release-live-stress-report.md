@@ -3533,3 +3533,93 @@ Result:
   identities have not proven propagated-message import for the latest canary.
   The remaining issue is downstream propagation fetch or identity/roster
   alignment, not a current RCH queue-state failure.
+
+## 2026-06-23 Repeated Send-Error Live Proof
+
+Scope:
+
+- DB/config-backed local server on `http://127.0.0.1:18080/` as PID `2584`
+  using `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- Reticulumd was running as PID `13776`.
+- Two USB phones were attached:
+  - Pixel 7 `35031FDH2003N8`.
+  - SM-G950W `988b9b344135304639`.
+- `/api/rem/peers` still returned no current REM peers:
+  `effective_connected_mode=false`, `items=[]`.
+
+Reported message:
+
+- User again reported `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+- Direct SQLite decode shows the canonical row is:
+  - content `ReticulumCommunityHub > test test test`.
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `delivery_method=propagated`.
+  - `delivery_mode=broadcast`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `attempts=5`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- Older terminal failed propagated fallback rows in SQLite were decoded and
+  were invalid-destination test artifacts with
+  `failed: invalid destination hash 'codex-rch-us014-20260622222002'`, not
+  retryable `send_error` broadcasts.
+
+Rendered proof:
+
+- In-app Chat loaded on `http://127.0.0.1:18080/chat` after the boot sequence.
+- Chat contained no `2a289...`, no `send_error`, and no failure-card text.
+- Dashboard loaded on `http://127.0.0.1:18080/`.
+- Dashboard event feed showed the expected recent propagation queue and
+  propagation acceptance events, with no `2a289...`, no `send_error`, and no
+  failure-card text.
+- Browser console warning/error capture was empty for the Chat/Dashboard check.
+
+Fresh canary:
+
+- Sent broadcast `def2799210434446af15d032d8b15829` with content
+  `RCH RC repeated send-error check 20260623T094955-03:00`.
+- The row started as direct broadcast `queued_deferred` with
+  `delivery_policy_reason=broadcast_direct`.
+- At `12:50:27.843Z`, RCH emitted `message_propagation_queued`:
+  - `State=queued`.
+  - `delivery_method=propagated`.
+  - `fallback_reason=direct_dispatch_timeout`.
+  - `retry_reason=send_timeout`.
+  - `error=send_timeout`.
+- At `12:50:28.050Z`, RCH emitted `message_propagated`:
+  - `State=propagated`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `dispatch_status=accepted`.
+  - `acknowledgement_type=propagation_acceptance`.
+  - `reticulumd_dispatch_count=13`.
+- Direct SQLite decode of the final canary row shows:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `direct_attempts=1`.
+  - `max_attempts=5`.
+  - no current `error`.
+  - no current `retry_reason`.
+  - 13 propagated receipt targets.
+
+Receipt state:
+
+- The fresh canary's 13 propagated targets were accepted but still reported
+  `sending` after the immediate follow-up.
+- `/Status` showed queue depth `0`, pending dispatches `0`, pending receipts
+  `0`, `outbound_propagation_fallback_total=33`, and no retry-worker error.
+
+Result:
+
+- Pass for current RCH fallback semantics and UI stale-card clearing. A
+  legitimate direct broadcast `send_timeout` was sent to propagation and
+  accepted without surfacing terminal `failed/send_error`.
+- Still blocked for RC end-device receipt. Both USB phones are attached, but
+  `/api/rem/peers` is empty and the propagated targets have not proven
+  downstream import. The remaining issue is downstream propagation fetch or
+  identity/roster alignment, not a current RCH queue-state failure.
