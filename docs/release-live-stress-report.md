@@ -110,9 +110,10 @@ Observed delivery-state progression:
   `delivery_policy_reason=broadcast_direct_timeout_fallback`,
   `dispatch_status=queued`, `retry_reason=rate_limited`, and
   `error=SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded`.
-- After the scheduled retry window, the row remained queued propagated fallback
-  and was rescheduled with a later `next_attempt_at_ts_ms`; it did not become
-  terminal `failed`.
+- After the scheduled retry window, the row moved back to
+  `dispatch_status=in_progress` with stale `error` and `retry_reason` metadata
+  cleared, then hit the same SDK rate limit and was rescheduled with a later
+  `next_attempt_at_ts_ms`; it did not become terminal `failed`.
 
 Current limitation:
 
