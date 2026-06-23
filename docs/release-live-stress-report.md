@@ -73,6 +73,46 @@ Current limitation:
   `send_timeout` rows no longer remain terminally failed; they are moved to
   propagation fallback and retried.
 
+## Assets, Assignments, And Skills API Retest - 2026-06-23 UTC
+
+Runtime under test:
+
+- Branch: `codex/rch-user-story-audit`
+- Server binary: `target/release/r3akt-rch-server.exe`
+- Server URL: `http://127.0.0.1:18080`
+- API key used for manual testing: `manual-test`
+- RCH database: `RTH_Store/rch_state.sqlite3`
+- RCH config: `RTH_Store/config.ini`
+
+Disposable run:
+
+- Prefix: `codex-us025-20260622232057`
+- Created mission, team, team member, offline checklist, and task to provide
+  valid assignment and requirement references.
+
+Passed checks:
+
+- Asset create, update, get, and `team_member_uid` list filter.
+- Skill create, update, and list membership.
+- Team-member skill create, update, and `team_member_rns_identity` list filter.
+- Task skill requirement create, update, and `task_uid` list filter.
+- Assignment create, update, and `mission_uid` plus `task_uid` list filter.
+- Assignment asset set-empty, link, and unlink.
+- Invalid asset member and invalid requirement skill references returned `404`.
+
+Cleanup:
+
+- Deleted the disposable asset, team member, and team.
+- Tombstoned the disposable mission through the public mission delete route.
+
+Remaining gap:
+
+- The current public HTTP surface has no delete routes for skills,
+  assignments, or task skill requirements. Namespaced skill/requirement/
+  assignment rows from the live run remain as audit/history artifacts. Browser
+  domain-object pages still need rendered create/edit/link proof before the UI
+  side of RCH-US-025 is fully closed.
+
 ## UI Coverage
 
 The following routes were exercised through browser automation against the live
