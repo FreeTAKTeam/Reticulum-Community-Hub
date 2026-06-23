@@ -28,7 +28,13 @@ const clientAlpha = {
   identity: "client-alpha",
   display_name: "Alpha Client",
   last_seen: "2026-06-23T06:00:00Z",
-  metadata: { display_name: "Alpha Client" },
+  metadata: {
+    display_name: "Alpha Client",
+    announce: {
+      destination_hash: "client-alpha",
+      source_interface: "delivery_app_data"
+    }
+  },
   client_type: "generic_lxmf",
   is_rem_capable: false
 };
@@ -224,6 +230,8 @@ describe("users page", () => {
 
     expect(text()).toContain("Alpha Client");
     expect(text()).toContain("Generic LXMF");
+    expect(text()).toContain("announce:destination_hash=client-alpha");
+    expect(text()).not.toContain("[object Object]");
 
     await clickCardButton("Alpha Client", "Ban");
 

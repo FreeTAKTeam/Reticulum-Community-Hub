@@ -1548,13 +1548,29 @@ const deleteTeamMember = async (teamMemberUid?: string) => {
   }
 };
 
+const formatMetadataValue = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  if (Array.isArray(value)) {
+    return value.map(formatMetadataValue).join(",");
+  }
+  if (typeof value === "object") {
+    const parts = Object.entries(value as Record<string, unknown>)
+      .slice(0, 3)
+      .map(([nestedKey, nestedValue]) => `${nestedKey}=${formatMetadataValue(nestedValue)}`);
+    return parts.length ? parts.join(",") : "-";
+  }
+  return String(value);
+};
+
 const formatMetadata = (metadata?: Record<string, unknown>) => {
   if (!metadata) {
     return "-";
   }
   const parts = Object.entries(metadata)
     .slice(0, 3)
-    .map(([key, value]) => `${key}:${String(value)}`);
+    .map(([key, value]) => `${key}:${formatMetadataValue(value)}`);
   return parts.length ? parts.join(" / ") : "-";
 };
 
