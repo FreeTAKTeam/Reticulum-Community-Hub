@@ -3836,3 +3836,65 @@ Result:
 - Final RC receipt proof is still blocked downstream of RCH: the only visible
   phone is locked and its local Reticulum propagation sync is timing out before
   the canary is fetched.
+
+## 2026-06-23 Repeated Propagated Send Error Browser And Receipt Retest
+
+Setup:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - sibling `reticulumd` PID `13776`.
+- Rechecked the user-reported message ID
+  `2a2892b3227b427487308d53712dd163`.
+- ADB initially saw only the S8, then the device disconnected; the final
+  `adb devices -l` output had no attached phones.
+
+Reported row state:
+
+- `/Chat/Messages?limit=1000` returned the reported ID as:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `dispatch_status=accepted`.
+  - `attempts=5`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=2000` returned no event rows for that message ID.
+- A fresh in-app browser load of `/chat` and `/` showed no
+  `2a289...`, no current failure card, and no `send_error` failure reason.
+
+Fresh broadcast canary:
+
+- Sent content
+  `RCH RC repeated send_error live canary 20260623T143251Z`.
+- Stored message ID: `864c8ff513324fabb0a5e234325cc7f6`.
+- RCH selected immediate propagated delivery:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_unannounced`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=6`.
+  - no current `error`.
+  - no current `retry_reason`.
+- Receipt polling progressed from all six current targets `sending` to all six
+  `sent: propagated resource` after about 90 seconds.
+- `/Events?limit=200` showed a `message_propagated` event for the canary and
+  no failure reason.
+- The in-app Chat route showed the canary as `PROPAGATED` after scrolling to
+  the latest broadcast messages. The only `send_error` text on the page was the
+  literal canary body, not a failure card.
+
+Result:
+
+- Pass for current RCH fallback/propagation semantics and rendered stale-card
+  clearing: the repeated `2a289...` report is not backed by current DB, API, or
+  browser state.
+- Pass for reticulumd propagation resource storage on the fresh six-target
+  canary: all six current targets reached `sent: propagated resource`.
+- Phone inbox receipt remains unproven in this run because ADB had no attached
+  phones by the final check, and `/api/rem/peers` remained empty.
