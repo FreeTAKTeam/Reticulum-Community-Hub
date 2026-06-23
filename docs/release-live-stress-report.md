@@ -3281,6 +3281,55 @@ Result:
   deck targets have not yet produced final receipt/inbox evidence for the
   latest canary.
 
+## 2026-06-23 Phone Identity and Stale Broadcast Target Follow-up
+
+Scope:
+
+- Continued the DB/config-backed local server on `http://127.0.0.1:18080/`
+  using PID `2584`, `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`,
+  API key `manual-test`, reticulumd RPC `127.0.0.1:14243`, and the live
+  LXMF ZeroMQ endpoints.
+- Rechecked user-reported message `2a2892b3227b427487308d53712dd163`, the
+  latest canary `cb60ebf635a84667bbcf8ca58b05a7c0`, the in-app Chat route,
+  reticulumd SQLite receipt rows, and fresh Columba logcat output from the
+  attached Pixel 7 and SM-G950W.
+
+Findings:
+
+- `/Chat/Messages` and the Chat UI both show
+  `2a2892b3227b427487308d53712dd163` as `PROPAGATED`, not failed. The
+  current API row is `State=propagated`, `dispatch_status=accepted`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, and has no serialized `error` or
+  `retry_reason`.
+- The in-app dashboard currently shows the latest direct-timeout broadcasts as
+  `message_propagation_queued` followed by `message_propagated`; the Chat page
+  also shows the user-reported `test test test` broadcast as `PROPAGATED`.
+- For both the reported message and the latest canary, reticulumd has six
+  target rows at `sent: propagated resource`: `Peregrine`, `silkedeck`,
+  `Corvo`, `raphydeck`, `corvodeck`, and `pixel`.
+- The seven remaining target rows are historical identities last seen between
+  February and April 2026. They remain `sending` with
+  `propagation_stamp_state=queued` rather than failing the canonical message
+  row.
+- Fresh Pixel 7 manual sync used default identity
+  `cb1489405fcba9f1...`, which RCH knows only as stale
+  `corvo columba pixel` last seen `2026-02-26T19:48:25.21Z`. Pixel sync
+  selected a propagation node and later auto-synced the local node, but the
+  local sync reported `available=0 fetched=0 imported=0`.
+- Fresh SM-G950W manual sync used default identity `e5e3f7587e6133d0...`,
+  which is not present in the current RCH `/Client` roster. Its manual sync to
+  the local node established a link, requested the message list, completed, and
+  reported `messages_received=0`.
+
+Result:
+
+- Pass for the RCH fallback behavior and the stale-failure UI concern: the
+  current backend and Chat UI show the reported message as propagated.
+- Release gate still open for end-device receipt. The current blocker is
+  identity/roster alignment and downstream phone propagation fetch, not a
+  current RCH terminal `send_error` state.
+
 ## 2026-06-23 WebMap Rendered Marker/Zone Proof
 
 Scope:
