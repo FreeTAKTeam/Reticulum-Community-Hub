@@ -1495,6 +1495,12 @@ Verification:
   A later propagated timeout emitted `message_delivery_retrying` at attempt `2`
   with `delivery_policy_reason=broadcast_direct_timeout_fallback`; failed count
   stayed flat at `38`.
+- Follow-up canary `c869fd1f3ffc405081c019a609324e80` reproduced the same
+  operator-visible path after both USB phones were confirmed attached. The first
+  direct broadcast attempt timed out, switched to `propagated` /
+  `broadcast_direct_timeout_fallback`, and the next propagated timeout returned
+  to `queued` with `retry_scheduled=true` and `retry_reason=send_timeout`
+  instead of terminal `failed/send_error`.
 
 Remaining retest:
 
