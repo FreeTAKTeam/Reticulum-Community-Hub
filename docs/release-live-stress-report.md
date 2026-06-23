@@ -3472,3 +3472,64 @@ Limitations:
 - Cleanup was completed through the API. `DELETE /Image/53` and
   `DELETE /File/52` both returned `200`; follow-up lists showed no
   `codex-ui-*` artifacts and counts restored to files `4`, images `26`.
+
+## 2026-06-23 Phone Sync Propagated Canary Retest
+
+Scope:
+
+- DB/config-backed local server on `http://127.0.0.1:18080/` as PID `2584`
+  using `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- Two USB phones were attached and running both Columba and REM:
+  - Pixel 7 `35031FDH2003N8`.
+  - SM-G950W `988b9b344135304639`.
+- `/api/rem/peers` still returned no current REM peers:
+  `effective_connected_mode=false`, `items=[]`.
+
+Phone preparation:
+
+- Launched `com.lxmf.messenger/.MainActivity` on both phones.
+- UI trees showed both phones on the Columba `Chats` screen with a visible
+  `Sync messages` action.
+- Triggered manual `Sync messages` on both phones before and after the canary.
+- Pixel logs showed manual sync activity plus RNS/LXMF announce discovery and
+  propagation-node discovery.
+- Samsung logs showed RNS/LXMF announce discovery through the Beleth TCP hub and
+  propagation-node discovery.
+
+Canary:
+
+- Sent broadcast `5edd1ea8a9f441b8b87646075da474db` with content
+  `RCH RC phone sync canary 20260623T093100-03:00`.
+- The row started as direct broadcast `queued` / `in_progress`.
+- At `12:31:35Z`, the row had converted to:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events` showed the expected `message_propagation_queued` event carrying
+  `retry_reason=send_timeout`, followed by `message_propagated` carrying
+  `acknowledgement_type=propagation_acceptance`.
+- `/Chat/Messages?limit=5` showed the canary as the newest row with 13
+  `reticulumd_receipt_targets`.
+
+Receipt state:
+
+- After manual phone sync, the canary's 13 targets were still `sending`.
+- Some target rows included `sdk_delivery_state=dispatching` and
+  `sdk_terminal=false`; none reached `sent`, `delivered`, or a phone-proven
+  receipt state during this pass.
+- Neither phone log contained the exact canary ID or the exact canary body.
+
+Result:
+
+- Pass for RCH fallback semantics: a legitimate direct broadcast `send_timeout`
+  was sent to propagation and accepted without surfacing terminal
+  `failed/send_error`.
+- Still blocked for RC end-device receipt: the connected phones and deck target
+  identities have not proven propagated-message import for the latest canary.
+  The remaining issue is downstream propagation fetch or identity/roster
+  alignment, not a current RCH queue-state failure.
