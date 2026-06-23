@@ -37575,6 +37575,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn checklist_from_template_returns_mission_uid_alias() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-checklist-template-mission-{}.db",
+            Uuid::new_v4()
+        ));
+        let app = crate::create_app_with_state(
+            crate::AppState::from_sqlite_path(&db_path)
+                .expect("state")
+                .with_api_key("secret"),
+        );
+
+        let mission = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/missions")
+                    .header("X-API-Key", "secret")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"uid":"mission-template-checklist","mission_name":"Template Checklist Mission","mission_status":"MISSION_ACTIVE"}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("mission response");
+        assert_eq!(mission.status(), StatusCode::OK);
+
+        let created_template = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/checklists/templates")
+                    .header("X-API-Key", "secret")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"template":{"template_name":"Mission Template","columns":[{"column_name":"Due","column_type":"RELATIVE_TIME","column_editable":false,"is_removable":false,"system_key":"DUE_RELATIVE_DTG"},{"column_name":"Task","column_type":"SHORT_STRING"}]}}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("template response");
+        assert_eq!(created_template.status(), StatusCode::OK);
+        let body = created_template
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let template_payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("template json");
+        let template_uid = template_payload["uid"].as_str().expect("template uid");
+
+        let checklist = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/checklists")
+                    .header("X-API-Key", "secret")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"template_uid":"{template_uid}","mission_uid":"mission-template-checklist","name":"Template Mission Checklist","source_identity":"member-rns"}}"#
+                    )))
+                    .expect("request"),
+            )
+            .await
+            .expect("checklist response");
+        assert_eq!(checklist.status(), StatusCode::OK);
+        let body = checklist
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let checklist_payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("checklist json");
+        assert_eq!(
+            checklist_payload["mission_id"],
+            "mission-template-checklist"
+        );
+        assert_eq!(
+            checklist_payload["mission_uid"],
+            "mission-template-checklist"
+        );
+        assert_eq!(checklist_payload["template_uid"], template_uid);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn checklist_task_feed_and_import_routes_persist_with_python_shapes() {
         let db_path =
             std::env::temp_dir().join(format!("r3akt-rch-checklist-tasks-{}.db", Uuid::new_v4()));

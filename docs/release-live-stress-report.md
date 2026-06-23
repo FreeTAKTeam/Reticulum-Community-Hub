@@ -1890,6 +1890,24 @@ Remaining retest:
   rendered dashboard refresh remains a manual browser proof item. The running
   server is ready for manual reload at `http://127.0.0.1:18080/`.
 
+Follow-up recheck:
+
+- At `2026-06-23T03:30Z`, after the configured manual server was rebuilt and
+  restarted as PID `18144`, the same reported message
+  `2a2892b3227b427487308d53712dd163` was still persisted as
+  `delivery_state=propagated`, `dispatch_status=accepted`,
+  `delivery_method=propagated`, and
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`, with 13 receipt
+  targets and no `send_error` on the current row.
+- `/Events?limit=10000` returned no current event for that message ID. The
+  selected in-app browser tab reported `about:blank` despite retaining the RCH
+  title, and browser navigation to the local UI timed out, so the repeated card
+  is treated as stale browser/dashboard state rather than a current backend
+  failure.
+- MessagePack decoding of the three newest terminal `failed` rows showed
+  invalid test destination hashes (`codex-rch-us014-20260622222002`), not
+  retryable propagated broadcast fallback `send_error` rows.
+
 ## Emergency Action Message API Retest
 
 Time: `2026-06-23T02:00Z`.
@@ -1964,3 +1982,68 @@ Remaining retest:
 - Confirm the UI submits canonical role values such as `TEAM_LEAD` instead of
   display labels such as `Team Lead`, or add UI mapping/error handling if
   needed.
+
+## Checklist And Template API Retest
+
+Time: `2026-06-23T03:25Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, rebuilt and restarted as
+  PID `18144`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+- Reticulumd RPC `127.0.0.1:14243`; LXMF ZMQ command/response endpoints
+  `tcp://127.0.0.1:19100` and `tcp://127.0.0.1:19101`.
+
+Finding and fix:
+
+- Disposable run `codex-us019-20260623001705` reproduced a checklist UI
+  contract bug: `POST /checklists` with a valid `template_uid` and
+  `mission_uid` persisted the link but returned only `mission_id`, leaving
+  `mission_uid` empty for UI raw records.
+- Added regression
+  `checklist_from_template_returns_mission_uid_alias`.
+- Fixed `RchCore::checklist_value` to emit both `mission_id` and
+  `mission_uid`, preserving the existing Python-compatible alias while matching
+  the Rust UI contract.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server checklist_from_template_returns_mission_uid_alias -- --nocapture`
+  failed before the fix with `mission_uid` as `Null`, then passed after the
+  serializer change.
+- `cargo test -p r3akt-rch-server checklist_ -- --nocapture` passed
+  19 checklist-related server tests with 2 ignored legacy generic-fanout tests.
+- `cargo test -p r3akt-rch-core checklist_ -- --nocapture` passed 9
+  checklist-related core tests.
+- `cargo build --release -p r3akt-rch-server` passed after stopping the old
+  manual server process that had the release binary locked.
+
+Live retest:
+
+- Created disposable run `codex-us019-20260623002534`.
+- Template create, patch, clone, and delete passed; valid template columns
+  included exactly one pinned `DUE_RELATIVE_DTG` system column.
+- Template-derived checklist create returned both
+  `mission_id=codex-us019-20260623002534-mission` and
+  `mission_uid=codex-us019-20260623002534-mission`.
+- Task add returned task `a6dc2dbc961d4076be2cccc8731bbba5`.
+- Cell patch persisted `Bring spare battery`.
+- Row style persisted `#223344` and `line_break_enabled=true`.
+- Task status changed to `COMPLETE`.
+- Join, upload, and feed publish passed.
+- CSV import `923d37d274744287ae75202ea65d7fdb` preserved three columns and
+  two task rows.
+- Task delete removed the disposable task.
+- Cleanup deleted the checklist, CSV import checklist, clone/template, and
+  mission; follow-up API verification showed zero active disposable checklists,
+  zero matching templates, zero active disposable missions, and one expected
+  deleted mission tombstone.
+
+Remaining retest:
+
+- Browser proof for checklist modals, CSV picker/preview, and delete
+  confirmation remains open. The route/API behavior itself passed against the
+  live configured server.
