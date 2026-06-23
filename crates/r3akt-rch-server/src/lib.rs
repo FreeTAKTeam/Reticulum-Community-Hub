@@ -48320,7 +48320,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
             responses,
-            Duration::from_millis(200),
+            Duration::from_secs(1),
         );
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-reticulumd-status-skip-terminal-{}.db",
@@ -48412,7 +48412,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
             responses,
-            Duration::from_millis(200),
+            Duration::from_secs(1),
         );
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-reticulumd-status-prioritize-pending-{}.db",
@@ -48484,6 +48484,30 @@ mod tests {
                     .and_then(Value::as_str)
                     .is_some_and(|message_id| message_id.starts_with("sdk-unseen-target-"))
         }));
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let stored = snapshot
+            .messages
+            .iter()
+            .find(|message| message.message_id == "prioritize-pending-backlog")
+            .expect("stored message");
+        let targets = stored.delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("receipt targets");
+        assert!(
+            targets
+                .iter()
+                .filter(|target| target["message_id"]
+                    .as_str()
+                    .is_some_and(|message_id| message_id.starts_with("sdk-unseen-target-")))
+                .all(|target| target
+                    .get("receipt_last_poll_ts_ms")
+                    .and_then(Value::as_i64)
+                    .is_some())
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -48504,7 +48528,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
             responses,
-            Duration::from_millis(200),
+            Duration::from_secs(1),
         );
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-reticulumd-status-rotate-in-progress-{}.db",
