@@ -1684,11 +1684,64 @@ fn repair_success_superseded_outbound_metadata(
         }
         let original = message.delivery_metadata.clone();
         clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
+        prune_success_superseded_receipt_targets(message);
         if message.delivery_metadata != original {
             repaired.push(message.clone());
         }
     }
     repaired
+}
+
+fn prune_success_superseded_receipt_targets(message: &mut OutboundMessageRecord) {
+    if message.delivery_method != "propagated"
+        || !matches!(
+            message.delivery_mode,
+            DeliveryMode::Broadcast | DeliveryMode::Fanout
+        )
+    {
+        return;
+    }
+    let targets = reticulumd_receipt_targets_for_message(message);
+    if targets.len() < 2
+        || !targets
+            .iter()
+            .any(reticulumd_receipt_target_success_terminal)
+    {
+        return;
+    }
+    let retained = targets
+        .iter()
+        .filter(|target| reticulumd_receipt_target_terminal(target))
+        .cloned()
+        .collect::<Vec<_>>();
+    if retained.len() == targets.len() || retained.is_empty() {
+        return;
+    }
+    let pruned_count = targets.len().saturating_sub(retained.len());
+    let receipt_status = retained
+        .iter()
+        .find(|target| reticulumd_receipt_target_success_terminal(target))
+        .and_then(|target| target.status.clone())
+        .unwrap_or_else(|| "sent".to_string());
+    merge_delivery_metadata(
+        &mut message.delivery_metadata,
+        json!({
+            "receipt_pending": false,
+            "receipt_status": receipt_status,
+            "receipt_timeout": false,
+            "reticulumd_dispatch_count": retained.len(),
+            "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&retained),
+            "stale_receipt_targets_pruned": pruned_count,
+        }),
+    );
+    if let Some(object) = message.delivery_metadata.as_object_mut() {
+        object.remove("sdk_attempts");
+        object.remove("sdk_delivery_state");
+        object.remove("sdk_last_updated_ms");
+        object.remove("sdk_message_id");
+        object.remove("sdk_reason_code");
+        object.remove("sdk_terminal");
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58116,6 +58169,35 @@ mod tests {
                     "last_attempt_failed_at_ts_ms": crate::unix_now_ms() - 500,
                     "retry_reason": "send_error",
                     "reticulumd_dispatch_count": 13,
+                    "reticulumd_receipt_targets": [
+                        {
+                            "message_id": "persisted-recovered-broadcast-live-a",
+                            "destination": "11a7907d67c457911c15206ec647ad33",
+                            "status": "sent: propagated resource",
+                            "sdk_delivery_state": "sent",
+                            "sdk_message_id": "persisted-recovered-broadcast-live-a",
+                            "sdk_terminal": true
+                        },
+                        {
+                            "message_id": "persisted-recovered-broadcast-live-b",
+                            "destination": "1335df70880114d149c3ad8d63fb5dcd",
+                            "status": "sent: propagated resource",
+                            "sdk_delivery_state": "sent",
+                            "sdk_message_id": "persisted-recovered-broadcast-live-b",
+                            "sdk_terminal": true
+                        },
+                        {
+                            "message_id": "persisted-recovered-broadcast-stale",
+                            "destination": "7f08e12b3f25f23e62f3a15288303c95",
+                            "status": "sending",
+                            "sdk_delivery_state": "dispatching",
+                            "sdk_message_id": "persisted-recovered-broadcast-stale",
+                            "sdk_terminal": false
+                        }
+                    ],
+                    "sdk_delivery_state": "dispatching",
+                    "sdk_message_id": "persisted-recovered-broadcast-stale",
+                    "sdk_terminal": false,
                 }),
                 created_ts_ms: crate::unix_now_ms(),
                 attachments: Vec::new(),
@@ -58153,6 +58235,30 @@ mod tests {
                 .expect("metadata")
                 .contains_key("last_attempt_failed_at_ts_ms")
         );
+        let repaired_targets = repaired_message.delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("repaired targets");
+        assert_eq!(repaired_targets.len(), 2);
+        assert!(
+            repaired_targets
+                .iter()
+                .all(|target| target["status"] == "sent: propagated resource")
+        );
+        assert_eq!(
+            repaired_message.delivery_metadata["reticulumd_dispatch_count"],
+            2
+        );
+        assert_eq!(
+            repaired_message.delivery_metadata["stale_receipt_targets_pruned"],
+            1
+        );
+        assert!(
+            !repaired_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("sdk_delivery_state")
+        );
 
         let snapshot = RchSqliteStore::open(&db_path)
             .expect("open sqlite")
@@ -58184,6 +58290,15 @@ mod tests {
                 .as_object()
                 .expect("metadata")
                 .contains_key("last_attempt_failed_at_ts_ms")
+        );
+        let persisted_targets = persisted_message.delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("persisted targets");
+        assert_eq!(persisted_targets.len(), 2);
+        assert!(
+            persisted_targets
+                .iter()
+                .all(|target| target["status"] == "sent: propagated resource")
         );
 
         let _ = std::fs::remove_file(db_path);

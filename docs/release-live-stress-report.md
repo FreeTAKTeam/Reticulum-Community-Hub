@@ -4430,3 +4430,59 @@ Result:
   DB/API/rendered Dashboard state.
 - The remaining propagation release gate is downstream phone/deck inbox import
   or receipt proof, not current RCH fallback queue state.
+
+## 2026-06-23 Stale Propagated Receipt Target Repair
+
+Setup:
+
+- Rebuilt and restarted the DB/config-backed local server on
+  `http://127.0.0.1:18080/` as PID `20228`.
+- Runtime inputs remained:
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - reticulumd RPC `127.0.0.1:14243`.
+  - LXMF ZMQ command/event endpoints on `19100`/`19101`.
+
+User-reported message:
+
+- The operator again reported `2a2892b3227b427487308d53712dd163` as a
+  propagated broadcast fallback failure with `send_error`.
+- Before this fix, the canonical row was already `propagated` / `accepted`, but
+  the delivery metadata still carried 13 propagated receipt targets:
+  - six current targets at `sent: propagated resource`.
+  - seven historical stale targets still shown as `sending`.
+- Added SQLite-load repair for successful propagated broadcast/fanout messages:
+  when at least one target is successful, unresolved stale receipt targets are
+  pruned, terminal targets are retained, aggregate stale SDK fields are cleared,
+  and `stale_receipt_targets_pruned` records the cleanup count.
+
+Verification:
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test -p r3akt-rch-server sqlite_load_repairs_success_superseded_delivery_metadata`
+  passed.
+- `cargo build --release -p r3akt-rch-server` passed after stopping the old
+  Windows process that locked the release executable.
+- Live `/Control/Status` showed the restarted DB/config-backed server as PID
+  `20228`.
+- Live `/Chat/Messages?limit=500` now returns
+  `2a2892b3227b427487308d53712dd163` as:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `dispatch_status=accepted`.
+  - no current `error`.
+  - `reticulumd_dispatch_count=6`.
+  - `stale_receipt_targets_pruned=7`.
+  - six receipt targets, all `sent: propagated resource`.
+
+Result:
+
+- Fixed the remaining misleading metadata on the repeated reported broadcast.
+- No live RCH terminal `failed/send_error` state remains for the reported ID.
+- Current canary `1ae2dabae0dc4653a20a17754f7ccd61` is still
+  `propagated` / `accepted` with six current targets at `sending`; Pixel 7 and
+  23013PC75G logs still do not prove inbox import.
+- Final RC blocker remains downstream phone/deck propagation fetch/import proof,
+  not RCH fallback or stale metadata state.
