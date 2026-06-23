@@ -3437,3 +3437,38 @@ Result:
   marker/zone mission association, validation, telemetry, and event recording;
   this rendered pass covers the WebMap canvas, marker radial menu, zone
   create/rename/edit/delete controls, and stale overlay cleanup.
+
+## 2026-06-23 File/Image Rendered UI Partial Proof
+
+Scope:
+
+- DB/config-backed local server on `http://127.0.0.1:18080/files` using PID
+  `2584`, `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, and API key
+  `manual-test`.
+- Reused disposable API-created artifacts:
+  - `codex-ui-file-20260623084146.txt`, `FileID=52`, `text/plain`, `58 bytes`.
+  - `codex-ui-image-20260623084146.png`, `FileID=53`, `image/png`, `70 bytes`.
+
+Rendered checks:
+
+- The Files tab loaded without the boot screen and without browser console
+  errors. It showed file ID `52`, media type `text/plain`, size `58 bytes`,
+  and Download/Delete actions.
+- The Images tab pagination reached page 4 and showed image ID `53`, media type
+  `image/png`, size `70 bytes`, and Preview/Download/Delete actions.
+- Preview opened an accessible `Image Preview` dialog containing an `<img>` with
+  alt text `codex-ui-image-20260623084146.png`, a blob URL, a Download button,
+  and an Open raw link.
+- A screenshot of the preview modal was emitted in the browser proof session.
+
+Limitations:
+
+- The programmatic blob-anchor download path did not surface a Playwright
+  `download` event through the in-app browser automation surface, and no failed
+  toast or console error appeared.
+- Native delete confirmation opened, but the browser automation channel wedged
+  while handling the confirm dialog. Fresh tab creation then timed out, so
+  rendered delete-confirmation proof remains open.
+- Cleanup was completed through the API. `DELETE /Image/53` and
+  `DELETE /File/52` both returned `200`; follow-up lists showed no
+  `codex-ui-*` artifacts and counts restored to files `4`, images `26`.
