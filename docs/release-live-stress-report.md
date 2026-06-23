@@ -3672,6 +3672,10 @@ Verification:
 - `/Chat/Messages?limit=500` returns the message as `State=propagated` and has
   no `send_error`.
 - `/Events?limit=500` has no current event for the ID and no `send_error`.
+- Post-fix broadcast canary `9bd68dc7b73c4b478993dfe0cb45f7ad` moved from
+  direct `in_progress` to `propagated` / `accepted` on poll 5, with
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, no `error`, and no `retry_reason`.
 - Focused regressions passed:
   - `cargo test -p r3akt-rch-server sqlite_load_repairs_success_superseded_delivery_metadata -- --nocapture`.
   - `cargo test -p r3akt-rch-server events_route_marks_recovered_delivery_failures_superseded -- --nocapture`.
