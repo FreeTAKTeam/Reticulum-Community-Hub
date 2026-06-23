@@ -12163,12 +12163,18 @@ fn reticulumd_receipt_pending_after_dispatch(
 }
 
 fn dispatch_pending(message: &OutboundMessageRecord) -> bool {
+    if message
+        .delivery_metadata
+        .get("dispatch_status")
+        .and_then(Value::as_str)
+        != Some("in_progress")
+    {
+        return false;
+    }
     normalized_delivery_state(message) == "queued"
-        && message
-            .delivery_metadata
-            .get("dispatch_status")
-            .and_then(Value::as_str)
-            == Some("in_progress")
+        || (normalized_delivery_state(message) == "failed"
+            && propagated_direct_timeout_fallback(message)
+            && propagated_fallback_has_retryable_error(message))
 }
 
 fn dispatch_pending_age_ms(message: &OutboundMessageRecord, now_ms: i64) -> i64 {
@@ -14475,7 +14481,7 @@ fn process_due_outbound_retry_messages(
 }
 
 fn outbound_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
-    normalized_delivery_state(message) == "queued"
+    (normalized_delivery_state(message) == "queued"
         && message
             .delivery_metadata
             .get("retry_scheduled")
@@ -14485,7 +14491,77 @@ fn outbound_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
             .delivery_metadata
             .get("next_attempt_at_ts_ms")
             .and_then(Value::as_i64)
-            .is_none_or(|deadline| deadline <= now_ms)
+            .is_none_or(|deadline| deadline <= now_ms))
+        || failed_propagation_fallback_retry_due(message, now_ms)
+}
+
+fn failed_propagation_fallback_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
+    if normalized_delivery_state(message) != "failed"
+        || !propagated_direct_timeout_fallback(message)
+        || !propagated_fallback_has_retryable_error(message)
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("dispatch_status")
+        .and_then(Value::as_str)
+        == Some("in_progress")
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("reticulumd_dispatch_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("next_attempt_at_ts_ms")
+        .and_then(Value::as_i64)
+        .is_some_and(|deadline| deadline > now_ms)
+    {
+        return false;
+    }
+    let attempts = outbound_attempts(message).saturating_add(1);
+    let rate_limited = message
+        .delivery_metadata
+        .get("error")
+        .and_then(Value::as_str)
+        .is_some_and(outbound_error_is_rate_limited);
+    let max_attempts = outbound_effective_max_attempts_for_retry(message, rate_limited);
+    outbound_retry_attempt_allowed(message, attempts, max_attempts)
+}
+
+fn propagated_fallback_has_retryable_error(message: &OutboundMessageRecord) -> bool {
+    if message
+        .delivery_metadata
+        .get("retry_reason")
+        .and_then(Value::as_str)
+        .is_some_and(|reason| matches!(reason, "send_timeout" | "send_error" | "rate_limited"))
+    {
+        return true;
+    }
+    let Some(error) = message
+        .delivery_metadata
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|error| !error.is_empty())
+    else {
+        return false;
+    };
+    let normalized = error.to_ascii_lowercase();
+    normalized == "send_timeout"
+        || outbound_error_is_rate_limited(error)
+        || normalized.contains("outbound request failed")
+        || normalized.contains("connection refused")
+        || normalized.contains("os error 10061")
+        || normalized.contains("timed out")
 }
 
 fn schedule_outbound_retry_after_failure(
@@ -14697,6 +14773,7 @@ fn mark_outbound_attempt_started(
     else {
         return Ok(());
     };
+    message.delivery_state = "queued".to_string();
     merge_delivery_metadata(
         &mut message.delivery_metadata,
         json!({
@@ -55410,6 +55487,70 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn failed_propagated_broadcast_timeout_fallback_is_due_for_repair() {
+        let now = crate::unix_now_ms();
+        let retryable = crate::OutboundMessageRecord {
+            message_id: "failed-broadcast-fallback-repair".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "dispatch_status": "failed",
+                "error": "send_timeout",
+                "fallback_reason": "direct_dispatch_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 0,
+                "retry_reason": "send_timeout",
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        let invalid_destination = crate::OutboundMessageRecord {
+            message_id: "invalid-broadcast-fallback-terminal".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "max_attempts": 1,
+                "dispatch_status": "failed",
+                "error": "failed: invalid destination hash 'not-hex' (expected 16-byte or 32-byte hex)",
+                "fallback_reason": "direct_dispatch_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 1,
+                "retry_reason": "send_error",
+                "retry_scheduled": false,
+            }),
+            ..retryable.clone()
+        };
+        let in_progress_repair = crate::OutboundMessageRecord {
+            message_id: "in-progress-broadcast-fallback-repair".to_string(),
+            delivery_metadata: json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "dispatch_status": "in_progress",
+                "error": "send_timeout",
+                "fallback_reason": "direct_dispatch_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 0,
+                "retry_reason": "send_timeout",
+                "retry_scheduled": false,
+            }),
+            ..retryable.clone()
+        };
+
+        assert!(crate::outbound_retry_due(&retryable, now));
+        assert!(!crate::outbound_retry_due(&invalid_destination, now));
+        assert!(!crate::outbound_retry_due(&in_progress_repair, now));
+        assert!(crate::dispatch_pending(&in_progress_repair));
     }
 
     #[test]

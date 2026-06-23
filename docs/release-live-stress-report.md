@@ -1684,3 +1684,42 @@ Remaining retest:
 - No remaining RCH-US-007 issue from this slice. The primary server was
   restarted after the release rebuild and remained healthy on
   `http://127.0.0.1:18080/`.
+
+## Persisted Broadcast Fallback Repair Retest
+
+Time: `2026-06-23T01:30Z` to `2026-06-23T01:50Z`.
+
+Runtime:
+
+- Rebuilt `target\release\r3akt-rch-server.exe` and restarted the primary
+  manual server on `http://127.0.0.1:18080/`, PID `16648`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- Reticulumd RPC and LXMF ZeroMQ SDK endpoints remained configured.
+
+Result:
+
+- User-reported message `2a2892b3227b427487308d53712dd163` is currently
+  `propagated` with `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  and 13 propagated receipt targets. Its older `failed/send_error` system event
+  was superseded by later retry and propagated state.
+- Found eight persisted broadcast direct-timeout fallback rows that were
+  stranded as terminal `failed` with retryable `send_timeout`, `send_error`, or
+  rate-limit transport errors and no propagation dispatch count.
+- Added a regression so failed propagated broadcast direct-timeout fallback rows
+  are treated as retry-due only when the failure is retryable, dispatch count is
+  still zero, and retry budget remains. Invalid-destination failures remain
+  terminal.
+- Fixed the repair path to set repaired rows back to `queued` when an attempt
+  starts, and to let already-started repair attempts finalize through the stale
+  dispatch timeout path without being selected repeatedly.
+- After the final rebuild/restart, all eight stranded rows moved from
+  `failed` to `queued`. After one dispatch timeout window, seven were queued
+  with rate-limit backoff and one remained actively dispatching; none returned
+  to terminal `failed`.
+
+Remaining retest:
+
+- The environment is still hitting `SDK_SECURITY_RATE_LIMITED`, so continue
+  live phone/deck stress after the rate-limit window clears and confirm queued
+  repaired fallbacks reach accepted/sent propagation.
