@@ -2764,3 +2764,47 @@ Result:
   not remain terminal failed.
 - Final device/deck receipt remains open until the 13 target receipts leave
   `pending`/`sending`.
+
+## 2026-06-23 Repeated Stale Broadcast Failure Card Check
+
+Trigger:
+
+- The operator again saw broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+
+Live state:
+
+- The configured manual server was still running as PID `2548` on
+  `http://127.0.0.1:18080/`.
+- Direct SQLite state in `RTH_Store\rch_state.sqlite3` showed the message row
+  as `delivery_state=propagated`, `dispatch_status=accepted`, attempts `5`, and
+  no terminal failed row.
+- Reticulumd SQLite state showed 13 propagated outbound child messages for the
+  same ID: six `sent: propagated resource` and seven `sending`.
+- `/Events?limit=500` did not contain the message ID and did not contain
+  `send_error`.
+- `/Chat/Messages?limit=500` contained the message ID but no `send_error`.
+- The server served the current rebuilt UI bundle
+  `/assets/index-kc7Jg-Vq.js`.
+- The in-app browser selected tab reported `about:blank` with title `RCH UI`,
+  and browser automation timed out attempting to navigate it to the local UI.
+
+Result:
+
+- No backend retry/fallback regression was reproduced. The current canonical
+  state is propagated/accepted, and the pasted card is consistent with stale
+  browser/client state rather than current server state.
+- Two USB phones remained attached, and both `network.reticulum.emergency` and
+  `com.lxmf.messenger` were running on Pixel 7 `35031FDH2003N8` and
+  SM-G950W `988b9b344135304639`.
+- Current canaries `2f98a8193d4b4f0e9bc9c248010e4633` and
+  `2d437d80fbeb4c4cbc36c6fc3f9faeaa` also remained
+  `propagated`/`accepted`; their propagated receipt targets were still
+  `sending`.
+
+Remaining live gap:
+
+- Final device/deck receipt is still unproven. Refresh the manual browser tab
+  so it loads `index-kc7Jg-Vq.js`, then continue monitoring propagated target
+  statuses and phone/deck inboxes until targets leave `sending`.
