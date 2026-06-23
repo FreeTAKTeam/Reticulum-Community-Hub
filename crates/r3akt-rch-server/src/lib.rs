@@ -13543,7 +13543,7 @@ async fn list_events(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
     Ok(Json(json!(
         events
             .into_iter()
-            .map(system_event_payload)
+            .map(|event| system_event_payload_for_state(&state, event))
             .collect::<Vec<_>>()
     )))
 }
@@ -19871,6 +19871,88 @@ fn system_event_payload(event: SystemEventRecord) -> Value {
     })
 }
 
+fn system_event_payload_for_state(state: &AppState, event: SystemEventRecord) -> Value {
+    let mut payload = system_event_payload(event);
+    mark_recovered_delivery_failure_event(state, &mut payload);
+    payload
+}
+
+fn mark_recovered_delivery_failure_event(state: &AppState, payload: &mut Value) {
+    if payload
+        .get("type")
+        .and_then(Value::as_str)
+        .is_none_or(|event_type| event_type != "message_delivery_failed")
+    {
+        return;
+    }
+    let Some(message_id) = payload
+        .get("metadata")
+        .and_then(|metadata| {
+            metadata
+                .get("MessageID")
+                .or_else(|| metadata.get("message_id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let Ok(messages) = state.messages.read() else {
+        return;
+    };
+    let Some(current) = messages
+        .iter()
+        .find(|message| message.message_id == message_id)
+        .cloned()
+    else {
+        return;
+    };
+    if current.delivery_state == "failed" {
+        return;
+    }
+    payload["type"] = json!("message_delivery_superseded");
+    payload["message"] = json!(format!(
+        "Message delivery failure superseded by {} state",
+        current.delivery_state
+    ));
+    if let Some(metadata) = payload.get_mut("metadata").and_then(Value::as_object_mut) {
+        metadata.insert(
+            "original_event_type".to_string(),
+            json!("message_delivery_failed"),
+        );
+        metadata.insert("delivery_failure_superseded".to_string(), json!(true));
+        metadata.insert(
+            "current_state".to_string(),
+            json!(current.delivery_state.clone()),
+        );
+        metadata.insert(
+            "current_dispatch_status".to_string(),
+            current
+                .delivery_metadata
+                .get("dispatch_status")
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+        metadata.insert("State".to_string(), json!(current.delivery_state.clone()));
+        metadata.insert(
+            "DeliveryMetadata".to_string(),
+            current.delivery_metadata.clone(),
+        );
+        metadata.insert(
+            "delivery_method".to_string(),
+            json!(current.delivery_method.clone()),
+        );
+        metadata.insert(
+            "delivery_policy_reason".to_string(),
+            json!(current.delivery_policy_reason.clone()),
+        );
+        metadata.insert(
+            "route_type".to_string(),
+            json!(delivery_route_type(current.delivery_mode)),
+        );
+    }
+}
+
 fn telemetry_payload(record: TelemetryRecord) -> Value {
     json!({
         "peer_destination": record.peer_destination,
@@ -25422,7 +25504,7 @@ async fn handle_system_socket(
                 if include_events {
                     let _ = send_ws_json(
                         &mut socket,
-                        ws_message("system.event", system_event_payload(event)),
+                        ws_message("system.event", system_event_payload_for_state(&state, event)),
                     )
                     .await;
                     if include_status
@@ -25454,7 +25536,7 @@ async fn send_system_event_replay(
     for event in events.into_iter().take(events_limit) {
         send_ws_json(
             socket,
-            ws_message("system.event", system_event_payload(event)),
+            ws_message("system.event", system_event_payload_for_state(state, event)),
         )
         .await?;
     }
@@ -56250,6 +56332,84 @@ mod tests {
             serde_json::from_slice(&body).expect("restart events json");
         assert_eq!(restarted_events[0]["type"], "message_sent");
         assert_eq!(restarted_events[0]["metadata"]["topic_id"], "events");
+    }
+
+    #[tokio::test]
+    async fn events_route_marks_recovered_delivery_failures_superseded() {
+        let state = crate::AppState::default().with_api_key("secret");
+        let message = crate::OutboundMessageRecord {
+            message_id: "recovered-broadcast-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "recovered broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "retry_reason": "send_error",
+                "fallback_reason": "direct_dispatch_timeout",
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        state
+            .system_events
+            .write()
+            .expect("events")
+            .push(r3akt_rch_core::SystemEventRecord {
+                event_id: "stale-failure".to_string(),
+                event_type: "message_delivery_failed".to_string(),
+                message: "Message delivery failed for unknown".to_string(),
+                timestamp_ms: crate::unix_now_ms(),
+                metadata: json!({
+                    "MessageID": message.message_id,
+                    "State": "failed",
+                    "failure_reason": "send_error",
+                    "delivery_method": "propagated",
+                    "delivery_policy_reason": "broadcast_direct_timeout_fallback",
+                    "route_type": "broadcast",
+                }),
+            });
+        let app = crate::create_app_with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/Events")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("events response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let events: serde_json::Value = serde_json::from_slice(&body).expect("events json");
+        assert_eq!(events[0]["id"], "stale-failure");
+        assert_eq!(events[0]["type"], "message_delivery_superseded");
+        assert_eq!(
+            events[0]["metadata"]["original_event_type"],
+            "message_delivery_failed"
+        );
+        assert_eq!(events[0]["metadata"]["delivery_failure_superseded"], true);
+        assert_eq!(events[0]["metadata"]["current_state"], "propagated");
+        assert_eq!(events[0]["metadata"]["current_dispatch_status"], "accepted");
+        assert_eq!(events[0]["metadata"]["State"], "propagated");
     }
 
     #[tokio::test]

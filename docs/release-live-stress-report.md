@@ -1810,6 +1810,43 @@ Remaining retest:
   live phone/deck stress after the rate-limit window clears and confirm queued
   repaired fallbacks reach accepted/sent propagation.
 
+## Superseded Broadcast Failure Event Retest
+
+Time: `2026-06-23T02:39Z`.
+
+Runtime:
+
+- Rebuilt `target\release\r3akt-rch-server.exe` and restarted the primary
+  manual server on `http://127.0.0.1:18080/`, PID `5748`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- Reticulumd RPC and LXMF ZeroMQ SDK endpoints remained configured.
+
+Result:
+
+- User again reported message `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- Live `/Chat/Messages?limit=200` showed the canonical message row is still
+  `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, and 13 propagated receipt targets. Six child
+  rows were `sent: propagated resource`; seven remained `sending`.
+- Live `/Events` no longer retained a `message_delivery_failed` row for the
+  reported message and had no retained `message_delivery_failed` rows at all.
+- Added a regression and formatter so `/Events` and `/events/system` replay
+  reclassify stale `message_delivery_failed` events as
+  `message_delivery_superseded` when the current message row has recovered to a
+  non-failed state. The metadata now includes `original_event_type`,
+  `delivery_failure_superseded=true`, `current_state`, and
+  `current_dispatch_status` while preserving the current delivery metadata.
+
+Remaining retest:
+
+- Browser event-feed replay should be refreshed in the open UI so any older
+  retained failure card with the same event ID is replaced by the superseded
+  event payload. Continue live phone/deck stress once the SDK rate-limit window
+  clears.
+
 ## Emergency Action Message API Retest
 
 Time: `2026-06-23T02:00Z`.
