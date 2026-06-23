@@ -2326,11 +2326,55 @@ Live retest:
   zero matching templates, zero active disposable missions, and one expected
   deleted mission tombstone.
 
-Remaining retest:
+Follow-up:
 
-- Browser proof for checklist modals, CSV picker/preview, and delete
-  confirmation remains open. The route/API behavior itself passed against the
-  live configured server.
+- Rendered browser proof for checklist modals, CSV picker/preview, checklist
+  controls, and delete confirmations is now covered by the checklist/template
+  browser retest below. The route/API behavior itself passed against the live
+  configured server.
+
+## Checklist/Template Browser Retest
+
+Time: `2026-06-23T15:11Z`.
+
+Runtime:
+
+- In-app browser against `http://127.0.0.1:18080/checklists`.
+- Primary manual server PID `24116`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Used disposable prefix `codex-ui-us019-20260623151124` and CSV file
+  `codex-ui-us019-20260623.csv`.
+- Template Library editor switched from read-only CSV selection to an editable
+  draft, added a column, deleted a column, saved
+  `codex-ui-us019-20260623151124-template`, cloned it, and accepted the clone
+  delete confirmation.
+- CSV upload rendered the selected filename, 3 header columns, 2 task rows, and
+  preview rows for `Radio check` and `Signal report`.
+- Preview downloaded `preview-codex-ui-us019-20260623.csv`.
+- Import created CSV template/checklist
+  `5b100d76913c4b5a92f707d64a1a0ec6` with 4 columns and 2 tasks.
+- The New checklist modal created `codex-ui-us019-20260623151124-run` from the
+  CSV source and rendered both imported tasks.
+- The detail view added a task, toggled a task to `COMPLETE`, opened the Link
+  Checklist to Mission modal, accepted checklist delete confirmation, and
+  accepted CSV import template delete confirmation.
+- Browser console warnings/errors: none.
+- Page runtime errors: none.
+- Cleanup deleted the disposable checklist, CSV import, and saved template;
+  follow-up API checks found zero active rows matching
+  `codex-ui-us019-20260623151124` or `codex-ui-us019-20260623`.
+
+Note:
+
+- The browser runner exposed one stale native dialog state during clone
+  deletion even though the page handler had already accepted it. The second half
+  used an in-page confirm shim to log confirmation text without wedging the
+  automation channel.
 
 ## Topic Asset Association API Retest
 
