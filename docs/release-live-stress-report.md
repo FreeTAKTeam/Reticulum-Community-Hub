@@ -73,6 +73,43 @@ Current limitation:
   `send_timeout` rows no longer remain terminally failed; they are moved to
   propagation fallback and retried.
 
+## Mission Audit/Event Export API Retest - 2026-06-23 UTC
+
+Runtime under test:
+
+- Branch: `codex/rch-user-story-audit`
+- Server binary: `target/release/r3akt-rch-server.exe`
+- Server URL: `http://127.0.0.1:18080`
+- API key used for manual testing: `manual-test`
+- RCH database: `RTH_Store/rch_state.sqlite3`
+- RCH config: `RTH_Store/config.ini`
+- Server PID observed: `3680`
+
+Disposable run:
+
+- Mission: `codex-us018-20260623014108`
+- Explicit mission change: `codex-us018-change-20260623014108`
+- Log entry: `codex-us018-log-20260623014108`
+
+Passed checks:
+
+- `/api/r3akt/events?limit=50&include_payload=false` returned the mission
+  event history newest-first without serialized `payload` fields.
+- `/api/r3akt/events?limit=50&include_payload=true` returned the same three
+  mission events with payload data for export use.
+- `/api/r3akt/mission-changes?mission_uid=...&include_delta=false` stripped
+  `delta`, while `include_delta=true` returned the explicit change and the
+  expected log-derived `ADD_CONTENT` change.
+- `/api/r3akt/log-entries?mission_uid=...` returned only the disposable log.
+- An export-shaped JSON object containing audit events, mission changes, and
+  log entries round-tripped with the mission UID and collection counts intact.
+
+Remaining gap:
+
+- The API/export data path passed. Browser proof is still needed for expanding
+  mission audit detail rows and triggering the actual `mission-audit-*.json`
+  download from the shared UI.
+
 ## Assets, Assignments, And Skills API Retest - 2026-06-23 UTC
 
 Runtime under test:
