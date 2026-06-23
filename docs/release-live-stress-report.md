@@ -4132,3 +4132,88 @@ Result:
 - Fixed a logistical UI error where wrapped Rust/Python-compatible list
   responses made the legacy mission workspace appear empty even though the live
   DB records existed.
+
+## 2026-06-23 Assets, Assignments, And Skills Rendered Proof
+
+Trigger:
+
+- RCH-US-025 still had a rendered browser proof gap after the live API retest.
+- The canonical mission domain store used a bare-array-only helper, so
+  `/missions/:mission_uid/*` domain pages could render empty tables against the
+  DB-backed Rust routes that return wrapped `{ value, Count }` list responses.
+
+Fix:
+
+- Updated `ui/src/stores/missionWorkspace.ts` to use the shared
+  `unwrapApiList` helper.
+- Added `ui/src/stores/missionWorkspace.spec.ts` to prove wrapped mission,
+  team, team-member, asset, and assignment lists hydrate scoped domain-page
+  collections.
+
+Live browser proof:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - rebuilt UI bundle `assets/index-hzkKVSjQ.js`.
+- Seeded disposable logistics prefix `codex-ui-us025-20260623154030`:
+  - mission `codex-ui-us025-20260623154030-mission`.
+  - team `codex-ui-us025-20260623154030-team`.
+  - member `codex-ui-us025-20260623154030-member`.
+  - checklist `7ca3719a564a4e26933d160d2585c37e`.
+  - task `a3620a33f1ed48a4b39c3e1c8919d08d`.
+  - seeded asset `codex-ui-us025-20260623154030-asset-seeded`.
+  - skill `codex-ui-us025-20260623154030-skill`.
+  - assignment `codex-ui-us025-20260623154030-assignment`.
+- Rendered `/missions/assets?mission_uid=...`:
+  - showed the seeded asset and assignable member.
+  - created `Codex US025 Browser Asset 20260623154030` through `New Asset`.
+  - edited it to `Codex US025 Browser Asset Updated 20260623154030` with
+    status `IN_USE`.
+  - deleted it through the native confirmation; the row disappeared and the
+    seeded asset remained visible.
+- Rendered canonical domain routes:
+  - `/missions/{mission_uid}/assets` showed the seeded asset row.
+  - `/missions/{mission_uid}/assignments` showed the assignment row with
+    assignment UID, asset UID, task UID, mission UID, and member RNS identity.
+  - `/missions/{mission_uid}/skills` showed the skill row.
+  - `/missions/{mission_uid}/team-member-skills` showed the skill UID, level
+    `3`, and member RNS identity.
+  - `/missions/{mission_uid}/task-skill-requirements` showed the task UID,
+    skill UID, and `minimum_level=2`.
+
+Cleanup:
+
+- Cleared assignment assets through
+  `/api/r3akt/assignments/{assignment_uid}/assets`.
+- Deleted the seeded asset.
+- Deleted the checklist task and checklist.
+- Deleted the team member.
+- Unlinked and deleted the team.
+- Tombstoned the mission.
+- Follow-up checks found:
+  - `activeMissions=0`.
+  - `teams=0`.
+  - `members=0`.
+  - `assets=0`.
+  - one assignment audit row with empty assets because no assignment delete
+    route exists.
+
+Verification:
+
+- `npm --prefix ui run test -- missionWorkspace.spec.ts` failed before the
+  store fix and passed after the fix.
+- `npm --prefix ui run test -- missionWorkspace.spec.ts mission-legacy-wrapped-lists.test.ts mission-domain-object-pages.test.ts`
+  passed.
+- `npm --prefix ui run build` passed.
+
+Result:
+
+- Pass for rendered RCH-US-025 asset CRUD and domain-object visibility.
+- Fixed the canonical mission domain wrapped-list defect.
+- Public delete routes remain missing for skills, assignments, and task skill
+  requirements, so those logistics records remain historical/audit artifacts
+  after live proof runs.
