@@ -2654,3 +2654,38 @@ Remaining live gap:
 - Final phone/deck receipt is still not proven for every propagated target.
   Continue monitoring target statuses and device inboxes until all targets
   leave `sending`.
+
+## 2026-06-23 Post-Fix Broadcast Canary on Rebuilt Server
+
+Runtime:
+
+- Rebuilt `target\release\r3akt-rch-server.exe` from the fixed branch and
+  restarted the manual DB/config-backed server on `http://127.0.0.1:18080/` as
+  PID `2548`.
+- Server arguments continued to use `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, Reticulum RPC
+  `127.0.0.1:14243`, local source `4fa9359ec3ea68185d4dd03b23073244`, and
+  LXMF ZMQ endpoints `tcp://127.0.0.1:19100` /
+  `tcp://127.0.0.1:19101`.
+
+Canary:
+
+- Sent broadcast `2f98a8193d4b4f0e9bc9c248010e4633` with content
+  `RCH RC post-fix broadcast canary 2026-06-23T02:48:54-03:00`.
+- Polls 1 through 14 showed direct broadcast `dispatch_status=in_progress`
+  without an error.
+- Poll 15 showed direct timeout fallback queued propagation with
+  `method=propagated`, `policy=broadcast_direct_timeout_fallback`,
+  `attempts=0`, `direct_attempts=1`, `max_attempts=5`,
+  `error=send_timeout`, and `retry_reason=send_timeout`.
+- Poll 16 showed successful propagation acceptance:
+  `State=propagated`, `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  no current `error`, no current `retry_reason`, and 13 pending target receipts.
+
+Result:
+
+- Pass for the release-blocking fallback behavior on the rebuilt manual server:
+  a legitimate direct broadcast `send_timeout` was sent to propagation and did
+  not remain terminal failed.
+- Final device/deck receipt remains open until the 13 target receipts leave
+  `pending`/`sending`.
