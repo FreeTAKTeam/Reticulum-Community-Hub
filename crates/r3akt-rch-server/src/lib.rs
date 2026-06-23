@@ -107,6 +107,10 @@ const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
 const RETICULUMD_RECEIPT_STATUS_PASS_INTERVAL_MS: i64 = 10_000;
 const RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS: usize = 4;
 const RETICULUMD_SECURITY_RATE_LIMIT_CODE: &str = "SDK_SECURITY_RATE_LIMITED";
+#[cfg(not(test))]
+const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 20_000;
+#[cfg(test)]
+const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 200;
 const RETICULUMD_INBOUND_WORKER_POLL_MS: u64 = 1_000;
 const RETICULUMD_LIST_MESSAGE_POLL_MS: u64 = 5_000;
 const RETICULUMD_EVENT_POLL_MAX: usize = 64;
@@ -23919,6 +23923,30 @@ fn reticulumd_identity_announce_capability_disabled(
 }
 
 async fn control_sync(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let sync_state = state.clone();
+    let sync = tokio::task::spawn_blocking(move || control_sync_blocking(&sync_state));
+    match tokio::time::timeout(Duration::from_millis(CONTROL_SYNC_REQUEST_TIMEOUT_MS), sync).await {
+        Ok(Ok(Ok(payload))) => Ok(Json(payload)),
+        Ok(Ok(Err(error))) => Err(error),
+        Ok(Err(error)) => Err(ApiError::Internal(format!(
+            "Control sync worker failed: {error}"
+        ))),
+        Err(_) => {
+            let _ = record_system_event(
+                &state,
+                "control_sync_timeout",
+                "Rust runtime propagation sync timed out",
+                json!({ "timeout_ms": CONTROL_SYNC_REQUEST_TIMEOUT_MS }),
+            );
+            Err(ApiError::ServiceUnavailable(format!(
+                "Sync timed out after {} ms",
+                CONTROL_SYNC_REQUEST_TIMEOUT_MS
+            )))
+        }
+    }
+}
+
+fn control_sync_blocking(state: &AppState) -> Result<Value, ApiError> {
     let Some(endpoint) = &state.reticulumd_rpc_endpoint else {
         return Err(ApiError::ServiceUnavailable("Sync unavailable".to_string()));
     };
@@ -23995,7 +24023,7 @@ async fn control_sync(State(state): State<AppState>) -> Result<Json<Value>, ApiE
         "Rust runtime propagation sync requested",
         payload.clone(),
     );
-    Ok(Json(payload))
+    Ok(payload)
 }
 
 fn first_reticulumd_propagation_node(result: &Value) -> Option<String> {
@@ -35610,6 +35638,74 @@ mod tests {
                 .any(|event| event.event_type == "control_sync_requested")
         );
 
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn control_sync_times_out_when_reticulumd_rpc_stalls() {
+        let listener = StdTcpListener::bind("127.0.0.1:0").expect("listener");
+        let endpoint = listener.local_addr().expect("addr").to_string();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            thread::sleep(Duration::from_millis(
+                crate::CONTROL_SYNC_REQUEST_TIMEOUT_MS.saturating_add(500),
+            ));
+        });
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-control-sync-timeout-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_api_key("secret")
+            .with_reticulumd_rpc(endpoint, "local-source");
+        let app = crate::create_app_with_state(state.clone());
+
+        let started = Instant::now();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/Control/Sync")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            started.elapsed()
+                < Duration::from_millis(crate::CONTROL_SYNC_REQUEST_TIMEOUT_MS.saturating_add(500)),
+            "control sync route did not respect its request timeout"
+        );
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(
+            payload["detail"],
+            format!(
+                "Sync timed out after {} ms",
+                crate::CONTROL_SYNC_REQUEST_TIMEOUT_MS
+            )
+        );
+        assert!(
+            state
+                .system_events
+                .read()
+                .expect("events")
+                .iter()
+                .any(|event| event.event_type == "control_sync_timeout")
+        );
+
+        server.join().expect("stalling rpc server");
         let _ = std::fs::remove_file(db_path);
     }
 

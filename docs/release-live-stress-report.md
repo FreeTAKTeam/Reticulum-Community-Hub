@@ -4367,3 +4367,66 @@ Result:
   state.
 - The remaining RC blocker is downstream target receipt or phone/deck inbox
   import, not current RCH propagation fallback state.
+
+## 2026-06-23 Additive Control and Broadcast Error Recheck
+
+Setup:
+
+- Rebuilt and restarted the DB/config-backed local server on
+  `http://127.0.0.1:18080/` as PID `13268`.
+- Runtime inputs remained:
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - reticulumd RPC `127.0.0.1:14243`.
+  - LXMF ZMQ command/event endpoints on `19100`/`19101`.
+
+Additive route retest:
+
+- `/api/v1/app/info` returned the configured DB/UI/runtime metadata.
+- `/openapi.yaml` returned `200` and included `/Control/Status`,
+  `/Control/Sync`, `/events/system`, `/messages/stream`,
+  `/telemetry/stream`, and `/openapi.yaml`.
+- `/Control/Stop`, `/Control/Start`, and `/Control/Announce` succeeded and
+  emitted the expected system events.
+- `/Control/Sync` previously hung while chained blocking reticulumd RPC calls
+  stalled. It now runs the blocking sync in a worker and returns
+  `503 {"detail":"Sync timed out after 20000 ms"}` after about 20 seconds,
+  while recording `control_sync_timeout`.
+- WebSocket route probes confirmed `/events/system` returns `auth.ok` plus
+  `system.event` frames, `/messages/stream` returns `auth.ok` plus
+  `message.subscribed`, and `/telemetry/stream` returns `auth.ok` plus a
+  small `telemetry.snapshot` when queried with a current `since` value.
+- `/diagnostics/runtime` confirmed `persistence.path=RTH_Store\rch_state.sqlite3`,
+  queue depth `0`, pending dispatches `0`, pending receipts `0`, and a running
+  retry worker.
+
+Repeated broadcast error recheck:
+
+- User again reported `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+- Current `/Chat/Messages?limit=1000` returns both
+  `2a2892b3227b427487308d53712dd163` and
+  `f011f23619fc4d0b9dcd9bf51462629e` as:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=2000` returned no current events for either reported ID.
+- The rendered Dashboard after reload contained no `send_error`, no
+  `message_delivery_failed`, and neither reported stale broadcast ID.
+- The rendered Chat page default window did not contain either old reported ID;
+  its visible `failed` text came from other current messages, not the reported
+  broadcast fallback rows.
+
+Result:
+
+- The control-route issue was a real backend hang and is fixed with a bounded
+  timeout.
+- The repeated `2a289...` broadcast card remains stale relative to current
+  DB/API/rendered Dashboard state.
+- The remaining propagation release gate is downstream phone/deck inbox import
+  or receipt proof, not current RCH fallback queue state.
