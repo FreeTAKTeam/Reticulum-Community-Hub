@@ -4217,3 +4217,76 @@ Result:
 - Public delete routes remain missing for skills, assignments, and task skill
   requirements, so those logistics records remain historical/audit artifacts
   after live proof runs.
+
+## 2026-06-23 Two-Phone Propagation Receipt Retry
+
+Setup:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+- USB devices were attached:
+  - Pixel 7 `35031FDH2003N8`.
+  - 23013PC75G `81bf319c`.
+- App/process inventory:
+  - Pixel 7 had `network.reticulum.emergency` PID `25109` and
+    `com.lxmf.messenger` PID `18327`.
+  - 23013PC75G had `network.reticulum.emergency` PID `15169` and
+    `network.columba.app.kt` installed/running.
+- `/api/rem/peers` remained empty with `effective_connected_mode=false`.
+
+Fresh broadcast canary:
+
+- Sent body `RCH RC phone deck receipt canary 20260623T184821Z`.
+- Stored message ID: `dcf7aa8cb6b24bf7a60e29dfad37d9ae`.
+- Initial response:
+  - `State=queued`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_unannounced`.
+  - `dispatch_status=queued_deferred`.
+- First poll result:
+  - `State=propagated`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=6`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=300` contained one `message_propagated` event for the ID with
+  `acknowledgement_type=propagation_acceptance`.
+
+Receipt target polling:
+
+- Polled `DeliveryMetadata.reticulumd_receipt_targets` for three minutes.
+- All 18 polls stayed:
+  - six targets `sending`.
+  - SDK state `dispatching`.
+  - no SDK reason code.
+- Runtime status after the poll:
+  - `queue_depth=0`.
+  - `pending_dispatches=0`.
+  - `pending_receipts=0`.
+  - `receipt_timeout_total=27`.
+
+Phone evidence:
+
+- Pixel 7 logs did not contain the message ID or body.
+- Pixel 7 propagation sync repeatedly reported:
+  - relay `4cce8a55cc0f232fb0946b392a73fa92`.
+  - `available=0`.
+  - `fetched=0`.
+  - `imported=0`.
+- Pixel 7 also emitted link activation retries/timeouts for REM/LXMF peers.
+- 23013PC75G/Columba logs did not contain the message ID or body.
+- 23013PC75G/Columba stayed in propagation `link_establishing` and reported
+  relay/link timeout/backoff states.
+
+Result:
+
+- Pass for current RCH behavior: the broadcast was persisted, expanded to six
+  current targets, accepted by reticulumd propagation, and did not regress into
+  `failed/send_error`.
+- RC blocker remains downstream receipt: phones did not fetch/import the
+  canary, and RCH did not observe terminal receipt-target progress beyond
+  `sending` / SDK `dispatching`.
