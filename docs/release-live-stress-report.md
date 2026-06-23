@@ -73,6 +73,55 @@ Current limitation:
   `send_timeout` rows no longer remain terminally failed; they are moved to
   propagation fallback and retried.
 
+## Bounded Broadcast Stress Probe - 2026-06-23 UTC
+
+Runtime under test:
+
+- Branch: `codex/rch-user-story-audit`
+- Server binary: `target/release/r3akt-rch-server.exe`
+- Server URL: `http://127.0.0.1:18080`
+- API key used for manual testing: `manual-test`
+- RCH database: `RTH_Store/rch_state.sqlite3`
+- RCH config: `RTH_Store/config.ini`
+- Server PID observed: `3680`
+
+Connected device inventory:
+
+- `adb devices -l` showed Pixel 7 `35031FDH2003N8` and SM-G950W
+  `988b9b344135304639`.
+- Both phones had `network.reticulum.emergency` and `com.lxmf.messenger`
+  installed and running by `pidof`.
+- `/Client` included historical deck identities for `raphydeck`, `silkedeck`,
+  and `corvodeck`.
+- `/api/rem/peers` returned no current REM peer rows during this probe.
+
+Broadcast probe:
+
+- Posted `scope=broadcast` to `/Chat/Message`.
+- Message ID: `2d437d80fbeb4c4cbc36c6fc3f9faeaa`
+- Initial response persisted the row as `queued` with
+  `delivery_policy_reason=broadcast_direct`, `method=direct`, and
+  `dispatch_status=queued_deferred`.
+
+Observed delivery-state progression:
+
+- Polls 1-4: `state=queued`, `method=direct`, `dispatch_status=in_progress`.
+- Poll 5: converted to `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=queued`, `retry_reason=rate_limited`, and
+  `error=SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded`.
+- After the scheduled retry window, the row remained queued propagated fallback
+  and was rescheduled with a later `next_attempt_at_ts_ms`; it did not become
+  terminal `failed`.
+
+Current limitation:
+
+- This is a partial live-device pass. The corrected fallback/retry behavior is
+  still working under pressure, but delivery to the connected phones/decks is
+  not proven while the SDK/RNS path is rate-limited and `/api/rem/peers` is
+  empty. Continue after the rate-limit window clears and require accepted/sent
+  propagated dispatch evidence.
+
 ## Mission Audit/Event Export API Retest - 2026-06-23 UTC
 
 Runtime under test:
