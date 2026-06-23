@@ -2978,3 +2978,54 @@ Result:
 - Pass for stale dashboard-card UX: the repeated pasted error is not backed by
   current backend state, and a fresh browser shell no longer renders it.
 - Phone/deck receipt remains open and separate from this stale-card fix.
+
+## 2026-06-23 Mission Domain All-Routes Rendered Proof
+
+Scope:
+
+- Covered RCH-US-017 and RCH-US-018 against the live DB/config-backed local
+  server on `http://127.0.0.1:18080/` with API key `manual-test`.
+- Used active mission `codex-us018-20260623014108`, which already has mission
+  audit/event/log data from the earlier audit API retest.
+
+Browser path:
+
+- The in-app Browser runtime connected and documentation was read, but
+  navigation to `/missions/codex-us018-20260623014108/overview` timed out and
+  reset the browser controller.
+- Per frontend test fallback policy, a clean disposable Chrome/CDP profile was
+  used for rendered validation against the same served UI bundle.
+
+Route proof:
+
+- Opened the mission root route and all 19 canonical domain subpages:
+  `overview`, `mission`, `topic`, `checklists`, `checklist-tasks`,
+  `checklist-templates`, `teams`, `team-members`, `skills`,
+  `team-member-skills`, `task-skill-requirements`, `assets`, `assignments`,
+  `zones`, `domain-events`, `mission-changes`, `log-entries`, `snapshots`, and
+  `audit-events`.
+- All 20 routes rendered meaningful mission content with no boot screen, no
+  framework overlay, and no relevant console/runtime errors.
+- Screenshots and machine-readable summaries were saved under
+  `C:\Users\broth\AppData\Local\Temp\rch-mission-domain-proof`.
+
+Audit interaction proof:
+
+- The legacy mission audit view rendered `Export Log`, `Snapshot`, `Open Logs`,
+  and six `DETAILS` buttons.
+- Clicking `DETAILS` changed the first detail control to `HIDE`, proving the
+  rendered details expansion path.
+- Clicking `Export Log` downloaded
+  `mission-audit-codex-us018-20260623014108.json` with the mission UID present
+  in the payload.
+- Clicking `Snapshot` downloaded
+  `mission-snapshots-codex-us018-20260623014108.json`; the file was an empty
+  JSON array because this mission currently has no snapshots.
+
+Result:
+
+- RCH-US-017 can move to `Manual pass`: every canonical mission domain route
+  rendered against the DB-backed server.
+- RCH-US-018 can move to `Manual pass`: API/export data, component coverage,
+  live rendered details expansion, and live browser download behavior are all
+  covered.
