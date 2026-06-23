@@ -3330,6 +3330,61 @@ Result:
   identity/roster alignment and downstream phone propagation fetch, not a
   current RCH terminal `send_error` state.
 
+## 2026-06-23 Repeated Propagated Send-Error Canary Check
+
+Trigger:
+
+- The operator again reported message `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+
+Runtime under test:
+
+- Local DB/config-backed server PID `2584`.
+- URL `http://127.0.0.1:18080/`.
+- SQLite store `RTH_Store\rch_state.sqlite3`.
+- Config file `RTH_Store\config.ini`.
+- API key `manual-test`.
+- Reticulumd RPC and LXMF ZeroMQ remained configured.
+
+Reported message evidence:
+
+- `/Chat/Messages?limit=500` returned `2a289...` as `State=propagated`,
+  `delivery_method=propagated`, `dispatch_status=accepted`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, no current `error`, and no current
+  `retry_reason`.
+- `/Events?limit=500` returned no current event for `2a289...`.
+- Direct SQLite state for the reported row is still canonical
+  `delivery_state=propagated`, `dispatch_status=accepted`.
+- After reloading the in-app browser Chat route, the page finished the boot
+  sequence and contained no `2a289...`, no `send_error`, and no failure-card
+  text.
+
+Fresh canary:
+
+- Sent broadcast `1ea7ba63979e4c76a76c0464cfa9764f` with content
+  `RCH RC broadcast fallback canary 20260623T114612Z`.
+- Polls `11:46:19Z` through `11:46:39Z` showed direct broadcast
+  `dispatch_status=in_progress`.
+- At `11:46:44Z`, the row converted to `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=in_progress`.
+- At `11:46:49Z`, the row reached `State=propagated`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  no current `error`, no current `retry_reason`, and 13 propagated targets.
+- `/Events` contained only `message_propagation_queued` followed by
+  `message_propagated` for the canary. No `message_delivery_failed` event was
+  emitted for this canary.
+
+Result:
+
+- No new backend code issue was found. The repeated `2a289...` card is stale
+  relative to current DB/API/browser state.
+- The current release-blocking behavior is still downstream identity/roster
+  alignment and phone/deck propagated-message receipt proof, not terminal RCH
+  fallback state.
+
 ## 2026-06-23 WebMap Rendered Marker/Zone Proof
 
 Scope:
