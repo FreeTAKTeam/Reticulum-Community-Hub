@@ -14498,21 +14498,56 @@ fn process_due_outbound_retry_messages(
             &mut delivery_update,
             shared_fanout_delivery_metadata(&message, dispatch_report.count),
         );
+        let success_metadata = outbound_delivery_metadata(
+            &message,
+            dispatch_report.count,
+            delivery_state == "propagated" || delivery_state == "delivered",
+            delivery_update,
+        );
         update_outbound_delivery_state(
             state,
             message.message_id.as_str(),
             delivery_state,
-            outbound_delivery_metadata(
-                &message,
-                dispatch_report.count,
-                delivery_state == "propagated" || delivery_state == "delivered",
-                delivery_update,
-            ),
+            success_metadata.clone(),
         )?;
+        let mut recovered_message = message.clone();
+        recovered_message.delivery_state = delivery_state.to_string();
+        clear_success_superseded_delivery_metadata(&mut recovered_message.delivery_metadata);
+        merge_delivery_metadata(&mut recovered_message.delivery_metadata, success_metadata);
+        record_outbound_retry_success_event(state, &recovered_message)?;
         report.dispatched += dispatch_report.count;
     }
     record_outbound_retry_worker_report(state, report, None);
     Ok(report)
+}
+
+fn record_outbound_retry_success_event(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+) -> Result<(), ApiError> {
+    let destination = message.destination.as_deref().unwrap_or("unknown");
+    if message.delivery_method == "propagated" {
+        let _ = record_system_event(
+            state,
+            "message_propagated",
+            &format!("Message accepted for propagation to {destination}"),
+            outbound_delivery_callback_metadata(
+                outbound_delivery_receipt_metadata(message, "propagation_acceptance"),
+                "retry_worker_success",
+            ),
+        )?;
+    } else {
+        let _ = record_system_event(
+            state,
+            "message_sent",
+            &format!("Message sent to {destination}"),
+            outbound_delivery_callback_metadata(
+                outbound_delivery_receipt_metadata(message, "dispatch_acceptance"),
+                "retry_worker_success",
+            ),
+        )?;
+    }
+    Ok(())
 }
 
 fn outbound_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
@@ -50267,6 +50302,88 @@ mod tests {
             stored.delivery_metadata["shared_payload_expanded_at"],
             "lxmf_legacy_batch_boundary"
         );
+    }
+
+    #[test]
+    fn outbound_retry_worker_emits_recovery_event_after_propagated_fallback_acceptance() {
+        let state = crate::AppState::default().with_lxmf_zmq_sdk(
+            unused_zmq_endpoint_for_rch_test(),
+            unused_zmq_endpoint_for_rch_test(),
+            "source-destination",
+        );
+        let now = crate::unix_now_ms();
+        for identity in [
+            "77b2539b72259af927e48c0f90721767",
+            "4bede2a6ecab26f234aac9bb894a441a",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), now),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "recovered-propagated-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "recovered broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "dispatch_status": "queued",
+                "error": "send_error",
+                "fallback_reason": "direct_dispatch_timeout",
+                "retry_reason": "send_error",
+                "retry_scheduled": true,
+                "next_attempt_at_ts_ms": now - 1,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        state
+            .system_events
+            .write()
+            .expect("events")
+            .push(r3akt_rch_core::SystemEventRecord {
+                event_id: "stale-failure".to_string(),
+                event_type: "message_delivery_failed".to_string(),
+                message: "Message delivery failed for unknown".to_string(),
+                timestamp_ms: now - 500,
+                metadata: crate::outbound_delivery_failure_metadata(&message, "send_error"),
+            });
+
+        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
+
+        assert_eq!(report.processed, 1);
+        assert_eq!(report.dispatched, 2);
+        let events = state.system_events.read().expect("events");
+        let recovery_event = events
+            .iter()
+            .find(|event| event.event_type == "message_propagated")
+            .expect("retry acceptance should emit propagation recovery event");
+        assert_eq!(
+            recovery_event.metadata["MessageID"],
+            "recovered-propagated-fallback"
+        );
+        assert_eq!(recovery_event.metadata["State"], "propagated");
+        assert_eq!(recovery_event.metadata["delivery_method"], "propagated");
+        assert_eq!(
+            recovery_event.metadata["delivery_policy_reason"],
+            "broadcast_direct_timeout_fallback"
+        );
+        let metadata = recovery_event.metadata["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
     }
 
     #[test]
