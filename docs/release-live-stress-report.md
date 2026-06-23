@@ -3161,6 +3161,69 @@ Result:
 - Final phone/deck receipt remains open: the active canary has not yet been
   proven in the Columba phone logs or embedded deck inboxes.
 
+## 2026-06-23 Receipt-Target Starvation Repair
+
+Trigger:
+
+- After the receipt-status rate-limit cap, canary
+  `b74328dc3e2b4088ab105b4a6690aeb9` reached accepted propagation but only
+  some fanout targets advanced.
+- Live polling showed the budget first re-polled already-terminal targets,
+  then repeatedly favored the earliest `sending` targets, so later fanout
+  targets could remain pending or unpolled indefinitely.
+
+Root-cause evidence:
+
+- The receipt loop walked targets in stored order on every pass.
+- With a four-RPC budget and two candidate IDs per child target, terminal or
+  in-progress targets at the front of the list could consume the whole pass.
+- The target metadata did not persist a per-target status-poll timestamp, so
+  equally unresolved `sending` targets could not rotate fairly across passes.
+
+Fix:
+
+- Terminal receipt targets are retained for message-state calculation but are
+  skipped for reticulumd status RPCs on later passes.
+- Pending/no-status targets are polled before already-known in-progress
+  targets.
+- Each target status update stores `receipt_last_poll_ts_ms`, and in-progress
+  targets are sorted by oldest target poll timestamp to rotate the limited
+  budget.
+- Added regression coverage:
+  `receipt_status_poll_budget_skips_terminal_targets`,
+  `receipt_status_poll_budget_prioritizes_unseen_pending_targets`, and
+  `receipt_status_poll_budget_rotates_in_progress_targets`.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_skips_terminal_targets`
+  passed.
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_prioritizes_unseen_pending_targets`
+  passed.
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_rotates_in_progress_targets`
+  passed.
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_prioritizes_newest_backlog`
+  passed.
+- `cargo test -p r3akt-rch-server propagated_broadcast_fallback` passed.
+- Rebuilt `target\release\r3akt-rch-server.exe` and restarted the
+  DB/config-backed manual server as PID `2584` on
+  `http://127.0.0.1:18080/`.
+- Live canary `b74328dc3e2b4088ab105b4a6690aeb9` remained
+  `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, and had no current `error` or
+  `retry_reason`.
+- Its receipt targets were six `sent: propagated resource` and seven
+  `sending`; all seven `sending` targets carried target-level poll timestamps,
+  and the oldest `sending` target changed over successive 10-second passes.
+- Reticulumd tail logs showed zero fresh `SDK_SECURITY_RATE_LIMITED` entries
+  while status polling continued.
+
+Result:
+
+- Pass for RCH receipt-reconciliation fairness under the bounded RPC budget.
+- Final phone/deck receipt remains open: the remaining seven targets are still
+  `sending`, so this closes RCH starvation but not end-device delivery proof.
+
 ## 2026-06-23 WebMap Rendered Marker/Zone Proof
 
 Scope:

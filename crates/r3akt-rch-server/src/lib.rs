@@ -10857,8 +10857,22 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
             continue;
         }
         mark_reticulumd_receipt_poll_attempt(state, &message_id, now_ms)?;
-        let mut statuses = Vec::new();
-        for target in &targets {
+        let mut statuses = targets
+            .iter()
+            .filter(|target| reticulumd_receipt_target_terminal(target))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut poll_targets = targets
+            .iter()
+            .filter(|target| !reticulumd_receipt_target_terminal(target))
+            .collect::<Vec<_>>();
+        poll_targets.sort_by_key(|target| {
+            (
+                reticulumd_receipt_target_poll_priority(target),
+                reticulumd_receipt_target_last_poll_ts_ms(target),
+            )
+        });
+        for target in poll_targets {
             match reticulumd_delivery_status(&mut client, &target.message_id, &mut rpc_budget) {
                 ReticulumdStatusPollResult::Found(delivery_status) => {
                     statuses.push(ReticulumdReceiptTarget {
@@ -10866,6 +10880,7 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
                         destination: target.destination.clone(),
                         status: Some(delivery_status.receipt_status),
                         sdk_snapshot: Some(delivery_status.snapshot),
+                        last_poll_ts_ms: Some(now_ms),
                     });
                 }
                 ReticulumdStatusPollResult::NotFound => {}
@@ -11022,6 +11037,7 @@ struct ReticulumdReceiptTarget {
     destination: String,
     status: Option<String>,
     sdk_snapshot: Option<LxmfDeliverySnapshot>,
+    last_poll_ts_ms: Option<i64>,
 }
 
 fn reticulumd_receipt_targets_for_message(
@@ -11055,6 +11071,9 @@ fn reticulumd_receipt_targets_for_message(
                             .filter(|status| !status.is_empty())
                             .map(ToString::to_string),
                         sdk_snapshot: None,
+                        last_poll_ts_ms: object
+                            .get("receipt_last_poll_ts_ms")
+                            .and_then(Value::as_i64),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -11066,6 +11085,7 @@ fn reticulumd_receipt_targets_for_message(
             destination: message.destination.clone().unwrap_or_default(),
             status: None,
             sdk_snapshot: None,
+            last_poll_ts_ms: None,
         });
     }
     targets
@@ -11100,6 +11120,7 @@ fn update_reticulumd_receipt_target_statuses(
                 target.status.clone_from(&status.status);
                 target.sdk_snapshot.clone_from(&status.sdk_snapshot);
             }
+            target.last_poll_ts_ms = status.last_poll_ts_ms;
         }
     }
     let sdk_metadata = statuses
@@ -11136,6 +11157,12 @@ fn reticulumd_receipt_targets_json(targets: &[ReticulumdReceiptTarget]) -> Value
                     merge_delivery_metadata(
                         &mut value,
                         sdk_delivery_snapshot_metadata_json(snapshot),
+                    );
+                }
+                if let Some(last_poll_ts_ms) = target.last_poll_ts_ms {
+                    merge_delivery_metadata(
+                        &mut value,
+                        json!({ "receipt_last_poll_ts_ms": last_poll_ts_ms }),
                     );
                 }
                 value
@@ -11343,6 +11370,27 @@ fn reticulumd_receipt_target_peer_not_announced(target: &ReticulumdReceiptTarget
             .as_deref()
             .is_some_and(|reason| reason.eq_ignore_ascii_case("peer_not_announced"))
     })
+}
+
+fn reticulumd_receipt_target_terminal(target: &ReticulumdReceiptTarget) -> bool {
+    reticulumd_receipt_target_success_terminal(target)
+        || reticulumd_receipt_target_failure_terminal(target)
+}
+
+fn reticulumd_receipt_target_poll_priority(target: &ReticulumdReceiptTarget) -> u8 {
+    if target
+        .status
+        .as_deref()
+        .is_none_or(|status| status.trim().eq_ignore_ascii_case("pending"))
+    {
+        0
+    } else {
+        1
+    }
+}
+
+fn reticulumd_receipt_target_last_poll_ts_ms(target: &ReticulumdReceiptTarget) -> i64 {
+    target.last_poll_ts_ms.unwrap_or_default()
 }
 
 fn propagated_fanout_partial_success_status(
@@ -14195,6 +14243,7 @@ fn dispatch_outbound_message(
                 destination: result.destination,
                 status: None,
                 sdk_snapshot: None,
+                last_poll_ts_ms: None,
             });
         }
         return Ok(report);
@@ -14244,6 +14293,7 @@ fn dispatch_outbound_message(
                     destination: result.destination,
                     status: None,
                     sdk_snapshot: None,
+                    last_poll_ts_ms: None,
                 });
             }
             continue;
@@ -14282,6 +14332,7 @@ fn dispatch_outbound_message(
             destination,
             status: None,
             sdk_snapshot: None,
+            last_poll_ts_ms: None,
         });
     }
     Ok(report)
@@ -14419,6 +14470,7 @@ fn dispatch_outbound_message_legacy_rpc_for_tests(
             destination,
             status: None,
             sdk_snapshot: None,
+            last_poll_ts_ms: None,
         });
     }
     Ok(report)
@@ -48167,7 +48219,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
             responses,
-            Duration::from_millis(200),
+            Duration::from_secs(1),
         );
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-reticulumd-status-budget-{}.db",
@@ -48248,6 +48300,304 @@ mod tests {
                     .and_then(Value::as_str)
                     .is_some_and(|message_id| message_id.starts_with("sdk-newest-backlog-"))
         }));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn receipt_status_poll_budget_skips_terminal_targets() {
+        let responses = (0..crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS)
+            .map(|_| {
+                json!({
+                    "message": {
+                        "message_id": "sdk-pending-target",
+                        "state": "sent",
+                        "terminal": true,
+                        "receipt_status": "sent: propagated resource"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            responses,
+            Duration::from_millis(200),
+        );
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-reticulumd-status-skip-terminal-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "skip-terminal-backlog".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "skip terminal targets".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 4,
+                "receipt_last_poll_ts_ms": now - crate::RETICULUMD_RECEIPT_STATUS_POLL_MS,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-terminal-target-a",
+                        "destination": "destination-a",
+                        "status": "sent: propagated resource",
+                        "sdk_delivery_state": "sent",
+                        "sdk_terminal": true
+                    },
+                    {
+                        "message_id": "sdk-terminal-target-b",
+                        "destination": "destination-b",
+                        "status": "sent: propagated resource",
+                        "sdk_delivery_state": "sent",
+                        "sdk_terminal": true
+                    },
+                    {
+                        "message_id": "sdk-pending-target-c",
+                        "destination": "destination-c",
+                        "status": "pending"
+                    },
+                    {
+                        "message_id": "sdk-pending-target-d",
+                        "destination": "destination-d",
+                        "status": "pending"
+                    }
+                ],
+                "receipt_pending": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert!(requests.len() >= 2);
+        assert!(requests.iter().take(2).all(|request| {
+            request.method == "sdk_status_v2"
+                && request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("message_id"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message_id| message_id.starts_with("sdk-pending-target-"))
+        }));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn receipt_status_poll_budget_prioritizes_unseen_pending_targets() {
+        let responses = (0..crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS)
+            .map(|_| {
+                json!({
+                    "message": {
+                        "message_id": "sdk-unseen-target",
+                        "state": "sent",
+                        "terminal": true,
+                        "receipt_status": "sent: propagated resource"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            responses,
+            Duration::from_millis(200),
+        );
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-reticulumd-status-prioritize-pending-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "prioritize-pending-backlog".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "prioritize unseen pending targets".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 4,
+                "receipt_last_poll_ts_ms": now - crate::RETICULUMD_RECEIPT_STATUS_POLL_MS,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-in-progress-target-a",
+                        "destination": "destination-a",
+                        "status": "sending",
+                        "sdk_delivery_state": "dispatching",
+                        "sdk_terminal": false
+                    },
+                    {
+                        "message_id": "sdk-in-progress-target-b",
+                        "destination": "destination-b",
+                        "status": "sending",
+                        "sdk_delivery_state": "dispatching",
+                        "sdk_terminal": false
+                    },
+                    {
+                        "message_id": "sdk-unseen-target-c",
+                        "destination": "destination-c",
+                        "status": "pending"
+                    },
+                    {
+                        "message_id": "sdk-unseen-target-d",
+                        "destination": "destination-d",
+                        "status": "pending"
+                    }
+                ],
+                "receipt_pending": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert!(requests.len() >= 2);
+        assert!(requests.iter().take(2).all(|request| {
+            request.method == "sdk_status_v2"
+                && request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("message_id"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message_id| message_id.starts_with("sdk-unseen-target-"))
+        }));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn receipt_status_poll_budget_rotates_in_progress_targets() {
+        let responses = (0..crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS)
+            .map(|_| {
+                json!({
+                    "message": {
+                        "message_id": "sdk-stale-in-progress-target",
+                        "state": "dispatching",
+                        "terminal": false,
+                        "receipt_status": "sending"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            responses,
+            Duration::from_millis(200),
+        );
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-reticulumd-status-rotate-in-progress-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "rotate-in-progress-backlog".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "rotate in-progress targets".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 4,
+                "receipt_last_poll_ts_ms": now - crate::RETICULUMD_RECEIPT_STATUS_POLL_MS,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-recent-in-progress-target-a",
+                        "destination": "destination-a",
+                        "status": "sending",
+                        "receipt_last_poll_ts_ms": now
+                    },
+                    {
+                        "message_id": "sdk-recent-in-progress-target-b",
+                        "destination": "destination-b",
+                        "status": "sending",
+                        "receipt_last_poll_ts_ms": now
+                    },
+                    {
+                        "message_id": "sdk-stale-in-progress-target-c",
+                        "destination": "destination-c",
+                        "status": "sending"
+                    },
+                    {
+                        "message_id": "sdk-stale-in-progress-target-d",
+                        "destination": "destination-d",
+                        "status": "sending"
+                    }
+                ],
+                "receipt_pending": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert!(requests.len() >= 2);
+        assert!(requests.iter().take(2).all(|request| {
+            request.method == "sdk_status_v2"
+                && request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("message_id"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message_id| message_id.starts_with("sdk-stale-in-progress-"))
+        }));
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let stored = snapshot
+            .messages
+            .iter()
+            .find(|message| message.message_id == "rotate-in-progress-backlog")
+            .expect("stored message");
+        let targets = stored.delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("receipt targets");
+        assert!(
+            targets
+                .iter()
+                .filter(|target| target["message_id"]
+                    .as_str()
+                    .is_some_and(|message_id| message_id.starts_with("sdk-stale-in-progress-")))
+                .all(|target| target
+                    .get("receipt_last_poll_ts_ms")
+                    .and_then(Value::as_i64)
+                    .is_some())
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
