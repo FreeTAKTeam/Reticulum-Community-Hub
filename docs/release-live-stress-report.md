@@ -3783,3 +3783,56 @@ Result:
   retry now remains visible as `send_timeout`.
 - The user-reported message is accepted in the current DB state, not terminal
   `failed`; final RC gate remains downstream phone/deck receipt proof.
+
+## 2026-06-23 Phone Propagation Receipt Probe After Timeout Label Fix
+
+Setup:
+
+- Rebuilt and restarted the DB/config-backed local server from
+  `target\release\r3akt-rch-server.exe` on `http://127.0.0.1:18080/` as PID
+  `24116`.
+- Runtime status after restart:
+  - `queue_depth=0`.
+  - `pending_dispatches=0`.
+  - `pending_receipts=0`.
+- ADB saw only one USB phone:
+  - `988b9b344135304639` / `SM-G950W`.
+  - The previously connected Pixel was not present in `adb devices`.
+- The S8 had:
+  - `network.reticulum.emergency` version `1.1.2`, process PID `30328`.
+  - `com.lxmf.messenger` version `0.10.10`, foreground activity token
+    `.MainActivity`.
+  - The screen locked at SystemUI, so UI inbox proof could not be completed
+    through `uiautomator`.
+
+Fresh broadcast canary:
+
+- Sent content `RCH RC phone receipt canary 20260623T141939Z`.
+- Stored message ID: `b56569da-86d6-47f5-aaa1-c8e21fe00fe6`.
+- RCH selected immediate propagated delivery:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_unannounced`.
+  - `reticulumd_dispatch_count=6`.
+  - no `error`.
+  - no `retry_reason`.
+- Receipt polling rotated across all six current targets, but after the poll
+  window all six remained `sending`.
+
+Phone evidence:
+
+- S8 logs contained no canary content or message ID.
+- S8 Reticulum service repeatedly attempted propagation sync and failed all
+  relays:
+  - `propagation sync relay attempt failed ... reason=timeout`.
+  - `propagation sync failed reason=propagation sync failed: all relay attempts failed`.
+- RCH `/api/rem/peers` remained empty with `effective_connected_mode=false`.
+
+Result:
+
+- RCH broadcast queue and propagation enqueue path remain healthy after the
+  timeout-label fix.
+- Final RC receipt proof is still blocked downstream of RCH: the only visible
+  phone is locked and its local Reticulum propagation sync is timing out before
+  the canary is fetched.
