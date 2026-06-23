@@ -98,6 +98,26 @@ const byLabelText = (label: string) => {
   return select;
 };
 
+const associatedSelectByLabel = (label: string) => {
+  const labelNode = Array.from(document.querySelectorAll("label")).find((entry) =>
+    (entry.textContent ?? "").includes(label)
+  );
+  if (!(labelNode instanceof HTMLLabelElement)) {
+    throw new Error(`Label not found: ${label}`);
+  }
+  expect(labelNode.htmlFor).not.toBe("");
+  const select = document.getElementById(labelNode.htmlFor);
+  expect(select).toBeInstanceOf(HTMLSelectElement);
+  return select as HTMLSelectElement;
+};
+
+const expectUniqueSelectLabelTargets = () => {
+  const targets = Array.from(document.querySelectorAll(".topic-assets-modal-panel label"))
+    .map((label) => (label as HTMLLabelElement).htmlFor)
+    .filter(Boolean);
+  expect(new Set(targets).size).toBe(targets.length);
+};
+
 const selectOption = async (label: string, value: string) => {
   const select = byLabelText(label);
   select.value = value;
@@ -210,6 +230,8 @@ describe("topics page", () => {
     expect(text()).toContain("Topic Assets: Alpha");
     expect(text()).toContain("Available Files In Asset Library");
     expect(text()).toContain("open.txt");
+    expectUniqueSelectLabelTargets();
+    expect(associatedSelectByLabel("Library File").value).toBe("");
 
     await selectOption("Library File", "file-open");
     await clickButton("Attach File");
