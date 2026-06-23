@@ -206,6 +206,47 @@ Result:
   all passed. The no-payload first inbound attempt is recorded as a transient
   external relay observation; no product code change was needed.
 
+## Python Install/Import Migration RC Rehearsal - 2026-06-23 UTC
+
+Scope:
+
+- First-start Python import discovery and runtime file copy helpers.
+- Core Python SQLite/config/telemetry migration.
+- `migrate_python_rch` CLI behavior.
+- Production migration wrapper dry-run and fixture apply behavior.
+
+Commands:
+
+- `cargo test -p r3akt-rch-server python_import`
+- `cargo test -p r3akt-rch-core python_migration`
+- `cargo test -p r3akt-rch-core parses_required_paths`
+- `cargo test -p r3akt-rch-core migrates_database_and_config_from_parsed_args`
+- `cargo test -p r3akt-rch-core reports_missing_required_paths_before_migrating`
+- `powershell -ExecutionPolicy Bypass -File scripts/import-python-rch-production.Tests.ps1`
+
+Passed checks:
+
+- First-run import gating only prompts for new/empty Rust stores.
+- Config-based Python source discovery recognizes `[migration].python_store`.
+- Missing source normalization rejects absent stores and absent `rth_api.sqlite`
+  files.
+- Import by legacy database path copies `identity`, `reticulumd.identity`,
+  `telemetry.db`, nested runtime files, imported topic rows, imported
+  `python_config.*` settings, and records migration completion.
+- Core migration imports identity/topic tables and R3AKT operational tables.
+- CLI migrator parses required paths, imports config and telemetry into the
+  target DB, and fails before mutating when required paths are missing.
+- The production wrapper writes a dry-run `migration-plan.json`; fixture apply
+  copies config, identity, Reticulum transport identity/config, telemetry DBs,
+  files, images, LXMF data, `reticulumd.toml`, `rust-migration-report.json`,
+  `migration-plan.json`, `migration-manifest.json`, and `MANIFEST.txt`.
+
+Result:
+
+- RCH-US-027 is current for RC against disposable Python-style stores. A real
+  release deployment still needs a source-specific `-DryRun` against the actual
+  Python store before applying the migration.
+
 ## Assets, Assignments, And Skills API Retest - 2026-06-23 UTC
 
 Runtime under test:
