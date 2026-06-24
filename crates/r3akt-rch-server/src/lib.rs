@@ -12378,7 +12378,11 @@ fn normalized_delivery_state(message: &OutboundMessageRecord) -> String {
 
 fn effective_delivery_state(message: &OutboundMessageRecord) -> String {
     let state = normalized_delivery_state(message);
-    if state == "failed" && retryable_propagation_fallback_repair_pending(message) {
+    if state == "failed" && retryable_propagation_fallback_has_successful_dispatch(message) {
+        "propagated".to_string()
+    } else if state == "failed" && retryable_propagation_fallback_has_active_dispatch(message) {
+        "propagating".to_string()
+    } else if state == "failed" && retryable_propagation_fallback_repair_pending(message) {
         "queued".to_string()
     } else if state == "propagated" && propagated_dispatch_has_active_targets(message) {
         "propagating".to_string()
@@ -12404,7 +12408,7 @@ fn retryable_propagation_fallback_repair_pending(message: &OutboundMessageRecord
 }
 
 fn propagated_dispatch_has_active_targets(message: &OutboundMessageRecord) -> bool {
-    if message.delivery_method != "propagated" {
+    if message.delivery_method != "propagated" || !message_has_reticulumd_receipt_targets(message) {
         return false;
     }
     let targets = reticulumd_receipt_targets_for_message(message);
@@ -12413,6 +12417,29 @@ fn propagated_dispatch_has_active_targets(message: &OutboundMessageRecord) -> bo
             .iter()
             .any(|target| reticulumd_status_still_active(target.status.as_deref()))
         && !targets
+            .iter()
+            .any(reticulumd_receipt_target_success_terminal)
+}
+
+fn message_has_reticulumd_receipt_targets(message: &OutboundMessageRecord) -> bool {
+    message
+        .delivery_metadata
+        .get("reticulumd_receipt_targets")
+        .and_then(Value::as_array)
+        .is_some_and(|targets| !targets.is_empty())
+}
+
+fn retryable_propagation_fallback_has_active_dispatch(message: &OutboundMessageRecord) -> bool {
+    propagated_direct_timeout_fallback(message)
+        && propagated_fallback_has_retryable_error(message)
+        && propagated_dispatch_has_active_targets(message)
+}
+
+fn retryable_propagation_fallback_has_successful_dispatch(message: &OutboundMessageRecord) -> bool {
+    propagated_direct_timeout_fallback(message)
+        && propagated_fallback_has_retryable_error(message)
+        && message_has_reticulumd_receipt_targets(message)
+        && reticulumd_receipt_targets_for_message(message)
             .iter()
             .any(reticulumd_receipt_target_success_terminal)
 }
@@ -12435,10 +12462,10 @@ fn delivery_receipt_pending(message: &OutboundMessageRecord) -> bool {
 }
 
 fn reticulumd_status_poll_candidate(message: &OutboundMessageRecord) -> bool {
-    if matches!(
-        normalized_delivery_state(message).as_str(),
-        "delivered" | "failed"
-    ) {
+    let state = normalized_delivery_state(message);
+    if state == "delivered"
+        || (state == "failed" && !retryable_propagation_fallback_has_active_dispatch(message))
+    {
         return false;
     }
     if delivery_receipt_pending(message) {
@@ -52088,6 +52115,92 @@ mod tests {
         assert!(!metadata.contains_key("retry_reason"));
         assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
         assert_eq!(metadata["dispatch_status"], "failed");
+    }
+
+    #[test]
+    fn chat_message_payload_projects_active_failed_propagated_fallback_as_propagating() {
+        let now = crate::unix_now_ms();
+        let targets = vec![crate::ReticulumdReceiptTarget {
+            message_id: "active-failed-propagated-broadcast-retry5-peer".to_string(),
+            destination: "11a7907d67c457911c15206ec647ad33".to_string(),
+            status: Some("sending".to_string()),
+            sdk_snapshot: None,
+            last_poll_ts_ms: Some(now - 250),
+        }];
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "active-failed-propagated-broadcast".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "dispatch_status": "accepted",
+                "error": "send_error",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": crate::reticulumd_receipt_targets_json(&targets),
+                "retry_reason": "send_error",
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        assert_eq!(payload["State"], "propagating");
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
+        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[test]
+    fn chat_message_payload_projects_successful_failed_propagated_fallback_as_propagated() {
+        let now = crate::unix_now_ms();
+        let targets = vec![crate::ReticulumdReceiptTarget {
+            message_id: "successful-failed-propagated-broadcast-retry5-peer".to_string(),
+            destination: "11a7907d67c457911c15206ec647ad33".to_string(),
+            status: Some("sent: propagated resource".to_string()),
+            sdk_snapshot: None,
+            last_poll_ts_ms: Some(now - 250),
+        }];
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "successful-failed-propagated-broadcast".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "dispatch_status": "accepted",
+                "error": "send_error",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": crate::reticulumd_receipt_targets_json(&targets),
+                "retry_reason": "send_error",
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        assert_eq!(payload["State"], "propagated");
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
+        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
     }
 
     #[test]

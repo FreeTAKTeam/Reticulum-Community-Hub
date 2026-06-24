@@ -4611,3 +4611,78 @@ Result:
   intended DB/config and reticulumd configuration.
 - Phone/deck inbox receipt remains the open RC gate; RCH propagation enqueue
   and reticulumd acceptance are passing.
+
+## 2026-06-24 Active Propagated Fallback Failure Projection Repair
+
+Setup:
+
+- Continued from the DB/config-backed local runtime at
+  `http://127.0.0.1:18080/` using `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, Reticulumd RPC
+  `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- Rechecked operator-reported broadcast
+  `2a2892b3227b427487308d53712dd163` through `/Chat/Messages` and
+  `RTH_Store\reticulumd.sqlite3`.
+
+Findings and fixes:
+
+- The reported UI card showed `State=failed`, `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`, and
+  `Failure Reason=send_error`.
+- The current API row had already reconciled to `State=propagated`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=6`,
+  `receipt_status=sent: propagated resource`, and no current `error` or
+  `retry_reason`.
+- Reticulumd had six current fanout rows for the message at
+  `sent: propagated resource`; older fanout targets remained `sending` and had
+  already been pruned from the RCH view as stale.
+- Added projection coverage for retryable propagated direct-timeout fallbacks
+  that are stored as `failed/send_error` after reticulumd work has started:
+  active fanout targets now render as `State=propagating`, successful fanout
+  targets render as `State=propagated`, and stale failure metadata is hidden in
+  both cases.
+- Kept failed rows with active propagated fallback targets eligible for
+  reticulumd receipt polling so they can reconcile instead of freezing in a
+  terminal-looking state.
+
+Verification:
+
+- Confirmed the new active-target regression failed before the production
+  patch with `left: String("failed")`, `right: "propagating"`.
+- `cargo test --quiet -p r3akt-rch-server --lib failed_propagated_fallback`
+  passed in a single-job isolated target directory after creating the target
+  `debug\deps` path explicitly; both new regressions passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo test --quiet -p r3akt-rch-server --lib chat_message_payload_`
+  passed.
+- `cargo test --quiet -p r3akt-rch-server --lib` passed with 308 passed and
+  33 ignored.
+- `cargo clippy --quiet -p r3akt-rch-server --all-targets -- -D warnings`
+  passed in the isolated target directory.
+- `cargo build --release -p r3akt-rch-server --quiet` passed.
+- Rebuilt sibling `LXMF-rs` reticulumd with
+  `cargo build --release -p reticulumd --features zmq-pipeline-rpc`; the
+  first build was still holding Cargo's artifact lock, and the captured rerun
+  completed successfully.
+- Restarted reticulumd PID `7036` and RCH PID `21492` with the configured
+  `RTH_Store` database/config, HTTP RPC `127.0.0.1:14243`, ZMQ command
+  `tcp://127.0.0.1:19100`, ZMQ response `tcp://127.0.0.1:19101`, and API key
+  `manual-test`. `/Status` returned runtime `rust`, retry worker running, and
+  HTTP `/` returned `200`.
+- Fresh broadcast canary `c8100ab917f144879da9fc0ce1a31422` returned from
+  `POST /Chat/Message` in 1810 ms as `queued` / `queued_deferred`, then stayed
+  `State=propagating`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=6`, no current `error`, and no current
+  `retry_reason` for the two-minute poll window.
+- The same canary did not create matching rows in `RTH_Store\reticulumd.sqlite3`
+  during that window; keep this as downstream transport/receipt evidence, not
+  as a terminal RCH failure.
+
+Result:
+
+- A transient or stale `failed/send_error` base row no longer overrides
+  propagated fallback evidence once reticulumd fanout is active or successful.
+- Terminal invalid-destination failures remain visible as failures.
+- Phone/deck inbox receipt remains open; this fix only prevents RCH/UI state
+  from presenting active or successful propagation as a terminal broadcast
+  failure.
