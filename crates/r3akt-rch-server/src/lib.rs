@@ -12378,11 +12378,29 @@ fn normalized_delivery_state(message: &OutboundMessageRecord) -> String {
 
 fn effective_delivery_state(message: &OutboundMessageRecord) -> String {
     let state = normalized_delivery_state(message);
-    if state == "propagated" && propagated_dispatch_has_active_targets(message) {
+    if state == "failed" && retryable_propagation_fallback_repair_pending(message) {
+        "queued".to_string()
+    } else if state == "propagated" && propagated_dispatch_has_active_targets(message) {
         "propagating".to_string()
     } else {
         state
     }
+}
+
+fn retryable_propagation_fallback_repair_pending(message: &OutboundMessageRecord) -> bool {
+    propagated_direct_timeout_fallback(message)
+        && propagated_fallback_has_retryable_error(message)
+        && message
+            .delivery_metadata
+            .get("dispatch_status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| matches!(status, "failed" | "queued"))
+        && message
+            .delivery_metadata
+            .get("reticulumd_dispatch_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            == 0
 }
 
 fn propagated_dispatch_has_active_targets(message: &OutboundMessageRecord) -> bool {
@@ -15478,6 +15496,14 @@ fn delivery_state_clears_error_metadata(delivery_state: &str) -> bool {
         delivery_state,
         "sent" | "delivered" | "propagated" | "propagating"
     )
+}
+
+fn delivery_state_clears_error_metadata_for_message(
+    message: &OutboundMessageRecord,
+    delivery_state: &str,
+) -> bool {
+    delivery_state_clears_error_metadata(delivery_state)
+        || (delivery_state == "queued" && retryable_propagation_fallback_repair_pending(message))
 }
 
 #[cfg(test)]
@@ -20351,7 +20377,7 @@ fn chat_message_payload(message: OutboundMessageRecord) -> Value {
         .map(chat_attachment_to_python_value)
         .collect::<Vec<_>>();
     let mut delivery_metadata = message.delivery_metadata.clone();
-    if delivery_state_clears_error_metadata(state.as_str()) {
+    if delivery_state_clears_error_metadata_for_message(&message, state.as_str()) {
         clear_success_superseded_delivery_metadata(&mut delivery_metadata);
     }
     if let Some(metadata) = delivery_metadata.as_object_mut() {
@@ -52026,6 +52052,76 @@ mod tests {
         assert!(!metadata.contains_key("error"));
         assert!(!metadata.contains_key("retry_reason"));
         assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[test]
+    fn chat_message_payload_projects_retryable_propagated_fallback_failure_as_queued() {
+        let now = crate::unix_now_ms();
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "retryable-propagated-broadcast-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 3,
+                "dispatch_status": "failed",
+                "error": "send_error",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "reticulumd_dispatch_count": 0,
+                "retry_reason": "send_error",
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        assert_eq!(payload["State"], "queued");
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
+        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+        assert_eq!(metadata["dispatch_status"], "failed");
+    }
+
+    #[test]
+    fn chat_message_payload_keeps_terminal_propagated_fallback_failure_visible() {
+        let now = crate::unix_now_ms();
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "terminal-propagated-broadcast-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 1,
+                "dispatch_status": "failed",
+                "error": "failed: invalid destination hash 'not-hex' (expected 16-byte or 32-byte hex)",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "reticulumd_dispatch_count": 1,
+                "retry_reason": "send_error",
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        assert_eq!(payload["State"], "failed");
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(metadata.contains_key("error"));
+        assert!(metadata.contains_key("retry_reason"));
+        assert!(metadata.contains_key("last_attempt_failed_at_ts_ms"));
     }
 
     #[test]

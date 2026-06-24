@@ -4555,3 +4555,59 @@ Result:
   before enqueueing.
 - Current RC blocker remains downstream reticulumd/device completion: fresh
   targets can remain `sending` and phone/deck inbox receipt remains unproven.
+
+## 2026-06-24 Retryable Propagated Failure Projection Repair
+
+Setup:
+
+- Kept the same DB/config-backed runtime and reticulumd instance:
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, reticulumd PID
+  `26456`, reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ command/response
+  endpoints.
+- Rebuilt and restarted `target\release\r3akt-rch-server.exe` on
+  `http://127.0.0.1:18080/`; verified patched RCH PID `14956`.
+- USB phones remained visible as Pixel 7 `35031FDH2003N8` and SM-G950W
+  `988b9b344135304639`.
+
+Findings and fixes:
+
+- User again reported `2a2892b3227b427487308d53712dd163` as
+  `State=failed`, `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`, and
+  `Failure Reason=send_error`.
+- The current API row for that message is clean `State=propagated`,
+  `method=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=6`, `receipt_status=sent: propagated resource`,
+  and has no current `error` or `retry_reason`.
+- Patched chat payload projection so retryable propagated direct-timeout
+  fallbacks with no accepted reticulumd dispatch are rendered as `queued`, and
+  their stale `error`, `retry_reason`, and `last_attempt_failed_at_ts_ms`
+  fields are hidden while repair is pending. Terminal failures such as invalid
+  destination hashes remain visible as `failed`.
+
+Verification:
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test -p r3akt-rch-server chat_message_payload_` passed.
+- `cargo test -p r3akt-rch-server` passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo build --release -p r3akt-rch-server` passed after stopping the prior
+  Windows-locked server executable.
+- Fresh post-restart canary `37579b4d028c4b75acca8b6c2dc84880` returned from
+  POST in 1129 ms, then advanced to `State=propagating`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=6`, six receipt
+  targets, and no `error` or `retry_reason`.
+- HTTP `/` served the UI shell with `200` and script assets; `/Status`
+  reported runtime `rust`, PID `14956`, and the retry worker running. The
+  available browser controller was on `about:blank`, so rendered proof was not
+  collected in this pass.
+
+Result:
+
+- A legitimate retryable `send_error` during propagated fallback no longer
+  appears to the operator as a terminal failed broadcast while RCH is still
+  eligible to queue propagation repair.
+- The current RCH server is running at `http://127.0.0.1:18080/` with the
+  intended DB/config and reticulumd configuration.
+- Phone/deck inbox receipt remains the open RC gate; RCH propagation enqueue
+  and reticulumd acceptance are passing.
