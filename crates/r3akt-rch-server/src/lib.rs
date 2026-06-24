@@ -14189,13 +14189,16 @@ fn record_outbound_message_with_metadata_mode(
     let dispatch_report = match dispatch_outbound_message(state, &message) {
         Ok(dispatch_report) => {
             let dispatch_count = dispatch_report.count;
-            let (delivery_state, dispatch_status) = if dispatch_count > 0 {
+            let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.deferred {
+                ("queued", "queued_deferred", false)
+            } else if dispatch_count > 0 {
                 (
                     delivery_accepted_state(&message, dispatch_count),
                     "accepted",
+                    false,
                 )
             } else {
-                ("queued", "not_configured")
+                ("queued", "not_configured", false)
             };
             let receipt_pending =
                 reticulumd_receipt_pending_after_dispatch(&message, dispatch_count, delivery_state);
@@ -14207,6 +14210,7 @@ fn record_outbound_message_with_metadata_mode(
                 "receipt_pending": receipt_pending,
                 "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
                 "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
+                "retry_scheduled": retry_scheduled,
             });
             merge_delivery_metadata(
                 &mut delivery_update,
@@ -14370,7 +14374,8 @@ fn dispatch_outbound_message(
             recipients,
         };
         let batch = lxmf_shared_batch_to_legacy_batch(shared_batch);
-        let batch_result = if should_enqueue_without_waiting_for_zmq_response(message) {
+        let deferred_dispatch = should_enqueue_without_waiting_for_zmq_response(message);
+        let batch_result = if deferred_dispatch {
             enqueue_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
         } else {
             send_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
@@ -14396,6 +14401,7 @@ fn dispatch_outbound_message(
                 last_poll_ts_ms: None,
             });
         }
+        report.deferred = deferred_dispatch;
         return Ok(report);
     }
 
@@ -14446,6 +14452,7 @@ fn dispatch_outbound_message(
                     last_poll_ts_ms: None,
                 });
             }
+            report.deferred = true;
             continue;
         }
         let dispatch_result = send_lxmf_zmq_outbound_message(
@@ -14655,6 +14662,7 @@ fn lxmf_sdk_try_propagation_on_fail(message: &OutboundMessageRecord) -> bool {
 #[derive(Default)]
 struct DispatchReport {
     count: usize,
+    deferred: bool,
     receipts: Vec<ReticulumdReceiptTarget>,
 }
 
@@ -14834,7 +14842,15 @@ fn process_due_outbound_retry_messages(
         if dispatch_report.count == 0 {
             continue;
         }
-        let delivery_state = delivery_accepted_state(&message, dispatch_report.count);
+        let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.deferred {
+            ("queued", "queued_deferred", false)
+        } else {
+            (
+                delivery_accepted_state(&message, dispatch_report.count),
+                "accepted",
+                false,
+            )
+        };
         let receipt_pending = reticulumd_receipt_pending_after_dispatch(
             &message,
             dispatch_report.count,
@@ -14842,13 +14858,13 @@ fn process_due_outbound_retry_messages(
         );
         let receipt_registered_ts_ms = unix_now_ms();
         let mut delivery_update = json!({
-            "dispatch_status": "accepted",
+            "dispatch_status": dispatch_status,
             "reticulumd_dispatch_count": dispatch_report.count,
             "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
             "receipt_pending": receipt_pending,
             "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
             "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
-            "retry_scheduled": false,
+            "retry_scheduled": retry_scheduled,
         });
         merge_delivery_metadata(
             &mut delivery_update,
@@ -14870,8 +14886,10 @@ fn process_due_outbound_retry_messages(
         recovered_message.delivery_state = delivery_state.to_string();
         clear_success_superseded_delivery_metadata(&mut recovered_message.delivery_metadata);
         merge_delivery_metadata(&mut recovered_message.delivery_metadata, success_metadata);
-        record_outbound_retry_success_event(state, &recovered_message)?;
-        report.dispatched += dispatch_report.count;
+        if !dispatch_report.deferred {
+            record_outbound_retry_success_event(state, &recovered_message)?;
+            report.dispatched += dispatch_report.count;
+        }
     }
     record_outbound_retry_worker_report(state, report, None);
     Ok(report)
@@ -51341,14 +51359,19 @@ mod tests {
         let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
 
         assert_eq!(report.processed, 1);
-        assert_eq!(report.dispatched, 2);
+        assert_eq!(report.dispatched, 0);
         let messages = state.messages.read().expect("messages");
         assert_eq!(messages.len(), 1);
         let stored = messages
             .iter()
             .find(|stored| stored.message_id == message.message_id)
             .expect("stored message");
-        assert_eq!(stored.delivery_state, "propagating");
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(
+            stored.delivery_metadata["dispatch_status"],
+            "queued_deferred"
+        );
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
         assert_eq!(stored.delivery_metadata["reticulumd_dispatch_count"], 2);
         assert_eq!(
             stored.delivery_metadata["fanout_payload_model"],
@@ -51365,7 +51388,86 @@ mod tests {
     }
 
     #[test]
-    fn outbound_retry_worker_emits_recovery_event_after_propagated_fallback_acceptance() {
+    fn outbound_retry_worker_keeps_deferred_zmq_enqueue_pending_until_daemon_ack() {
+        let state = crate::AppState::default().with_lxmf_zmq_sdk(
+            unused_zmq_endpoint_for_rch_test(),
+            unused_zmq_endpoint_for_rch_test(),
+            "source-destination",
+        );
+        let now = crate::unix_now_ms();
+        for identity in [
+            "77b2539b72259af927e48c0f90721767",
+            "4bede2a6ecab26f234aac9bb894a441a",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), now),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "deferred-zmq-unconfirmed".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "deferred unconfirmed".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_unannounced".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "queued",
+                "retry_scheduled": true,
+                "next_attempt_at_ts_ms": now - 1,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
+
+        assert_eq!(report.processed, 1);
+        assert_eq!(report.dispatched, 0);
+        let stored = state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .find(|stored| stored.message_id == message.message_id)
+            .expect("stored message")
+            .clone();
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(
+            stored.delivery_metadata["dispatch_status"],
+            "queued_deferred"
+        );
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(stored.delivery_metadata["reticulumd_dispatch_count"], 2);
+        assert_eq!(
+            stored.delivery_metadata["reticulumd_receipt_targets"][0]["status"],
+            "pending"
+        );
+        let payload = crate::chat_message_payload(stored);
+        assert_eq!(payload["State"], "queued");
+        assert_eq!(
+            payload["DeliveryMetadata"]["dispatch_status"],
+            "queued_deferred"
+        );
+        let events = state.system_events.read().expect("events");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "message_propagated"),
+            "unconfirmed deferred enqueue must not emit a propagation success event"
+        );
+    }
+
+    #[test]
+    fn outbound_retry_worker_waits_for_daemon_ack_before_recovery_event() {
         let state = crate::AppState::default().with_lxmf_zmq_sdk(
             unused_zmq_endpoint_for_rch_test(),
             unused_zmq_endpoint_for_rch_test(),
@@ -51423,27 +51525,28 @@ mod tests {
         let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
 
         assert_eq!(report.processed, 1);
-        assert_eq!(report.dispatched, 2);
+        assert_eq!(report.dispatched, 0);
         let events = state.system_events.read().expect("events");
-        let recovery_event = events
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "message_propagated"),
+            "unconfirmed deferred enqueue must not emit a propagation recovery event"
+        );
+        drop(events);
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
             .iter()
-            .find(|event| event.event_type == "message_propagated")
-            .expect("retry acceptance should emit propagation recovery event");
+            .find(|stored| stored.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "queued");
         assert_eq!(
-            recovery_event.metadata["MessageID"],
-            "recovered-propagated-fallback"
+            updated.delivery_metadata["dispatch_status"],
+            "queued_deferred"
         );
-        assert_eq!(recovery_event.metadata["State"], "propagating");
-        assert_eq!(recovery_event.metadata["delivery_method"], "propagated");
-        assert_eq!(
-            recovery_event.metadata["delivery_policy_reason"],
-            "broadcast_direct_timeout_fallback"
-        );
-        let metadata = recovery_event.metadata["DeliveryMetadata"]
-            .as_object()
-            .expect("delivery metadata");
-        assert!(!metadata.contains_key("error"));
-        assert!(!metadata.contains_key("retry_reason"));
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
+        assert!(updated.delivery_metadata.get("error").is_none());
+        assert!(updated.delivery_metadata.get("retry_reason").is_none());
     }
 
     #[test]

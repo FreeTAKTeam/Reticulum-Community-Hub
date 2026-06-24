@@ -4686,3 +4686,74 @@ Result:
 - Phone/deck inbox receipt remains open; this fix only prevents RCH/UI state
   from presenting active or successful propagation as a terminal broadcast
   failure.
+
+## 2026-06-24 Deferred ZMQ Acceptance Semantics Repair
+
+Setup:
+
+- Continued the DB/config-backed local release-candidate runtime on
+  `http://127.0.0.1:18080/` with `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, reticulumd RPC
+  `127.0.0.1:14243`, and LXMF ZMQ command/response endpoints.
+- Rebuilt and restarted the patched release server as PID `17340`; reticulumd
+  remained running as PID `7036`.
+- Two USB phones were attached during the pass: Pixel 7 `35031FDH2003N8` and
+  23013PC75G `81bf319c`.
+
+Findings and fixes:
+
+- The retry worker was treating the fire-and-forget ZeroMQ enqueue path as a
+  daemon acceptance. For propagated broadcast fanout this could emit
+  `message_propagated`, increment retry-worker dispatched counts, and show
+  `dispatch_status=accepted` before reticulumd had acknowledged or persisted
+  the send.
+- Added an explicit deferred flag to dispatch reports. Deferred ZMQ batch and
+  single-message enqueues now keep the row as `State=queued`,
+  `dispatch_status=queued_deferred`, and `retry_scheduled=false` while
+  preserving `reticulumd_dispatch_count` and receipt targets for status
+  polling.
+- Retry-worker success events and dispatched counters are now emitted only
+  after non-deferred dispatch acknowledgement; deferred enqueue remains pending
+  until daemon receipt/status reconciliation moves it forward.
+
+Live verification:
+
+- Fresh canary `0d9adf34486d4161945475927b435879` initially returned from
+  `POST /Chat/Message` as `queued` / `queued_deferred` with six fanout targets,
+  no current `error`, and no current `retry_reason`.
+- A later DB/API poll reconciled the same canary to `State=propagated`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=6`,
+  `receipt_status=sent: propagated resource`, and all six current target rows
+  at `sent: propagated resource`.
+- `RTH_Store\reticulumd.sqlite3` contains the six canary fanout rows:
+  base `0d9adf34486d4161945475927b435879` plus fanouts for
+  `1335df708801`, `22c8ba9c883e`, `279797db68f8`, `441f217e9a51`, and
+  `77b2539b7225`, all with `receipt_status=sent: propagated resource`.
+- The repeated user-reported ID `2a2892b3227b427487308d53712dd163` is current
+  `State=propagated`, `dispatch_status=accepted`, no current `error` or
+  `retry_reason`, and has six current reticulumd rows at
+  `sent: propagated resource`.
+- Reloading the in-app browser against the patched server showed
+  `PID: 17340`, a live event feed, no `2a289...`, no `send_error`, and no
+  failure-card text after normal polling caught up.
+
+Verification commands:
+
+- `cargo fmt --all -- --check`.
+- `cargo test --quiet -p r3akt-rch-server --lib outbound_retry_worker_keeps_deferred_zmq_enqueue_pending_until_daemon_ack -- --nocapture`.
+- `cargo test --quiet -p r3akt-rch-server --lib propagated -- --nocapture`.
+- `cargo test --quiet -p r3akt-rch-server --lib outbound_retry_worker -- --nocapture`.
+- `cargo test --quiet -p r3akt-rch-server --lib`.
+- `cargo clippy --quiet -p r3akt-rch-server --all-targets -- -D warnings`.
+- `cargo build --release -p r3akt-rch-server --quiet`.
+
+Result:
+
+- RCH no longer presents local fire-and-forget ZeroMQ enqueue as confirmed
+  daemon acceptance.
+- A legitimate direct broadcast timeout still falls back to propagation, but
+  any propagated fallback work that is only locally enqueued remains visibly
+  pending until reticulumd evidence arrives.
+- Phone/deck inbox proof remains the release-candidate gate; this pass proves
+  RCH state semantics and reticulumd persisted propagated-resource rows, not
+  end-device import.
