@@ -4486,3 +4486,72 @@ Result:
   23013PC75G logs still do not prove inbox import.
 - Final RC blocker remains downstream phone/deck propagation fetch/import proof,
   not RCH fallback or stale metadata state.
+
+## 2026-06-24 Propagating State and Fast Enqueue Repair
+
+Setup:
+
+- Rebuilt ZMQ-enabled release `reticulumd.exe` from the sibling LXMF checkout
+  with `--features zmq-pipeline-rpc` and started it against
+  `RTH_Store\reticulumd.sqlite3` and `RTH_Store\reticulumd.toml` as PID
+  `26456`.
+- Rebuilt and restarted the DB/config-backed RCH release server on
+  `http://127.0.0.1:18080/`; final verified PID after the test/build cycle was
+  `5516`.
+- Runtime inputs remained:
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - reticulumd RPC `127.0.0.1:14243`.
+  - LXMF ZMQ command endpoint `tcp://127.0.0.1:19100`.
+
+Findings and fixes:
+
+- User-reported `2a2892b3227b427487308d53712dd163`,
+  `f011f23619fc4d0b9dcd9bf51462629e`, and
+  `1ae2dabae0dc4653a20a17754f7ccd61` all returned from
+  `/Chat/Messages?limit=1000` as clean `State=propagated`,
+  `method=propagated`, `dispatch_status=accepted`, no current `error`, and no
+  current `retry_reason`.
+- Fresh canary `a6352d7e3d7c4de698ddf6923e4a1b76` reproduced the misleading
+  final-state gap: RCH had accepted six propagated fanout targets while
+  reticulumd targets were still pending/sending. RCH now projects such rows as
+  `State=propagating` until a terminal successful receipt arrives.
+- The same test exposed a request-path UX issue: `/Chat/Message` broadcast POST
+  waited on reticulumd announce refresh before persisting the row and timed out
+  in the client. Deferred chat sends now make the route decision from cached
+  state and return promptly.
+
+Verification:
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test -p r3akt-rch-server chat_broadcast_route_queues_for_worker_without_blocking_on_fanout`
+  passed.
+- `cargo test -p r3akt-rch-server chat_message_payload_projects_active_propagated_targets_as_propagating`
+  passed.
+- `cargo test -p r3akt-rch-server propagated_fanout_acceptance_stays_propagating_until_receipt_success`
+  passed.
+- `cargo test -p r3akt-rch-server sqlite_load_repairs_success_superseded_delivery_metadata`
+  passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+- Fresh canary `00edeaeb4413430b9dc9df7a0eb0b6cb` returned from POST in
+  654 ms as `queued` / `queued_deferred`, then advanced to `State=propagating`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=6`, no current
+  `error`, no current `retry_reason`, and all six targets reached `sending`.
+- Final post-build canary `27dbb259f1024641ac6591549309dccd` returned from
+  POST in 850 ms as `queued` / `queued_deferred`, then advanced to
+  `State=propagating`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=6`, no current `error`, and no current
+  `retry_reason`.
+- In-app browser loaded `http://127.0.0.1:18080/` with no console warnings or
+  errors, showed the DB/config-backed backend PID, and displayed the fresh
+  `message_propagated` dashboard event.
+
+Result:
+
+- RCH no longer reports an active propagated fanout as final `propagated`.
+- RCH no longer blocks the broadcast send button on reticulumd announce refresh
+  before enqueueing.
+- Current RC blocker remains downstream reticulumd/device completion: fresh
+  targets can remain `sending` and phone/deck inbox receipt remains unproven.
