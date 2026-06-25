@@ -47,6 +47,7 @@ export const useConfigStore = defineStore("config", () => {
     error.value = "";
     try {
       rollbackResult.value = await post<unknown>(endpoints.configRollback);
+      configText.value = await get<string>(endpoints.config);
     } catch (err) {
       error.value = formatApiError(err);
       throw err;

@@ -27,6 +27,303 @@ setup was changed to two REM phones.
 - RCH database: `target/manual-test/rch-manual.sqlite3`
 - reticulumd database: `target/manual-test/reticulumd.sqlite3`
 
+## Broadcast Timeout Repair Retest - 2026-06-23 UTC
+
+Runtime under test:
+
+- Branch: `codex/rch-user-story-audit`
+- Server binary: `target/release/r3akt-rch-server.exe`
+- Server URL: `http://127.0.0.1:18080`
+- API key used for manual testing: `manual-test`
+- RCH database: `RTH_Store/rch_state.sqlite3`
+- RCH config: `RTH_Store/config.ini`
+- Server PID after rebuild/restart: `24208`
+
+Observed operator-reported row:
+
+- Message `2a2892b3227b427487308d53712dd163` was reported by the UI as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`. After the existing propagated fallback repair path caught up,
+  the configured SQLite store showed the row as `propagated` with
+  `dispatch_status=accepted`, `delivery_method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`, and
+  `reticulumd_dispatch_count=13`.
+
+New regression and live repair:
+
+- Added a regression for persisted direct broadcast `send_timeout` rows that
+  had already been marked `failed`.
+- Rebuilt and restarted the local release binary against the configured DB and
+  config.
+- Historical failed direct broadcast timeout rows
+  `f011f23619fc4d0b9dcd9bf51462629e` and
+  `d3a43d4ff4844ccb9cb692d56a7b157c` were repaired by the running worker from
+  `failed` / `direct` / `broadcast_direct` to queued propagated retries with
+  `delivery_policy_reason=broadcast_direct_timeout_fallback` and
+  `retry_reason=send_timeout`.
+- A fresh live broadcast probe
+  `096df17c-4569-4204-a11c-871064038b8a` timed out in direct broadcast mode
+  and then converted to queued propagated fallback instead of terminal failure.
+
+Current limitation:
+
+- The local SDK/reticulumd path was rate-limited or slow during the probe, so
+  several propagated fallback rows remained queued or in progress. The
+  release-blocking behavior fixed here is that legitimate broadcast
+  `send_timeout` rows no longer remain terminally failed; they are moved to
+  propagation fallback and retried.
+
+## Bounded Broadcast Stress Probe - 2026-06-23 UTC
+
+Runtime under test:
+
+- Branch: `codex/rch-user-story-audit`
+- Server binary: `target/release/r3akt-rch-server.exe`
+- Server URL: `http://127.0.0.1:18080`
+- API key used for manual testing: `manual-test`
+- RCH database: `RTH_Store/rch_state.sqlite3`
+- RCH config: `RTH_Store/config.ini`
+- Server PID observed: `3680`
+
+Connected device inventory:
+
+- `adb devices -l` showed Pixel 7 `35031FDH2003N8` and SM-G950W
+  `988b9b344135304639`.
+- Both phones had `network.reticulum.emergency` and `com.lxmf.messenger`
+  installed and running by `pidof`.
+- `/Client` included historical deck identities for `raphydeck`, `silkedeck`,
+  and `corvodeck`.
+- `/api/rem/peers` returned no current REM peer rows during this probe.
+
+Broadcast probe:
+
+- Posted `scope=broadcast` to `/Chat/Message`.
+- Message ID: `2d437d80fbeb4c4cbc36c6fc3f9faeaa`
+- Initial response persisted the row as `queued` with
+  `delivery_policy_reason=broadcast_direct`, `method=direct`, and
+  `dispatch_status=queued_deferred`.
+
+Observed delivery-state progression:
+
+- Polls 1-4: `state=queued`, `method=direct`, `dispatch_status=in_progress`.
+- Poll 5: converted to `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=queued`, `retry_reason=rate_limited`, and
+  `error=SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded`.
+- After the scheduled retry window, the row moved back to
+  `dispatch_status=in_progress` with stale `error` and `retry_reason` metadata
+  cleared, then hit the same SDK rate limit and was rescheduled with a later
+  `next_attempt_at_ts_ms`; it did not become terminal `failed`.
+
+Current limitation:
+
+- This is a partial live-device pass. The corrected fallback/retry behavior is
+  still working under pressure, but delivery to the connected phones/decks is
+  not proven while the SDK/RNS path is rate-limited and `/api/rem/peers` is
+  empty. Continue after the rate-limit window clears and require accepted/sent
+  propagated dispatch evidence.
+
+## Mission Audit/Event Export API Retest - 2026-06-23 UTC
+
+Runtime under test:
+
+- Branch: `codex/rch-user-story-audit`
+- Server binary: `target/release/r3akt-rch-server.exe`
+- Server URL: `http://127.0.0.1:18080`
+- API key used for manual testing: `manual-test`
+- RCH database: `RTH_Store/rch_state.sqlite3`
+- RCH config: `RTH_Store/config.ini`
+- Server PID observed: `3680`
+
+Disposable run:
+
+- Mission: `codex-us018-20260623014108`
+- Explicit mission change: `codex-us018-change-20260623014108`
+- Log entry: `codex-us018-log-20260623014108`
+
+Passed checks:
+
+- `/api/r3akt/events?limit=50&include_payload=false` returned the mission
+  event history newest-first without serialized `payload` fields.
+- `/api/r3akt/events?limit=50&include_payload=true` returned the same three
+  mission events with payload data for export use.
+- `/api/r3akt/mission-changes?mission_uid=...&include_delta=false` stripped
+  `delta`, while `include_delta=true` returned the explicit change and the
+  expected log-derived `ADD_CONTENT` change.
+- `/api/r3akt/log-entries?mission_uid=...` returned only the disposable log.
+- An export-shaped JSON object containing audit events, mission changes, and
+  log entries round-tripped with the mission UID and collection counts intact.
+
+Remaining gap:
+
+- The API/export data path passed. Browser proof is still needed for expanding
+  mission audit detail rows and triggering the actual `mission-audit-*.json`
+  download from the shared UI.
+- Follow-up in-app browser attempts to open
+  `/missions?mission_uid=codex-us018-20260623014108` and then `/` timed out and
+  reset the browser controller while `/Status` still reported healthy PID
+  `3680`. Treat the rendered expand/download proof as blocked by the browser
+  harness, not passed.
+
+## Mission Audit UI Regression - 2026-06-23 UTC
+
+Scope:
+
+- The in-app browser controller remained unreliable for local navigation, so
+  this slice added component/composable coverage for the RCH-US-018 UI
+  behaviors that were previously only API-proven.
+- `MissionsLegacyPage.vue` now reuses `useAuditExportActions.ts` instead of
+  maintaining duplicate local blob-download helpers.
+
+Result:
+
+- `MissionOverviewScreen.vue` was mounted with mission audit entries.
+- The rendered `Details` control expanded an audit detail row and `Hide`
+  removed it again.
+- Empty detail rows kept the `Details` control disabled.
+- The visible `Export Log` button emitted the public `Export Log` request
+  action.
+- `useAuditExportActions.ts` downloaded
+  `mission-audit-mission-alpha.json` with the selected audit payload.
+- Snapshot export requested `/api/r3akt/snapshots`, filtered rows to the
+  selected mission UID, and downloaded
+  `mission-snapshots-mission-alpha.json` without unrelated snapshot entries.
+
+Verification:
+
+- `npm --prefix ui run test -- mission-audit-ui` passed with 4 tests.
+- `npm --prefix ui run lint` passed after the test mock cleanup.
+- A full `npm --prefix ui run test` pass also succeeded during this slice with
+  30 files and 99 tests.
+
+Remaining gap:
+
+- This closes automated UI/export contract coverage for RCH-US-018. A clean
+  live in-app browser pass against the DB-backed server is still required
+  before calling the story a manual pass.
+
+## TAK Connector RC Retest - 2026-06-23 UTC
+
+Scope:
+
+- Standalone TAK connector crate.
+- Local loopback CoT send/receive coverage.
+- Standalone `r3akt-tak-service` bridge tests.
+- Documented external clear-TCP TAK profile `tcp://137.184.101.250:8087`.
+
+Local tests:
+
+- `cargo test -p r3akt-tak-connector tak_tcp_loopback_validates_bidirectional_cot_workflow`
+  passed.
+- `cargo test -p r3akt-tak-connector tak_proto_tcp_sender_pushes_stream_framed_protobuf_payload`
+  passed.
+- `cargo test -p r3akt-tak-connector service_bridges_rch_telemetry_and_chat_to_tak_cot_socket`
+  passed.
+- `cargo test -p r3akt-tak-connector service_bridges_inbound_tak_cot_to_rch_marker_route`
+  passed.
+- Full `cargo test -p r3akt-tak-connector` passed: 40 library tests and 5
+  service binary tests.
+
+External TCP TAK profile:
+
+- A TCP reachability probe to `137.184.101.250:8087` succeeded.
+- With `R3AKT_TAK_LIVE_COT_URL=tcp://137.184.101.250:8087`,
+  `live_tak_server_accepts_keepalive_when_configured` passed.
+- With the same outbound URL, `live_tak_server_accepts_reconnect_when_configured`
+  passed.
+- With both `R3AKT_TAK_LIVE_COT_URL` and
+  `R3AKT_TAK_LIVE_INBOUND_COT_URL` set to the external TCP profile, the first
+  inbound relay attempt connected but returned no payload after the probe.
+  Rerunning the same configured test passed in 14.29 seconds.
+
+Result:
+
+- RCH-US-026 is current for RC: local loopback, protobuf framing, standalone
+  sidecar bridge behavior, and the documented external clear-TCP TAK target
+  all passed. The no-payload first inbound attempt is recorded as a transient
+  external relay observation; no product code change was needed.
+
+## Python Install/Import Migration RC Rehearsal - 2026-06-23 UTC
+
+Scope:
+
+- First-start Python import discovery and runtime file copy helpers.
+- Core Python SQLite/config/telemetry migration.
+- `migrate_python_rch` CLI behavior.
+- Production migration wrapper dry-run and fixture apply behavior.
+
+Commands:
+
+- `cargo test -p r3akt-rch-server python_import`
+- `cargo test -p r3akt-rch-core python_migration`
+- `cargo test -p r3akt-rch-core parses_required_paths`
+- `cargo test -p r3akt-rch-core migrates_database_and_config_from_parsed_args`
+- `cargo test -p r3akt-rch-core reports_missing_required_paths_before_migrating`
+- `powershell -ExecutionPolicy Bypass -File scripts/import-python-rch-production.Tests.ps1`
+
+Passed checks:
+
+- First-run import gating only prompts for new/empty Rust stores.
+- Config-based Python source discovery recognizes `[migration].python_store`.
+- Missing source normalization rejects absent stores and absent `rth_api.sqlite`
+  files.
+- Import by legacy database path copies `identity`, `reticulumd.identity`,
+  `telemetry.db`, nested runtime files, imported topic rows, imported
+  `python_config.*` settings, and records migration completion.
+- Core migration imports identity/topic tables and R3AKT operational tables.
+- CLI migrator parses required paths, imports config and telemetry into the
+  target DB, and fails before mutating when required paths are missing.
+- The production wrapper writes a dry-run `migration-plan.json`; fixture apply
+  copies config, identity, Reticulum transport identity/config, telemetry DBs,
+  files, images, LXMF data, `reticulumd.toml`, `rust-migration-report.json`,
+  `migration-plan.json`, `migration-manifest.json`, and `MANIFEST.txt`.
+
+Result:
+
+- RCH-US-027 is current for RC against disposable Python-style stores. A real
+  release deployment still needs a source-specific `-DryRun` against the actual
+  Python store before applying the migration.
+
+## Assets, Assignments, And Skills API Retest - 2026-06-23 UTC
+
+Runtime under test:
+
+- Branch: `codex/rch-user-story-audit`
+- Server binary: `target/release/r3akt-rch-server.exe`
+- Server URL: `http://127.0.0.1:18080`
+- API key used for manual testing: `manual-test`
+- RCH database: `RTH_Store/rch_state.sqlite3`
+- RCH config: `RTH_Store/config.ini`
+
+Disposable run:
+
+- Prefix: `codex-us025-20260622232057`
+- Created mission, team, team member, offline checklist, and task to provide
+  valid assignment and requirement references.
+
+Passed checks:
+
+- Asset create, update, get, and `team_member_uid` list filter.
+- Skill create, update, and list membership.
+- Team-member skill create, update, and `team_member_rns_identity` list filter.
+- Task skill requirement create, update, and `task_uid` list filter.
+- Assignment create, update, and `mission_uid` plus `task_uid` list filter.
+- Assignment asset set-empty, link, and unlink.
+- Invalid asset member and invalid requirement skill references returned `404`.
+
+Cleanup:
+
+- Deleted the disposable asset, team member, and team.
+- Tombstoned the disposable mission through the public mission delete route.
+
+Remaining gap:
+
+- The current public HTTP surface has no delete routes for skills,
+  assignments, or task skill requirements. Namespaced skill/requirement/
+  assignment rows from the live run remain as audit/history artifacts. Browser
+  domain-object pages still need rendered create/edit/link proof before the UI
+  side of RCH-US-025 is fully closed.
+
 ## UI Coverage
 
 The following routes were exercised through browser automation against the live
@@ -1322,3 +1619,3141 @@ Post-build UI verification:
   - API auth failures: none confirmed in app route content;
   - app runtime errors: `0`;
   - captured console/network errors: `0`.
+
+## Broadcast Timeout Fallback Retest
+
+Time: `2026-06-22T22:06Z` to `2026-06-22T22:45Z`.
+
+Runtime:
+
+- RCH server: `target\release\r3akt-rch-server.exe`, PID `5740` after the
+  final rebuild.
+- State/config: `RTH_Store\rch_state.sqlite3` and `RTH_Store\config.ini`.
+- Reticulumd RPC: `127.0.0.1:14243`.
+- LXMF ZMQ command/response:
+  `tcp://127.0.0.1:19100` / `tcp://127.0.0.1:19101`.
+
+Observed messages:
+
+| Message ID | Result |
+| --- | --- |
+| `2a2892b3227b427487308d53712dd163` | User saw a transient `failed/send_error` after direct-timeout propagation fallback. Live DB later showed current state `propagated`, method `propagated`, policy `broadcast_direct_timeout_fallback`, `reticulumd_dispatch_count=13`, six child rows with `sent: propagated resource`, and seven still `sending`. |
+| `d3a43d4ff4844ccb9cb692d56a7b157c` | Post-retry-budget patch canary reproduced the remaining bug: direct broadcast stayed terminal `failed` with `error=send_timeout` instead of queueing propagation. |
+| `89101f6a0bb04916b68aed1b31b1e21c` | After the direct-timeout fallback patch, direct broadcast timeout changed to queued `propagated` with policy `broadcast_direct_timeout_fallback`, `fallback_reason=direct_dispatch_timeout`, and no terminal failed state. Subsequent propagated attempts hit `SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded`, so the message stayed queued with retry scheduled. |
+| `991ee56574b04ca59c0a5bd173a4c5b0` | After rebuilding with the rate-limit retry patch, the fallback canary remained queued through attempt 10 with `retry_scheduled=true`, `retry_reason=rate_limited`, and `SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded` instead of terminally failing at attempt 5. |
+
+Fixes added:
+
+- Worker-side direct broadcast/fanout dispatch timeouts now queue the same
+  parent message for propagation instead of marking it failed after the direct
+  retry budget is exhausted.
+- Propagated broadcast/fanout fallback retries now allow the fifth propagated
+  attempt before terminal failure, matching the observed daemon retry behavior.
+- SDK rate-limit responses now use a longer delayed retry budget so transient
+  backpressure does not consume the normal propagated fallback retry ceiling.
+- Runtime diagnostics now count worker direct-timeout propagation fallback under
+  `propagation_fallback_total`.
+
+Remaining retest:
+
+- Wait for the LXMF SDK rate-limit window to clear, then send another broadcast
+  canary and confirm the queued propagated fallback reaches accepted propagated
+  dispatch against the connected phones/decks. The current expected state while
+  rate-limited is queued with delayed retry, not failed.
+
+## Propagated Broadcast Failure Callback Retest
+
+Time: `2026-06-22T23:12Z`.
+
+Reported failure:
+
+- Message ID `2a2892b3227b427487308d53712dd163`.
+- UI showed `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`,
+  `Failure Reason=send_error`, and `Route Type=broadcast`.
+
+Result:
+
+- The live SQLite row had recovered to `delivery_state=propagated`,
+  `dispatch_status=accepted`, `attempts=5`, and a future retry timestamp, so
+  the propagation fallback path was still active.
+- Root cause in code: `/internal/delivery-failure` marked callbacks terminal
+  failed without consulting the retry scheduler used by outbound dispatch.
+- Added a server regression for a propagated broadcast fallback `send_error`
+  callback. The callback now returns `retry_scheduled`, stores
+  `delivery_state=queued`, preserves `delivery_method=propagated`, and records
+  `retry_reason=send_error` instead of surfacing terminal failure.
+
+Remaining retest:
+
+- Restart the manual server with the callback fix, repeat broadcast canaries
+  against the phones/decks, and confirm retry-eligible propagated fallback
+  callbacks no longer appear as terminal `failed/send_error` in the UI.
+
+## Propagated Broadcast Rate-Limit Budget Retest
+
+Time: `2026-06-22T23:21Z` to `2026-06-22T23:43Z`.
+
+Runtime:
+
+- RCH server restarted from `target\release\r3akt-rch-server.exe` on
+  `http://127.0.0.1:18080/`, PID `13732`, using `RTH_Store\rch_state.sqlite3`
+  and `RTH_Store\config.ini`.
+- Diagnostics confirmed `status=running`, outbound retry worker running,
+  Reticulumd RPC configured, and LXMF SDK ZeroMQ configured.
+- USB phones were attached as `Pixel_7` (`35031FDH2003N8`) and `SM_G950W`
+  (`988b9b344135304639`). Both had `network.reticulum.emergency` version
+  `1.1.2`; both apps were launched after the first canary because no PID was
+  initially present.
+- `/Client` still listed embedded peers `silkedeck`, `raphydeck`, and
+  `corvodeck`, but the current announce evidence is stale for `silkedeck` and
+  `raphydeck`; `corvodeck` was last seen earlier on `2026-06-22`.
+
+Result:
+
+- Canary `3fc2f131af65410c82badf99d5ec44a8` reproduced the remaining failure:
+  direct broadcast timed out into `propagated` /
+  `broadcast_direct_timeout_fallback`, hit SDK rate limiting, then a later
+  `send_timeout` marked the message terminal `failed` at attempt 7.
+- Root cause: the rate-limit path extended the current retry attempt, but a
+  later non-rate-limit timeout recalculated max attempts from the smaller
+  normal propagated fallback budget.
+- Added a regression for this sequence and fixed retry metadata to persist
+  `rate_limit_retry_budget=true` once SDK rate limiting has been encountered.
+- After rebuilding and restarting, canary
+  `dc8c20bc041b47f78c313f77eea916c1` stayed `queued` as `propagated` /
+  `broadcast_direct_timeout_fallback` through attempt 8 with
+  `retry_scheduled=true`, `rate_limit_retry_budget=true`, and global failed
+  count flat at `37`.
+
+Remaining retest:
+
+- The queue no longer collapses to terminal `failed/send_error`, but live
+  propagation is still blocked by `SDK_SECURITY_RATE_LIMITED: per-ip request
+  rate limit exceeded`. Continue after the rate-limit window clears and confirm
+  the queued propagated canary reaches accepted/sent propagation and appears on
+  the phones/decks.
+
+## Propagated Fallback Retry-Ceiling Retest
+
+Time: `2026-06-23T00:30Z` to `2026-06-23T00:42Z`.
+
+Trigger:
+
+- User saw another broadcast failure card with `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`,
+  `Failure Reason=send_error`, and `Route Type=broadcast`.
+
+Evidence:
+
+- `/Events` showed the latest terminal failure was canary
+  `dc8c20bc041b47f78c313f77eea916c1`, not the earlier recovered
+  `2a2892b3227b427487308d53712dd163` row.
+- The event metadata had `rate_limit_retry_budget=true`, `attempts=30`,
+  `delivery_method=propagated`, `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  and `dispatch_timeout=true`. This proved the previous SDK rate-limit extension
+  still allowed a terminal failure once the 30-attempt budget was exhausted.
+- After the first rebuild, fresh canary
+  `d0af7fcf-c651-4ecc-92f8-883845a3cff0` exposed a second ordering issue:
+  the first default-budget direct broadcast `send_timeout` produced
+  `message_delivery_retrying` with `delivery_method=direct` /
+  `delivery_policy_reason=broadcast_direct` instead of immediately switching
+  to propagation.
+
+Fix:
+
+- Direct broadcast/fanout dispatch timeouts now queue propagation before the
+  ordinary direct retry budget is considered.
+- Propagated broadcast/fanout messages that already came from a direct-timeout
+  fallback now receive an extended propagation fallback retry ceiling
+  (`120` attempts). This keeps `send_timeout` and later `send_error` attempts
+  queued for propagation instead of producing a terminal `message_delivery_failed`
+  event while the extended budget remains.
+- Added regressions for:
+  - default-budget direct broadcast timeout fallback ordering;
+  - helper-level propagated broadcast fallback `send_timeout` after attempt 30;
+  - stale propagated broadcast dispatch timeout finalization after attempt 30;
+  - continuing propagated broadcast fallback `send_error` past the previous
+    fifth-attempt ceiling.
+
+Verification:
+
+- `cargo fmt --all -- --check`
+- `cargo test -p r3akt-rch-server propagated_broadcast_fallback_ -- --nocapture`
+- `cargo test -p r3akt-rch-server outbound_diagnostics_queues_broadcast_direct_timeout_for_propagation -- --nocapture`
+- `cargo test -p r3akt-rch-server outbound_diagnostics_keeps_propagated_broadcast_timeout_queued_after_rate_limit_budget -- --nocapture`
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings`
+- Rebuilt and restarted `target\release\r3akt-rch-server.exe` on
+  `http://127.0.0.1:18080/`, PID `10352`, using the live
+  `RTH_Store\rch_state.sqlite3` and `RTH_Store\config.ini`.
+- Fresh canary `996a8718-7aa4-4a7a-bee4-e72c05cbcc66` emitted
+  `message_propagation_queued` on the first direct timeout with
+  `delivery_method=propagated` and `fallback_reason=direct_dispatch_timeout`.
+  A later propagated timeout emitted `message_delivery_retrying` at attempt `2`
+  with `delivery_policy_reason=broadcast_direct_timeout_fallback`; failed count
+  stayed flat at `38`.
+- Follow-up canary `c869fd1f3ffc405081c019a609324e80` reproduced the same
+  operator-visible path after both USB phones were confirmed attached. The first
+  direct broadcast attempt timed out, switched to `propagated` /
+  `broadcast_direct_timeout_fallback`, and the next propagated timeout returned
+  to `queued` with `retry_scheduled=true` and `retry_reason=send_timeout`
+  instead of terminal `failed/send_error`.
+
+Remaining retest:
+
+- Phone/deck receipt remains unproven in this rate-limited environment. Continue
+  watching for accepted/sent propagation once the SDK/RNS path stops timing out.
+
+## Dashboard Runtime-Control Retest
+
+Time: `2026-06-22T23:47Z` to `2026-06-23T00:18Z`.
+
+Runtime:
+
+- RCH server rebuilt and restarted from `target\release\r3akt-rch-server.exe`
+  on `http://127.0.0.1:18080/`, PID `5012`, using
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, Reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- The in-app browser loaded the Dashboard from the rebuilt `ui\dist` bundle.
+
+Result:
+
+- Before the fix, `/Control/Status` returned `port=null`; the Dashboard showed
+  `Port: -` even though the server was bound to `127.0.0.1:18080`.
+- `/Control/Announce` returned `announce sent`.
+- `/Control/Sync` legitimately failed because the configured propagation RPC
+  path timed out, but the Dashboard initially showed only a generic
+  `Propagation sync failed` message. A 30-second UI request timeout could also
+  mask the backend's 503 response detail.
+- After the fix, `/Control/Status` includes the bound API host and port.
+  Browser retest showed `PID: 5012` and `Port: 18080`.
+- The Dashboard `Sync` action now waits for the backend propagation sync window
+  and renders the backend error detail:
+  `Propagation sync failed: outbound request failed: ... (os error 10060)`.
+
+Remaining retest:
+
+- No remaining RCH-US-004 issue from this slice. The failed propagation sync is
+  a legitimate environment/runtime failure and is now visible to the operator.
+
+## Remote Auth And Connection Retest
+
+Time: `2026-06-23T00:20Z` to `2026-06-23T00:31Z`.
+
+Runtime:
+
+- RCH server remained on `http://127.0.0.1:18080/`, PID `5012`, using the live
+  `RTH_Store` DB/config and API key `manual-test`.
+- Browser test used `http://127.0.0.1.nip.io:18080` and
+  `ws://127.0.0.1.nip.io:18080` as remote-looking URLs that resolve to the
+  local RCH instance. This exercises remote-target auth behavior without an
+  external hub.
+
+Result:
+
+- Connect switched from Local Connection Settings to Remote Connection mode and
+  displayed `Remote backend requires authentication.`.
+- While unauthenticated, clicking the protected Chat route redirected to
+  `/connect?redirect=/chat`.
+- API Key mode displayed
+  `API key is required for remote backend authentication.` until an API key was
+  entered.
+- Login with API key `manual-test` reached the live server through the
+  remote-looking URL and redirected back to `/chat`.
+- Settings were restored to `http://127.0.0.1:18080`; Connect returned to Local
+  Connection Settings and showed `Connection settings saved`.
+
+Remaining retest:
+
+- No RCH-US-003 product error found in this browser slice. A real deployed
+  remote hub should still be checked for TLS/DNS/proxy behavior during staging
+  or deployment testing.
+
+## Config And Reticulum Path Retest
+
+Time: `2026-06-22T22:41Z` to `2026-06-22T22:49Z`.
+
+Runtime:
+
+- RCH server: `target\release\r3akt-rch-server.exe`, PID `18500` after the
+  final rebuild.
+- State/config: `RTH_Store\rch_state.sqlite3` and `RTH_Store\config.ini`.
+- Launch intentionally omitted `--reticulum-config-path` to verify
+  `[hub].reticulum_config_path` fallback from the hub config.
+
+Result:
+
+- `/Config` returned the 1,162-byte hub config and `/Config/Validate` returned
+  `valid=true`.
+- Invalid hub config text returned `valid=false` with parser errors instead of
+  mutating files.
+- Before the fix, `/api/v1/app/info.reticulum_config_path` was empty and
+  `/Reticulum/Config` returned an empty text payload even though
+  `RTH_Store\config.ini` contained
+  `reticulum_config_path = ~/.reticulum/config`.
+- After the fix, `/api/v1/app/info.reticulum_config_path` resolved to
+  `C:\Users\broth\.reticulum/config`, `/Reticulum/Config` returned the
+  640-byte real Reticulum config, and `/Reticulum/Config/Validate` returned
+  `valid=true`.
+- The Configure page loaded without console errors. The Reticulum tab showed
+  real values including `rmap` and `rmap.world`, and its header no longer showed
+  the stale 1,162-byte Hub payload size while the Reticulum module was active.
+
+Remaining retest:
+
+- Exercise controlled apply/rollback against a temporary backup path or an
+  operator-approved config edit before marking the full RCH-US-007 behavior
+  complete.
+
+## Controlled Config Apply/Rollback Retest
+
+Time: `2026-06-22T22:53Z` to `2026-06-22T23:00Z`.
+
+Runtime:
+
+- Primary manual server remained running on `http://127.0.0.1:18080/`.
+- Isolated temp server ran on `http://127.0.0.1:18081/`, PID `6576`, with
+  temp hub and Reticulum config files under `%TEMP%` and API key `config-test`.
+- No Reticulum daemon was attached to the isolated server; this retest only
+  exercised file-backed config read, apply, backup, rollback, and UI state.
+
+Result:
+
+- `/Config` and `/Reticulum/Config` `PUT` created backup files and persisted
+  temp edits.
+- No-body rollback restored both temp files through the same endpoint shape used
+  by the UI. PowerShell `Invoke-RestMethod` shaped one empty POST in a way that
+  the endpoint rejected, but `curl.exe` and browser fetch no-body rollback
+  succeeded.
+- Hub Configure UI apply showed `Apply Result` and the backup path without
+  console errors.
+- Initial Hub UI rollback restored the file but left the editor showing the
+  pre-rollback edited text and the status biased toward the earlier apply.
+- After the UI store fix, Hub UI rollback refreshed the editor to the restored
+  file text, showed `Rollback Result`, and changed the status pill to
+  `Restored`.
+
+Remaining retest:
+
+- The Reticulum config API apply/rollback path passed, and the Reticulum store
+  now reloads after rollback, but the Reticulum form toggle/apply/rollback path
+  still needs a clean browser interaction pass. Direct switch interaction timed
+  out in the current browser harness.
+
+## Reticulum Form And BOM Config Retest
+
+Time: `2026-06-23T00:34Z` to `2026-06-23T01:05Z`.
+
+Runtime:
+
+- Primary manual server remained on `http://127.0.0.1:18080/`.
+- Isolated temp server ran on `http://127.0.0.1:18081/` with temp hub and
+  Reticulum config files under `%TEMP%`, API key `config-test`, and no
+  Reticulum daemon. Browser access used `127.0.0.1.nip.io:18081` so the UI
+  exercised remote auth while still reaching the temp local server.
+
+Reticulum form result:
+
+- Configure > Reticulum loaded the temp Reticulum file and displayed
+  `test_tcp` with `target_host = example.invalid`.
+- Browser changed the target host to `example.org` and clicked Reticulum
+  `Apply`; the UI showed `Reticulum config applied`.
+- Browser clicked Reticulum `Rollback`; the UI showed `Rollback complete`,
+  refreshed the form back to `example.invalid`, and no stale `example.org`
+  value remained.
+- Direct file check showed `hasRestoredHost=true`, `hasAppliedHost=false`, and
+  `backupCount=1`.
+
+BOM parser result:
+
+- The temp setup exposed a Windows-specific issue: a hub `config.ini` written
+  with PowerShell UTF-8 BOM did not resolve `[hub].reticulum_config_path` when
+  `--reticulum-config-path` was omitted.
+- Fixed `ini_value` to ignore a leading UTF-8 BOM before parsing section
+  headers and added a regression test.
+- Rebuilt the release binary and launched a fresh temp server without explicit
+  `--reticulum-config-path`; `/api/v1/app/info.reticulum_config_path` matched
+  the expected temp Reticulum config path and `/Reticulum/Config` returned the
+  temp file.
+
+Remaining retest:
+
+- No remaining RCH-US-007 issue from this slice. The primary server was
+  restarted after the release rebuild and remained healthy on
+  `http://127.0.0.1:18080/`.
+
+## Persisted Broadcast Fallback Repair Retest
+
+Time: `2026-06-23T01:30Z` to `2026-06-23T01:50Z`.
+
+Runtime:
+
+- Rebuilt `target\release\r3akt-rch-server.exe` and restarted the primary
+  manual server on `http://127.0.0.1:18080/`, PID `16648`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- Reticulumd RPC and LXMF ZeroMQ SDK endpoints remained configured.
+
+Result:
+
+- User-reported message `2a2892b3227b427487308d53712dd163` is currently
+  `propagated` with `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  and 13 propagated receipt targets. Its older `failed/send_error` system event
+  was superseded by later retry and propagated state.
+- Found eight persisted broadcast direct-timeout fallback rows that were
+  stranded as terminal `failed` with retryable `send_timeout`, `send_error`, or
+  rate-limit transport errors and no propagation dispatch count.
+- Added a regression so failed propagated broadcast direct-timeout fallback rows
+  are treated as retry-due only when the failure is retryable, dispatch count is
+  still zero, and retry budget remains. Invalid-destination failures remain
+  terminal.
+- Fixed the repair path to set repaired rows back to `queued` when an attempt
+  starts, and to let already-started repair attempts finalize through the stale
+  dispatch timeout path without being selected repeatedly.
+- After the final rebuild/restart, all eight stranded rows moved from
+  `failed` to `queued`. After one dispatch timeout window, seven were queued
+  with rate-limit backoff and one remained actively dispatching; none returned
+  to terminal `failed`.
+
+Remaining retest:
+
+- The environment is still hitting `SDK_SECURITY_RATE_LIMITED`, so continue
+  live phone/deck stress after the rate-limit window clears and confirm queued
+  repaired fallbacks reach accepted/sent propagation.
+
+## Superseded Broadcast Failure Event Retest
+
+Time: `2026-06-23T02:39Z`.
+
+Runtime:
+
+- Rebuilt `target\release\r3akt-rch-server.exe` and restarted the primary
+  manual server on `http://127.0.0.1:18080/`, PID `5748`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- Reticulumd RPC and LXMF ZeroMQ SDK endpoints remained configured.
+
+Result:
+
+- User again reported message `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- Live `/Chat/Messages?limit=200` showed the canonical message row is still
+  `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, and 13 propagated receipt targets. Six child
+  rows were `sent: propagated resource`; seven remained `sending`.
+- Live `/Events` no longer retained a `message_delivery_failed` row for the
+  reported message and had no retained `message_delivery_failed` rows at all.
+- Added a regression and formatter so `/Events` and `/events/system` replay
+  reclassify stale `message_delivery_failed` events as
+  `message_delivery_superseded` when the current message row has recovered to a
+  non-failed state. The metadata now includes `original_event_type`,
+  `delivery_failure_superseded=true`, `current_state`, and
+  `current_dispatch_status` while preserving the current delivery metadata.
+
+Remaining retest:
+
+- A later pasted card showed the backend fix was not enough for an already-open
+  dashboard event feed. The client-side merge fix is covered in the next
+  section. Continue live phone/deck stress once the SDK rate-limit window
+  clears.
+
+## Dashboard Stale Broadcast Failure Card Retest
+
+Time: `2026-06-23T02:58Z`.
+
+Runtime:
+
+- Primary manual server remained on `http://127.0.0.1:18080/`, PID `5748`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- User pasted another dashboard failure card for the same broadcast message
+  `2a2892b3227b427487308d53712dd163`: `Destination=Not set`,
+  `State=failed`, `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`,
+  `Failure Reason=send_error`, `Route Type=broadcast`.
+- Live `/Chat/Messages?limit=500` showed the canonical row is still
+  `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, and 13 propagated receipt targets. Six child
+  rows were `sent: propagated resource`; seven remained `sending`.
+- Live `/Events?limit=500` returned zero current events for that message ID and
+  zero current `message_delivery_failed` rows.
+- Root HTTP serving check returned `200 text/html` from
+  `http://127.0.0.1:18080/`.
+- Added `ui/src/stores/dashboard.spec.ts` for the stale-card scenario and
+  changed the dashboard event merge so a `message_delivery_superseded` event
+  removes older `message_delivery_failed` rows for the same `MessageID`.
+- Rebuilt `ui/dist` so the already-running manual server serves the refreshed
+  dashboard bundle.
+
+Verification:
+
+- `npm --prefix ui run test -- dashboard` passed.
+- `npm --prefix ui run build` passed.
+
+Remaining retest:
+
+- In-app browser control timed out while navigating to the local URL, so the
+  rendered dashboard refresh remains a manual browser proof item. The running
+  server is ready for manual reload at `http://127.0.0.1:18080/`.
+
+Follow-up recheck:
+
+- At `2026-06-23T03:30Z`, after the configured manual server was rebuilt and
+  restarted as PID `18144`, the same reported message
+  `2a2892b3227b427487308d53712dd163` was still persisted as
+  `delivery_state=propagated`, `dispatch_status=accepted`,
+  `delivery_method=propagated`, and
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`, with 13 receipt
+  targets and no `send_error` on the current row.
+- `/Events?limit=10000` returned no current event for that message ID. The
+  selected in-app browser tab reported `about:blank` despite retaining the RCH
+  title, and browser navigation to the local UI timed out, so the repeated card
+  is treated as stale browser/dashboard state rather than a current backend
+  failure.
+- MessagePack decoding of the three newest terminal `failed` rows showed
+  invalid test destination hashes (`codex-rch-us014-20260622222002`), not
+  retryable propagated broadcast fallback `send_error` rows.
+
+## Emergency Action Message API Retest
+
+Time: `2026-06-23T02:00Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `16648`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Created disposable team `codex-eam-team-1782179686` and EAM callsign
+  `Codex EAM 1782179686`.
+- `POST /api/EmergencyActionMessage` persisted the EAM and computed
+  `overall_status=Yellow` from mixed Green/Yellow member status fields.
+- Filtered list `GET /api/EmergencyActionMessage?team_uid=...&overall_status=yellow`
+  returned the created EAM.
+- `GET /api/EmergencyActionMessage/latest/{team_member_uid}` and
+  `GET /api/EmergencyActionMessage/{callsign}` returned the same active record.
+- `GET /api/EmergencyActionMessage/team/{team_uid}/summary` reported
+  `total=1`, `active_total=1`, and `yellow_total=1`.
+- `PUT /api/EmergencyActionMessage/{callsign}` changed medical status to Red
+  and recomputed `overall_status=Red`.
+- Validation checks passed: mismatched path/body callsign returned `400` with
+  `callsign in body must match the path callsign`; confidence `1.1` returned
+  `422` with `less_than_equal`.
+- `DELETE /api/EmergencyActionMessage/{callsign}` returned the deleted record;
+  follow-up get returned `404`; team summary reported `active_total=0` and
+  `deleted_total=1`.
+- Cleanup deleted the disposable team. Follow-up API checks showed
+  `activeEamMatches=0` and `teamMatches=0`. The SQLite EAM tombstone remains
+  with `deleted_ts_ms`, which is expected for summary/history semantics.
+
+Remaining retest:
+
+- Browser proof for the embedded mission/member EAM controls remains open; the
+  route/API behavior itself passed against the live configured server.
+
+## Team Roster And Rights API Retest
+
+Time: `2026-06-23T02:52Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `5748`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Created disposable mission/team/member run `codex-us015-20260623025150`.
+- Rights definitions exposed `mission.registry.log.read` and role bundles.
+- Team create/update/list/filter/get and team mission link/list/unlink passed.
+- Member create/update/list/filter/get and member client link/list/unlink
+  passed; member update used canonical role token `TEAM_LEAD`.
+- Rights subjects listed the mission team member.
+- Operation right grant/list/revoke passed for `mission.registry.log.read`.
+- Mission access assign/list/revoke passed for `MISSION_OWNER`.
+- Validation probes returned expected statuses: grant query missing
+  `subject_type` returned `400`, missing member clients returned `404`, and
+  display-label role `Team Lead` returned `400`.
+- Cleanup deleted member/team/mission and verified zero active
+  member/team/access rows for the disposable prefix.
+
+Follow-up:
+
+- Browser proof for `TeamRosterPage` and `TeamRightsMatrixPanel` is covered by
+  the browser retest below.
+- Confirm the UI submits canonical role values such as `TEAM_LEAD` instead of
+  display labels such as `Team Lead`, or add UI mapping/error handling if new
+  editor flows are added.
+
+## Team Roster And Rights Browser Retest
+
+Time: `2026-06-23T14:50Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `24116`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Setup:
+
+- Created disposable mission/team/member run `codex-ui-us015-20260623145030`.
+- Linked `codex-ui-us015-20260623145030-team` to
+  `codex-ui-us015-20260623145030-mission`.
+- Created team member `codex-ui-us015-20260623145030-member` with callsign
+  `US015-20260623145030`, role `TEAM_LEAD`, and RNS identity
+  `77b2539b72259af927e48c0f90721767`.
+- Granted `mission.registry.log.read` to the team member and assigned mission
+  access role `TEAM_LEAD`.
+
+Rendered roster proof:
+
+- Opened `/users/teams/members?team_uid=codex-ui-us015-20260623145030-team`
+  in the in-app browser.
+- Page identity was `RCH UI` at the expected route.
+- The page had no boot screen, no framework overlay text, and no browser
+  console warnings or errors.
+- The page rendered:
+  - `TEAM MEMBER ASSIGNMENT`.
+  - `Codex UI US015 Team 20260623145030`.
+  - `ROSTER SIZE: 1`.
+  - `Codex UI US015 Mission 20260623145030`.
+  - row `US015-20260623145030`,
+    `77b2539b72259af927e48c0f90721767`, `TEAM_LEAD`,
+    `Codex UI US015 Member 20260623145030`, `AVAILABLE`.
+
+Rendered rights proof:
+
+- Opened `/users?tab=rights`, selected the disposable team and linked mission,
+  and filtered rights to `mission.registry.log.read`.
+- The matrix rendered:
+  - `TEAM RIGHTS MATRIX`.
+  - selected team `Codex UI US015 Team 20260623145030`.
+  - selected mission `Codex UI US015 Mission 20260623145030 (linked)`.
+  - member `US015-20260623145030`.
+  - role `TEAM_LEAD` / `Team lead`.
+  - filtered count `1 RIGHTS`.
+  - cell title `Log Read: Allowed via explicit grant`.
+- Clicked `Revoke Visible`; the cell changed to
+  `Log Read: Denied (draft change)`, `Reset Draft` and `Apply Changes` became
+  enabled, and the mission role draft changed to `No bundle`.
+- Clicked `Apply Changes`; the page showed `Rights assignments updated.`, the
+  cell changed to `Log Read: Denied via explicit revoke`, and `Reset Draft` /
+  `Apply Changes` returned to disabled.
+- Follow-up API checks showed the grant row persisted as `granted=false` and
+  mission access for the member was removed.
+
+Cleanup:
+
+- Deleted the explicit rights grant, mission access, team/mission link, member,
+  team, and mission.
+- Follow-up checks found zero active team/member/mission rows for the
+  disposable prefix.
+
+Result:
+
+- Pass for the rendered RCH-US-015 roster and rights matrix workflow against
+  the DB/config-backed server.
+- Browser screenshot capture timed out once in the in-app browser harness, but
+  DOM, console, API, and interaction evidence all passed.
+
+## Checklist And Template API Retest
+
+Time: `2026-06-23T03:25Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, rebuilt and restarted as
+  PID `18144`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+- Reticulumd RPC `127.0.0.1:14243`; LXMF ZMQ command/response endpoints
+  `tcp://127.0.0.1:19100` and `tcp://127.0.0.1:19101`.
+
+Finding and fix:
+
+- Disposable run `codex-us019-20260623001705` reproduced a checklist UI
+  contract bug: `POST /checklists` with a valid `template_uid` and
+  `mission_uid` persisted the link but returned only `mission_id`, leaving
+  `mission_uid` empty for UI raw records.
+- Added regression
+  `checklist_from_template_returns_mission_uid_alias`.
+- Fixed `RchCore::checklist_value` to emit both `mission_id` and
+  `mission_uid`, preserving the existing Python-compatible alias while matching
+  the Rust UI contract.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server checklist_from_template_returns_mission_uid_alias -- --nocapture`
+  failed before the fix with `mission_uid` as `Null`, then passed after the
+  serializer change.
+- `cargo test -p r3akt-rch-server checklist_ -- --nocapture` passed
+  19 checklist-related server tests with 2 ignored legacy generic-fanout tests.
+- `cargo test -p r3akt-rch-core checklist_ -- --nocapture` passed 9
+  checklist-related core tests.
+- `cargo build --release -p r3akt-rch-server` passed after stopping the old
+  manual server process that had the release binary locked.
+
+Live retest:
+
+- Created disposable run `codex-us019-20260623002534`.
+- Template create, patch, clone, and delete passed; valid template columns
+  included exactly one pinned `DUE_RELATIVE_DTG` system column.
+- Template-derived checklist create returned both
+  `mission_id=codex-us019-20260623002534-mission` and
+  `mission_uid=codex-us019-20260623002534-mission`.
+- Task add returned task `a6dc2dbc961d4076be2cccc8731bbba5`.
+- Cell patch persisted `Bring spare battery`.
+- Row style persisted `#223344` and `line_break_enabled=true`.
+- Task status changed to `COMPLETE`.
+- Join, upload, and feed publish passed.
+- CSV import `923d37d274744287ae75202ea65d7fdb` preserved three columns and
+  two task rows.
+- Task delete removed the disposable task.
+- Cleanup deleted the checklist, CSV import checklist, clone/template, and
+  mission; follow-up API verification showed zero active disposable checklists,
+  zero matching templates, zero active disposable missions, and one expected
+  deleted mission tombstone.
+
+Follow-up:
+
+- Rendered browser proof for checklist modals, CSV picker/preview, checklist
+  controls, and delete confirmations is now covered by the checklist/template
+  browser retest below. The route/API behavior itself passed against the live
+  configured server.
+
+## Checklist/Template Browser Retest
+
+Time: `2026-06-23T15:11Z`.
+
+Runtime:
+
+- In-app browser against `http://127.0.0.1:18080/checklists`.
+- Primary manual server PID `24116`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Used disposable prefix `codex-ui-us019-20260623151124` and CSV file
+  `codex-ui-us019-20260623.csv`.
+- Template Library editor switched from read-only CSV selection to an editable
+  draft, added a column, deleted a column, saved
+  `codex-ui-us019-20260623151124-template`, cloned it, and accepted the clone
+  delete confirmation.
+- CSV upload rendered the selected filename, 3 header columns, 2 task rows, and
+  preview rows for `Radio check` and `Signal report`.
+- Preview downloaded `preview-codex-ui-us019-20260623.csv`.
+- Import created CSV template/checklist
+  `5b100d76913c4b5a92f707d64a1a0ec6` with 4 columns and 2 tasks.
+- The New checklist modal created `codex-ui-us019-20260623151124-run` from the
+  CSV source and rendered both imported tasks.
+- The detail view added a task, toggled a task to `COMPLETE`, opened the Link
+  Checklist to Mission modal, accepted checklist delete confirmation, and
+  accepted CSV import template delete confirmation.
+- Browser console warnings/errors: none.
+- Page runtime errors: none.
+- Cleanup deleted the disposable checklist, CSV import, and saved template;
+  follow-up API checks found zero active rows matching
+  `codex-ui-us019-20260623151124` or `codex-ui-us019-20260623`.
+
+Note:
+
+- The browser runner exposed one stale native dialog state during clone
+  deletion even though the page handler had already accepted it. The second half
+  used an in-page confirm shim to log confirmation text without wedging the
+  automation channel.
+
+## Topic Asset Association API Retest
+
+Time: `2026-06-23T03:49Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `18144`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Created disposable topic `codex-us008-20260623004949` and explicit
+  subscriber `codex-us008-20260623004949-subscriber` with random destination
+  `83146ad350e7429bbd8846c0c80a0a7e`.
+- Uploaded a text file and PNG image through `/Chat/Attachment`.
+- `PATCH /File/{id}` and `PATCH /Image/{id}` with
+  `TopicID=codex-us008-20260623004949` persisted the topic association.
+- `/File` and `/Image` list responses showed the associated `TopicID`.
+- Patching the file with `TopicID=null` detached it.
+- Deleting the topic cleared the still-linked image `TopicID`, covering the
+  cleanup path used when topic cards are removed.
+- Cleanup deleted the subscriber, topic, file, and image. Follow-up list checks
+  showed zero matching disposable topics and subscribers.
+
+Remaining retest:
+
+- Browser proof for the Topics page Manage Assets modal attach/detach feedback
+  and topic/subscriber delete confirmation remains open.
+
+## Topics Page Component Regression
+
+Time: `2026-06-23T06:08Z`.
+
+Scope:
+
+- The in-app browser controller timed out while navigating to the local
+  DB/config-backed server, so rendered browser proof for RCH-US-008 could not
+  be completed in this slice.
+- Added page-level jsdom coverage for `ui/src/pages/TopicsPage.vue` using a
+  memory router, real Pinia stores, and mocked RCH API responses.
+
+Result:
+
+- The test mounts the real Topics page and opens `Manage Assets`.
+- It verifies the modal renders linked and unassigned assets from `/File` and
+  `/Image`.
+- It drives the visible `Library File` selector and `Attach File` button, then
+  verifies `PATCH /File/file-open` receives `TopicID=topic-alpha`.
+- It drives the visible `File` selector and `Remove File` button, then verifies
+  `PATCH /File/file-linked` receives `TopicID=null`.
+- It verifies topic deletion honors a canceled confirmation before calling
+  `DELETE /Topic?id=topic-alpha`.
+- It verifies subscriber deletion honors a canceled confirmation before calling
+  `DELETE /Subscriber?id=sub-alpha`.
+
+Verification:
+
+- `npm --prefix ui run test -- topics-page` passed with 3 tests.
+- `ui/vitest.config.ts` now registers `@vitejs/plugin-vue` so Vue SFC page
+  tests can run under Vitest.
+
+Remaining retest:
+
+- This covers the component-level UI contract for the previously open
+  modal/delete paths. RCH-US-008 still needs a clean in-app browser pass
+  against the live server before it should be marked `Manual pass`.
+
+## Dashboard Event Snapshot Reconciliation Retest
+
+Time: `2026-06-23T03:56Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `18144`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Finding and fix:
+
+- User again saw the broadcast delivery card for
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- Live SQLite and `/Chat/Messages?limit=500` both showed exactly one current
+  row for that message: `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, with six propagated child targets already
+  `sent: propagated resource`.
+- `/Events?limit=500` had no current event for `2a289...` and no current
+  `message_delivery_failed` event for the message.
+- The remaining issue was an open-dashboard stale-state gap: a tab that missed
+  a superseded/recovery event could keep the old failure card in memory.
+- Added dashboard store replacement from authoritative `/Events` snapshots.
+  Periodic dashboard refresh now clears in-memory failure rows that are absent
+  from the server event snapshot.
+
+Verification:
+
+- `npm --prefix ui run test -- dashboard` failed before the fix with
+  `dashboard.replaceEvents is not a function`.
+- After adding `replaceEvents` and wiring dashboard refresh to
+  `/Events?limit=200`, `npm --prefix ui run test -- dashboard` passed.
+- `npm --prefix ui run lint`, `npm --prefix ui run test`, and
+  `npm --prefix ui run build` passed. The local server returned `200` for `/`
+  and served the rebuilt `assets/index-D9w_tpHe.js` bundle.
+
+Remaining retest:
+
+- In-app browser navigation to the local UI timed out during this slice, so
+  rendered proof remains open. Refresh the browser tab and confirm the event
+  feed no longer shows the stale `2a289...` failure card.
+
+## Marker And Zone API Retest
+
+Time: `2026-06-23T04:03Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, PID `18144`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Result:
+
+- Created disposable mission `codex-us021-20260623040349-mission`.
+- `/api/markers/symbols` included the default `marker` symbol with
+  `mdi=map-marker`.
+- Created marker `623b9d1b7b8b4dfbbebce05aeadf7ca8`, listed it with the
+  expected name and `position={lat:45.5017, lon:-73.5673}`, moved it through
+  `/api/markers/{id}/position`, renamed it through `/api/markers/{id}`, and
+  deleted it during cleanup.
+- Created alias marker `d0c1916c42f540409f014f3023276451` using
+  `type=car` and `symbol=uav`; list output normalized it to
+  `type=vehicle`, `symbol=drone`, and `category=drone`.
+- Unsupported marker type returned `422`.
+- Created zone `7fcf60c32f8146b4a038d4a2be4be0d0`, listed it with three
+  points, patched name and geometry, and deleted it during cleanup.
+- One-point zone creation returned `422`.
+- Linked the zone and marker to the disposable mission with
+  `/api/r3akt/missions/{mission_uid}/zones/{zone_id}` and
+  `/api/r3akt/missions/{mission_uid}/markers/{marker_id}`.
+- Mission link lists returned the expected zone and marker IDs, then unlink
+  routes removed both IDs.
+- `/Events?limit=500` included marker create/update/delete/telemetry events
+  and mission marker/zone link/unlink events for the disposable artifacts.
+- `/Telemetry?since=0` retained the marker deleted telemetry row for
+  `623b9d1b7b8b4dfbbebce05aeadf7ca8`.
+- Cleanup deleted the marker, alias marker, zone, and mission. Follow-up list
+  checks showed zero active disposable markers, zones, or missions, with one
+  expected deleted mission tombstone.
+
+Remaining retest:
+
+- Browser proof for MapLibre rendering, marker placement/radial menu, zone
+  drawing/edit/delete, mission assignment popovers, icon fallback, and stale
+  overlay cleanup after delete remains open.
+
+## Post-Budget Broadcast Fallback Retry Repair
+
+Time: `2026-06-23T04:24Z`.
+
+Runtime:
+
+- Primary manual server on `http://127.0.0.1:18080/`, restarted from rebuilt
+  release binaries during the retest; final running PID is `3680`.
+- State/config remained `RTH_Store\rch_state.sqlite3` and
+  `RTH_Store\config.ini`.
+- API key `manual-test`.
+
+Finding and fix:
+
+- User again reported broadcast message
+  `2a2892b3227b427487308d53712dd163` with `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`, and
+  `Failure Reason=send_error`.
+- Live SQLite and `/Chat/Messages?limit=500` showed the canonical row was not
+  failed: `State=propagated`, `dispatch_status=accepted`,
+  `delivery_method=propagated`, `reticulumd_dispatch_count=13`, and no current
+  `error` or `retry_reason`.
+- The live DB also contained older retryable propagated fallback rows that had
+  exhausted the previous fallback retry ceiling and stayed terminal `failed`
+  under rate-limit/timeout pressure.
+- Changed retry scheduling so retryable propagated broadcast/fanout
+  direct-timeout fallback errors continue as queued propagation even after the
+  previous 120-attempt ceiling instead of falling through to terminal failed.
+- Changed the failed-row repair predicate so already-failed retryable propagated
+  fallback rows are due for repair even after the old retry budget is exceeded.
+- Cleared stale `error`, `retry_reason`, and `last_attempt_failed_at_ts_ms`
+  metadata when a retry attempt starts, and cleared stale failed-at metadata
+  when a later dispatch reaches `sent`, `delivered`, or `propagated`.
+- Sanitized `/Chat/Messages` serialization for already-persisted successful
+  rows so older recovered messages no longer expose stale failure metadata to
+  UI detail renderers.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server
+  propagated_broadcast_fallback_retryable_error_stays_queued_after_retry_budget`
+  failed before the fix because scheduling returned `None`, then passed.
+- `cargo test -p r3akt-rch-server
+  internal_delivery_attempt_clears_retry_scheduled_like_python_callback` failed
+  before the retry-start cleanup because `retry_reason` remained present, then
+  passed.
+- `cargo test -p r3akt-rch-server propagated_broadcast` passed 7 focused
+  propagated broadcast fallback tests.
+- `cargo test -p r3akt-rch-server` passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- After restarting the fixed binary, live rows
+  `dc8c20bc041b47f78c313f77eea916c1` and
+  `991ee56574b04ca59c0a5bd173a4c5b0` moved from terminal failed back to
+  `queued` / `in_progress` propagated fallback retry state.
+- Final `/Chat/Messages?limit=500` verification for
+  `2a2892b3227b427487308d53712dd163` returned `State=propagated`,
+  `method=propagated`, `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  and no serialized `error`, `retry_reason`, or
+  `last_attempt_failed_at_ts_ms`.
+
+Remaining retest:
+
+- The live mesh is still hitting `SDK_SECURITY_RATE_LIMITED`, so phone/deck
+  receipt remains blocked by the SDK/RNS rate-limit window. Continue stress
+  until queued propagated fallbacks reach accepted/sent propagation on the two
+  USB phones and embedded decks.
+
+## 2026-06-23 Wrapped List UI Reconciliation
+
+Trigger:
+
+- The operator again saw message `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+
+Live state:
+
+- Direct SQLite inspection of `RTH_Store\rch_state.sqlite3` showed the reported
+  row is still canonical `delivery_state=propagated`,
+  `dispatch_status=accepted`, `attempts=5`.
+- The active stress probe `2d437d80fbeb4c4cbc36c6fc3f9faeaa` remained
+  non-terminal under the SDK/RNS rate-limit window, moving between queued and
+  in-progress propagated fallback retries.
+
+UI finding:
+
+- Raw HTTP checks showed the current local server returns plain arrays for
+  `/Events` and `/Chat/Messages`.
+- The repeated visible card is therefore consistent with a stale browser tab or
+  older loaded bundle, not the current backend row.
+- The dashboard and chat stores were still hardened to accept both raw arrays
+  and Python-style wrapped list responses so future compatibility envelopes
+  cannot prevent authoritative refreshes from replacing stale in-memory state.
+
+Fix:
+
+- Added `ui/src/utils/api-list.ts` to unwrap raw arrays plus `value`, `Value`,
+  `items`, and `Items` list envelopes.
+- Updated the dashboard refresh path to unwrap wrapped `/Events`, mission, and
+  team-member snapshots before replacing in-memory events.
+- Updated the chat history refresh path to unwrap wrapped `/Chat/Messages`
+  before mapping rows.
+
+Verification:
+
+- `npm --prefix ui run lint` passed.
+- `npm --prefix ui run test -- dashboard chat` passed, including a regression
+  where a wrapped `/Events` snapshot clears an older
+  `message_delivery_failed` card for `2a2892b3227b427487308d53712dd163`.
+- `npm --prefix ui run build` passed and the live server returned
+  `200 text/html` serving rebuilt bundle `assets/index-kc7Jg-Vq.js`.
+- In-app browser navigation to `http://127.0.0.1:18080/` timed out before
+  rendered proof could be captured.
+
+Remaining retest:
+
+- Refresh or reload the manual browser tab so it loads the rebuilt bundle.
+- Continue live delivery stress once the SDK/RNS rate-limit window clears and
+  confirm propagated dispatch reaches accepted/sent state on the connected
+  phones/decks.
+
+## 2026-06-23 Packaging and Sidecar RC Smoke
+
+Scope:
+
+- Local Windows validation of the full server package assembly script and Tauri
+  desktop sidecar preparation.
+- CI matrix inspection only for macOS, Linux AMD64, Linux Raspberry Pi 64,
+  Windows NSIS, and Linux AppImage.
+
+Evidence:
+
+- `scripts/build-rust-release-package.ps1` stages server binary, optional TAK
+  service binary, packaging templates, Windows helper scripts, docs, optional
+  `ui/dist`, `release-manifest.json`, an archive, and a `.sha256` sidecar.
+- `.github/workflows/rust-release.yml` builds full server packages for Windows
+  x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64. It also
+  builds desktop artifacts for Windows x64 NSIS and Linux x64 AppImage.
+- `apps/rch-desktop/scripts/prepare-sidecar.mjs` prepares both
+  `r3akt-rch-server` and `r3akt-tak-service` sidecar binaries with the host
+  target triple suffix required by Tauri.
+
+Local run:
+
+- Ran `powershell -ExecutionPolicy Bypass -File
+  scripts\build-rust-release-package.ps1 -PackageName
+  codex-rch-rc-package-smoke -ReleaseVersion codex-rc-smoke-20260623
+  -OutputDir target\rc-package-smoke -ServerBinaryPath
+  target\release\r3akt-rch-server.exe -TakServiceBinaryPath
+  target\release\r3akt-tak-service.exe -IncludeTakService -IncludeUi
+  -ArchiveFormat zip`.
+- Generated `target\rc-package-smoke\codex-rch-rc-package-smoke.zip`
+  (`8,852,114` bytes) and a matching SHA-256 sidecar with hash
+  `173AEC4E75AFC8975D2639A7941A1232008D5786E47B722B65E97EAE8500DA09`.
+- Manifest recorded `includes_server=true`, `includes_tak_service=true`,
+  `includes_ui=true`, and binaries `r3akt-rch-server.exe` plus
+  `r3akt-tak-service.exe`.
+- Archive entries included `bin\r3akt-rch-server.exe`,
+  `bin\r3akt-tak-service.exe`, server and TAK service systemd templates,
+  Windows start/install helpers, and `ui\index.html`.
+- Ran `npm --prefix apps/rch-desktop run prepare:sidecar`; it prepared ignored
+  Windows sidecars `r3akt-rch-server-x86_64-pc-windows-msvc.exe` and
+  `r3akt-tak-service-x86_64-pc-windows-msvc.exe`.
+
+Documentation fix:
+
+- Updated `apps/rch-desktop/README.md` to say both sidecars are prepared and
+  bundled, while the shell currently starts only the RCH server sidecar
+  automatically.
+
+Remaining release gate:
+
+- This does not prove the hosted release workflow matrix. Run
+  `Build Rust Release Packages` before publishing the RC and verify uploaded or
+  attached artifacts plus checksums for all matrix entries.
+
+## 2026-06-23 Release Gate and Main Merge
+
+Context:
+
+- PR #201 targeted `main`; after `origin/main` advanced to include PR #200,
+  GitHub reported no checks and `mergeStateStatus=DIRTY`.
+- A non-mutating merge preview showed one conflict in
+  `crates/r3akt-rch-server/src/lib.rs` around broadcast fallback retry
+  scheduling.
+
+Resolution:
+
+- Merged `origin/main`.
+- Preserved this branch's retryable propagated fallback behavior and retained
+  `main`'s local-transport retry helper in the retry scheduler predicate.
+- Removed the duplicate broadcast-only timeout propagation path from `main` in
+  favor of this branch's generalized broadcast/fanout direct-timeout propagation
+  path, with the metadata cleanup and `direct_attempts` field folded in.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server propagated_broadcast` passed 10 focused
+  propagated broadcast fallback tests.
+- `cargo fmt --all -- --check` passed.
+- `scripts\release-readiness.ps1 -ServerOnlyAlpha -SkipClippy
+  -SkipWorkspaceTests -Bind 127.0.0.1:18082 -ApiKey codex-release-gate
+  -LxmfZmqCommand tcp://localhost:9100 -LxmfZmqResponse
+  tcp://localhost:9101 -ReticulumdSource codex-release-gate` passed.
+
+Runtime note:
+
+- The first post-merge release gate attempt failed because the manual
+  DB/config-backed server was running from `target\release\r3akt-rch-server.exe`
+  and Windows denied Cargo replacing the locked binary.
+- Stopped the manual server briefly, reran the gate, and restarted the manual
+  server on `http://127.0.0.1:18080/` with PID `26344`, using
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, Reticulum RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints
+  `tcp://127.0.0.1:19100` / `tcp://127.0.0.1:19101`.
+
+Remaining release gate:
+
+- Push the merge and wait for GitHub to report checks for PR #201.
+- Full clippy/workspace tests were not rerun in this local gate; rely on
+  GitHub PR quality checks or run them locally before marking the PR ready.
+
+## 2026-06-23 Post-Merge Accepted Propagation Stress Check
+
+Runtime:
+
+- Manual DB/config-backed server restarted on `http://127.0.0.1:18080/` as PID
+  `26344` after the merge/release-gate run.
+- Two USB phones remained attached:
+  - Pixel 7 `35031FDH2003N8`
+  - SM-G950W `988b9b344135304639`
+- `network.reticulum.emergency` was running on both phones.
+
+Message state:
+
+- User-reported `2a2892b3227b427487308d53712dd163` remained canonical
+  `State=propagated`, `dispatch_status=accepted`, attempts `5`, no current
+  `error` or `retry_reason`.
+- Stress probe `2d437d80fbeb4c4cbc36c6fc3f9faeaa` advanced from retrying
+  propagated fallback to `State=propagated`, `dispatch_status=accepted`,
+  attempts `34`, `reticulumd_dispatch_count=13`, no current `error`, and no
+  current `retry_reason`.
+- Runtime diagnostics reported queue depth `0`, pending dispatches `0`,
+  propagated count `29`, and retry worker `running=true`.
+
+Client/deck inventory:
+
+- `/Client` still listed historical deck identities for `raphydeck`,
+  `silkedeck`, and `corvodeck`.
+
+Remaining live gap:
+
+- `2d437...` target statuses were still `sending` across all 13 targets after
+  follow-up polls. This proves accepted propagation dispatch but not final
+  phone/deck receipt.
+- Continue monitoring target statuses and connected device inboxes until the
+  propagated targets report sent/received.
+
+## 2026-06-23 Broadcast Fallback Metadata and CI Pin Follow-Up
+
+Trigger:
+
+- The operator again saw broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- GitHub PR checks for #201 failed after the `origin/main` merge.
+
+Live state:
+
+- The DB/config-backed manual server on `http://127.0.0.1:18080/` still had
+  `2a289...` as canonical `State=propagated`, `dispatch_status=accepted`,
+  `method=propagated`, `policy=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, no current `error`, and no current
+  `retry_reason`.
+- Target status split was six `sent: propagated resource` and seven `sending`.
+  The visible failed card is therefore not the current backend state.
+
+Fixes:
+
+- Direct broadcast/fanout timeout fallback now resets the propagated leg's
+  `attempts` to `0`, preserves the old direct count as `direct_attempts`, and
+  sets `max_attempts` to the propagated multi-recipient retry budget. This
+  prevents direct-only attempt metadata from leaking into propagation fallback
+  state.
+- Timeout-generated `message_propagation_queued` events now include
+  `callback_source=reticulumd_internal_adapter` and
+  `callback_type=propagation_fallback`, matching other delivery callback
+  events.
+- GitHub CI and release workflows now pin the LXMF-rs checkout to commit
+  `ed4a8a1e7921925023ed5583d20f75c7671e3b6e`, whose crate package versions
+  match the committed `Cargo.lock`. The older `v0.5.1` tag contains earlier
+  package versions and made CI try to rewrite the lockfile under
+  `cargo fetch --locked`.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server direct_broadcast_dispatch_timeout_falls_back_to_propagation -- --nocapture`
+  passed.
+- `cargo test -p r3akt-rch-server propagated_broadcast -- --nocapture` passed
+  10 focused propagated broadcast fallback tests.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo fetch --locked` passed locally against the pinned LXMF-rs-compatible
+  lockfile.
+
+Remaining live gap:
+
+- Final phone/deck receipt is still not proven for every propagated target.
+  Continue monitoring target statuses and device inboxes until all targets
+  leave `sending`.
+
+## 2026-06-23 Post-Fix Broadcast Canary on Rebuilt Server
+
+Runtime:
+
+- Rebuilt `target\release\r3akt-rch-server.exe` from the fixed branch and
+  restarted the manual DB/config-backed server on `http://127.0.0.1:18080/` as
+  PID `2548`.
+- Server arguments continued to use `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, Reticulum RPC
+  `127.0.0.1:14243`, local source `4fa9359ec3ea68185d4dd03b23073244`, and
+  LXMF ZMQ endpoints `tcp://127.0.0.1:19100` /
+  `tcp://127.0.0.1:19101`.
+
+Canary:
+
+- Sent broadcast `2f98a8193d4b4f0e9bc9c248010e4633` with content
+  `RCH RC post-fix broadcast canary 2026-06-23T02:48:54-03:00`.
+- Polls 1 through 14 showed direct broadcast `dispatch_status=in_progress`
+  without an error.
+- Poll 15 showed direct timeout fallback queued propagation with
+  `method=propagated`, `policy=broadcast_direct_timeout_fallback`,
+  `attempts=0`, `direct_attempts=1`, `max_attempts=5`,
+  `error=send_timeout`, and `retry_reason=send_timeout`.
+- Poll 16 showed successful propagation acceptance:
+  `State=propagated`, `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  no current `error`, no current `retry_reason`, and 13 pending target receipts.
+
+Result:
+
+- Pass for the release-blocking fallback behavior on the rebuilt manual server:
+  a legitimate direct broadcast `send_timeout` was sent to propagation and did
+  not remain terminal failed.
+- Final device/deck receipt remains open until the 13 target receipts leave
+  `pending`/`sending`.
+
+## 2026-06-23 Repeated Stale Broadcast Failure Card Check
+
+Trigger:
+
+- The operator again saw broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+
+Live state:
+
+- The configured manual server was still running as PID `2548` on
+  `http://127.0.0.1:18080/`.
+- Direct SQLite state in `RTH_Store\rch_state.sqlite3` showed the message row
+  as `delivery_state=propagated`, `dispatch_status=accepted`, attempts `5`, and
+  no terminal failed row.
+- Reticulumd SQLite state showed 13 propagated outbound child messages for the
+  same ID: six `sent: propagated resource` and seven `sending`.
+- `/Events?limit=500` did not contain the message ID and did not contain
+  `send_error`.
+- `/Chat/Messages?limit=500` contained the message ID but no `send_error`.
+- The server served the current rebuilt UI bundle
+  `/assets/index-kc7Jg-Vq.js`.
+- The in-app browser selected tab reported `about:blank` with title `RCH UI`,
+  and browser automation timed out attempting to navigate it to the local UI.
+
+Result:
+
+- No backend retry/fallback regression was reproduced. The current canonical
+  state is propagated/accepted, and the pasted card is consistent with stale
+  browser/client state rather than current server state.
+- Two USB phones remained attached, and both `network.reticulum.emergency` and
+  `com.lxmf.messenger` were running on Pixel 7 `35031FDH2003N8` and
+  SM-G950W `988b9b344135304639`.
+- Current canaries `2f98a8193d4b4f0e9bc9c248010e4633` and
+  `2d437d80fbeb4c4cbc36c6fc3f9faeaa` also remained
+  `propagated`/`accepted`; their propagated receipt targets were still
+  `sending`.
+
+Remaining live gap:
+
+- Final device/deck receipt is still unproven. Refresh the manual browser tab
+  so it loads `index-kc7Jg-Vq.js`, then continue monitoring propagated target
+  statuses and phone/deck inboxes until targets leave `sending`.
+
+## 2026-06-23 Repeated Stale Card and Phone Transport Retest
+
+Trigger:
+
+- The operator again saw broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+
+Live canonical state:
+
+- The DB/config-backed manual server was running on
+  `http://127.0.0.1:18080/` as PID `16216`, using
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, Reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints
+  `tcp://127.0.0.1:19100` / `tcp://127.0.0.1:19101`.
+- `/Chat/Messages?limit=500` returned `2a289...` as
+  `State=propagated`, `dispatch_status=accepted`,
+  `method=propagated`, `policy=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, no current `error`, and no current
+  `retry_reason`.
+- `/Events?limit=1000` returned zero events for `2a289...`. The only current
+  `message_delivery_failed` event was an unrelated targeted REM log command
+  to `11a7907d67c457911c15206ec647ad33` with
+  `delivery_receipt_timeout`.
+- The server returned HTTP 200 for `/`, `/Status`, `/Events`,
+  `/Chat/Messages`, `/Client`, `/api/rem/peers`, and the UI assets. The
+  served bundle was `assets/index-CbP9Cn97.js`, and the built asset contains
+  the dashboard stale-failure reconciliation code.
+- In-app browser automation still timed out navigating to
+  `http://127.0.0.1:18080/`; the selected tab reported `about:blank` with
+  title `RCH UI`.
+
+Fresh canary:
+
+- Sent broadcast `094e12d531db40b79350972e8e34f33b` with content
+  `Codex post-stale-card broadcast canary 2026-06-23T05:22:17.6240738-03:00`.
+- Polls 1-14 stayed non-terminal direct broadcast with
+  `dispatch_status=in_progress`.
+- Poll 15 reached `State=propagated`, `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  no current `error`, no current `retry_reason`, and 13 receipt targets.
+- `/Events` contained `message_propagation_queued` followed by
+  `message_propagated` for the canary, and no `message_delivery_failed` for
+  the canary.
+
+Phone evidence:
+
+- USB inventory showed both Pixel 7 `35031FDH2003N8` and SM-G950W
+  `988b9b344135304639` had `network.reticulum.emergency` and
+  `com.lxmf.messenger` installed and running.
+- Four minutes of follow-up polling left all 13 canary receipt targets at
+  `pending`.
+- Pixel logs showed Reticulum/LXMF network instability, including public
+  BackboneInterface DNS failures, AutoInterface multicast warnings, repeated
+  link requests, and link activation timeout retries.
+- Samsung logs showed LXMF Messenger service instability:
+  `ServiceReticulumProtocol` failed to query path table hashes with
+  `android.os.DeadObjectException`, while Columba reported no shared
+  Reticulum instance and zero discovered interfaces.
+
+Result:
+
+- Pass for RCH fallback semantics: the repeated `2a289...` card is not backed
+  by current DB/API/event state, and the fresh canary sent a legitimate direct
+  timeout to propagation without surfacing terminal `failed/send_error`.
+- Blocked for final live receipt: phones/decks still do not prove propagated
+  message receipt, and the phone-side Reticulum/LXMF transport stack needs
+  stabilization or manual refresh before this can be release-ready.
+
+## 2026-06-23 Phone App Refresh Receipt Follow-up
+
+Action:
+
+- Force-stopped and relaunched `network.reticulum.emergency` and
+  `com.lxmf.messenger` on both USB phones:
+  - Pixel 7 `35031FDH2003N8`
+  - SM-G950W `988b9b344135304639`
+- Cleared logcat after restart and verified fresh PIDs for both packages on
+  both phones.
+- Rechecked `/api/rem/peers`, `/Client`, phone logs, and live message state.
+
+Post-refresh canary:
+
+- Sent broadcast `bd1cb3b94daa49e2bef52816a0f292b0` with content
+  `Codex post-phone-refresh broadcast canary 2026-06-23T05:31:14.8089679-03:00`.
+- Polls 1-7 stayed direct `dispatch_status=in_progress`.
+- Poll 8 reached `State=propagated`, `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, no current `error`, no current `retry_reason`,
+  and 13 propagated receipt targets.
+- Polls 8-24 stayed accepted, but target status remained `pending=13`.
+
+Follow-up state:
+
+- Earlier canary `094e12d531db40b79350972e8e34f33b` advanced from all pending
+  to six `sent: propagated resource`, five `sending`, and two `pending`.
+- The repeated user-reported message `2a2892b3227b427487308d53712dd163`
+  remained canonical `propagated` / `accepted`, with six
+  `sent: propagated resource` targets and seven `sending`.
+- New canary `bd1cb3...` remained `propagated` / `accepted`, with all 13
+  targets still `pending`.
+- `/api/rem/peers` remained empty.
+
+Phone evidence after restart:
+
+- Pixel logs showed LXMF announce callbacks and reachable LXMF delivery
+  announces over AutoInterface, but also repeated shared-instance checks
+  reporting no shared Reticulum instance and BLE connection timeouts.
+- Samsung logs showed LXMF announce callbacks, Reticulum propagation sync
+  scheduling/attempts, and BLE traffic. It also continued reporting no shared
+  Reticulum instance at `127.0.0.1:37428`.
+
+Result:
+
+- Partial progress: the app refresh produced live announce/sync activity and
+  one earlier canary advanced to six propagated-resource sends.
+- Still blocked for release-candidate receipt proof: neither phone/deck path
+  proved complete receipt, `/api/rem/peers` is empty, and propagated targets
+  remain partly `pending`/`sending`.
+
+## 2026-06-23 Dashboard SPA Cache Refresh Proof
+
+Trigger:
+
+- The operator again saw message `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+
+Backend evidence:
+
+- Restarted the DB/config-backed server with the rebuilt
+  `target/release/r3akt-rch-server.exe` as PID `7516`.
+- `/api/v1/app/info` confirmed display name `RCH Win Test`, database path
+  `RTH_Store\rch_state.sqlite3`, Reticulum destination
+  `4fa9359ec3ea68185d4dd03b23073244`, shared instance connected, and
+  transport enabled.
+- `/Chat/Messages?limit=1000` returned `2a289...` as `State=propagated`,
+  `method=propagated`, `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`, with no current
+  `error` and no current `retry_reason`.
+- `/Events?limit=1000` returned zero events for `2a289...`; the only retained
+  `message_delivery_failed` row was for unrelated targeted message
+  `1dac7c41-7708-47a6-bea3-5f6061a8282d`.
+
+Fix:
+
+- Added no-store/no-cache headers to the served SPA `index.html` response so
+  rebuilt dashboard bundles cannot be hidden behind an old cached app shell:
+  `cache-control: no-store, no-cache, must-revalidate, max-age=0`,
+  `pragma: no-cache`, and `expires: 0`.
+- Added coverage to
+  `ui_dist_fallback_serves_built_spa_without_shadowing_api_routes`.
+
+Rendered proof:
+
+- Loaded a clean disposable Chrome profile against `http://127.0.0.1:18080/`
+  with API key `manual-test`.
+- The rendered event feed had propagated/queued rows only for recent canaries
+  and contained no `2a2892b3227b427487308d53712dd163`, no `send_error`, and no
+  `message_delivery_failed` card.
+- Screenshot saved at
+  `C:\Users\broth\AppData\Local\Temp\rch-dashboard-proof.png`.
+
+Result:
+
+- Pass for stale dashboard-card UX: the repeated pasted error is not backed by
+  current backend state, and a fresh browser shell no longer renders it.
+- Phone/deck receipt remains open and separate from this stale-card fix.
+
+## 2026-06-23 Mission Domain All-Routes Rendered Proof
+
+Scope:
+
+- Covered RCH-US-017 and RCH-US-018 against the live DB/config-backed local
+  server on `http://127.0.0.1:18080/` with API key `manual-test`.
+- Used active mission `codex-us018-20260623014108`, which already has mission
+  audit/event/log data from the earlier audit API retest.
+
+Browser path:
+
+- The in-app Browser runtime connected and documentation was read, but
+  navigation to `/missions/codex-us018-20260623014108/overview` timed out and
+  reset the browser controller.
+- Per frontend test fallback policy, a clean disposable Chrome/CDP profile was
+  used for rendered validation against the same served UI bundle.
+
+Route proof:
+
+- Opened the mission root route and all 19 canonical domain subpages:
+  `overview`, `mission`, `topic`, `checklists`, `checklist-tasks`,
+  `checklist-templates`, `teams`, `team-members`, `skills`,
+  `team-member-skills`, `task-skill-requirements`, `assets`, `assignments`,
+  `zones`, `domain-events`, `mission-changes`, `log-entries`, `snapshots`, and
+  `audit-events`.
+- All 20 routes rendered meaningful mission content with no boot screen, no
+  framework overlay, and no relevant console/runtime errors.
+- Screenshots and machine-readable summaries were saved under
+  `C:\Users\broth\AppData\Local\Temp\rch-mission-domain-proof`.
+
+Audit interaction proof:
+
+- The legacy mission audit view rendered `Export Log`, `Snapshot`, `Open Logs`,
+  and six `DETAILS` buttons.
+- Clicking `DETAILS` changed the first detail control to `HIDE`, proving the
+  rendered details expansion path.
+- Clicking `Export Log` downloaded
+  `mission-audit-codex-us018-20260623014108.json` with the mission UID present
+  in the payload.
+- Clicking `Snapshot` downloaded
+  `mission-snapshots-codex-us018-20260623014108.json`; the file was an empty
+  JSON array because this mission currently has no snapshots.
+
+Result:
+
+- RCH-US-017 can move to `Manual pass`: every canonical mission domain route
+  rendered against the DB-backed server.
+- RCH-US-018 can move to `Manual pass`: API/export data, component coverage,
+  live rendered details expansion, and live browser download behavior are all
+  covered.
+
+## 2026-06-23 Worker-Stall Broadcast Fallback Repair
+
+Trigger:
+
+- The operator again reported a broadcast card showing
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+
+Root-cause evidence:
+
+- Direct SQLite decode showed `2a289...` was still canonical
+  `delivery_state=propagated`, `dispatch_status=accepted`, attempts `5`, with
+  13 propagated receipt targets, no current failed row, and no recent matching
+  system event.
+- A fresh live canary `d89f842351654f6eba0a8d12e59edb26` reproduced a real
+  remaining backend failure mode: it stayed `queued` / `direct` /
+  `in_progress` beyond `dispatch_deadline_ts_ms`.
+- `/diagnostics/runtime` showed one pending dispatch and the retry worker
+  `last_run_at` stopped at the start of that dispatch. The stale-dispatch
+  finalizer was correct, but it ran inside the same worker tick that was
+  blocked in direct dispatch.
+
+Fix:
+
+- Bounded each retry-worker tick with a 31 second timeout so a hung direct
+  dispatch cannot starve timeout finalization.
+- Added a stale-attempt guard so a late direct-dispatch result cannot overwrite
+  a message that has already fallen back to propagation.
+- Added regression coverage:
+  `late_direct_dispatch_result_is_ignored_after_timeout_fallback`.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server` passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+- Restarted the DB/config-backed server as PID `19328` on
+  `http://127.0.0.1:18080/` with `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, Reticulumd RPC
+  `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- The previously stuck canary recovered immediately to `State=propagated`,
+  `method=propagated`, `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`, with no current
+  `error` or `retry_reason`.
+- `/Events?limit=200` showed only `message_propagated` and
+  `message_propagation_queued` for the canary and zero
+  `message_delivery_failed` rows.
+- Rendered dashboard proof showed no `send_error` and no
+  `message_delivery_failed`; queue depth and in-flight dispatches returned to
+  zero.
+
+Result:
+
+- Pass for RCH broadcast fallback semantics under a hung direct dispatch:
+  legitimate direct-send timeout is now converted to propagation even when the
+  original dispatch call stalls the worker tick.
+- Final phone/deck receipt remains open and separate from this fix.
+
+## 2026-06-23 Receipt-Status Rate-Limit Hardening
+
+Trigger:
+
+- During the continued phone/deck broadcast stress pass, reticulumd logs showed
+  RCH repeatedly calling `sdk_status_v2` across historical propagated fanout
+  targets until reticulumd returned `SDK_SECURITY_RATE_LIMITED`.
+- The operator had just reported another broadcast card as `failed` /
+  `propagated` / `broadcast_direct_timeout_fallback` with `send_error`.
+
+Root-cause evidence:
+
+- The reported `2a2892b3227b427487308d53712dd163` row was no longer terminal
+  failed in the current DB-backed server; direct SQLite projection showed
+  `delivery_state=propagated`, `dispatch_status=accepted`, and attempts `5`.
+- Fresh canary `c5af168eca2a4f4cb93664d054f15fc9` reached propagated
+  acceptance with 13 receipt targets, but the receipt worker then swept old
+  pending fanouts and produced a burst of reticulumd `sdk_status_v2` calls.
+- `RTH_Store\reticulumd-local.out.log` showed repeated
+  `SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded` for
+  `rpc_method=sdk_status_v2`.
+
+Fix:
+
+- `poll_reticulumd_delivery_receipts` now sorts newest messages first, spends
+  a fixed budget of four reticulumd status RPCs per pass, and waits 10 seconds
+  between passes.
+- The poller stops immediately on explicit
+  `SDK_SECURITY_RATE_LIMITED` responses and records a reconciliation diagnostic
+  instead of silently continuing the sweep.
+- Successful later status updates clear stale reconciliation diagnostics.
+- Added regression coverage:
+  `receipt_status_poll_budget_prioritizes_newest_backlog`.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_prioritizes_newest_backlog`
+  passed.
+- `cargo test -p r3akt-rch-server propagated_broadcast_fallback` passed.
+- `cargo test -p r3akt-rch-server failed_propagated_broadcast_timeout_fallback_is_due_for_repair`
+  passed.
+- `cargo test -p r3akt-rch-server` passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+- Restarted the DB/config-backed server as PID `17188` on
+  `http://127.0.0.1:18080/` with `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, Reticulumd RPC
+  `127.0.0.1:14243`, Reticulum source
+  `4fa9359ec3ea68185d4dd03b23073244`, and LXMF ZMQ endpoints.
+- After restart, reticulumd showed four `sdk_status_v2` calls per 10-second
+  receipt pass and no fresh `SDK_SECURITY_RATE_LIMITED` entries.
+- Fresh broadcast canary `b74328dc3e2b4088ab105b4a6690aeb9` moved from
+  direct broadcast to `State=propagated`, `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`, with no current
+  `error` or `retry_reason`.
+- At the follow-up poll, two targets had advanced to `sending` and 11 remained
+  `pending`.
+- USB phones were still attached as Pixel 7 `35031FDH2003N8` and SM-G950W
+  `988b9b344135304639`; saved logcats under
+  `C:\Users\broth\AppData\Local\Temp\rch-phone-logs` contained no exact
+  canary ID or content receipt.
+
+Result:
+
+- Pass for RCH queue/fallback/reconciliation behavior: broadcast direct
+  timeout now falls back to accepted propagation, and receipt-status polling no
+  longer self-rate-limits reticulumd under historical fanout backlog.
+- Final phone/deck receipt remains open: the active canary has not yet been
+  proven in the Columba phone logs or embedded deck inboxes.
+
+## 2026-06-23 Receipt-Target Starvation Repair
+
+Trigger:
+
+- After the receipt-status rate-limit cap, canary
+  `b74328dc3e2b4088ab105b4a6690aeb9` reached accepted propagation but only
+  some fanout targets advanced.
+- Live polling showed the budget first re-polled already-terminal targets,
+  then repeatedly favored the earliest `sending` targets, so later fanout
+  targets could remain pending or unpolled indefinitely.
+
+Root-cause evidence:
+
+- The receipt loop walked targets in stored order on every pass.
+- With a four-RPC budget and two candidate IDs per child target, terminal or
+  in-progress targets at the front of the list could consume the whole pass.
+- The target metadata did not persist a per-target status-poll timestamp, so
+  equally unresolved `sending` targets could not rotate fairly across passes.
+
+Fix:
+
+- Terminal receipt targets are retained for message-state calculation but are
+  skipped for reticulumd status RPCs on later passes.
+- Pending/no-status targets are polled before already-known in-progress
+  targets.
+- Each target status update stores `receipt_last_poll_ts_ms`, and in-progress
+  targets are sorted by oldest target poll timestamp to rotate the limited
+  budget.
+- Added regression coverage:
+  `receipt_status_poll_budget_skips_terminal_targets`,
+  `receipt_status_poll_budget_prioritizes_unseen_pending_targets`, and
+  `receipt_status_poll_budget_rotates_in_progress_targets`.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_skips_terminal_targets`
+  passed.
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_prioritizes_unseen_pending_targets`
+  passed.
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_rotates_in_progress_targets`
+  passed.
+- `cargo test -p r3akt-rch-server receipt_status_poll_budget_prioritizes_newest_backlog`
+  passed.
+- `cargo test -p r3akt-rch-server propagated_broadcast_fallback` passed.
+- Rebuilt `target\release\r3akt-rch-server.exe` and restarted the
+  DB/config-backed manual server as PID `2584` on
+  `http://127.0.0.1:18080/`.
+- Live canary `b74328dc3e2b4088ab105b4a6690aeb9` remained
+  `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, and had no current `error` or
+  `retry_reason`.
+- Its receipt targets were six `sent: propagated resource` and seven
+  `sending`; all seven `sending` targets carried target-level poll timestamps,
+  and the oldest `sending` target changed over successive 10-second passes.
+- Reticulumd tail logs showed zero fresh `SDK_SECURITY_RATE_LIMITED` entries
+  while status polling continued.
+
+Result:
+
+- Pass for RCH receipt-reconciliation fairness under the bounded RPC budget.
+- Final phone/deck receipt remains open: the remaining seven targets are still
+  `sending`, so this closes RCH starvation but not end-device delivery proof.
+
+## 2026-06-23 Live Propagated Send-Error Recovery Check
+
+Trigger:
+
+- The operator again reported broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- PR #201 also had one CI-only failure in
+  `receipt_status_poll_budget_prioritizes_unseen_pending_targets`.
+
+Findings:
+
+- The live DB/API row for `2a2892b3227b427487308d53712dd163` is still
+  canonical `State=propagated`, `dispatch_status=accepted`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, and has no current `error` or
+  `retry_reason`.
+- The in-app browser loaded the local DB/config-backed dashboard at
+  `http://127.0.0.1:18080/`; its current event feed showed the latest
+  direct-timeout broadcasts as `message_propagation_queued` followed by
+  `message_propagated`, with no visible stale `send_error` row.
+- Fresh live canary `cb60ebf635a84667bbcf8ca58b05a7c0` reproduced the direct
+  broadcast timeout and recovered cleanly:
+  `message_propagation_queued` at `2026-06-23T11:15:54.392Z`, then
+  `message_propagated` at `2026-06-23T11:15:54.558Z`.
+- The canary reached `State=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=13`, queue depth `0`, pending dispatches `0`,
+  pending receipts `0`, and no current `error`.
+- Receipt polling reached all 13 canary targets; all were `sending` at the
+  last poll, so the RCH queue/fallback path is healthy but final device receipt
+  remains open.
+- Both USB phones were attached and their Columba processes were running.
+  Pixel 7 logs showed active RNS/LXMF announces and propagation sync activity;
+  Samsung logs showed LXMF/BLE churn but no exact canary receipt line.
+
+Fix and verification:
+
+- Stabilized the CI-only receipt-priority regression by using the same
+  one-second fake RPC accept window as the other receipt-budget tests and by
+  asserting persisted target poll timestamps for unseen pending targets.
+- Local checks passed:
+  `cargo test -p r3akt-rch-server receipt_status_poll_budget_`,
+  `cargo test -p r3akt-rch-server`, and
+  `cargo fmt --all -- --check`.
+- Pushed commit `c9f6b7e` to PR #201. GitHub PR Quality checks for Format,
+  Clippy, Workspace Tests, Release Builds, and Dependency Audit are green;
+  the longer `Rust workspace` check is still running at the time of this note.
+
+Result:
+
+- Pass for the user-reported propagated `send_error` recovery path on the
+  current DB/config-backed server: the current row is not failed, and a fresh
+  broadcast timeout was sent to propagation and accepted.
+- Release gate still open for end-device delivery proof: attached phones and
+  deck targets have not yet produced final receipt/inbox evidence for the
+  latest canary.
+
+## 2026-06-23 Phone Identity and Stale Broadcast Target Follow-up
+
+Scope:
+
+- Continued the DB/config-backed local server on `http://127.0.0.1:18080/`
+  using PID `2584`, `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`,
+  API key `manual-test`, reticulumd RPC `127.0.0.1:14243`, and the live
+  LXMF ZeroMQ endpoints.
+- Rechecked user-reported message `2a2892b3227b427487308d53712dd163`, the
+  latest canary `cb60ebf635a84667bbcf8ca58b05a7c0`, the in-app Chat route,
+  reticulumd SQLite receipt rows, and fresh Columba logcat output from the
+  attached Pixel 7 and SM-G950W.
+
+Findings:
+
+- `/Chat/Messages` and the Chat UI both show
+  `2a2892b3227b427487308d53712dd163` as `PROPAGATED`, not failed. The
+  current API row is `State=propagated`, `dispatch_status=accepted`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, and has no serialized `error` or
+  `retry_reason`.
+- The in-app dashboard currently shows the latest direct-timeout broadcasts as
+  `message_propagation_queued` followed by `message_propagated`; the Chat page
+  also shows the user-reported `test test test` broadcast as `PROPAGATED`.
+- For both the reported message and the latest canary, reticulumd has six
+  target rows at `sent: propagated resource`: `Peregrine`, `silkedeck`,
+  `Corvo`, `raphydeck`, `corvodeck`, and `pixel`.
+- The seven remaining target rows are historical identities last seen between
+  February and April 2026. They remain `sending` with
+  `propagation_stamp_state=queued` rather than failing the canonical message
+  row.
+- Fresh Pixel 7 manual sync used default identity
+  `cb1489405fcba9f1...`, which RCH knows only as stale
+  `corvo columba pixel` last seen `2026-02-26T19:48:25.21Z`. Pixel sync
+  selected a propagation node and later auto-synced the local node, but the
+  local sync reported `available=0 fetched=0 imported=0`.
+- Fresh SM-G950W manual sync used default identity `e5e3f7587e6133d0...`,
+  which is not present in the current RCH `/Client` roster. Its manual sync to
+  the local node established a link, requested the message list, completed, and
+  reported `messages_received=0`.
+
+Result:
+
+- Pass for the RCH fallback behavior and the stale-failure UI concern: the
+  current backend and Chat UI show the reported message as propagated.
+- Release gate still open for end-device receipt. The current blocker is
+  identity/roster alignment and downstream phone propagation fetch, not a
+  current RCH terminal `send_error` state.
+
+## 2026-06-23 Repeated Propagated Send-Error Canary Check
+
+Trigger:
+
+- The operator again reported message `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+
+Runtime under test:
+
+- Local DB/config-backed server PID `2584`.
+- URL `http://127.0.0.1:18080/`.
+- SQLite store `RTH_Store\rch_state.sqlite3`.
+- Config file `RTH_Store\config.ini`.
+- API key `manual-test`.
+- Reticulumd RPC and LXMF ZeroMQ remained configured.
+
+Reported message evidence:
+
+- `/Chat/Messages?limit=500` returned `2a289...` as `State=propagated`,
+  `delivery_method=propagated`, `dispatch_status=accepted`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, no current `error`, and no current
+  `retry_reason`.
+- `/Events?limit=500` returned no current event for `2a289...`.
+- Direct SQLite state for the reported row is still canonical
+  `delivery_state=propagated`, `dispatch_status=accepted`.
+- After reloading the in-app browser Chat route, the page finished the boot
+  sequence and contained no `2a289...`, no `send_error`, and no failure-card
+  text.
+
+Fresh canary:
+
+- Sent broadcast `1ea7ba63979e4c76a76c0464cfa9764f` with content
+  `RCH RC broadcast fallback canary 20260623T114612Z`.
+- Polls `11:46:19Z` through `11:46:39Z` showed direct broadcast
+  `dispatch_status=in_progress`.
+- At `11:46:44Z`, the row converted to `method=propagated`,
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `dispatch_status=in_progress`.
+- At `11:46:49Z`, the row reached `State=propagated`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=13`,
+  no current `error`, no current `retry_reason`, and 13 propagated targets.
+- `/Events` contained only `message_propagation_queued` followed by
+  `message_propagated` for the canary. No `message_delivery_failed` event was
+  emitted for this canary.
+
+Result:
+
+- No new backend code issue was found. The repeated `2a289...` card is stale
+  relative to current DB/API/browser state.
+- The current release-blocking behavior is still downstream identity/roster
+  alignment and phone/deck propagated-message receipt proof, not terminal RCH
+  fallback state.
+
+## 2026-06-23 WebMap Rendered Marker/Zone Proof
+
+Scope:
+
+- DB/config-backed local server on `http://127.0.0.1:18080/webmap` using
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, and API key
+  `manual-test`.
+- Browser plugin setup timed out once while opening `/webmap`, so the pass used
+  direct Playwright fallback against the same in-app browser tab.
+- Screenshots were written outside the repository under
+  `C:\Users\broth\AppData\Local\Temp\rch-webmap-proof`.
+
+Rendered checks:
+
+- Page identity: title `RCH UI`, URL `/webmap`.
+- MapLibre canvas rendered with one `.maplibregl-canvas`.
+- No framework overlay was present.
+- Console warning/error capture was empty during the rendered WebMap pass.
+
+Marker proof:
+
+- Created disposable marker
+  `Codex WebMap Marker 1782207793897`
+  (`e2ca3ae8f58445599ed782daa3a74a9b`).
+- Expanded the marker registry, focused the marker from the visible list, then
+  hovered the centered map marker.
+- The marker radial menu opened with `Edit`, `Move`, `Assign`, and `Delete`.
+- Cleanup deleted the disposable marker with status `200`.
+
+Zone proof:
+
+- Created disposable zone `Codex WebMap Zone 1782207729396`
+  (`3b046778ef3c4934bf891a070276784b`).
+- The zone appeared in the rendered Zones tab with area summary and
+  `Rename`/`Edit`/`Delete` controls.
+- Renamed it to `Codex WebMap Zone 1782207729396 Renamed`.
+- Entered edit mode and saved the zone; the UI emitted `Zone updated`.
+- Deleted the zone through the visible `Delete` control; the UI emitted
+  `Zone deleted`, the row disappeared, and the list count dropped from `1-5 / 5`
+  to `1-4 / 4`.
+
+Cleanup:
+
+- Follow-up API/page checks reported `codexMarkers=0`, `codexZones=0`,
+  `pageHasCodex=false`, and the MapLibre canvas still rendered.
+
+Result:
+
+- RCH-US-021 can move to `Manual pass`: live API coverage already covers
+  marker/zone mission association, validation, telemetry, and event recording;
+  this rendered pass covers the WebMap canvas, marker radial menu, zone
+  create/rename/edit/delete controls, and stale overlay cleanup.
+
+## 2026-06-23 File/Image Rendered UI Proof
+
+Scope:
+
+- DB/config-backed local server on `http://127.0.0.1:18080/files` using PID
+  `24116`, `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, and API key
+  `manual-test`.
+- Uploaded disposable artifacts through the rendered Files page controls:
+  - `codex-ui-us022-20260623.txt`, `FileID=52`, `text/plain`, `45 bytes`.
+  - `codex-ui-us022-20260623.png`, `FileID=53`, `image/png`, `70 bytes`.
+
+Rendered checks:
+
+- The Files tab loaded without the boot screen and without browser console
+  errors. It showed uploaded file ID `52`, media type `text/plain`, size
+  `45 bytes`, and Download/Delete actions.
+- File download produced `codex-ui-us022-20260623.txt`.
+- The Images tab showed uploaded image ID `53`, media type `image/png`, size
+  `70 bytes`, and Preview/Download/Delete actions.
+- Preview opened `Image Preview` with an `<img>` alt matching
+  `codex-ui-us022-20260623.png`.
+- Preview download and image-card download both produced
+  `codex-ui-us022-20260623.png`.
+- The UI delete confirmation text was captured and accepted for both
+  `codex-ui-us022-20260623.png` and `codex-ui-us022-20260623.txt`.
+- Browser console warnings/errors: none.
+- Page runtime errors: none.
+
+Cleanup:
+
+- Follow-up API checks found zero `/File` rows and zero `/Image` rows matching
+  `codex-ui-us022-20260623`.
+- The proof used an in-page confirm shim to log native confirmation text without
+  wedging the browser automation channel.
+
+## 2026-06-23 Phone Sync Propagated Canary Retest
+
+Scope:
+
+- DB/config-backed local server on `http://127.0.0.1:18080/` as PID `2584`
+  using `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- Two USB phones were attached and running both Columba and REM:
+  - Pixel 7 `35031FDH2003N8`.
+  - SM-G950W `988b9b344135304639`.
+- `/api/rem/peers` still returned no current REM peers:
+  `effective_connected_mode=false`, `items=[]`.
+
+Phone preparation:
+
+- Launched `com.lxmf.messenger/.MainActivity` on both phones.
+- UI trees showed both phones on the Columba `Chats` screen with a visible
+  `Sync messages` action.
+- Triggered manual `Sync messages` on both phones before and after the canary.
+- Pixel logs showed manual sync activity plus RNS/LXMF announce discovery and
+  propagation-node discovery.
+- Samsung logs showed RNS/LXMF announce discovery through the Beleth TCP hub and
+  propagation-node discovery.
+
+Canary:
+
+- Sent broadcast `5edd1ea8a9f441b8b87646075da474db` with content
+  `RCH RC phone sync canary 20260623T093100-03:00`.
+- The row started as direct broadcast `queued` / `in_progress`.
+- At `12:31:35Z`, the row had converted to:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events` showed the expected `message_propagation_queued` event carrying
+  `retry_reason=send_timeout`, followed by `message_propagated` carrying
+  `acknowledgement_type=propagation_acceptance`.
+- `/Chat/Messages?limit=5` showed the canary as the newest row with 13
+  `reticulumd_receipt_targets`.
+
+Receipt state:
+
+- After manual phone sync, the canary's 13 targets were still `sending`.
+- Some target rows included `sdk_delivery_state=dispatching` and
+  `sdk_terminal=false`; none reached `sent`, `delivered`, or a phone-proven
+  receipt state during this pass.
+- Neither phone log contained the exact canary ID or the exact canary body.
+
+Result:
+
+- Pass for RCH fallback semantics: a legitimate direct broadcast `send_timeout`
+  was sent to propagation and accepted without surfacing terminal
+  `failed/send_error`.
+- Still blocked for RC end-device receipt: the connected phones and deck target
+  identities have not proven propagated-message import for the latest canary.
+  The remaining issue is downstream propagation fetch or identity/roster
+  alignment, not a current RCH queue-state failure.
+
+## 2026-06-23 Repeated Send-Error Live Proof
+
+Scope:
+
+- DB/config-backed local server on `http://127.0.0.1:18080/` as PID `2584`
+  using `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, API key
+  `manual-test`, reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- Reticulumd was running as PID `13776`.
+- Two USB phones were attached:
+  - Pixel 7 `35031FDH2003N8`.
+  - SM-G950W `988b9b344135304639`.
+- `/api/rem/peers` still returned no current REM peers:
+  `effective_connected_mode=false`, `items=[]`.
+
+Reported message:
+
+- User again reported `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+- Direct SQLite decode shows the canonical row is:
+  - content `ReticulumCommunityHub > test test test`.
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `delivery_method=propagated`.
+  - `delivery_mode=broadcast`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `attempts=5`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- Older terminal failed propagated fallback rows in SQLite were decoded and
+  were invalid-destination test artifacts with
+  `failed: invalid destination hash 'codex-rch-us014-20260622222002'`, not
+  retryable `send_error` broadcasts.
+
+Rendered proof:
+
+- In-app Chat loaded on `http://127.0.0.1:18080/chat` after the boot sequence.
+- Chat contained no `2a289...`, no `send_error`, and no failure-card text.
+- Dashboard loaded on `http://127.0.0.1:18080/`.
+- Dashboard event feed showed the expected recent propagation queue and
+  propagation acceptance events, with no `2a289...`, no `send_error`, and no
+  failure-card text.
+- Browser console warning/error capture was empty for the Chat/Dashboard check.
+
+Fresh canary:
+
+- Sent broadcast `def2799210434446af15d032d8b15829` with content
+  `RCH RC repeated send-error check 20260623T094955-03:00`.
+- The row started as direct broadcast `queued_deferred` with
+  `delivery_policy_reason=broadcast_direct`.
+- At `12:50:27.843Z`, RCH emitted `message_propagation_queued`:
+  - `State=queued`.
+  - `delivery_method=propagated`.
+  - `fallback_reason=direct_dispatch_timeout`.
+  - `retry_reason=send_timeout`.
+  - `error=send_timeout`.
+- At `12:50:28.050Z`, RCH emitted `message_propagated`:
+  - `State=propagated`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `dispatch_status=accepted`.
+  - `acknowledgement_type=propagation_acceptance`.
+  - `reticulumd_dispatch_count=13`.
+- Direct SQLite decode of the final canary row shows:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `direct_attempts=1`.
+  - `max_attempts=5`.
+  - no current `error`.
+  - no current `retry_reason`.
+  - 13 propagated receipt targets.
+
+Receipt state:
+
+- The fresh canary's 13 propagated targets were accepted but still reported
+  `sending` after the immediate follow-up.
+- `/Status` showed queue depth `0`, pending dispatches `0`, pending receipts
+  `0`, `outbound_propagation_fallback_total=33`, and no retry-worker error.
+
+Result:
+
+- Pass for current RCH fallback semantics and UI stale-card clearing. A
+  legitimate direct broadcast `send_timeout` was sent to propagation and
+  accepted without surfacing terminal `failed/send_error`.
+- Still blocked for RC end-device receipt. Both USB phones are attached, but
+  `/api/rem/peers` is empty and the propagated targets have not proven
+  downstream import. The remaining issue is downstream propagation fetch or
+  identity/roster alignment, not a current RCH queue-state failure.
+
+## 2026-06-23 Persisted Stale Failure Metadata Repair
+
+Setup:
+
+- Rebuilt and restarted the DB/config-backed local server on
+  `http://127.0.0.1:18080/` as PID `21368`.
+- Runtime arguments:
+  - `--db-path RTH_Store\rch_state.sqlite3`.
+  - `--config-path RTH_Store\config.ini`.
+  - `--api-key manual-test`.
+  - `--reticulumd-rpc 127.0.0.1:14243`.
+  - `--reticulumd-source 4fa9359ec3ea68185d4dd03b23073244`.
+  - LXMF ZMQ command/response endpoints
+    `tcp://127.0.0.1:19100` and `tcp://127.0.0.1:19101`.
+
+Reported message:
+
+- User again reported `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+- Before this fix, the canonical row was already `propagated` / `accepted`, but
+  the persisted MessagePack delivery metadata still carried an old
+  `last_attempt_failed_at_ts_ms`.
+
+Fix:
+
+- Successful outbound rows are repaired during SQLite snapshot load:
+  superseded failure metadata is cleared and the repaired row is written back to
+  SQLite.
+- Superseded `message_delivery_failed` events now expose scrubbed current
+  delivery metadata when `/Events` reconciles them against a successful current
+  message row.
+
+Verification:
+
+- Direct SQLite decode after restart shows:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `reticulumd_dispatch_count=13`.
+  - no `error`.
+  - no `retry_reason`.
+  - no `last_attempt_failed_at_ts_ms`.
+  - six receipt targets `sent`, seven receipt targets `dispatching`.
+- `/Chat/Messages?limit=500` returns the message as `State=propagated` and has
+  no `send_error`.
+- `/Events?limit=500` has no current event for the ID and no `send_error`.
+- Post-fix broadcast canary `9bd68dc7b73c4b478993dfe0cb45f7ad` moved from
+  direct `in_progress` to `propagated` / `accepted` on poll 5, with
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`,
+  `reticulumd_dispatch_count=13`, no `error`, and no `retry_reason`.
+- Focused regressions passed:
+  - `cargo test -p r3akt-rch-server sqlite_load_repairs_success_superseded_delivery_metadata -- --nocapture`.
+  - `cargo test -p r3akt-rch-server events_route_marks_recovered_delivery_failures_superseded -- --nocapture`.
+- `cargo fmt --all -- --check` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+
+Result:
+
+- Pass for stale failure cleanup. The repeated `send_error` card cannot be
+  sourced from the current DB/API state for `2a289...` after restart.
+- Still blocked for final RC phone/deck receipt proof: six propagated targets
+  are `sent`, while seven historical roster identities remain `dispatching`.
+
+## 2026-06-23 Stale Roster Target Filter Retest
+
+Root cause:
+
+- Repeated propagated broadcast canaries targeted 13 stored `/Client` rows.
+- Six rows were current enough for the lab devices, with ages around 1-2 days:
+  `Peregrine`, `silkedeck`, `Corvo`, `raphydeck`, `corvodeck`, and `pixel`.
+- Seven rows were historical identities last seen 77-158 days earlier:
+  `corvoS8`, `corvo Pixel`, old `SilkeDeck`, `corvo columba pixel`, `Korvo PC`,
+  `pocorvo`, and `Helio Tablet`.
+- The propagated enqueue fast path intentionally skipped announce refresh, but
+  it also bypassed the existing outbound active-client filter, so stale
+  historical rows kept becoming receipt targets.
+
+Fix:
+
+- Propagated broadcast dispatch now reuses
+  `broadcast_outbound_client_records_for_state_with_refresh(state, false)`.
+  This preserves the no-refresh/no-slow-RPC enqueue behavior while still
+  filtering outbound recipients.
+- Broadcast outbound filtering now accepts a seven-day roster/announce window
+  instead of the one-hour runtime-presence window, so recently known field
+  devices remain eligible while months-old imported identities are excluded.
+
+Verification:
+
+- Focused tests passed:
+  - `cargo test -p r3akt-rch-server propagated_broadcast_dispatch_excludes_stale_known_clients -- --nocapture`.
+  - `cargo test -p r3akt-rch-server broadcast_delivery_uses_recent_roster_presence_without_fresh_announces -- --nocapture`.
+  - `cargo test -p r3akt-rch-server broadcast_destinations -- --nocapture`.
+- `cargo fmt --all -- --check` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+- Rebuilt/restarted the DB/config-backed server on `http://127.0.0.1:18080/`
+  as PID `20544`.
+- Broadcast canary `d804006cb8a34815b3552e1a034cb154` selected propagated
+  delivery with `delivery_policy_reason=broadcast_unannounced`, reached
+  `State=propagated`, `dispatch_status=accepted`, `reticulumd_dispatch_count=6`,
+  no `error`, and no `retry_reason`.
+- The six receipt targets were exactly the current roster identities:
+  `11a7907d67c457911c15206ec647ad33`,
+  `1335df70880114d149c3ad8d63fb5dcd`,
+  `22c8ba9c883e06c7e540ed6dc87ceecf`,
+  `279797db68f81ae8555a73cd12620240`,
+  `441f217e9a51029edc58c1fe898c6c0b`, and
+  `77b2539b72259af927e48c0f90721767`.
+
+Result:
+
+- Pass for stale-target pruning. Current RC broadcasts no longer dispatch to
+  the seven February-April historical identities.
+- Still open for final phone/deck receipt: after a receipt poll, the six current
+  targets remained `sending`, so downstream inbox import is not proven yet.
+
+## 2026-06-23 Literal Send Timeout Retry Label Retest
+
+Trigger:
+
+- The operator reported broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `Failure Reason=send_error`.
+- Live DB decode after the retry worker ran showed the current row is not
+  terminally failed:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `attempts=5`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- The row is an older pre-roster-filter broadcast, so it still has 13 targets:
+  six current targets are `sent: propagated resource`, and seven historical
+  targets remain `sending`.
+
+Fix:
+
+- Preserved a literal `send_timeout` from retry scheduling as
+  `retry_reason=send_timeout` instead of relabeling it as `send_error`.
+- Kept generic transport failures, including correlated-response timeout text,
+  as `send_error`; this change only affects the explicit `send_timeout` reason.
+
+Verification:
+
+- `cargo test -p r3akt-rch-server retry_reason_for_error_preserves_literal_send_timeout -- --nocapture`.
+- `cargo test -p r3akt-rch-server propagated_broadcast_fallback_send_timeout_stays_queued_after_rate_limit_budget -- --nocapture`.
+- `cargo test -p r3akt-rch-server internal_delivery_failure_retries_propagated_broadcast_fallback_send_error -- --nocapture`.
+- `cargo test -p r3akt-rch-server failed_direct_broadcast_send_timeout_queues_propagation_repair -- --nocapture`.
+
+Result:
+
+- Pass for timeout-label accuracy: a legitimate `send_timeout` propagation
+  retry now remains visible as `send_timeout`.
+- The user-reported message is accepted in the current DB state, not terminal
+  `failed`; final RC gate remains downstream phone/deck receipt proof.
+
+## 2026-06-23 Phone Propagation Receipt Probe After Timeout Label Fix
+
+Setup:
+
+- Rebuilt and restarted the DB/config-backed local server from
+  `target\release\r3akt-rch-server.exe` on `http://127.0.0.1:18080/` as PID
+  `24116`.
+- Runtime status after restart:
+  - `queue_depth=0`.
+  - `pending_dispatches=0`.
+  - `pending_receipts=0`.
+- ADB saw only one USB phone:
+  - `988b9b344135304639` / `SM-G950W`.
+  - The previously connected Pixel was not present in `adb devices`.
+- The S8 had:
+  - `network.reticulum.emergency` version `1.1.2`, process PID `30328`.
+  - `com.lxmf.messenger` version `0.10.10`, foreground activity token
+    `.MainActivity`.
+  - The screen locked at SystemUI, so UI inbox proof could not be completed
+    through `uiautomator`.
+
+Fresh broadcast canary:
+
+- Sent content `RCH RC phone receipt canary 20260623T141939Z`.
+- Stored message ID: `b56569da-86d6-47f5-aaa1-c8e21fe00fe6`.
+- RCH selected immediate propagated delivery:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_unannounced`.
+  - `reticulumd_dispatch_count=6`.
+  - no `error`.
+  - no `retry_reason`.
+- Receipt polling rotated across all six current targets, but after the poll
+  window all six remained `sending`.
+
+Phone evidence:
+
+- S8 logs contained no canary content or message ID.
+- S8 Reticulum service repeatedly attempted propagation sync and failed all
+  relays:
+  - `propagation sync relay attempt failed ... reason=timeout`.
+  - `propagation sync failed reason=propagation sync failed: all relay attempts failed`.
+- RCH `/api/rem/peers` remained empty with `effective_connected_mode=false`.
+
+Result:
+
+- RCH broadcast queue and propagation enqueue path remain healthy after the
+  timeout-label fix.
+- Final RC receipt proof is still blocked downstream of RCH: the only visible
+  phone is locked and its local Reticulum propagation sync is timing out before
+  the canary is fetched.
+
+## 2026-06-23 Repeated Propagated Send Error Browser And Receipt Retest
+
+Setup:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - sibling `reticulumd` PID `13776`.
+- Rechecked the user-reported message ID
+  `2a2892b3227b427487308d53712dd163`.
+- ADB initially saw only the S8, then the device disconnected; the final
+  `adb devices -l` output had no attached phones.
+
+Reported row state:
+
+- `/Chat/Messages?limit=1000` returned the reported ID as:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `dispatch_status=accepted`.
+  - `attempts=5`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=2000` returned no event rows for that message ID.
+- A fresh in-app browser load of `/chat` and `/` showed no
+  `2a289...`, no current failure card, and no `send_error` failure reason.
+
+Fresh broadcast canary:
+
+- Sent content
+  `RCH RC repeated send_error live canary 20260623T143251Z`.
+- Stored message ID: `864c8ff513324fabb0a5e234325cc7f6`.
+- RCH selected immediate propagated delivery:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_unannounced`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=6`.
+  - no current `error`.
+  - no current `retry_reason`.
+- Receipt polling progressed from all six current targets `sending` to all six
+  `sent: propagated resource` after about 90 seconds.
+- `/Events?limit=200` showed a `message_propagated` event for the canary and
+  no failure reason.
+- The in-app Chat route showed the canary as `PROPAGATED` after scrolling to
+  the latest broadcast messages. The only `send_error` text on the page was the
+  literal canary body, not a failure card.
+
+Result:
+
+- Pass for current RCH fallback/propagation semantics and rendered stale-card
+  clearing: the repeated `2a289...` report is not backed by current DB, API, or
+  browser state.
+- Pass for reticulumd propagation resource storage on the fresh six-target
+  canary: all six current targets reached `sent: propagated resource`.
+- Phone inbox receipt remains unproven in this run because ADB had no attached
+  phones by the final check, and `/api/rem/peers` remained empty.
+
+## 2026-06-23 Chat Store Propagated State Downgrade Guard
+
+Trigger:
+
+- The operator again reported broadcast message
+  `2a2892b3227b427487308d53712dd163` as `failed` / `propagated` /
+  `broadcast_direct_timeout_fallback` with `send_error`.
+- Live DB and `/Chat/Messages?limit=500` both returned that ID as
+  `State=propagated`, `dispatch_status=accepted`, and
+  `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+- The older `f011f23619fc4d0b9dcd9bf51462629e` report also returned
+  `State=propagated` / `dispatch_status=accepted`.
+
+Fix:
+
+- Added a chat-store merge guard so a late `failed` update for a message ID
+  cannot downgrade an already successful `sent`, `delivered`, or `propagated`
+  chat row.
+- Recovery still works in the other direction: queued/failed rows can still be
+  replaced by later successful delivery states.
+
+Verification:
+
+- `npm --prefix ui run test -- chat.spec.ts` failed before the guard and passed
+  after the fix.
+- `npm --prefix ui run test -- chat.spec.ts dashboard.spec.ts` passed.
+- `npm --prefix ui run build` passed and the running local server served the
+  rebuilt `index-DKA-mRkx.js` entry.
+- Focused backend fallback checks still passed:
+  - `cargo test -p r3akt-rch-server propagated_broadcast_fallback_send_error_continues_after_fifth_attempt`.
+  - `cargo test -p r3akt-rch-server internal_delivery_failure_retries_propagated_broadcast_fallback_send_error`.
+- In-app browser `/chat` loaded the rebuilt bundle and rendered the
+  communications grid without a visible failed delivery state in the broadcast
+  list.
+
+Result:
+
+- Pass for the client-side stale-update path: the UI can no longer turn an
+  already accepted propagation fallback into a visible terminal `failed` row
+  when an older failure update arrives late.
+
+## 2026-06-23 Emergency Action Message Mission Member Browser Proof
+
+Trigger:
+
+- The RCH-US-024 embedded mission/member EAM control proof was still open.
+- A live in-app browser run against
+  `/missions?mission_uid=codex-ui-us024-20260623124807-mission&screen=missionTeamMembers`
+  initially showed `Total Missions 0` because the legacy mission workspace
+  only accepted bare arrays, while the DB-backed Rust routes return wrapped
+  `{ value, Count }` list responses.
+
+Fix:
+
+- Updated `ui/src/pages/missions/MissionsLegacyPage.vue` to use
+  `unwrapApiList` for the shared list-normalization helper.
+- Added `ui/tests/mission-legacy-wrapped-lists.test.ts` to cover wrapped
+  mission, team, team-member, and EAM responses in the embedded member-status
+  board path.
+
+Live browser proof:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - sibling `reticulumd` PID `13776`.
+- Seeded disposable data:
+  - mission `codex-ui-us024-20260623153318-mission`.
+  - team `codex-ui-us024-20260623153318-team`.
+  - member `codex-ui-us024-20260623153318-member`.
+  - callsign `US024-20260623153318`.
+- Opened the mission URL in the in-app browser, clicked `Team`, expanded
+  `Show Statuses`, and clicked `Security`.
+- The rendered page showed:
+  - `Codex UI US024 Team 20260623153318`.
+  - `US024-20260623153318`.
+  - `Member Status Board`.
+  - expanded six status dimensions.
+  - `Security Green`.
+  - aggregate `17%`.
+- `/api/EmergencyActionMessage/US024-20260623153318` persisted:
+  - `team_member_uid=codex-ui-us024-20260623153318-member`.
+  - `team_uid=codex-ui-us024-20260623153318-team`.
+  - `security_status=Green`.
+  - all other dimension statuses as `Unknown`.
+
+Cleanup:
+
+- Deleted the disposable EAM.
+- Deleted the disposable member.
+- Unlinked the disposable team from the mission.
+- Deleted the disposable team and mission.
+- Follow-up checks found:
+  - `remainingMissions=0`.
+  - `remainingTeams=0`.
+  - `remainingMembers=0`.
+  - `eamExists=false`.
+
+Verification:
+
+- `npm --prefix ui run test -- mission-legacy-wrapped-lists.test.ts` failed
+  before the production fix and passed after the fix.
+- `npm --prefix ui run test -- mission-legacy-wrapped-lists.test.ts chat.spec.ts dashboard.spec.ts`
+  passed.
+- `npm --prefix ui run build` passed and produced the rebuilt
+  `assets/index-pz5N0Okr.js` entry.
+
+Result:
+
+- Pass for the embedded mission/member EAM controls.
+- Fixed a logistical UI error where wrapped Rust/Python-compatible list
+  responses made the legacy mission workspace appear empty even though the live
+  DB records existed.
+
+## 2026-06-23 Assets, Assignments, And Skills Rendered Proof
+
+Trigger:
+
+- RCH-US-025 still had a rendered browser proof gap after the live API retest.
+- The canonical mission domain store used a bare-array-only helper, so
+  `/missions/:mission_uid/*` domain pages could render empty tables against the
+  DB-backed Rust routes that return wrapped `{ value, Count }` list responses.
+
+Fix:
+
+- Updated `ui/src/stores/missionWorkspace.ts` to use the shared
+  `unwrapApiList` helper.
+- Added `ui/src/stores/missionWorkspace.spec.ts` to prove wrapped mission,
+  team, team-member, asset, and assignment lists hydrate scoped domain-page
+  collections.
+
+Live browser proof:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - rebuilt UI bundle `assets/index-hzkKVSjQ.js`.
+- Seeded disposable logistics prefix `codex-ui-us025-20260623154030`:
+  - mission `codex-ui-us025-20260623154030-mission`.
+  - team `codex-ui-us025-20260623154030-team`.
+  - member `codex-ui-us025-20260623154030-member`.
+  - checklist `7ca3719a564a4e26933d160d2585c37e`.
+  - task `a3620a33f1ed48a4b39c3e1c8919d08d`.
+  - seeded asset `codex-ui-us025-20260623154030-asset-seeded`.
+  - skill `codex-ui-us025-20260623154030-skill`.
+  - assignment `codex-ui-us025-20260623154030-assignment`.
+- Rendered `/missions/assets?mission_uid=...`:
+  - showed the seeded asset and assignable member.
+  - created `Codex US025 Browser Asset 20260623154030` through `New Asset`.
+  - edited it to `Codex US025 Browser Asset Updated 20260623154030` with
+    status `IN_USE`.
+  - deleted it through the native confirmation; the row disappeared and the
+    seeded asset remained visible.
+- Rendered canonical domain routes:
+  - `/missions/{mission_uid}/assets` showed the seeded asset row.
+  - `/missions/{mission_uid}/assignments` showed the assignment row with
+    assignment UID, asset UID, task UID, mission UID, and member RNS identity.
+  - `/missions/{mission_uid}/skills` showed the skill row.
+  - `/missions/{mission_uid}/team-member-skills` showed the skill UID, level
+    `3`, and member RNS identity.
+  - `/missions/{mission_uid}/task-skill-requirements` showed the task UID,
+    skill UID, and `minimum_level=2`.
+
+Cleanup:
+
+- Cleared assignment assets through
+  `/api/r3akt/assignments/{assignment_uid}/assets`.
+- Deleted the seeded asset.
+- Deleted the checklist task and checklist.
+- Deleted the team member.
+- Unlinked and deleted the team.
+- Tombstoned the mission.
+- Follow-up checks found:
+  - `activeMissions=0`.
+  - `teams=0`.
+  - `members=0`.
+  - `assets=0`.
+  - one assignment audit row with empty assets because no assignment delete
+    route exists.
+
+Verification:
+
+- `npm --prefix ui run test -- missionWorkspace.spec.ts` failed before the
+  store fix and passed after the fix.
+- `npm --prefix ui run test -- missionWorkspace.spec.ts mission-legacy-wrapped-lists.test.ts mission-domain-object-pages.test.ts`
+  passed.
+- `npm --prefix ui run build` passed.
+
+Result:
+
+- Pass for rendered RCH-US-025 asset CRUD and domain-object visibility.
+- Fixed the canonical mission domain wrapped-list defect.
+- Public delete routes remain missing for skills, assignments, and task skill
+  requirements, so those logistics records remain historical/audit artifacts
+  after live proof runs.
+
+## 2026-06-23 Two-Phone Propagation Receipt Retry
+
+Setup:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+- USB devices were attached:
+  - Pixel 7 `35031FDH2003N8`.
+  - 23013PC75G `81bf319c`.
+- App/process inventory:
+  - Pixel 7 had `network.reticulum.emergency` PID `25109` and
+    `com.lxmf.messenger` PID `18327`.
+  - 23013PC75G had `network.reticulum.emergency` PID `15169` and
+    `network.columba.app.kt` installed/running.
+- `/api/rem/peers` remained empty with `effective_connected_mode=false`.
+
+Fresh broadcast canary:
+
+- Sent body `RCH RC phone deck receipt canary 20260623T184821Z`.
+- Stored message ID: `dcf7aa8cb6b24bf7a60e29dfad37d9ae`.
+- Initial response:
+  - `State=queued`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_unannounced`.
+  - `dispatch_status=queued_deferred`.
+- First poll result:
+  - `State=propagated`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=6`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=300` contained one `message_propagated` event for the ID with
+  `acknowledgement_type=propagation_acceptance`.
+
+Receipt target polling:
+
+- Polled `DeliveryMetadata.reticulumd_receipt_targets` for three minutes.
+- The first 18 polls stayed:
+  - six targets `sending`.
+  - SDK state `dispatching`.
+  - no SDK reason code.
+- A later follow-up poll showed all six current targets reached
+  `sent: propagated resource`:
+  - `Peregrine` (`11a7907d67c457911c15206ec647ad33`).
+  - `silkedeck` (`1335df70880114d149c3ad8d63fb5dcd`).
+  - `Corvo` (`22c8ba9c883e06c7e540ed6dc87ceecf`).
+  - `raphydeck` (`279797db68f81ae8555a73cd12620240`).
+  - `corvodeck` (`441f217e9a51029edc58c1fe898c6c0b`).
+  - `pixel` (`77b2539b72259af927e48c0f90721767`).
+- Runtime status after the poll:
+  - `queue_depth=0`.
+  - `pending_dispatches=0`.
+  - `pending_receipts=0`.
+  - `receipt_timeout_total=27`.
+
+Phone evidence:
+
+- Pixel 7 logs did not contain the message ID or body.
+- Pixel 7 propagation sync repeatedly reported:
+  - relay `4cce8a55cc0f232fb0946b392a73fa92`.
+  - `available=0`.
+  - `fetched=0`.
+  - `imported=0`.
+- Pixel 7 also emitted link activation retries/timeouts for REM/LXMF peers.
+- 23013PC75G/Columba logs did not contain the message ID or body.
+- 23013PC75G/Columba stayed in propagation `link_establishing` and reported
+  relay/link timeout/backoff states.
+
+Result:
+
+- Pass for current RCH behavior: the broadcast was persisted, expanded to six
+  current targets, accepted by reticulumd propagation, and later recorded
+  `sent: propagated resource` for all six current target rows.
+- RC blocker remains downstream phone/deck inbox receipt: phones did not
+  fetch/import the canary even though RCH and reticulumd completed publication
+  to the current target roster.
+
+## 2026-06-23 Repeated Broadcast Error Live Recheck
+
+Setup:
+
+- Continued on the DB/config-backed local server:
+  - PID `24116`.
+  - `http://127.0.0.1:18080/`.
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+
+User-reported message:
+
+- The operator again reported message `2a2892b3227b427487308d53712dd163` as:
+  - `State=failed`.
+  - `Delivery Method=propagated`.
+  - `Delivery Policy Reason=broadcast_direct_timeout_fallback`.
+  - `Failure Reason=send_error`.
+  - `Route Type=broadcast`.
+- Direct SQLite state for the row was:
+  - `delivery_state=propagated`.
+  - `dispatch_status=accepted`.
+  - `attempts=5`.
+- `/Chat/Messages?limit=250&direction=outbound` returned the same row as:
+  - `State=propagated`.
+  - `delivery_method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=500` returned no event for that message ID.
+
+Fresh broadcast canary:
+
+- Sent body `RCH RC broadcast fallback canary 20260623T190756Z`.
+- Stored message ID: `984a023ebff0440191ba52d0cdcd147a`.
+- Initial response:
+  - `State=queued`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_unannounced`.
+  - `dispatch_status=queued_deferred`.
+- First poll result:
+  - `State=propagated`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=6`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=500` contained one `message_propagated` event for the canary
+  with `acknowledgement_type=propagation_acceptance`.
+- The in-app browser loaded `http://127.0.0.1:18080/chat` and contained the
+  canary text after reload.
+
+Follow-up:
+
+- The canary stayed `propagated` / `accepted` for the two-minute poll window.
+- All six current targets remained `sending` during that short follow-up.
+- Runtime queue state remained clear:
+  - `queue_depth=0`.
+  - `pending_dispatches=0`.
+  - `pending_receipts=0`.
+
+Result:
+
+- No new terminal RCH `send_error` state was found.
+- The repeated `2a289...` failure card is stale relative to current DB/API
+  state.
+- The remaining RC blocker is downstream target receipt or phone/deck inbox
+  import, not current RCH propagation fallback state.
+
+## 2026-06-23 Additive Control and Broadcast Error Recheck
+
+Setup:
+
+- Rebuilt and restarted the DB/config-backed local server on
+  `http://127.0.0.1:18080/` as PID `13268`.
+- Runtime inputs remained:
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - reticulumd RPC `127.0.0.1:14243`.
+  - LXMF ZMQ command/event endpoints on `19100`/`19101`.
+
+Additive route retest:
+
+- `/api/v1/app/info` returned the configured DB/UI/runtime metadata.
+- `/openapi.yaml` returned `200` and included `/Control/Status`,
+  `/Control/Sync`, `/events/system`, `/messages/stream`,
+  `/telemetry/stream`, and `/openapi.yaml`.
+- `/Control/Stop`, `/Control/Start`, and `/Control/Announce` succeeded and
+  emitted the expected system events.
+- `/Control/Sync` previously hung while chained blocking reticulumd RPC calls
+  stalled. It now runs the blocking sync in a worker and returns
+  `503 {"detail":"Sync timed out after 20000 ms"}` after about 20 seconds,
+  while recording `control_sync_timeout`.
+- WebSocket route probes confirmed `/events/system` returns `auth.ok` plus
+  `system.event` frames, `/messages/stream` returns `auth.ok` plus
+  `message.subscribed`, and `/telemetry/stream` returns `auth.ok` plus a
+  small `telemetry.snapshot` when queried with a current `since` value.
+- `/diagnostics/runtime` confirmed `persistence.path=RTH_Store\rch_state.sqlite3`,
+  queue depth `0`, pending dispatches `0`, pending receipts `0`, and a running
+  retry worker.
+
+Repeated broadcast error recheck:
+
+- User again reported `2a2892b3227b427487308d53712dd163` as
+  `failed` / `propagated` / `broadcast_direct_timeout_fallback` with
+  `send_error`.
+- Current `/Chat/Messages?limit=1000` returns both
+  `2a2892b3227b427487308d53712dd163` and
+  `f011f23619fc4d0b9dcd9bf51462629e` as:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `dispatch_status=accepted`.
+  - `reticulumd_dispatch_count=13`.
+  - no current `error`.
+  - no current `retry_reason`.
+- `/Events?limit=2000` returned no current events for either reported ID.
+- The rendered Dashboard after reload contained no `send_error`, no
+  `message_delivery_failed`, and neither reported stale broadcast ID.
+- The rendered Chat page default window did not contain either old reported ID;
+  its visible `failed` text came from other current messages, not the reported
+  broadcast fallback rows.
+
+Result:
+
+- The control-route issue was a real backend hang and is fixed with a bounded
+  timeout.
+- The repeated `2a289...` broadcast card remains stale relative to current
+  DB/API/rendered Dashboard state.
+- The remaining propagation release gate is downstream phone/deck inbox import
+  or receipt proof, not current RCH fallback queue state.
+
+## 2026-06-23 Stale Propagated Receipt Target Repair
+
+Setup:
+
+- Rebuilt and restarted the DB/config-backed local server on
+  `http://127.0.0.1:18080/` as PID `20228`.
+- Runtime inputs remained:
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - reticulumd RPC `127.0.0.1:14243`.
+  - LXMF ZMQ command/event endpoints on `19100`/`19101`.
+
+User-reported message:
+
+- The operator again reported `2a2892b3227b427487308d53712dd163` as a
+  propagated broadcast fallback failure with `send_error`.
+- Before this fix, the canonical row was already `propagated` / `accepted`, but
+  the delivery metadata still carried 13 propagated receipt targets:
+  - six current targets at `sent: propagated resource`.
+  - seven historical stale targets still shown as `sending`.
+- Added SQLite-load repair for successful propagated broadcast/fanout messages:
+  when at least one target is successful, unresolved stale receipt targets are
+  pruned, terminal targets are retained, aggregate stale SDK fields are cleared,
+  and `stale_receipt_targets_pruned` records the cleanup count.
+
+Verification:
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test -p r3akt-rch-server sqlite_load_repairs_success_superseded_delivery_metadata`
+  passed.
+- `cargo build --release -p r3akt-rch-server` passed after stopping the old
+  Windows process that locked the release executable.
+- Live `/Control/Status` showed the restarted DB/config-backed server as PID
+  `20228`.
+- Live `/Chat/Messages?limit=500` now returns
+  `2a2892b3227b427487308d53712dd163` as:
+  - `State=propagated`.
+  - `method=propagated`.
+  - `delivery_policy_reason=broadcast_direct_timeout_fallback`.
+  - `dispatch_status=accepted`.
+  - no current `error`.
+  - `reticulumd_dispatch_count=6`.
+  - `stale_receipt_targets_pruned=7`.
+  - six receipt targets, all `sent: propagated resource`.
+
+Result:
+
+- Fixed the remaining misleading metadata on the repeated reported broadcast.
+- No live RCH terminal `failed/send_error` state remains for the reported ID.
+- Current canary `1ae2dabae0dc4653a20a17754f7ccd61` is still
+  `propagated` / `accepted` with six current targets at `sending`; Pixel 7 and
+  23013PC75G logs still do not prove inbox import.
+- Final RC blocker remains downstream phone/deck propagation fetch/import proof,
+  not RCH fallback or stale metadata state.
+
+## 2026-06-24 Propagating State and Fast Enqueue Repair
+
+Setup:
+
+- Rebuilt ZMQ-enabled release `reticulumd.exe` from the sibling LXMF checkout
+  with `--features zmq-pipeline-rpc` and started it against
+  `RTH_Store\reticulumd.sqlite3` and `RTH_Store\reticulumd.toml` as PID
+  `26456`.
+- Rebuilt and restarted the DB/config-backed RCH release server on
+  `http://127.0.0.1:18080/`; final verified PID after the test/build cycle was
+  `5516`.
+- Runtime inputs remained:
+  - `RTH_Store\rch_state.sqlite3`.
+  - `RTH_Store\config.ini`.
+  - API key `manual-test`.
+  - reticulumd RPC `127.0.0.1:14243`.
+  - LXMF ZMQ command endpoint `tcp://127.0.0.1:19100`.
+
+Findings and fixes:
+
+- User-reported `2a2892b3227b427487308d53712dd163`,
+  `f011f23619fc4d0b9dcd9bf51462629e`, and
+  `1ae2dabae0dc4653a20a17754f7ccd61` all returned from
+  `/Chat/Messages?limit=1000` as clean `State=propagated`,
+  `method=propagated`, `dispatch_status=accepted`, no current `error`, and no
+  current `retry_reason`.
+- Fresh canary `a6352d7e3d7c4de698ddf6923e4a1b76` reproduced the misleading
+  final-state gap: RCH had accepted six propagated fanout targets while
+  reticulumd targets were still pending/sending. RCH now projects such rows as
+  `State=propagating` until a terminal successful receipt arrives.
+- The same test exposed a request-path UX issue: `/Chat/Message` broadcast POST
+  waited on reticulumd announce refresh before persisting the row and timed out
+  in the client. Deferred chat sends now make the route decision from cached
+  state and return promptly.
+
+Verification:
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test -p r3akt-rch-server chat_broadcast_route_queues_for_worker_without_blocking_on_fanout`
+  passed.
+- `cargo test -p r3akt-rch-server chat_message_payload_projects_active_propagated_targets_as_propagating`
+  passed.
+- `cargo test -p r3akt-rch-server propagated_fanout_acceptance_stays_propagating_until_receipt_success`
+  passed.
+- `cargo test -p r3akt-rch-server sqlite_load_repairs_success_superseded_delivery_metadata`
+  passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo build --release -p r3akt-rch-server` passed.
+- Fresh canary `00edeaeb4413430b9dc9df7a0eb0b6cb` returned from POST in
+  654 ms as `queued` / `queued_deferred`, then advanced to `State=propagating`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=6`, no current
+  `error`, no current `retry_reason`, and all six targets reached `sending`.
+- Final post-build canary `27dbb259f1024641ac6591549309dccd` returned from
+  POST in 850 ms as `queued` / `queued_deferred`, then advanced to
+  `State=propagating`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=6`, no current `error`, and no current
+  `retry_reason`.
+- In-app browser loaded `http://127.0.0.1:18080/` with no console warnings or
+  errors, showed the DB/config-backed backend PID, and displayed the fresh
+  `message_propagated` dashboard event.
+
+Result:
+
+- RCH no longer reports an active propagated fanout as final `propagated`.
+- RCH no longer blocks the broadcast send button on reticulumd announce refresh
+  before enqueueing.
+- Current RC blocker remains downstream reticulumd/device completion: fresh
+  targets can remain `sending` and phone/deck inbox receipt remains unproven.
+
+## 2026-06-24 Retryable Propagated Failure Projection Repair
+
+Setup:
+
+- Kept the same DB/config-backed runtime and reticulumd instance:
+  `RTH_Store\rch_state.sqlite3`, `RTH_Store\config.ini`, reticulumd PID
+  `26456`, reticulumd RPC `127.0.0.1:14243`, and LXMF ZMQ command/response
+  endpoints.
+- Rebuilt and restarted `target\release\r3akt-rch-server.exe` on
+  `http://127.0.0.1:18080/`; verified patched RCH PID `14956`.
+- USB phones remained visible as Pixel 7 `35031FDH2003N8` and SM-G950W
+  `988b9b344135304639`.
+
+Findings and fixes:
+
+- User again reported `2a2892b3227b427487308d53712dd163` as
+  `State=failed`, `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`, and
+  `Failure Reason=send_error`.
+- The current API row for that message is clean `State=propagated`,
+  `method=propagated`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=6`, `receipt_status=sent: propagated resource`,
+  and has no current `error` or `retry_reason`.
+- Patched chat payload projection so retryable propagated direct-timeout
+  fallbacks with no accepted reticulumd dispatch are rendered as `queued`, and
+  their stale `error`, `retry_reason`, and `last_attempt_failed_at_ts_ms`
+  fields are hidden while repair is pending. Terminal failures such as invalid
+  destination hashes remain visible as `failed`.
+
+Verification:
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test -p r3akt-rch-server chat_message_payload_` passed.
+- `cargo test -p r3akt-rch-server` passed.
+- `cargo clippy -p r3akt-rch-server --all-targets -- -D warnings` passed.
+- `cargo build --release -p r3akt-rch-server` passed after stopping the prior
+  Windows-locked server executable.
+- Fresh post-restart canary `37579b4d028c4b75acca8b6c2dc84880` returned from
+  POST in 1129 ms, then advanced to `State=propagating`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=6`, six receipt
+  targets, and no `error` or `retry_reason`.
+- HTTP `/` served the UI shell with `200` and script assets; `/Status`
+  reported runtime `rust`, PID `14956`, and the retry worker running. The
+  available browser controller was on `about:blank`, so rendered proof was not
+  collected in this pass.
+
+Result:
+
+- A legitimate retryable `send_error` during propagated fallback no longer
+  appears to the operator as a terminal failed broadcast while RCH is still
+  eligible to queue propagation repair.
+- The current RCH server is running at `http://127.0.0.1:18080/` with the
+  intended DB/config and reticulumd configuration.
+- Phone/deck inbox receipt remains the open RC gate; RCH propagation enqueue
+  and reticulumd acceptance are passing.
+
+## 2026-06-24 Active Propagated Fallback Failure Projection Repair
+
+Setup:
+
+- Continued from the DB/config-backed local runtime at
+  `http://127.0.0.1:18080/` using `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, Reticulumd RPC
+  `127.0.0.1:14243`, and LXMF ZMQ endpoints.
+- Rechecked operator-reported broadcast
+  `2a2892b3227b427487308d53712dd163` through `/Chat/Messages` and
+  `RTH_Store\reticulumd.sqlite3`.
+
+Findings and fixes:
+
+- The reported UI card showed `State=failed`, `Delivery Method=propagated`,
+  `Delivery Policy Reason=broadcast_direct_timeout_fallback`, and
+  `Failure Reason=send_error`.
+- The current API row had already reconciled to `State=propagated`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=6`,
+  `receipt_status=sent: propagated resource`, and no current `error` or
+  `retry_reason`.
+- Reticulumd had six current fanout rows for the message at
+  `sent: propagated resource`; older fanout targets remained `sending` and had
+  already been pruned from the RCH view as stale.
+- Added projection coverage for retryable propagated direct-timeout fallbacks
+  that are stored as `failed/send_error` after reticulumd work has started:
+  active fanout targets now render as `State=propagating`, successful fanout
+  targets render as `State=propagated`, and stale failure metadata is hidden in
+  both cases.
+- Kept failed rows with active propagated fallback targets eligible for
+  reticulumd receipt polling so they can reconcile instead of freezing in a
+  terminal-looking state.
+
+Verification:
+
+- Confirmed the new active-target regression failed before the production
+  patch with `left: String("failed")`, `right: "propagating"`.
+- `cargo test --quiet -p r3akt-rch-server --lib failed_propagated_fallback`
+  passed in a single-job isolated target directory after creating the target
+  `debug\deps` path explicitly; both new regressions passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo test --quiet -p r3akt-rch-server --lib chat_message_payload_`
+  passed.
+- `cargo test --quiet -p r3akt-rch-server --lib` passed with 308 passed and
+  33 ignored.
+- `cargo clippy --quiet -p r3akt-rch-server --all-targets -- -D warnings`
+  passed in the isolated target directory.
+- `cargo build --release -p r3akt-rch-server --quiet` passed.
+- Rebuilt sibling `LXMF-rs` reticulumd with
+  `cargo build --release -p reticulumd --features zmq-pipeline-rpc`; the
+  first build was still holding Cargo's artifact lock, and the captured rerun
+  completed successfully.
+- Restarted reticulumd PID `7036` and RCH PID `21492` with the configured
+  `RTH_Store` database/config, HTTP RPC `127.0.0.1:14243`, ZMQ command
+  `tcp://127.0.0.1:19100`, ZMQ response `tcp://127.0.0.1:19101`, and API key
+  `manual-test`. `/Status` returned runtime `rust`, retry worker running, and
+  HTTP `/` returned `200`.
+- Fresh broadcast canary `c8100ab917f144879da9fc0ce1a31422` returned from
+  `POST /Chat/Message` in 1810 ms as `queued` / `queued_deferred`, then stayed
+  `State=propagating`, `dispatch_status=accepted`,
+  `reticulumd_dispatch_count=6`, no current `error`, and no current
+  `retry_reason` for the two-minute poll window.
+- The same canary did not create matching rows in `RTH_Store\reticulumd.sqlite3`
+  during that window; keep this as downstream transport/receipt evidence, not
+  as a terminal RCH failure.
+
+Result:
+
+- A transient or stale `failed/send_error` base row no longer overrides
+  propagated fallback evidence once reticulumd fanout is active or successful.
+- Terminal invalid-destination failures remain visible as failures.
+- Phone/deck inbox receipt remains open; this fix only prevents RCH/UI state
+  from presenting active or successful propagation as a terminal broadcast
+  failure.
+
+## 2026-06-24 Deferred ZMQ Acceptance Semantics Repair
+
+Setup:
+
+- Continued the DB/config-backed local release-candidate runtime on
+  `http://127.0.0.1:18080/` with `RTH_Store\rch_state.sqlite3`,
+  `RTH_Store\config.ini`, API key `manual-test`, reticulumd RPC
+  `127.0.0.1:14243`, and LXMF ZMQ command/response endpoints.
+- Rebuilt and restarted the patched release server as PID `17340`; reticulumd
+  remained running as PID `7036`.
+- Two USB phones were attached during the pass: Pixel 7 `35031FDH2003N8` and
+  23013PC75G `81bf319c`.
+
+Findings and fixes:
+
+- The retry worker was treating the fire-and-forget ZeroMQ enqueue path as a
+  daemon acceptance. For propagated broadcast fanout this could emit
+  `message_propagated`, increment retry-worker dispatched counts, and show
+  `dispatch_status=accepted` before reticulumd had acknowledged or persisted
+  the send.
+- Added an explicit deferred flag to dispatch reports. Deferred ZMQ batch and
+  single-message enqueues now keep the row as `State=queued`,
+  `dispatch_status=queued_deferred`, and `retry_scheduled=false` while
+  preserving `reticulumd_dispatch_count` and receipt targets for status
+  polling.
+- Retry-worker success events and dispatched counters are now emitted only
+  after non-deferred dispatch acknowledgement; deferred enqueue remains pending
+  until daemon receipt/status reconciliation moves it forward.
+
+Live verification:
+
+- Fresh canary `0d9adf34486d4161945475927b435879` initially returned from
+  `POST /Chat/Message` as `queued` / `queued_deferred` with six fanout targets,
+  no current `error`, and no current `retry_reason`.
+- A later DB/API poll reconciled the same canary to `State=propagated`,
+  `dispatch_status=accepted`, `reticulumd_dispatch_count=6`,
+  `receipt_status=sent: propagated resource`, and all six current target rows
+  at `sent: propagated resource`.
+- `RTH_Store\reticulumd.sqlite3` contains the six canary fanout rows:
+  base `0d9adf34486d4161945475927b435879` plus fanouts for
+  `1335df708801`, `22c8ba9c883e`, `279797db68f8`, `441f217e9a51`, and
+  `77b2539b7225`, all with `receipt_status=sent: propagated resource`.
+- The repeated user-reported ID `2a2892b3227b427487308d53712dd163` is current
+  `State=propagated`, `dispatch_status=accepted`, no current `error` or
+  `retry_reason`, and has six current reticulumd rows at
+  `sent: propagated resource`.
+- Reloading the in-app browser against the patched server showed
+  `PID: 17340`, a live event feed, no `2a289...`, no `send_error`, and no
+  failure-card text after normal polling caught up.
+
+Verification commands:
+
+- `cargo fmt --all -- --check`.
+- `cargo test --quiet -p r3akt-rch-server --lib outbound_retry_worker_keeps_deferred_zmq_enqueue_pending_until_daemon_ack -- --nocapture`.
+- `cargo test --quiet -p r3akt-rch-server --lib propagated -- --nocapture`.
+- `cargo test --quiet -p r3akt-rch-server --lib outbound_retry_worker -- --nocapture`.
+- `cargo test --quiet -p r3akt-rch-server --lib`.
+- `cargo clippy --quiet -p r3akt-rch-server --all-targets -- -D warnings`.
+- `cargo build --release -p r3akt-rch-server --quiet`.
+
+Result:
+
+- RCH no longer presents local fire-and-forget ZeroMQ enqueue as confirmed
+  daemon acceptance.
+- A legitimate direct broadcast timeout still falls back to propagation, but
+  any propagated fallback work that is only locally enqueued remains visibly
+  pending until reticulumd evidence arrives.
+- Phone/deck inbox proof remains the release-candidate gate; this pass proves
+  RCH state semantics and reticulumd persisted propagated-resource rows, not
+  end-device import.

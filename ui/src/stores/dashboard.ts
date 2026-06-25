@@ -5,6 +5,7 @@ import { get } from "../api/client";
 import type { EventEntry, StatusResponse, TeamMemberRecord } from "../api/types";
 import type { MissionRaw } from "../types/missions/raw";
 import { buildEventCallsignLookup } from "../utils/event-feed";
+import { unwrapApiList } from "../utils/api-list";
 import { useConnectionStore } from "./connection";
 import { useUsersStore } from "./users";
 
@@ -27,8 +28,6 @@ export const EVENT_FEED_MAX_EVENTS = 200;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
 const toKeyPart = (value: unknown): string =>
   String(value ?? "")
@@ -59,9 +58,66 @@ const normalizeEvent = (payload: EventApiPayload): EventEntry => ({
   metadata: payload.metadata ?? {}
 });
 
+const toEventEntry = (event: EventApiPayload | EventEntry): EventEntry =>
+  "timestamp" in event || "type" in event ? normalizeEvent(event as EventApiPayload) : (event as EventEntry);
+
 const eventTime = (event: EventEntry): number => {
   const parsed = Date.parse(event.created_at ?? "");
   return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const metadataString = (metadata: Record<string, unknown> | undefined, key: string): string =>
+  String(metadata?.[key] ?? "").trim();
+
+const deliveryMessageId = (event: EventEntry): string => {
+  const metadata = event.metadata;
+  const directId = metadataString(metadata, "MessageID") || metadataString(metadata, "message_id");
+  if (directId) {
+    return directId;
+  }
+  const deliveryMetadata = metadata?.DeliveryMetadata;
+  if (isRecord(deliveryMetadata)) {
+    return metadataString(deliveryMetadata, "message_id");
+  }
+  return "";
+};
+
+const isDeliveryFailureEvent = (event: EventEntry): boolean =>
+  toKeyPart(event.category) === "message_delivery_failed" ||
+  toKeyPart(event.metadata?.original_event_type) === "message_delivery_failed";
+
+const supersedesDeliveryFailure = (event: EventEntry): boolean =>
+  toKeyPart(event.category) === "message_delivery_superseded" ||
+  event.metadata?.delivery_failure_superseded === true;
+
+const isDeliveryRecoveryEvent = (event: EventEntry): boolean => {
+  const category = toKeyPart(event.category);
+  if (supersedesDeliveryFailure(event)) {
+    return true;
+  }
+  if (
+    ![
+      "message_delivered",
+      "message_delivery_retrying",
+      "message_propagated",
+      "message_propagation_queued",
+      "message_sent"
+    ].includes(category)
+  ) {
+    return false;
+  }
+  return deliveryMessageId(event) !== "" && toKeyPart(event.metadata?.State) !== "failed";
+};
+
+const isTerminalDeliveryRecoveryEvent = (event: EventEntry): boolean => {
+  const category = toKeyPart(event.category);
+  if (supersedesDeliveryFailure(event)) {
+    return true;
+  }
+  if (!["message_delivered", "message_propagated"].includes(category)) {
+    return false;
+  }
+  return deliveryMessageId(event) !== "" && toKeyPart(event.metadata?.State) !== "failed";
 };
 
 export const eventEntryKey = (event: EventEntry): string => {
@@ -75,6 +131,39 @@ export const eventEntryKey = (event: EventEntry): string => {
 const mergeEventLists = (current: EventEntry[], incoming: EventEntry[]): EventEntry[] => {
   const merged = new Map<string, EventEntry>();
   for (const event of [...current, ...incoming]) {
+    const messageId = deliveryMessageId(event);
+    const currentEventTime = eventTime(event);
+    if (isDeliveryFailureEvent(event) && messageId) {
+      const terminallyRecovered = [...merged.values()].some(
+        (existing) => isTerminalDeliveryRecoveryEvent(existing) && deliveryMessageId(existing) === messageId
+      );
+      if (terminallyRecovered) {
+        continue;
+      }
+      const alreadyRecovered = [...merged.values()].some(
+        (existing) =>
+          isDeliveryRecoveryEvent(existing) &&
+          deliveryMessageId(existing) === messageId &&
+          eventTime(existing) >= currentEventTime
+      );
+      if (alreadyRecovered) {
+        continue;
+      }
+    }
+    if (isDeliveryRecoveryEvent(event)) {
+      const messageId = deliveryMessageId(event);
+      if (messageId) {
+        for (const [key, existing] of merged) {
+          if (
+            isDeliveryFailureEvent(existing) &&
+            deliveryMessageId(existing) === messageId &&
+            (isTerminalDeliveryRecoveryEvent(event) || eventTime(existing) <= currentEventTime)
+          ) {
+            merged.delete(key);
+          }
+        }
+      }
+    }
     merged.set(eventEntryKey(event), event);
   }
   return [...merged.values()]
@@ -123,19 +212,23 @@ export const useDashboardStore = defineStore("dashboard", () => {
       const response = await get<StatusApiPayload>(endpoints.status);
       status.value = normalizeStatus(isRecord(response) ? response : {});
 
-      const [missionResponse, teamMemberResponse] = await Promise.allSettled([
-        get<MissionRaw[]>(endpoints.r3aktMissions),
-        get<TeamMemberRecord[]>(endpoints.r3aktTeamMembers),
+      const [missionResponse, teamMemberResponse, eventResponse] = await Promise.allSettled([
+        get<unknown>(endpoints.r3aktMissions),
+        get<unknown>(endpoints.r3aktTeamMembers),
+        get<unknown>(`${endpoints.events}?limit=${EVENT_FEED_MAX_EVENTS}`),
         usersStore.fetchUsers()
       ]);
 
       if (missionResponse.status === "fulfilled") {
-        activeMissions.value = toArray<MissionRaw>(missionResponse.value).filter(isActiveMission).length;
+        activeMissions.value = unwrapApiList<MissionRaw>(missionResponse.value).filter(isActiveMission).length;
       } else {
         activeMissions.value = null;
       }
       if (teamMemberResponse.status === "fulfilled") {
-        teamMembers.value = toArray<TeamMemberRecord>(teamMemberResponse.value);
+        teamMembers.value = unwrapApiList<TeamMemberRecord>(teamMemberResponse.value);
+      }
+      if (eventResponse.status === "fulfilled") {
+        replaceEvents(unwrapApiList<EventApiPayload>(eventResponse.value));
       }
       connectionStore.setOnline();
     } finally {
@@ -144,8 +237,12 @@ export const useDashboardStore = defineStore("dashboard", () => {
   };
 
   const pushEvent = (event: EventApiPayload | EventEntry) => {
-    const mapped = "timestamp" in event || "type" in event ? normalizeEvent(event as EventApiPayload) : (event as EventEntry);
+    const mapped = toEventEntry(event);
     events.value = mergeEventLists(events.value, [mapped]);
+  };
+
+  const replaceEvents = (incoming: Array<EventApiPayload | EventEntry>) => {
+    events.value = mergeEventLists([], incoming.map(toEventEntry));
   };
 
   const updateStatus = (payload: StatusApiPayload) => {
@@ -160,6 +257,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
     loading,
     refresh,
     pushEvent,
+    replaceEvents,
     updateStatus
   };
 });

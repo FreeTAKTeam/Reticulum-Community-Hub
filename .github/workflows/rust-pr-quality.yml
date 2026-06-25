@@ -30,7 +30,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.1
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
@@ -56,7 +56,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.1
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
@@ -86,7 +86,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.1
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
@@ -115,7 +115,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.1
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
@@ -148,7 +148,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.1
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable

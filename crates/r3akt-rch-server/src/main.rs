@@ -90,7 +90,7 @@ struct ManagedReticulumdLaunch {
 }
 
 impl ManagedReticulumdLaunch {
-    fn from_args(args: &ServerArgs) -> Self {
+    fn from_args(args: &ServerArgs, reticulum_config_path: Option<PathBuf>) -> Self {
         Self {
             exe: args.reticulumd_exe.clone(),
             rpc: args.reticulumd_rpc.clone(),
@@ -100,7 +100,7 @@ impl ManagedReticulumdLaunch {
                     .then(|| DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT.to_string())
             }),
             db_path: args.reticulumd_db_path.clone(),
-            config_path: args.reticulum_config_path.clone(),
+            config_path: reticulum_config_path,
             transport: args.reticulumd_transport.clone().or_else(|| {
                 args.reticulumd_exe
                     .is_some()
@@ -165,9 +165,17 @@ where
 {
     maybe_prompt_python_import(&args)?;
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
-    let managed_reticulumd_launch = ManagedReticulumdLaunch::from_args(&args);
+    let api_bind = listener.local_addr()?;
+    let reticulum_config_path = resolve_reticulum_config_path(&args);
+    let managed_reticulumd_launch =
+        ManagedReticulumdLaunch::from_args(&args, reticulum_config_path.clone());
     let ui_dist_path = args.ui_dist_path.clone().or_else(env_ui_dist_path);
-    let state = build_runtime_state(&args, &managed_reticulumd_launch)?;
+    let state = build_runtime_state(
+        &args,
+        &managed_reticulumd_launch,
+        reticulum_config_path.as_deref(),
+    )?
+    .with_api_bind(api_bind);
     state.start_managed_reticulumd()?;
     let app = create_app_for_runtime(state.clone(), ui_dist_path.as_ref());
     let outbound_worker = r3akt_rch_server::spawn_outbound_delivery_worker(state.clone());
@@ -193,6 +201,7 @@ where
 fn build_runtime_state(
     args: &ServerArgs,
     managed_reticulumd_launch: &ManagedReticulumdLaunch,
+    reticulum_config_path: Option<&Path>,
 ) -> Result<r3akt_rch_server::AppState, Box<dyn std::error::Error>> {
     let api_key = args
         .api_key
@@ -212,7 +221,13 @@ fn build_runtime_state(
         }
         None => r3akt_rch_server::AppState::default(),
     };
-    state = apply_runtime_config(state, args, api_key, system_status_fanout_mode)?;
+    state = apply_runtime_config(
+        state,
+        args,
+        reticulum_config_path,
+        api_key,
+        system_status_fanout_mode,
+    )?;
     if let Some(command_endpoint) = managed_reticulumd_launch.zmq_command.clone() {
         if let Some(exe) = managed_reticulumd_launch.exe.as_ref() {
             state = state
@@ -248,6 +263,7 @@ fn build_runtime_state(
 fn apply_runtime_config(
     mut state: r3akt_rch_server::AppState,
     args: &ServerArgs,
+    reticulum_config_path: Option<&Path>,
     api_key: Option<String>,
     system_status_fanout_mode: Option<String>,
 ) -> Result<r3akt_rch_server::AppState, Box<dyn std::error::Error>> {
@@ -258,7 +274,7 @@ fn apply_runtime_config(
     if let Some(path) = &args.config_path {
         state = state.with_config_path(path);
     }
-    if let Some(path) = &args.reticulum_config_path {
+    if let Some(path) = reticulum_config_path {
         state = state.with_reticulum_config_path(path);
     }
     if let Some(endpoint) = &args.reticulumd_rpc {
@@ -276,6 +292,59 @@ fn apply_runtime_config(
         state = state.with_lxmf_zmq_sdk(command.as_str(), response.as_str(), source);
     }
     Ok(state)
+}
+
+fn resolve_reticulum_config_path(args: &ServerArgs) -> Option<PathBuf> {
+    if let Some(path) = &args.reticulum_config_path {
+        return Some(path.clone());
+    }
+    let config_path = args.config_path.as_ref()?;
+    let content = fs::read_to_string(config_path).ok()?;
+    let configured = ini_value(&content, "hub", "reticulum_config_path")?;
+    let expanded = expand_user_path(configured);
+    if expanded.is_absolute() {
+        return Some(expanded);
+    }
+    Some(
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(expanded),
+    )
+}
+
+fn ini_value(content: &str, target_section: &str, target_key: &str) -> Option<String> {
+    let target_section = target_section.trim().to_ascii_lowercase();
+    let target_key = target_key.trim().to_ascii_lowercase();
+    let mut section = String::new();
+    for raw_line in content.lines() {
+        let line = raw_line.trim().trim_start_matches('\u{feff}');
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+        {
+            section = name.trim().to_ascii_lowercase();
+            continue;
+        }
+        if section != target_section {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim().to_ascii_lowercase() != target_key {
+            continue;
+        }
+        let value = value.trim().trim_matches('"').trim_matches('\'').trim();
+        if value.is_empty() {
+            return None;
+        }
+        return Some(value.to_string());
+    }
+    None
 }
 
 async fn wait_for_shutdown_signal() {
@@ -1632,6 +1701,89 @@ mod tests {
     }
 
     #[test]
+    fn reticulum_config_path_cli_takes_precedence_over_hub_config() {
+        let data_dir =
+            std::env::temp_dir().join(format!("r3akt-rch-reticulum-config-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let config_path = data_dir.join("config.ini");
+        std::fs::write(&config_path, "[hub]\nreticulum_config_path = from-config\n")
+            .expect("config");
+        let cli_path = data_dir.join("from-cli");
+        let args = test_server_args(Some(config_path), Some(cli_path.clone()));
+
+        assert_eq!(
+            super::resolve_reticulum_config_path(&args).as_deref(),
+            Some(cli_path.as_path())
+        );
+
+        std::fs::remove_dir_all(data_dir).expect("cleanup");
+    }
+
+    #[test]
+    fn reticulum_config_path_resolves_relative_to_hub_config_file() {
+        let data_dir =
+            std::env::temp_dir().join(format!("r3akt-rch-reticulum-config-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let config_path = data_dir.join("config.ini");
+        std::fs::write(
+            &config_path,
+            "[hub]\nreticulum_config_path = reticulum/config\n",
+        )
+        .expect("config");
+        let args = test_server_args(Some(config_path), None);
+
+        assert_eq!(
+            super::resolve_reticulum_config_path(&args).as_deref(),
+            Some(data_dir.join("reticulum/config").as_path())
+        );
+
+        std::fs::remove_dir_all(data_dir).expect("cleanup");
+    }
+
+    #[test]
+    fn reticulum_config_path_accepts_utf8_bom_hub_config_file() {
+        let data_dir =
+            std::env::temp_dir().join(format!("r3akt-rch-reticulum-config-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let config_path = data_dir.join("config.ini");
+        std::fs::write(
+            &config_path,
+            "\u{feff}[hub]\nreticulum_config_path = reticulum/config\n",
+        )
+        .expect("config");
+        let args = test_server_args(Some(config_path), None);
+
+        assert_eq!(
+            super::resolve_reticulum_config_path(&args).as_deref(),
+            Some(data_dir.join("reticulum/config").as_path())
+        );
+
+        std::fs::remove_dir_all(data_dir).expect("cleanup");
+    }
+
+    #[test]
+    fn reticulum_config_path_expands_home_from_hub_config_file() {
+        let data_dir =
+            std::env::temp_dir().join(format!("r3akt-rch-reticulum-config-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let config_path = data_dir.join("config.ini");
+        std::fs::write(
+            &config_path,
+            "[hub]\nreticulum_config_path = ~/.reticulum/config\n",
+        )
+        .expect("config");
+        let args = test_server_args(Some(config_path), None);
+        let home = super::home_dir().expect("home dir");
+
+        assert_eq!(
+            super::resolve_reticulum_config_path(&args).as_deref(),
+            Some(home.join(".reticulum/config").as_path())
+        );
+
+        std::fs::remove_dir_all(data_dir).expect("cleanup");
+    }
+
+    #[test]
     fn python_import_source_can_be_discovered_from_config_file() {
         let data_dir = std::env::temp_dir().join(format!("r3akt-rch-import-{}", Uuid::new_v4()));
         let source_dir = data_dir.join("LegacyStore");
@@ -1865,5 +2017,29 @@ mod tests {
             ",
         )
         .expect("legacy schema");
+    }
+
+    fn test_server_args(
+        config_path: Option<std::path::PathBuf>,
+        reticulum_config_path: Option<std::path::PathBuf>,
+    ) -> super::ServerArgs {
+        super::ServerArgs {
+            bind: "127.0.0.1:0".parse().expect("bind"),
+            db_path: None,
+            config_path,
+            reticulum_config_path,
+            reticulumd_rpc: None,
+            reticulumd_source: None,
+            lxmf_zmq_command: None,
+            lxmf_zmq_response: None,
+            reticulumd_exe: None,
+            reticulumd_db_path: None,
+            reticulumd_transport: None,
+            ui_dist_path: None,
+            api_key: None,
+            system_status_fanout_mode: None,
+            outbound_allowlist: Vec::new(),
+            prompt_python_import: false,
+        }
     }
 }

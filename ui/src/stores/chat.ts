@@ -5,6 +5,7 @@ import { get } from "../api/client";
 import { post } from "../api/client";
 import type { ChatAttachment } from "../api/types";
 import type { ChatMessage } from "../api/types";
+import { unwrapApiList } from "../utils/api-list";
 
 type ChatAttachmentPayload = {
   FileID?: number;
@@ -50,6 +51,14 @@ const fromApiMessage = (payload: ChatMessagePayload): ChatMessage => ({
   updated_at: payload.UpdatedAt
 });
 
+const successfulDeliveryStates = new Set(["delivered", "propagated", "sent"]);
+
+const isStaleFailureDowngrade = (current: ChatMessage, incoming: ChatMessage): boolean => {
+  const currentState = String(current.state ?? "").trim().toLowerCase();
+  const incomingState = String(incoming.state ?? "").trim().toLowerCase();
+  return successfulDeliveryStates.has(currentState) && incomingState === "failed";
+};
+
 export const useChatStore = defineStore("chat", () => {
   const messages = ref<ChatMessage[]>([]);
   const loading = ref(false);
@@ -57,8 +66,8 @@ export const useChatStore = defineStore("chat", () => {
   const fetchMessages = async (limit = 200) => {
     loading.value = true;
     try {
-      const response = await get<ChatMessagePayload[]>(`${endpoints.chatMessages}?limit=${limit}`);
-      messages.value = response.map(fromApiMessage).reverse();
+      const response = await get<unknown>(`${endpoints.chatMessages}?limit=${limit}`);
+      messages.value = unwrapApiList<ChatMessagePayload>(response).map(fromApiMessage).reverse();
     } finally {
       loading.value = false;
     }
@@ -111,6 +120,9 @@ export const useChatStore = defineStore("chat", () => {
     }
     const index = messages.value.findIndex((entry) => entry.message_id === message.message_id);
     if (index >= 0) {
+      if (isStaleFailureDowngrade(messages.value[index], message)) {
+        return;
+      }
       messages.value[index] = { ...messages.value[index], ...message };
     } else {
       messages.value.push(message);

@@ -9764,6 +9764,7 @@ impl RchCore {
         json!({
             "uid": checklist.uid,
             "mission_id": checklist.mission_uid,
+            "mission_uid": checklist.mission_uid,
             "template_uid": checklist.template_uid,
             "template_version": checklist.template_version,
             "template_name": checklist.template_name,
