@@ -107,8 +107,9 @@ const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
 const RETICULUMD_RECEIPT_STATUS_PASS_INTERVAL_MS: i64 = 10_000;
 const RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS: usize = 4;
 const RETICULUMD_SECURITY_RATE_LIMIT_CODE: &str = "SDK_SECURITY_RATE_LIMITED";
+const CONTROL_SYNC_PROPAGATION_FETCH_TIMEOUT_SECS: f64 = 45.0;
 #[cfg(not(test))]
-const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 20_000;
+const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 70_000;
 #[cfg(test)]
 const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 200;
 const RETICULUMD_INBOUND_WORKER_POLL_MS: u64 = 1_000;
@@ -12508,7 +12509,9 @@ fn reticulumd_receipt_pending_after_dispatch(
     }
     dispatch_count > 0
         && (delivery_state == "sent"
-            || (delivery_state == "propagated" && message.delivery_mode == DeliveryMode::Targeted))
+            || (matches!(delivery_state, "propagated" | "propagating")
+                && message.delivery_mode == DeliveryMode::Targeted
+                && message.delivery_method == "propagated"))
 }
 
 fn dispatch_pending(message: &OutboundMessageRecord) -> bool {
@@ -20515,13 +20518,14 @@ fn mark_recovered_delivery_failure_event(state: &AppState, payload: &mut Value) 
     else {
         return;
     };
-    if current.delivery_state == "failed" {
+    let current_state = effective_delivery_state(&current);
+    if current_state == "failed" {
         return;
     }
     payload["type"] = json!("message_delivery_superseded");
     payload["message"] = json!(format!(
         "Message delivery failure superseded by {} state",
-        current.delivery_state
+        current_state
     ));
     if let Some(metadata) = payload.get_mut("metadata").and_then(Value::as_object_mut) {
         metadata.insert(
@@ -20529,10 +20533,7 @@ fn mark_recovered_delivery_failure_event(state: &AppState, payload: &mut Value) 
             json!("message_delivery_failed"),
         );
         metadata.insert("delivery_failure_superseded".to_string(), json!(true));
-        metadata.insert(
-            "current_state".to_string(),
-            json!(current.delivery_state.clone()),
-        );
+        metadata.insert("current_state".to_string(), json!(current_state.clone()));
         metadata.insert(
             "current_dispatch_status".to_string(),
             current
@@ -20541,9 +20542,9 @@ fn mark_recovered_delivery_failure_event(state: &AppState, payload: &mut Value) 
                 .cloned()
                 .unwrap_or(Value::Null),
         );
-        metadata.insert("State".to_string(), json!(current.delivery_state.clone()));
+        metadata.insert("State".to_string(), json!(current_state.clone()));
         let mut delivery_metadata = current.delivery_metadata.clone();
-        if delivery_state_clears_error_metadata(current.delivery_state.as_str()) {
+        if delivery_state_clears_error_metadata(current_state.as_str()) {
             clear_success_superseded_delivery_metadata(&mut delivery_metadata);
         }
         metadata.insert("DeliveryMetadata".to_string(), delivery_metadata);
@@ -24175,7 +24176,7 @@ fn control_sync_blocking(state: &AppState) -> Result<Value, ApiError> {
         "propagation_remote_fetch",
         Some(json!({
             "remote": peer,
-            "timeout_secs": 45.0,
+            "timeout_secs": CONTROL_SYNC_PROPAGATION_FETCH_TIMEOUT_SECS,
             "transfer_limit_kb": 10_240.0,
         })),
     ) {
@@ -51745,6 +51746,32 @@ mod tests {
     }
 
     #[test]
+    fn targeted_propagated_acceptance_keeps_receipt_deadline_pending() {
+        let message = crate::OutboundMessageRecord {
+            message_id: "targeted-propagated-receipt".to_string(),
+            topic_id: None,
+            destination: Some("target-destination".to_string()),
+            sender: "northbound".to_string(),
+            content: "receipt required".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "rem_no_fresh_presence".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "delivery_receipt_required": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+
+        assert_eq!(crate::delivery_accepted_state(&message, 1), "propagating");
+        assert!(
+            crate::reticulumd_receipt_pending_after_dispatch(&message, 1, "propagating"),
+            "targeted propagated dispatch must retain a receipt deadline while propagation is active"
+        );
+    }
+
+    #[test]
     fn outbound_retry_worker_rate_limit_backs_off_past_sdk_window() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_responses(vec![(
             None,
@@ -58653,6 +58680,96 @@ mod tests {
         assert!(!delivery_metadata.contains_key("error"));
         assert!(!delivery_metadata.contains_key("retry_reason"));
         assert!(!delivery_metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[tokio::test]
+    async fn events_route_supersedes_failed_propagation_fallback_with_active_targets() {
+        let state = crate::AppState::default().with_api_key("secret");
+        let message = crate::OutboundMessageRecord {
+            message_id: "active-failed-broadcast-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "active failed broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "error": "send_error",
+                "retry_reason": "send_error",
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "active-failed-broadcast-fallback",
+                        "destination": "11a7907d67c457911c15206ec647ad33",
+                        "status": "sending"
+                    }
+                ],
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        state
+            .system_events
+            .write()
+            .expect("events")
+            .push(r3akt_rch_core::SystemEventRecord {
+                event_id: "active-stale-failure".to_string(),
+                event_type: "message_delivery_failed".to_string(),
+                message: "Message delivery failed for unknown".to_string(),
+                timestamp_ms: crate::unix_now_ms(),
+                metadata: json!({
+                    "MessageID": message.message_id,
+                    "State": "failed",
+                    "failure_reason": "send_error",
+                    "delivery_method": "propagated",
+                    "delivery_policy_reason": "broadcast_direct_timeout_fallback",
+                    "route_type": "broadcast",
+                }),
+            });
+        let app = crate::create_app_with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/Events")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("events response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let events: serde_json::Value = serde_json::from_slice(&body).expect("events json");
+        assert_eq!(events[0]["id"], "active-stale-failure");
+        assert_eq!(events[0]["type"], "message_delivery_superseded");
+        assert_eq!(events[0]["metadata"]["current_state"], "propagating");
+        assert_eq!(events[0]["metadata"]["State"], "propagating");
+        assert_eq!(
+            events[0]["metadata"]["DeliveryMetadata"]["dispatch_status"],
+            "accepted"
+        );
+        assert!(
+            events[0]["metadata"]["DeliveryMetadata"]
+                .get("error")
+                .is_none(),
+            "active recovered projection should not replay stale failure text"
+        );
     }
 
     #[test]
