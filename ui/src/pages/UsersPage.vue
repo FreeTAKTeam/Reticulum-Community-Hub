@@ -150,13 +150,6 @@
                 </div>
               </div>
               <div v-if="pagedClients.length === 0" class="panel-empty">No users match the current filter.</div>
-              <BasePagination
-                v-if="filteredClients.length"
-                v-model:page="clientsPage"
-                class="panel-pagination"
-                :page-size="clientsPageSize"
-                :total="filteredClients.length"
-              />
             </div>
 
             <div v-else-if="activeTab === 'identities'" class="card-grid">
@@ -170,30 +163,23 @@
                     <div class="registry-card-title">{{ resolveIdentityLabel(identity.display_name, identity.id) }}</div>
                     <div class="registry-card-subtitle mono">{{ identity.id || "Unknown destination" }}</div>
                   </div>
-                  <div class="registry-card-tag">{{ identity.status || "Unknown" }}</div>
+                  <div class="registry-card-tag">{{ identityAnnounceTag(identity) }}</div>
                 </div>
                 <div class="registry-card-meta">
                   <div><span>Last Seen</span><span>{{ formatTimestamp(identity.last_seen) }}</span></div>
-                  <div><span>Status</span><span>{{ identity.status || "-" }}</span></div>
+                  <div v-if="identity.is_announced">
+                    <span>First Seen</span>
+                    <span>{{ formatTimestamp(identity.announce_first_seen) }}</span>
+                  </div>
                   <div v-if="identity.is_announced">
                     <span>Announce Source</span>
                     <span>{{ identity.announce_source || "-" }}</span>
-                  </div>
-                  <div v-if="identity.is_announced">
-                    <span>Destination</span>
-                    <span class="mono" :title="identity.announce_destination_hash || '-'">
-                      {{ identityAnnounceDestinationLabel(identity) }}
-                    </span>
                   </div>
                   <div v-if="identityVoiceDestination(identity)">
                     <span>Voice</span>
                     <span class="mono" :title="identityVoiceDestination(identity)">
                       {{ identityVoiceDestinationLabel(identity) }}
                     </span>
-                  </div>
-                  <div v-if="identity.is_announced">
-                    <span>First Announce</span>
-                    <span>{{ formatTimestamp(identity.announce_first_seen) }}</span>
                   </div>
                 </div>
                 <div class="registry-card-badges">
@@ -223,13 +209,6 @@
                 </div>
               </div>
               <div v-if="pagedIdentities.length === 0" class="panel-empty">No identities match the current filter.</div>
-              <BasePagination
-                v-if="filteredIdentities.length"
-                v-model:page="identitiesPage"
-                class="panel-pagination"
-                :page-size="identitiesPageSize"
-                :total="filteredIdentities.length"
-              />
             </div>
 
             <div v-else-if="activeTab === 'rem-peers'" class="card-grid">
@@ -298,13 +277,6 @@
                   </div>
                 </div>
                 <div v-if="pagedTeams.length === 0" class="panel-empty">No teams match the current filter.</div>
-                <BasePagination
-                  v-if="filteredTeams.length"
-                  v-model:page="teamsPage"
-                  class="panel-pagination"
-                  :page-size="teamsPageSize"
-                  :total="filteredTeams.length"
-                />
               </template>
             </div>
 
@@ -340,13 +312,6 @@
                   </div>
                 </div>
                 <div v-if="pagedTeamMembers.length === 0" class="panel-empty">No team members match the current filter.</div>
-                <BasePagination
-                  v-if="filteredTeamMembers.length"
-                  v-model:page="teamMembersPage"
-                  class="panel-pagination"
-                  :page-size="teamMembersPageSize"
-                  :total="filteredTeamMembers.length"
-                />
               </template>
             </div>
 
@@ -390,27 +355,59 @@
             />
           </div>
 
-          <div class="panel-actions">
-            <BaseButton
-              v-if="activeTab === 'clients' || activeTab === 'identities' || activeTab === 'rem-peers'"
-              variant="secondary"
-              icon-left="refresh"
-              @click="usersStore.fetchUsers()"
-            >
-              Refresh
-            </BaseButton>
-            <BaseButton v-if="activeTab === 'routing'" variant="secondary" icon-left="refresh" @click="loadRouting">
-              Reload
-            </BaseButton>
-            <BaseButton v-if="activeTab === 'teams' || activeTab === 'team-members'" variant="secondary" icon-left="refresh" @click="loadTeamWorkspace">
-              Refresh
-            </BaseButton>
-            <BaseButton v-if="activeTab === 'teams'" icon-left="plus" @click="openTeamEditor()">
-              New Team
-            </BaseButton>
-            <BaseButton v-if="activeTab === 'team-members'" icon-left="plus" @click="openTeamMemberEditor()">
-              New Team Member
-            </BaseButton>
+          <div v-if="activeTab !== 'rights'" class="panel-footer">
+            <div class="panel-pagination-slot">
+              <BasePagination
+                v-if="activeTab === 'clients' && filteredClients.length"
+                v-model:page="clientsPage"
+                class="panel-pagination"
+                :page-size="clientsPageSize"
+                :total="filteredClients.length"
+              />
+              <BasePagination
+                v-else-if="activeTab === 'identities' && filteredIdentities.length"
+                v-model:page="identitiesPage"
+                class="panel-pagination"
+                :page-size="identitiesPageSize"
+                :total="filteredIdentities.length"
+              />
+              <BasePagination
+                v-else-if="activeTab === 'teams' && filteredTeams.length"
+                v-model:page="teamsPage"
+                class="panel-pagination"
+                :page-size="teamsPageSize"
+                :total="filteredTeams.length"
+              />
+              <BasePagination
+                v-else-if="activeTab === 'team-members' && filteredTeamMembers.length"
+                v-model:page="teamMembersPage"
+                class="panel-pagination"
+                :page-size="teamMembersPageSize"
+                :total="filteredTeamMembers.length"
+              />
+            </div>
+            <div class="panel-actions">
+              <BaseButton
+                v-if="activeTab === 'clients' || activeTab === 'identities' || activeTab === 'rem-peers'"
+                variant="secondary"
+                icon-left="refresh"
+                @click="usersStore.fetchUsers()"
+              >
+                Refresh
+              </BaseButton>
+              <BaseButton v-if="activeTab === 'routing'" variant="secondary" icon-left="refresh" @click="loadRouting">
+                Reload
+              </BaseButton>
+              <BaseButton v-if="activeTab === 'teams' || activeTab === 'team-members'" variant="secondary" icon-left="refresh" @click="loadTeamWorkspace">
+                Refresh
+              </BaseButton>
+              <BaseButton v-if="activeTab === 'teams'" icon-left="plus" @click="openTeamEditor()">
+                New Team
+              </BaseButton>
+              <BaseButton v-if="activeTab === 'team-members'" icon-left="plus" @click="openTeamMemberEditor()">
+                New Team Member
+              </BaseButton>
+            </div>
           </div>
         </section>
       </div>
@@ -515,7 +512,7 @@ import type { TeamRecord } from "../api/types";
 import { useUsersStore } from "../stores/users";
 import { useToastStore } from "../stores/toasts";
 import { formatTimestamp } from "../utils/format";
-import { clientPresenceTag } from "../utils/presence";
+import { clientPresenceTag, isRecentlySeen } from "../utils/presence";
 import { resolveIdentityLabel, shortHash } from "../utils/identity";
 import { resolveTeamMemberPrimaryLabel } from "../utils/team-members";
 
@@ -1198,6 +1195,23 @@ const teamMissionLabels = (team: TeamRecord): string[] => {
 
 const clientTag = (lastSeenAt?: string) => {
   return clientPresenceTag(lastSeenAt);
+};
+
+const ANNOUNCE_ACTIVE_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+type IdentityAnnounceStatusInput = {
+  is_announced?: boolean;
+  last_seen?: string | null;
+  announce_last_seen?: string | null;
+  status?: string | null;
+};
+
+const identityAnnounceTag = (identity: IdentityAnnounceStatusInput): string => {
+  if (!identity.is_announced) {
+    return identity.status || "Unknown";
+  }
+  const lastSeenAt = identity.announce_last_seen ?? identity.last_seen;
+  return isRecentlySeen(lastSeenAt, { activeWindowMs: ANNOUNCE_ACTIVE_WINDOW_MS }) ? "Active" : "Seen";
 };
 
 const clientTypeLabel = (clientType?: string, isRemCapable?: boolean): string => {

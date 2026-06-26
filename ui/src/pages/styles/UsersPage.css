@@ -110,20 +110,29 @@
   gap: 12px;
 }
 
+.registry-card-header > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .registry-card-title {
   font-size: 16px;
   color: #e6feff;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 
 .registry-card-subtitle {
   font-size: 11px;
   color: rgba(190, 246, 255, 0.7);
   margin-top: 4px;
+  overflow-wrap: anywhere;
 }
 
 .registry-card-tag {
+  flex: 0 0 auto;
+  max-width: 44%;
   border: 1px solid rgba(55, 242, 255, 0.45);
   color: rgba(227, 252, 255, 0.85);
   font-size: 10px;
@@ -131,6 +140,9 @@
   padding: 4px 10px;
   text-transform: uppercase;
   letter-spacing: 0.14em;
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .registry-card-meta {
@@ -176,15 +188,29 @@
 }
 
 .panel-pagination {
-  margin-top: 16px;
+  margin-top: 0;
+}
+
+.panel-footer {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.panel-pagination-slot {
+  flex: 1 1 420px;
+  min-width: 280px;
 }
 
 .panel-actions {
-  margin-top: 18px;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .editor-form {

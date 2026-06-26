@@ -90,6 +90,7 @@ const routingPayload = {
 };
 
 const text = () => document.body.textContent ?? "";
+let identityPayloads = [identityAlpha, identityBravo];
 
 const waitForUi = async () => {
   await nextTick();
@@ -151,7 +152,7 @@ const mountPage = async (): Promise<MountedPage> => {
   };
 };
 
-const currentIdentities = () => [identityAlpha, identityBravo];
+const currentIdentities = () => identityPayloads;
 
 const setupApiMocks = () => {
   getMock.mockImplementation((path: string) => {
@@ -215,6 +216,7 @@ describe("users page", () => {
     postMock.mockReset();
     putMock.mockReset();
     setupApiMocks();
+    identityPayloads = [identityAlpha, identityBravo];
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -284,5 +286,39 @@ describe("users page", () => {
     expect(text()).toContain("Bravo Route");
     expect(text()).toContain("route-bravo");
     expect(text()).toContain("Joined");
+  });
+
+  it("marks announced identities active only when seen in the last six hours", async () => {
+    const nowMs = Date.now();
+    identityPayloads = [
+      {
+        ...identityAlpha,
+        DisplayName: "Fresh Announce",
+        IsAnnounced: true,
+        AnnounceLastSeen: new Date(nowMs - (6 * 60 - 1) * 60 * 1000).toISOString()
+      },
+      {
+        ...identityBravo,
+        DisplayName: "Stale Announce",
+        IsAnnounced: true,
+        AnnounceLastSeen: new Date(nowMs - 6 * 60 * 60 * 1000 - 1000).toISOString()
+      }
+    ];
+
+    page = await mountPage();
+    await clickButton("Identities", 1);
+
+    const cardFor = (label: string) => {
+      const card = Array.from(document.querySelectorAll(".registry-card")).find((entry) =>
+        (entry.textContent ?? "").includes(label)
+      );
+      if (!(card instanceof HTMLElement)) {
+        throw new Error(`Card not found: ${label}`);
+      }
+      return card;
+    };
+
+    expect(cardFor("Fresh Announce").querySelector(".registry-card-tag")?.textContent?.trim()).toBe("Active");
+    expect(cardFor("Stale Announce").querySelector(".registry-card-tag")?.textContent?.trim()).toBe("Seen");
   });
 });

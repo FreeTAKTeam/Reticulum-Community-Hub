@@ -22,7 +22,7 @@ describe("telemetry markers", () => {
     expect(markers[0].lon).toBe(2);
   });
 
-  it("skips operator marker telemetry entries", () => {
+  it("preserves marker telemetry with its marker icon hint", () => {
     const markers = deriveMarkers([
       {
         id: "1",
@@ -46,8 +46,52 @@ describe("telemetry markers", () => {
       }
     ]);
 
-    expect(markers).toHaveLength(1);
-    expect(markers[0].id).toBe("deadbeef03");
-    expect(markers[0].name).toBe("Bravo");
+    expect(markers).toHaveLength(2);
+    expect(markers[0].id).toBe("f4c1d2e3");
+    expect(markers[0].sourceType).toBe("operator-marker");
+    expect(markers[0].iconKey).toBe("hostile");
+    expect(markers[1].id).toBe("deadbeef03");
+    expect(markers[1].name).toBe("Bravo");
+    expect(markers[1].sourceType).toBe("telemetry");
+    expect(markers[1].iconKey).toBeUndefined();
+  });
+
+  it("preserves server-recorded marker telemetry metadata with its marker icon hint", () => {
+    const markers = deriveMarkers([
+      {
+        id: "1",
+        identity_id: "marker-destination",
+        display_name: "Hostile Marker",
+        location: { lat: 1, lon: 2 },
+        data: {
+          custom: {
+            type_label: "marker",
+            metadata: {
+              object_type: "marker",
+              object_id: "marker-destination",
+              event_type: "marker.created",
+              symbol: "hostile"
+            }
+          }
+        }
+      },
+      {
+        id: "2",
+        identity_id: "deadbeef04",
+        display_name: "Charlie",
+        location: { lat: 5, lon: 6 },
+        data: {
+          telemetry_type: "person"
+        }
+      }
+    ]);
+
+    expect(markers).toHaveLength(2);
+    expect(markers[0].id).toBe("marker-destination");
+    expect(markers[0].sourceType).toBe("operator-marker");
+    expect(markers[0].iconKey).toBe("hostile");
+    expect(markers[1].id).toBe("deadbeef04");
+    expect(markers[1].sourceType).toBe("telemetry");
+    expect(markers[1].iconKey).toBeUndefined();
   });
 });

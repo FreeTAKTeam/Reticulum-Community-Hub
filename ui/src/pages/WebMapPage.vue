@@ -57,7 +57,7 @@
         </div>
 
         <div
-          v-if="markerRadialMenuStyle && markerRadialMenuItems.length"
+          v-if="!markerMoveArmId && markerRadialMenuStyle && markerRadialMenuItems.length"
           ref="markerRadialMenuRef"
           class="webmap-marker-radial-menu"
           :style="markerRadialMenuStyle"
@@ -995,6 +995,14 @@ const dismissRadialMenus = () => {
   }
 };
 const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
+  if (markerMoveArmId.value) {
+    const anchored = resolveMarkerScreenPoint(markerId, point);
+    if (anchored && markerMoveArmId.value === markerId) {
+      hoveredOperatorMarkerId.value = markerId;
+      hoveredOperatorMarkerPoint.value = anchored;
+    }
+    return;
+  }
   const anchored = resolveMarkerScreenPoint(markerId, point);
   if (!anchored) {
     return;
@@ -1183,6 +1191,9 @@ const syncMarkerInteractionAnchors = () => {
   }
 };
 const openMarkerRadialMenu = (markerId: string, point?: ScreenPoint) => {
+  if (markerMoveArmId.value) {
+    return;
+  }
   const anchored = resolveMarkerScreenPoint(markerId, point);
   if (!anchored) {
     return;
@@ -1253,8 +1264,16 @@ const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
     return;
   }
   if (item.action === "move") {
-    markerMoveArmId.value = markerId;
     closeMarkerRadialMenu();
+    closeMarkerAssign();
+    closeMarkerCompass();
+    markerToolbarOpen.value = false;
+    markerMoveArmId.value = markerId;
+    const anchor = resolveMarkerScreenPoint(markerId);
+    if (anchor) {
+      hoveredOperatorMarkerId.value = markerId;
+      hoveredOperatorMarkerPoint.value = anchor;
+    }
     toastStore.push("Press and hold this marker to move it.", "info");
     return;
   }
@@ -1274,7 +1293,7 @@ const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
     void markersStore
       .deleteMarker(markerId)
       .then(() => {
-        renderOperatorMarkers();
+        renderMarkers();
         toastStore.push("Marker deleted.", "warning");
       })
       .catch(() => {
@@ -1302,9 +1321,15 @@ const handleInspectorViewportChange = () => {
   }
 };
 
+const telemetryMarkersForMap = computed(() =>
+  telemetry.markers.filter(
+    (marker) => marker.sourceType !== "operator-marker" || !markersStore.markerIndex.has(marker.id)
+  )
+);
+
 const telemetryMarkersFiltered = computed(() => {
   const query = search.value.toLowerCase();
-  return telemetry.markers.filter((marker) => {
+  return telemetryMarkersForMap.value.filter((marker) => {
     if (query && !marker.name.toLowerCase().includes(query)) {
       return false;
     }
@@ -1433,7 +1458,7 @@ watch(selectedZoneId, () => {
 
 const markerIndex = computed(() => {
   const map = new Map<string, TelemetryMarker>();
-  telemetry.markers.forEach((marker) => {
+  telemetryMarkersForMap.value.forEach((marker) => {
     map.set(marker.id, marker);
   });
   return map;
@@ -1922,7 +1947,7 @@ const createMarkerAt = async (lngLat: maplibregl.LngLat) => {
       lat: lngLat.lat,
       lon: lngLat.lng
     });
-    renderOperatorMarkers();
+    renderMarkers();
     markerMode.value = false;
   } finally {
     creatingMarker.value = false;
@@ -1992,7 +2017,6 @@ const handleDocumentPointerDown = (event: MouseEvent) => {
   if (markerRadialMenuMarkerId.value && markerRadialMenuRef.value) {
     if (!target || !markerRadialMenuRef.value.contains(target)) {
       closeMarkerRadialMenu();
-      markerMoveArmId.value = null;
     }
   }
   if (zoneRadialMenuZoneId.value && zoneRadialMenuRef.value) {
@@ -2034,6 +2058,13 @@ const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
 };
 
 const handleMapClick = (event: maplibregl.MapMouseEvent) => {
+  if (markerMoveArmId.value) {
+    event.preventDefault();
+    (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+    closeMarkerRadialMenu();
+    closeZoneRadialMenu();
+    return;
+  }
   dismissRadialMenus();
   if (zoneMode.value) {
     const clickDetail = (event.originalEvent as MouseEvent | undefined)?.detail ?? 1;
@@ -2082,6 +2113,11 @@ const handleMapClick = (event: maplibregl.MapMouseEvent) => {
 const handleMapContextMenu = (event: maplibregl.MapMouseEvent) => {
   event.preventDefault();
   (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  if (markerMoveArmId.value) {
+    closeMarkerRadialMenu();
+    closeZoneRadialMenu();
+    return;
+  }
   dismissRadialMenus();
 };
 
@@ -2536,7 +2572,7 @@ const loadMarkerImages = async () => {
 const buildOperatorFeatureCollection = () =>
   ({
     type: "FeatureCollection",
-    features: markersStore.markers.filter((marker) => !marker.expired).map((marker) => {
+    features: markersStore.markers.map((marker) => {
       const override = dragPositions.value.get(marker.id);
       const lat = override?.lat ?? marker.lat;
       const lon = override?.lon ?? marker.lon;
@@ -2570,6 +2606,11 @@ const buildOperatorFeatureCollection = () =>
       };
     })
   }) as GeoJSON.FeatureCollection;
+
+const telemetryMarkerIconId = (marker: TelemetryMarker): string => {
+  const resolved = marker.iconKey ? resolveTelemetryIconValue(marker.iconKey, symbolKeySet.value) : "marker";
+  return buildTelemetryIconId(resolved || "marker");
+};
 
 const toZoneCoordinates = (points: GeoPoint[]) => {
   return [closePolygonRing(points).map((point) => [point.lon, point.lat])] as [number, number][][];
@@ -3086,6 +3127,10 @@ const stopMarkerDrag = () => {
 const handleOperatorMarkerContextMenu = (event: maplibregl.MapLayerMouseEvent) => {
   event.preventDefault();
   (event.originalEvent as MouseEvent | undefined)?.preventDefault?.();
+  if (markerMoveArmId.value) {
+    closeMarkerRadialMenu();
+    return;
+  }
   dismissRadialMenus();
 };
 
@@ -3102,7 +3147,7 @@ const renderTelemetryMarkers = () => {
   let existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
   const featureCollection = {
     type: "FeatureCollection",
-    features: telemetry.markers.map((marker) => ({
+    features: telemetryMarkersForMap.value.map((marker) => ({
       type: "Feature",
       geometry: {
         type: "Point",
@@ -3111,7 +3156,7 @@ const renderTelemetryMarkers = () => {
       properties: {
         id: marker.id,
         name: marker.name,
-        icon: buildTelemetryIconId("person")
+        icon: telemetryMarkerIconId(marker)
       }
     }))
   } as GeoJSON.FeatureCollection;

@@ -23,6 +23,82 @@ export type ReticulumConfigState = {
 const TRUE_VALUES = new Set(["1", "true", "yes", "on", "y"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off", "n"]);
 const LIST_SEPARATOR_PATTERN = /[,;\r\n]+/;
+const BOOLEAN_VALUE_KEYS = new Set([
+  "enabled",
+  "interface_enabled",
+  "discover_interfaces",
+  "outgoing",
+  "ingress_control",
+  "bootstrap_only",
+  "ignore_config_warnings",
+  "discoverable",
+  "discovery_encrypt",
+  "publish_ifac",
+  "prefer_ipv6",
+  "i2p_tunneled",
+  "kiss_framing",
+  "connectable",
+  "flow_control",
+]);
+const LIST_VALUE_KEYS = new Set([
+  "interface_discovery_sources",
+  "devices",
+  "ignored_devices",
+  "peers",
+]);
+const NUMBER_VALUE_KEYS = new Set([
+  "required_discovery_value",
+  "autoconnect_discovered_interfaces",
+  "bitrate",
+  "announce_cap",
+  "ifac_size",
+  "announce_rate_target",
+  "announce_rate_grace",
+  "announce_rate_penalty",
+  "announce_interval",
+  "discovery_stamp_value",
+  "latitude",
+  "longitude",
+  "height",
+  "discovery_frequency",
+  "discovery_bandwidth",
+  "discovery_port",
+  "data_port",
+  "listen_port",
+  "target_port",
+  "forward_port",
+  "fixed_mtu",
+  "speed",
+  "preamble",
+  "txtail",
+  "persistence",
+  "slottime",
+  "id_interval",
+  "ssid",
+  "frequency",
+  "bandwidth",
+  "txpower",
+  "spreadingfactor",
+  "codingrate",
+  "airtime_limit_short",
+  "airtime_limit_long",
+  "respawn_delay",
+  "respawn_interval",
+]);
+const NUMERIC_PORT_INTERFACE_TYPES = new Set([
+  "tcpclientinterface",
+  "tcp_client",
+  "tcpserverinterface",
+  "tcp_server",
+  "udpinterface",
+  "udp",
+  "backboneinterface",
+  "backbone",
+  "backboneclientinterface",
+  "backbone_client",
+  "localinterface",
+  "local",
+]);
 
 let interfaceIdCounter = 0;
 
@@ -39,6 +115,25 @@ export const createEmptyReticulumConfig = (): ReticulumConfigState => ({
 
 const normalizeSectionName = (name: string) => name.trim().toLowerCase();
 
+const unquoteConfigValue = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return typeof parsed === "string" ? parsed : trimmed;
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+};
+
 export const parseBool = (value: string | undefined, defaultValue: boolean) => {
   if (!value) {
     return defaultValue;
@@ -52,8 +147,6 @@ export const parseBool = (value: string | undefined, defaultValue: boolean) => {
   }
   return defaultValue;
 };
-
-const toBoolValue = (value: boolean) => (value ? "yes" : "no");
 
 const pushSection = (state: ReticulumConfigState, name: string) => {
   if (!state.sections[name]) {
@@ -69,6 +162,46 @@ const addKeyValue = (entries: KeyValueItem[], key: string, value: string) => {
     return;
   }
   entries.push({ key, value });
+};
+
+const isTomlNumber = (value: string) => {
+  const normalized = value.trim().replaceAll("_", "");
+  if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(normalized)) {
+    return false;
+  }
+  return Number.isFinite(Number(normalized));
+};
+
+const tomlString = (value: string) => JSON.stringify(value);
+
+const usesNumericPort = (interfaceType: string | undefined) =>
+  Boolean(interfaceType && NUMERIC_PORT_INTERFACE_TYPES.has(interfaceType.trim().toLowerCase()));
+
+const toTomlValue = (key: string, value: string, interfaceType?: string) => {
+  const normalizedKey = key.trim().toLowerCase();
+  const normalizedValue = value.trim();
+  const boolValue = parseBool(normalizedValue, false);
+
+  if (
+    BOOLEAN_VALUE_KEYS.has(normalizedKey) &&
+    (TRUE_VALUES.has(normalizedValue.toLowerCase()) || FALSE_VALUES.has(normalizedValue.toLowerCase()))
+  ) {
+    return boolValue ? "true" : "false";
+  }
+
+  if (LIST_VALUE_KEYS.has(normalizedKey)) {
+    const values = parseConfigList(normalizedValue);
+    return `[${values.map(tomlString).join(", ")}]`;
+  }
+
+  if (
+    (NUMBER_VALUE_KEYS.has(normalizedKey) || (normalizedKey === "port" && usesNumericPort(interfaceType))) &&
+    isTomlNumber(normalizedValue)
+  ) {
+    return normalizedValue.replaceAll("_", "");
+  }
+
+  return tomlString(normalizedValue);
 };
 
 export const findEntryIndex = (entries: KeyValueItem[], key: string) =>
@@ -140,6 +273,22 @@ export const parseReticulumConfig = (text: string): ReticulumConfigState => {
       continue;
     }
 
+    const tomlInterfaceMatch = trimmed.match(/^\[\[interfaces\]\]$/i);
+    if (tomlInterfaceMatch) {
+      currentSection = "interfaces";
+      inInterfaces = true;
+      currentInterface = {
+        id: createInterfaceId(),
+        name: `Interface ${state.interfaces.length + 1}`,
+        type: "",
+        enabled: true,
+        enableKey: "enabled",
+        settings: [],
+      };
+      state.interfaces.push(currentInterface);
+      continue;
+    }
+
     const interfaceMatch = trimmed.match(/^\[\[(.+)\]\]$/);
     if (interfaceMatch && inInterfaces) {
       const name = interfaceMatch[1].trim();
@@ -170,7 +319,7 @@ export const parseReticulumConfig = (text: string): ReticulumConfigState => {
       continue;
     }
     const key = trimmed.slice(0, equalsIndex).trim();
-    const value = trimmed.slice(equalsIndex + 1).trim();
+    const value = unquoteConfigValue(trimmed.slice(equalsIndex + 1));
     if (!key) {
       continue;
     }
@@ -179,6 +328,8 @@ export const parseReticulumConfig = (text: string): ReticulumConfigState => {
       const lowerKey = key.toLowerCase();
       if (lowerKey === "type") {
         currentInterface.type = value;
+      } else if (lowerKey === "name") {
+        currentInterface.name = value || currentInterface.name;
       } else if (lowerKey === "interface_enabled" || lowerKey === "enabled") {
         currentInterface.enabled = parseBool(value, true);
         currentInterface.enableKey = lowerKey as ReticulumInterfaceEnableKey;
@@ -193,10 +344,10 @@ export const parseReticulumConfig = (text: string): ReticulumConfigState => {
   return state;
 };
 
-const serializeEntries = (entries: KeyValueItem[]) =>
+const serializeEntries = (entries: KeyValueItem[], interfaceType?: string) =>
   entries
     .filter((entry) => entry.key.trim().length > 0)
-    .map((entry) => `${entry.key} = ${entry.value}`.trimEnd());
+    .map((entry) => `${entry.key} = ${toTomlValue(entry.key, entry.value, interfaceType)}`.trimEnd());
 
 export const serializeReticulumConfig = (state: ReticulumConfigState): string => {
   const lines: string[] = [];
@@ -210,10 +361,8 @@ export const serializeReticulumConfig = (state: ReticulumConfigState): string =>
 
   ensureOrder("reticulum");
   ensureOrder("logging");
-  ensureOrder("interfaces");
-
   if (!order.length) {
-    order.push("reticulum", "logging", "interfaces");
+    order.push("reticulum", "logging");
   }
 
   const appendBlank = () => {
@@ -224,27 +373,6 @@ export const serializeReticulumConfig = (state: ReticulumConfigState): string =>
 
   for (const section of order) {
     if (section === "interfaces") {
-      lines.push("[interfaces]");
-      const globalEntries = state.sections[section] ?? [];
-      lines.push(...serializeEntries(globalEntries));
-      if (globalEntries.length || state.interfaces.length) {
-        lines.push("");
-      }
-      state.interfaces.forEach((iface, index) => {
-        const name = iface.name.trim() || `Interface ${index + 1}`;
-        lines.push(`[[${name}]]`);
-        if (iface.type.trim()) {
-          lines.push(`type = ${iface.type}`.trimEnd());
-        }
-        const enableKey = iface.enableKey || "enabled";
-        lines.push(`${enableKey} = ${toBoolValue(iface.enabled)}`);
-        lines.push(...serializeEntries(iface.settings));
-        lines.push("");
-      });
-      if (lines.length && lines[lines.length - 1] === "") {
-        lines.pop();
-      }
-      appendBlank();
       continue;
     }
 
@@ -255,6 +383,22 @@ export const serializeReticulumConfig = (state: ReticulumConfigState): string =>
     lines.push(`[${section}]`);
     lines.push(...serializeEntries(entries));
     appendBlank();
+  }
+
+  if (state.interfaces.length) {
+    appendBlank();
+    state.interfaces.forEach((iface, index) => {
+      const name = iface.name.trim() || `Interface ${index + 1}`;
+      lines.push("[[interfaces]]");
+      lines.push(`name = ${tomlString(name)}`);
+      if (iface.type.trim()) {
+        lines.push(`type = ${tomlString(iface.type.trim())}`);
+      }
+      const enableKey = iface.enableKey || "enabled";
+      lines.push(`${enableKey} = ${iface.enabled ? "true" : "false"}`);
+      lines.push(...serializeEntries(iface.settings, iface.type));
+      lines.push("");
+    });
   }
 
   if (lines.length && lines[lines.length - 1] === "") {

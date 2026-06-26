@@ -3534,9 +3534,13 @@ fn import_reticulumd_announce_batch(
                 .iter()
                 .find(|record| record.destination_hash == destination_hash)
                 .cloned();
+            let source_interface = announce_source_interface(announce);
             let should_record = prior.as_ref().is_none_or(|record| {
                 record.last_seen_ts_ms != announce_ts_ms
                     || (!capabilities.is_empty() && record.announce_capabilities != capabilities)
+                    || source_interface.as_ref().is_some_and(|source| {
+                        record.source_interface.as_deref() != Some(source.as_str())
+                    })
             });
             if !should_record {
                 if touch_unchanged_records {
@@ -3549,17 +3553,11 @@ fn import_reticulumd_announce_batch(
                 }
                 continue;
             }
-            let source_interface = announce
-                .interface
-                .as_deref()
-                .or(announce.name_source.as_deref())
-                .and_then(|value| normalize_optional_text(Some(value.to_string())))
-                .unwrap_or_else(|| "reticulumd".to_string());
             core.record_identity_announce(
                 destination_hash.clone(),
                 None,
                 display_name,
-                Some(source_interface),
+                source_interface,
                 capabilities,
             )
             .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -3602,6 +3600,13 @@ fn import_reticulumd_announce_batch(
         persist_identity_state_records(state, &records_to_touch)?;
     }
     Ok((imported, last_id))
+}
+
+fn announce_source_interface(announce: &ReticulumdAnnounceRecord) -> Option<String> {
+    announce
+        .interface
+        .as_deref()
+        .and_then(normalize_reticulum_interface_lookup_key)
 }
 
 fn announce_is_telephony(announce: &ReticulumdAnnounceRecord) -> bool {
@@ -24413,6 +24418,61 @@ fn reticulum_runtime_snapshot(state: &AppState) -> Option<ReticulumRuntimeSnapsh
     Some(ReticulumRuntimeSnapshot { status, interfaces })
 }
 
+fn reticulum_interface_name_lookup(state: &AppState) -> HashMap<String, String> {
+    let Some(endpoint) = state.reticulumd_rpc_endpoint.as_ref() else {
+        return HashMap::new();
+    };
+    let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint.as_str());
+    let interfaces = client
+        .call("list_interfaces", None)
+        .ok()
+        .and_then(|response| response.result)
+        .and_then(|result| result.get("interfaces").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    let mut lookup = HashMap::new();
+    for (index, interface) in interfaces.iter().enumerate() {
+        let name = interface
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("interface-{index}"));
+        for key in reticulum_interface_lookup_keys(interface) {
+            lookup.entry(key).or_insert_with(|| name.clone());
+        }
+    }
+    lookup
+}
+
+fn reticulum_interface_lookup_keys(interface: &Value) -> Vec<String> {
+    let settings = interface.get("settings").and_then(Value::as_object);
+    let runtime = settings.and_then(|settings| settings.get("_runtime"));
+    [
+        interface.get("name"),
+        interface.get("id"),
+        interface.get("discovery_hash"),
+        interface.get("host"),
+        interface.get("target_host"),
+        runtime.and_then(|runtime| runtime.get("iface")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .filter_map(normalize_reticulum_interface_lookup_key)
+    .collect()
+}
+
+fn normalize_reticulum_interface_lookup_key(value: &str) -> Option<String> {
+    let trimmed = value
+        .trim()
+        .trim_matches('/')
+        .trim_matches('{')
+        .trim_matches('}')
+        .trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_ascii_lowercase())
+}
+
 fn call_first_successful_reticulumd_status(
     client: &mut r3akt_rch_bridge::ReticulumdRpcClient,
 ) -> Option<Value> {
@@ -25203,6 +25263,7 @@ async fn list_clients(
 async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let client_records = client_records_for_state(&state)?;
     let annotations = rem_annotations_for_state(&state)?;
+    let interface_names = reticulum_interface_name_lookup(&state);
     let identity_display_records =
         identity_display_records_for_annotations(&client_records, &annotations);
     let identity_display_records_by_identity = identity_display_records
@@ -25238,6 +25299,7 @@ async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, A
                 return None;
             }
             let mut value = record.to_python_value(annotations.get(&identity));
+            resolve_identity_announce_source_payload(&mut value, &interface_names);
             if let Some(client) = identity_display_records_by_identity.get(&identity) {
                 merge_identity_payload_client_display_metadata(&mut value, client);
             }
@@ -25262,6 +25324,51 @@ fn merge_identity_payload_client_display_metadata(value: &mut Value, client: &Cl
             metadata.insert("voice".to_string(), voice);
         }
     }
+}
+
+fn resolve_identity_announce_source_payload(
+    value: &mut Value,
+    interface_names: &HashMap<String, String>,
+) {
+    let source = value
+        .get("AnnounceSource")
+        .and_then(Value::as_str)
+        .and_then(|source| resolve_announce_source_name(source, interface_names));
+    value["AnnounceSource"] = source.as_ref().map_or(Value::Null, |source| json!(source));
+    if let Some(metadata) = value.get_mut("Metadata").and_then(Value::as_object_mut) {
+        if let Some(announce) = metadata.get_mut("announce").and_then(Value::as_object_mut) {
+            announce.insert(
+                "source_interface".to_string(),
+                source.map_or(Value::Null, |source| json!(source)),
+            );
+        }
+    }
+}
+
+fn resolve_announce_source_name(
+    source: &str,
+    interface_names: &HashMap<String, String>,
+) -> Option<String> {
+    let key = normalize_reticulum_interface_lookup_key(source)?;
+    if let Some(name) = interface_names.get(&key) {
+        return Some(name.clone());
+    }
+    if is_non_interface_announce_source_marker(key.as_str()) {
+        return None;
+    }
+    Some(source.trim().to_string())
+}
+
+fn is_non_interface_announce_source_marker(source: &str) -> bool {
+    matches!(
+        source,
+        "reticulumd"
+            | "delivery_app_data"
+            | "app_data"
+            | "app_data_utf8"
+            | "identity"
+            | "destination"
+    )
 }
 
 async fn ban_identity(
@@ -33707,7 +33814,7 @@ mod tests {
         assert_eq!(payload[0]["Status"], "active");
         assert_eq!(payload[0]["IsAnnounced"], true);
         assert_eq!(payload[0]["AnnounceDestinationHash"], "alpha");
-        assert_eq!(payload[0]["AnnounceSource"], "identity");
+        assert!(payload[0]["AnnounceSource"].is_null());
         assert!(payload[0]["LastSeen"].as_str().is_some());
         assert_eq!(payload[0]["LastSeen"], payload[0]["AnnounceLastSeen"]);
         assert!(payload[0]["AnnounceFirstSeen"].as_str().is_some());
@@ -33715,6 +33822,78 @@ mod tests {
             payload[0]["Metadata"]["announce"]["destination_hash"],
             "alpha"
         );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn identity_route_resolves_announce_source_interface_name() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-identity-interface-name-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut core = RchCore::new();
+        core.record_identity_announce(
+            "47ff8b43fea7df9082f6fc1e2b8c954b",
+            None,
+            Some("Field REM".to_string()),
+            Some("35be322d094f9d154a8aba4733b8497f".to_string()),
+            vec!["r3akt".to_string()],
+        )
+        .expect("announce");
+        core.set_identity_state("47ff8b43fea7df9082f6fc1e2b8c954b", false, false)
+            .expect("identity state");
+        {
+            let mut store = RchSqliteStore::open(&db_path).expect("store");
+            store.save_snapshot(&core.snapshot()).expect("snapshot");
+        }
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
+            "interfaces": [{
+                "name": "Minuteman_RNS",
+                "type": "tcp_client",
+                "host": "72.74.221.3",
+                "port": 4242,
+                "settings": {
+                    "_runtime": {
+                        "startup_status": "spawned",
+                        "iface": "/35be322d094f9d154a8aba4733b8497f/"
+                    }
+                }
+            }]
+        })]);
+        let app = crate::create_app_with_state(
+            crate::AppState::from_sqlite_path(&db_path)
+                .expect("state")
+                .with_api_key("secret")
+                .with_reticulumd_rpc(endpoint, "local-source"),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/Identities")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload[0]["AnnounceSource"], "Minuteman_RNS");
+        assert_eq!(
+            payload[0]["Metadata"]["announce"]["source_interface"],
+            "Minuteman_RNS"
+        );
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests[0].method, "list_interfaces");
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -55222,6 +55401,46 @@ mod tests {
                 "telemetry".to_string(),
                 "name=s8".to_string()
             ]
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn reticulumd_import_records_interface_not_name_source() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-announce-interface-source-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("sqlite state");
+        let announce = ReticulumdAnnounceRecord {
+            id: "announce-interface".to_string(),
+            peer: "47ff8b43fea7df9082f6fc1e2b8c954b".to_string(),
+            timestamp: 1_778_289_151,
+            aspect: None,
+            name: Some("Field user".to_string()),
+            name_source: Some("delivery_app_data".to_string()),
+            first_seen: 1_778_289_151,
+            seen_count: 1,
+            app_data_hex: None,
+            capabilities: Vec::new(),
+            rssi: None,
+            snr: None,
+            q: None,
+            interface: Some("/35be322d094f9d154a8aba4733b8497f/".to_string()),
+            hops: None,
+            stamp_cost: None,
+            stamp_cost_flexibility: None,
+            peering_cost: None,
+        };
+
+        crate::import_reticulumd_announce_batch(&state, &[announce], true).expect("import");
+
+        let records = crate::load_identity_announce_records(&state).expect("records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].source_interface.as_deref(),
+            Some("35be322d094f9d154a8aba4733b8497f")
         );
 
         let _ = std::fs::remove_file(db_path);
