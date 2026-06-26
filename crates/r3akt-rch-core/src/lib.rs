@@ -2719,7 +2719,7 @@ impl RchSqliteStore {
         for row in rows {
             records.push(decode_msgpack(&row?)?);
         }
-        records.sort_by(|left, right| right.timestamp_ms.cmp(&left.timestamp_ms));
+        records.sort_by_key(|event| std::cmp::Reverse(event.timestamp_ms));
         Ok(records)
     }
 
@@ -7875,7 +7875,7 @@ impl RchCore {
             .filter(|column| column.template_uid.as_deref() == Some(template_uid))
             .cloned()
             .collect();
-        columns.sort_by(|left, right| left.display_order.cmp(&right.display_order));
+        columns.sort_by_key(|column| column.display_order);
         columns
             .into_iter()
             .map(|column| checklist_column_record_value(&column))
@@ -8685,7 +8685,7 @@ impl RchCore {
             .filter(|column| column.checklist_uid.as_deref() == Some(checklist_uid))
             .cloned()
             .collect();
-        columns.sort_by(|left, right| left.display_order.cmp(&right.display_order));
+        columns.sort_by_key(|column| column.display_order);
         columns
     }
 
@@ -9824,7 +9824,7 @@ impl RchCore {
             .filter(|task| task.checklist_uid == checklist_uid)
             .cloned()
             .collect();
-        tasks.sort_by(|left, right| left.number.cmp(&right.number));
+        tasks.sort_by_key(|task| task.number);
         tasks
             .into_iter()
             .map(|task| {
