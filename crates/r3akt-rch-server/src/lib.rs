@@ -10386,7 +10386,7 @@ fn sqlite_runtime_metrics(state: &AppState) -> Value {
         .unwrap_or_default();
     json!({
         "transactions": transactions,
-        "avg_ms": if transactions == 0 { 0 } else { total_ms / transactions },
+        "avg_ms": total_ms.checked_div(transactions).unwrap_or(0),
         "p50_ms": percentile_ms(&samples, 50),
         "p95_ms": percentile_ms(&samples, 95),
         "max_ms": state.runtime_metrics.sqlite_latency_max_ms.load(Ordering::Relaxed),

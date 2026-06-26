@@ -1,7 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 use r3akt_identity::NodeIdentity;
 use r3akt_node::R3aktNode;
@@ -80,14 +79,7 @@ fn block_on<F>(future: F) -> F::Output
 where
     F: Future,
 {
-    struct NoopWake;
-
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
-
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     let mut future = Box::pin(future);
 
     loop {
