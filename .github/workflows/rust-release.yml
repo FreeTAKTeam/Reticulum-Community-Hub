@@ -6,7 +6,7 @@ on:
       release_version:
         description: "Version label to embed in manually built artifacts"
         required: false
-        default: "v3.0.0-preview.4"
+        default: "v3.0.0-preview.5"
   release:
     types: [published]
   push:

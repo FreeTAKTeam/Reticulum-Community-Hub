@@ -22,7 +22,7 @@ server-package-only milestone, not the full stable 3.0 release.
 | Rust core preserves Python-shaped domain behavior | `crates/r3akt-rch-core/src/lib.rs` tests | Core tests cover topics, clients, missions, teams, members, assets, skills, assignments, checklists, EAM, delivery policy, authorization, SQLite migration, and Python-shaped responses | Passed locally |
 | TAK is a separate service, not embedded in `r3akt-rch-server` | `crates/r3akt-tak-connector/src/bin/r3akt-tak-service.rs`, packaging files | `r3akt-tak-service` bridges RCH telemetry/chat to TAK and TAK CoT to RCH marker routes through northbound HTTP; `r3akt-rch-server` does not own TAK socket lifecycle | Passed locally |
 | Voice is an additional LXMF chat capability, not a voice-only destination class | `crates/r3akt-rch-server/src/lib.rs` tests | Voice-capable peer routing tests keep voice-capable identities in chat/fanout routing | Passed locally |
-| Rust MSRV gate is valid for Rust 1.85 | `.github/workflows/rust-pr-quality.yml`, `.github/workflows/rust.yml`, local `cargo +1.85.0` checks | PR quality control and the push release gate use Rust 1.85. The `Rust workspace` workflow run `26696071362` passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`, running `scripts/release-readiness.ps1 -ServerOnlyAlpha` with Rust 1.85. | Passed in CI |
+| Rust release CI is green while workspace MSRV remains 1.85 | `Cargo.toml`, `.github/workflows/rust-pr-quality.yml`, `.github/workflows/rust.yml` | The workspace still declares `rust-version = "1.85"`. PR quality control and the push release gate currently run Rust 1.88. The `Rust workspace` workflow run `28197882141` passed on commit `8e6f742e8d6909717eddaba6b616b5e4a739d1b9`, running `scripts/release-readiness.ps1 -ServerOnlyAlpha` with Rust 1.88. | Passed in CI |
 | PR Rust quality control is explicit and branch-protectable | `.github/workflows/rust-pr-quality.yml` | Pull requests into `rust-next` or `main` get separate checks for `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`, release builds for `r3akt-rch-server` and `r3akt-tak-service`, and `cargo audit --deny warnings`. The workflow is branch-protectable; current push evidence is provided by the stricter committed alpha gate in `Rust workspace` run `26696071362`. | Workflow defined; push gate passed |
 | Release CI gate runs the committed alpha verifier | `.github/workflows/rust.yml`, `scripts/release-readiness.ps1` | CI invokes `scripts/release-readiness.ps1 -ServerOnlyAlpha`, which runs Rust format, clippy, workspace tests, the server release build, and the ZeroMQ-configured release HTTP smoke. `Rust workspace` run `26696071362` passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. | Passed in CI |
 | Server release binary builds and smokes with ZeroMQ configured | `scripts/release-readiness.ps1` | Alpha runner builds `r3akt-rch-server`, starts it with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source`, and validates `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, and `/diagnostics/runtime` against a temporary SQLite DB. This passed locally through `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` on 2026-05-28 against LXMF-rs `origin/main` `cbccf0f`. The Rust workspace baseline now targets LXMF-rs `v0.5.1` commit `81acffc1409a760aeb9d7b09dc9a76b4be304a59`; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, focused ZeroMQ transport tests, `cargo build --release -p r3akt-rch-server`, and local workflow YAML parsing passed before publishing `v3.0.0-preview.2` against the prior `v0.5.0` baseline. | Passed locally |
@@ -76,11 +76,11 @@ The Rust edition is not ready for the stable 3.0 release yet.
 
 The initial alpha release scope is the Rust server/package line, with desktop
 bundles treated as preview artifacts. The server alpha gates are now green on
-commit `8dc69773af38ced251138c007c6f0bdc9543ea02`: the committed Rust 1.85
-`ServerOnlyAlpha` verifier passed in CI, full release packaging passed in CI,
-downloaded server and desktop artifacts passed checksum verification, and live
-two-phone REM checklist fanout is documented as delivered and visible in both
-REM phone UIs.
+commit `8e6f742e8d6909717eddaba6b616b5e4a739d1b9`: the committed Rust 1.88
+`ServerOnlyAlpha` verifier passed in CI, prior full release packaging passed in
+CI, downloaded server and desktop artifacts passed checksum verification, and
+live two-phone REM checklist fanout is documented as delivered and visible in
+both REM phone UIs.
 
 No current local server-alpha blocker is recorded in this audit. Remaining work
 before stable `v3.0.0`:
@@ -88,7 +88,7 @@ before stable `v3.0.0`:
 - Run the external RMAP Reticulum profile again after the latest ZeroMQ event
   polling refresh, if public testnet evidence is required for the release notes.
 - Publish a tagged preview or alpha release so the packaging workflow embeds a
-  semantic release tag such as `v3.0.0-preview.4` instead of the staging branch
+  semantic release tag such as `v3.0.0-preview.5` instead of the staging branch
   label `rust-next`.
 - Continue broad parity hardening for less common Python edge cases listed in
   `README.md` and `docs/release-contract-matrix.json`.

@@ -740,7 +740,7 @@ Current local verification snapshot, refreshed on 2026-05-11:
   mandatory ZeroMQ SDK endpoints.
 - `.github/workflows/rust-pr-quality.yml` runs PR quality-control checks for
   Rust formatting, clippy with warnings denied, locked workspace tests, release
-  binary builds, and `cargo audit` against Rust 1.85.
+  binary builds, and `cargo audit` against Rust 1.88.
 - `.github/workflows/rust.yml` runs the committed release gate runner with
   `-ServerOnlyAlpha` so push and PR CI still cover the alpha verifier, the
   server release build, and the ZeroMQ-configured release HTTP smoke.
@@ -760,7 +760,8 @@ Current local verification snapshot, refreshed on 2026-05-11:
   `C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\apps\rch-desktop`
   passed, including shared UI build,
   Tauri sidecar preparation, optimized desktop build, and Windows x64 NSIS
-  installer generation for `RCH Desktop_3.0.0-preview.4_x64-setup.exe`.
+  previous preview.4 installer generation for
+  `RCH Desktop_3.0.0-preview.4_x64-setup.exe`.
 - A local Rust-backend UI smoke against the built `ui/dist` passed: `/`,
   `/missions/workspace`, and HTML `/checklists` served the SPA, while
   `/Status`, `/api/v1/app/info`, `/checklists`, `/Telemetry?since=0`, and
