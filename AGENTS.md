@@ -74,6 +74,61 @@ npm --prefix apps/rch-desktop install
 npm --prefix apps/rch-desktop run build
 ```
 
+For server release-candidate work, use the committed gate runner before
+claiming release readiness:
+
+```powershell
+.\scripts\release-readiness.ps1 -ServerOnlyAlpha
+```
+
+Use `scripts/local-reticulum-live-gate.ps1` for explicit local Reticulum
+receipt/fanout/ZeroMQ event-poll or load validation when the sibling
+`LXMF-rs\target\debug\reticulumd.exe` is available. Add `-LiveTak` or
+`-LiveReticulum` to release-readiness only when the required external
+infrastructure and environment variables are configured.
+
+## Local Runtime Workflow
+
+- A Rust server launch that must exercise southbound Reticulum/LXMF behavior is
+  not complete with HTTP alone. Run `r3akt-rch-server` with LXMF-rs ZeroMQ SDK
+  endpoints and a `reticulumd` source, or let it manage a sibling
+  `LXMF-rs` `reticulumd.exe` built with `zmq-pipeline-rpc` support.
+- Verify local runtime work with `/Status` plus `/diagnostics/runtime`; for
+  daemon-backed runs, diagnostics should show Reticulum/`reticulumd`
+  configured and running.
+- Keep the local launch commands in `README.md` as the source of truth for
+  `--lxmf-zmq-command`, `--lxmf-zmq-response`, `--reticulumd-source`,
+  `--reticulumd-exe`, and UI bundle flags.
+
+## Diagnostics and Error Handling
+
+- Follow the spirit of LXMF-rs issue #369 for RCH transport, TAK, migration,
+  and runtime paths: do not hide unexpected errors behind `.ok()`, `let _ =`,
+  or `unwrap_or_default()` when the caller or operator needs to distinguish
+  absent data from malformed data, dropped work, encode/decode failure, or a
+  poisoned lock.
+- Prefer propagating `Result` with context, or logging at `warn!`/`error!`
+  before intentionally discarding a failure. This is especially important for
+  MessagePack/JSON/XML parsing, UTF-8 conversion, channel sends, socket writes,
+  worker lifecycle transitions, delivery receipts, and reticulumd/TAK bridge
+  calls.
+- It is still acceptable to ignore best-effort cleanup failures in tests or
+  shutdown code, but production paths should expose enough context through
+  logs, events, delivery metadata, or `/diagnostics/runtime` for an operator to
+  debug the failure without tracing every call site manually.
+
+## Release Packaging Workflow
+
+- `.github/workflows/rust-release.yml` owns published Rust release packages.
+  Keep release workflow changes aligned with `docs/rust-transition.md`,
+  `packaging/README.md`, and `docs/release-readiness-audit.md`.
+- Current server archives are built for Windows x64, macOS x64, macOS arm64,
+  Linux AMD64, and Linux Raspberry Pi 64; do not create duplicate packaging
+  workflows for the same release surface.
+- Python 2.9.x packaging remains on `rch-python`; keep Rust release-package
+  changes in the Rust packaging path unless the user explicitly asks for a
+  Python compatibility artifact.
+
 ## Compatibility Rules
 
 - Preserve the RCH northbound contract as the compatibility target: `/Status`,
