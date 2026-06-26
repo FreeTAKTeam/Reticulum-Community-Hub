@@ -44,14 +44,8 @@ async fn release_contract_matrix_http_routes_are_exposed_by_rust_openapi() {
     {
         for route in contract.routes() {
             let method = route.method.to_ascii_lowercase();
-            let operations = paths.get(route.path).unwrap_or_else(|| {
-                panic!(
-                    "contract {} path {} missing from OpenAPI",
-                    contract.id, route.path
-                )
-            });
             assert!(
-                operations.get(&method).is_some(),
+                openapi_has_route_or_alias(paths, route.path, method.as_str()),
                 "contract {} {method} {} missing from OpenAPI",
                 contract.id,
                 route.path
@@ -135,6 +129,24 @@ impl Contract {
 struct RouteContractRef<'a> {
     path: &'a str,
     method: &'a str,
+}
+
+fn openapi_has_route_or_alias(
+    paths: &serde_json::Map<String, Value>,
+    route_path: &str,
+    method: &str,
+) -> bool {
+    paths
+        .get(route_path)
+        .and_then(Value::as_object)
+        .is_some_and(|operations| operations.get(method).is_some())
+        || paths.values().any(|path_item| {
+            path_item
+                .get(method)
+                .and_then(|operation| operation.get("x-rch-aliases"))
+                .and_then(Value::as_array)
+                .is_some_and(|aliases| aliases.iter().any(|alias| alias == route_path))
+        })
 }
 
 fn load_matrix() -> ContractMatrix {

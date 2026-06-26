@@ -10,7 +10,7 @@ param(
     [switch]$IncludeZmqEventPoll,
     [switch]$IncludeZmqLoad,
     [switch]$ZmqLoadOnly,
-    [int]$LoadMessages = 1000,
+    [int]$LoadMessages = 500,
     [int]$LoadSenderClients = 4,
     [int]$LoadReceiverCount = 0,
     [int]$LoadPollAttempts = 240,

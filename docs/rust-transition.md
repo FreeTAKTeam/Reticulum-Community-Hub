@@ -44,7 +44,7 @@ database and validate `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`,
 and at least one topic/chat/checklist/mission flow.
 
 GitHub PR quality control is handled by
-`.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.85, checks
+`.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.88, checks
 out the sibling `LXMF-rs` workspace beside RCH, and exposes separate required
 checks for formatting, clippy with `-D warnings`, locked workspace tests,
 release server/TAK-service builds, and `cargo audit`.
@@ -115,9 +115,9 @@ Validated during the root Rust import and refreshed on 2026-05-11:
 - `.github/workflows/rust.yml`: now invokes the committed release gate runner
   with `-ServerOnlyAlpha`; Tauri desktop bundling is outside the initial alpha
   release workflow.
-- The `Rust workspace` CI run `26696071362` passed on commit
-  `8dc69773af38ced251138c007c6f0bdc9543ea02`, proving the committed
-  `ServerOnlyAlpha` verifier on Rust 1.85 for the current staging branch.
+- The `Rust workspace` CI run `28197882141` passed on commit
+  `8e6f742e8d6909717eddaba6b616b5e4a739d1b9`, proving the committed
+  `ServerOnlyAlpha` verifier on Rust 1.88 for the current main baseline.
 - The `Build Rust Release Packages` CI run `26696071364` passed on the same
   commit, producing Windows/Linux server archives plus Windows NSIS and Linux
   AppImage desktop artifacts. Downloaded artifacts verified against their
@@ -128,7 +128,8 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   UI vulnerabilities after the lockfile refresh and 23 Vitest files / 70 tests.
 - `npm run build` in `apps/rch-desktop/`: passed, including shared UI build,
   Tauri sidecar preparation, optimized desktop build, and Windows x64 NSIS
-  installer generation for `RCH Desktop_3.0.0-preview.2_x64-setup.exe`.
+  previous preview.4 installer generation for
+  `RCH Desktop_3.0.0-preview.4_x64-setup.exe`.
 - Release-binary smoke test with a temporary SQLite database: passed for
   `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, topic creation/list,
   chat creation/list, checklist template creation, mission creation/list, and
@@ -141,12 +142,14 @@ Validated during the root Rust import and refreshed on 2026-05-11:
   over the LXMF-rs ZeroMQ RPC loop.
 - Local daemon-involved ZeroMQ load validation is available through
   `scripts/local-reticulum-live-gate.ps1 -ZmqLoadOnly -LoadMessages <count>`.
-  It sends normal individual `sdk_send_v2` requests from one local daemon to
-  local receiver daemons and verifies receiver-side `sdk_poll_events_v2`
-  inbound events. A 2-message sanity run passed on 2026-05-30; 10-message
-  burst runs accepted all sends but exposed incomplete receiver delivery,
-  confirming the remaining bottleneck is daemon/network delivery rather than
-  RCH-side request construction.
+  It sends chunked `sdk_send_batch_v2` requests from one local daemon to local
+  receiver daemons and verifies receiver-side `sdk_poll_events_v2` inbound
+  events. The default 500-message run passed on 2026-06-22 with 500 accepted
+  and 500 received, balanced across two local receiver daemons; larger
+  `-LoadMessages` values remain useful explicit saturation tests for the
+  daemon/network delivery layer. A 1,000-message saturation run across four
+  receiver daemons also passed on 2026-06-22 with 1,000 accepted and 1,000
+  received.
 - The daemon-side scalability fix is a persistent bounded delivery scheduler in
   `reticulumd`: accepted messages enter one runtime-backed queue, direct links
   are reused instead of reset per message, per-peer delivery defaults to ordered

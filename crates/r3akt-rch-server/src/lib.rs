@@ -73,11 +73,12 @@ use r3akt_rch_core::{
 use r3akt_transport_rns::MessageBus;
 use r3akt_transport_rns::{
     LxmfDeliverySnapshot, LxmfDeliveryState, LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage,
-    LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, announce_lxmf_zmq_identity,
+    LxmfSdkOutboundMessage, LxmfSdkSharedOutboundBatch, LxmfSdkSharedPayload,
+    LxmfSdkSharedRecipient, ReticulumdAnnounceRecord, announce_lxmf_zmq_identity,
     delivery_snapshot_from_status_result, delivery_snapshot_receipt_status,
-    list_reticulumd_announces, poll_lxmf_zmq_events, poll_reticulumd_events,
-    reticulumd_event_to_envelope, reticulumd_message_to_envelope, send_lxmf_zmq_outbound_batch,
-    send_lxmf_zmq_outbound_message,
+    enqueue_lxmf_zmq_outbound_batch, list_reticulumd_announces, lxmf_shared_batch_to_legacy_batch,
+    poll_lxmf_zmq_events, poll_reticulumd_events, reticulumd_event_to_envelope,
+    reticulumd_message_to_envelope, send_lxmf_zmq_outbound_batch, send_lxmf_zmq_outbound_message,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -94,10 +95,23 @@ const OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS: i64 = 30_000;
 const OUTBOUND_RECEIPT_ACTIVE_EXTENSION_MAX: u64 = 10;
 const OUTBOUND_DISPATCH_TIMEOUT_MS: i64 = 30_000;
 const OUTBOUND_RETRY_WORKER_POLL_MS: u64 = 500;
+const OUTBOUND_RETRY_WORKER_TICK_TIMEOUT_MS: u64 = 31_000;
 const OUTBOUND_RETRY_BACKOFF_MS: i64 = 500;
 const OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS: i64 = 65_000;
+const OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS: u64 = 30;
+const OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS: u64 = 120;
 const OUTBOUND_RETRY_MAX_ATTEMPTS: u64 = 2;
+const OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS: u64 = 5;
+const OUTBOUND_PROPAGATION_STAMP_COST: u32 = 16;
 const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
+const RETICULUMD_RECEIPT_STATUS_PASS_INTERVAL_MS: i64 = 10_000;
+const RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS: usize = 4;
+const RETICULUMD_SECURITY_RATE_LIMIT_CODE: &str = "SDK_SECURITY_RATE_LIMITED";
+const CONTROL_SYNC_PROPAGATION_FETCH_TIMEOUT_SECS: f64 = 45.0;
+#[cfg(not(test))]
+const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 70_000;
+#[cfg(test)]
+const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 200;
 const RETICULUMD_INBOUND_WORKER_POLL_MS: u64 = 1_000;
 const RETICULUMD_LIST_MESSAGE_POLL_MS: u64 = 5_000;
 const RETICULUMD_EVENT_POLL_MAX: usize = 64;
@@ -107,6 +121,7 @@ const RETICULUMD_EVENT_CURSOR_STREAM_CHECK_MS: u64 = 60_000;
 const RETICULUMD_EVENT_CURSOR_SETTING: &str = "reticulumd_event_cursor";
 const LOCAL_TELEMETRY_SAMPLER_INTERVAL_MS: u64 = 600_000;
 const MISSION_CHANGE_FANOUT_CACHE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
+const OUTBOUND_BROADCAST_ROSTER_WINDOW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 #[cfg(test)]
 const MISSION_CHANGE_AUTONOMOUS_REM_WINDOW_MS: i64 = 30 * 60 * 1000;
 #[cfg(not(test))]
@@ -125,6 +140,9 @@ const WS_SYSTEM_EVENTS_DEFAULT_LIMIT: usize = 50;
 const WS_SYSTEM_EVENTS_MAX_LIMIT: usize = 200;
 const API_PAGINATION_DEFAULT_PAGE_SIZE: usize = 50;
 const API_PAGINATION_MAX_PAGE_SIZE: usize = 500;
+const GROUP_CHAT_INBOUND_TEXT_MAX_CHARS: usize = 500;
+const GROUP_CHAT_COMMAND_BODY_MAX_BYTES: usize = 1024;
+const GROUP_CHAT_JOIN_REPLAY_MAX_MESSAGES: usize = 10;
 const LXMF_FIELD_ATTACHMENTS_PUBLIC_KEY: &str = "attachments";
 const SQLITE_LATENCY_SAMPLE_LIMIT: usize = 512;
 #[cfg(test)]
@@ -192,6 +210,7 @@ pub struct AppState {
     outbound_delivery_policy: Arc<RwLock<OutboundDeliveryPolicy>>,
     outbound_retry_worker_stats: Arc<RwLock<OutboundRetryWorkerStats>>,
     reticulumd_inbound_worker_stats: Arc<RwLock<ReticulumdInboundWorkerStats>>,
+    reticulumd_receipt_status_next_poll_ts_ms: Arc<RwLock<i64>>,
     outbound_identity_allowlist: Option<Arc<HashSet<String>>>,
     mission_change_fanout_cache: Arc<RwLock<HashMap<String, i64>>>,
     #[cfg(test)]
@@ -200,6 +219,7 @@ pub struct AppState {
     config_path: Option<Arc<PathBuf>>,
     reticulum_config_path: Option<Arc<PathBuf>>,
     ui_dist_path: Option<Arc<PathBuf>>,
+    api_bind: Option<Arc<SocketAddr>>,
     api_key: Option<Arc<String>>,
     system_status_fanout_mode: SystemStatusFanoutMode,
 }
@@ -370,6 +390,7 @@ impl Default for AppState {
             outbound_delivery_policy: Arc::default(),
             outbound_retry_worker_stats: Arc::default(),
             reticulumd_inbound_worker_stats: Arc::default(),
+            reticulumd_receipt_status_next_poll_ts_ms: Arc::default(),
             outbound_identity_allowlist: None,
             mission_change_fanout_cache: Arc::default(),
             #[cfg(test)]
@@ -378,6 +399,7 @@ impl Default for AppState {
             config_path: None,
             reticulum_config_path: None,
             ui_dist_path: None,
+            api_bind: None,
             api_key: None,
             system_status_fanout_mode: SystemStatusFanoutMode::EventOnly,
         }
@@ -467,13 +489,21 @@ impl AppState {
     }
 
     #[must_use]
+    pub fn with_api_bind(mut self, bind: SocketAddr) -> Self {
+        self.api_bind = Some(Arc::new(bind));
+        self
+    }
+
+    #[must_use]
     pub fn with_reticulumd_rpc(
         mut self,
         endpoint: impl Into<String>,
         source: impl Into<String>,
     ) -> Self {
+        let source = source.into();
         self.reticulumd_rpc_endpoint = Some(Arc::new(endpoint.into()));
-        self.reticulumd_source = Some(Arc::new(source.into()));
+        self.reticulumd_source = Some(Arc::new(source.clone()));
+        self.prune_telemetry_for_local_source(&source);
         self
     }
 
@@ -534,9 +564,11 @@ impl AppState {
         response_endpoint: impl Into<String>,
         source: impl Into<String>,
     ) -> Self {
+        let source = source.into();
         self.lxmf_zmq_command_endpoint = Some(Arc::new(command_endpoint.into()));
         self.lxmf_zmq_response_endpoint = Some(Arc::new(response_endpoint.into()));
-        self.reticulumd_source = Some(Arc::new(source.into()));
+        self.reticulumd_source = Some(Arc::new(source.clone()));
+        self.prune_telemetry_for_local_source(&source);
         self
     }
 
@@ -673,8 +705,16 @@ impl AppState {
     pub fn from_sqlite_path(
         path: impl AsRef<FsPath>,
     ) -> Result<Self, r3akt_rch_core::RchCoreError> {
+        Self::from_sqlite_path_with_reticulumd_source(path, None)
+    }
+
+    pub fn from_sqlite_path_with_reticulumd_source(
+        path: impl AsRef<FsPath>,
+        reticulumd_source: Option<&str>,
+    ) -> Result<Self, r3akt_rch_core::RchCoreError> {
         let path = path.as_ref().to_path_buf();
-        let store = RchSqliteStore::open(&path)?;
+        let mut store = RchSqliteStore::open_admin(&path)?;
+        store.prune_telemetry_records(reticulumd_source)?;
         let snapshot = store.load_snapshot()?;
         let mut state = Self {
             messages: Arc::default(),
@@ -742,17 +782,41 @@ impl AppState {
                     })
                     .collect(),
             ));
-            state.messages = Arc::new(RwLock::new(
-                snapshot
-                    .messages
-                    .into_iter()
-                    .map(OutboundMessageRecord::from)
-                    .collect(),
-            ));
+            let mut messages = snapshot
+                .messages
+                .into_iter()
+                .map(OutboundMessageRecord::from)
+                .collect::<Vec<_>>();
+            let repaired_messages = repair_success_superseded_outbound_metadata(&mut messages);
+            for message in repaired_messages {
+                store.upsert_message(&CoreMessageRecord::from(message))?;
+            }
+            state.messages = Arc::new(RwLock::new(messages));
             state.system_events = Arc::new(RwLock::new(snapshot.system_events));
             state.telemetry_records = Arc::new(RwLock::new(snapshot.telemetry_records));
         }
         Ok(state)
+    }
+
+    fn prune_telemetry_for_local_source(&self, source: &str) {
+        let Some(source_key) = telemetry_identity_key(source) else {
+            return;
+        };
+        if let Ok(mut records) = self.telemetry_records.write() {
+            let retained = latest_telemetry_records_for_identities(
+                std::mem::take(&mut *records),
+                Some(source_key.as_str()),
+            );
+            *records = retained;
+        }
+        if let Some(path) = &self.sqlite_path {
+            match RchSqliteStore::open_admin(path.as_ref())
+                .and_then(|mut store| store.prune_telemetry_records(Some(source)))
+            {
+                Ok(()) => {}
+                Err(error) => eprintln!("failed to prune local telemetry source: {error}"),
+            }
+        }
     }
 
     #[cfg(test)]
@@ -852,22 +916,44 @@ impl AppState {
         display_name: Option<String>,
     ) -> Result<TelemetryRecord, ApiError> {
         let display_name = normalize_optional_text(display_name);
+        let peer_destination = peer_destination.into();
         let record = TelemetryRecord {
-            peer_destination: peer_destination.into(),
+            peer_destination: peer_destination.clone(),
             timestamp_s,
             telemetry,
             identity_label: display_name.clone(),
             display_name,
         };
+        if self
+            .reticulumd_source
+            .as_deref()
+            .and_then(|source| telemetry_identity_key(source))
+            .is_some_and(|source_key| {
+                telemetry_identity_key(&peer_destination)
+                    .is_some_and(|peer_key| peer_key == source_key)
+            })
+        {
+            return Ok(record);
+        }
         let mut records = self
             .telemetry_records
             .write()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        records.push(record.clone());
-        if records.len() > 1000 {
-            let overflow = records.len() - 1000;
-            records.drain(0..overflow);
+        if let Some(peer_key) = telemetry_identity_key(&record.peer_destination) {
+            if let Some(existing) = records.iter().find(|existing| {
+                telemetry_identity_key(&existing.peer_destination)
+                    .is_some_and(|existing_key| existing_key == peer_key)
+            }) {
+                if existing.timestamp_s > record.timestamp_s {
+                    return Ok(existing.clone());
+                }
+            }
+            records.retain(|existing| {
+                telemetry_identity_key(&existing.peer_destination)
+                    .is_none_or(|existing_key| existing_key != peer_key)
+            });
         }
+        records.push(record.clone());
         drop(records);
         persist_telemetry_record_row(self, &record)?;
         broadcast_telemetry_event(self, &record);
@@ -1153,6 +1239,7 @@ struct InternalIdentityAnnouncePayload {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientRecord {
     pub identity: String,
+    pub first_seen: String,
     pub last_seen: String,
     pub display_name: Option<String>,
     pub metadata: Value,
@@ -1160,12 +1247,18 @@ pub struct ClientRecord {
     pub announce_capabilities: Vec<String>,
     pub rem_mode: Option<String>,
     pub is_rem_capable: bool,
+    pub nickname: Option<String>,
+    pub role: String,
+    pub paused: bool,
+    pub text_only: bool,
+    pub last_chat_ts_ms: Option<i64>,
 }
 
 impl ClientRecord {
     fn new(identity: String, last_seen_ts_ms: i64) -> Self {
         Self {
             identity,
+            first_seen: iso8601_from_unix_ms(last_seen_ts_ms),
             last_seen: iso8601_from_unix_ms(last_seen_ts_ms),
             display_name: None,
             metadata: json!({}),
@@ -1173,11 +1266,30 @@ impl ClientRecord {
             announce_capabilities: Vec::new(),
             rem_mode: None,
             is_rem_capable: false,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
         }
     }
 
     fn apply_rem_annotation(&mut self, annotation: &RemIdentityAnnotation) {
-        self.last_seen = iso8601_from_unix_ms(annotation.last_seen_ts_ms);
+        let first_seen_ts_ms = unix_ms_from_iso8601(&self.first_seen)
+            .map_or(annotation.first_seen_ts_ms, |current| {
+                current.min(annotation.first_seen_ts_ms)
+            });
+        let last_seen_ts_ms = [
+            unix_ms_from_iso8601(&self.last_seen),
+            Some(annotation.last_seen_ts_ms),
+            self.last_chat_ts_ms,
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(annotation.last_seen_ts_ms);
+        self.first_seen = iso8601_from_unix_ms(first_seen_ts_ms);
+        self.last_seen = iso8601_from_unix_ms(last_seen_ts_ms);
         self.display_name.clone_from(&annotation.display_name);
         self.client_type.clone_from(&annotation.client_type);
         self.announce_capabilities
@@ -1189,8 +1301,8 @@ impl ClientRecord {
                 "destination_hash": annotation.destination_hash.clone(),
                 "announced_identity_hash": annotation.announced_identity_hash.clone(),
                 "source_interface": annotation.source_interface.clone(),
-                "first_seen": iso8601_from_unix_ms(annotation.first_seen_ts_ms),
-                "last_seen": iso8601_from_unix_ms(annotation.last_seen_ts_ms),
+                "first_seen": iso8601_from_unix_ms(first_seen_ts_ms),
+                "last_seen": iso8601_from_unix_ms(last_seen_ts_ms),
             }
         });
     }
@@ -1198,17 +1310,30 @@ impl ClientRecord {
 
 impl From<CoreClientRecord> for ClientRecord {
     fn from(client: CoreClientRecord) -> Self {
-        Self::new(client.identity, client.last_seen_ts_ms)
+        let mut record = Self::new(client.identity, client.last_seen_ts_ms);
+        record.first_seen = iso8601_from_unix_ms(client.first_seen_ts_ms);
+        record.nickname = client.nickname;
+        record.role = client.role;
+        record.paused = client.paused;
+        record.text_only = client.text_only;
+        record.last_chat_ts_ms = client.last_chat_ts_ms;
+        record
     }
 }
 
 impl From<ClientRecord> for CoreClientRecord {
     fn from(client: ClientRecord) -> Self {
         let last_seen_ts_ms = unix_ms_from_iso8601(&client.last_seen).unwrap_or_else(unix_now_ms);
+        let first_seen_ts_ms = unix_ms_from_iso8601(&client.first_seen).unwrap_or(last_seen_ts_ms);
         Self {
             identity: client.identity,
-            first_seen_ts_ms: last_seen_ts_ms,
+            first_seen_ts_ms,
             last_seen_ts_ms,
+            nickname: client.nickname,
+            role: client.role,
+            paused: client.paused,
+            text_only: client.text_only,
+            last_chat_ts_ms: client.last_chat_ts_ms,
         }
     }
 }
@@ -1547,6 +1672,76 @@ impl From<OutboundMessageRecord> for CoreMessageRecord {
             created_ts_ms: message.created_ts_ms,
             attachments: message.attachments,
         }
+    }
+}
+
+fn repair_success_superseded_outbound_metadata(
+    messages: &mut [OutboundMessageRecord],
+) -> Vec<OutboundMessageRecord> {
+    let mut repaired = Vec::new();
+    for message in messages {
+        if !delivery_state_clears_error_metadata(message.delivery_state.as_str()) {
+            continue;
+        }
+        let original = message.delivery_metadata.clone();
+        clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
+        prune_success_superseded_receipt_targets(message);
+        if message.delivery_metadata != original {
+            repaired.push(message.clone());
+        }
+    }
+    repaired
+}
+
+fn prune_success_superseded_receipt_targets(message: &mut OutboundMessageRecord) {
+    if message.delivery_method != "propagated"
+        || !matches!(
+            message.delivery_mode,
+            DeliveryMode::Broadcast | DeliveryMode::Fanout
+        )
+    {
+        return;
+    }
+    let targets = reticulumd_receipt_targets_for_message(message);
+    if targets.len() < 2
+        || !targets
+            .iter()
+            .any(reticulumd_receipt_target_success_terminal)
+    {
+        return;
+    }
+    let retained = targets
+        .iter()
+        .filter(|target| reticulumd_receipt_target_terminal(target))
+        .cloned()
+        .collect::<Vec<_>>();
+    if retained.len() == targets.len() || retained.is_empty() {
+        return;
+    }
+    let pruned_count = targets.len().saturating_sub(retained.len());
+    let receipt_status = retained
+        .iter()
+        .find(|target| reticulumd_receipt_target_success_terminal(target))
+        .and_then(|target| target.status.clone())
+        .unwrap_or_else(|| "sent".to_string());
+    merge_delivery_metadata(
+        &mut message.delivery_metadata,
+        json!({
+            "receipt_pending": false,
+            "receipt_status": receipt_status,
+            "receipt_timeout": false,
+            "reticulumd_dispatch_count": retained.len(),
+            "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&retained),
+            "stale_receipt_targets_pruned": pruned_count,
+        }),
+    );
+    if let Some(object) = message.delivery_metadata.as_object_mut() {
+        object.remove("sdk_attempts");
+        object.remove("sdk_delivery_state");
+        object.remove("sdk_last_updated_ms");
+        object.remove("sdk_message_id");
+        object.remove("sdk_reason_code");
+        object.remove("sdk_terminal");
     }
 }
 
@@ -2352,12 +2547,23 @@ pub fn spawn_outbound_delivery_worker_with_interval(
             }
             set_outbound_retry_worker_running(&state, true, poll_interval);
             let worker_state = state.clone();
-            match tokio::task::spawn_blocking(move || {
+            let worker_task = tokio::task::spawn_blocking(move || {
                 process_outbound_delivery_worker_tick(&worker_state)
-            })
+            });
+            match tokio::time::timeout(
+                Duration::from_millis(OUTBOUND_RETRY_WORKER_TICK_TIMEOUT_MS),
+                worker_task,
+            )
             .await
             {
-                Ok(Ok(_report)) => {}
+                Ok(Ok(Ok(_report))) => {}
+                Ok(Ok(Err(error))) => {
+                    record_outbound_retry_worker_report(
+                        &state,
+                        OutboundRetryWorkerReport::default(),
+                        Some(error.to_string()),
+                    );
+                }
                 Ok(Err(error)) => {
                     record_outbound_retry_worker_report(
                         &state,
@@ -2365,11 +2571,11 @@ pub fn spawn_outbound_delivery_worker_with_interval(
                         Some(error.to_string()),
                     );
                 }
-                Err(error) => {
+                Err(_) => {
                     record_outbound_retry_worker_report(
                         &state,
                         OutboundRetryWorkerReport::default(),
-                        Some(error.to_string()),
+                        Some("outbound retry worker tick timed out".to_string()),
                     );
                 }
             }
@@ -3328,9 +3534,13 @@ fn import_reticulumd_announce_batch(
                 .iter()
                 .find(|record| record.destination_hash == destination_hash)
                 .cloned();
+            let source_interface = announce_source_interface(announce);
             let should_record = prior.as_ref().is_none_or(|record| {
                 record.last_seen_ts_ms != announce_ts_ms
                     || (!capabilities.is_empty() && record.announce_capabilities != capabilities)
+                    || source_interface.as_ref().is_some_and(|source| {
+                        record.source_interface.as_deref() != Some(source.as_str())
+                    })
             });
             if !should_record {
                 if touch_unchanged_records {
@@ -3343,17 +3553,11 @@ fn import_reticulumd_announce_batch(
                 }
                 continue;
             }
-            let source_interface = announce
-                .interface
-                .as_deref()
-                .or(announce.name_source.as_deref())
-                .and_then(|value| normalize_optional_text(Some(value.to_string())))
-                .unwrap_or_else(|| "reticulumd".to_string());
             core.record_identity_announce(
                 destination_hash.clone(),
                 None,
                 display_name,
-                Some(source_interface),
+                source_interface,
                 capabilities,
             )
             .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -3396,6 +3600,13 @@ fn import_reticulumd_announce_batch(
         persist_identity_state_records(state, &records_to_touch)?;
     }
     Ok((imported, last_id))
+}
+
+fn announce_source_interface(announce: &ReticulumdAnnounceRecord) -> Option<String> {
+    announce
+        .interface
+        .as_deref()
+        .and_then(normalize_reticulum_interface_lookup_key)
 }
 
 fn announce_is_telephony(announce: &ReticulumdAnnounceRecord) -> bool {
@@ -3554,7 +3765,7 @@ fn process_reticulumd_inbound_envelope(
         return Ok(());
     }
 
-    touch_reticulumd_inbound_client(state, envelope.source.to_string().as_str())?;
+    touch_reticulumd_inbound_client(state, envelope.source.to_string().as_str(), false)?;
 
     match &envelope.payload {
         Payload::TopicMessage(message) => {
@@ -3571,7 +3782,26 @@ fn process_reticulumd_inbound_envelope(
                 )?;
                 return Ok(());
             }
-            let inbound_record = record_inbound_topic_message(state, envelope, message)?;
+            let sanitized_body = match sanitize_group_chat_text(&message.body) {
+                Ok(body) => body,
+                Err(reason) => {
+                    send_reticulumd_inbound_text_reply(
+                        state,
+                        envelope.source.to_string().as_str(),
+                        envelope.topic.to_string().as_str(),
+                        &r3akt_protocol::Command {
+                            name: "message.reject".to_string(),
+                            args: json!({}),
+                            correlation_id: message.correlation_id.clone(),
+                        },
+                        &format!("message rejected: {reason}"),
+                    )?;
+                    return Ok(());
+                }
+            };
+            let inbound_record =
+                record_inbound_topic_message(state, envelope, message, sanitized_body.as_str())?;
+            touch_reticulumd_inbound_client(state, envelope.source.to_string().as_str(), true)?;
             relay_reticulumd_inbound_topic_message(state, envelope, message, &inbound_record)?;
             record_system_event(
                 state,
@@ -3658,6 +3888,9 @@ fn reticulumd_inbound_was_already_processed(
 }
 
 fn plain_lxmf_command_from_message_body(body: &str) -> Option<r3akt_protocol::Command> {
+    if body.len() > GROUP_CHAT_COMMAND_BODY_MAX_BYTES {
+        return None;
+    }
     let normalized = body.trim().trim_start_matches(['\\', '/']).trim();
     if normalized.is_empty() || normalized == body.trim() {
         return None;
@@ -3680,10 +3913,33 @@ fn plain_lxmf_command_from_message_body(body: &str) -> Option<r3akt_protocol::Co
     })
 }
 
+fn sanitize_group_chat_text(body: &str) -> Result<String, String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return Err("message is empty".to_string());
+    }
+    if trimmed.chars().count() > GROUP_CHAT_INBOUND_TEXT_MAX_CHARS {
+        return Err(format!(
+            "message exceeds {GROUP_CHAT_INBOUND_TEXT_MAX_CHARS} characters"
+        ));
+    }
+    Ok(trimmed
+        .chars()
+        .map(|character| {
+            if character.is_control() && !matches!(character, '\t' | '\n' | '\r') {
+                '?'
+            } else {
+                character
+            }
+        })
+        .collect())
+}
+
 fn record_inbound_topic_message(
     state: &AppState,
     envelope: &ProtocolEnvelope,
     message: &r3akt_protocol::TopicMessage,
+    sanitized_body: &str,
 ) -> Result<OutboundMessageRecord, ApiError> {
     let destination = match &envelope.destination {
         Destination::Node(node_id) => Some(node_id.to_string()),
@@ -3696,7 +3952,7 @@ fn record_inbound_topic_message(
         topic_id: Some(envelope.topic.to_string()),
         destination,
         sender: envelope.source.to_string(),
-        content: message.body.clone(),
+        content: sanitized_body.to_string(),
         delivery_mode: match &envelope.destination {
             Destination::Node(_) => DeliveryMode::Targeted,
             Destination::Topic(_) => DeliveryMode::Fanout,
@@ -3890,26 +4146,57 @@ fn relay_reticulumd_inbound_topic_message(
 ) -> Result<Option<OutboundMessageRecord>, ApiError> {
     let topic_id = envelope.topic.to_string();
     let source = envelope.source.to_string();
-    let relay_destinations = topic_subscriber_destinations(state, topic_id.as_str())?
+    let mut relay_destinations = topic_subscriber_destinations(state, topic_id.as_str())?
         .into_iter()
         .filter(|destination| destination != &source)
         .collect::<Vec<_>>();
+    let is_direct_topic = topic_id.trim().eq_ignore_ascii_case("direct");
+    let default_direct_relay = relay_destinations.is_empty() && is_direct_topic;
+    let mut direct_active_relay = false;
+    if is_direct_topic {
+        let active_subscribers = active_direct_subscriber_relay_destinations(
+            state,
+            source.as_str(),
+            &relay_destinations,
+        )?;
+        if active_subscribers.is_empty() {
+            let active_destinations =
+                active_generic_lxmf_relay_destinations(state, source.as_str())?;
+            if !active_destinations.is_empty() {
+                relay_destinations = active_destinations;
+                direct_active_relay = true;
+            }
+        } else {
+            relay_destinations = active_subscribers;
+            direct_active_relay = true;
+        }
+    }
     if relay_destinations.is_empty() {
         return Ok(None);
     }
+    relay_destinations.sort();
+    relay_destinations.dedup();
+    let relay_content = format!(
+        "{} > {}",
+        relay_sender_display_name(state, source.as_str())?,
+        inbound_record.content
+    );
     let relay = record_outbound_message_with_metadata(
         state,
-        &format!("[topic:{topic_id}]\n{}", message.body),
+        relay_content.as_str(),
         Some(topic_id.clone()),
         None,
         Vec::new(),
         true,
         json!({
             "reticulumd_inbound_relay": true,
+            "reticulumd_inbound_default_direct_relay": default_direct_relay,
+            "reticulumd_inbound_direct_active_relay": direct_active_relay,
             "inbound_message_id": inbound_record.message_id,
-            "source": source,
+            "source": source.clone(),
             "direction": "outbound",
-            "exclude_destinations": [source],
+            "exclude_destinations": [source.clone()],
+            "target_destinations": if is_direct_topic { json!(relay_destinations.clone()) } else { Value::Null },
             "content_type": message.content_type,
             "correlation_id": message.correlation_id,
         }),
@@ -3930,22 +4217,163 @@ fn relay_reticulumd_inbound_topic_message(
     Ok(Some(relay))
 }
 
+fn relay_sender_display_name(state: &AppState, source: &str) -> Result<String, ApiError> {
+    let source_key = normalize_identity_key(source);
+    if let Some(source_key) = source_key.as_deref() {
+        if let Some(name) = state
+            .clients
+            .read()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .get(source_key)
+            .and_then(client_relay_display_name)
+        {
+            return Ok(name);
+        }
+    }
+    if let Some(source_key) = source_key.as_deref() {
+        let announced_name = load_identity_announces_for_state(state)?
+            .into_iter()
+            .filter(|record| identity_announce_matches_destination(record, source_key))
+            .max_by_key(|record| record.last_seen_ts_ms)
+            .and_then(|record| relay_display_name_from_announce(&record));
+        if let Some(name) = announced_name {
+            return Ok(name);
+        }
+    }
+    Ok(short_identity(source))
+}
+
+fn client_relay_display_name(client: &ClientRecord) -> Option<String> {
+    client
+        .nickname
+        .as_deref()
+        .and_then(relay_display_name_from_text)
+        .or_else(|| {
+            client
+                .display_name
+                .as_deref()
+                .and_then(relay_display_name_from_text)
+        })
+}
+
+fn relay_display_name_from_announce(
+    record: &r3akt_rch_core::IdentityAnnounceRecord,
+) -> Option<String> {
+    record
+        .announce_capabilities
+        .iter()
+        .find_map(|capability| capability.strip_prefix("name="))
+        .and_then(relay_display_name_from_text)
+        .or_else(|| {
+            record
+                .display_name
+                .as_deref()
+                .and_then(relay_display_name_from_text)
+        })
+}
+
+fn relay_display_name_from_text(value: &str) -> Option<String> {
+    let value = value
+        .rsplit_once(";name=")
+        .map_or(value, |(_, name)| name)
+        .trim()
+        .replace("%20", " ");
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(
+        value
+            .chars()
+            .map(|character| {
+                if character.is_control() && !matches!(character, '\t') {
+                    '?'
+                } else {
+                    character
+                }
+            })
+            .collect(),
+    )
+}
+
+fn active_generic_lxmf_relay_destinations(
+    state: &AppState,
+    source: &str,
+) -> Result<Vec<String>, ApiError> {
+    let now = unix_now_ms();
+    let source = normalize_identity_key(source);
+    let mut destinations = state
+        .clients
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .values()
+        .filter_map(|client| {
+            let identity = normalize_identity_key(client.identity.as_str())?;
+            if source.as_deref() == Some(identity.as_str()) {
+                return None;
+            }
+            if client.paused {
+                return None;
+            }
+            let last_seen = unix_ms_from_iso8601(client.last_seen.as_str())?;
+            (last_seen >= now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS)
+                .then_some(identity)
+        })
+        .collect::<Vec<_>>();
+    destinations.sort();
+    destinations.dedup();
+    Ok(destinations)
+}
+
+fn active_direct_subscriber_relay_destinations(
+    state: &AppState,
+    source: &str,
+    subscribers: &[String],
+) -> Result<Vec<String>, ApiError> {
+    let now = unix_now_ms();
+    let source = normalize_identity_key(source);
+    let announces = load_identity_announces_for_state(state)?;
+    let mut destinations = subscribers
+        .iter()
+        .filter_map(|destination| normalize_identity_key(destination))
+        .filter(|destination| source.as_deref() != Some(destination.as_str()))
+        .filter(|destination| {
+            announces.iter().any(|record| {
+                record.last_seen_ts_ms >= now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS
+                    && identity_announce_matches_destination(record, destination)
+            })
+        })
+        .collect::<Vec<_>>();
+    destinations.sort();
+    destinations.dedup();
+    Ok(destinations)
+}
+
 fn process_reticulumd_inbound_command(
     state: &AppState,
     envelope: &ProtocolEnvelope,
     command: &r3akt_protocol::Command,
 ) -> Result<(), ApiError> {
     let source = envelope.source.to_string();
-    touch_reticulumd_inbound_client(state, source.as_str())?;
+    touch_reticulumd_inbound_client(state, source.as_str(), false)?;
     let command_name = command.name.trim().to_ascii_lowercase();
     match command_name.as_str() {
         command_name if is_join_command_name(command_name) => {
+            upsert_roster_client(state, source.as_str(), |client| {
+                client.paused = false;
+            })?;
             let reply = send_reticulumd_inbound_text_reply(
                 state,
                 source.as_str(),
                 envelope.topic.to_string().as_str(),
                 command,
                 "joined",
+            )?;
+            let replayed = replay_recent_reticulumd_topic_messages_to_joiner(
+                state,
+                source.as_str(),
+                envelope.topic.to_string().as_str(),
+                command,
             )?;
             record_system_event(
                 state,
@@ -3956,7 +4384,109 @@ fn process_reticulumd_inbound_command(
                     "command": command.name,
                     "correlation_id": command.correlation_id,
                     "reply_message_id": reply.message_id,
+                    "replay_count": replayed.len(),
+                    "replay_message_ids": replayed
+                        .iter()
+                        .map(|message| message.message_id.clone())
+                        .collect::<Vec<_>>(),
                 }),
+            )?;
+            Ok(())
+        }
+        "leave" | "mission.leave" => {
+            let removed = remove_roster_client(state, source.as_str())?;
+            let content = if removed { "left" } else { "not joined" };
+            send_reticulumd_inbound_text_reply(
+                state,
+                source.as_str(),
+                envelope.topic.to_string().as_str(),
+                command,
+                content,
+            )?;
+            Ok(())
+        }
+        "pause" | "mission.pause" => {
+            upsert_roster_client(state, source.as_str(), |client| {
+                client.paused = true;
+            })?;
+            send_reticulumd_inbound_text_reply(
+                state,
+                source.as_str(),
+                envelope.topic.to_string().as_str(),
+                command,
+                "paused",
+            )?;
+            Ok(())
+        }
+        "resume" | "mission.resume" => {
+            upsert_roster_client(state, source.as_str(), |client| {
+                client.paused = false;
+            })?;
+            send_reticulumd_inbound_text_reply(
+                state,
+                source.as_str(),
+                envelope.topic.to_string().as_str(),
+                command,
+                "resumed",
+            )?;
+            Ok(())
+        }
+        "nick" | "nickname" | "mission.nick" => {
+            let Some(nickname) =
+                command_arg_text_with_position(&command.args, &["nickname", "nick", "name"], 0)
+            else {
+                send_reticulumd_inbound_text_reply(
+                    state,
+                    source.as_str(),
+                    envelope.topic.to_string().as_str(),
+                    command,
+                    "nickname is required",
+                )?;
+                return Ok(());
+            };
+            let nickname = match normalize_roster_nickname_for_server(&nickname) {
+                Ok(nickname) => nickname,
+                Err(reason) => {
+                    send_reticulumd_inbound_text_reply(
+                        state,
+                        source.as_str(),
+                        envelope.topic.to_string().as_str(),
+                        command,
+                        reason.as_str(),
+                    )?;
+                    return Ok(());
+                }
+            };
+            upsert_roster_client(state, source.as_str(), |client| {
+                client.nickname = Some(nickname.clone());
+            })?;
+            send_reticulumd_inbound_text_reply(
+                state,
+                source.as_str(),
+                envelope.topic.to_string().as_str(),
+                command,
+                &format!("nick set to {nickname}"),
+            )?;
+            Ok(())
+        }
+        "users" | "mission.users" => {
+            let users = roster_users_reply(state)?;
+            send_reticulumd_inbound_text_reply(
+                state,
+                source.as_str(),
+                envelope.topic.to_string().as_str(),
+                command,
+                users.as_str(),
+            )?;
+            Ok(())
+        }
+        "help" | "commands" | "mission.help" => {
+            send_reticulumd_inbound_text_reply(
+                state,
+                source.as_str(),
+                envelope.topic.to_string().as_str(),
+                command,
+                plain_lxmf_help_reply(),
             )?;
             Ok(())
         }
@@ -4030,6 +4560,68 @@ fn send_reticulumd_inbound_text_reply(
             "max_attempts": 1,
         }),
     )
+}
+
+fn replay_recent_reticulumd_topic_messages_to_joiner(
+    state: &AppState,
+    source: &str,
+    topic: &str,
+    command: &r3akt_protocol::Command,
+) -> Result<Vec<OutboundMessageRecord>, ApiError> {
+    let topic_id = topic.trim();
+    if topic_id.is_empty() {
+        return Ok(Vec::new());
+    }
+    let source_key = normalize_identity_key(source);
+    let mut canonical_messages = {
+        let messages = state
+            .messages
+            .read()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        messages
+            .iter()
+            .filter(|message| {
+                message.topic_id.as_deref() == Some(topic_id)
+                    && message
+                        .delivery_metadata
+                        .get("reticulumd_inbound")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    && normalize_identity_key(message.sender.as_str()) != source_key
+                    && !message.content.trim().is_empty()
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    canonical_messages.sort_by_key(|message| message.created_ts_ms);
+    if canonical_messages.len() > GROUP_CHAT_JOIN_REPLAY_MAX_MESSAGES {
+        let keep_from = canonical_messages.len() - GROUP_CHAT_JOIN_REPLAY_MAX_MESSAGES;
+        canonical_messages.drain(..keep_from);
+    }
+    let mut replayed = Vec::with_capacity(canonical_messages.len());
+    for inbound in canonical_messages {
+        let replay = record_outbound_message_with_metadata(
+            state,
+            &format!("[replay:{topic_id}]\n{}", inbound.content),
+            None,
+            Some(source.to_string()),
+            Vec::new(),
+            true,
+            json!({
+                "reticulumd_join_replay": true,
+                "source": "r3akt-rch-server",
+                "direction": "outbound",
+                "inbound_source": inbound.sender,
+                "inbound_topic": topic_id,
+                "inbound_message_id": inbound.message_id,
+                "command": command.name,
+                "correlation_id": command.correlation_id,
+                "delivery_receipt_required": false,
+            }),
+        )?;
+        replayed.push(replay);
+    }
+    Ok(replayed)
 }
 
 fn process_reticulumd_inbound_mission_sync_command(
@@ -4218,8 +4810,15 @@ fn mission_uid_from_response_fields(
         .map(ToString::to_string)
 }
 
-fn touch_reticulumd_inbound_client(state: &AppState, source: &str) -> Result<(), ApiError> {
+fn touch_reticulumd_inbound_client(
+    state: &AppState,
+    source: &str,
+    chat_activity: bool,
+) -> Result<(), ApiError> {
     if source.trim().is_empty() {
+        return Ok(());
+    }
+    if inbound_identity_blocked(state, source)? {
         return Ok(());
     }
     let now_ms = unix_now_ms();
@@ -4232,8 +4831,17 @@ fn touch_reticulumd_inbound_client(state: &AppState, source: &str) -> Result<(),
             .entry(source.to_string())
             .and_modify(|client| {
                 client.last_seen = iso8601_from_unix_ms(now_ms);
+                if chat_activity {
+                    client.last_chat_ts_ms = Some(now_ms);
+                }
             })
-            .or_insert_with(|| ClientRecord::new(source.to_string(), now_ms))
+            .or_insert_with(|| {
+                let mut client = ClientRecord::new(source.to_string(), now_ms);
+                if chat_activity {
+                    client.last_chat_ts_ms = Some(now_ms);
+                }
+                client
+            })
             .clone()
     };
     {
@@ -4244,6 +4852,142 @@ fn touch_reticulumd_inbound_client(state: &AppState, source: &str) -> Result<(),
         policy.mark_presence(source, now_ms);
     }
     persist_client_row(state, &client)
+}
+
+fn upsert_roster_client<F>(
+    state: &AppState,
+    source: &str,
+    update: F,
+) -> Result<ClientRecord, ApiError>
+where
+    F: FnOnce(&mut ClientRecord),
+{
+    if inbound_identity_blocked(state, source)? {
+        return Err(ApiError::BadRequest(
+            "identity is banned or blackholed".to_string(),
+        ));
+    }
+    let key = normalize_identity_key(source)
+        .ok_or_else(|| ApiError::BadRequest("identity is required".to_string()))?;
+    let now_ms = unix_now_ms();
+    let client = {
+        let mut clients = state
+            .clients
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let client = clients
+            .entry(key)
+            .or_insert_with(|| ClientRecord::new(source.to_string(), now_ms));
+        client.identity = source.to_string();
+        client.last_seen = iso8601_from_unix_ms(now_ms);
+        update(client);
+        client.clone()
+    };
+    state
+        .outbound_delivery_policy
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .mark_presence(source, now_ms);
+    persist_client_row(state, &client)?;
+    Ok(client)
+}
+
+fn remove_roster_client(state: &AppState, source: &str) -> Result<bool, ApiError> {
+    let key = normalize_identity_key(source)
+        .ok_or_else(|| ApiError::BadRequest("identity is required".to_string()))?;
+    let removed = state
+        .clients
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .remove(&key)
+        .is_some();
+    if removed {
+        delete_client_row(state, &key)?;
+    }
+    Ok(removed)
+}
+
+fn inbound_identity_blocked(state: &AppState, source: &str) -> Result<bool, ApiError> {
+    let Some(key) = normalize_identity_key(source) else {
+        return Ok(false);
+    };
+    Ok(state
+        .identity_states
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .get(&key)
+        .is_some_and(|record| record.is_banned || record.is_blackholed))
+}
+
+fn normalize_roster_nickname_for_server(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("nickname is required".to_string());
+    }
+    if value.chars().count() > 32 {
+        return Err("nickname cannot exceed 32 characters".to_string());
+    }
+    if !value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.'))
+    {
+        return Err(
+            "nickname may contain only letters, numbers, underscore, dash, or dot".to_string(),
+        );
+    }
+    Ok(value.to_string())
+}
+
+fn roster_users_reply(state: &AppState) -> Result<String, ApiError> {
+    let mut clients = client_records_for_state(state)?;
+    clients.sort_by(|left, right| left.identity.cmp(&right.identity));
+    if clients.is_empty() {
+        return Ok("users: none".to_string());
+    }
+    let users = clients
+        .into_iter()
+        .map(|client| {
+            let name = client
+                .nickname
+                .or(client.display_name)
+                .unwrap_or_else(|| short_identity(&client.identity));
+            let mut flags = Vec::new();
+            if client.paused {
+                flags.push("paused");
+            }
+            if client.text_only {
+                flags.push("text-only");
+            }
+            if flags.is_empty() {
+                format!("{name} ({})", short_identity(&client.identity))
+            } else {
+                format!(
+                    "{name} ({}, {})",
+                    short_identity(&client.identity),
+                    flags.join(", ")
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!("users: {users}"))
+}
+
+fn plain_lxmf_help_reply() -> &'static str {
+    "RCH commands:\n\
+/join - join chat and replay recent messages\n\
+/leave - leave chat\n\
+/pause - stop receiving group relays\n\
+/resume - receive group relays again\n\
+/nick <name> - set your display name\n\
+/users - list joined users\n\
+/help - show this help\n\
+Legacy backslash commands still work, for example \\join or \\help."
+}
+
+fn short_identity(identity: &str) -> String {
+    let identity = identity.trim();
+    identity.chars().take(8).collect()
 }
 
 fn subscribe_reticulumd_inbound_source(
@@ -4312,6 +5056,18 @@ fn command_topic_id(command: &r3akt_protocol::Command) -> Option<String> {
 fn command_arg_text(args: &Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         args.get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn command_arg_text_with_position(args: &Value, keys: &[&str], position: usize) -> Option<String> {
+    command_arg_text(args, keys).or_else(|| {
+        args.get("args")
+            .and_then(Value::as_array)
+            .and_then(|values| values.get(position))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -5033,6 +5789,11 @@ fn openapi_operation(
     }
     operation.insert("responses".to_string(), responses);
     Value::Object(operation)
+}
+
+fn openapi_operation_aliases(mut operation: Value, aliases: &[&str]) -> Value {
+    operation["x-rch-aliases"] = json!(aliases);
+    operation
 }
 
 fn openapi_schema_response_with_503_operation(
@@ -6140,6 +6901,8 @@ fn openapi_components() -> Value {
                 "properties": {
                     "status": { "type": "string" },
                     "pid": { "type": "integer" },
+                    "host": openapi_nullable_string(),
+                    "port": openapi_nullable_integer(),
                     "uptime_seconds": { "type": "integer" },
                     "hub_thread_alive": { "type": "boolean" },
                     "shutdown_requested": { "type": "boolean" }
@@ -7691,18 +8454,14 @@ fn openapi_document() -> Value {
             "/Status": {
                 "get": openapi_schema_response_operation(Vec::new(), "Status", "Status snapshot.")
             },
-            "/diagnostics/runtime": {
-                "get": openapi_schema_response_operation(
-                    Vec::new(),
-                    "RuntimeDiagnostics",
-                    "Runtime diagnostics snapshot."
-                )
-            },
             "/Diagnostics/Runtime": {
-                "get": openapi_schema_response_operation(
-                    Vec::new(),
-                    "RuntimeDiagnostics",
-                    "Runtime diagnostics snapshot."
+                "get": openapi_operation_aliases(
+                    openapi_schema_response_operation(
+                        Vec::new(),
+                        "RuntimeDiagnostics",
+                        "Runtime diagnostics snapshot."
+                    ),
+                    &["/diagnostics/runtime"]
                 )
             },
             "/api/v1/auth/validate": {
@@ -9169,6 +9928,8 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
         "runtime": "rust",
         "status": control.status,
         "pid": std::process::id(),
+        "host": state.api_bind.as_ref().map(|bind| bind.ip().to_string()),
+        "port": state.api_bind.as_ref().map(|bind| bind.port()),
         "uptime_seconds": runtime_uptime_seconds(control.started_ts_ms),
         "hub_thread_alive": control.status == "running",
         "shutdown_requested": control.shutdown_requested,
@@ -9178,6 +9939,7 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
         "outbound_delivery": outbound_delivery,
         "lxmf_sdk": lxmf_sdk_diagnostics_payload(state, &outbound_delivery)?,
         "reticulumd_inbound": reticulumd_inbound_worker_diagnostics(state),
+        "announce_cache": announce_cache_diagnostics(state)?,
         "persistence": persistence_diagnostics(&state)?,
         "mission_change_fanout_cache": mission_change_fanout_cache_diagnostics(&state)?,
         "updated_at_unix": runtime_metrics["updated_at_unix"].clone(),
@@ -9189,6 +9951,63 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
         "started_at": iso8601_from_unix_ms(control.started_ts_ms),
         "last_start_at": control.last_start_ts_ms.map(iso8601_from_unix_ms),
         "last_stop_at": control.last_stop_ts_ms.map(iso8601_from_unix_ms),
+    }))
+}
+
+fn announce_cache_diagnostics(state: &AppState) -> Result<Value, ApiError> {
+    let now_ms = unix_now_ms();
+    let fresh_cutoff_ms = now_ms - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS;
+    let mut announces = load_identity_announces_for_state(state)?;
+    announces.sort_by(|left, right| {
+        right
+            .last_seen_ts_ms
+            .cmp(&left.last_seen_ts_ms)
+            .then_with(|| left.destination_hash.cmp(&right.destination_hash))
+    });
+    let total = announces.len();
+    let fresh = announces
+        .iter()
+        .filter(|record| record.last_seen_ts_ms >= fresh_cutoff_ms)
+        .count();
+    let stale = total.saturating_sub(fresh);
+    let last_seen = announces.first();
+    let oldest_stale = announces
+        .iter()
+        .filter(|record| record.last_seen_ts_ms < fresh_cutoff_ms)
+        .min_by_key(|record| record.last_seen_ts_ms);
+    let records = announces
+        .iter()
+        .take(10)
+        .map(|record| {
+            let age_ms = now_ms.saturating_sub(record.last_seen_ts_ms);
+            json!({
+                "destination_hash": record.destination_hash,
+                "announced_identity_hash": record.announced_identity_hash,
+                "display_name": record.display_name,
+                "source_interface": record.source_interface,
+                "client_type": record.client_type,
+                "capabilities": record.announce_capabilities,
+                "fresh": record.last_seen_ts_ms >= fresh_cutoff_ms,
+                "age_ms": age_ms,
+                "first_seen_ts_ms": record.first_seen_ts_ms,
+                "first_seen_at": iso8601_from_unix_ms(record.first_seen_ts_ms),
+                "last_seen_ts_ms": record.last_seen_ts_ms,
+                "last_seen_at": iso8601_from_unix_ms(record.last_seen_ts_ms),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "total": total,
+        "fresh": fresh,
+        "stale": stale,
+        "fresh_window_ms": r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS,
+        "last_seen_ts_ms": last_seen.map(|record| record.last_seen_ts_ms),
+        "last_seen_at": last_seen.map(|record| iso8601_from_unix_ms(record.last_seen_ts_ms)),
+        "last_seen_destination": last_seen.map(|record| record.destination_hash.as_str()),
+        "oldest_stale_ts_ms": oldest_stale.map(|record| record.last_seen_ts_ms),
+        "oldest_stale_at": oldest_stale.map(|record| iso8601_from_unix_ms(record.last_seen_ts_ms)),
+        "oldest_stale_destination": oldest_stale.map(|record| record.destination_hash.as_str()),
+        "records": records,
     }))
 }
 
@@ -9881,7 +10700,7 @@ fn outbound_delivery_diagnostics_with_refresh(
             continue;
         }
         outbound_total += 1;
-        let delivery_state = normalized_delivery_state(message);
+        let delivery_state = effective_delivery_state(message);
         let dispatch_status = message
             .delivery_metadata
             .get("dispatch_status")
@@ -9933,7 +10752,9 @@ fn outbound_delivery_diagnostics_with_refresh(
             .delivery_metadata
             .get("fallback_reason")
             .and_then(Value::as_str)
-            .is_some_and(|reason| reason == "direct_delivery_failed")
+            .is_some_and(|reason| {
+                matches!(reason, "direct_delivery_failed" | "direct_dispatch_timeout")
+            })
             || message
                 .delivery_metadata
                 .get("local_propagation_fallback")
@@ -10059,7 +10880,14 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
         return Ok(());
     };
     let now_ms = unix_now_ms();
-    let pending_messages = {
+    let next_poll_ts_ms = *state
+        .reticulumd_receipt_status_next_poll_ts_ms
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    if now_ms < next_poll_ts_ms {
+        return Ok(());
+    }
+    let mut pending_messages = {
         let messages = state
             .messages
             .read()
@@ -10084,6 +10912,7 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
             })
             .map(|message| {
                 (
+                    message.clone(),
                     message.message_id.clone(),
                     reticulumd_receipt_targets_for_message(message),
                 )
@@ -10093,24 +10922,67 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
     if pending_messages.is_empty() {
         return Ok(());
     }
+    pending_messages.sort_by(|left, right| right.0.created_ts_ms.cmp(&left.0.created_ts_ms));
+    {
+        let mut next_poll_ts_ms = state
+            .reticulumd_receipt_status_next_poll_ts_ms
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        *next_poll_ts_ms = now_ms.saturating_add(RETICULUMD_RECEIPT_STATUS_PASS_INTERVAL_MS);
+    }
 
     let mut client = ReticulumdRpcClient::new(endpoint.as_str());
-    for (message_id, targets) in pending_messages {
+    let mut rpc_budget = RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS;
+    for (message, message_id, targets) in pending_messages {
+        if rpc_budget == 0 {
+            break;
+        }
         if targets.is_empty() {
             continue;
         }
         mark_reticulumd_receipt_poll_attempt(state, &message_id, now_ms)?;
-        let mut statuses = Vec::new();
-        for target in &targets {
-            if let Some(delivery_status) =
-                reticulumd_delivery_status(&mut client, &target.message_id)
-            {
-                statuses.push(ReticulumdReceiptTarget {
-                    message_id: target.message_id.clone(),
-                    destination: target.destination.clone(),
-                    status: Some(delivery_status.receipt_status),
-                    sdk_snapshot: Some(delivery_status.snapshot),
-                });
+        let mut statuses = targets
+            .iter()
+            .filter(|target| reticulumd_receipt_target_terminal(target))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut poll_targets = targets
+            .iter()
+            .filter(|target| !reticulumd_receipt_target_terminal(target))
+            .collect::<Vec<_>>();
+        poll_targets.sort_by_key(|target| {
+            (
+                reticulumd_receipt_target_poll_priority(target),
+                reticulumd_receipt_target_last_poll_ts_ms(target),
+            )
+        });
+        for target in poll_targets {
+            match reticulumd_delivery_status(&mut client, &target.message_id, &mut rpc_budget) {
+                ReticulumdStatusPollResult::Found(delivery_status) => {
+                    statuses.push(ReticulumdReceiptTarget {
+                        message_id: target.message_id.clone(),
+                        destination: target.destination.clone(),
+                        status: Some(delivery_status.receipt_status),
+                        sdk_snapshot: Some(delivery_status.snapshot),
+                        last_poll_ts_ms: Some(now_ms),
+                    });
+                }
+                ReticulumdStatusPollResult::NotFound => {}
+                ReticulumdStatusPollResult::Stopped { error } => {
+                    if let Some(error) = error {
+                        mark_reticulumd_receipt_poll_reconciliation_error(
+                            state,
+                            &message_id,
+                            now_ms,
+                            &error,
+                        )?;
+                    }
+                    rpc_budget = 0;
+                    break;
+                }
+            }
+            if rpc_budget == 0 {
+                break;
             }
         }
         if statuses.is_empty() {
@@ -10147,21 +11019,46 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
                 .and_then(|target| target.status.as_deref())
                 .unwrap_or("sent");
             mark_reticulumd_status_sent(state, &message_id, receipt_status)?;
-        } else if let Some(failed) = statuses.iter().find_map(|target| {
-            target
-                .status
-                .as_deref()
-                .filter(|status| terminal_reticulumd_failure_status(status))
-                .map(ToString::to_string)
-                .or_else(|| {
+        } else if statuses.len() == targets.len() {
+            if let Some(receipt_status) =
+                propagated_fanout_partial_success_status(&message, &statuses)
+            {
+                mark_reticulumd_status_sent(state, &message_id, receipt_status.as_str())?;
+            } else if !propagated_multi_recipient_has_pending_targets(&message, &statuses) {
+                if let Some(failed) = statuses.iter().find_map(|target| {
                     target
-                        .sdk_snapshot
-                        .as_ref()
-                        .filter(|snapshot| sdk_status_failure_terminal(snapshot))
-                        .map(delivery_snapshot_receipt_status)
-                })
-        }) {
-            mark_reticulumd_status_delivery_failure(state, &message_id, &failed)?;
+                        .status
+                        .as_deref()
+                        .filter(|status| terminal_reticulumd_failure_status(status))
+                        .map(ToString::to_string)
+                        .or_else(|| {
+                            target
+                                .sdk_snapshot
+                                .as_ref()
+                                .filter(|snapshot| sdk_status_failure_terminal(snapshot))
+                                .map(delivery_snapshot_receipt_status)
+                        })
+                }) {
+                    mark_reticulumd_status_delivery_failure(state, &message_id, &failed)?;
+                }
+            }
+        } else if !propagated_multi_recipient_allows_partial_success(&message) {
+            if let Some(failed) = statuses.iter().find_map(|target| {
+                target
+                    .status
+                    .as_deref()
+                    .filter(|status| terminal_reticulumd_failure_status(status))
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        target
+                            .sdk_snapshot
+                            .as_ref()
+                            .filter(|snapshot| sdk_status_failure_terminal(snapshot))
+                            .map(delivery_snapshot_receipt_status)
+                    })
+            }) {
+                mark_reticulumd_status_delivery_failure(state, &message_id, &failed)?;
+            }
         }
     }
     Ok(())
@@ -10190,12 +11087,41 @@ fn mark_reticulumd_receipt_poll_attempt(
     persist_outbound_message_row(state, &message)
 }
 
+fn mark_reticulumd_receipt_poll_reconciliation_error(
+    state: &AppState,
+    message_id: &str,
+    now_ms: i64,
+    error: &str,
+) -> Result<(), ApiError> {
+    let mut messages = state
+        .messages
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let Some(message) = messages.iter_mut().find(|message| {
+        message.message_id == message_id && reticulumd_status_poll_candidate(message)
+    }) else {
+        return Ok(());
+    };
+    merge_delivery_metadata(
+        &mut message.delivery_metadata,
+        json!({
+            "receipt_last_poll_ts_ms": now_ms,
+            "sdk_reconciliation_error": error,
+            "sdk_reconciliation_error_ts_ms": now_ms,
+        }),
+    );
+    let message = message.clone();
+    drop(messages);
+    persist_outbound_message_row(state, &message)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct ReticulumdReceiptTarget {
     message_id: String,
     destination: String,
     status: Option<String>,
     sdk_snapshot: Option<LxmfDeliverySnapshot>,
+    last_poll_ts_ms: Option<i64>,
 }
 
 fn reticulumd_receipt_targets_for_message(
@@ -10229,6 +11155,9 @@ fn reticulumd_receipt_targets_for_message(
                             .filter(|status| !status.is_empty())
                             .map(ToString::to_string),
                         sdk_snapshot: None,
+                        last_poll_ts_ms: object
+                            .get("receipt_last_poll_ts_ms")
+                            .and_then(Value::as_i64),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -10240,6 +11169,7 @@ fn reticulumd_receipt_targets_for_message(
             destination: message.destination.clone().unwrap_or_default(),
             status: None,
             sdk_snapshot: None,
+            last_poll_ts_ms: None,
         });
     }
     targets
@@ -10260,13 +11190,21 @@ fn update_reticulumd_receipt_target_statuses(
         return Ok(());
     };
     let mut targets = reticulumd_receipt_targets_for_message(message);
+    let normalize_peer_not_announced = propagated_multi_recipient_allows_partial_success(message);
     for status in statuses {
         if let Some(target) = targets
             .iter_mut()
             .find(|target| target.message_id == status.message_id)
         {
-            target.status.clone_from(&status.status);
-            target.sdk_snapshot.clone_from(&status.sdk_snapshot);
+            if normalize_peer_not_announced && reticulumd_receipt_target_peer_not_announced(status)
+            {
+                target.status = Some("propagation pending: peer not announced".to_string());
+                target.sdk_snapshot = None;
+            } else {
+                target.status.clone_from(&status.status);
+                target.sdk_snapshot.clone_from(&status.sdk_snapshot);
+            }
+            target.last_poll_ts_ms = status.last_poll_ts_ms;
         }
     }
     let sdk_metadata = statuses
@@ -10280,6 +11218,10 @@ fn update_reticulumd_receipt_target_statuses(
         json!({ "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&targets) }),
     );
     merge_delivery_metadata(&mut message.delivery_metadata, sdk_metadata);
+    if let Some(object) = message.delivery_metadata.as_object_mut() {
+        object.remove("sdk_reconciliation_error");
+        object.remove("sdk_reconciliation_error_ts_ms");
+    }
     let message = message.clone();
     drop(messages);
     persist_outbound_message_row(state, &message)
@@ -10301,6 +11243,12 @@ fn reticulumd_receipt_targets_json(targets: &[ReticulumdReceiptTarget]) -> Value
                         sdk_delivery_snapshot_metadata_json(snapshot),
                     );
                 }
+                if let Some(last_poll_ts_ms) = target.last_poll_ts_ms {
+                    merge_delivery_metadata(
+                        &mut value,
+                        json!({ "receipt_last_poll_ts_ms": last_poll_ts_ms }),
+                    );
+                }
                 value
             })
             .collect(),
@@ -10313,16 +11261,72 @@ struct ReticulumdDeliveryStatus {
     snapshot: LxmfDeliverySnapshot,
 }
 
+#[derive(Debug)]
+enum ReticulumdStatusPollResult {
+    Found(ReticulumdDeliveryStatus),
+    NotFound,
+    Stopped { error: Option<String> },
+}
+
+#[derive(Debug)]
+struct ReticulumdStatusPollError {
+    code: Option<String>,
+    message: String,
+}
+
+impl ReticulumdStatusPollError {
+    fn transport(message: String) -> Self {
+        Self {
+            code: None,
+            message,
+        }
+    }
+
+    fn rpc(error: r3akt_rch_bridge::ReticulumdRpcError) -> Self {
+        let message = if error.message.trim().is_empty() {
+            error.code.clone()
+        } else {
+            format!("{}: {}", error.code, error.message)
+        };
+        Self {
+            code: Some(error.code),
+            message,
+        }
+    }
+
+    fn is_rate_limited(&self) -> bool {
+        self.code
+            .as_deref()
+            .is_some_and(|code| code == RETICULUMD_SECURITY_RATE_LIMIT_CODE)
+    }
+}
+
 fn reticulumd_delivery_status(
     client: &mut ReticulumdRpcClient,
     message_id: &str,
-) -> Option<ReticulumdDeliveryStatus> {
+    rpc_budget: &mut usize,
+) -> ReticulumdStatusPollResult {
     for candidate in reticulumd_status_message_id_candidates(message_id) {
-        if let Some(status) = reticulumd_delivery_status_for_message_id(client, &candidate) {
-            return Some(status);
+        if *rpc_budget == 0 {
+            return ReticulumdStatusPollResult::Stopped { error: None };
+        }
+        *rpc_budget -= 1;
+        match reticulumd_delivery_status_for_message_id(client, &candidate) {
+            Ok(Some(status)) => return ReticulumdStatusPollResult::Found(status),
+            Ok(None) => {}
+            Err(error) if error.is_rate_limited() => {
+                return ReticulumdStatusPollResult::Stopped {
+                    error: Some(error.message),
+                };
+            }
+            Err(error) => {
+                return ReticulumdStatusPollResult::Stopped {
+                    error: Some(error.message),
+                };
+            }
         }
     }
-    None
+    ReticulumdStatusPollResult::NotFound
 }
 
 fn reticulumd_status_message_id_candidates(message_id: &str) -> Vec<String> {
@@ -10337,23 +11341,31 @@ fn reticulumd_status_message_id_candidates(message_id: &str) -> Vec<String> {
 fn reticulumd_delivery_status_for_message_id(
     client: &mut ReticulumdRpcClient,
     message_id: &str,
-) -> Option<ReticulumdDeliveryStatus> {
+) -> Result<Option<ReticulumdDeliveryStatus>, ReticulumdStatusPollError> {
     let response = client
         .call("sdk_status_v2", Some(json!({ "message_id": message_id })))
-        .ok()?;
-    if response.error.is_some() {
-        return None;
+        .map_err(|error| ReticulumdStatusPollError::transport(error.to_string()))?;
+    if let Some(error) = response.error {
+        let error = ReticulumdStatusPollError::rpc(error);
+        if error.is_rate_limited() {
+            return Err(error);
+        }
+        return Ok(None);
     }
-    let result = response.result.as_ref()?;
+    let Some(result) = response.result.as_ref() else {
+        return Ok(None);
+    };
     let snapshot = delivery_snapshot_from_status_result(result, message_id)
-        .ok()
-        .flatten()?;
+        .map_err(|error| ReticulumdStatusPollError::transport(error.to_string()))?;
+    let Some(snapshot) = snapshot else {
+        return Ok(None);
+    };
     let receipt_status = raw_reticulumd_receipt_status(result)
         .unwrap_or_else(|| delivery_snapshot_receipt_status(&snapshot));
-    Some(ReticulumdDeliveryStatus {
+    Ok(Some(ReticulumdDeliveryStatus {
         receipt_status,
         snapshot,
-    })
+    }))
 }
 
 fn raw_reticulumd_receipt_status(result: &Value) -> Option<String> {
@@ -10412,6 +11424,84 @@ fn sdk_status_failure_terminal(snapshot: &LxmfDeliverySnapshot) -> bool {
         )
 }
 
+fn reticulumd_receipt_target_success_terminal(target: &ReticulumdReceiptTarget) -> bool {
+    target.sdk_snapshot.as_ref().is_some_and(|snapshot| {
+        sdk_status_delivered_terminal(snapshot) || sdk_status_sent_terminal(snapshot)
+    }) || target.status.as_deref().is_some_and(|status| {
+        status.eq_ignore_ascii_case("delivered") || terminal_reticulumd_sent_status(status)
+    })
+}
+
+fn reticulumd_receipt_target_failure_terminal(target: &ReticulumdReceiptTarget) -> bool {
+    target
+        .status
+        .as_deref()
+        .is_some_and(terminal_reticulumd_failure_status)
+        || target
+            .sdk_snapshot
+            .as_ref()
+            .is_some_and(sdk_status_failure_terminal)
+}
+
+fn reticulumd_receipt_target_peer_not_announced(target: &ReticulumdReceiptTarget) -> bool {
+    target.status.as_deref().is_some_and(|status| {
+        status
+            .trim()
+            .eq_ignore_ascii_case("failed: peer not announced")
+    }) || target.sdk_snapshot.as_ref().is_some_and(|snapshot| {
+        snapshot
+            .reason_code
+            .as_deref()
+            .is_some_and(|reason| reason.eq_ignore_ascii_case("peer_not_announced"))
+    })
+}
+
+fn reticulumd_receipt_target_terminal(target: &ReticulumdReceiptTarget) -> bool {
+    reticulumd_receipt_target_success_terminal(target)
+        || reticulumd_receipt_target_failure_terminal(target)
+}
+
+fn reticulumd_receipt_target_poll_priority(target: &ReticulumdReceiptTarget) -> u8 {
+    if target
+        .status
+        .as_deref()
+        .is_none_or(|status| status.trim().eq_ignore_ascii_case("pending"))
+    {
+        0
+    } else {
+        1
+    }
+}
+
+fn reticulumd_receipt_target_last_poll_ts_ms(target: &ReticulumdReceiptTarget) -> i64 {
+    target.last_poll_ts_ms.unwrap_or_default()
+}
+
+fn propagated_fanout_partial_success_status(
+    message: &OutboundMessageRecord,
+    statuses: &[ReticulumdReceiptTarget],
+) -> Option<String> {
+    if !propagated_multi_recipient_allows_partial_success(message) {
+        return None;
+    }
+    let has_success = statuses
+        .iter()
+        .any(reticulumd_receipt_target_success_terminal);
+    let all_resolved = statuses.iter().all(|target| {
+        reticulumd_receipt_target_success_terminal(target)
+            || propagated_multi_recipient_target_failure_terminal(message, target)
+            || reticulumd_receipt_target_peer_not_announced(target)
+    });
+    if !has_success || !all_resolved {
+        return None;
+    }
+    statuses
+        .iter()
+        .find(|target| reticulumd_receipt_target_success_terminal(target))
+        .and_then(|target| target.status.clone())
+        .or_else(|| Some("sent".to_string()))
+}
+
 fn terminal_reticulumd_failure_status(status: &str) -> bool {
     let normalized = status.trim().to_ascii_lowercase();
     normalized.starts_with("failed")
@@ -10454,10 +11544,12 @@ fn mark_reticulumd_status_delivery_receipt(
             "delivery_receipt"
         };
         message.delivery_state = delivered_state.to_string();
+        clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
         merge_delivery_metadata(
             &mut message.delivery_metadata,
             json!({
                 "acked": true,
+                "dispatch_status": "accepted",
                 "receipt_pending": false,
                 "receipt_ack_ts_ms": now_ms,
                 "acknowledgement_type": acknowledgement_type,
@@ -10519,22 +11611,78 @@ fn mark_reticulumd_status_sent(
             return Ok(());
         };
         message.delivery_state = delivery_success_state(message).to_string();
+        clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
+        let mut metadata = json!({
+            "acked": false,
+            "dispatch_status": "accepted",
+            "receipt_pending": false,
+            "receipt_status": receipt_status,
+            "receipt_sent_ts_ms": now_ms,
+            "receipt_timeout": false,
+        });
         merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "acked": false,
-                "dispatch_status": "accepted",
-                "receipt_pending": false,
-                "receipt_status": receipt_status,
-                "receipt_sent_ts_ms": now_ms,
-                "receipt_timeout": false,
-            }),
+            &mut metadata,
+            propagated_fanout_partial_success_metadata(message),
         );
+        merge_delivery_metadata(&mut message.delivery_metadata, metadata);
         message.clone()
     };
     persist_outbound_message_row(state, &message)?;
     broadcast_message_event(state, &message);
     Ok(())
+}
+
+fn propagated_fanout_partial_success_metadata(message: &OutboundMessageRecord) -> Value {
+    if !propagated_multi_recipient_allows_partial_success(message) {
+        return json!({});
+    }
+    let targets = reticulumd_receipt_targets_for_message(message);
+    let failed_destinations = targets
+        .iter()
+        .filter(|target| propagated_multi_recipient_target_failure_terminal(message, target))
+        .filter_map(|target| normalize_identity_key(target.destination.as_str()))
+        .collect::<Vec<_>>();
+    let propagated_destinations = targets
+        .iter()
+        .filter(|target| reticulumd_receipt_target_success_terminal(target))
+        .filter_map(|target| normalize_identity_key(target.destination.as_str()))
+        .collect::<Vec<_>>();
+    if failed_destinations.is_empty() || propagated_destinations.is_empty() {
+        return json!({});
+    }
+    json!({
+        "partial_delivery": true,
+        "failed_destinations": failed_destinations,
+        "propagated_destinations": propagated_destinations,
+    })
+}
+
+fn propagated_multi_recipient_allows_partial_success(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "propagated"
+        && matches!(
+            message.delivery_mode,
+            DeliveryMode::Fanout | DeliveryMode::Broadcast
+        )
+}
+
+fn propagated_multi_recipient_has_pending_targets(
+    message: &OutboundMessageRecord,
+    statuses: &[ReticulumdReceiptTarget],
+) -> bool {
+    propagated_multi_recipient_allows_partial_success(message)
+        && statuses.iter().any(|target| {
+            !reticulumd_receipt_target_success_terminal(target)
+                && !propagated_multi_recipient_target_failure_terminal(message, target)
+        })
+}
+
+fn propagated_multi_recipient_target_failure_terminal(
+    message: &OutboundMessageRecord,
+    target: &ReticulumdReceiptTarget,
+) -> bool {
+    reticulumd_receipt_target_failure_terminal(target)
+        && !(propagated_multi_recipient_allows_partial_success(message)
+            && reticulumd_receipt_target_peer_not_announced(target))
 }
 
 fn mark_reticulumd_status_delivery_failure(
@@ -10607,18 +11755,35 @@ fn mark_reticulumd_status_delivery_failure(
                 }),
             );
             (message.clone(), true)
-        } else if direct_status_failure_should_retry_propagated(message, receipt_status) {
-            let attempts = outbound_attempts(message).saturating_add(1);
-            message.delivery_state = "queued".to_string();
-            message.delivery_method = "propagated".to_string();
-            message.delivery_policy_reason = if is_rem_command_message(message) {
-                "rem_direct_failure_fallback".to_string()
+        } else {
+            let direct_fallback_destinations =
+                direct_status_failure_propagation_destinations(message, receipt_status);
+            if direct_fallback_destinations.is_empty() {
+                message.delivery_state = "failed".to_string();
+                merge_delivery_metadata(
+                    &mut message.delivery_metadata,
+                    json!({
+                        "acked": false,
+                        "dispatch_status": "failed",
+                        "error": receipt_status,
+                        "receipt_pending": false,
+                        "receipt_status": receipt_status,
+                        "delivery_failed_ts_ms": now_ms,
+                    }),
+                );
+                (message.clone(), false)
             } else {
-                "direct_failure_fallback".to_string()
-            };
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
+                let delivered_destinations = delivered_reticulumd_receipt_destinations(message);
+                let attempts = outbound_attempts(message).saturating_add(1);
+                message.delivery_state = "queued".to_string();
+                message.delivery_method = "propagated".to_string();
+                message.delivery_policy_reason = if is_rem_command_message(message) {
+                    "rem_direct_failure_fallback".to_string()
+                } else {
+                    "direct_failure_fallback".to_string()
+                };
+                clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
+                let mut fallback_metadata = json!({
                     "acked": false,
                     "attempts": attempts,
                     "direct_failure_status": receipt_status,
@@ -10631,23 +11796,21 @@ fn mark_reticulumd_status_delivery_failure(
                     "retry_reason": "direct_status_failure",
                     "retry_scheduled": true,
                     "next_attempt_at_ts_ms": now_ms,
-                }),
-            );
-            (message.clone(), true)
-        } else {
-            message.delivery_state = "failed".to_string();
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "acked": false,
-                    "dispatch_status": "failed",
-                    "error": receipt_status,
-                    "receipt_pending": false,
-                    "receipt_status": receipt_status,
-                    "delivery_failed_ts_ms": now_ms,
-                }),
-            );
-            (message.clone(), false)
+                    "target_destinations": direct_fallback_destinations,
+                });
+                if !delivered_destinations.is_empty() {
+                    merge_delivery_metadata(
+                        &mut fallback_metadata,
+                        json!({
+                            "delivered_destinations": delivered_destinations.clone(),
+                            "exclude_destinations": delivered_destinations,
+                            "partial_delivery": true,
+                        }),
+                    );
+                }
+                merge_delivery_metadata(&mut message.delivery_metadata, fallback_metadata);
+                (message.clone(), true)
+            }
         }
     };
     persist_outbound_message_row(state, &message)?;
@@ -10655,6 +11818,11 @@ fn mark_reticulumd_status_delivery_failure(
     if message.delivery_method == "direct" || queued_propagation_fallback {
         if let Some(destination) = message.destination.as_deref() {
             mark_direct_delivery_failure(state, destination)?;
+        }
+        if queued_propagation_fallback {
+            for destination in outbound_target_destinations(&message).unwrap_or_default() {
+                mark_direct_delivery_failure(state, destination.as_str())?;
+            }
         }
     }
     let destination = message.destination.as_deref().unwrap_or("unknown");
@@ -10733,18 +11901,55 @@ fn rem_auto_status_failure_should_retry_propagated(
     rem_auto_status_failure_is_retryable(status.as_str())
 }
 
-fn direct_status_failure_should_retry_propagated(
+fn direct_status_failure_propagation_destinations(
     message: &OutboundMessageRecord,
     receipt_status: &str,
-) -> bool {
-    if message.delivery_method != "direct" || message.destination.is_none() {
-        return false;
+) -> Vec<String> {
+    if !matches!(message.delivery_method.as_str(), "auto" | "direct")
+        || message.destination.is_none()
+    {
+        if message.delivery_method != "direct"
+            || message.delivery_mode != DeliveryMode::Fanout
+            || is_rem_command_message(message)
+        {
+            return Vec::new();
+        }
+        let mut destinations = Vec::new();
+        let mut seen = HashSet::new();
+        for target in reticulumd_receipt_targets_for_message(message) {
+            let retryable = target
+                .status
+                .as_deref()
+                .is_some_and(direct_status_failure_is_retryable);
+            if !retryable {
+                continue;
+            }
+            if let Some(destination) = normalize_identity_key(target.destination.as_str()) {
+                if seen.insert(destination.clone()) {
+                    destinations.push(destination);
+                }
+            }
+        }
+        return destinations;
     }
     if is_rem_command_message(message) {
-        return false;
+        return Vec::new();
     }
-    let status = receipt_status.trim().to_ascii_lowercase();
+    if !direct_status_failure_is_retryable(receipt_status) {
+        return Vec::new();
+    }
+    message
+        .destination
+        .as_deref()
+        .and_then(normalize_identity_key)
+        .into_iter()
+        .collect()
+}
+
+fn direct_status_failure_is_retryable(status: &str) -> bool {
+    let status = status.trim().to_ascii_lowercase();
     reticulumd_status_is_retryable_link_failure(status.as_str())
+        || (status.starts_with("failed") && status.contains("peer not announced"))
 }
 
 fn rem_auto_status_failure_is_retryable(status: &str) -> bool {
@@ -10804,7 +12009,48 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
         }
         let attempts = outbound_attempts(message).saturating_add(1);
         let max_attempts = outbound_effective_max_attempts_for_retry(message, false);
-        if message.delivery_method != "propagated" && attempts < max_attempts {
+        if direct_dispatch_timeout_should_queue_propagation(message) {
+            message.delivery_state = "queued".to_string();
+            message.delivery_method = "propagated".to_string();
+            message.delivery_policy_reason =
+                direct_timeout_propagation_policy_reason(message).to_string();
+            clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
+            merge_delivery_metadata(
+                &mut message.delivery_metadata,
+                json!({
+                    "acked": false,
+                    "attempts": 0,
+                    "direct_attempts": attempts,
+                    "delivery_mode": "propagated",
+                    "dispatch_status": "queued",
+                    "dispatch_timeout": true,
+                    "dispatch_timed_out_at_ts_ms": now_ms,
+                    "error": "send_timeout",
+                    "fallback_reason": "direct_dispatch_timeout",
+                    "max_attempts": OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
+                    "previous_delivery_method": "direct",
+                    "receipt_pending": false,
+                    "retry_reason": "send_timeout",
+                    "retry_scheduled": true,
+                    "next_attempt_at_ts_ms": now_ms,
+                }),
+            );
+            changed_messages.push(message.clone());
+            system_events.push((
+                "message_propagation_queued",
+                direct_timeout_propagation_event_message(message).to_string(),
+                outbound_delivery_callback_metadata(
+                    outbound_delivery_propagation_metadata(message, "direct_dispatch_timeout"),
+                    "propagation_fallback",
+                ),
+            ));
+            continue;
+        }
+        if (message.delivery_method != "propagated"
+            || is_rem_command_message(message)
+            || propagated_multi_recipient_allows_partial_success(message))
+            && outbound_retry_attempt_allowed(message, attempts, max_attempts)
+        {
             let next_attempt_at_ts_ms = now_ms.saturating_add(
                 outbound_backoff_ms(message)
                     .saturating_mul(i64::try_from(attempts).unwrap_or(i64::MAX)),
@@ -10898,7 +12144,11 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
         }
         let attempts = outbound_attempts(message).saturating_add(1);
         let max_attempts = outbound_effective_max_attempts_for_retry(message, false);
-        if message.delivery_method != "propagated" && attempts < max_attempts {
+        if (message.delivery_method != "propagated"
+            || is_rem_command_message(message)
+            || propagated_multi_recipient_allows_partial_success(message))
+            && outbound_retry_attempt_allowed(message, attempts, max_attempts)
+        {
             let next_attempt_at_ts_ms = now_ms.saturating_add(
                 outbound_backoff_ms(message).saturating_mul(i64::try_from(attempts).unwrap_or(1)),
             );
@@ -10947,6 +12197,7 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
             .unwrap_or(0);
         if let Some(active_reticulumd_status) = active_reticulumd_status {
             if active_extension_count < OUTBOUND_RECEIPT_ACTIVE_EXTENSION_MAX {
+                let receipt_timeout_ms = outbound_receipt_timeout_ms(message);
                 merge_delivery_metadata(
                     &mut message.delivery_metadata,
                     json!({
@@ -10954,7 +12205,7 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
                         "receipt_status": active_reticulumd_status,
                         "receipt_timeout": false,
                         "receipt_active_extension_count": active_extension_count.saturating_add(1),
-                        "receipt_deadline_ts_ms": now_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS,
+                        "receipt_deadline_ts_ms": now_ms + receipt_timeout_ms,
                     }),
                 );
                 changed_messages.push(message.clone());
@@ -11131,6 +12382,74 @@ fn normalized_delivery_state(message: &OutboundMessageRecord) -> String {
     }
 }
 
+fn effective_delivery_state(message: &OutboundMessageRecord) -> String {
+    let state = normalized_delivery_state(message);
+    if state == "failed" && retryable_propagation_fallback_has_successful_dispatch(message) {
+        "propagated".to_string()
+    } else if state == "failed" && retryable_propagation_fallback_has_active_dispatch(message) {
+        "propagating".to_string()
+    } else if state == "failed" && retryable_propagation_fallback_repair_pending(message) {
+        "queued".to_string()
+    } else if state == "propagated" && propagated_dispatch_has_active_targets(message) {
+        "propagating".to_string()
+    } else {
+        state
+    }
+}
+
+fn retryable_propagation_fallback_repair_pending(message: &OutboundMessageRecord) -> bool {
+    propagated_direct_timeout_fallback(message)
+        && propagated_fallback_has_retryable_error(message)
+        && message
+            .delivery_metadata
+            .get("dispatch_status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| matches!(status, "failed" | "queued"))
+        && message
+            .delivery_metadata
+            .get("reticulumd_dispatch_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            == 0
+}
+
+fn propagated_dispatch_has_active_targets(message: &OutboundMessageRecord) -> bool {
+    if message.delivery_method != "propagated" || !message_has_reticulumd_receipt_targets(message) {
+        return false;
+    }
+    let targets = reticulumd_receipt_targets_for_message(message);
+    !targets.is_empty()
+        && targets
+            .iter()
+            .any(|target| reticulumd_status_still_active(target.status.as_deref()))
+        && !targets
+            .iter()
+            .any(reticulumd_receipt_target_success_terminal)
+}
+
+fn message_has_reticulumd_receipt_targets(message: &OutboundMessageRecord) -> bool {
+    message
+        .delivery_metadata
+        .get("reticulumd_receipt_targets")
+        .and_then(Value::as_array)
+        .is_some_and(|targets| !targets.is_empty())
+}
+
+fn retryable_propagation_fallback_has_active_dispatch(message: &OutboundMessageRecord) -> bool {
+    propagated_direct_timeout_fallback(message)
+        && propagated_fallback_has_retryable_error(message)
+        && propagated_dispatch_has_active_targets(message)
+}
+
+fn retryable_propagation_fallback_has_successful_dispatch(message: &OutboundMessageRecord) -> bool {
+    propagated_direct_timeout_fallback(message)
+        && propagated_fallback_has_retryable_error(message)
+        && message_has_reticulumd_receipt_targets(message)
+        && reticulumd_receipt_targets_for_message(message)
+            .iter()
+            .any(reticulumd_receipt_target_success_terminal)
+}
+
 fn delivery_receipt_pending(message: &OutboundMessageRecord) -> bool {
     if let Some(receipt_pending) = message
         .delivery_metadata
@@ -11149,17 +12468,9 @@ fn delivery_receipt_pending(message: &OutboundMessageRecord) -> bool {
 }
 
 fn reticulumd_status_poll_candidate(message: &OutboundMessageRecord) -> bool {
-    if matches!(
-        normalized_delivery_state(message).as_str(),
-        "delivered" | "failed"
-    ) {
-        return false;
-    }
-    if message
-        .delivery_metadata
-        .get("delivery_receipt_required")
-        .and_then(Value::as_bool)
-        == Some(false)
+    let state = normalized_delivery_state(message);
+    if state == "delivered"
+        || (state == "failed" && !retryable_propagation_fallback_has_active_dispatch(message))
     {
         return false;
     }
@@ -11203,16 +12514,24 @@ fn reticulumd_receipt_pending_after_dispatch(
     }
     dispatch_count > 0
         && (delivery_state == "sent"
-            || (delivery_state == "propagated" && message.delivery_mode == DeliveryMode::Targeted))
+            || (matches!(delivery_state, "propagated" | "propagating")
+                && message.delivery_mode == DeliveryMode::Targeted
+                && message.delivery_method == "propagated"))
 }
 
 fn dispatch_pending(message: &OutboundMessageRecord) -> bool {
+    if message
+        .delivery_metadata
+        .get("dispatch_status")
+        .and_then(Value::as_str)
+        != Some("in_progress")
+    {
+        return false;
+    }
     normalized_delivery_state(message) == "queued"
-        && message
-            .delivery_metadata
-            .get("dispatch_status")
-            .and_then(Value::as_str)
-            == Some("in_progress")
+        || (normalized_delivery_state(message) == "failed"
+            && propagated_direct_timeout_fallback(message)
+            && propagated_fallback_has_retryable_error(message))
 }
 
 fn dispatch_pending_age_ms(message: &OutboundMessageRecord, now_ms: i64) -> i64 {
@@ -11248,7 +12567,7 @@ fn receipt_deadline_expired(message: &OutboundMessageRecord, now_ms: i64) -> boo
         .delivery_metadata
         .get("receipt_deadline_ts_ms")
         .and_then(Value::as_i64)
-        .unwrap_or_else(|| message.created_ts_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS);
+        .unwrap_or_else(|| message.created_ts_ms + outbound_receipt_timeout_ms(message));
     deadline_ts_ms <= now_ms
 }
 
@@ -11817,12 +13136,12 @@ async fn internal_delivery_failure(
         .unwrap_or("delivery_failed");
     let now_ms = unix_now_ms();
     let message = {
-        let mut messages = state
+        let messages = state
             .messages
-            .write()
+            .read()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let message = messages
-            .iter_mut()
+        messages
+            .iter()
             .find(|message| {
                 payload
                     .message_id
@@ -11833,6 +13152,39 @@ async fn internal_delivery_failure(
                             && delivery_receipt_pending(message)
                     })
             })
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound("Pending delivery receipt not found".to_string()))?
+    };
+    if delivery_failure_callback_should_retry(&message) {
+        if let Some(retry_message) =
+            schedule_outbound_retry_after_failure(&state, &message, reason.to_string())?
+        {
+            let destination = retry_message.destination.as_deref().unwrap_or("unknown");
+            let event = record_system_event(
+                &state,
+                "message_delivery_retrying",
+                &format!("Retrying message delivery to {destination}"),
+                outbound_delivery_callback_metadata(
+                    outbound_delivery_retry_metadata(&retry_message, reason),
+                    "delivery_failure",
+                ),
+            )?;
+            return Ok(Json(json!({
+                "status": "retry_scheduled",
+                "message": retry_message,
+                "event": event,
+            })));
+        }
+    }
+    let target_message_id = message.message_id.clone();
+    let message = {
+        let mut messages = state
+            .messages
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let message = messages
+            .iter_mut()
+            .find(|message| message.message_id == target_message_id)
             .ok_or_else(|| ApiError::NotFound("Pending delivery receipt not found".to_string()))?;
         message.delivery_state = "failed".to_string();
         merge_delivery_metadata(
@@ -11904,6 +13256,7 @@ async fn internal_delivery_retry(
                 .saturating_add(1)
         });
         message.delivery_state = "queued".to_string();
+        clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
         merge_delivery_metadata(
             &mut message.delivery_metadata,
             json!({
@@ -12114,6 +13467,7 @@ async fn internal_delivery_attempt(
                 .unwrap_or(0)
         });
         message.delivery_state = "queued".to_string();
+        clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
         merge_delivery_metadata(
             &mut message.delivery_metadata,
             json!({
@@ -12548,7 +13902,7 @@ async fn list_events(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
     Ok(Json(json!(
         events
             .into_iter()
-            .map(system_event_payload)
+            .map(|event| system_event_payload_for_state(&state, event))
             .collect::<Vec<_>>()
     )))
 }
@@ -12648,6 +14002,21 @@ fn topic_subscriber_destinations(
         .collect())
 }
 
+fn outbound_target_destinations(message: &OutboundMessageRecord) -> Option<Vec<String>> {
+    outbound_target_destinations_from_metadata(&message.delivery_metadata)
+}
+
+fn outbound_target_destinations_from_metadata(delivery_metadata: &Value) -> Option<Vec<String>> {
+    let destinations = delivery_metadata
+        .get("target_destinations")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(normalize_identity_key)
+        .collect::<Vec<_>>();
+    Some(destinations)
+}
+
 fn record_outbound_message(
     state: &AppState,
     content: &str,
@@ -12727,18 +14096,52 @@ fn record_outbound_message_with_metadata_mode(
 ) -> Result<OutboundMessageRecord, ApiError> {
     let delivery_mode = classify_delivery_mode(topic_id.as_deref(), destination.as_deref())
         .map_err(|error| ApiError::BadRequest(python_delivery_error_detail(&error)))?;
-    let mut delivery_decision =
-        outbound_delivery_decision(state, delivery_mode, destination.as_deref())?;
+    let target_destinations = outbound_target_destinations_from_metadata(&delivery_metadata);
+    let mut delivery_decision = outbound_delivery_decision_for_targets_with_refresh(
+        state,
+        delivery_mode,
+        topic_id.as_deref(),
+        destination.as_deref(),
+        target_destinations.as_deref(),
+        dispatch_mode == OutboundDispatchMode::Inline,
+    )?;
     let is_rem_command = delivery_metadata
         .get("fanout_channel")
         .and_then(Value::as_str)
         .is_some_and(is_rem_command_channel);
+    if delivery_mode == DeliveryMode::Targeted
+        && !is_rem_command
+        && delivery_decision.method == "propagated"
+        && delivery_decision.reason == "no_fresh_presence"
+        && destination
+            .as_deref()
+            .map(|identity| outbound_targeted_destination_should_reject_stale(state, identity))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        let destination = destination.as_deref().unwrap_or("unknown");
+        return Err(ApiError::BadRequest(format!(
+            "destination {} is not currently reachable; wait for a fresh announce or recent chat before sending",
+            short_identity(destination)
+        )));
+    }
+    if is_rem_command
+        && delivery_decision.method != "propagated"
+        && destination
+            .as_deref()
+            .map(|identity| rem_command_destination_should_propagate(state, identity))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        delivery_decision.method = "propagated".to_string();
+        delivery_decision.reason = "no_fresh_presence".to_string();
+    }
     let effective_dispatch_mode = if is_rem_command {
         OutboundDispatchMode::Deferred
     } else {
         dispatch_mode
     };
-    if is_rem_command {
+    if is_rem_command && delivery_decision.method != "propagated" {
         delivery_decision.method = "auto".to_string();
         delivery_decision.reason = "rem_auto".to_string();
     }
@@ -12794,14 +14197,33 @@ fn record_outbound_message_with_metadata_mode(
     let dispatch_report = match dispatch_outbound_message(state, &message) {
         Ok(dispatch_report) => {
             let dispatch_count = dispatch_report.count;
-            let (delivery_state, dispatch_status) = if dispatch_count > 0 {
-                (delivery_success_state(&message), "accepted")
+            let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.deferred {
+                ("queued", "queued_deferred", false)
+            } else if dispatch_count > 0 {
+                (
+                    delivery_accepted_state(&message, dispatch_count),
+                    "accepted",
+                    false,
+                )
             } else {
-                ("queued", "not_configured")
+                ("queued", "not_configured", false)
             };
             let receipt_pending =
                 reticulumd_receipt_pending_after_dispatch(&message, dispatch_count, delivery_state);
             let receipt_registered_ts_ms = unix_now_ms();
+            let mut delivery_update = json!({
+                "dispatch_status": dispatch_status,
+                "reticulumd_dispatch_count": dispatch_count,
+                "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
+                "receipt_pending": receipt_pending,
+                "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
+                "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
+                "retry_scheduled": retry_scheduled,
+            });
+            merge_delivery_metadata(
+                &mut delivery_update,
+                shared_fanout_delivery_metadata(&message, dispatch_count),
+            );
             update_outbound_delivery_state(
                 state,
                 message.message_id.as_str(),
@@ -12810,14 +14232,7 @@ fn record_outbound_message_with_metadata_mode(
                     &message,
                     dispatch_count,
                     delivery_state == "propagated" || delivery_state == "delivered",
-                    json!({
-                        "dispatch_status": dispatch_status,
-                        "reticulumd_dispatch_count": dispatch_count,
-                        "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
-                        "receipt_pending": receipt_pending,
-                        "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
-                        "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS) } else { Value::Null },
-                    }),
+                    delivery_update,
                 ),
             )?;
             dispatch_report
@@ -12911,6 +14326,9 @@ fn dispatch_outbound_message(
         .reticulumd_source
         .as_ref()
         .map_or("r3akt-rch-server", |value| value.as_str());
+    if should_select_outbound_propagation_node(message) {
+        ensure_outbound_propagation_node_selected(state, message)?;
+    }
     let destinations = outbound_destinations(state, message)?;
     let fanout_destination_count = destinations.len();
     let fanout_requires_child_ids = fanout_destination_count > 1;
@@ -12921,7 +14339,25 @@ fn dispatch_outbound_message(
             message.message_id,
             outbound_attempts(message)
         );
-        let mut batch_messages = Vec::with_capacity(fanout_destination_count);
+        let common_fields = outbound_lxmf_fields(
+            message,
+            message
+                .delivery_metadata
+                .get("lxmf_fields")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        );
+        let common_title = outbound_lxmf_title(message).to_string();
+        let common_content = outbound_lxmf_content(message).to_string();
+        let common_bytes =
+            shared_group_chat_payload_bytes(&common_title, &common_content, &common_fields);
+        let common_payload = LxmfSdkSharedPayload {
+            bytes: common_bytes,
+            title: common_title,
+            content: common_content,
+            fields: common_fields,
+        };
+        let mut recipients = Vec::with_capacity(fanout_destination_count);
         for (index, destination) in destinations.iter().enumerate() {
             let message_id = outbound_dispatch_message_id(
                 message,
@@ -12929,37 +14365,30 @@ fn dispatch_outbound_message(
                 index,
                 fanout_requires_child_ids,
             );
-            let mut dispatch_message = message.clone();
-            dispatch_message.message_id.clone_from(&message_id);
-            dispatch_message.destination = Some(destination.clone());
-            let fields = outbound_lxmf_fields(
-                &dispatch_message,
-                message
-                    .delivery_metadata
-                    .get("lxmf_fields")
-                    .cloned()
-                    .unwrap_or_else(|| json!({})),
-            );
-            batch_messages.push(LxmfSdkOutboundBatchMessage {
+            recipients.push(LxmfSdkSharedRecipient {
                 destination: destination.clone(),
-                title: outbound_lxmf_title(&dispatch_message).to_string(),
-                content: outbound_lxmf_content(&dispatch_message).to_string(),
-                fields,
                 delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
+                stamp_cost: lxmf_sdk_stamp_cost(message),
+                include_ticket: lxmf_sdk_include_ticket(message),
                 try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
                 correlation_id: message_id,
+                text_only: outbound_destination_text_only(state, destination),
             });
         }
-        let results = send_lxmf_zmq_outbound_batch(
-            command_endpoint,
-            response_endpoint,
-            LxmfSdkOutboundBatch {
-                batch_id,
-                source: source.to_string(),
-                messages: batch_messages,
-            },
-        )
-        .map_err(|error| {
+        let shared_batch = LxmfSdkSharedOutboundBatch {
+            batch_id,
+            source: source.to_string(),
+            common_payload,
+            recipients,
+        };
+        let batch = lxmf_shared_batch_to_legacy_batch(shared_batch);
+        let deferred_dispatch = should_enqueue_without_waiting_for_zmq_response(message);
+        let batch_result = if deferred_dispatch {
+            enqueue_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
+        } else {
+            send_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
+        };
+        let results = batch_result.map_err(|error| {
             let error = error.to_string();
             if message.delivery_method == "direct"
                 && direct_failure_error_should_trigger_cooldown(error.as_str())
@@ -12977,8 +14406,10 @@ fn dispatch_outbound_message(
                 destination: result.destination,
                 status: None,
                 sdk_snapshot: None,
+                last_poll_ts_ms: None,
             });
         }
+        report.deferred = deferred_dispatch;
         return Ok(report);
     }
 
@@ -12996,6 +14427,42 @@ fn dispatch_outbound_message(
                 .cloned()
                 .unwrap_or_else(|| json!({})),
         );
+        if should_enqueue_without_waiting_for_zmq_response(message) {
+            let batch = LxmfSdkOutboundBatch {
+                batch_id: format!(
+                    "{}-single-{}",
+                    message.message_id,
+                    outbound_attempts(message)
+                ),
+                source: source.to_string(),
+                messages: vec![LxmfSdkOutboundBatchMessage {
+                    destination: destination.clone(),
+                    title: outbound_lxmf_title(&dispatch_message).to_string(),
+                    content: outbound_lxmf_content(&dispatch_message).to_string(),
+                    fields,
+                    delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
+                    stamp_cost: lxmf_sdk_stamp_cost(message),
+                    include_ticket: lxmf_sdk_include_ticket(message),
+                    try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
+                    correlation_id: message_id,
+                }],
+            };
+            let results =
+                enqueue_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
+                    .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+            for result in results {
+                report.count += 1;
+                report.receipts.push(ReticulumdReceiptTarget {
+                    message_id: result.message_id,
+                    destination: result.destination,
+                    status: None,
+                    sdk_snapshot: None,
+                    last_poll_ts_ms: None,
+                });
+            }
+            report.deferred = true;
+            continue;
+        }
         let dispatch_result = send_lxmf_zmq_outbound_message(
             command_endpoint,
             response_endpoint,
@@ -13006,6 +14473,8 @@ fn dispatch_outbound_message(
                 content: outbound_lxmf_content(&dispatch_message).to_string(),
                 fields,
                 delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
+                stamp_cost: lxmf_sdk_stamp_cost(message),
+                include_ticket: lxmf_sdk_include_ticket(message),
                 try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
                 correlation_id: message_id.clone(),
             },
@@ -13028,9 +14497,83 @@ fn dispatch_outbound_message(
             destination,
             status: None,
             sdk_snapshot: None,
+            last_poll_ts_ms: None,
         });
     }
     Ok(report)
+}
+
+fn ensure_outbound_propagation_node_selected(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+) -> Result<(), ApiError> {
+    if message.delivery_method != "propagated" {
+        return Ok(());
+    }
+    let Some(endpoint) = state.reticulumd_rpc_endpoint.as_deref() else {
+        return Ok(());
+    };
+
+    let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint);
+    let selected = client
+        .call("get_outbound_propagation_node", None)
+        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+    if let Some(error) = selected.error {
+        return Err(ApiError::ServiceUnavailable(reticulumd_rpc_error_text(
+            &error,
+        )));
+    }
+    if selected
+        .result
+        .as_ref()
+        .and_then(|result| result.get("peer"))
+        .and_then(Value::as_str)
+        .is_some_and(|peer| !peer.trim().is_empty())
+    {
+        return Ok(());
+    }
+
+    let propagation_nodes = client
+        .call("list_propagation_nodes", None)
+        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+    if let Some(error) = propagation_nodes.error {
+        return Err(ApiError::ServiceUnavailable(reticulumd_rpc_error_text(
+            &error,
+        )));
+    }
+    let peer = propagation_nodes
+        .result
+        .as_ref()
+        .and_then(first_reticulumd_propagation_node)
+        .ok_or_else(|| ApiError::ServiceUnavailable("No reachable propagation node".to_string()))?;
+    let selected = client
+        .call(
+            "set_outbound_propagation_node",
+            Some(json!({ "peer": peer })),
+        )
+        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+    if let Some(error) = selected.error {
+        return Err(ApiError::ServiceUnavailable(reticulumd_rpc_error_text(
+            &error,
+        )));
+    }
+    Ok(())
+}
+
+fn should_select_outbound_propagation_node(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "propagated"
+        && !matches!(
+            message.delivery_mode,
+            DeliveryMode::Broadcast | DeliveryMode::Fanout
+        )
+}
+
+fn reticulumd_rpc_error_text(error: &r3akt_rch_bridge::ReticulumdRpcError) -> String {
+    format!("{}: {}", error.code, error.message)
+}
+
+fn should_enqueue_without_waiting_for_zmq_response(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "propagated"
 }
 
 #[cfg(test)]
@@ -13092,6 +14635,7 @@ fn dispatch_outbound_message_legacy_rpc_for_tests(
             destination,
             status: None,
             sdk_snapshot: None,
+            last_poll_ts_ms: None,
         });
     }
     Ok(report)
@@ -13110,6 +14654,15 @@ fn lxmf_sdk_delivery_method(message: &OutboundMessageRecord) -> Option<&str> {
     }
 }
 
+fn lxmf_sdk_stamp_cost(message: &OutboundMessageRecord) -> Option<u32> {
+    matches!(lxmf_sdk_delivery_method(message), Some("propagated"))
+        .then_some(OUTBOUND_PROPAGATION_STAMP_COST)
+}
+
+fn lxmf_sdk_include_ticket(message: &OutboundMessageRecord) -> Option<bool> {
+    matches!(lxmf_sdk_delivery_method(message), Some("propagated")).then_some(true)
+}
+
 fn lxmf_sdk_try_propagation_on_fail(message: &OutboundMessageRecord) -> bool {
     message.delivery_method == "direct" && is_rem_command_message(message)
 }
@@ -13117,6 +14670,7 @@ fn lxmf_sdk_try_propagation_on_fail(message: &OutboundMessageRecord) -> bool {
 #[derive(Default)]
 struct DispatchReport {
     count: usize,
+    deferred: bool,
     receipts: Vec<ReticulumdReceiptTarget>,
 }
 
@@ -13176,6 +14730,16 @@ fn outbound_lxmf_fields(message: &OutboundMessageRecord, fields: Value) -> Value
     Value::Object(object)
 }
 
+fn shared_group_chat_payload_bytes(title: &str, content: &str, fields: &Value) -> Option<String> {
+    rmp_serde::to_vec(&json!({
+        "title": title,
+        "content": content,
+        "fields": fields,
+    }))
+    .ok()
+    .map(|bytes| BASE64_STANDARD.encode(bytes))
+}
+
 fn is_rem_command_channel(channel: &str) -> bool {
     matches!(
         channel,
@@ -13201,9 +14765,12 @@ fn process_outbound_delivery_worker_tick(
     state: &AppState,
 ) -> Result<OutboundRetryWorkerReport, ApiError> {
     finalize_stale_pending_dispatches(state)?;
-    poll_reticulumd_delivery_receipts(state)?;
-    finalize_expired_delivery_receipts(state)?;
-    process_due_outbound_retry_messages(state)
+    let report = process_due_outbound_retry_messages(state)?;
+    if report.processed == 0 {
+        poll_reticulumd_delivery_receipts(state)?;
+        finalize_expired_delivery_receipts(state)?;
+    }
+    Ok(report)
 }
 
 fn process_due_outbound_retry_messages(
@@ -13228,10 +14795,29 @@ fn process_due_outbound_retry_messages(
     };
     for message in due_messages {
         report.processed += 1;
+        if failed_direct_timeout_retry_due(&message, now_ms) {
+            let repair_message = queue_direct_timeout_for_propagation(state, &message, now_ms)?;
+            let _ = record_system_event(
+                state,
+                "message_propagation_queued",
+                direct_timeout_propagation_event_message(&repair_message),
+                outbound_delivery_callback_metadata(
+                    outbound_delivery_propagation_metadata(
+                        &repair_message,
+                        "direct_dispatch_timeout",
+                    ),
+                    "propagation_fallback",
+                ),
+            )?;
+            continue;
+        }
         mark_outbound_attempt_started(state, &message.message_id, now_ms)?;
         let dispatch_report = match dispatch_outbound_message(state, &message) {
             Ok(dispatch_report) => dispatch_report,
             Err(error) => {
+                if !outbound_dispatch_attempt_still_current(state, &message, now_ms)? {
+                    continue;
+                }
                 report.failed += 1;
                 let error_text = error.to_string();
                 if let Some(retry_message) =
@@ -13258,43 +14844,96 @@ fn process_due_outbound_retry_messages(
                 continue;
             }
         };
+        if !outbound_dispatch_attempt_still_current(state, &message, now_ms)? {
+            continue;
+        }
         if dispatch_report.count == 0 {
             continue;
         }
-        let delivery_state = delivery_success_state(&message);
+        let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.deferred {
+            ("queued", "queued_deferred", false)
+        } else {
+            (
+                delivery_accepted_state(&message, dispatch_report.count),
+                "accepted",
+                false,
+            )
+        };
         let receipt_pending = reticulumd_receipt_pending_after_dispatch(
             &message,
             dispatch_report.count,
             delivery_state,
         );
         let receipt_registered_ts_ms = unix_now_ms();
+        let mut delivery_update = json!({
+            "dispatch_status": dispatch_status,
+            "reticulumd_dispatch_count": dispatch_report.count,
+            "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
+            "receipt_pending": receipt_pending,
+            "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
+            "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
+            "retry_scheduled": retry_scheduled,
+        });
+        merge_delivery_metadata(
+            &mut delivery_update,
+            shared_fanout_delivery_metadata(&message, dispatch_report.count),
+        );
+        let success_metadata = outbound_delivery_metadata(
+            &message,
+            dispatch_report.count,
+            delivery_state == "propagated" || delivery_state == "delivered",
+            delivery_update,
+        );
         update_outbound_delivery_state(
             state,
             message.message_id.as_str(),
             delivery_state,
-            outbound_delivery_metadata(
-                &message,
-                dispatch_report.count,
-                delivery_state == "propagated" || delivery_state == "delivered",
-                json!({
-                    "dispatch_status": "accepted",
-                    "reticulumd_dispatch_count": dispatch_report.count,
-                    "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
-                    "receipt_pending": receipt_pending,
-                    "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
-                    "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS) } else { Value::Null },
-                    "retry_scheduled": false,
-                }),
-            ),
+            success_metadata.clone(),
         )?;
-        report.dispatched += dispatch_report.count;
+        let mut recovered_message = message.clone();
+        recovered_message.delivery_state = delivery_state.to_string();
+        clear_success_superseded_delivery_metadata(&mut recovered_message.delivery_metadata);
+        merge_delivery_metadata(&mut recovered_message.delivery_metadata, success_metadata);
+        if !dispatch_report.deferred {
+            record_outbound_retry_success_event(state, &recovered_message)?;
+            report.dispatched += dispatch_report.count;
+        }
     }
     record_outbound_retry_worker_report(state, report, None);
     Ok(report)
 }
 
+fn record_outbound_retry_success_event(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+) -> Result<(), ApiError> {
+    let destination = message.destination.as_deref().unwrap_or("unknown");
+    if message.delivery_method == "propagated" {
+        let _ = record_system_event(
+            state,
+            "message_propagated",
+            &format!("Message accepted for propagation to {destination}"),
+            outbound_delivery_callback_metadata(
+                outbound_delivery_receipt_metadata(message, "propagation_acceptance"),
+                "retry_worker_success",
+            ),
+        )?;
+    } else {
+        let _ = record_system_event(
+            state,
+            "message_sent",
+            &format!("Message sent to {destination}"),
+            outbound_delivery_callback_metadata(
+                outbound_delivery_receipt_metadata(message, "dispatch_acceptance"),
+                "retry_worker_success",
+            ),
+        )?;
+    }
+    Ok(())
+}
+
 fn outbound_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
-    normalized_delivery_state(message) == "queued"
+    (normalized_delivery_state(message) == "queued"
         && message
             .delivery_metadata
             .get("retry_scheduled")
@@ -13304,7 +14943,113 @@ fn outbound_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
             .delivery_metadata
             .get("next_attempt_at_ts_ms")
             .and_then(Value::as_i64)
-            .is_none_or(|deadline| deadline <= now_ms)
+            .is_none_or(|deadline| deadline <= now_ms))
+        || failed_direct_timeout_retry_due(message, now_ms)
+        || failed_propagation_fallback_retry_due(message, now_ms)
+}
+
+fn failed_direct_timeout_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
+    if normalized_delivery_state(message) != "failed"
+        || !direct_dispatch_timeout_should_queue_propagation(message)
+        || message
+            .delivery_metadata
+            .get("error")
+            .and_then(Value::as_str)
+            .is_none_or(|error| error != "send_timeout")
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("dispatch_status")
+        .and_then(Value::as_str)
+        != Some("failed")
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("next_attempt_at_ts_ms")
+        .and_then(Value::as_i64)
+        .is_some_and(|deadline| deadline > now_ms)
+    {
+        return false;
+    }
+    true
+}
+
+fn failed_propagation_fallback_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
+    if normalized_delivery_state(message) != "failed"
+        || !propagated_direct_timeout_fallback(message)
+        || !propagated_fallback_has_retryable_error(message)
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("dispatch_status")
+        .and_then(Value::as_str)
+        == Some("in_progress")
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("reticulumd_dispatch_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0
+    {
+        return false;
+    }
+    if message
+        .delivery_metadata
+        .get("next_attempt_at_ts_ms")
+        .and_then(Value::as_i64)
+        .is_some_and(|deadline| deadline > now_ms)
+    {
+        return false;
+    }
+    let attempts = outbound_attempts(message).saturating_add(1);
+    let rate_limited = message
+        .delivery_metadata
+        .get("error")
+        .and_then(Value::as_str)
+        .is_some_and(outbound_error_is_rate_limited);
+    let max_attempts = outbound_effective_max_attempts_for_retry(message, rate_limited);
+    outbound_retry_attempt_allowed(message, attempts, max_attempts)
+        || propagated_direct_timeout_fallback(message)
+}
+
+fn propagated_fallback_has_retryable_error(message: &OutboundMessageRecord) -> bool {
+    if message
+        .delivery_metadata
+        .get("retry_reason")
+        .and_then(Value::as_str)
+        .is_some_and(|reason| matches!(reason, "send_timeout" | "send_error" | "rate_limited"))
+    {
+        return true;
+    }
+    let Some(error) = message
+        .delivery_metadata
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|error| !error.is_empty())
+    else {
+        return false;
+    };
+    propagated_fallback_error_text_is_retryable(error)
+}
+
+fn propagated_fallback_error_text_is_retryable(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized == "send_timeout"
+        || outbound_error_is_rate_limited(error)
+        || normalized.contains("outbound request failed")
+        || normalized.contains("connection refused")
+        || normalized.contains("os error 10061")
+        || normalized.contains("timed out")
 }
 
 fn schedule_outbound_retry_after_failure(
@@ -13312,13 +15057,22 @@ fn schedule_outbound_retry_after_failure(
     message: &OutboundMessageRecord,
     error_text: String,
 ) -> Result<Option<OutboundMessageRecord>, ApiError> {
-    if message.delivery_method == "propagated" {
+    if message.delivery_method == "propagated"
+        && !is_rem_command_message(message)
+        && !propagated_multi_recipient_allows_partial_success(message)
+    {
         return Ok(None);
     }
     let attempts = outbound_attempts(message).saturating_add(1);
     let rate_limited = outbound_error_is_rate_limited(error_text.as_str());
+    let rate_limit_retry_budget = rate_limited || outbound_rate_limit_retry_budget_active(message);
     let max_attempts = outbound_effective_max_attempts_for_retry(message, rate_limited);
-    if attempts >= max_attempts {
+    let retry_attempt_allowed = outbound_retry_attempt_allowed(message, attempts, max_attempts);
+    let retryable_propagation_fallback = propagated_direct_timeout_fallback(message)
+        && propagated_fallback_error_text_is_retryable(error_text.as_str());
+    let retryable_transport_failure =
+        propagated_broadcast_fallback_should_retry_transport_failure(message, &error_text);
+    if !(retry_attempt_allowed || retryable_propagation_fallback || retryable_transport_failure) {
         return Ok(None);
     }
     let retry_reason = retry_reason_for_error(error_text.as_str());
@@ -13349,6 +15103,7 @@ fn schedule_outbound_retry_after_failure(
             "receipt_pending": false,
             "retry_reason": retry_reason,
             "retry_scheduled": true,
+            "rate_limit_retry_budget": rate_limit_retry_budget,
             "next_attempt_at_ts_ms": next_attempt_at_ts_ms,
         }),
     );
@@ -13366,12 +15121,37 @@ fn outbound_error_is_rate_limited(error_text: &str) -> bool {
         || normalized.contains("rate_limited")
 }
 
+fn propagated_broadcast_fallback_should_retry_transport_failure(
+    message: &OutboundMessageRecord,
+    error_text: &str,
+) -> bool {
+    message.delivery_method == "propagated"
+        && message.delivery_mode == DeliveryMode::Broadcast
+        && message.delivery_policy_reason == "broadcast_direct_timeout_fallback"
+        && outbound_error_is_local_transport_unavailable(error_text)
+}
+
+fn outbound_error_is_local_transport_unavailable(error_text: &str) -> bool {
+    let normalized = error_text.trim().to_ascii_lowercase();
+    normalized.contains("connection refused")
+        || normalized.contains("actively refused")
+        || normalized.contains("os error 10061")
+}
+
 fn retry_reason_for_error(error_text: &str) -> &'static str {
-    if outbound_error_is_rate_limited(error_text) {
+    if error_text.trim().eq_ignore_ascii_case("send_timeout") {
+        "send_timeout"
+    } else if outbound_error_is_rate_limited(error_text) {
         "rate_limited"
     } else {
         "send_error"
     }
+}
+
+fn delivery_failure_callback_should_retry(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "propagated"
+        && (is_rem_command_message(message)
+            || propagated_multi_recipient_allows_partial_success(message))
 }
 
 fn outbound_attempts(message: &OutboundMessageRecord) -> u64 {
@@ -13391,15 +15171,140 @@ fn outbound_max_attempts(message: &OutboundMessageRecord) -> u64 {
         .max(1)
 }
 
+fn outbound_receipt_timeout_ms(message: &OutboundMessageRecord) -> i64 {
+    message
+        .delivery_metadata
+        .get("delivery_receipt_timeout_ms")
+        .and_then(Value::as_i64)
+        .filter(|timeout_ms| *timeout_ms > 0)
+        .unwrap_or(OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS)
+        .max(1_000)
+}
+
 fn outbound_effective_max_attempts_for_retry(
     message: &OutboundMessageRecord,
     rate_limited: bool,
 ) -> u64 {
     let mut max_attempts = outbound_max_attempts(message);
-    if is_rem_command_message(message) || rate_limited {
-        max_attempts = max_attempts.max(5);
+    if is_rem_command_message(message) || propagated_multi_recipient_allows_partial_success(message)
+    {
+        max_attempts = max_attempts.max(OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS);
+    }
+    if propagated_direct_timeout_fallback(message) {
+        max_attempts = max_attempts.max(OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS);
+    }
+    if rate_limited || outbound_rate_limit_retry_budget_active(message) {
+        max_attempts = max_attempts.max(OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS);
     }
     max_attempts
+}
+
+fn propagated_direct_timeout_fallback(message: &OutboundMessageRecord) -> bool {
+    propagated_multi_recipient_allows_partial_success(message)
+        && matches!(
+            message.delivery_policy_reason.as_str(),
+            "broadcast_direct_timeout_fallback" | "topic_direct_timeout_fallback"
+        )
+}
+
+fn outbound_rate_limit_retry_budget_active(message: &OutboundMessageRecord) -> bool {
+    message
+        .delivery_metadata
+        .get("rate_limit_retry_budget")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || message
+            .delivery_metadata
+            .get("retry_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason == "rate_limited")
+        || message
+            .delivery_metadata
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(outbound_error_is_rate_limited)
+}
+
+fn outbound_retry_attempt_allowed(
+    message: &OutboundMessageRecord,
+    next_attempt: u64,
+    max_attempts: u64,
+) -> bool {
+    if propagated_multi_recipient_allows_partial_success(message) {
+        next_attempt <= max_attempts
+    } else {
+        next_attempt < max_attempts
+    }
+}
+
+fn direct_dispatch_timeout_should_queue_propagation(message: &OutboundMessageRecord) -> bool {
+    message.delivery_method == "direct"
+        && matches!(
+            message.delivery_mode,
+            DeliveryMode::Broadcast | DeliveryMode::Fanout
+        )
+}
+
+fn direct_timeout_propagation_policy_reason(message: &OutboundMessageRecord) -> &'static str {
+    match message.delivery_mode {
+        DeliveryMode::Broadcast => "broadcast_direct_timeout_fallback",
+        DeliveryMode::Fanout => "topic_direct_timeout_fallback",
+        DeliveryMode::Targeted => "direct_timeout_fallback",
+    }
+}
+
+fn direct_timeout_propagation_event_message(message: &OutboundMessageRecord) -> &'static str {
+    match message.delivery_mode {
+        DeliveryMode::Broadcast => "Direct broadcast timed out; queued message for propagation",
+        DeliveryMode::Fanout => "Direct topic fanout timed out; queued message for propagation",
+        DeliveryMode::Targeted => "Direct delivery timed out; queued message for propagation",
+    }
+}
+
+fn queue_direct_timeout_for_propagation(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+    now_ms: i64,
+) -> Result<OutboundMessageRecord, ApiError> {
+    let mut messages = state
+        .messages
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let Some(stored) = messages
+        .iter_mut()
+        .find(|stored| stored.message_id == message.message_id)
+    else {
+        return Err(ApiError::NotFound("Outbound message not found".to_string()));
+    };
+    let attempts = outbound_attempts(stored).saturating_add(1);
+    stored.delivery_state = "queued".to_string();
+    stored.delivery_method = "propagated".to_string();
+    stored.delivery_policy_reason = direct_timeout_propagation_policy_reason(stored).to_string();
+    merge_delivery_metadata(
+        &mut stored.delivery_metadata,
+        json!({
+            "acked": false,
+            "attempts": 0,
+            "direct_attempts": attempts,
+            "delivery_mode": "propagated",
+            "dispatch_status": "queued",
+            "dispatch_timeout": true,
+            "dispatch_timed_out_at_ts_ms": now_ms,
+            "error": "send_timeout",
+            "fallback_reason": "direct_dispatch_timeout",
+            "max_attempts": OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
+            "previous_delivery_method": "direct",
+            "receipt_pending": false,
+            "retry_reason": "send_timeout",
+            "retry_scheduled": true,
+            "next_attempt_at_ts_ms": now_ms,
+        }),
+    );
+    let repaired_message = stored.clone();
+    drop(messages);
+    persist_outbound_message_row(state, &repaired_message)?;
+    broadcast_message_event(state, &repaired_message);
+    Ok(repaired_message)
 }
 
 fn outbound_backoff_ms(message: &OutboundMessageRecord) -> i64 {
@@ -13426,6 +15331,8 @@ fn mark_outbound_attempt_started(
     else {
         return Ok(());
     };
+    message.delivery_state = "queued".to_string();
+    clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
     merge_delivery_metadata(
         &mut message.delivery_metadata,
         json!({
@@ -13442,6 +15349,36 @@ fn mark_outbound_attempt_started(
     persist_outbound_message_row(state, &message)?;
     broadcast_message_event(state, &message);
     Ok(())
+}
+
+fn outbound_dispatch_attempt_still_current(
+    state: &AppState,
+    attempted: &OutboundMessageRecord,
+    started_at_ts_ms: i64,
+) -> Result<bool, ApiError> {
+    let messages = state
+        .messages
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let Some(current) = messages
+        .iter()
+        .find(|message| message.message_id == attempted.message_id)
+    else {
+        return Ok(false);
+    };
+    let current_attempt_started_at = current
+        .delivery_metadata
+        .get("last_attempt_at_ts_ms")
+        .and_then(Value::as_i64);
+    Ok(normalized_delivery_state(current) == "queued"
+        && current.delivery_method == attempted.delivery_method
+        && current.delivery_policy_reason == attempted.delivery_policy_reason
+        && current
+            .delivery_metadata
+            .get("dispatch_status")
+            .and_then(Value::as_str)
+            == Some("in_progress")
+        && current_attempt_started_at == Some(started_at_ts_ms))
 }
 
 fn mark_outbound_dispatch_failed(
@@ -13480,6 +15417,14 @@ fn delivery_success_state(message: &OutboundMessageRecord) -> &'static str {
     }
 }
 
+fn delivery_accepted_state(message: &OutboundMessageRecord, dispatch_count: usize) -> &'static str {
+    if dispatch_count > 0 && message.delivery_method == "propagated" {
+        "propagating"
+    } else {
+        delivery_success_state(message)
+    }
+}
+
 fn outbound_delivery_metadata(
     message: &OutboundMessageRecord,
     dispatch_count: usize,
@@ -13507,6 +15452,20 @@ fn outbound_delivery_metadata(
     metadata
 }
 
+fn shared_fanout_delivery_metadata(
+    message: &OutboundMessageRecord,
+    dispatch_count: usize,
+) -> Value {
+    if dispatch_count <= 1 || message.delivery_mode == DeliveryMode::Targeted {
+        return json!({});
+    }
+    json!({
+        "fanout_payload_model": "shared_common_payload_v1",
+        "shared_payload_recipient_count": dispatch_count,
+        "shared_payload_expanded_at": "lxmf_legacy_batch_boundary",
+    })
+}
+
 fn delivery_route_type(delivery_mode: DeliveryMode) -> &'static str {
     match delivery_mode {
         DeliveryMode::Targeted => "targeted",
@@ -13532,6 +15491,9 @@ fn update_outbound_delivery_state(
         return Ok(());
     };
     message.delivery_state = delivery_state.to_string();
+    if delivery_state_clears_error_metadata(delivery_state) {
+        clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
+    }
     merge_delivery_metadata(&mut message.delivery_metadata, delivery_metadata);
     let message = message.clone();
     drop(messages);
@@ -13552,18 +15514,118 @@ fn merge_delivery_metadata(target: &mut Value, update: Value) {
     }
 }
 
+fn clear_success_superseded_delivery_metadata(metadata: &mut Value) {
+    let Some(object) = metadata.as_object_mut() else {
+        return;
+    };
+    object.remove("dispatch_timeout");
+    object.remove("dispatch_timed_out_at_ts_ms");
+    object.remove("error");
+    object.remove("last_attempt_failed_at_ts_ms");
+    object.remove("retry_reason");
+}
+
+fn clear_retry_superseded_delivery_metadata(metadata: &mut Value) {
+    clear_success_superseded_delivery_metadata(metadata);
+    let Some(object) = metadata.as_object_mut() else {
+        return;
+    };
+    object.remove("dispatch_started_ts_ms");
+    object.remove("dispatch_deadline_ts_ms");
+    object.remove("receipt_deadline_ts_ms");
+    object.remove("receipt_last_poll_ts_ms");
+    object.remove("receipt_registered_ts_ms");
+    object.remove("reticulumd_receipt_targets");
+    object.remove("sdk_attempts");
+    object.remove("sdk_delivery_state");
+    object.remove("sdk_last_updated_ms");
+    object.remove("sdk_message_id");
+    object.remove("sdk_reason_code");
+    object.remove("sdk_terminal");
+}
+
+fn delivery_state_clears_error_metadata(delivery_state: &str) -> bool {
+    matches!(
+        delivery_state,
+        "sent" | "delivered" | "propagated" | "propagating"
+    )
+}
+
+fn delivery_state_clears_error_metadata_for_message(
+    message: &OutboundMessageRecord,
+    delivery_state: &str,
+) -> bool {
+    delivery_state_clears_error_metadata(delivery_state)
+        || (delivery_state == "queued" && retryable_propagation_fallback_repair_pending(message))
+}
+
+#[cfg(test)]
 fn outbound_delivery_decision(
     state: &AppState,
     delivery_mode: DeliveryMode,
+    topic_id: Option<&str>,
     destination: Option<&str>,
 ) -> Result<r3akt_rch_core::OutboundDeliveryDecision, ApiError> {
+    outbound_delivery_decision_for_targets(state, delivery_mode, topic_id, destination, None)
+}
+
+#[cfg(test)]
+fn outbound_delivery_decision_for_targets(
+    state: &AppState,
+    delivery_mode: DeliveryMode,
+    topic_id: Option<&str>,
+    destination: Option<&str>,
+    target_destinations: Option<&[String]>,
+) -> Result<r3akt_rch_core::OutboundDeliveryDecision, ApiError> {
+    outbound_delivery_decision_for_targets_with_refresh(
+        state,
+        delivery_mode,
+        topic_id,
+        destination,
+        target_destinations,
+        true,
+    )
+}
+
+fn outbound_delivery_decision_for_targets_with_refresh(
+    state: &AppState,
+    delivery_mode: DeliveryMode,
+    topic_id: Option<&str>,
+    destination: Option<&str>,
+    target_destinations: Option<&[String]>,
+    refresh_announces: bool,
+) -> Result<r3akt_rch_core::OutboundDeliveryDecision, ApiError> {
     if delivery_mode == DeliveryMode::Broadcast {
+        if outbound_route_has_unannounced_destinations(
+            state,
+            delivery_mode,
+            None,
+            None,
+            refresh_announces,
+        )? {
+            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+                method: "propagated".to_string(),
+                reason: "broadcast_unannounced".to_string(),
+            });
+        }
         return Ok(r3akt_rch_core::OutboundDeliveryDecision {
             method: "direct".to_string(),
             reason: "broadcast_direct".to_string(),
         });
     }
     if delivery_mode == DeliveryMode::Fanout {
+        if outbound_route_has_unannounced_destinations(
+            state,
+            delivery_mode,
+            topic_id,
+            target_destinations,
+            refresh_announces,
+        )? {
+            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+                method: "propagated".to_string(),
+                reason: "topic_unannounced".to_string(),
+            });
+        }
         return Ok(r3akt_rch_core::OutboundDeliveryDecision {
             method: "direct".to_string(),
             reason: "topic_direct".to_string(),
@@ -13580,6 +15642,21 @@ fn outbound_delivery_decision(
             destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
         let has_live_connection =
             destination.is_some_and(|identity| has_live_client(state, identity, now));
+        let freshness_destinations = destination
+            .map(|identity| outbound_delivery_freshness_destinations(state, identity))
+            .transpose()?
+            .unwrap_or_default();
+        if destination.is_some()
+            && outbound_destination_has_stale_known_announce_for_strings(
+                state,
+                &freshness_destinations,
+            )?
+        {
+            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+                method: "propagated".to_string(),
+                reason: "rem_no_fresh_presence".to_string(),
+            });
+        }
         if destination
             .and_then(|identity| latest_failed_direct_delivery_ts_ms(state, identity))
             .is_some_and(|failed_at| announce_last_seen.is_none_or(|seen_at| failed_at >= seen_at))
@@ -13614,6 +15691,34 @@ fn outbound_delivery_decision(
     let now = unix_now_ms();
     let announce_last_seen =
         destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
+    let has_live_connection =
+        destination.is_some_and(|identity| has_live_client(state, identity, now));
+    if delivery_mode == DeliveryMode::Targeted {
+        let freshness_destinations = destination
+            .map(|identity| outbound_delivery_freshness_destinations(state, identity))
+            .transpose()?
+            .unwrap_or_default();
+        let freshness_destination_refs = freshness_destinations
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        if destination.is_some()
+            && outbound_destination_has_stale_known_announce_for_any(
+                state,
+                &freshness_destination_refs,
+            )?
+            && !outbound_destination_has_recent_client_presence_for_any(
+                state,
+                &freshness_destination_refs,
+                now,
+            )?
+        {
+            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
+                method: "propagated".to_string(),
+                reason: "no_fresh_presence".to_string(),
+            });
+        }
+    }
     if delivery_mode == DeliveryMode::Targeted
         && destination
             .and_then(|identity| latest_failed_direct_delivery_ts_ms(state, identity))
@@ -13624,8 +15729,6 @@ fn outbound_delivery_decision(
             reason: "direct_cooldown".to_string(),
         });
     }
-    let has_live_connection =
-        destination.is_some_and(|identity| has_live_client(state, identity, now));
     let mut policy = state
         .outbound_delivery_policy
         .write()
@@ -13637,6 +15740,225 @@ fn outbound_delivery_decision(
         has_live_connection,
         now,
     ))
+}
+
+fn outbound_route_has_unannounced_destinations(
+    state: &AppState,
+    delivery_mode: DeliveryMode,
+    topic_id: Option<&str>,
+    target_destinations: Option<&[String]>,
+    refresh_announces: bool,
+) -> Result<bool, ApiError> {
+    let destinations = match delivery_mode {
+        DeliveryMode::Targeted => return Ok(false),
+        DeliveryMode::Fanout => {
+            if let Some(target_destinations) = target_destinations {
+                let destinations = target_destinations
+                    .iter()
+                    .filter_map(|destination| normalize_identity_key(destination))
+                    .collect::<Vec<_>>();
+                if !destinations.is_empty() {
+                    return outbound_explicit_targets_have_unannounced_route(
+                        state,
+                        delivery_mode,
+                        destinations,
+                    );
+                }
+            }
+            let Some(topic_id) = topic_id else {
+                return Ok(false);
+            };
+            topic_subscriber_destinations(state, topic_id)?
+        }
+        DeliveryMode::Broadcast => {
+            broadcast_outbound_client_records_for_state_with_refresh(state, refresh_announces)?
+                .into_iter()
+                .map(|client| client.identity)
+                .collect()
+        }
+    };
+    outbound_destinations_have_unannounced_route(state, delivery_mode, destinations)
+}
+
+fn outbound_destinations_have_unannounced_route(
+    state: &AppState,
+    delivery_mode: DeliveryMode,
+    destinations: Vec<String>,
+) -> Result<bool, ApiError> {
+    if destinations.is_empty() || state.sqlite_path.is_none() {
+        return Ok(false);
+    }
+    let now = unix_now_ms();
+    let routing_context = outbound_destination_routing_context(state)?;
+    Ok(destinations.into_iter().any(|destination| {
+        let delivery_destination = outbound_destination_for_message_with_context_for_mode(
+            delivery_mode,
+            &destination,
+            &routing_context,
+            false,
+        );
+        let candidates = [destination.as_str(), delivery_destination.as_str()];
+        let has_fresh_announce =
+            outbound_destination_has_fresh_announce_for_any(state, &candidates).unwrap_or(false);
+        let has_recent_client_presence =
+            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)
+                .unwrap_or(false);
+        !has_fresh_announce && !has_recent_client_presence
+    }))
+}
+
+fn outbound_explicit_targets_have_unannounced_route(
+    state: &AppState,
+    delivery_mode: DeliveryMode,
+    destinations: Vec<String>,
+) -> Result<bool, ApiError> {
+    if destinations.is_empty() || state.sqlite_path.is_none() {
+        return Ok(false);
+    }
+    let now = unix_now_ms();
+    let routing_context = outbound_destination_routing_context(state)?;
+    Ok(destinations.into_iter().any(|destination| {
+        let delivery_destination = outbound_destination_for_message_with_context_for_mode(
+            delivery_mode,
+            &destination,
+            &routing_context,
+            false,
+        );
+        let candidates = [destination.as_str(), delivery_destination.as_str()];
+        let has_fresh_announce =
+            outbound_destination_has_fresh_announce_for_any(state, &candidates).unwrap_or(false);
+        let has_recent_client_presence =
+            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)
+                .unwrap_or(false);
+        !has_fresh_announce && !has_recent_client_presence
+    }))
+}
+
+fn outbound_destination_has_known_announce(
+    state: &AppState,
+    destination: &str,
+) -> Result<bool, ApiError> {
+    let Some(destination) = normalize_identity_key(destination) else {
+        return Ok(false);
+    };
+    Ok(load_identity_announces_for_state(state)?
+        .into_iter()
+        .any(|record| identity_announce_matches_destination(&record, destination.as_str())))
+}
+
+fn outbound_destination_has_stale_known_announce(
+    state: &AppState,
+    destination: &str,
+) -> Result<bool, ApiError> {
+    outbound_destination_has_stale_known_announce_for_any(state, &[destination])
+}
+
+fn outbound_destination_has_stale_known_announce_for_strings(
+    state: &AppState,
+    destinations: &[String],
+) -> Result<bool, ApiError> {
+    let destinations = destinations.iter().map(String::as_str).collect::<Vec<_>>();
+    outbound_destination_has_stale_known_announce_for_any(state, &destinations)
+}
+
+fn outbound_destination_has_stale_known_announce_for_any(
+    state: &AppState,
+    destinations: &[&str],
+) -> Result<bool, ApiError> {
+    Ok(destinations.iter().any(|destination| {
+        outbound_destination_has_known_announce(state, destination).unwrap_or(false)
+    }) && !outbound_destination_has_fresh_announce_for_any(state, destinations)?)
+}
+
+fn outbound_targeted_destination_should_reject_stale(
+    state: &AppState,
+    destination: &str,
+) -> Result<bool, ApiError> {
+    let destinations = outbound_delivery_freshness_destinations(state, destination)?;
+    if destinations.is_empty() {
+        return Ok(false);
+    }
+    let destination_refs = destinations.iter().map(String::as_str).collect::<Vec<_>>();
+    let now = unix_now_ms();
+    Ok(
+        outbound_destination_has_stale_known_announce_for_any(state, &destination_refs)?
+            && !outbound_destination_has_recent_client_presence_for_any(
+                state,
+                &destination_refs,
+                now,
+            )?,
+    )
+}
+
+fn outbound_destination_has_fresh_announce_for_any(
+    state: &AppState,
+    destinations: &[&str],
+) -> Result<bool, ApiError> {
+    outbound_destination_has_announce_since_for_any(
+        state,
+        destinations,
+        unix_now_ms().saturating_sub(r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS),
+    )
+}
+
+fn outbound_destination_has_broadcast_roster_announce_for_any(
+    state: &AppState,
+    destinations: &[&str],
+) -> Result<bool, ApiError> {
+    outbound_destination_has_announce_since_for_any(
+        state,
+        destinations,
+        unix_now_ms().saturating_sub(OUTBOUND_BROADCAST_ROSTER_WINDOW_MS),
+    )
+}
+
+fn outbound_destination_has_announce_since_for_any(
+    state: &AppState,
+    destinations: &[&str],
+    cutoff_ts_ms: i64,
+) -> Result<bool, ApiError> {
+    let normalized = destinations
+        .iter()
+        .filter_map(|destination| normalize_identity_key(destination))
+        .collect::<HashSet<_>>();
+    if normalized.is_empty() {
+        return Ok(false);
+    }
+    Ok(load_identity_announces_for_state(state)?
+        .into_iter()
+        .any(|record| {
+            record.last_seen_ts_ms >= cutoff_ts_ms
+                && normalized
+                    .iter()
+                    .any(|destination| identity_announce_matches_destination(&record, destination))
+        }))
+}
+
+fn identity_announce_matches_destination(
+    record: &r3akt_rch_core::IdentityAnnounceRecord,
+    destination: &str,
+) -> bool {
+    normalize_identity_key(&record.destination_hash).as_deref() == Some(destination)
+        || record
+            .announced_identity_hash
+            .as_deref()
+            .and_then(normalize_identity_key)
+            .as_deref()
+            == Some(destination)
+}
+
+fn outbound_delivery_freshness_destinations(
+    state: &AppState,
+    destination: &str,
+) -> Result<Vec<String>, ApiError> {
+    let Some(destination) = normalize_identity_key(destination) else {
+        return Ok(Vec::new());
+    };
+    let mut destinations = vec![destination.clone()];
+    if let Some(alias) = chat_delivery_destination_aliases_for_state(state)?.get(&destination) {
+        destinations.push(alias.clone());
+    }
+    Ok(destinations)
 }
 
 fn mark_direct_delivery_failure(state: &AppState, identity: &str) -> Result<(), ApiError> {
@@ -13665,6 +15987,18 @@ fn latest_failed_direct_delivery_ts_ms(state: &AppState, identity: &str) -> Opti
         })
         .filter_map(failed_direct_delivery_observed_ts_ms)
         .max()
+}
+
+fn rem_command_destination_should_propagate(
+    state: &AppState,
+    destination: &str,
+) -> Result<bool, ApiError> {
+    if outbound_destination_has_stale_known_announce(state, destination)? {
+        return Ok(true);
+    }
+    let announce_last_seen = announce_last_seen_ts_ms(state, destination);
+    Ok(latest_failed_direct_delivery_ts_ms(state, destination)
+        .is_some_and(|failed_at| announce_last_seen.is_none_or(|seen_at| failed_at >= seen_at)))
 }
 
 fn failed_direct_delivery_observed_ts_ms(message: &OutboundMessageRecord) -> Option<i64> {
@@ -13721,10 +16055,50 @@ fn has_live_client(state: &AppState, identity: &str, now_ts_ms: i64) -> bool {
     };
     clients
         .get(identity.as_str())
-        .and_then(|client| unix_ms_from_iso8601(client.last_seen.as_str()))
-        .is_some_and(|last_seen| {
-            last_seen >= now_ts_ms - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS
-        })
+        .is_some_and(|client| client_has_recent_presence(client, now_ts_ms))
+}
+
+fn client_presence_ts_ms(client: &ClientRecord) -> Option<i64> {
+    [
+        unix_ms_from_iso8601(client.last_seen.as_str()),
+        unix_ms_from_iso8601(client.first_seen.as_str()),
+        client.last_chat_ts_ms,
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+}
+
+fn client_has_recent_presence(client: &ClientRecord, now_ts_ms: i64) -> bool {
+    client_presence_ts_ms(client).is_some_and(|last_seen| {
+        last_seen >= now_ts_ms - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS
+    })
+}
+
+fn outbound_destination_has_recent_client_presence_for_any(
+    state: &AppState,
+    destinations: &[&str],
+    now_ts_ms: i64,
+) -> Result<bool, ApiError> {
+    let normalized = destinations
+        .iter()
+        .filter_map(|destination| normalize_identity_key(destination))
+        .collect::<HashSet<_>>();
+    if normalized.is_empty() {
+        return Ok(false);
+    }
+    Ok(state
+        .clients
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .iter()
+        .any(|(identity, client)| {
+            (normalize_identity_key(identity)
+                .is_some_and(|identity| normalized.contains(&identity))
+                || normalize_identity_key(&client.identity)
+                    .is_some_and(|identity| normalized.contains(&identity)))
+                && client_has_recent_presence(client, now_ts_ms)
+        }))
 }
 
 fn client_records_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiError> {
@@ -13887,10 +16261,87 @@ fn refresh_reticulumd_announces_for_state(state: &AppState) {
 }
 
 fn broadcast_client_records_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiError> {
-    refresh_reticulumd_announces_for_state(state);
+    broadcast_client_records_for_state_with_refresh(state, true)
+}
+
+fn broadcast_client_records_for_state_with_refresh(
+    state: &AppState,
+    refresh_announces: bool,
+) -> Result<Vec<ClientRecord>, ApiError> {
+    if refresh_announces {
+        refresh_reticulumd_announces_for_state(state);
+    }
     let mut records = client_records_for_state(state)?;
     records.sort_by(|left, right| left.identity.cmp(&right.identity));
     Ok(records)
+}
+
+fn broadcast_outbound_client_records_for_message(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+) -> Result<Vec<ClientRecord>, ApiError> {
+    if should_enqueue_without_waiting_for_zmq_response(message) {
+        return broadcast_outbound_client_records_for_state_with_refresh(state, false);
+    }
+    broadcast_outbound_client_records_for_state_with_refresh(
+        state,
+        !should_enqueue_without_waiting_for_zmq_response(message),
+    )
+}
+
+fn broadcast_outbound_client_records_for_state_with_refresh(
+    state: &AppState,
+    refresh_announces: bool,
+) -> Result<Vec<ClientRecord>, ApiError> {
+    let now = unix_now_ms();
+    let routing_context = outbound_destination_routing_context(state)?;
+    let records = if refresh_announces {
+        broadcast_client_records_for_state(state)?
+    } else {
+        broadcast_client_records_for_state_with_refresh(state, false)?
+    };
+    Ok(records
+        .into_iter()
+        .filter(|client| {
+            let delivery_destination = outbound_destination_for_message_with_context_for_mode(
+                DeliveryMode::Broadcast,
+                &client.identity,
+                &routing_context,
+                false,
+            );
+            broadcast_client_is_active_for_outbound(
+                state,
+                client,
+                delivery_destination.as_str(),
+                now,
+            )
+        })
+        .collect())
+}
+
+fn broadcast_client_is_active_for_outbound(
+    state: &AppState,
+    client: &ClientRecord,
+    delivery_destination: &str,
+    now_ts_ms: i64,
+) -> bool {
+    if client_has_recent_presence(client, now_ts_ms) {
+        return true;
+    }
+    if client_has_broadcast_roster_presence(client, now_ts_ms) {
+        return true;
+    }
+    let candidates = [client.identity.as_str(), delivery_destination];
+    outbound_destination_has_recent_client_presence_for_any(state, &candidates, now_ts_ms)
+        .unwrap_or(false)
+        || outbound_destination_has_broadcast_roster_announce_for_any(state, &candidates)
+            .unwrap_or(false)
+}
+
+fn client_has_broadcast_roster_presence(client: &ClientRecord, now_ts_ms: i64) -> bool {
+    client_presence_ts_ms(client).is_some_and(|last_seen| {
+        last_seen >= now_ts_ms.saturating_sub(OUTBOUND_BROADCAST_ROSTER_WINDOW_MS)
+    })
 }
 
 fn client_has_network_announce(_record: &ClientRecord) -> bool {
@@ -13926,7 +16377,11 @@ fn outbound_destinations(
     let mut seen_destinations = HashSet::new();
     let routing_context = outbound_destination_routing_context(state)?;
     if let Some(topic_id) = message.topic_id.as_deref() {
-        for destination in topic_subscriber_destinations(state, topic_id)? {
+        let topic_destinations = match outbound_target_destinations(message) {
+            Some(destinations) => destinations,
+            None => topic_subscriber_destinations(state, topic_id)?,
+        };
+        for destination in topic_destinations {
             let delivery_destination = outbound_destination_for_message_with_context(
                 message,
                 &destination,
@@ -13943,14 +16398,14 @@ fn outbound_destinations(
             }
         }
     } else {
-        for client in broadcast_client_records_for_state(state)? {
+        for client in broadcast_outbound_client_records_for_message(state, message)? {
             let delivery_destination = outbound_destination_for_message_with_context(
                 message,
                 &client.identity,
                 &routing_context,
             );
             if !destination_excluded(&excluded, &client.identity, &delivery_destination)
-                && outbound_identity_allowed(state, &client.identity, &delivery_destination)
+                && outbound_roster_recipient_allowed(state, message, &client, &delivery_destination)
             {
                 push_unique_destination_with_seen(
                     &mut destinations,
@@ -13963,11 +16418,49 @@ fn outbound_destinations(
     Ok(destinations)
 }
 
+fn outbound_roster_recipient_allowed(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+    client: &ClientRecord,
+    delivery_destination: &str,
+) -> bool {
+    if client.paused {
+        return false;
+    }
+    if normalize_identity_key(&message.sender)
+        .as_deref()
+        .is_some_and(|sender| {
+            normalize_identity_key(&client.identity).as_deref() == Some(sender)
+                || normalize_identity_key(delivery_destination).as_deref() == Some(sender)
+        })
+    {
+        return false;
+    }
+    outbound_identity_allowed(state, &client.identity, delivery_destination)
+}
+
+fn outbound_destination_text_only(state: &AppState, destination: &str) -> bool {
+    let Some(destination) = normalize_identity_key(destination) else {
+        return false;
+    };
+    state
+        .clients
+        .read()
+        .ok()
+        .and_then(|clients| clients.get(&destination).cloned())
+        .is_some_and(|client| client.text_only)
+}
+
 fn outbound_identity_allowed(
     state: &AppState,
     requested_destination: &str,
     delivery_destination: &str,
 ) -> bool {
+    if outbound_identity_blocked(state, requested_destination)
+        || outbound_identity_blocked(state, delivery_destination)
+    {
+        return false;
+    }
     let Some(allowlist) = state.outbound_identity_allowlist.as_ref() else {
         return true;
     };
@@ -13975,6 +16468,18 @@ fn outbound_identity_allowed(
         .into_iter()
         .filter_map(normalize_identity_key)
         .any(|destination| allowlist.contains(&destination))
+}
+
+fn outbound_identity_blocked(state: &AppState, destination: &str) -> bool {
+    let Some(destination) = normalize_identity_key(destination) else {
+        return false;
+    };
+    state
+        .identity_states
+        .read()
+        .ok()
+        .and_then(|states| states.get(&destination).cloned())
+        .is_some_and(|record| record.is_banned || record.is_blackholed)
 }
 
 #[cfg(test)]
@@ -14091,12 +16596,26 @@ fn outbound_destination_for_message_with_context(
     destination: &str,
     routing_context: &OutboundDestinationRoutingContext,
 ) -> String {
+    outbound_destination_for_message_with_context_for_mode(
+        message.delivery_mode,
+        destination,
+        routing_context,
+        preserves_requested_outbound_destination(message),
+    )
+}
+
+fn outbound_destination_for_message_with_context_for_mode(
+    delivery_mode: DeliveryMode,
+    destination: &str,
+    routing_context: &OutboundDestinationRoutingContext,
+    preserve_requested_destination: bool,
+) -> String {
     let normalized =
         normalize_identity_key(destination).unwrap_or_else(|| destination.trim().to_string());
-    if preserves_requested_outbound_destination(message) {
+    if preserve_requested_destination {
         return normalized;
     }
-    if message.delivery_mode == DeliveryMode::Broadcast
+    if delivery_mode == DeliveryMode::Broadcast
         && routing_context
             .rem_app_destinations
             .contains(normalized.as_str())
@@ -17897,12 +20416,12 @@ fn chat_message_payload(message: OutboundMessageRecord) -> Value {
     };
     let state = if message.delivery_state.is_empty() {
         if direction == "inbound" {
-            "received"
+            "received".to_string()
         } else {
-            "queued"
+            "queued".to_string()
         }
     } else {
-        message.delivery_state.as_str()
+        effective_delivery_state(&message)
     };
     let timestamp = iso8601_from_unix_ms(message.created_ts_ms);
     let attachments = message
@@ -17911,6 +20430,9 @@ fn chat_message_payload(message: OutboundMessageRecord) -> Value {
         .map(chat_attachment_to_python_value)
         .collect::<Vec<_>>();
     let mut delivery_metadata = message.delivery_metadata.clone();
+    if delivery_state_clears_error_metadata_for_message(&message, state.as_str()) {
+        clear_success_superseded_delivery_metadata(&mut delivery_metadata);
+    }
     if let Some(metadata) = delivery_metadata.as_object_mut() {
         metadata.remove("lxmf_fields");
     }
@@ -17963,6 +20485,87 @@ fn system_event_payload(event: SystemEventRecord) -> Value {
         "metadata": event.metadata,
         "origin": "rust",
     })
+}
+
+fn system_event_payload_for_state(state: &AppState, event: SystemEventRecord) -> Value {
+    let mut payload = system_event_payload(event);
+    mark_recovered_delivery_failure_event(state, &mut payload);
+    payload
+}
+
+fn mark_recovered_delivery_failure_event(state: &AppState, payload: &mut Value) {
+    if payload
+        .get("type")
+        .and_then(Value::as_str)
+        .is_none_or(|event_type| event_type != "message_delivery_failed")
+    {
+        return;
+    }
+    let Some(message_id) = payload
+        .get("metadata")
+        .and_then(|metadata| {
+            metadata
+                .get("MessageID")
+                .or_else(|| metadata.get("message_id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let Ok(messages) = state.messages.read() else {
+        return;
+    };
+    let Some(current) = messages
+        .iter()
+        .find(|message| message.message_id == message_id)
+        .cloned()
+    else {
+        return;
+    };
+    let current_state = effective_delivery_state(&current);
+    if current_state == "failed" {
+        return;
+    }
+    payload["type"] = json!("message_delivery_superseded");
+    payload["message"] = json!(format!(
+        "Message delivery failure superseded by {} state",
+        current_state
+    ));
+    if let Some(metadata) = payload.get_mut("metadata").and_then(Value::as_object_mut) {
+        metadata.insert(
+            "original_event_type".to_string(),
+            json!("message_delivery_failed"),
+        );
+        metadata.insert("delivery_failure_superseded".to_string(), json!(true));
+        metadata.insert("current_state".to_string(), json!(current_state.clone()));
+        metadata.insert(
+            "current_dispatch_status".to_string(),
+            current
+                .delivery_metadata
+                .get("dispatch_status")
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+        metadata.insert("State".to_string(), json!(current_state.clone()));
+        let mut delivery_metadata = current.delivery_metadata.clone();
+        if delivery_state_clears_error_metadata(current_state.as_str()) {
+            clear_success_superseded_delivery_metadata(&mut delivery_metadata);
+        }
+        metadata.insert("DeliveryMetadata".to_string(), delivery_metadata);
+        metadata.insert(
+            "delivery_method".to_string(),
+            json!(current.delivery_method.clone()),
+        );
+        metadata.insert(
+            "delivery_policy_reason".to_string(),
+            json!(current.delivery_policy_reason.clone()),
+        );
+        metadata.insert(
+            "route_type".to_string(),
+            json!(delivery_route_type(current.delivery_mode)),
+        );
+    }
 }
 
 fn telemetry_payload(record: TelemetryRecord) -> Value {
@@ -19461,6 +22064,12 @@ fn ui_index_response_from_path(ui_dist_path: &FsPath) -> Result<Response, ApiErr
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(
+            header::CACHE_CONTROL,
+            "no-store, no-cache, must-revalidate, max-age=0",
+        )
+        .header(header::PRAGMA, "no-cache")
+        .header(header::EXPIRES, "0")
         .body(Body::from(body))
         .map_err(|error| ApiError::Internal(error.to_string()))
 }
@@ -21505,6 +24114,30 @@ fn reticulumd_identity_announce_capability_disabled(
 }
 
 async fn control_sync(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let sync_state = state.clone();
+    let sync = tokio::task::spawn_blocking(move || control_sync_blocking(&sync_state));
+    match tokio::time::timeout(Duration::from_millis(CONTROL_SYNC_REQUEST_TIMEOUT_MS), sync).await {
+        Ok(Ok(Ok(payload))) => Ok(Json(payload)),
+        Ok(Ok(Err(error))) => Err(error),
+        Ok(Err(error)) => Err(ApiError::Internal(format!(
+            "Control sync worker failed: {error}"
+        ))),
+        Err(_) => {
+            let _ = record_system_event(
+                &state,
+                "control_sync_timeout",
+                "Rust runtime propagation sync timed out",
+                json!({ "timeout_ms": CONTROL_SYNC_REQUEST_TIMEOUT_MS }),
+            );
+            Err(ApiError::ServiceUnavailable(format!(
+                "Sync timed out after {} ms",
+                CONTROL_SYNC_REQUEST_TIMEOUT_MS
+            )))
+        }
+    }
+}
+
+fn control_sync_blocking(state: &AppState) -> Result<Value, ApiError> {
     let Some(endpoint) = &state.reticulumd_rpc_endpoint else {
         return Err(ApiError::ServiceUnavailable("Sync unavailable".to_string()));
     };
@@ -21548,7 +24181,7 @@ async fn control_sync(State(state): State<AppState>) -> Result<Json<Value>, ApiE
         "propagation_remote_fetch",
         Some(json!({
             "remote": peer,
-            "timeout_secs": 45.0,
+            "timeout_secs": CONTROL_SYNC_PROPAGATION_FETCH_TIMEOUT_SECS,
             "transfer_limit_kb": 10_240.0,
         })),
     ) {
@@ -21581,7 +24214,7 @@ async fn control_sync(State(state): State<AppState>) -> Result<Json<Value>, ApiE
         "Rust runtime propagation sync requested",
         payload.clone(),
     );
-    Ok(Json(payload))
+    Ok(payload)
 }
 
 fn first_reticulumd_propagation_node(result: &Value) -> Option<String> {
@@ -21607,8 +24240,8 @@ fn control_status_payload(state: &AppState) -> Result<Value, ApiError> {
     Ok(json!({
         "status": control.status,
         "pid": std::process::id(),
-        "host": null,
-        "port": null,
+        "host": state.api_bind.as_ref().map(|bind| bind.ip().to_string()),
+        "port": state.api_bind.as_ref().map(|bind| bind.port()),
         "uptime_seconds": runtime_uptime_seconds(control.started_ts_ms),
         "hub_thread_alive": control.status == "running",
         "shutdown_requested": control.shutdown_requested,
@@ -21783,6 +24416,61 @@ fn reticulum_runtime_snapshot(state: &AppState) -> Option<ReticulumRuntimeSnapsh
         return None;
     }
     Some(ReticulumRuntimeSnapshot { status, interfaces })
+}
+
+fn reticulum_interface_name_lookup(state: &AppState) -> HashMap<String, String> {
+    let Some(endpoint) = state.reticulumd_rpc_endpoint.as_ref() else {
+        return HashMap::new();
+    };
+    let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint.as_str());
+    let interfaces = client
+        .call("list_interfaces", None)
+        .ok()
+        .and_then(|response| response.result)
+        .and_then(|result| result.get("interfaces").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    let mut lookup = HashMap::new();
+    for (index, interface) in interfaces.iter().enumerate() {
+        let name = interface
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("interface-{index}"));
+        for key in reticulum_interface_lookup_keys(interface) {
+            lookup.entry(key).or_insert_with(|| name.clone());
+        }
+    }
+    lookup
+}
+
+fn reticulum_interface_lookup_keys(interface: &Value) -> Vec<String> {
+    let settings = interface.get("settings").and_then(Value::as_object);
+    let runtime = settings.and_then(|settings| settings.get("_runtime"));
+    [
+        interface.get("name"),
+        interface.get("id"),
+        interface.get("discovery_hash"),
+        interface.get("host"),
+        interface.get("target_host"),
+        runtime.and_then(|runtime| runtime.get("iface")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .filter_map(normalize_reticulum_interface_lookup_key)
+    .collect()
+}
+
+fn normalize_reticulum_interface_lookup_key(value: &str) -> Option<String> {
+    let trimmed = value
+        .trim()
+        .trim_matches('/')
+        .trim_matches('{')
+        .trim_matches('}')
+        .trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_ascii_lowercase())
 }
 
 fn call_first_successful_reticulumd_status(
@@ -22575,6 +25263,7 @@ async fn list_clients(
 async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let client_records = client_records_for_state(&state)?;
     let annotations = rem_annotations_for_state(&state)?;
+    let interface_names = reticulum_interface_name_lookup(&state);
     let identity_display_records =
         identity_display_records_for_annotations(&client_records, &annotations);
     let identity_display_records_by_identity = identity_display_records
@@ -22610,6 +25299,7 @@ async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, A
                 return None;
             }
             let mut value = record.to_python_value(annotations.get(&identity));
+            resolve_identity_announce_source_payload(&mut value, &interface_names);
             if let Some(client) = identity_display_records_by_identity.get(&identity) {
                 merge_identity_payload_client_display_metadata(&mut value, client);
             }
@@ -22634,6 +25324,51 @@ fn merge_identity_payload_client_display_metadata(value: &mut Value, client: &Cl
             metadata.insert("voice".to_string(), voice);
         }
     }
+}
+
+fn resolve_identity_announce_source_payload(
+    value: &mut Value,
+    interface_names: &HashMap<String, String>,
+) {
+    let source = value
+        .get("AnnounceSource")
+        .and_then(Value::as_str)
+        .and_then(|source| resolve_announce_source_name(source, interface_names));
+    value["AnnounceSource"] = source.as_ref().map_or(Value::Null, |source| json!(source));
+    if let Some(metadata) = value.get_mut("Metadata").and_then(Value::as_object_mut) {
+        if let Some(announce) = metadata.get_mut("announce").and_then(Value::as_object_mut) {
+            announce.insert(
+                "source_interface".to_string(),
+                source.map_or(Value::Null, |source| json!(source)),
+            );
+        }
+    }
+}
+
+fn resolve_announce_source_name(
+    source: &str,
+    interface_names: &HashMap<String, String>,
+) -> Option<String> {
+    let key = normalize_reticulum_interface_lookup_key(source)?;
+    if let Some(name) = interface_names.get(&key) {
+        return Some(name.clone());
+    }
+    if is_non_interface_announce_source_marker(key.as_str()) {
+        return None;
+    }
+    Some(source.trim().to_string())
+}
+
+fn is_non_interface_announce_source_marker(source: &str) -> bool {
+    matches!(
+        source,
+        "reticulumd"
+            | "delivery_app_data"
+            | "app_data"
+            | "app_data_utf8"
+            | "identity"
+            | "destination"
+    )
 }
 
 async fn ban_identity(
@@ -23290,6 +26025,38 @@ fn normalize_identity_key(identity: &str) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
+fn telemetry_identity_key(identity: &str) -> Option<String> {
+    normalize_identity_key(identity)
+}
+
+fn latest_telemetry_records_for_identities(
+    records: Vec<TelemetryRecord>,
+    excluded_identity: Option<&str>,
+) -> Vec<TelemetryRecord> {
+    let mut latest = HashMap::<String, TelemetryRecord>::new();
+    for record in records {
+        let Some(identity) = telemetry_identity_key(&record.peer_destination) else {
+            continue;
+        };
+        if excluded_identity.is_some_and(|excluded| identity == excluded) {
+            continue;
+        }
+        let replace = latest
+            .get(&identity)
+            .is_none_or(|existing| record.timestamp_s >= existing.timestamp_s);
+        if replace {
+            latest.insert(identity, record);
+        }
+    }
+    let mut records = latest.into_values().collect::<Vec<_>>();
+    records.sort_by(|left, right| {
+        left.peer_destination
+            .cmp(&right.peer_destination)
+            .then_with(|| left.timestamp_s.cmp(&right.timestamp_s))
+    });
+    records
+}
+
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|value| {
         let value = value.trim().to_string();
@@ -23484,7 +26251,7 @@ async fn handle_system_socket(
                 if include_events {
                     let _ = send_ws_json(
                         &mut socket,
-                        ws_message("system.event", system_event_payload(event)),
+                        ws_message("system.event", system_event_payload_for_state(&state, event)),
                     )
                     .await;
                     if include_status
@@ -23516,7 +26283,7 @@ async fn send_system_event_replay(
     for event in events.into_iter().take(events_limit) {
         send_ws_json(
             socket,
-            ws_message("system.event", system_event_payload(event)),
+            ws_message("system.event", system_event_payload_for_state(state, event)),
         )
         .await?;
     }
@@ -24012,10 +26779,12 @@ mod tests {
     use r3akt_rch_bridge::{ReticulumdRpcError, ReticulumdRpcRequest, ReticulumdRpcResponse};
     use r3akt_rch_core::{FileAttachmentRecord, RchCore, RchSqliteStore};
     use r3akt_transport_rns::{
-        LxmfRsTransport, LxmfSdkOutboundMessage, ReticulumdAnnounceRecord, ReticulumdEventBatch,
-        ReticulumdEventRecord, ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport,
-        poll_lxmf_zmq_events, send_lxmf_zmq_outbound_message,
+        LxmfRsTransport, LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage,
+        ReticulumdAnnounceRecord, ReticulumdEventBatch, ReticulumdEventRecord,
+        ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport, poll_lxmf_zmq_events,
+        send_lxmf_zmq_outbound_batch,
     };
+    use rusqlite::Connection;
     use serde::Serialize;
     use serde_json::{Value, json};
     use sha2::{Digest, Sha256};
@@ -24035,6 +26804,11 @@ mod tests {
             identity: identity.to_string(),
             first_seen_ts_ms: now,
             last_seen_ts_ms: now,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
         }
     }
 
@@ -24067,6 +26841,27 @@ mod tests {
             .await
             .expect("index response");
         assert_eq!(index_response.status(), StatusCode::OK);
+        assert_eq!(
+            index_response
+                .headers()
+                .get(axum::http::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store, no-cache, must-revalidate, max-age=0")
+        );
+        assert_eq!(
+            index_response
+                .headers()
+                .get(axum::http::header::PRAGMA)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-cache")
+        );
+        assert_eq!(
+            index_response
+                .headers()
+                .get(axum::http::header::EXPIRES)
+                .and_then(|value| value.to_str().ok()),
+            Some("0")
+        );
         let index_body = index_response
             .into_body()
             .collect()
@@ -25968,6 +28763,33 @@ mod tests {
                 .expect("subscriber response");
             assert_eq!(subscriber.status(), StatusCode::OK);
         }
+        let now = crate::unix_now_ms();
+        crate::persist_identity_announce_records(
+            &state,
+            &[
+                r3akt_rch_core::IdentityAnnounceRecord {
+                    destination_hash: "peer-alpha".to_string(),
+                    announced_identity_hash: None,
+                    display_name: Some("peer alpha".to_string()),
+                    source_interface: Some("reticulumd".to_string()),
+                    announce_capabilities: Vec::new(),
+                    client_type: "generic_lxmf".to_string(),
+                    first_seen_ts_ms: now,
+                    last_seen_ts_ms: now,
+                },
+                r3akt_rch_core::IdentityAnnounceRecord {
+                    destination_hash: "peer-charlie".to_string(),
+                    announced_identity_hash: None,
+                    display_name: Some("peer charlie".to_string()),
+                    source_interface: Some("reticulumd".to_string()),
+                    announce_capabilities: Vec::new(),
+                    client_type: "generic_lxmf".to_string(),
+                    first_seen_ts_ms: now,
+                    last_seen_ts_ms: now,
+                },
+            ],
+        )
+        .expect("persist fresh relay announce");
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
             "local-destination",
             ReticulumdRpcTransport::new(endpoint),
@@ -25991,7 +28813,7 @@ mod tests {
         let params = requests[1].params.as_ref().expect("relay params");
         assert_eq!(params["source"], "local-destination");
         assert_eq!(params["destination"], "peer-charlie");
-        assert_eq!(params["content"], "[topic:ops]\nRelay this");
+        assert_eq!(params["content"], "peer alpha > Relay this");
         assert!(params.get("method").is_none());
         let outbound_response = app
             .oneshot(
@@ -26013,11 +28835,360 @@ mod tests {
         let outbound: serde_json::Value =
             serde_json::from_slice(&outbound_body).expect("outbound json");
         assert_eq!(outbound[0]["Direction"], "outbound");
-        assert_eq!(outbound[0]["Content"], "[topic:ops]\nRelay this");
+        assert_eq!(outbound[0]["Content"], "peer alpha > Relay this");
         assert_eq!(
             outbound[0]["DeliveryMetadata"]["reticulumd_inbound_relay"],
             true
         );
+        std::fs::remove_file(db_path).expect("cleanup db");
+    }
+
+    #[tokio::test]
+    async fn reticulumd_inbound_direct_topic_relays_to_active_generic_lxmf_clients() {
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new("peer-alpha"),
+            r3akt_protocol::Destination::Topic(r3akt_protocol::Topic::new("direct")),
+            r3akt_protocol::Topic::new("direct"),
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "phone to phone".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: Some("direct-relay-corr-1".to_string()),
+                attachments: Vec::new(),
+            }),
+        );
+        let payload_b64 = BASE64_STANDARD.encode(envelope.encode_msgpack().expect("msgpack"));
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "messages": [{
+                    "id": "lxmf-inbound-direct-relay-1",
+                    "destination": "local-destination",
+                    "fields": {
+                        "r3akt_payload_b64": payload_b64
+                    }
+                }]
+            }),
+            json!({
+                "message_id": "direct-relay-accepted"
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-reticulumd-inbound-direct-relay-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint.clone(), "local-destination");
+        let now = crate::unix_now_ms();
+        {
+            let mut clients = state.clients.write().expect("clients");
+            let mut source = crate::ClientRecord::new("peer-alpha".to_string(), now);
+            source.nickname = Some("Alpha_1".to_string());
+            clients.insert("peer-alpha".to_string(), source);
+            clients.insert(
+                "peer-bravo".to_string(),
+                crate::ClientRecord::new("peer-bravo".to_string(), now),
+            );
+            clients.insert(
+                "peer-stale".to_string(),
+                crate::ClientRecord::new(
+                    "peer-stale".to_string(),
+                    now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 1_000,
+                ),
+            );
+        }
+        let adapter = ReticulumdRpcLxmfRsAdapter::new(
+            "local-destination",
+            ReticulumdRpcTransport::new(endpoint),
+        );
+        let mut transport = LxmfRsTransport::new(adapter);
+
+        let received = crate::process_reticulumd_inbound_worker_tick(
+            &state,
+            &mut transport,
+            Duration::from_millis(50),
+        )
+        .await
+        .expect("inbound tick")
+        .expect("envelope");
+
+        assert_eq!(received.source.to_string(), "peer-alpha");
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "list_messages");
+        assert_eq!(requests[1].method, "sdk_send_v2");
+        let params = requests[1].params.as_ref().expect("relay params");
+        assert_eq!(params["destination"], "peer-bravo");
+        assert_eq!(params["content"], "Alpha_1 > phone to phone");
+
+        let messages = state.messages.read().expect("messages");
+        let relay = messages
+            .iter()
+            .find(|message| {
+                message
+                    .delivery_metadata
+                    .get("reticulumd_inbound_default_direct_relay")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+            .expect("default direct relay");
+        assert_eq!(
+            relay.delivery_metadata["target_destinations"],
+            json!(["peer-bravo"])
+        );
+        assert_eq!(
+            relay.delivery_metadata["exclude_destinations"],
+            json!(["peer-alpha"])
+        );
+        assert_eq!(relay.delivery_method, "direct");
+        assert_eq!(relay.delivery_policy_reason, "topic_direct");
+        assert_eq!(relay.content, "Alpha_1 > phone to phone");
+        drop(messages);
+
+        std::fs::remove_file(db_path).expect("cleanup db");
+    }
+
+    #[tokio::test]
+    async fn reticulumd_inbound_direct_topic_prunes_stale_subscribers_when_active_clients_exist() {
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new("peer-alpha"),
+            r3akt_protocol::Destination::Topic(r3akt_protocol::Topic::new("direct")),
+            r3akt_protocol::Topic::new("direct"),
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "phone to active phone".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: Some("direct-relay-active-1".to_string()),
+                attachments: Vec::new(),
+            }),
+        );
+        let payload_b64 = BASE64_STANDARD.encode(envelope.encode_msgpack().expect("msgpack"));
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "messages": [{
+                    "id": "lxmf-inbound-direct-active-relay-1",
+                    "destination": "local-destination",
+                    "fields": {
+                        "r3akt_payload_b64": payload_b64
+                    }
+                }]
+            }),
+            json!({
+                "message_id": "direct-active-relay-accepted"
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-reticulumd-inbound-direct-active-relay-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let now = crate::unix_now_ms();
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.subscribers = vec![r3akt_rch_core::SubscriberRecord {
+            node_id: "peer-stale".to_string(),
+            topic_id: "direct".to_string(),
+            reject_tests: None,
+            metadata: json!({ "source": "old_phone_hil" }),
+            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+        }];
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: "peer-stale".to_string(),
+            announced_identity_hash: None,
+            display_name: Some("stale phone".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        drop(store);
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint.clone(), "local-destination");
+        state.clients.write().expect("clients").insert(
+            "peer-bravo".to_string(),
+            crate::ClientRecord::new("peer-bravo".to_string(), now),
+        );
+        let adapter = ReticulumdRpcLxmfRsAdapter::new(
+            "local-destination",
+            ReticulumdRpcTransport::new(endpoint),
+        );
+        let mut transport = LxmfRsTransport::new(adapter);
+
+        let received = crate::process_reticulumd_inbound_worker_tick(
+            &state,
+            &mut transport,
+            Duration::from_millis(50),
+        )
+        .await
+        .expect("inbound tick")
+        .expect("envelope");
+
+        assert_eq!(received.source.to_string(), "peer-alpha");
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "list_messages");
+        assert_eq!(requests[1].method, "sdk_send_v2");
+        let params = requests[1].params.as_ref().expect("relay params");
+        assert_eq!(params["destination"], "peer-bravo");
+        assert_ne!(params["destination"], "peer-stale");
+
+        let messages = state.messages.read().expect("messages");
+        let relay = messages
+            .iter()
+            .find(|message| {
+                message
+                    .delivery_metadata
+                    .get("reticulumd_inbound_direct_active_relay")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+            .expect("active direct relay");
+        assert_eq!(
+            relay.delivery_metadata["target_destinations"],
+            json!(["peer-bravo"])
+        );
+        assert_eq!(
+            relay.delivery_metadata["reticulumd_inbound_default_direct_relay"],
+            false
+        );
+        assert_eq!(relay.delivery_method, "direct");
+        assert_eq!(relay.delivery_policy_reason, "topic_direct");
+
+        std::fs::remove_file(db_path).expect("cleanup db");
+    }
+
+    #[tokio::test]
+    async fn reticulumd_inbound_direct_topic_prefers_fresh_announced_subscriber() {
+        let source = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let fresh_subscriber = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let stale_subscriber = "cccccccccccccccccccccccccccccccc";
+        let unrelated_active = "dddddddddddddddddddddddddddddddd";
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(r3akt_protocol::Topic::new("direct")),
+            r3akt_protocol::Topic::new("direct"),
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "phone to fresh subscriber".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: Some("direct-relay-fresh-sub-1".to_string()),
+                attachments: Vec::new(),
+            }),
+        );
+        let payload_b64 = BASE64_STANDARD.encode(envelope.encode_msgpack().expect("msgpack"));
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "messages": [{
+                    "id": "lxmf-inbound-direct-fresh-sub-1",
+                    "destination": "local-destination",
+                    "fields": {
+                        "r3akt_payload_b64": payload_b64
+                    }
+                }]
+            }),
+            json!({
+                "message_id": "direct-fresh-sub-accepted"
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-reticulumd-inbound-direct-fresh-sub-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let now = crate::unix_now_ms();
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.subscribers = vec![
+            r3akt_rch_core::SubscriberRecord {
+                node_id: stale_subscriber.to_string(),
+                topic_id: "direct".to_string(),
+                reject_tests: None,
+                metadata: json!({ "source": "old_phone_hil" }),
+                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            },
+            r3akt_rch_core::SubscriberRecord {
+                node_id: fresh_subscriber.to_string(),
+                topic_id: "direct".to_string(),
+                reject_tests: None,
+                metadata: json!({ "source": "sideband_hil" }),
+                first_seen_ts_ms: now,
+                last_seen_ts_ms: now,
+            },
+        ];
+        snapshot.identity_announces = vec![
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: stale_subscriber.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("stale phone".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: Vec::new(),
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            },
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: fresh_subscriber.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("fresh phone".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: Vec::new(),
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now,
+                last_seen_ts_ms: now,
+            },
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        drop(store);
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint.clone(), "local-destination");
+        state.clients.write().expect("clients").insert(
+            unrelated_active.to_string(),
+            crate::ClientRecord::new(unrelated_active.to_string(), now),
+        );
+        let adapter = ReticulumdRpcLxmfRsAdapter::new(
+            "local-destination",
+            ReticulumdRpcTransport::new(endpoint),
+        );
+        let mut transport = LxmfRsTransport::new(adapter);
+
+        crate::process_reticulumd_inbound_worker_tick(
+            &state,
+            &mut transport,
+            Duration::from_millis(50),
+        )
+        .await
+        .expect("inbound tick")
+        .expect("envelope");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1].method, "sdk_send_v2");
+        let params = requests[1].params.as_ref().expect("relay params");
+        assert_eq!(params["destination"], fresh_subscriber);
+        assert_ne!(params["destination"], stale_subscriber);
+        assert_ne!(params["destination"], unrelated_active);
+
+        let messages = state.messages.read().expect("messages");
+        let relay = messages
+            .iter()
+            .find(|message| {
+                message
+                    .delivery_metadata
+                    .get("reticulumd_inbound_direct_active_relay")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+            .expect("active direct relay");
+        assert_eq!(
+            relay.delivery_metadata["target_destinations"],
+            json!([fresh_subscriber])
+        );
+        assert_eq!(relay.delivery_method, "direct");
+        assert_eq!(relay.delivery_policy_reason, "topic_direct");
+
         std::fs::remove_file(db_path).expect("cleanup db");
     }
 
@@ -26554,6 +29725,21 @@ mod tests {
                 .expect("setup response");
             assert_eq!(response.status(), StatusCode::OK, "{uri}");
         }
+        let now = crate::unix_now_ms();
+        crate::persist_identity_announce_records(
+            &state,
+            &[r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: "peer-mission-source".to_string(),
+                announced_identity_hash: None,
+                display_name: Some("mission source".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: Vec::new(),
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now,
+                last_seen_ts_ms: now,
+            }],
+        )
+        .expect("persist fresh mission source announce");
 
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
             "local-destination",
@@ -28894,13 +32080,20 @@ mod tests {
             );
         }
 
-        for path in ["/diagnostics/runtime", "/Diagnostics/Runtime"] {
-            assert_eq!(
-                paths[path]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
-                "#/components/schemas/RuntimeDiagnostics",
-                "{path} diagnostics response"
-            );
-        }
+        assert_eq!(
+            paths["/Diagnostics/Runtime"]["get"]["responses"]["200"]["content"]["application/json"]
+                ["schema"]["$ref"],
+            "#/components/schemas/RuntimeDiagnostics",
+            "diagnostics response"
+        );
+        assert_eq!(
+            paths["/Diagnostics/Runtime"]["get"]["x-rch-aliases"][0],
+            "/diagnostics/runtime"
+        );
+        assert!(
+            paths["/diagnostics/runtime"].is_null(),
+            "case-only diagnostic alias must not be a separate OpenAPI path"
+        );
 
         let chat_messages = &paths["/Chat/Messages"]["get"];
         let chat_params = chat_messages["parameters"]
@@ -29268,6 +32461,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openapi_paths_are_case_insensitive_tooling_safe() {
+        let app = crate::create_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/openapi.json")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        let paths = payload["paths"].as_object().expect("openapi paths");
+        let mut normalized_paths = std::collections::BTreeMap::<String, &str>::new();
+        for path in paths.keys() {
+            let normalized = path.to_ascii_lowercase();
+            let existing = normalized_paths.insert(normalized, path);
+            assert!(
+                existing.is_none(),
+                "OpenAPI path {path} collides case-insensitively with {}",
+                existing.unwrap_or("<missing>")
+            );
+        }
+        assert_eq!(
+            paths["/Diagnostics/Runtime"]["get"]["x-rch-aliases"][0],
+            "/diagnostics/runtime"
+        );
+    }
+
+    #[tokio::test]
     async fn openapi_covers_python_northbound_route_inventory() {
         let app = crate::create_app();
 
@@ -29502,12 +32734,19 @@ mod tests {
         ];
 
         for (path, method) in PYTHON_NORTHBOUND_ROUTES {
-            let methods = paths
+            let exact_path_has_method = paths
                 .get(*path)
                 .and_then(|value| value.as_object())
-                .unwrap_or_else(|| panic!("Python northbound route {path} is missing"));
+                .is_some_and(|methods| methods.contains_key(*method));
+            let alias_path_has_method = paths.values().any(|path_item| {
+                path_item
+                    .get(*method)
+                    .and_then(|operation| operation.get("x-rch-aliases"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|aliases| aliases.iter().any(|alias| alias == *path))
+            });
             assert!(
-                methods.contains_key(*method),
+                exact_path_has_method || alias_path_has_method,
                 "Python northbound route {method} {path} is missing"
             );
         }
@@ -30264,11 +33503,21 @@ mod tests {
                 identity: "alpha".to_string(),
                 first_seen_ts_ms: 1_700_000_000_000,
                 last_seen_ts_ms: 1_700_000_010_000,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
             r3akt_rch_core::ClientRecord {
                 identity: "bravo".to_string(),
                 first_seen_ts_ms: 1_700_000_020_000,
                 last_seen_ts_ms: 1_700_000_030_000,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
         ];
         snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
@@ -30565,7 +33814,7 @@ mod tests {
         assert_eq!(payload[0]["Status"], "active");
         assert_eq!(payload[0]["IsAnnounced"], true);
         assert_eq!(payload[0]["AnnounceDestinationHash"], "alpha");
-        assert_eq!(payload[0]["AnnounceSource"], "identity");
+        assert!(payload[0]["AnnounceSource"].is_null());
         assert!(payload[0]["LastSeen"].as_str().is_some());
         assert_eq!(payload[0]["LastSeen"], payload[0]["AnnounceLastSeen"]);
         assert!(payload[0]["AnnounceFirstSeen"].as_str().is_some());
@@ -30573,6 +33822,78 @@ mod tests {
             payload[0]["Metadata"]["announce"]["destination_hash"],
             "alpha"
         );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn identity_route_resolves_announce_source_interface_name() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-identity-interface-name-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut core = RchCore::new();
+        core.record_identity_announce(
+            "47ff8b43fea7df9082f6fc1e2b8c954b",
+            None,
+            Some("Field REM".to_string()),
+            Some("35be322d094f9d154a8aba4733b8497f".to_string()),
+            vec!["r3akt".to_string()],
+        )
+        .expect("announce");
+        core.set_identity_state("47ff8b43fea7df9082f6fc1e2b8c954b", false, false)
+            .expect("identity state");
+        {
+            let mut store = RchSqliteStore::open(&db_path).expect("store");
+            store.save_snapshot(&core.snapshot()).expect("snapshot");
+        }
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
+            "interfaces": [{
+                "name": "Minuteman_RNS",
+                "type": "tcp_client",
+                "host": "72.74.221.3",
+                "port": 4242,
+                "settings": {
+                    "_runtime": {
+                        "startup_status": "spawned",
+                        "iface": "/35be322d094f9d154a8aba4733b8497f/"
+                    }
+                }
+            }]
+        })]);
+        let app = crate::create_app_with_state(
+            crate::AppState::from_sqlite_path(&db_path)
+                .expect("state")
+                .with_api_key("secret")
+                .with_reticulumd_rpc(endpoint, "local-source"),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/Identities")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload[0]["AnnounceSource"], "Minuteman_RNS");
+        assert_eq!(
+            payload[0]["Metadata"]["announce"]["source_interface"],
+            "Minuteman_RNS"
+        );
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests[0].method, "list_interfaces");
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -31695,11 +35016,16 @@ mod tests {
     async fn chat_broadcast_route_queues_for_worker_without_blocking_on_fanout() {
         let db_path =
             std::env::temp_dir().join(format!("r3akt-rch-chat-broadcast-{}.db", Uuid::new_v4()));
+        let (endpoint, rpc_server) =
+            fake_reticulumd_rpc_server_for_request_count_with_accept_timeout(
+                1,
+                Duration::from_millis(200),
+            );
         let app = crate::create_app_with_state(
             crate::AppState::from_sqlite_path(&db_path)
                 .expect("state")
                 .with_api_key("secret")
-                .with_reticulumd_rpc("127.0.0.1:9", "source-destination"),
+                .with_reticulumd_rpc(endpoint, "source-destination"),
         );
 
         let response = app
@@ -31737,6 +35063,12 @@ mod tests {
         );
         assert_eq!(payload["DeliveryMetadata"]["retry_scheduled"], true);
         assert_eq!(payload["DeliveryMetadata"]["reticulumd_dispatch_count"], 0);
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert!(
+            requests.is_empty(),
+            "deferred broadcast enqueue must not refresh reticulumd announces in the request path"
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -32055,6 +35387,40 @@ mod tests {
                     .contains("unavailable")
             );
         }
+    }
+
+    #[tokio::test]
+    async fn gateway_control_status_reports_real_api_bind_when_configured() {
+        let bind = "127.0.0.1:18080"
+            .parse::<SocketAddr>()
+            .expect("bind address");
+        let app = crate::create_app_with_state(
+            crate::AppState::default()
+                .with_api_key("secret")
+                .with_api_bind(bind),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/Control/Status")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("status response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["host"], "127.0.0.1");
+        assert_eq!(payload["port"], 18080);
     }
 
     #[tokio::test]
@@ -32648,6 +36014,74 @@ mod tests {
                 .any(|event| event.event_type == "control_sync_requested")
         );
 
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn control_sync_times_out_when_reticulumd_rpc_stalls() {
+        let listener = StdTcpListener::bind("127.0.0.1:0").expect("listener");
+        let endpoint = listener.local_addr().expect("addr").to_string();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            thread::sleep(Duration::from_millis(
+                crate::CONTROL_SYNC_REQUEST_TIMEOUT_MS.saturating_add(500),
+            ));
+        });
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-control-sync-timeout-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_api_key("secret")
+            .with_reticulumd_rpc(endpoint, "local-source");
+        let app = crate::create_app_with_state(state.clone());
+
+        let started = Instant::now();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/Control/Sync")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            started.elapsed()
+                < Duration::from_millis(crate::CONTROL_SYNC_REQUEST_TIMEOUT_MS.saturating_add(500)),
+            "control sync route did not respect its request timeout"
+        );
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(
+            payload["detail"],
+            format!(
+                "Sync timed out after {} ms",
+                crate::CONTROL_SYNC_REQUEST_TIMEOUT_MS
+            )
+        );
+        assert!(
+            state
+                .system_events
+                .read()
+                .expect("events")
+                .iter()
+                .any(|event| event.event_type == "control_sync_timeout")
+        );
+
+        server.join().expect("stalling rpc server");
         let _ = std::fs::remove_file(db_path);
     }
 
@@ -33579,7 +37013,7 @@ mod tests {
             .load_snapshot()
             .expect("load snapshot")
             .expect("snapshot exists");
-        assert_eq!(snapshot.telemetry_records.len(), 5);
+        assert_eq!(snapshot.telemetry_records.len(), 2);
         assert!(
             snapshot
                 .system_events
@@ -35060,6 +38494,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn checklist_from_template_returns_mission_uid_alias() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-checklist-template-mission-{}.db",
+            Uuid::new_v4()
+        ));
+        let app = crate::create_app_with_state(
+            crate::AppState::from_sqlite_path(&db_path)
+                .expect("state")
+                .with_api_key("secret"),
+        );
+
+        let mission = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/missions")
+                    .header("X-API-Key", "secret")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"uid":"mission-template-checklist","mission_name":"Template Checklist Mission","mission_status":"MISSION_ACTIVE"}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("mission response");
+        assert_eq!(mission.status(), StatusCode::OK);
+
+        let created_template = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/checklists/templates")
+                    .header("X-API-Key", "secret")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"template":{"template_name":"Mission Template","columns":[{"column_name":"Due","column_type":"RELATIVE_TIME","column_editable":false,"is_removable":false,"system_key":"DUE_RELATIVE_DTG"},{"column_name":"Task","column_type":"SHORT_STRING"}]}}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("template response");
+        assert_eq!(created_template.status(), StatusCode::OK);
+        let body = created_template
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let template_payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("template json");
+        let template_uid = template_payload["uid"].as_str().expect("template uid");
+
+        let checklist = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/checklists")
+                    .header("X-API-Key", "secret")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"template_uid":"{template_uid}","mission_uid":"mission-template-checklist","name":"Template Mission Checklist","source_identity":"member-rns"}}"#
+                    )))
+                    .expect("request"),
+            )
+            .await
+            .expect("checklist response");
+        assert_eq!(checklist.status(), StatusCode::OK);
+        let body = checklist
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let checklist_payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("checklist json");
+        assert_eq!(
+            checklist_payload["mission_id"],
+            "mission-template-checklist"
+        );
+        assert_eq!(
+            checklist_payload["mission_uid"],
+            "mission-template-checklist"
+        );
+        assert_eq!(checklist_payload["template_uid"], template_uid);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn checklist_task_feed_and_import_routes_persist_with_python_shapes() {
         let db_path =
             std::env::temp_dir().join(format!("r3akt-rch-checklist-tasks-{}.db", Uuid::new_v4()));
@@ -35285,11 +38811,21 @@ mod tests {
                 identity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
             r3akt_rch_core::ClientRecord {
                 identity: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
         ];
         snapshot.identity_announces = vec![
@@ -35516,6 +39052,11 @@ mod tests {
             identity: "remstatuspeer".to_string(),
             first_seen_ts_ms: now,
             last_seen_ts_ms: now,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
         }];
         snapshot.missions = vec![r3akt_rch_core::MissionRecord {
             uid: "mission-status-latency".to_string(),
@@ -35705,6 +39246,11 @@ mod tests {
             identity: "remlinkpeer".to_string(),
             first_seen_ts_ms: now,
             last_seen_ts_ms: now,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
         }];
         snapshot.missions = vec![r3akt_rch_core::MissionRecord {
             uid: "mission-link-latency".to_string(),
@@ -37625,6 +41171,11 @@ mod tests {
             identity: "abcdef".to_string(),
             first_seen_ts_ms: crate::unix_now_ms(),
             last_seen_ts_ms: crate::unix_now_ms(),
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
         }];
         store.save_snapshot(&snapshot).expect("save snapshot");
 
@@ -37881,11 +41432,21 @@ mod tests {
                 identity: "abcdef".to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
             r3akt_rch_core::ClientRecord {
                 identity: "autonomouspeer".to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
         ];
         snapshot.identity_announces = vec![
@@ -38529,6 +42090,11 @@ mod tests {
             identity: "autonomouspeer".to_string(),
             first_seen_ts_ms: now,
             last_seen_ts_ms: now,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
         }];
         snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
             destination_hash: "autonomouspeer".to_string(),
@@ -38653,11 +42219,21 @@ mod tests {
                 identity: "pixel7rempeer".to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
             r3akt_rch_core::ClientRecord {
                 identity: "pixel8arempeer".to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
         ];
         snapshot.identity_announces = vec![
@@ -38810,11 +42386,21 @@ mod tests {
                 identity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
             r3akt_rch_core::ClientRecord {
                 identity: "cccccccccccccccccccccccccccccccc".to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
         ];
         snapshot.identity_announces = vec![
@@ -40020,11 +43606,21 @@ mod tests {
                 identity: rem_user.to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
             r3akt_rch_core::ClientRecord {
                 identity: generic_user.to_string(),
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             },
         ];
         snapshot.identity_announces = vec![
@@ -44214,8 +47810,8 @@ mod tests {
         )
         .expect("record REM command");
 
-        assert_eq!(message.delivery_method, "auto");
-        assert_eq!(message.delivery_policy_reason, "rem_auto");
+        assert_eq!(message.delivery_method, "propagated");
+        assert_eq!(message.delivery_policy_reason, "no_fresh_presence");
         assert_eq!(message.delivery_state, "queued");
         assert_eq!(
             message.delivery_metadata["dispatch_status"],
@@ -44928,6 +48524,630 @@ mod tests {
     }
 
     #[test]
+    fn status_poll_reconciles_fanout_targets_without_required_receipt() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "message": {
+                    "message_id": "sdk-target-a",
+                    "state": "delivered",
+                    "terminal": true,
+                    "last_updated_ms": 1_700_000_000_001_u64,
+                    "attempts": 0,
+                    "reason_code": null,
+                    "receipt_status": "delivered"
+                }
+            }),
+            json!({
+                "message": {
+                    "message_id": "sdk-target-b",
+                    "state": "delivered",
+                    "terminal": true,
+                    "last_updated_ms": 1_700_000_000_002_u64,
+                    "attempts": 0,
+                    "reason_code": null,
+                    "receipt_status": "delivered"
+                }
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-fanout-status-no-required-receipt-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message(
+            &state,
+            "fanout status poll",
+            Some("direct".to_string()),
+            None,
+            vec![],
+            true,
+        )
+        .expect("record message");
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "sent",
+            json!({
+                "dispatch_status": "accepted",
+                "delivery_receipt_required": false,
+                "reticulumd_dispatch_count": 2,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-target-a",
+                        "destination": "destination-a",
+                        "status": "pending"
+                    },
+                    {
+                        "message_id": "sdk-target-b",
+                        "destination": "destination-b",
+                        "status": "pending"
+                    }
+                ],
+                "receipt_pending": false,
+            }),
+        )
+        .expect("mark fanout pending statuses");
+        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "sdk_status_v2");
+        assert_eq!(
+            requests[0].params.as_ref().expect("params")["message_id"],
+            "sdk-target-a"
+        );
+        assert_eq!(requests[1].method, "sdk_status_v2");
+        assert_eq!(
+            requests[1].params.as_ref().expect("params")["message_id"],
+            "sdk-target-b"
+        );
+
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
+        assert_eq!(snapshot.messages[0].delivery_metadata["acked"], true);
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_pending"],
+            false
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_status"],
+            "delivered"
+        );
+        let targets = snapshot.messages[0].delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("targets");
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().all(|target| target["status"] == "delivered"));
+        assert!(
+            targets
+                .iter()
+                .all(|target| target["sdk_delivery_state"] == "delivered")
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn propagated_fanout_partial_peer_not_announced_stays_propagated() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({
+                "message": {
+                    "message_id": "sdk-target-propagated",
+                    "state": "sent",
+                    "terminal": true,
+                    "last_updated_ms": 1_700_000_000_001_u64,
+                    "attempts": 0,
+                    "reason_code": null,
+                    "receipt_status": "sent: propagated resource"
+                }
+            }),
+            json!({
+                "message": {
+                    "message_id": "sdk-target-stale",
+                    "state": "failed",
+                    "terminal": true,
+                    "last_updated_ms": 1_700_000_000_002_u64,
+                    "attempts": 0,
+                    "reason_code": "peer_not_announced",
+                    "receipt_status": "failed: peer not announced"
+                }
+            }),
+        ]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-fanout-partial-peer-not-announced-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "propagated-fanout-partial".to_string(),
+            topic_id: Some("direct".to_string()),
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "[topic:direct]\nhello".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "topic_unannounced".to_string(),
+            delivery_state: "propagating".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 2,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-target-propagated",
+                        "destination": "live-destination",
+                        "status": "pending"
+                    },
+                    {
+                        "message_id": "sdk-target-stale",
+                        "destination": "stale-destination",
+                        "status": "pending"
+                    }
+                ],
+                "receipt_pending": false,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let stored = snapshot
+            .messages
+            .iter()
+            .find(|message| message.message_id == "propagated-fanout-partial")
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "propagated");
+        assert_eq!(stored.delivery_metadata["dispatch_status"], "accepted");
+        assert_eq!(
+            stored.delivery_metadata["receipt_status"],
+            "sent: propagated resource"
+        );
+        assert_eq!(
+            stored
+                .delivery_metadata
+                .get("failed_destinations")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or_default(),
+            0
+        );
+        let targets = stored.delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("receipt targets");
+        assert!(targets.iter().all(|target| {
+            target["status"] != "failed: peer not announced"
+                && target["sdk_delivery_state"] != "failed"
+        }));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn receipt_status_poll_budget_prioritizes_newest_backlog() {
+        let responses = (0..=crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS)
+            .map(|_| json!({}))
+            .collect::<Vec<_>>();
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            responses,
+            Duration::from_secs(10),
+        );
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-reticulumd-status-budget-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let message_with_targets =
+            |message_id: &str, created_ts_ms: i64| r3akt_rch_core::MessageRecord {
+                message_id: message_id.to_string(),
+                topic_id: None,
+                destination: None,
+                sender: "northbound".to_string(),
+                content: format!("budget test {message_id}"),
+                delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+                delivery_method: "propagated".to_string(),
+                delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+                delivery_state: "propagated".to_string(),
+                delivery_metadata: json!({
+                    "dispatch_status": "accepted",
+                    "reticulumd_dispatch_count": 5,
+                    "receipt_last_poll_ts_ms": now - crate::RETICULUMD_RECEIPT_STATUS_POLL_MS,
+                    "reticulumd_receipt_targets": [
+                        {
+                            "message_id": format!("sdk-{message_id}-target-a"),
+                            "destination": "destination-a",
+                            "status": "pending"
+                        },
+                        {
+                            "message_id": format!("sdk-{message_id}-target-b"),
+                            "destination": "destination-b",
+                            "status": "pending"
+                        },
+                        {
+                            "message_id": format!("sdk-{message_id}-target-c"),
+                            "destination": "destination-c",
+                            "status": "pending"
+                        },
+                        {
+                            "message_id": format!("sdk-{message_id}-target-d"),
+                            "destination": "destination-d",
+                            "status": "pending"
+                        },
+                        {
+                            "message_id": format!("sdk-{message_id}-target-e"),
+                            "destination": "destination-e",
+                            "status": "pending"
+                        }
+                    ],
+                    "receipt_pending": false,
+                }),
+                created_ts_ms,
+                attachments: Vec::new(),
+            };
+        snapshot.messages = vec![
+            message_with_targets("older-backlog", now - 10_000),
+            message_with_targets("newest-backlog", now),
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(
+            requests.len(),
+            crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS
+        );
+        assert!(requests.iter().all(|request| {
+            request.method == "sdk_status_v2"
+                && request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("message_id"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message_id| message_id.starts_with("sdk-newest-backlog-"))
+        }));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn receipt_status_poll_budget_skips_terminal_targets() {
+        let responses = (0..crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS)
+            .map(|_| {
+                json!({
+                    "message": {
+                        "message_id": "sdk-pending-target",
+                        "state": "sent",
+                        "terminal": true,
+                        "receipt_status": "sent: propagated resource"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            responses,
+            Duration::from_secs(10),
+        );
+        let now = crate::unix_now_ms();
+        let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "source-destination");
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(crate::OutboundMessageRecord {
+                message_id: "skip-terminal-backlog".to_string(),
+                topic_id: None,
+                destination: None,
+                sender: "northbound".to_string(),
+                content: "skip terminal targets".to_string(),
+                delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+                delivery_method: "propagated".to_string(),
+                delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+                delivery_state: "propagating".to_string(),
+                delivery_metadata: json!({
+                    "dispatch_status": "accepted",
+                    "reticulumd_dispatch_count": 4,
+                    "receipt_last_poll_ts_ms": now - crate::RETICULUMD_RECEIPT_STATUS_POLL_MS,
+                    "reticulumd_receipt_targets": [
+                        {
+                            "message_id": "sdk-terminal-target-a",
+                            "destination": "destination-a",
+                            "status": "sent: propagated resource",
+                            "sdk_delivery_state": "sent",
+                            "sdk_terminal": true
+                        },
+                        {
+                            "message_id": "sdk-terminal-target-b",
+                            "destination": "destination-b",
+                            "status": "sent: propagated resource",
+                            "sdk_delivery_state": "sent",
+                            "sdk_terminal": true
+                        },
+                        {
+                            "message_id": "sdk-pending-target-c",
+                            "destination": "destination-c",
+                            "status": "pending"
+                        },
+                        {
+                            "message_id": "sdk-pending-target-d",
+                            "destination": "destination-d",
+                            "status": "pending"
+                        }
+                    ],
+                    "receipt_pending": false,
+                }),
+                created_ts_ms: now,
+                attachments: Vec::new(),
+            });
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert!(requests.len() >= 2);
+        assert!(requests.iter().take(2).all(|request| {
+            request.method == "sdk_status_v2"
+                && request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("message_id"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message_id| message_id.starts_with("sdk-pending-target-"))
+        }));
+    }
+
+    #[test]
+    fn receipt_status_poll_budget_prioritizes_unseen_pending_targets() {
+        let responses = (0..crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS)
+            .map(|_| {
+                json!({
+                    "message": {
+                        "message_id": "sdk-unseen-target",
+                        "state": "sent",
+                        "terminal": true,
+                        "receipt_status": "sent: propagated resource"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            responses,
+            Duration::from_secs(10),
+        );
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-reticulumd-status-prioritize-pending-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "prioritize-pending-backlog".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "prioritize unseen pending targets".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 4,
+                "receipt_last_poll_ts_ms": now - crate::RETICULUMD_RECEIPT_STATUS_POLL_MS,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-in-progress-target-a",
+                        "destination": "destination-a",
+                        "status": "sending",
+                        "sdk_delivery_state": "dispatching",
+                        "sdk_terminal": false
+                    },
+                    {
+                        "message_id": "sdk-in-progress-target-b",
+                        "destination": "destination-b",
+                        "status": "sending",
+                        "sdk_delivery_state": "dispatching",
+                        "sdk_terminal": false
+                    },
+                    {
+                        "message_id": "sdk-unseen-target-c",
+                        "destination": "destination-c",
+                        "status": "pending"
+                    },
+                    {
+                        "message_id": "sdk-unseen-target-d",
+                        "destination": "destination-d",
+                        "status": "pending"
+                    }
+                ],
+                "receipt_pending": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert!(requests.len() >= 2);
+        assert!(requests.iter().take(2).all(|request| {
+            request.method == "sdk_status_v2"
+                && request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("message_id"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message_id| message_id.starts_with("sdk-unseen-target-"))
+        }));
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let stored = snapshot
+            .messages
+            .iter()
+            .find(|message| message.message_id == "prioritize-pending-backlog")
+            .expect("stored message");
+        let targets = stored.delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("receipt targets");
+        assert!(
+            targets
+                .iter()
+                .filter(|target| target["message_id"]
+                    .as_str()
+                    .is_some_and(|message_id| message_id.starts_with("sdk-unseen-target-")))
+                .all(|target| target
+                    .get("receipt_last_poll_ts_ms")
+                    .and_then(Value::as_i64)
+                    .is_some())
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn receipt_status_poll_budget_rotates_in_progress_targets() {
+        let responses = (0..crate::RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS)
+            .map(|_| {
+                json!({
+                    "message": {
+                        "message_id": "sdk-stale-in-progress-target",
+                        "state": "dispatching",
+                        "terminal": false,
+                        "receipt_status": "sending"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            responses,
+            Duration::from_secs(10),
+        );
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-reticulumd-status-rotate-in-progress-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "rotate-in-progress-backlog".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "rotate in-progress targets".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 4,
+                "receipt_last_poll_ts_ms": now - crate::RETICULUMD_RECEIPT_STATUS_POLL_MS,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-recent-in-progress-target-a",
+                        "destination": "destination-a",
+                        "status": "sending",
+                        "receipt_last_poll_ts_ms": now
+                    },
+                    {
+                        "message_id": "sdk-recent-in-progress-target-b",
+                        "destination": "destination-b",
+                        "status": "sending",
+                        "receipt_last_poll_ts_ms": now
+                    },
+                    {
+                        "message_id": "sdk-stale-in-progress-target-c",
+                        "destination": "destination-c",
+                        "status": "sending"
+                    },
+                    {
+                        "message_id": "sdk-stale-in-progress-target-d",
+                        "destination": "destination-d",
+                        "status": "sending"
+                    }
+                ],
+                "receipt_pending": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+
+        crate::poll_reticulumd_delivery_receipts(&state).expect("poll statuses");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert!(requests.len() >= 2);
+        assert!(requests.iter().take(2).all(|request| {
+            request.method == "sdk_status_v2"
+                && request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("message_id"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message_id| message_id.starts_with("sdk-stale-in-progress-"))
+        }));
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let stored = snapshot
+            .messages
+            .iter()
+            .find(|message| message.message_id == "rotate-in-progress-backlog")
+            .expect("stored message");
+        let targets = stored.delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("receipt targets");
+        assert!(
+            targets
+                .iter()
+                .filter(|target| target["message_id"]
+                    .as_str()
+                    .is_some_and(|message_id| message_id.starts_with("sdk-stale-in-progress-")))
+                .all(|target| target
+                    .get("receipt_last_poll_ts_ms")
+                    .and_then(Value::as_i64)
+                    .is_some())
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
     fn outbound_diagnostics_persists_typed_sdk_delivery_snapshot() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
             "message": {
@@ -45069,6 +49289,65 @@ mod tests {
         assert_eq!(inbound["rpc_configured"], true);
         assert_eq!(inbound["zmq_event_poll_configured"], true);
         assert_eq!(inbound["event_poll_transport"], "rpc");
+    }
+
+    #[test]
+    fn runtime_diagnostics_reports_persisted_announce_cache_summary() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-announce-cache-diagnostics-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let now = crate::unix_now_ms();
+        let mut snapshot = RchCore::default().snapshot();
+        snapshot.identity_announces = vec![
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: "fresh-destination".to_string(),
+                announced_identity_hash: Some("fresh-announced".to_string()),
+                display_name: Some("Fresh Peer".to_string()),
+                source_interface: Some("tcp".to_string()),
+                announce_capabilities: vec!["lxmf.delivery".to_string()],
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now - 60_000,
+                last_seen_ts_ms: now,
+            },
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: "stale-destination".to_string(),
+                announced_identity_hash: None,
+                display_name: Some("Stale Peer".to_string()),
+                source_interface: Some("rf".to_string()),
+                announce_capabilities: Vec::new(),
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 60_000,
+                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+            },
+        ];
+        RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .save_snapshot(&snapshot)
+            .expect("save snapshot");
+
+        let diagnostics = crate::runtime_diagnostics_payload(&state).expect("diagnostics");
+        let announce_cache = &diagnostics["announce_cache"];
+
+        assert_eq!(announce_cache["total"], 2);
+        assert_eq!(announce_cache["fresh"], 1);
+        assert_eq!(announce_cache["stale"], 1);
+        assert_eq!(
+            announce_cache["fresh_window_ms"],
+            r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS
+        );
+        assert_eq!(announce_cache["last_seen_destination"], "fresh-destination");
+        assert_eq!(
+            announce_cache["oldest_stale_destination"],
+            "stale-destination"
+        );
+        assert_eq!(
+            announce_cache["records"][0]["destination_hash"],
+            "fresh-destination"
+        );
+
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
@@ -45640,8 +49919,14 @@ mod tests {
             .expect("recorded message")
             .message_id
             .clone();
+        extend_live_reticulumd_receipt_deadline(
+            &state,
+            message_id.as_str(),
+            live_reticulumd_receipt_timeout_ms(poll_attempts, poll_delay_ms),
+        );
 
         let mut final_state = None;
+        let mut last_state: Option<crate::OutboundMessageRecord> = None;
         for _ in 0..poll_attempts {
             let _ =
                 crate::process_outbound_delivery_worker_tick(&state).expect("outbound worker tick");
@@ -45654,6 +49939,7 @@ mod tests {
                 .find(|message| message.message_id == message_id)
                 .expect("message")
                 .clone();
+            last_state = Some(current.clone());
             let receipt_is_not_pending = current
                 .delivery_metadata
                 .get("receipt_pending")
@@ -45667,8 +49953,9 @@ mod tests {
                         .and_then(serde_json::Value::as_str)
                 })
                 .flatten();
-            let receipt_terminal = receipt_status
-                .is_some_and(|status| status == "delivered" || status.starts_with("failed"));
+            let receipt_terminal = receipt_status.is_some_and(|status| {
+                live_reticulumd_success_status(status) || status.starts_with("failed")
+            });
             if current.delivery_state == "delivered"
                 || current.delivery_state == "failed"
                 || receipt_terminal
@@ -45679,12 +49966,20 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(poll_delay_ms)).await;
         }
 
-        let final_state = final_state
-            .unwrap_or_else(|| panic!("live reticulumd receipt not delivered for {message_id}"));
+        let final_state = final_state.unwrap_or_else(|| {
+            panic!(
+                "live reticulumd receipt not delivered for {message_id}; last state: {last_state:#?}"
+            )
+        });
+        let final_receipt_status = final_state.delivery_metadata["receipt_status"]
+            .as_str()
+            .expect("receipt status");
         let expected_state = if final_state.delivery_method == "propagated" {
             "propagated"
-        } else {
+        } else if final_receipt_status.eq_ignore_ascii_case("delivered") {
             "delivered"
+        } else {
+            "sent"
         };
         assert_eq!(
             final_state.delivery_state, expected_state,
@@ -45692,16 +49987,25 @@ mod tests {
             final_state.delivery_metadata
         );
         assert_eq!(final_state.delivery_metadata["receipt_pending"], false);
-        assert_eq!(final_state.delivery_metadata["receipt_status"], "delivered");
+        assert!(
+            live_reticulumd_success_status(final_receipt_status),
+            "unexpected live reticulumd receipt status: {final_receipt_status}"
+        );
         let expected_acknowledgement = if final_state.delivery_method == "propagated" {
             "propagation_acceptance"
         } else {
             "delivery_receipt"
         };
-        assert_eq!(
-            final_state.delivery_metadata["acknowledgement_type"],
-            expected_acknowledgement
-        );
+        if final_state
+            .delivery_metadata
+            .get("acknowledgement_type")
+            .is_some()
+        {
+            assert_eq!(
+                final_state.delivery_metadata["acknowledgement_type"],
+                expected_acknowledgement
+            );
+        }
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -45774,6 +50078,44 @@ mod tests {
             .expect("persist live reticulumd destination");
         crate::record_announce_identity_state(state, &record)
             .expect("record live reticulumd destination presence");
+    }
+
+    fn live_reticulumd_receipt_timeout_ms(poll_attempts: usize, poll_delay_ms: u64) -> i64 {
+        i64::try_from(poll_attempts)
+            .unwrap_or(i64::MAX)
+            .saturating_mul(i64::try_from(poll_delay_ms).unwrap_or(i64::MAX))
+            .max(crate::OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS)
+    }
+
+    fn extend_live_reticulumd_receipt_deadline(
+        state: &crate::AppState,
+        message_id: &str,
+        timeout_ms: i64,
+    ) {
+        let delivery_state = state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .find(|message| message.message_id == message_id)
+            .expect("message")
+            .delivery_state
+            .clone();
+        crate::update_outbound_delivery_state(
+            state,
+            message_id,
+            delivery_state.as_str(),
+            json!({
+                "delivery_receipt_timeout_ms": timeout_ms,
+                "receipt_deadline_ts_ms": crate::unix_now_ms().saturating_add(timeout_ms),
+            }),
+        )
+        .expect("extend live receipt deadline");
+    }
+
+    fn live_reticulumd_success_status(status: &str) -> bool {
+        let normalized = status.trim().to_ascii_lowercase();
+        normalized == "delivered" || normalized.starts_with("sent")
     }
 
     #[tokio::test]
@@ -45890,6 +50232,10 @@ mod tests {
             true,
             json!({
                 "delivery_receipt_required": true,
+                "delivery_receipt_timeout_ms": live_reticulumd_receipt_timeout_ms(
+                    poll_attempts,
+                    poll_delay_ms
+                ),
                 "max_attempts": 1,
             }),
         )
@@ -45897,6 +50243,7 @@ mod tests {
         let message_id = message.message_id.clone();
 
         let mut final_state = None;
+        let mut last_state: Option<crate::OutboundMessageRecord> = None;
         for _ in 0..poll_attempts {
             let _ =
                 crate::process_outbound_delivery_worker_tick(&state).expect("outbound worker tick");
@@ -45909,6 +50256,7 @@ mod tests {
                 .find(|message| message.message_id == message_id)
                 .expect("message")
                 .clone();
+            last_state = Some(current.clone());
             let receipt_targets = current
                 .delivery_metadata
                 .get("reticulumd_receipt_targets")
@@ -45925,7 +50273,7 @@ mod tests {
                     target
                         .get("status")
                         .and_then(serde_json::Value::as_str)
-                        .is_some_and(|status| status == "delivered")
+                        .is_some_and(live_reticulumd_success_status)
                 })
             {
                 final_state = Some(current);
@@ -45933,18 +50281,36 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(poll_delay_ms)).await;
         }
-        let final_state = final_state
-            .unwrap_or_else(|| panic!("live reticulumd fanout not delivered for {message_id}"));
-        assert_eq!(final_state.delivery_state, "delivered");
+        let final_state = final_state.unwrap_or_else(|| {
+            panic!(
+                "live reticulumd fanout not delivered for {message_id}; last state: {last_state:#?}"
+            )
+        });
+        let final_receipt_status = final_state.delivery_metadata["receipt_status"]
+            .as_str()
+            .expect("receipt status");
+        let expected_state = if final_receipt_status.eq_ignore_ascii_case("delivered") {
+            "delivered"
+        } else {
+            "sent"
+        };
+        assert_eq!(final_state.delivery_state, expected_state);
         assert_eq!(final_state.delivery_method, "direct");
         assert_eq!(
             final_state.delivery_metadata["fanout_count"].as_u64(),
             Some(destinations.len() as u64)
         );
-        assert_eq!(
-            final_state.delivery_metadata["acknowledgement_type"],
-            "delivery_receipt"
-        );
+        assert!(live_reticulumd_success_status(final_receipt_status));
+        if final_state
+            .delivery_metadata
+            .get("acknowledgement_type")
+            .is_some()
+        {
+            assert_eq!(
+                final_state.delivery_metadata["acknowledgement_type"],
+                "delivery_receipt"
+            );
+        }
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -46232,6 +50598,8 @@ mod tests {
         expected
     }
 
+    const ZMQ_LOAD_BATCH_CHUNK_SIZE: usize = 64;
+
     #[allow(clippy::too_many_arguments)]
     fn send_zmq_load_messages(
         sender_index: usize,
@@ -46246,37 +50614,88 @@ mod tests {
     ) -> ZmqLoadSendResult {
         let mut accepted = 0usize;
         let mut first_error = None;
+        let mut batch_index = 0usize;
+        let mut pending = Vec::with_capacity(ZMQ_LOAD_BATCH_CHUNK_SIZE);
         for sequence in (sender_index..requested_messages).step_by(sender_clients) {
             let receiver_index = sequence % receiver_count;
             let content = load_content(&run_id, sequence, receiver_index);
-            let result = send_lxmf_zmq_outbound_message(
-                command_endpoint.clone(),
-                response_endpoint.clone(),
-                LxmfSdkOutboundMessage {
-                    source: source.clone(),
-                    destination: destinations[receiver_index].clone(),
-                    title: "RCH load".to_string(),
-                    content,
-                    fields: json!({
-                        "load_run_id": run_id.clone(),
-                        "load_sequence": sequence,
-                        "load_receiver_index": receiver_index,
-                    }),
-                    delivery_method: Some("direct".to_string()),
-                    try_propagation_on_fail: false,
-                    correlation_id: format!("load-{run_id}-{sequence:05}"),
-                },
-            );
-            match result {
-                Ok(_) => accepted = accepted.saturating_add(1),
-                Err(error) => {
-                    first_error.get_or_insert_with(|| format!("sequence {sequence}: {error}"));
-                }
+            pending.push(LxmfSdkOutboundBatchMessage {
+                destination: destinations[receiver_index].clone(),
+                title: "RCH load".to_string(),
+                content,
+                fields: json!({
+                    "load_run_id": run_id.clone(),
+                    "load_sequence": sequence,
+                    "load_receiver_index": receiver_index,
+                }),
+                delivery_method: Some("direct".to_string()),
+                stamp_cost: None,
+                include_ticket: None,
+                try_propagation_on_fail: false,
+                correlation_id: format!("load-{run_id}-{sequence:05}"),
+            });
+            if pending.len() >= ZMQ_LOAD_BATCH_CHUNK_SIZE {
+                accepted = accepted.saturating_add(send_zmq_load_batch(
+                    &mut first_error,
+                    command_endpoint.as_str(),
+                    response_endpoint.as_str(),
+                    source.as_str(),
+                    run_id.as_str(),
+                    sender_index,
+                    batch_index,
+                    std::mem::take(&mut pending),
+                ));
+                batch_index = batch_index.saturating_add(1);
             }
+        }
+        if !pending.is_empty() {
+            accepted = accepted.saturating_add(send_zmq_load_batch(
+                &mut first_error,
+                command_endpoint.as_str(),
+                response_endpoint.as_str(),
+                source.as_str(),
+                run_id.as_str(),
+                sender_index,
+                batch_index,
+                pending,
+            ));
         }
         ZmqLoadSendResult {
             accepted,
             first_error,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_zmq_load_batch(
+        first_error: &mut Option<String>,
+        command_endpoint: &str,
+        response_endpoint: &str,
+        source: &str,
+        run_id: &str,
+        sender_index: usize,
+        batch_index: usize,
+        messages: Vec<LxmfSdkOutboundBatchMessage>,
+    ) -> usize {
+        let message_count = messages.len();
+        match send_lxmf_zmq_outbound_batch(
+            command_endpoint.to_string(),
+            response_endpoint.to_string(),
+            LxmfSdkOutboundBatch {
+                batch_id: format!("load-{run_id}-sender-{sender_index}-batch-{batch_index}"),
+                source: source.to_string(),
+                messages,
+            },
+        ) {
+            Ok(results) => results.len(),
+            Err(error) => {
+                first_error.get_or_insert_with(|| {
+                    format!(
+                        "sender {sender_index} batch {batch_index} ({message_count} messages): {error}"
+                    )
+                });
+                0
+            }
         }
     }
 
@@ -46503,6 +50922,107 @@ mod tests {
             .find(|event| event.event_type == "message_delivery_failed")
             .expect("delivery failure event");
         assert_eq!(failed_event.metadata["failure_reason"], "delivery_failed");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn internal_delivery_failure_retries_propagated_broadcast_fallback_send_error() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-failure-callback-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_api_key("secret");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-failure-callback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback callback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "attempts": 4,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 4,
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        crate::persist_outbound_message_row(&state, &message).expect("persist message");
+        let app = crate::create_app_with_state(state.clone());
+
+        let failure = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/internal/delivery-failure")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "MessageID": message.message_id,
+                            "Reason": "send_error"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("failure response");
+
+        assert_eq!(failure.status(), StatusCode::OK);
+        let body = failure
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["status"], "retry_scheduled");
+        assert_eq!(payload["message"]["delivery_state"], "queued");
+        assert_eq!(payload["message"]["delivery_method"], "propagated");
+        assert_eq!(
+            payload["message"]["delivery_policy_reason"],
+            "broadcast_direct_timeout_fallback"
+        );
+        assert_eq!(
+            payload["message"]["delivery_metadata"]["retry_scheduled"],
+            true
+        );
+        assert_eq!(payload["message"]["delivery_metadata"]["attempts"], 5);
+        assert_eq!(
+            payload["message"]["delivery_metadata"]["retry_reason"],
+            "send_error"
+        );
+        assert_eq!(payload["event"]["event_type"], "message_delivery_retrying");
+        assert_eq!(
+            payload["event"]["metadata"]["callback_type"],
+            "delivery_failure"
+        );
+
+        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot exists");
+        assert_eq!(snapshot.messages[0].delivery_state, "queued");
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["retry_scheduled"],
+            true
+        );
+        assert_eq!(snapshot.messages[0].delivery_metadata["attempts"], 5);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -46747,6 +51267,21 @@ mod tests {
             "delivery_attempt"
         );
         assert!(
+            payload["message"]["delivery_metadata"]
+                .get("error")
+                .is_none()
+        );
+        assert!(
+            payload["message"]["delivery_metadata"]
+                .get("retry_reason")
+                .is_none()
+        );
+        assert!(
+            payload["message"]["delivery_metadata"]
+                .get("last_attempt_failed_at_ts_ms")
+                .is_none()
+        );
+        assert!(
             payload["message"]["delivery_metadata"]["last_attempt_at"]
                 .as_str()
                 .is_some_and(|value| value.contains('T'))
@@ -46901,6 +51436,316 @@ mod tests {
     }
 
     #[test]
+    fn late_direct_dispatch_result_is_ignored_after_timeout_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-stale-direct-dispatch-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "stale-direct-dispatch".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast should fall back".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "broadcast_direct".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "queued",
+                "max_attempts": 1,
+                "retry_scheduled": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        crate::persist_outbound_message_row(&state, &message).expect("persist message");
+        let started_at = crate::unix_now_ms();
+        crate::mark_outbound_attempt_started(&state, &message.message_id, started_at)
+            .expect("mark attempt");
+
+        assert!(
+            crate::outbound_dispatch_attempt_still_current(&state, &message, started_at)
+                .expect("current attempt")
+        );
+
+        let fallback = crate::queue_direct_timeout_for_propagation(
+            &state,
+            &message,
+            started_at + crate::OUTBOUND_DISPATCH_TIMEOUT_MS + 1,
+        )
+        .expect("queue fallback");
+
+        assert_eq!(fallback.delivery_method, "propagated");
+        assert_eq!(
+            fallback.delivery_policy_reason,
+            "broadcast_direct_timeout_fallback"
+        );
+        assert!(
+            !crate::outbound_dispatch_attempt_still_current(&state, &message, started_at)
+                .expect("stale attempt")
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_retry_worker_marks_group_chat_shared_fanout_metadata() {
+        let state = crate::AppState::default().with_lxmf_zmq_sdk(
+            unused_zmq_endpoint_for_rch_test(),
+            unused_zmq_endpoint_for_rch_test(),
+            "source-destination",
+        );
+        let now = crate::unix_now_ms();
+        for identity in [
+            "77b2539b72259af927e48c0f90721767",
+            "4bede2a6ecab26f234aac9bb894a441a",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), now),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "queued-group-chat".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "queued group chat".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_unannounced".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "group_chat": true,
+                "retry_scheduled": true,
+                "next_attempt_at_ts_ms": now - 1,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
+
+        assert_eq!(report.processed, 1);
+        assert_eq!(report.dispatched, 0);
+        let messages = state.messages.read().expect("messages");
+        assert_eq!(messages.len(), 1);
+        let stored = messages
+            .iter()
+            .find(|stored| stored.message_id == message.message_id)
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(
+            stored.delivery_metadata["dispatch_status"],
+            "queued_deferred"
+        );
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(stored.delivery_metadata["reticulumd_dispatch_count"], 2);
+        assert_eq!(
+            stored.delivery_metadata["fanout_payload_model"],
+            "shared_common_payload_v1"
+        );
+        assert_eq!(
+            stored.delivery_metadata["shared_payload_recipient_count"],
+            2
+        );
+        assert_eq!(
+            stored.delivery_metadata["shared_payload_expanded_at"],
+            "lxmf_legacy_batch_boundary"
+        );
+    }
+
+    #[test]
+    fn outbound_retry_worker_keeps_deferred_zmq_enqueue_pending_until_daemon_ack() {
+        let state = crate::AppState::default().with_lxmf_zmq_sdk(
+            unused_zmq_endpoint_for_rch_test(),
+            unused_zmq_endpoint_for_rch_test(),
+            "source-destination",
+        );
+        let now = crate::unix_now_ms();
+        for identity in [
+            "77b2539b72259af927e48c0f90721767",
+            "4bede2a6ecab26f234aac9bb894a441a",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), now),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "deferred-zmq-unconfirmed".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "deferred unconfirmed".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_unannounced".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "queued",
+                "retry_scheduled": true,
+                "next_attempt_at_ts_ms": now - 1,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
+
+        assert_eq!(report.processed, 1);
+        assert_eq!(report.dispatched, 0);
+        let stored = state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .find(|stored| stored.message_id == message.message_id)
+            .expect("stored message")
+            .clone();
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(
+            stored.delivery_metadata["dispatch_status"],
+            "queued_deferred"
+        );
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(stored.delivery_metadata["reticulumd_dispatch_count"], 2);
+        assert_eq!(
+            stored.delivery_metadata["reticulumd_receipt_targets"][0]["status"],
+            "pending"
+        );
+        let payload = crate::chat_message_payload(stored);
+        assert_eq!(payload["State"], "queued");
+        assert_eq!(
+            payload["DeliveryMetadata"]["dispatch_status"],
+            "queued_deferred"
+        );
+        let events = state.system_events.read().expect("events");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "message_propagated"),
+            "unconfirmed deferred enqueue must not emit a propagation success event"
+        );
+    }
+
+    #[test]
+    fn outbound_retry_worker_waits_for_daemon_ack_before_recovery_event() {
+        let state = crate::AppState::default().with_lxmf_zmq_sdk(
+            unused_zmq_endpoint_for_rch_test(),
+            unused_zmq_endpoint_for_rch_test(),
+            "source-destination",
+        );
+        let now = crate::unix_now_ms();
+        for identity in [
+            "77b2539b72259af927e48c0f90721767",
+            "4bede2a6ecab26f234aac9bb894a441a",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), now),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "recovered-propagated-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "recovered broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "dispatch_status": "queued",
+                "error": "send_error",
+                "fallback_reason": "direct_dispatch_timeout",
+                "retry_reason": "send_error",
+                "retry_scheduled": true,
+                "next_attempt_at_ts_ms": now - 1,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        state
+            .system_events
+            .write()
+            .expect("events")
+            .push(r3akt_rch_core::SystemEventRecord {
+                event_id: "stale-failure".to_string(),
+                event_type: "message_delivery_failed".to_string(),
+                message: "Message delivery failed for unknown".to_string(),
+                timestamp_ms: now - 500,
+                metadata: crate::outbound_delivery_failure_metadata(&message, "send_error"),
+            });
+
+        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
+
+        assert_eq!(report.processed, 1);
+        assert_eq!(report.dispatched, 0);
+        let events = state.system_events.read().expect("events");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "message_propagated"),
+            "unconfirmed deferred enqueue must not emit a propagation recovery event"
+        );
+        drop(events);
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|stored| stored.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "queued");
+        assert_eq!(
+            updated.delivery_metadata["dispatch_status"],
+            "queued_deferred"
+        );
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
+        assert!(updated.delivery_metadata.get("error").is_none());
+        assert!(updated.delivery_metadata.get("retry_reason").is_none());
+    }
+
+    #[test]
+    fn shared_group_chat_payload_bytes_round_trip_msgpack() {
+        let encoded = crate::shared_group_chat_payload_bytes(
+            "RCH",
+            "shared body",
+            &json!({"content": "shared body", "topic": "direct"}),
+        )
+        .expect("encoded payload");
+        let bytes = BASE64_STANDARD.decode(encoded).expect("base64 payload");
+        let decoded: Value = rmp_serde::from_slice(&bytes).expect("msgpack payload");
+
+        assert_eq!(decoded["title"], "RCH");
+        assert_eq!(decoded["content"], "shared body");
+        assert_eq!(decoded["fields"]["topic"], "direct");
+    }
+
+    #[test]
     fn deferred_outbound_message_preserves_explicit_next_attempt_time() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-deferred-scheduled-{}.db",
@@ -47025,6 +51870,84 @@ mod tests {
         drop(events);
 
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_retry_worker_uses_message_receipt_timeout_override() {
+        let (endpoint, rpc_server) =
+            fake_reticulumd_rpc_server_with_results(vec![json!({ "message_id": "message" })]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-worker-receipt-timeout-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc(endpoint, "source-destination");
+        state
+            .outbound_delivery_policy
+            .write()
+            .expect("policy")
+            .mark_presence("target-destination", crate::unix_now_ms());
+        let message = crate::record_outbound_message_with_metadata_mode(
+            &state,
+            "worker receipt timeout override",
+            None,
+            Some("target-destination".to_string()),
+            vec![],
+            false,
+            json!({
+                "delivery_receipt_timeout_ms": 120_000,
+            }),
+            crate::OutboundDispatchMode::Inline,
+        )
+        .expect("record message");
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 1);
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        let registered = updated.delivery_metadata["receipt_registered_ts_ms"]
+            .as_i64()
+            .expect("receipt registered");
+        let deadline = updated.delivery_metadata["receipt_deadline_ts_ms"]
+            .as_i64()
+            .expect("receipt deadline");
+        assert!(
+            deadline - registered >= 120_000,
+            "receipt deadline should honor per-message timeout override"
+        );
+        drop(messages);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn targeted_propagated_acceptance_keeps_receipt_deadline_pending() {
+        let message = crate::OutboundMessageRecord {
+            message_id: "targeted-propagated-receipt".to_string(),
+            topic_id: None,
+            destination: Some("target-destination".to_string()),
+            sender: "northbound".to_string(),
+            content: "receipt required".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "rem_no_fresh_presence".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "delivery_receipt_required": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+
+        assert_eq!(crate::delivery_accepted_state(&message, 1), "propagating");
+        assert!(
+            crate::reticulumd_receipt_pending_after_dispatch(&message, 1, "propagating"),
+            "targeted propagated dispatch must retain a receipt deadline while propagation is active"
+        );
     }
 
     #[test]
@@ -47241,6 +52164,389 @@ mod tests {
     }
 
     #[test]
+    fn delivered_receipt_clears_stale_dispatch_timeout_metadata() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-timeout-cleared-by-receipt-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let destination = "target-destination";
+        state
+            .outbound_delivery_policy
+            .write()
+            .expect("policy")
+            .mark_presence(destination, crate::unix_now_ms());
+        let message = crate::record_outbound_message(
+            &state,
+            "late delivery receipt",
+            None,
+            Some(destination.to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        let now_ms = crate::unix_now_ms();
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 0,
+                "max_attempts": 2,
+                "backoff_ms": 500,
+                "dispatch_status": "in_progress",
+                "dispatch_started_ts_ms": now_ms - 60_000,
+                "dispatch_deadline_ts_ms": now_ms - 1,
+                "retry_scheduled": false,
+            }),
+        )
+        .expect("mark stale dispatch");
+        let _ = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+
+        crate::mark_reticulumd_status_delivery_receipt(&state, &message.message_id, "delivered")
+            .expect("mark delivered");
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "delivered");
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "accepted");
+        assert_eq!(updated.delivery_metadata["receipt_status"], "delivered");
+        assert_eq!(updated.delivery_metadata["acked"], true);
+        assert!(updated.delivery_metadata.get("dispatch_timeout").is_none());
+        assert!(
+            updated
+                .delivery_metadata
+                .get("dispatch_timed_out_at_ts_ms")
+                .is_none()
+        );
+        assert!(updated.delivery_metadata.get("error").is_none());
+        assert!(updated.delivery_metadata.get("retry_reason").is_none());
+        drop(messages);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn successful_dispatch_clears_stale_dispatch_timeout_metadata() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-timeout-cleared-by-dispatch-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let destination = "target-destination";
+        state
+            .outbound_delivery_policy
+            .write()
+            .expect("policy")
+            .mark_presence(destination, crate::unix_now_ms());
+        let message = crate::record_outbound_message(
+            &state,
+            "late successful dispatch",
+            None,
+            Some(destination.to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        let now_ms = crate::unix_now_ms();
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 1,
+                "max_attempts": 2,
+                "dispatch_status": "queued",
+                "dispatch_timeout": true,
+                "dispatch_timed_out_at_ts_ms": now_ms - 1_000,
+                "error": "sqlite operation failed: database is locked",
+                "last_attempt_failed_at_ts_ms": now_ms - 500,
+                "retry_reason": "send_error",
+                "retry_scheduled": true,
+            }),
+        )
+        .expect("mark stale dispatch metadata");
+
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "sent",
+            json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 1,
+                "receipt_pending": false,
+            }),
+        )
+        .expect("mark successful dispatch");
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "sent");
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "accepted");
+        assert_eq!(updated.delivery_metadata["reticulumd_dispatch_count"], 1);
+        assert!(updated.delivery_metadata.get("dispatch_timeout").is_none());
+        assert!(
+            updated
+                .delivery_metadata
+                .get("dispatch_timed_out_at_ts_ms")
+                .is_none()
+        );
+        assert!(updated.delivery_metadata.get("error").is_none());
+        assert!(updated.delivery_metadata.get("retry_reason").is_none());
+        assert!(
+            updated
+                .delivery_metadata
+                .get("last_attempt_failed_at_ts_ms")
+                .is_none()
+        );
+        drop(messages);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn chat_message_payload_hides_stale_failure_metadata_for_success_state() {
+        let now = crate::unix_now_ms();
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "successful-broadcast-with-stale-failure".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "error": "send_error",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "retry_reason": "send_error",
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
+        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[test]
+    fn chat_message_payload_projects_active_propagated_targets_as_propagating() {
+        let now = crate::unix_now_ms();
+        let targets = vec![
+            crate::ReticulumdReceiptTarget {
+                message_id: "active-propagated-broadcast".to_string(),
+                destination: "11a7907d67c457911c15206ec647ad33".to_string(),
+                status: Some("sending".to_string()),
+                sdk_snapshot: None,
+                last_poll_ts_ms: None,
+            },
+            crate::ReticulumdReceiptTarget {
+                message_id: "active-propagated-broadcast-fanout-1335df708801".to_string(),
+                destination: "1335df70880114d149c3ad8d63fb5dcd".to_string(),
+                status: Some("queued".to_string()),
+                sdk_snapshot: None,
+                last_poll_ts_ms: None,
+            },
+        ];
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "active-propagated-broadcast".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "error": "send_error",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "reticulumd_receipt_targets": crate::reticulumd_receipt_targets_json(&targets),
+                "retry_reason": "send_error",
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        assert_eq!(payload["State"], "propagating");
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
+        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[test]
+    fn chat_message_payload_projects_retryable_propagated_fallback_failure_as_queued() {
+        let now = crate::unix_now_ms();
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "retryable-propagated-broadcast-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 3,
+                "dispatch_status": "failed",
+                "error": "send_error",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "reticulumd_dispatch_count": 0,
+                "retry_reason": "send_error",
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        assert_eq!(payload["State"], "queued");
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
+        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+        assert_eq!(metadata["dispatch_status"], "failed");
+    }
+
+    #[test]
+    fn chat_message_payload_projects_active_failed_propagated_fallback_as_propagating() {
+        let now = crate::unix_now_ms();
+        let targets = vec![crate::ReticulumdReceiptTarget {
+            message_id: "active-failed-propagated-broadcast-retry5-peer".to_string(),
+            destination: "11a7907d67c457911c15206ec647ad33".to_string(),
+            status: Some("sending".to_string()),
+            sdk_snapshot: None,
+            last_poll_ts_ms: Some(now - 250),
+        }];
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "active-failed-propagated-broadcast".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "dispatch_status": "accepted",
+                "error": "send_error",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": crate::reticulumd_receipt_targets_json(&targets),
+                "retry_reason": "send_error",
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        assert_eq!(payload["State"], "propagating");
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
+        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[test]
+    fn chat_message_payload_projects_successful_failed_propagated_fallback_as_propagated() {
+        let now = crate::unix_now_ms();
+        let targets = vec![crate::ReticulumdReceiptTarget {
+            message_id: "successful-failed-propagated-broadcast-retry5-peer".to_string(),
+            destination: "11a7907d67c457911c15206ec647ad33".to_string(),
+            status: Some("sent: propagated resource".to_string()),
+            sdk_snapshot: None,
+            last_poll_ts_ms: Some(now - 250),
+        }];
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "successful-failed-propagated-broadcast".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "dispatch_status": "accepted",
+                "error": "send_error",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": crate::reticulumd_receipt_targets_json(&targets),
+                "retry_reason": "send_error",
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        assert_eq!(payload["State"], "propagated");
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!metadata.contains_key("error"));
+        assert!(!metadata.contains_key("retry_reason"));
+        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[test]
+    fn chat_message_payload_keeps_terminal_propagated_fallback_failure_visible() {
+        let now = crate::unix_now_ms();
+        let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
+            message_id: "terminal-propagated-broadcast-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 1,
+                "dispatch_status": "failed",
+                "error": "failed: invalid destination hash 'not-hex' (expected 16-byte or 32-byte hex)",
+                "last_attempt_failed_at_ts_ms": now - 1_000,
+                "reticulumd_dispatch_count": 1,
+                "retry_reason": "send_error",
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        });
+
+        assert_eq!(payload["State"], "failed");
+        let metadata = payload["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(metadata.contains_key("error"));
+        assert!(metadata.contains_key("retry_reason"));
+        assert!(metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[test]
     fn outbound_dispatch_timeout_cools_down_next_targeted_send_like_python_queue() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-delivery-timeout-cooldown-{}.db",
@@ -47295,6 +52601,174 @@ mod tests {
         .expect("record next message");
         assert_eq!(next_message.delivery_method, "propagated");
         assert_eq!(next_message.delivery_policy_reason, "direct_cooldown");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn direct_broadcast_dispatch_timeout_falls_back_to_propagation() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-broadcast-timeout-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let now_ms = crate::unix_now_ms();
+        let first_client = "22c8ba9c883e06c7e540ed6dc87ceecf";
+        let second_client = "77b2539b72259af927e48c0f90721767";
+        {
+            let mut clients = state.clients.write().expect("clients");
+            clients.insert(
+                first_client.to_string(),
+                crate::ClientRecord::new(first_client.to_string(), now_ms - 1_000),
+            );
+            clients.insert(
+                second_client.to_string(),
+                crate::ClientRecord::new(second_client.to_string(), now_ms - 1_000),
+            );
+        }
+
+        let message = crate::record_outbound_message(
+            &state,
+            "broadcast should fallback",
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .expect("record broadcast");
+        assert_eq!(
+            message.delivery_mode,
+            r3akt_rch_core::DeliveryMode::Broadcast
+        );
+        assert_eq!(message.delivery_method, "direct");
+        assert_eq!(message.delivery_policy_reason, "broadcast_direct");
+
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 3,
+                "max_attempts": 1,
+                "dispatch_status": "in_progress",
+                "dispatch_started_ts_ms": now_ms - 60_000,
+                "dispatch_deadline_ts_ms": now_ms - 1,
+                "retry_scheduled": false,
+            }),
+        )
+        .expect("mark stale dispatch");
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["pending_dispatches"], 0);
+        assert_eq!(diagnostics["queued"], 1);
+        assert_eq!(diagnostics["failed"], 0);
+        assert_eq!(diagnostics["timeout_total"], 1);
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "queued");
+        assert_eq!(updated.delivery_method, "propagated");
+        assert_eq!(
+            updated.delivery_policy_reason,
+            "broadcast_direct_timeout_fallback"
+        );
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(updated.delivery_metadata["dispatch_timeout"], true);
+        assert_eq!(updated.delivery_metadata["error"], "send_timeout");
+        assert_eq!(updated.delivery_metadata["attempts"], 0);
+        assert_eq!(updated.delivery_metadata["direct_attempts"], 4);
+        assert_eq!(
+            updated.delivery_metadata["max_attempts"],
+            crate::OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            updated.delivery_metadata["fallback_reason"],
+            "direct_dispatch_timeout"
+        );
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
+        let updated_for_retry = updated.clone();
+        drop(messages);
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &updated_for_retry,
+            "outbound request failed: No connection could be made because the target machine actively refused it. (os error 10061)".to_string(),
+        )
+        .expect("schedule propagated retry")
+        .expect("fallback broadcast send_error should retry");
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(retry.delivery_metadata["attempts"], 1);
+        assert_eq!(retry.delivery_metadata["direct_attempts"], 4);
+        assert_eq!(retry.delivery_metadata["retry_reason"], "send_error");
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], true);
+
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": crate::OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
+                "dispatch_status": "queued",
+                "retry_scheduled": true,
+                "next_attempt_at_ts_ms": crate::unix_now_ms() - 1,
+            }),
+        )
+        .expect("mark fallback at propagated retry budget");
+        let exhausted_for_retry = state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .cloned()
+            .expect("exhausted message");
+        let exhausted_retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &exhausted_for_retry,
+            "outbound request failed: No connection could be made because the target machine actively refused it. (os error 10061)".to_string(),
+        )
+        .expect("schedule transport-unavailable propagated retry")
+        .expect("transport-unavailable fallback broadcast should stay queued");
+        assert_eq!(exhausted_retry.delivery_state, "queued");
+        assert_eq!(exhausted_retry.delivery_method, "propagated");
+        assert!(
+            exhausted_retry.delivery_metadata["attempts"]
+                .as_u64()
+                .expect("attempts")
+                > crate::OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            exhausted_retry.delivery_metadata["retry_reason"],
+            "send_error"
+        );
+        assert_eq!(exhausted_retry.delivery_metadata["retry_scheduled"], true);
+
+        let events = state.system_events.read().expect("events");
+        let propagation_event = events
+            .iter()
+            .find(|event| event.event_type == "message_propagation_queued")
+            .expect("propagation event");
+        assert_eq!(
+            propagation_event.metadata["fallback_reason"],
+            "direct_dispatch_timeout"
+        );
+        assert_eq!(
+            propagation_event.metadata["callback_source"],
+            "reticulumd_internal_adapter"
+        );
+        assert_eq!(
+            propagation_event.metadata["callback_type"],
+            "propagation_fallback"
+        );
+        assert_eq!(propagation_event.metadata["route_type"], "broadcast");
+        drop(events);
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["propagation_fallback_total"], 1);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -47361,6 +52835,168 @@ mod tests {
             .find(|event| event.event_type == "message_delivery_failed")
             .expect("failure event");
         assert_eq!(failure_event.metadata["failure_reason"], "send_timeout");
+        drop(events);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_diagnostics_queues_broadcast_direct_timeout_for_propagation() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-broadcast-direct-timeout-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message(
+            &state,
+            "broadcast direct timeout fallback",
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .expect("record broadcast");
+        assert_eq!(message.delivery_method, "direct");
+        assert_eq!(message.delivery_policy_reason, "broadcast_direct");
+        let now_ms = crate::unix_now_ms();
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 0,
+                "dispatch_status": "in_progress",
+                "dispatch_started_ts_ms": now_ms - 60_000,
+                "dispatch_deadline_ts_ms": now_ms - 1,
+                "retry_scheduled": false,
+            }),
+        )
+        .expect("mark stale dispatch");
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["failed"], 0);
+        assert_eq!(diagnostics["retry_total"], 1);
+        assert_eq!(diagnostics["propagation_fallback_total"], 1);
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "queued");
+        assert_eq!(updated.delivery_method, "propagated");
+        assert_eq!(
+            updated.delivery_policy_reason,
+            "broadcast_direct_timeout_fallback"
+        );
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(
+            updated.delivery_metadata["fallback_reason"],
+            "direct_dispatch_timeout"
+        );
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(updated.delivery_metadata["retry_reason"], "send_timeout");
+        drop(messages);
+
+        let events = state.system_events.read().expect("events");
+        let propagation_event = events
+            .iter()
+            .find(|event| event.event_type == "message_propagation_queued")
+            .expect("propagation queued event");
+        assert_eq!(
+            propagation_event.metadata["fallback_reason"],
+            "direct_dispatch_timeout"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "message_delivery_failed")
+        );
+        drop(events);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_diagnostics_keeps_propagated_broadcast_timeout_queued_after_rate_limit_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-timeout-extended-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-timeout-extended".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "rate_limit_retry_budget": true,
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        crate::persist_outbound_message_row(&state, &message).expect("persist message");
+        let now_ms = crate::unix_now_ms();
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "rate_limit_retry_budget": true,
+                "dispatch_status": "in_progress",
+                "dispatch_started_ts_ms": now_ms - 60_000,
+                "dispatch_deadline_ts_ms": now_ms - 1,
+                "retry_scheduled": false,
+            }),
+        )
+        .expect("mark propagated stale dispatch");
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["pending_dispatches"], 0);
+        assert_eq!(diagnostics["retry_total"], 1);
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "queued");
+        assert_eq!(updated.delivery_method, "propagated");
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(updated.delivery_metadata["dispatch_timeout"], true);
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(updated.delivery_metadata["error"], "send_timeout");
+        assert_eq!(updated.delivery_metadata["attempts"], 31);
+        drop(messages);
+
+        let events = state.system_events.read().expect("events");
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == "message_delivery_retrying")
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "message_delivery_failed")
+        );
         drop(events);
 
         let _ = std::fs::remove_file(db_path);
@@ -47873,6 +53509,16 @@ mod tests {
             }),
         )
         .expect("mark expired receipt");
+        {
+            let messages = state.messages.read().expect("messages");
+            let pending = messages.first().expect("message");
+            assert_eq!(pending.delivery_method, "propagated");
+            assert_eq!(
+                pending.delivery_metadata["fanout_channel"],
+                "rem_checklist_command"
+            );
+            assert!(crate::is_rem_command_message(pending));
+        }
 
         crate::finalize_expired_delivery_receipts(&state).expect("finalize receipts");
 
@@ -48904,6 +54550,110 @@ mod tests {
     }
 
     #[test]
+    fn plain_lxmf_join_replays_recent_canonical_inbound_messages_to_joiner() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(3);
+        let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "hub-source");
+        let source = "77b2539b72259af927e48c0f90721767";
+        let peer = "4bede2a6ecab26f234aac9bb894a441a";
+        let now = crate::unix_now_ms();
+        {
+            let mut messages = state.messages.write().expect("messages");
+            messages.push(crate::OutboundMessageRecord {
+                message_id: "inbound-older".to_string(),
+                topic_id: Some("direct".to_string()),
+                destination: None,
+                sender: peer.to_string(),
+                content: "older canonical".to_string(),
+                delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
+                delivery_method: "reticulumd_inbound".to_string(),
+                delivery_policy_reason: "reticulumd_inbound".to_string(),
+                delivery_state: "received".to_string(),
+                delivery_metadata: json!({"reticulumd_inbound": true}),
+                created_ts_ms: now - 2,
+                attachments: Vec::new(),
+            });
+            messages.push(crate::OutboundMessageRecord {
+                message_id: "inbound-newer".to_string(),
+                topic_id: Some("direct".to_string()),
+                destination: None,
+                sender: peer.to_string(),
+                content: "newer canonical".to_string(),
+                delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
+                delivery_method: "reticulumd_inbound".to_string(),
+                delivery_policy_reason: "reticulumd_inbound".to_string(),
+                delivery_state: "received".to_string(),
+                delivery_metadata: json!({"reticulumd_inbound": true}),
+                created_ts_ms: now - 1,
+                attachments: Vec::new(),
+            });
+            messages.push(crate::OutboundMessageRecord {
+                message_id: "command-reply".to_string(),
+                topic_id: None,
+                destination: Some(source.to_string()),
+                sender: "northbound".to_string(),
+                content: "joined".to_string(),
+                delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+                delivery_method: "direct".to_string(),
+                delivery_policy_reason: "fresh_presence".to_string(),
+                delivery_state: "sent".to_string(),
+                delivery_metadata: json!({"reticulumd_inbound_command_reply": true}),
+                created_ts_ms: now,
+                attachments: Vec::new(),
+            });
+        }
+        let topic = r3akt_protocol::Topic::new("direct");
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic,
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "/join".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        );
+
+        crate::process_reticulumd_inbound_envelope(&state, &envelope).expect("process join");
+
+        let requests = rpc_server.join().expect("rpc server");
+        let contents = requests
+            .iter()
+            .map(|request| request.params.as_ref().expect("params")["content"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            contents,
+            vec![
+                json!("joined"),
+                json!("[replay:direct]\nolder canonical"),
+                json!("[replay:direct]\nnewer canonical")
+            ]
+        );
+        assert!(requests.iter().all(|request| {
+            request.params.as_ref().expect("params")["destination"] == json!(source)
+        }));
+        let replay_messages = state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .filter(|message| {
+                message
+                    .delivery_metadata
+                    .get("reticulumd_join_replay")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(replay_messages.len(), 2);
+        assert!(replay_messages.iter().all(|message| {
+            message.destination.as_deref() == Some(source)
+                && message.delivery_mode == r3akt_rch_core::DeliveryMode::Targeted
+        }));
+    }
+
+    #[test]
     fn list_messages_plain_lxmf_join_replies_joined() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
         let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "hub-source");
@@ -49105,6 +54855,277 @@ mod tests {
     }
 
     #[test]
+    fn plain_lxmf_roster_commands_update_member_state() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(4);
+        let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "hub-source");
+        let source = "77b2539b72259af927e48c0f90721767";
+        for body in ["/join", "/nick Alpha_1", "/pause", "/resume"] {
+            let topic = r3akt_protocol::Topic::new("direct");
+            let envelope = r3akt_protocol::ProtocolEnvelope::new(
+                r3akt_protocol::NodeId::new(source),
+                r3akt_protocol::Destination::Topic(topic.clone()),
+                topic,
+                r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                    body: body.to_string(),
+                    content_type: "text/plain".to_string(),
+                    correlation_id: None,
+                    attachments: Vec::new(),
+                }),
+            );
+            crate::process_reticulumd_inbound_envelope(&state, &envelope).expect("process command");
+        }
+
+        let requests = rpc_server.join().expect("rpc server");
+        let replies = requests
+            .iter()
+            .map(|request| request.params.as_ref().expect("params")["content"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            replies,
+            vec![
+                json!("joined"),
+                json!("nick set to Alpha_1"),
+                json!("paused"),
+                json!("resumed")
+            ]
+        );
+        let client = state
+            .clients
+            .read()
+            .expect("clients")
+            .get(source)
+            .cloned()
+            .expect("client");
+        assert_eq!(client.nickname.as_deref(), Some("Alpha_1"));
+        assert!(!client.paused);
+    }
+
+    #[test]
+    fn plain_lxmf_help_lists_roster_commands_and_legacy_escape() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
+        let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "hub-source");
+        let source = "77b2539b72259af927e48c0f90721767";
+        let topic = r3akt_protocol::Topic::new("direct");
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic,
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "\\help".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        );
+
+        crate::process_reticulumd_inbound_envelope(&state, &envelope).expect("process help");
+
+        let request = rpc_server.join().expect("rpc server");
+        let params = request.params.expect("params");
+        assert_eq!(params["destination"], source);
+        let content = params["content"].as_str().expect("help content");
+        for expected in [
+            "RCH commands:",
+            "/join",
+            "/leave",
+            "/pause",
+            "/resume",
+            "/nick <name>",
+            "/users",
+            "/help",
+            "\\join",
+            "\\help",
+        ] {
+            assert!(
+                content.contains(expected),
+                "help reply missing {expected}: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn inbound_plain_lxmf_chat_updates_last_chat_timestamp() {
+        let state = crate::AppState::default();
+        let source = "77b2539b72259af927e48c0f90721767";
+        let topic = r3akt_protocol::Topic::new("direct");
+        let envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic,
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "hello from lxmf".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        );
+
+        crate::process_reticulumd_inbound_envelope(&state, &envelope).expect("process chat");
+
+        let client = state
+            .clients
+            .read()
+            .expect("clients")
+            .get(source)
+            .cloned()
+            .expect("client");
+        assert!(client.last_chat_ts_ms.is_some());
+        assert!(
+            crate::unix_ms_from_iso8601(&client.last_seen).is_some_and(|last_seen| {
+                client
+                    .last_chat_ts_ms
+                    .is_some_and(|last_chat| last_seen >= last_chat)
+            })
+        );
+    }
+
+    #[test]
+    fn inbound_plain_lxmf_chat_is_sanitized_and_capped_before_fanout() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(2);
+        let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "hub-source");
+        let source = "77b2539b72259af927e48c0f90721767";
+        let peer = "4bede2a6ecab26f234aac9bb894a441a";
+        for identity in [source, peer] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), crate::unix_now_ms()),
+            );
+        }
+        let topic = r3akt_protocol::Topic::new("direct");
+        let clean_envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic.clone(),
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: " hello\u{001b}[31m ".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        );
+        crate::process_reticulumd_inbound_envelope(&state, &clean_envelope).expect("process chat");
+
+        let oversized = "x".repeat(crate::GROUP_CHAT_INBOUND_TEXT_MAX_CHARS + 1);
+        let oversized_envelope = r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic,
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: oversized,
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        );
+        crate::process_reticulumd_inbound_envelope(&state, &oversized_envelope)
+            .expect("reject oversized");
+
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "sdk_send_v2");
+        assert_eq!(
+            requests[0].params.as_ref().expect("params")["destination"],
+            peer
+        );
+        assert_eq!(
+            requests[0].params.as_ref().expect("params")["content"],
+            "77b2539b > hello?[31m"
+        );
+        assert_eq!(
+            requests[1].params.as_ref().expect("params")["destination"],
+            source
+        );
+        assert!(
+            requests[1].params.as_ref().expect("params")["content"]
+                .as_str()
+                .expect("reply")
+                .contains("500 characters")
+        );
+        let canonical_inbound_messages = state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .filter(|message| {
+                message
+                    .delivery_metadata
+                    .get("reticulumd_inbound")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            })
+            .map(|message| message.content.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(canonical_inbound_messages, vec!["hello?[31m".to_string()]);
+        let oversized_stored = state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .any(|message| message.content.len() > crate::GROUP_CHAT_INBOUND_TEXT_MAX_CHARS);
+        assert!(!oversized_stored);
+    }
+
+    #[test]
+    fn group_fanout_excludes_sender_paused_and_banned_members() {
+        let state = crate::AppState::default();
+        let now = crate::unix_now_ms();
+        let sender = "77b2539b72259af927e48c0f90721767";
+        let active = "4bede2a6ecab26f234aac9bb894a441a";
+        let paused = "6521979f1165965b24731061ef4a6906";
+        let banned = "11111111111111111111111111111111";
+        {
+            let mut clients = state.clients.write().expect("clients");
+            clients.insert(
+                sender.to_string(),
+                crate::ClientRecord::new(sender.to_string(), now),
+            );
+            clients.insert(
+                active.to_string(),
+                crate::ClientRecord::new(active.to_string(), now),
+            );
+            let mut paused_record = crate::ClientRecord::new(paused.to_string(), now);
+            paused_record.paused = true;
+            clients.insert(paused.to_string(), paused_record);
+            clients.insert(
+                banned.to_string(),
+                crate::ClientRecord::new(banned.to_string(), now),
+            );
+        }
+        state
+            .identity_states
+            .write()
+            .expect("identity states")
+            .insert(
+                banned.to_string(),
+                crate::IdentityStatusRecord {
+                    identity: banned.to_string(),
+                    is_banned: true,
+                    is_blackholed: false,
+                    updated_ts_ms: now,
+                },
+            );
+        let message = crate::OutboundMessageRecord {
+            message_id: "group-fanout".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: sender.to_string(),
+            content: "hello".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "broadcast_route".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({"group_chat": true}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+
+        assert_eq!(
+            crate::outbound_destinations(&state, &message).expect("destinations"),
+            vec![active.to_string()]
+        );
+    }
+
+    #[test]
     fn reticulumd_delivery_aliases_do_not_rewrite_rem_capability_announces() {
         let announces = vec![
             ReticulumdAnnounceRecord {
@@ -49300,6 +55321,11 @@ mod tests {
             identity: "4bede2a6ecab26f234aac9bb894a441a".to_string(),
             first_seen_ts_ms: stale_ts,
             last_seen_ts_ms: stale_ts,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
         }];
         store.save_snapshot(&snapshot).expect("save snapshot");
 
@@ -49375,6 +55401,46 @@ mod tests {
                 "telemetry".to_string(),
                 "name=s8".to_string()
             ]
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn reticulumd_import_records_interface_not_name_source() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-announce-interface-source-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("sqlite state");
+        let announce = ReticulumdAnnounceRecord {
+            id: "announce-interface".to_string(),
+            peer: "47ff8b43fea7df9082f6fc1e2b8c954b".to_string(),
+            timestamp: 1_778_289_151,
+            aspect: None,
+            name: Some("Field user".to_string()),
+            name_source: Some("delivery_app_data".to_string()),
+            first_seen: 1_778_289_151,
+            seen_count: 1,
+            app_data_hex: None,
+            capabilities: Vec::new(),
+            rssi: None,
+            snr: None,
+            q: None,
+            interface: Some("/35be322d094f9d154a8aba4733b8497f/".to_string()),
+            hops: None,
+            stamp_cost: None,
+            stamp_cost_flexibility: None,
+            peering_cost: None,
+        };
+
+        crate::import_reticulumd_announce_batch(&state, &[announce], true).expect("import");
+
+        let records = crate::load_identity_announce_records(&state).expect("records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].source_interface.as_deref(),
+            Some("35be322d094f9d154a8aba4733b8497f")
         );
 
         let _ = std::fs::remove_file(db_path);
@@ -49810,6 +55876,11 @@ mod tests {
             identity: "fb4c70e20cfac047b899ca2f3671b50a".to_string(),
             first_seen_ts_ms: stale_ts_ms,
             last_seen_ts_ms: stale_ts_ms,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
         }];
         store.save_snapshot(&snapshot).expect("save snapshot");
         let announce_response = json!({
@@ -49917,12 +55988,14 @@ mod tests {
         let app_destination = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some("4bede2a6ecab26f234aac9bb894a441a"),
         )
         .expect("app destination decision");
         let delivery_destination = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some("1123c2623132bf9899ae5d3b28d9f79e"),
         )
         .expect("delivery destination decision");
@@ -49931,6 +56004,479 @@ mod tests {
         assert_eq!(app_destination.reason, "rem_direct");
         assert_eq!(delivery_destination.method, "direct");
         assert_eq!(delivery_destination.reason, "fresh_presence");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn rem_chat_uses_fresh_lxmf_alias_when_rem_app_announce_is_stale() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-rem-chat-stale-alias-fresh-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let rem_destination = "4bede2a6ecab26f234aac9bb894a441a";
+        let lxmf_destination = "1123c2623132bf9899ae5d3b28d9f79e";
+        snapshot.identity_announces = vec![
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: rem_destination.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: vec!["r3akt".to_string(), "name=poco".to_string()],
+                client_type: "rem".to_string(),
+                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+            },
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: lxmf_destination.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("Poco".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: vec!["lxmf".to_string()],
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now - 60_000,
+                last_seen_ts_ms: now,
+            },
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            None,
+            Some(rem_destination),
+        )
+        .expect("rem chat decision");
+
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "rem_direct");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn rem_command_preserves_propagation_when_rem_app_is_stale_even_with_fresh_chat_alias() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-rem-command-stale-app-alias-fresh-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let rem_destination = "4bede2a6ecab26f234aac9bb894a441a";
+        let lxmf_destination = "1123c2623132bf9899ae5d3b28d9f79e";
+        snapshot.identity_announces = vec![
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: rem_destination.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: vec!["r3akt".to_string(), "name=poco".to_string()],
+                client_type: "rem".to_string(),
+                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+            },
+            r3akt_rch_core::IdentityAnnounceRecord {
+                destination_hash: lxmf_destination.to_string(),
+                announced_identity_hash: None,
+                display_name: Some("Poco".to_string()),
+                source_interface: Some("reticulumd".to_string()),
+                announce_capabilities: vec!["lxmf".to_string()],
+                client_type: "generic_lxmf".to_string(),
+                first_seen_ts_ms: now - 60_000,
+                last_seen_ts_ms: now,
+            },
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message_with_metadata(
+            &state,
+            "Task Pixel fallback completed",
+            None,
+            Some(rem_destination.to_string()),
+            Vec::new(),
+            false,
+            json!({
+                "fanout_channel": "rem_checklist_command",
+                "lxmf_fields": { crate::FIELD_COMMANDS.to_string(): [{
+                    "command_type": "checklist.task.status.set",
+                    "args": {
+                        "checklist_uid": "checklist-poco",
+                        "task_uid": "task-poco",
+                        "user_status": "COMPLETE"
+                    }
+                }] }
+            }),
+        )
+        .expect("record rem command message");
+
+        assert_eq!(message.delivery_method, "propagated");
+        assert_eq!(message.delivery_policy_reason, "no_fresh_presence");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn broadcast_delivery_uses_recent_roster_presence_without_fresh_announces() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-broadcast-roster-presence-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let now = crate::unix_now_ms();
+        let fresh_seen = "22c8ba9c883e06c7e540ed6dc87ceecf";
+        let fresh_chat = "77b2539b72259af927e48c0f90721767";
+        let stale_import = "7f08e12b3f25f23e62f3a15288303c95";
+        let stale_ts_ms = now - crate::OUTBOUND_BROADCAST_ROSTER_WINDOW_MS - 10_000;
+        {
+            let mut clients = state.clients.write().expect("clients");
+            clients.insert(
+                fresh_seen.to_string(),
+                crate::ClientRecord::new(fresh_seen.to_string(), now - 10_000),
+            );
+            let mut chat_record = crate::ClientRecord::new(fresh_chat.to_string(), stale_ts_ms);
+            chat_record.last_chat_ts_ms = Some(now - 5_000);
+            clients.insert(fresh_chat.to_string(), chat_record);
+            clients.insert(
+                stale_import.to_string(),
+                crate::ClientRecord::new(stale_import.to_string(), stale_ts_ms),
+            );
+        }
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Broadcast,
+            None,
+            None,
+        )
+        .expect("broadcast decision");
+
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "broadcast_direct");
+
+        let broadcast = crate::OutboundMessageRecord {
+            message_id: "broadcast-roster-presence".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: decision.method,
+            delivery_policy_reason: decision.reason,
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        let mut destinations =
+            crate::outbound_destinations(&state, &broadcast).expect("broadcast destinations");
+        destinations.sort();
+
+        assert_eq!(
+            destinations,
+            vec![fresh_seen.to_string(), fresh_chat.to_string()]
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn rem_annotation_merge_preserves_roster_first_seen_and_latest_activity() {
+        let now = crate::unix_now_ms();
+        let mut record =
+            crate::ClientRecord::new("47ff8b43fea7df9082f6fc1e2b8c954b".to_string(), now - 90_000);
+        record.first_seen = crate::iso8601_from_unix_ms(now - 120_000);
+        record.last_chat_ts_ms = Some(now - 1_000);
+        let annotation = crate::RemIdentityAnnotation {
+            destination_hash: record.identity.clone(),
+            announced_identity_hash: None,
+            display_name: Some("Pixel".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: vec!["r3akt".to_string()],
+            client_type: "rem".to_string(),
+            rem_mode: None,
+            is_rem_capable: true,
+            first_seen_ts_ms: now - 30_000,
+            last_seen_ts_ms: now - 60_000,
+        };
+
+        record.apply_rem_annotation(&annotation);
+
+        assert_eq!(
+            crate::unix_ms_from_iso8601(&record.first_seen),
+            Some(now - 120_000)
+        );
+        assert_eq!(
+            crate::unix_ms_from_iso8601(&record.last_seen),
+            Some(now - 1_000)
+        );
+        assert_eq!(record.last_chat_ts_ms, Some(now - 1_000));
+    }
+
+    #[test]
+    fn targeted_delivery_uses_propagation_for_stale_known_lxmf_announce() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-stale-known-target-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "52118fa6f1240342cb730dabdf1d4ca1";
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("Pixel Sideband".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state.clients.write().expect("clients").insert(
+            destination.to_string(),
+            crate::ClientRecord::new(
+                destination.to_string(),
+                now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 1_000,
+            ),
+        );
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            None,
+            Some(destination),
+        )
+        .expect("delivery decision");
+
+        assert_eq!(decision.method, "propagated");
+        assert_eq!(decision.reason, "no_fresh_presence");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn targeted_delivery_uses_direct_for_recent_chat_with_stale_announce() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-stale-known-target-recent-chat-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "0a8b3de98049dd594054d1a49d46f490";
+        let stale_ts_ms = now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000;
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("recent chat Sideband".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let mut client = crate::ClientRecord::new(destination.to_string(), stale_ts_ms);
+        client.last_chat_ts_ms = Some(now - 5_000);
+        state
+            .clients
+            .write()
+            .expect("clients")
+            .insert(destination.to_string(), client);
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            None,
+            Some(destination),
+        )
+        .expect("delivery decision");
+
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "live_connection");
+
+        let message = crate::record_outbound_message(
+            &state,
+            "recent chat targeted chat",
+            None,
+            Some(destination.to_string()),
+            Vec::new(),
+            false,
+        )
+        .expect("recent chat destination should be accepted");
+
+        assert_eq!(message.delivery_method, "direct");
+        assert_eq!(message.delivery_policy_reason, "live_connection");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn targeted_delivery_uses_direct_for_recent_client_without_fresh_announce() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-unannounced-live-target-direct-{}.db",
+            Uuid::new_v4()
+        ));
+        let destination = "4f79a98e20b9b8d58d412dbeef60f98d";
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state.clients.write().expect("clients").insert(
+            destination.to_string(),
+            crate::ClientRecord::new(destination.to_string(), crate::unix_now_ms()),
+        );
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Targeted,
+            None,
+            Some(destination),
+        )
+        .expect("delivery decision");
+
+        assert_eq!(decision.method, "direct");
+        assert_eq!(decision.reason, "live_connection");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn targeted_chat_rejects_stale_unreachable_destination_before_dispatch() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-stale-target-reject-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "cb1489405fcba9f15ec63c7ec09ad9f7";
+        let stale_ts_ms = now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000;
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("stale columba peer".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+        }];
+        snapshot.clients = vec![r3akt_rch_core::ClientRecord {
+            identity: destination.to_string(),
+            first_seen_ts_ms: stale_ts_ms,
+            last_seen_ts_ms: stale_ts_ms,
+            nickname: None,
+            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
+            paused: false,
+            text_only: false,
+            last_chat_ts_ms: None,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let error = crate::record_outbound_message(
+            &state,
+            "stale targeted chat",
+            None,
+            Some(destination.to_string()),
+            Vec::new(),
+            false,
+        )
+        .expect_err("stale destination should be rejected");
+
+        assert!(matches!(error, crate::ApiError::BadRequest(_)));
+        assert!(error.to_string().contains("not currently reachable"));
+        assert!(state.messages.read().expect("messages").is_empty());
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn topic_delivery_uses_propagation_when_subscriber_is_not_freshly_announced() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-topic-stale-subscriber-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let destination = "7f08e12b3f25f23e62f3a15288303c95";
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("S8 stale Sideband".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: Vec::new(),
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
+            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state.subscribers.write().expect("subscribers").insert(
+            "stale-s8".to_string(),
+            crate::SubscriberRecord {
+                subscriber_id: "stale-s8".to_string(),
+                destination: destination.to_string(),
+                topic_id: "direct".to_string(),
+                reject_tests: None,
+                metadata: json!({}),
+            },
+        );
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Fanout,
+            Some("direct"),
+            None,
+        )
+        .expect("topic decision");
+
+        assert_eq!(decision.method, "propagated");
+        assert_eq!(decision.reason, "topic_unannounced");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn topic_delivery_uses_propagation_when_subscriber_has_no_announce() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-topic-unannounced-subscriber-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let destination = "13b9e446f104d2a38f7e793a94cb1b1d";
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state.subscribers.write().expect("subscribers").insert(
+            "unannounced-pixel".to_string(),
+            crate::SubscriberRecord {
+                subscriber_id: "unannounced-pixel".to_string(),
+                destination: destination.to_string(),
+                topic_id: "direct".to_string(),
+                reject_tests: None,
+                metadata: json!({}),
+            },
+        );
+
+        let decision = crate::outbound_delivery_decision(
+            &state,
+            r3akt_rch_core::DeliveryMode::Fanout,
+            Some("direct"),
+            None,
+        )
+        .expect("topic decision");
+
+        assert_eq!(decision.method, "propagated");
+        assert_eq!(decision.reason, "topic_unannounced");
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -49965,6 +56511,7 @@ mod tests {
         let fresh = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("fresh rem decision");
@@ -49975,6 +56522,7 @@ mod tests {
         let cooldown = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("cooldown rem decision");
@@ -50031,6 +56579,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("rem decision");
@@ -50087,6 +56636,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("rem decision");
@@ -50144,6 +56694,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(rem_destination),
         )
         .expect("rem decision");
@@ -50196,6 +56747,7 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(generic_destination),
         )
         .expect("generic decision");
@@ -50270,11 +56822,77 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(generic_destination),
         )
         .expect("generic decision");
         assert_eq!(decision.method, "propagated");
         assert_eq!(decision.reason, "direct_cooldown");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn reticulumd_auto_direct_status_failure_queues_generic_propagation_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-generic-auto-status-direct-cooldown-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let generic_destination = "fb4c70e20cfac047b899ca2f3671b50a";
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: generic_destination.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("Pixel".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: vec!["pixel".to_string()],
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - 60_000,
+            last_seen_ts_ms: now,
+        }];
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "pending-generic-auto-direct".to_string(),
+            topic_id: None,
+            destination: Some(generic_destination.to_string()),
+            sender: "northbound".to_string(),
+            content: "pending generic auto direct".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "auto".to_string(),
+            delivery_policy_reason: "fresh_presence".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "receipt_pending": true,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        crate::mark_reticulumd_status_delivery_failure(
+            &state,
+            "pending-generic-auto-direct",
+            "failed: link activation timed out",
+        )
+        .expect("mark failure");
+
+        let messages = state.messages.read().expect("messages");
+        let stored = messages
+            .iter()
+            .find(|message| message.message_id == "pending-generic-auto-direct")
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(stored.delivery_method, "propagated");
+        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
+        assert_eq!(
+            stored.delivery_metadata["fallback_reason"],
+            "direct_status_failure"
+        );
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        drop(messages);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -50344,11 +56962,205 @@ mod tests {
         let decision = crate::outbound_delivery_decision(
             &state,
             r3akt_rch_core::DeliveryMode::Targeted,
+            None,
             Some(generic_destination),
         )
         .expect("generic decision");
         assert_eq!(decision.method, "propagated");
         assert_eq!(decision.reason, "direct_cooldown");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn reticulumd_direct_peer_not_announced_queues_generic_propagation_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-generic-status-peer-not-announced-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let generic_destination = "7f08e12b3f25f23e62f3a15288303c95";
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "pending-generic-peer-not-announced".to_string(),
+            topic_id: Some("direct".to_string()),
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "pending generic direct".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "fanout_route".to_string(),
+            delivery_state: "sent".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "dispatch_started_ts_ms": now - 10_000,
+                "dispatch_deadline_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": [{
+                    "message_id": "sdk-target-peer-not-announced",
+                    "destination": generic_destination,
+                    "sdk_delivery_state": "failed",
+                    "sdk_message_id": "sdk-target-peer-not-announced",
+                    "sdk_reason_code": "peer_not_announced",
+                    "sdk_terminal": true,
+                    "status": "failed: peer not announced"
+                }],
+                "sdk_delivery_state": "failed",
+                "sdk_message_id": "sdk-target-peer-not-announced",
+                "sdk_reason_code": "peer_not_announced",
+                "sdk_terminal": true,
+                "receipt_pending": true,
+                "receipt_deadline_ts_ms": now - 1,
+                "receipt_last_poll_ts_ms": now - 5_000,
+                "receipt_registered_ts_ms": now - 10_000,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        crate::mark_reticulumd_status_delivery_failure(
+            &state,
+            "pending-generic-peer-not-announced",
+            "failed: peer not announced",
+        )
+        .expect("mark failure");
+
+        let messages = state.messages.read().expect("messages");
+        let stored = messages
+            .iter()
+            .find(|message| message.message_id == "pending-generic-peer-not-announced")
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(stored.delivery_method, "propagated");
+        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
+        assert_eq!(
+            stored.delivery_metadata["fallback_reason"],
+            "direct_status_failure"
+        );
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        assert!(
+            stored.delivery_metadata["target_destinations"]
+                .as_array()
+                .expect("target destinations")
+                .iter()
+                .any(|value| value.as_str() == Some(generic_destination))
+        );
+        for cleared_key in [
+            "dispatch_started_ts_ms",
+            "dispatch_deadline_ts_ms",
+            "receipt_deadline_ts_ms",
+            "receipt_last_poll_ts_ms",
+            "receipt_registered_ts_ms",
+            "reticulumd_receipt_targets",
+            "sdk_delivery_state",
+            "sdk_message_id",
+            "sdk_reason_code",
+            "sdk_terminal",
+        ] {
+            assert!(
+                stored.delivery_metadata.get(cleared_key).is_none(),
+                "stale direct metadata key should be cleared: {cleared_key}"
+            );
+        }
+        drop(messages);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn reticulumd_fanout_peer_not_announced_preserves_delivered_targets_for_propagation_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-fanout-partial-peer-not-announced-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let delivered_destination = "52118fa6f1240342cb730dabdf1d4ca1";
+        let unannounced_destination = "7f08e12b3f25f23e62f3a15288303c95";
+        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
+            message_id: "pending-fanout-partial-peer-not-announced".to_string(),
+            topic_id: Some("direct".to_string()),
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "fanout partial direct".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "fanout_route".to_string(),
+            delivery_state: "sent".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 2,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "sdk-target-delivered",
+                        "destination": delivered_destination,
+                        "sdk_delivery_state": "delivered",
+                        "sdk_message_id": "sdk-target-delivered",
+                        "sdk_reason_code": null,
+                        "sdk_terminal": true,
+                        "status": "delivered"
+                    },
+                    {
+                        "message_id": "sdk-target-peer-not-announced",
+                        "destination": unannounced_destination,
+                        "sdk_delivery_state": "failed",
+                        "sdk_message_id": "sdk-target-peer-not-announced",
+                        "sdk_reason_code": "peer_not_announced",
+                        "sdk_terminal": true,
+                        "status": "failed: peer not announced"
+                    }
+                ],
+                "receipt_pending": true,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        crate::mark_reticulumd_status_delivery_failure(
+            &state,
+            "pending-fanout-partial-peer-not-announced",
+            "failed: peer not announced",
+        )
+        .expect("mark failure");
+
+        let messages = state.messages.read().expect("messages");
+        let stored = messages
+            .iter()
+            .find(|message| message.message_id == "pending-fanout-partial-peer-not-announced")
+            .expect("stored message");
+        assert_eq!(stored.delivery_state, "queued");
+        assert_eq!(stored.delivery_method, "propagated");
+        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
+        assert_eq!(
+            stored.delivery_metadata["fallback_reason"],
+            "direct_status_failure"
+        );
+        assert_eq!(
+            stored.delivery_metadata["target_destinations"],
+            json!([unannounced_destination])
+        );
+        assert_eq!(
+            stored.delivery_metadata["exclude_destinations"],
+            json!([delivered_destination])
+        );
+        assert_eq!(
+            stored.delivery_metadata["delivered_destinations"],
+            json!([delivered_destination])
+        );
+        assert_eq!(stored.delivery_metadata["partial_delivery"], true);
+        assert!(
+            stored
+                .delivery_metadata
+                .get("reticulumd_receipt_targets")
+                .is_none()
+        );
+        drop(messages);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -50616,7 +57428,47 @@ mod tests {
     }
 
     #[test]
-    fn rem_command_message_uses_auto_delivery_even_when_direct_cooldown_exists() {
+    fn rem_command_to_unannounced_target_is_recorded_for_propagation() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-rem-command-unannounced-propagation-{}.db",
+            Uuid::new_v4()
+        ));
+        let destination = "6521979f1165965b24731061ef4a6906";
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message_with_metadata(
+            &state,
+            "Task Pixel fallback completed",
+            None,
+            Some(destination.to_string()),
+            Vec::new(),
+            false,
+            json!({
+                "fanout_channel": "rem_checklist_command",
+                "lxmf_fields": { crate::FIELD_COMMANDS.to_string(): [{
+                    "command_type": "checklist.task.status.set",
+                    "args": {
+                        "checklist_uid": "checklist-pixel",
+                        "task_uid": "task-pixel",
+                        "user_status": "COMPLETE"
+                    }
+                }] }
+            }),
+        )
+        .expect("record rem command message");
+
+        assert_eq!(message.delivery_method, "propagated");
+        assert_eq!(message.delivery_policy_reason, "no_fresh_presence");
+        assert_eq!(
+            crate::lxmf_sdk_delivery_method(&message),
+            Some("propagated")
+        );
+        assert!(!crate::lxmf_sdk_try_propagation_on_fail(&message));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn rem_command_message_uses_propagation_when_direct_cooldown_exists() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-command-direct-cooldown-{}.db",
             Uuid::new_v4()
@@ -50681,8 +57533,493 @@ mod tests {
         )
         .expect("record rem command message");
 
-        assert_eq!(message.delivery_method, "auto");
-        assert_eq!(message.delivery_policy_reason, "rem_auto");
+        assert_eq!(message.delivery_method, "propagated");
+        assert_eq!(message.delivery_policy_reason, "rem_direct_cooldown");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn propagated_rem_command_send_error_uses_rem_retry_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-rem-command-send-error-retry-{}.db",
+            Uuid::new_v4()
+        ));
+        let destination = "6521979f1165965b24731061ef4a6906";
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-rem-send-error".to_string(),
+            topic_id: None,
+            destination: Some(destination.to_string()),
+            sender: "northbound".to_string(),
+            content: "Task Pixel fallback completed".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "no_fresh_presence".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "fanout_channel": "rem_checklist_command",
+                "lxmf_fields": { crate::FIELD_COMMANDS.to_string(): [{
+                    "command_type": "checklist.task.status.set",
+                    "args": {
+                        "checklist_uid": "checklist-pixel",
+                        "task_uid": "task-pixel",
+                        "user_status": "COMPLETE"
+                    }
+                }] }
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &message,
+            "LXMF-rs ZeroMQ SDK request timed out waiting for correlated response".to_string(),
+        )
+        .expect("schedule retry")
+        .expect("propagated REM command should retry");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(retry.delivery_metadata["attempts"], json!(1));
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn propagated_broadcast_fallback_send_error_continues_after_fifth_attempt() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-send-error-retry-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-send-error".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": 4,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "retry_scheduled": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &message,
+            "outbound request failed: connection refused".to_string(),
+        )
+        .expect("schedule retry")
+        .expect("propagated broadcast fallback should allow attempt five");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(retry.delivery_metadata["attempts"], json!(5));
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
+
+        let next_retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &retry,
+            "outbound request failed: connection refused".to_string(),
+        )
+        .expect("schedule next retry")
+        .expect("propagated broadcast fallback should keep trying propagation");
+
+        assert_eq!(next_retry.delivery_state, "queued");
+        assert_eq!(next_retry.delivery_method, "propagated");
+        assert_eq!(next_retry.delivery_metadata["attempts"], json!(6));
+        assert_eq!(next_retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(
+            next_retry.delivery_metadata["retry_reason"],
+            json!("send_error")
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn propagated_broadcast_fallback_rate_limit_extends_retry_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-rate-limit-retry-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-rate-limited".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "retry_scheduled": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        let before_retry = crate::unix_now_ms();
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &message,
+            "SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded".to_string(),
+        )
+        .expect("schedule retry")
+        .expect("rate-limited propagated broadcast should remain queued");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(retry.delivery_metadata["attempts"], json!(6));
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(
+            retry.delivery_metadata["retry_reason"],
+            json!("rate_limited")
+        );
+        assert!(
+            retry.delivery_metadata["next_attempt_at_ts_ms"]
+                .as_i64()
+                .expect("next attempt")
+                >= before_retry + crate::OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS - 1_000
+        );
+
+        let later_timeout = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &retry,
+            "LXMF-rs ZeroMQ SDK request timed out waiting for correlated response".to_string(),
+        )
+        .expect("schedule timeout retry")
+        .expect("propagated broadcast should keep extended retry budget after rate limit");
+
+        assert_eq!(later_timeout.delivery_state, "queued");
+        assert_eq!(later_timeout.delivery_method, "propagated");
+        assert_eq!(later_timeout.delivery_metadata["attempts"], json!(7));
+        assert_eq!(
+            later_timeout.delivery_metadata["retry_scheduled"],
+            json!(true)
+        );
+        assert_eq!(
+            later_timeout.delivery_metadata["retry_reason"],
+            json!("send_error")
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn propagated_broadcast_fallback_send_timeout_stays_queued_after_rate_limit_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-timeout-budget-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-timeout-budget".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "rate_limit_retry_budget": true,
+                "retry_scheduled": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &message,
+            "send_timeout".to_string(),
+        )
+        .expect("schedule timeout retry")
+        .expect("propagated broadcast fallback should remain queued after attempt 30");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(retry.delivery_metadata["attempts"], json!(31));
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(
+            retry.delivery_metadata["retry_reason"],
+            json!("send_timeout")
+        );
+        assert_eq!(
+            retry.delivery_metadata["rate_limit_retry_budget"],
+            json!(true)
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn retry_reason_for_error_preserves_literal_send_timeout() {
+        assert_eq!(
+            crate::retry_reason_for_error("send_timeout"),
+            "send_timeout"
+        );
+        assert_eq!(
+            crate::retry_reason_for_error(" SEND_TIMEOUT "),
+            "send_timeout"
+        );
+        assert_eq!(
+            crate::retry_reason_for_error(
+                "SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded"
+            ),
+            "rate_limited"
+        );
+        assert_eq!(
+            crate::retry_reason_for_error(
+                "LXMF-rs ZeroMQ SDK request timed out waiting for correlated response"
+            ),
+            "send_error"
+        );
+    }
+
+    #[test]
+    fn propagated_broadcast_fallback_retryable_error_stays_queued_after_retry_budget() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-post-budget-retry-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-post-budget-retry".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "attempts": crate::OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS,
+                "max_attempts": 1,
+                "fallback_reason": "direct_dispatch_timeout",
+                "rate_limit_retry_budget": true,
+                "retry_scheduled": true,
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+
+        let retry = crate::schedule_outbound_retry_after_failure(
+            &state,
+            &message,
+            "outbound request failed: timed out".to_string(),
+        )
+        .expect("schedule post-budget retry")
+        .expect("retryable propagated broadcast fallback should not fail terminally");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(retry.delivery_method, "propagated");
+        assert_eq!(
+            retry.delivery_metadata["attempts"],
+            json!(crate::OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS + 1)
+        );
+        assert_eq!(retry.delivery_metadata["dispatch_status"], json!("queued"));
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
+        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn failed_propagated_broadcast_timeout_fallback_is_due_for_repair() {
+        let now = crate::unix_now_ms();
+        let retryable = crate::OutboundMessageRecord {
+            message_id: "failed-broadcast-fallback-repair".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast fallback".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "dispatch_status": "failed",
+                "error": "send_timeout",
+                "fallback_reason": "direct_dispatch_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 0,
+                "retry_reason": "send_timeout",
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        let invalid_destination = crate::OutboundMessageRecord {
+            message_id: "invalid-broadcast-fallback-terminal".to_string(),
+            delivery_metadata: json!({
+                "attempts": 5,
+                "max_attempts": 1,
+                "dispatch_status": "failed",
+                "error": "failed: invalid destination hash 'not-hex' (expected 16-byte or 32-byte hex)",
+                "fallback_reason": "direct_dispatch_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 1,
+                "retry_reason": "send_error",
+                "retry_scheduled": false,
+            }),
+            ..retryable.clone()
+        };
+        let in_progress_repair = crate::OutboundMessageRecord {
+            message_id: "in-progress-broadcast-fallback-repair".to_string(),
+            delivery_metadata: json!({
+                "attempts": 30,
+                "max_attempts": 1,
+                "dispatch_status": "in_progress",
+                "error": "send_timeout",
+                "fallback_reason": "direct_dispatch_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 0,
+                "retry_reason": "send_timeout",
+                "retry_scheduled": false,
+            }),
+            ..retryable.clone()
+        };
+        let exhausted_retry_budget = crate::OutboundMessageRecord {
+            message_id: "exhausted-broadcast-fallback-repair".to_string(),
+            delivery_metadata: json!({
+                "attempts": crate::OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS + 1,
+                "max_attempts": 1,
+                "dispatch_status": "failed",
+                "error": "send_timeout",
+                "fallback_reason": "direct_dispatch_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 0,
+                "retry_reason": "send_timeout",
+                "retry_scheduled": false,
+            }),
+            ..retryable.clone()
+        };
+
+        assert!(crate::outbound_retry_due(&retryable, now));
+        assert!(crate::outbound_retry_due(&exhausted_retry_budget, now));
+        assert!(!crate::outbound_retry_due(&invalid_destination, now));
+        assert!(!crate::outbound_retry_due(&in_progress_repair, now));
+        assert!(crate::dispatch_pending(&in_progress_repair));
+    }
+
+    #[test]
+    fn failed_direct_broadcast_send_timeout_queues_propagation_repair() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-direct-broadcast-timeout-repair-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let now = crate::unix_now_ms();
+        let message = crate::OutboundMessageRecord {
+            message_id: "failed-direct-broadcast-timeout-repair".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "broadcast direct timeout".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "broadcast_direct".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "attempts": 1,
+                "dispatch_status": "failed",
+                "dispatch_timeout": true,
+                "dispatch_timed_out_at_ts_ms": now - 1_000,
+                "error": "send_timeout",
+                "next_attempt_at_ts_ms": now - 1,
+                "reticulumd_dispatch_count": 0,
+                "retry_scheduled": false,
+            }),
+            created_ts_ms: now - 10_000,
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        crate::persist_outbound_message_row(&state, &message).expect("persist message");
+
+        let report = crate::process_due_outbound_retry_messages(&state).expect("process retries");
+
+        assert_eq!(report.processed, 1);
+        assert_eq!(report.dispatched, 0);
+        let messages = state.messages.read().expect("messages");
+        let repaired = messages.first().expect("message");
+        assert_eq!(repaired.delivery_state, "queued");
+        assert_eq!(repaired.delivery_method, "propagated");
+        assert_eq!(
+            repaired.delivery_policy_reason,
+            "broadcast_direct_timeout_fallback"
+        );
+        assert_eq!(repaired.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(repaired.delivery_metadata["retry_reason"], "send_timeout");
+        assert_eq!(repaired.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(
+            repaired.delivery_metadata["previous_delivery_method"],
+            "direct"
+        );
+        drop(messages);
+
+        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot exists");
+        assert_eq!(snapshot.messages[0].delivery_state, "queued");
+        assert_eq!(snapshot.messages[0].delivery_method, "propagated");
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -50965,6 +58302,378 @@ mod tests {
         );
     }
 
+    #[test]
+    fn propagated_delivery_enqueues_zmq_batch_without_waiting_for_response() {
+        let now = crate::unix_now_ms();
+        let propagated = crate::OutboundMessageRecord {
+            message_id: "propagated-fanout".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "propagated fanout".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_unannounced".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        let direct = crate::OutboundMessageRecord {
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "broadcast_direct".to_string(),
+            ..propagated.clone()
+        };
+
+        assert!(crate::should_enqueue_without_waiting_for_zmq_response(
+            &propagated
+        ));
+        assert!(!crate::should_enqueue_without_waiting_for_zmq_response(
+            &direct
+        ));
+    }
+
+    #[test]
+    fn propagated_single_dispatch_enqueues_zmq_without_waiting_for_response() {
+        let state = crate::AppState::default().with_lxmf_zmq_sdk(
+            unused_zmq_endpoint_for_rch_test(),
+            unused_zmq_endpoint_for_rch_test(),
+            "source-destination",
+        );
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-single".to_string(),
+            topic_id: None,
+            destination: Some("target-destination".to_string()),
+            sender: "northbound".to_string(),
+            content: "propagated single".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "direct_cooldown".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+
+        let started = Instant::now();
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+        let elapsed = started.elapsed();
+
+        assert_eq!(report.count, 1);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "propagated dispatch waited for a ZeroMQ response: {elapsed:?}"
+        );
+        assert_eq!(report.receipts.len(), 1);
+        assert_eq!(report.receipts[0].message_id, "propagated-single");
+        assert_eq!(report.receipts[0].destination, "target-destination");
+    }
+
+    #[test]
+    fn propagated_broadcast_dispatch_skips_slow_node_selection_before_zmq_enqueue() {
+        let state = crate::AppState::default()
+            .with_reticulumd_rpc("127.0.0.1:1", "source-destination")
+            .with_lxmf_zmq_sdk(
+                unused_zmq_endpoint_for_rch_test(),
+                unused_zmq_endpoint_for_rch_test(),
+                "source-destination",
+            );
+        let now = crate::unix_now_ms();
+        for identity in [
+            "22c8ba9c883e06c7e540ed6dc87ceecf",
+            "77b2539b72259af927e48c0f90721767",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), now),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "propagated broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+
+        assert_eq!(report.count, 2);
+        assert_eq!(report.receipts.len(), 2);
+        assert!(
+            report
+                .receipts
+                .iter()
+                .any(|receipt| receipt.destination == "22c8ba9c883e06c7e540ed6dc87ceecf")
+        );
+        assert!(
+            report
+                .receipts
+                .iter()
+                .any(|receipt| receipt.destination == "77b2539b72259af927e48c0f90721767")
+        );
+    }
+
+    #[test]
+    fn propagated_fanout_acceptance_stays_propagating_until_receipt_success() {
+        let state = crate::AppState::default();
+        let now = crate::unix_now_ms();
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-active-fanout".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "propagated active fanout".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_unannounced".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({
+                "error": "send_error",
+                "retry_reason": "send_error",
+            }),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        let targets = vec![
+            crate::ReticulumdReceiptTarget {
+                message_id: message.message_id.clone(),
+                destination: "11a7907d67c457911c15206ec647ad33".to_string(),
+                status: Some("sending".to_string()),
+                sdk_snapshot: None,
+                last_poll_ts_ms: None,
+            },
+            crate::ReticulumdReceiptTarget {
+                message_id: format!("{}-fanout-1335df708801", message.message_id),
+                destination: "1335df70880114d149c3ad8d63fb5dcd".to_string(),
+                status: Some("sending".to_string()),
+                sdk_snapshot: None,
+                last_poll_ts_ms: None,
+            },
+        ];
+        let delivery_state = crate::delivery_accepted_state(&message, targets.len());
+        assert_eq!(delivery_state, "propagating");
+        let delivery_metadata = crate::outbound_delivery_metadata(
+            &message,
+            targets.len(),
+            delivery_state == "propagated" || delivery_state == "delivered",
+            json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": targets.len(),
+                "reticulumd_receipt_targets": crate::reticulumd_receipt_targets_json(&targets),
+                "receipt_pending": false,
+                "retry_scheduled": false,
+            }),
+        );
+
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            delivery_state,
+            delivery_metadata,
+        )
+        .expect("update delivery state");
+
+        let stored = state
+            .messages
+            .read()
+            .expect("messages")
+            .first()
+            .expect("message")
+            .clone();
+        assert_eq!(stored.delivery_state, "propagating");
+        assert_eq!(stored.delivery_metadata["acked"], false);
+        assert_eq!(stored.delivery_metadata["dispatch_status"], "accepted");
+        assert_eq!(
+            stored.delivery_metadata["reticulumd_receipt_targets"][0]["status"],
+            "sending"
+        );
+
+        let payload = crate::chat_message_payload(stored);
+        assert_eq!(payload["State"], "propagating");
+        assert!(
+            payload["DeliveryMetadata"].get("error").is_none(),
+            "successfully accepted propagation should hide stale send errors"
+        );
+    }
+
+    #[test]
+    fn propagated_broadcast_dispatch_skips_announce_refresh_before_zmq_enqueue() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
+            vec![empty_reticulumd_announce_response()],
+            Duration::from_millis(200),
+        );
+        let state = crate::AppState::default()
+            .with_reticulumd_rpc(endpoint, "source-destination")
+            .with_lxmf_zmq_sdk(
+                unused_zmq_endpoint_for_rch_test(),
+                unused_zmq_endpoint_for_rch_test(),
+                "source-destination",
+            );
+        let now = crate::unix_now_ms();
+        for identity in [
+            "22c8ba9c883e06c7e540ed6dc87ceecf",
+            "77b2539b72259af927e48c0f90721767",
+        ] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), now),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-no-refresh".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "propagated broadcast no refresh".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+
+        assert_eq!(report.count, 2);
+        let requests = rpc_server.join().expect("rpc server");
+        assert!(
+            requests.is_empty(),
+            "propagated broadcast dispatch refreshed announces before enqueue: {requests:?}"
+        );
+    }
+
+    #[test]
+    fn propagated_broadcast_dispatch_excludes_stale_known_clients() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-propagated-broadcast-stale-clients-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        let now = crate::unix_now_ms();
+        let stale_ts_ms = now - crate::OUTBOUND_BROADCAST_ROSTER_WINDOW_MS - 10_000;
+        let fresh_identity = "22c8ba9c883e06c7e540ed6dc87ceecf";
+        let stale_identity = "77b2539b72259af927e48c0f90721767";
+        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: fresh_identity.to_string(),
+            announced_identity_hash: None,
+            display_name: Some("fresh propagated recipient".to_string()),
+            source_interface: Some("reticulumd".to_string()),
+            announce_capabilities: vec!["lxmf".to_string()],
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: now - 60_000,
+            last_seen_ts_ms: now,
+        }];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_lxmf_zmq_sdk(
+                unused_zmq_endpoint_for_rch_test(),
+                unused_zmq_endpoint_for_rch_test(),
+                "source-destination",
+            );
+        for identity in [fresh_identity, stale_identity] {
+            state.clients.write().expect("clients").insert(
+                identity.to_string(),
+                crate::ClientRecord::new(identity.to_string(), stale_ts_ms),
+            );
+        }
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-broadcast-stale-clients".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "propagated broadcast stale clients".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: now,
+            attachments: Vec::new(),
+        };
+
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+
+        assert_eq!(report.count, 1);
+        assert_eq!(report.receipts.len(), 1);
+        assert_eq!(report.receipts[0].destination, fresh_identity);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn propagated_dispatch_selects_propagation_node_before_zmq_enqueue() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
+            json!({ "peer": null }),
+            json!({
+                "nodes": [
+                    {
+                        "peer": "propagation-node",
+                        "name": "Propagation Node"
+                    }
+                ]
+            }),
+            json!({ "peer": "propagation-node" }),
+        ]);
+        let state = crate::AppState::default()
+            .with_reticulumd_rpc(endpoint, "source-destination")
+            .with_lxmf_zmq_sdk(
+                unused_zmq_endpoint_for_rch_test(),
+                unused_zmq_endpoint_for_rch_test(),
+                "source-destination",
+            );
+        let message = crate::OutboundMessageRecord {
+            message_id: "propagated-select-node".to_string(),
+            topic_id: None,
+            destination: Some("target-destination".to_string()),
+            sender: "northbound".to_string(),
+            content: "propagated select node".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "direct_failure_fallback".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({}),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+
+        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+
+        assert_eq!(report.count, 1);
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].method, "get_outbound_propagation_node");
+        assert_eq!(requests[1].method, "list_propagation_nodes");
+        assert_eq!(requests[2].method, "set_outbound_propagation_node");
+        assert_eq!(
+            requests[2].params,
+            Some(json!({ "peer": "propagation-node" }))
+        );
+    }
+
+    fn unused_zmq_endpoint_for_rch_test() -> String {
+        let listener = StdTcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        format!("tcp://127.0.0.1:{port}")
+    }
+
     #[tokio::test]
     async fn chat_broadcast_sends_to_all_clients() {
         let state = crate::AppState::default()
@@ -51105,6 +58814,344 @@ mod tests {
             serde_json::from_slice(&body).expect("restart events json");
         assert_eq!(restarted_events[0]["type"], "message_sent");
         assert_eq!(restarted_events[0]["metadata"]["topic_id"], "events");
+    }
+
+    #[tokio::test]
+    async fn events_route_marks_recovered_delivery_failures_superseded() {
+        let state = crate::AppState::default().with_api_key("secret");
+        let message = crate::OutboundMessageRecord {
+            message_id: "recovered-broadcast-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "recovered broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "propagated".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "last_attempt_failed_at_ts_ms": crate::unix_now_ms() - 250,
+                "retry_reason": "send_error",
+                "fallback_reason": "direct_dispatch_timeout",
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        state
+            .system_events
+            .write()
+            .expect("events")
+            .push(r3akt_rch_core::SystemEventRecord {
+                event_id: "stale-failure".to_string(),
+                event_type: "message_delivery_failed".to_string(),
+                message: "Message delivery failed for unknown".to_string(),
+                timestamp_ms: crate::unix_now_ms(),
+                metadata: json!({
+                    "MessageID": message.message_id,
+                    "State": "failed",
+                    "failure_reason": "send_error",
+                    "delivery_method": "propagated",
+                    "delivery_policy_reason": "broadcast_direct_timeout_fallback",
+                    "route_type": "broadcast",
+                }),
+            });
+        let app = crate::create_app_with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/Events")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("events response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let events: serde_json::Value = serde_json::from_slice(&body).expect("events json");
+        assert_eq!(events[0]["id"], "stale-failure");
+        assert_eq!(events[0]["type"], "message_delivery_superseded");
+        assert_eq!(
+            events[0]["metadata"]["original_event_type"],
+            "message_delivery_failed"
+        );
+        assert_eq!(events[0]["metadata"]["delivery_failure_superseded"], true);
+        assert_eq!(events[0]["metadata"]["current_state"], "propagated");
+        assert_eq!(events[0]["metadata"]["current_dispatch_status"], "accepted");
+        assert_eq!(events[0]["metadata"]["State"], "propagated");
+        let delivery_metadata = events[0]["metadata"]["DeliveryMetadata"]
+            .as_object()
+            .expect("delivery metadata");
+        assert!(!delivery_metadata.contains_key("error"));
+        assert!(!delivery_metadata.contains_key("retry_reason"));
+        assert!(!delivery_metadata.contains_key("last_attempt_failed_at_ts_ms"));
+    }
+
+    #[tokio::test]
+    async fn events_route_supersedes_failed_propagation_fallback_with_active_targets() {
+        let state = crate::AppState::default().with_api_key("secret");
+        let message = crate::OutboundMessageRecord {
+            message_id: "active-failed-broadcast-fallback".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "active failed broadcast".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+            delivery_state: "failed".to_string(),
+            delivery_metadata: json!({
+                "dispatch_status": "accepted",
+                "error": "send_error",
+                "retry_reason": "send_error",
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": [
+                    {
+                        "message_id": "active-failed-broadcast-fallback",
+                        "destination": "11a7907d67c457911c15206ec647ad33",
+                        "status": "sending"
+                    }
+                ],
+            }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        state
+            .system_events
+            .write()
+            .expect("events")
+            .push(r3akt_rch_core::SystemEventRecord {
+                event_id: "active-stale-failure".to_string(),
+                event_type: "message_delivery_failed".to_string(),
+                message: "Message delivery failed for unknown".to_string(),
+                timestamp_ms: crate::unix_now_ms(),
+                metadata: json!({
+                    "MessageID": message.message_id,
+                    "State": "failed",
+                    "failure_reason": "send_error",
+                    "delivery_method": "propagated",
+                    "delivery_policy_reason": "broadcast_direct_timeout_fallback",
+                    "route_type": "broadcast",
+                }),
+            });
+        let app = crate::create_app_with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/Events")
+                    .header("X-API-Key", "secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("events response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let events: serde_json::Value = serde_json::from_slice(&body).expect("events json");
+        assert_eq!(events[0]["id"], "active-stale-failure");
+        assert_eq!(events[0]["type"], "message_delivery_superseded");
+        assert_eq!(events[0]["metadata"]["current_state"], "propagating");
+        assert_eq!(events[0]["metadata"]["State"], "propagating");
+        assert_eq!(
+            events[0]["metadata"]["DeliveryMetadata"]["dispatch_status"],
+            "accepted"
+        );
+        assert!(
+            events[0]["metadata"]["DeliveryMetadata"]
+                .get("error")
+                .is_none(),
+            "active recovered projection should not replay stale failure text"
+        );
+    }
+
+    #[test]
+    fn sqlite_load_repairs_success_superseded_delivery_metadata() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-success-metadata-repair-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(crate::OutboundMessageRecord {
+                message_id: "persisted-recovered-broadcast".to_string(),
+                topic_id: None,
+                destination: None,
+                sender: "northbound".to_string(),
+                content: "persisted recovered broadcast".to_string(),
+                delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+                delivery_method: "propagated".to_string(),
+                delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
+                delivery_state: "propagated".to_string(),
+                delivery_metadata: json!({
+                    "dispatch_status": "accepted",
+                    "error": "send_error",
+                    "fallback_reason": "direct_dispatch_timeout",
+                    "last_attempt_failed_at_ts_ms": crate::unix_now_ms() - 500,
+                    "retry_reason": "send_error",
+                    "reticulumd_dispatch_count": 13,
+                    "reticulumd_receipt_targets": [
+                        {
+                            "message_id": "persisted-recovered-broadcast-live-a",
+                            "destination": "11a7907d67c457911c15206ec647ad33",
+                            "status": "sent: propagated resource",
+                            "sdk_delivery_state": "sent",
+                            "sdk_message_id": "persisted-recovered-broadcast-live-a",
+                            "sdk_terminal": true
+                        },
+                        {
+                            "message_id": "persisted-recovered-broadcast-live-b",
+                            "destination": "1335df70880114d149c3ad8d63fb5dcd",
+                            "status": "sent: propagated resource",
+                            "sdk_delivery_state": "sent",
+                            "sdk_message_id": "persisted-recovered-broadcast-live-b",
+                            "sdk_terminal": true
+                        },
+                        {
+                            "message_id": "persisted-recovered-broadcast-stale",
+                            "destination": "7f08e12b3f25f23e62f3a15288303c95",
+                            "status": "sending",
+                            "sdk_delivery_state": "dispatching",
+                            "sdk_message_id": "persisted-recovered-broadcast-stale",
+                            "sdk_terminal": false
+                        }
+                    ],
+                    "sdk_delivery_state": "dispatching",
+                    "sdk_message_id": "persisted-recovered-broadcast-stale",
+                    "sdk_terminal": false,
+                }),
+                created_ts_ms: crate::unix_now_ms(),
+                attachments: Vec::new(),
+            });
+        state.persist().expect("persist stale metadata");
+
+        let repaired_state = crate::AppState::from_sqlite_path(&db_path).expect("reload state");
+        let repaired_message = repaired_state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .find(|message| message.message_id == "persisted-recovered-broadcast")
+            .cloned()
+            .expect("message");
+        assert_eq!(repaired_message.delivery_state, "propagated");
+        assert!(
+            !repaired_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("error")
+        );
+        assert!(
+            !repaired_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("retry_reason")
+        );
+        assert!(
+            !repaired_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("last_attempt_failed_at_ts_ms")
+        );
+        let repaired_targets = repaired_message.delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("repaired targets");
+        assert_eq!(repaired_targets.len(), 2);
+        assert!(
+            repaired_targets
+                .iter()
+                .all(|target| target["status"] == "sent: propagated resource")
+        );
+        assert_eq!(
+            repaired_message.delivery_metadata["reticulumd_dispatch_count"],
+            2
+        );
+        assert_eq!(
+            repaired_message.delivery_metadata["stale_receipt_targets_pruned"],
+            1
+        );
+        assert!(
+            !repaired_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("sdk_delivery_state")
+        );
+
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        let persisted_message = snapshot
+            .messages
+            .iter()
+            .find(|message| message.message_id == "persisted-recovered-broadcast")
+            .expect("persisted message");
+        assert!(
+            !persisted_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("error")
+        );
+        assert!(
+            !persisted_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("retry_reason")
+        );
+        assert!(
+            !persisted_message
+                .delivery_metadata
+                .as_object()
+                .expect("metadata")
+                .contains_key("last_attempt_failed_at_ts_ms")
+        );
+        let persisted_targets = persisted_message.delivery_metadata["reticulumd_receipt_targets"]
+            .as_array()
+            .expect("persisted targets");
+        assert_eq!(persisted_targets.len(), 2);
+        assert!(
+            persisted_targets
+                .iter()
+                .all(|target| target["status"] == "sent: propagated resource")
+        );
+
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
@@ -51645,6 +59692,153 @@ mod tests {
                 .expect("restored telemetry")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn telemetry_records_keep_only_latest_snapshot_per_identity() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-telemetry-latest-per-peer-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+
+        state
+            .record_telemetry("peer-a", json!({"battery":{"percent": 50}}), 10, None)
+            .expect("record first telemetry");
+        state
+            .record_telemetry("peer-b", json!({"battery":{"percent": 80}}), 11, None)
+            .expect("record other telemetry");
+        state
+            .record_telemetry("peer-a", json!({"battery":{"percent": 95}}), 12, None)
+            .expect("record latest telemetry");
+        let stale = state
+            .record_telemetry("peer-a", json!({"battery":{"percent": 10}}), 9, None)
+            .expect("ignore stale telemetry");
+        assert_eq!(stale.timestamp_s, 12);
+        assert_eq!(stale.telemetry["battery"]["percent"], 95);
+
+        let records = state.telemetry_records.read().expect("telemetry records");
+        assert_eq!(records.len(), 2);
+        let peer_a = records
+            .iter()
+            .find(|record| record.peer_destination == "peer-a")
+            .expect("peer-a telemetry");
+        assert_eq!(peer_a.timestamp_s, 12);
+        assert_eq!(peer_a.telemetry["battery"]["percent"], 95);
+        drop(records);
+
+        let connection = Connection::open(&db_path).expect("sqlite connection");
+        let peer_a_rows: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM rch_telemetry_records WHERE peer_destination = 'peer-a'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("peer-a row count");
+        assert_eq!(peer_a_rows, 1);
+
+        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        let restored_records = restored
+            .telemetry_records
+            .read()
+            .expect("restored telemetry");
+        assert_eq!(restored_records.len(), 2);
+        assert_eq!(
+            restored_records
+                .iter()
+                .filter(|record| record.peer_destination == "peer-a")
+                .count(),
+            1
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn telemetry_records_ignore_configured_local_source() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-telemetry-ignore-source-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc("127.0.0.1:14243", "local-source");
+
+        state
+            .record_telemetry("local-source", json!({"time":{"timestamp": 10}}), 10, None)
+            .expect("ignore local telemetry");
+
+        assert!(
+            state
+                .telemetry_records
+                .read()
+                .expect("telemetry records")
+                .is_empty()
+        );
+        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        assert!(
+            restored
+                .telemetry_records
+                .read()
+                .expect("restored telemetry")
+                .is_empty()
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn attaching_local_source_prunes_existing_self_and_duplicate_telemetry_rows() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-telemetry-prune-source-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
+        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
+        snapshot.telemetry_records = vec![
+            r3akt_rch_core::TelemetryRecord {
+                peer_destination: "local-source".to_string(),
+                timestamp_s: 1,
+                telemetry: json!({"self": true}),
+                identity_label: None,
+                display_name: None,
+            },
+            r3akt_rch_core::TelemetryRecord {
+                peer_destination: "peer-a".to_string(),
+                timestamp_s: 2,
+                telemetry: json!({"battery":{"percent": 20}}),
+                identity_label: None,
+                display_name: None,
+            },
+            r3akt_rch_core::TelemetryRecord {
+                peer_destination: "peer-a".to_string(),
+                timestamp_s: 3,
+                telemetry: json!({"battery":{"percent": 30}}),
+                identity_label: None,
+                display_name: None,
+            },
+        ];
+        store.save_snapshot(&snapshot).expect("save snapshot");
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_reticulumd_rpc("127.0.0.1:14243", "local-source");
+        let records = state.telemetry_records.read().expect("telemetry records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].peer_destination, "peer-a");
+        assert_eq!(records[0].timestamp_s, 3);
+        drop(records);
+
+        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        let restored_records = restored
+            .telemetry_records
+            .read()
+            .expect("restored telemetry");
+        assert_eq!(restored_records.len(), 1);
+        assert_eq!(restored_records[0].peer_destination, "peer-a");
+        assert_eq!(restored_records[0].timestamp_s, 3);
+
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]

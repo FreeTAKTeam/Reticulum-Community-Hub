@@ -309,6 +309,7 @@ import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import BasePagination from "../components/BasePagination.vue";
 import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { get, post } from "../api/client";
+import type { ApiError } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import { WsClient } from "../api/ws";
 import { EVENT_FEED_MAX_EVENTS, eventEntryKey, useDashboardStore } from "../stores/dashboard";
@@ -358,6 +359,24 @@ interface ControlSyncResponse {
   fetch_result?: PropagationFetchResult;
 }
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const apiErrorDetail = (error: unknown): string | undefined => {
+  const apiError = error as ApiError;
+  if (typeof apiError?.body === "string" && apiError.body.trim()) {
+    return apiError.body.trim();
+  }
+  const detail = asRecord(apiError?.body).detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return detail.trim();
+  }
+  if (error instanceof Error && apiError?.status === undefined && error.message.trim()) {
+    return error.message.trim();
+  }
+  return undefined;
+};
+
 interface TelemetryBucket {
   count: number;
   motion: number;
@@ -371,6 +390,7 @@ const BUCKET_MS = BUCKET_MINUTES * 60 * 1000;
 const BUCKET_COUNT = (HOURS_RANGE * 60) / BUCKET_MINUTES;
 const RANGE_MS = HOURS_RANGE * 60 * 60 * 1000;
 const EVENT_PAGE_SIZE = 12;
+const CONTROL_SYNC_TIMEOUT_MS = 70_000;
 
 const bucketCount = BUCKET_COUNT;
 const telemetryBuckets = ref<TelemetryBucket[]>([]);
@@ -844,13 +864,17 @@ const propagationFetchToast = (response?: ControlSyncResponse): string => {
 const syncBackend = async () => {
   controlBusy.value = true;
   try {
-    const response = await post<ControlSyncResponse>(endpoints.controlSync);
+    const response = await post<ControlSyncResponse>(endpoints.controlSync, undefined, {
+      timeoutMs: CONTROL_SYNC_TIMEOUT_MS
+    });
     const message = propagationFetchToast(response);
     lastSyncMessage.value = message;
     toastStore.push(message, "success");
   } catch (error) {
-    lastSyncMessage.value = "Propagation sync failed";
-    toastStore.push("Propagation sync failed", "danger");
+    const detail = apiErrorDetail(error);
+    const message = detail ? `Propagation sync failed: ${detail}` : "Propagation sync failed";
+    lastSyncMessage.value = message;
+    toastStore.push(message, "danger");
   } finally {
     controlBusy.value = false;
   }

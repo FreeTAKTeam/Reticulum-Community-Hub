@@ -6,10 +6,17 @@
     :required="required"
     :state="resolvedState"
     :size="size"
-    :for-id="id"
+    :for-id="controlId"
   >
     <div class="cui-combobox__control">
-      <select :id="id" :name="name" :value="modelValue" class="cui-combobox__select" :disabled="disabled" @change="onChange">
+      <select
+        :id="controlId"
+        :name="name"
+        :value="modelValue"
+        class="cui-combobox__select"
+        :disabled="disabled"
+        @change="onChange"
+      >
         <option v-for="option in options" :key="option.value" :value="option.value">
           {{ option.label }}
         </option>
@@ -20,11 +27,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, getCurrentInstance } from "vue";
 
 import BaseField from "./BaseField.vue";
 import type { CosmicFieldState } from "../types/cosmic-ui";
 import type { CosmicSize } from "../types/cosmic-ui";
+
+let nextSelectId = 0;
 
 interface OptionItem {
   label: string;
@@ -60,6 +69,10 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{ (event: "update:modelValue", value: string): void }>();
+
+const instance = getCurrentInstance();
+const generatedId = `cui-select-${instance?.uid ?? ++nextSelectId}`;
+const controlId = computed(() => props.id || generatedId);
 
 const resolvedState = computed<CosmicFieldState>(() => {
   if (props.disabled) {

@@ -169,8 +169,8 @@ Crates:
 Found at `C:\Users\broth\Documents\work\ATAK\src\LXMF-rs`, remote
 `https://github.com/FreeTAKTeam/LXMF-rs`.
 
-Current Rust RCH verification targets the LXMF-rs `v0.5.0` release commit
-`2a74b84b50a7ac1cde16eb1e3b3380bc358231c1`. The sibling dependency packages
+Current Rust RCH verification targets the LXMF-rs `v0.5.1` release commit
+`81acffc1409a760aeb9d7b09dc9a76b4be304a59`. The sibling dependency packages
 resolved by `r3akt-transport-rns` are `lxmf-wire` `0.2.0`, `lxmf-sdk` `0.2.1`,
 `reticulum-rs-rpc` `0.3.0`, and their `lxmf-reference` `0.1.0` dependency.
 
@@ -740,7 +740,7 @@ Current local verification snapshot, refreshed on 2026-05-11:
   mandatory ZeroMQ SDK endpoints.
 - `.github/workflows/rust-pr-quality.yml` runs PR quality-control checks for
   Rust formatting, clippy with warnings denied, locked workspace tests, release
-  binary builds, and `cargo audit` against Rust 1.85.
+  binary builds, and `cargo audit` against Rust 1.88.
 - `.github/workflows/rust.yml` runs the committed release gate runner with
   `-ServerOnlyAlpha` so push and PR CI still cover the alpha verifier, the
   server release build, and the ZeroMQ-configured release HTTP smoke.
@@ -760,7 +760,8 @@ Current local verification snapshot, refreshed on 2026-05-11:
   `C:\Users\broth\Documents\work\ATAK\src\Reticulum-Telemetry-Hub\apps\rch-desktop`
   passed, including shared UI build,
   Tauri sidecar preparation, optimized desktop build, and Windows x64 NSIS
-  installer generation for `RCH Desktop_3.0.0-preview.2_x64-setup.exe`.
+  previous preview.4 installer generation for
+  `RCH Desktop_3.0.0-preview.4_x64-setup.exe`.
 - A local Rust-backend UI smoke against the built `ui/dist` passed: `/`,
   `/missions/workspace`, and HTML `/checklists` served the SPA, while
   `/Status`, `/api/v1/app/info`, `/checklists`, `/Telemetry?since=0`, and
@@ -845,19 +846,35 @@ Run the repeatable local Reticulum receipt/fanout/ZeroMQ event-poll harness when
 ```
 
 Run the same local mesh with a daemon-involved ZeroMQ load check. This sends
-normal individual `sdk_send_v2` messages from node 0 to the local receiver
-daemons and confirms delivery through receiver-side `sdk_poll_events_v2`:
+chunked `sdk_send_batch_v2` traffic from node 0 to the local receiver daemons
+and confirms delivery through receiver-side `sdk_poll_events_v2`. The default
+500-message run is the repeatable local release-candidate stress gate; use
+larger `-LoadMessages` values for explicit saturation tests:
 
 ```powershell
 .\scripts\local-reticulum-live-gate.ps1 `
   -IncludeZmqLoad `
-  -LoadMessages 1000 `
   -LoadSenderClients 4 `
   -DiscoverySettleSeconds 10
 ```
 
 Use `-ZmqLoadOnly` to run only the load check while tuning daemon delivery
 throughput.
+
+For a heavier local saturation check, spread 1,000 messages across four
+temporary receiver daemons:
+
+```powershell
+.\scripts\local-reticulum-live-gate.ps1 `
+  -ZmqLoadOnly `
+  -NodeCount 5 `
+  -LoadReceiverCount 4 `
+  -LoadMessages 1000 `
+  -LoadSenderClients 4 `
+  -DiscoverySettleSeconds 10 `
+  -LoadPollAttempts 480 `
+  -LoadPollDelayMs 250
+```
 
 The Rust daemon delivery path now uses a bounded persistent scheduler rather
 than spawning one delivery runtime per message. Tune burst capacity with the

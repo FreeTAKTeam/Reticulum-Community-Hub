@@ -7,7 +7,7 @@ import {
 import { validateReticulumConfigState } from "../src/utils/reticulum-config-validation";
 
 describe("reticulum config parsing and validation", () => {
-  it("parses both enabled key styles and preserves original style on serialize", () => {
+  it("parses both enabled key styles and serializes daemon-compatible TOML", () => {
     const source =
       "[interfaces]\n" +
       "[[alpha]]\n" +
@@ -29,8 +29,74 @@ describe("reticulum config parsing and validation", () => {
     expect(parsed.interfaces[1].enableKey).toBe("interface_enabled");
 
     const serialized = serializeReticulumConfig(parsed);
-    expect(serialized).toContain("enabled = yes");
-    expect(serialized).toContain("interface_enabled = no");
+    expect(serialized).toContain("[[interfaces]]");
+    expect(serialized).toContain('name = "alpha"');
+    expect(serialized).toContain('type = "TCPClientInterface"');
+    expect(serialized).toContain("enabled = true");
+    expect(serialized).toContain('name = "bravo"');
+    expect(serialized).toContain("interface_enabled = false");
+    expect(serialized).not.toContain("[[alpha]]");
+  });
+
+  it("parses reticulumd TOML interface array entries", () => {
+    const source =
+      "[[interfaces]]\n" +
+      'name = "client"\n' +
+      'type = "TCPClientInterface"\n' +
+      "enabled = true\n" +
+      'target_host = "10.0.0.8"\n' +
+      "target_port = 4242\n";
+
+    const parsed = parseReticulumConfig(source);
+
+    expect(parsed.interfaces).toHaveLength(1);
+    expect(parsed.interfaces[0].name).toBe("client");
+    expect(parsed.interfaces[0].type).toBe("TCPClientInterface");
+    expect(parsed.interfaces[0].enabled).toBe(true);
+    expect(parsed.interfaces[0].settings).toContainEqual({ key: "target_host", value: "10.0.0.8" });
+    expect(parsed.interfaces[0].settings).toContainEqual({ key: "target_port", value: "4242" });
+  });
+
+  it("serializes TCP server interfaces in the shape reticulumd loads", () => {
+    const parsed = parseReticulumConfig(
+      "[interfaces]\n" +
+        "[[server]]\n" +
+        "type = TCPServerInterface\n" +
+        "enabled = yes\n" +
+        "listen_ip = 127.0.0.1\n" +
+        "listen_port = 37429\n"
+    );
+
+    const serialized = serializeReticulumConfig(parsed);
+
+    expect(serialized).toContain("[[interfaces]]");
+    expect(serialized).toContain('name = "server"');
+    expect(serialized).toContain('type = "TCPServerInterface"');
+    expect(serialized).toContain("enabled = true");
+    expect(serialized).toContain('listen_ip = "127.0.0.1"');
+    expect(serialized).toContain("listen_port = 37429");
+    expect(serialized).not.toContain("[interfaces]\n[[server]]");
+  });
+
+  it("serializes port as number only for network interface aliases", () => {
+    const parsed = parseReticulumConfig(
+      "[interfaces]\n" +
+        "[[server]]\n" +
+        "type = TCPServerInterface\n" +
+        "enabled = yes\n" +
+        "listen_ip = 127.0.0.1\n" +
+        "port = 37429\n" +
+        "\n" +
+        "[[serial]]\n" +
+        "type = SerialInterface\n" +
+        "enabled = yes\n" +
+        "port = 1\n"
+    );
+
+    const serialized = serializeReticulumConfig(parsed);
+
+    expect(serialized).toContain("port = 37429");
+    expect(serialized).toContain('port = "1"');
   });
 
   it("parses list fields from comma/newline/semicolon separators", () => {
@@ -50,7 +116,7 @@ describe("reticulum config parsing and validation", () => {
     expect(parsed.interfaces[0].enableKey).toBe("enabled");
 
     const serialized = serializeReticulumConfig(parsed);
-    expect(serialized).toContain("enabled = yes");
+    expect(serialized).toContain("enabled = true");
     expect(serialized).not.toContain("interface_enabled =");
   });
 

@@ -55,6 +55,8 @@ export const useReticulumConfigStore = defineStore("reticulum-config", () => {
     error.value = "";
     try {
       rollbackResult.value = await post<unknown>(endpoints.reticulumConfigRollback);
+      const text = await get<string>(endpoints.reticulumConfig);
+      config.value = parseReticulumConfig(text);
     } catch (err) {
       error.value = formatApiError(err);
       throw err;

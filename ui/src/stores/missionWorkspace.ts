@@ -25,8 +25,9 @@ import type {
   ZoneRaw
 } from "../types/missions/raw";
 import { MISSION_SELECTION_STORAGE_KEY } from "../types/missions/routes";
+import { unwrapApiList } from "../utils/api-list";
 
-const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const toArray = unwrapApiList;
 
 const toText = (value: unknown): string => {
   if (Array.isArray(value)) {

@@ -6,7 +6,7 @@ on:
       release_version:
         description: "Version label to embed in manually built artifacts"
         required: false
-        default: "v3.0.0-preview.2"
+        default: "v3.0.0-preview.5"
   release:
     types: [published]
   push:
@@ -78,12 +78,12 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.0
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -182,12 +182,12 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.0
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

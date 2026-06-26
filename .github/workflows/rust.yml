@@ -24,12 +24,12 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.0
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
           components: rustfmt, clippy
 
       - name: Run release readiness gates

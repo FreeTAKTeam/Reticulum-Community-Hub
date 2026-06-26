@@ -47,7 +47,7 @@
             </div>
             <div class="rail-stat">
               <span>Validation</span>
-              <strong>{{ configStore.validation ? "Available" : "Pending" }}</strong>
+              <strong>{{ activeValidation ? "Available" : "Pending" }}</strong>
             </div>
             <div class="rail-stat">
               <span>Tool Stream</span>
@@ -204,10 +204,13 @@ import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
 import { useConfigStore } from "../stores/config";
 import { useMapSettingsStore } from "../stores/map-settings";
+import { useReticulumConfigStore } from "../stores/reticulum-config";
 import { useToastStore } from "../stores/toasts";
+import { serializeReticulumConfig } from "../utils/reticulum-config";
 
 const configStore = useConfigStore();
 const mapSettingsStore = useMapSettingsStore();
+const reticulumConfigStore = useReticulumConfigStore();
 const toastStore = useToastStore();
 const toolResponse = ref<unknown>(null);
 const toolResponseMode = ref<"auto" | "markdown" | "json" | "html">("auto");
@@ -229,26 +232,79 @@ const activeTabLabel = computed(() => {
   return "Configuration";
 });
 const configSizeLabel = computed(() => {
-  const bytes = textEncoder.encode(configStore.configText ?? "").length;
+  let payload = configStore.configText ?? "";
+  if (activeTab.value === "reticulum") {
+    payload = serializeReticulumConfig(reticulumConfigStore.config);
+  } else if (activeTab.value === "tools" && toolResponse.value !== null) {
+    payload = typeof toolResponse.value === "string" ? toolResponse.value : JSON.stringify(toolResponse.value);
+  }
+  const bytes = textEncoder.encode(payload).length;
   return `${bytes.toLocaleString()} bytes`;
 });
+const activeError = computed(() => {
+  if (activeTab.value === "reticulum") {
+    return reticulumConfigStore.error;
+  }
+  if (activeTab.value === "config") {
+    return configStore.error;
+  }
+  return "";
+});
+const activeValidation = computed(() => {
+  if (activeTab.value === "reticulum") {
+    return reticulumConfigStore.validation;
+  }
+  if (activeTab.value === "config") {
+    return configStore.validation;
+  }
+  return null;
+});
+const activeApplyResult = computed(() => {
+  if (activeTab.value === "reticulum") {
+    return reticulumConfigStore.applyResult;
+  }
+  if (activeTab.value === "config") {
+    return configStore.applyResult;
+  }
+  return null;
+});
+const activeRollbackResult = computed(() => {
+  if (activeTab.value === "reticulum") {
+    return reticulumConfigStore.rollbackResult;
+  }
+  if (activeTab.value === "config") {
+    return configStore.rollbackResult;
+  }
+  return null;
+});
 const healthStateLabel = computed(() => {
-  if (configStore.error) {
+  if (activeError.value) {
     return "Attention";
   }
-  if (configStore.applyResult) {
+  if (activeRollbackResult.value) {
+    return "Restored";
+  }
+  if (activeApplyResult.value) {
     return "Applied";
   }
-  if (configStore.validation) {
+  if (activeValidation.value) {
     return "Verified";
+  }
+  if (activeTab.value === "tools" && toolResponse.value) {
+    return "Captured";
   }
   return "Standby";
 });
 const healthStateClass = computed(() => {
-  if (configStore.error) {
+  if (activeError.value) {
     return "state-danger";
   }
-  if (configStore.applyResult || configStore.validation) {
+  if (
+    activeApplyResult.value ||
+    activeRollbackResult.value ||
+    activeValidation.value ||
+    (activeTab.value === "tools" && toolResponse.value)
+  ) {
     return "state-ok";
   }
   return "state-idle";

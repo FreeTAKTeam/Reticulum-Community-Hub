@@ -30,12 +30,12 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.0
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
           components: rustfmt
 
       - name: Check Rust formatting
@@ -56,12 +56,12 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.0
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
           components: clippy
 
       - name: Check locked dependencies
@@ -86,12 +86,12 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.0
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
 
       - name: Check locked dependencies
         working-directory: rch
@@ -115,12 +115,12 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.0
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
 
       - name: Check locked dependencies
         working-directory: rch
@@ -148,19 +148,16 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.5.0
+          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
 
       - name: Audit locked dependency graph
         working-directory: rch
-        run: |
-          # time >=0.3.47 resolves RUSTSEC-2026-0009 but requires Rust 1.88.
-          # Keep the Rust 1.85 transition baseline until the workspace MSRV moves.
-          cargo audit --deny warnings --ignore RUSTSEC-2026-0009
+        run: cargo audit --deny warnings

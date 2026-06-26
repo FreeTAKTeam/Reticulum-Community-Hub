@@ -2,7 +2,8 @@
 
 This is the Tauri desktop shell for the Rust RCH product line. It reuses the
 shared Vue UI from `ui/` and launches `r3akt-rch-server` as a managed local
-sidecar.
+sidecar. The desktop bundle also carries the `r3akt-tak-service` sidecar for
+release package parity; the shell does not start it automatically yet.
 
 ## Build
 
@@ -12,9 +13,9 @@ npm --prefix apps/rch-desktop install
 npm --prefix apps/rch-desktop run build
 ```
 
-The sidecar preparation step builds `r3akt-rch-server --release` and copies the
-binary into `src-tauri/binaries/` with the host target-triple suffix required by
-Tauri.
+The sidecar preparation step builds the release `r3akt-rch-server` and
+`r3akt-tak-service` binaries and copies them into `src-tauri/binaries/` with the
+host target-triple suffix required by Tauri.
 
 ## Runtime
 

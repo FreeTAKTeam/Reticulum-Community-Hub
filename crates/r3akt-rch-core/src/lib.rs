@@ -31,6 +31,7 @@ pub const DEFAULT_PRIORITY: i32 = 0;
 pub const MAX_CLOCK_SKEW_SECONDS: i64 = 300;
 pub const RECENT_ANNOUNCE_WINDOW_MS: i64 = 60 * 60 * 1000;
 pub const RECENT_RUNTIME_PRESENCE_WINDOW_MS: i64 = 60 * 60 * 1000;
+pub const DEFAULT_ROSTER_ROLE: &str = "user";
 const DEFAULT_LOG_MISSION_UID: &str = "mission-default";
 
 const ACCEPTED_CONTENT_TYPES: [&str; 3] = [
@@ -64,6 +65,10 @@ const MISSION_READONLY_OPERATION_LIST: &[&str] = &[
     "mission.content.read",
     "mission.join",
     "mission.leave",
+    "mission.pause",
+    "mission.resume",
+    "mission.nick",
+    "mission.users",
     "mission.registry.asset.read",
     "mission.registry.assignment.read",
     "mission.registry.log.read",
@@ -86,6 +91,10 @@ const MISSION_WRITE_OPERATION_LIST: &[&str] = &[
     "mission.content.write",
     "mission.join",
     "mission.leave",
+    "mission.pause",
+    "mission.resume",
+    "mission.nick",
+    "mission.users",
     "mission.message.send",
     "mission.registry.assignment.read",
     "mission.registry.assignment.write",
@@ -114,6 +123,10 @@ const MISSION_OWNER_OPERATION_LIST: &[&str] = &[
     "mission.content.write",
     "mission.join",
     "mission.leave",
+    "mission.pause",
+    "mission.resume",
+    "mission.nick",
+    "mission.users",
     "mission.message.send",
     "mission.registry.asset.read",
     "mission.registry.asset.write",
@@ -381,6 +394,8 @@ pub enum RchCoreError {
     Delivery(String),
     #[error("invalid command payload: {0}")]
     InvalidPayload(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("topic not found")]
     TopicNotFound,
     #[error("mission not found")]
@@ -412,6 +427,7 @@ impl RchCoreError {
     pub fn reason_code(&self) -> &'static str {
         match self {
             Self::Delivery(_) | Self::InvalidPayload(_) => "invalid_payload",
+            Self::Forbidden(_) => "forbidden",
             Self::TopicNotFound
             | Self::MissionNotFound
             | Self::TeamNotFound
@@ -810,6 +826,20 @@ pub struct ClientRecord {
     pub identity: String,
     pub first_seen_ts_ms: i64,
     pub last_seen_ts_ms: i64,
+    #[serde(default)]
+    pub nickname: Option<String>,
+    #[serde(default = "default_roster_role")]
+    pub role: String,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub text_only: bool,
+    #[serde(default)]
+    pub last_chat_ts_ms: Option<i64>,
+}
+
+fn default_roster_role() -> String {
+    DEFAULT_ROSTER_ROLE.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1817,6 +1847,10 @@ impl RchSqliteStore {
     ) -> Result<(), RchCoreError> {
         let transaction = self.connection.transaction()?;
         transaction.execute(
+            "DELETE FROM rch_telemetry_records WHERE lower(peer_destination) = lower(?1)",
+            params![record.peer_destination],
+        )?;
+        transaction.execute(
             "INSERT INTO rch_telemetry_records (peer_destination, timestamp_s, payload)
              VALUES (?1, ?2, ?3)",
             params![
@@ -1825,10 +1859,33 @@ impl RchSqliteStore {
                 encode_msgpack(record)?
             ],
         )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn prune_telemetry_records(
+        &mut self,
+        excluded_peer_destination: Option<&str>,
+    ) -> Result<(), RchCoreError> {
+        let transaction = self.connection.transaction()?;
+        if let Some(destination) = excluded_peer_destination {
+            transaction.execute(
+                "DELETE FROM rch_telemetry_records WHERE lower(peer_destination) = lower(?1)",
+                params![destination],
+            )?;
+        }
         transaction.execute(
             "DELETE FROM rch_telemetry_records
              WHERE id NOT IN (
-                 SELECT id FROM rch_telemetry_records ORDER BY id DESC LIMIT 1000
+                 SELECT keep.id
+                 FROM rch_telemetry_records AS keep
+                 WHERE keep.id = (
+                     SELECT candidate.id
+                     FROM rch_telemetry_records AS candidate
+                     WHERE lower(candidate.peer_destination) = lower(keep.peer_destination)
+                     ORDER BY candidate.timestamp_s DESC, candidate.id DESC
+                     LIMIT 1
+                 )
              )",
             [],
         )?;
@@ -2363,9 +2420,7 @@ impl RchSqliteStore {
         let system_events = self.load_payload_rows::<SystemEventRecord>(
             "SELECT payload FROM rch_system_events ORDER BY id",
         )?;
-        let telemetry_records = self.load_payload_rows::<TelemetryRecord>(
-            "SELECT payload FROM rch_telemetry_records ORDER BY peer_destination, timestamp_s",
-        )?;
+        let telemetry_records = self.load_latest_telemetry_records()?;
         let markers = self.load_payload_rows::<MarkerRecord>(
             "SELECT payload FROM rch_markers ORDER BY object_destination_hash",
         )?;
@@ -2835,6 +2890,21 @@ impl RchSqliteStore {
         Ok(records)
     }
 
+    fn load_latest_telemetry_records(&self) -> Result<Vec<TelemetryRecord>, RchCoreError> {
+        self.load_payload_rows::<TelemetryRecord>(
+            "SELECT payload
+             FROM rch_telemetry_records AS keep
+             WHERE keep.id = (
+                 SELECT candidate.id
+                 FROM rch_telemetry_records AS candidate
+                 WHERE lower(candidate.peer_destination) = lower(keep.peer_destination)
+                 ORDER BY candidate.timestamp_s DESC, candidate.id DESC
+                 LIMIT 1
+             )
+             ORDER BY lower(keep.peer_destination), keep.timestamp_s",
+        )
+    }
+
     pub fn setting_value(&self, key: &str) -> Result<Option<String>, RchCoreError> {
         let mut statement = self
             .connection
@@ -2939,6 +3009,24 @@ impl RchCore {
         let mut records: Vec<_> = self.clients.values().cloned().collect();
         records.sort_by(|left, right| left.identity.cmp(&right.identity));
         records
+    }
+
+    fn client_values(&self) -> Vec<Value> {
+        self.clients()
+            .into_iter()
+            .map(|client| {
+                json!({
+                    "identity": client.identity,
+                    "nickname": client.nickname,
+                    "role": client.role,
+                    "paused": client.paused,
+                    "text_only": client.text_only,
+                    "first_seen_ts_ms": client.first_seen_ts_ms,
+                    "last_seen_ts_ms": client.last_seen_ts_ms,
+                    "last_chat_ts_ms": client.last_chat_ts_ms,
+                })
+            })
+            .collect()
     }
 
     #[must_use]
@@ -4428,9 +4516,13 @@ impl RchCore {
             "rem.registry.mode.set" | "rem.registry.peers.list" => {
                 self.apply_rem_registry_command(command)
             }
-            "mission.join" | "mission.leave" | "mission.events.list" => {
-                self.apply_client_event_command(command)
-            }
+            "mission.join"
+            | "mission.leave"
+            | "mission.pause"
+            | "mission.resume"
+            | "mission.nick"
+            | "mission.users"
+            | "mission.events.list" => self.apply_client_event_command(command),
             "mission.marker.list"
             | "mission.marker.create"
             | "mission.marker.position.patch"
@@ -4807,6 +4899,37 @@ impl RchCore {
                     json!({ "identity": identity, "left": left }),
                 )))
             }
+            "mission.pause" => {
+                let identity = self.pause_client(&command.source.rns_identity)?;
+                Ok(Some(Self::event(
+                    "mission.paused",
+                    command,
+                    json!({ "identity": identity, "paused": true }),
+                )))
+            }
+            "mission.resume" => {
+                let identity = self.resume_client(&command.source.rns_identity)?;
+                Ok(Some(Self::event(
+                    "mission.resumed",
+                    command,
+                    json!({ "identity": identity, "paused": false }),
+                )))
+            }
+            "mission.nick" => {
+                let nickname = required_text(&command.args, &["nickname", "nick", "name"])?;
+                let (identity, nickname) =
+                    self.set_client_nickname(&command.source.rns_identity, &nickname)?;
+                Ok(Some(Self::event(
+                    "mission.nickname.updated",
+                    command,
+                    json!({ "identity": identity, "nickname": nickname }),
+                )))
+            }
+            "mission.users" => Ok(Some(Self::event(
+                "mission.users.listed",
+                command,
+                json!({ "users": self.client_values() }),
+            ))),
             "mission.events.list" => Ok(Some(Self::event(
                 "mission.events.listed",
                 command,
@@ -6087,6 +6210,11 @@ impl RchCore {
         let display_identity = identity.trim().to_string();
         let identity = normalize_hash(Some(identity))
             .ok_or_else(|| RchCoreError::InvalidPayload("identity is required".to_string()))?;
+        if self.identity_blocked(&identity) {
+            return Err(RchCoreError::Forbidden(
+                "identity is banned or blackholed".to_string(),
+            ));
+        }
         let now = utc_now_ms();
         self.clients
             .entry(identity.clone())
@@ -6098,6 +6226,11 @@ impl RchCore {
                 identity: display_identity,
                 first_seen_ts_ms: now,
                 last_seen_ts_ms: now,
+                nickname: None,
+                role: DEFAULT_ROSTER_ROLE.to_string(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
             });
         Ok(identity)
     }
@@ -6107,6 +6240,53 @@ impl RchCore {
             .ok_or_else(|| RchCoreError::InvalidPayload("identity is required".to_string()))?;
         let left = self.clients.remove(&identity).is_some();
         Ok((identity, left))
+    }
+
+    fn pause_client(&mut self, identity: &str) -> Result<String, RchCoreError> {
+        let identity = self.ensure_roster_client(identity)?;
+        if let Some(client) = self.clients.get_mut(&identity) {
+            client.paused = true;
+            client.last_seen_ts_ms = utc_now_ms();
+        }
+        Ok(identity)
+    }
+
+    fn resume_client(&mut self, identity: &str) -> Result<String, RchCoreError> {
+        let identity = self.ensure_roster_client(identity)?;
+        if let Some(client) = self.clients.get_mut(&identity) {
+            client.paused = false;
+            client.last_seen_ts_ms = utc_now_ms();
+        }
+        Ok(identity)
+    }
+
+    fn set_client_nickname(
+        &mut self,
+        identity: &str,
+        nickname: &str,
+    ) -> Result<(String, String), RchCoreError> {
+        let identity = self.ensure_roster_client(identity)?;
+        let nickname = normalize_roster_nickname(nickname)?;
+        if let Some(client) = self.clients.get_mut(&identity) {
+            client.nickname = Some(nickname.clone());
+            client.last_seen_ts_ms = utc_now_ms();
+        }
+        Ok((identity, nickname))
+    }
+
+    fn ensure_roster_client(&mut self, identity: &str) -> Result<String, RchCoreError> {
+        let normalized = normalize_hash(Some(identity))
+            .ok_or_else(|| RchCoreError::InvalidPayload("identity is required".to_string()))?;
+        if !self.clients.contains_key(&normalized) {
+            self.join_client(identity)?;
+        }
+        Ok(normalized)
+    }
+
+    fn identity_blocked(&self, identity: &str) -> bool {
+        self.identity_states
+            .get(identity)
+            .is_some_and(|state| state.is_banned || state.is_blackholed)
     }
 
     fn create_marker_from_args(
@@ -9584,6 +9764,7 @@ impl RchCore {
         json!({
             "uid": checklist.uid,
             "mission_id": checklist.mission_uid,
+            "mission_uid": checklist.mission_uid,
             "template_uid": checklist.template_uid,
             "template_version": checklist.template_version,
             "template_name": checklist.template_name,
@@ -9798,6 +9979,10 @@ pub fn is_supported_mission_command(command_type: &str) -> bool {
         command_type,
         "mission.join"
             | "mission.leave"
+            | "mission.pause"
+            | "mission.resume"
+            | "mission.nick"
+            | "mission.users"
             | "mission.events.list"
             | "mission.marker.list"
             | "mission.marker.create"
@@ -9917,8 +10102,10 @@ pub fn is_supported_checklist_command(command_type: &str) -> bool {
 pub fn required_capability(command_type: &str) -> Option<&'static str> {
     match command_type {
         "mission.join" => Some("mission.join"),
-        "mission.leave" => Some("mission.leave"),
-        "mission.events.list" => Some("mission.audit.read"),
+        "mission.leave" | "mission.pause" | "mission.resume" | "mission.nick" => {
+            Some("mission.leave")
+        }
+        "mission.users" | "mission.events.list" => Some("mission.audit.read"),
         "mission.marker.list" => Some("mission.content.read"),
         "mission.marker.create"
         | "mission.marker.position.patch"
@@ -11273,6 +11460,24 @@ fn required_non_empty(value: &str, field_name: &str) -> Result<String, RchCoreEr
     } else {
         Ok(value.to_string())
     }
+}
+
+fn normalize_roster_nickname(value: &str) -> Result<String, RchCoreError> {
+    let value = required_non_empty(value, "nickname")?;
+    if value.chars().count() > 32 {
+        return Err(RchCoreError::InvalidPayload(
+            "nickname cannot exceed 32 characters".to_string(),
+        ));
+    }
+    if !value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.'))
+    {
+        return Err(RchCoreError::InvalidPayload(
+            "nickname may contain only letters, numbers, underscore, dash, or dot".to_string(),
+        ));
+    }
+    Ok(value)
 }
 
 fn required_f64(args: &Value, key: &str) -> Result<f64, RchCoreError> {
@@ -13388,6 +13593,53 @@ mod tests {
         );
         assert!(core.clients().is_empty());
         assert_eq!(core.audit_events().len(), 3);
+    }
+
+    #[test]
+    fn mission_roster_commands_persist_member_state() {
+        let mut core = RchCore::new();
+
+        core.handle_mission_sync_command(&command("mission.join", json!({})));
+        core.handle_mission_sync_command(&command("mission.pause", json!({})));
+        core.handle_mission_sync_command(&command(
+            "mission.nick",
+            json!({ "nickname": "Alpha_1" }),
+        ));
+
+        let paused = core.clients().pop().expect("client");
+        assert_eq!(paused.identity, "ABCDEF");
+        assert_eq!(paused.nickname.as_deref(), Some("Alpha_1"));
+        assert_eq!(paused.role, "user");
+        assert!(paused.paused);
+        assert!(!paused.text_only);
+        assert!(paused.last_chat_ts_ms.is_none());
+
+        let mut store = RchSqliteStore::in_memory().expect("store");
+        core.save_to_sqlite(&mut store).expect("save");
+        let restored = RchCore::load_from_sqlite(&store)
+            .expect("load")
+            .expect("snapshot");
+        let restored_client = restored.clients().pop().expect("restored client");
+        assert_eq!(restored_client.nickname.as_deref(), Some("Alpha_1"));
+        assert!(restored_client.paused);
+
+        core.handle_mission_sync_command(&command("mission.resume", json!({})));
+        assert!(!core.clients().pop().expect("resumed").paused);
+    }
+
+    #[test]
+    fn mission_roster_rejects_banned_member_join() {
+        let mut core = RchCore::new();
+        core.set_identity_state("abcdef", true, false)
+            .expect("ban identity");
+
+        let joined = core.handle_mission_sync_command(&command("mission.join", json!({})));
+
+        assert_eq!(
+            joined[1].results_field().expect("rejected")["reason_code"],
+            "forbidden"
+        );
+        assert!(core.clients().is_empty());
     }
 
     #[test]
