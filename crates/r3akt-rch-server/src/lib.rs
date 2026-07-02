@@ -401,6 +401,7 @@ struct KillSwitchArtifactReport {
     database_files: usize,
     configuration_files: usize,
     identity_files: usize,
+    attachment_files: usize,
     deleted_paths: Vec<String>,
 }
 
@@ -409,6 +410,7 @@ impl KillSwitchArtifactReport {
         self.database_files
             .saturating_add(self.configuration_files)
             .saturating_add(self.identity_files)
+            .saturating_add(self.attachment_files)
     }
 }
 
@@ -14185,8 +14187,16 @@ async fn kill_switch_purge(State(state): State<AppState>) -> Result<Json<Value>,
     Ok(Json(kill_switch_status_payload(&state)?))
 }
 
-async fn first_run_setup_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(first_run_setup_status_payload(&state)?))
+async fn first_run_setup_status(
+    State(state): State<AppState>,
+    request: Request,
+) -> Result<Json<Value>, ApiError> {
+    let client_addr = request_client_addr(&request);
+    let include_sensitive_paths = state.validate_http_headers(request.headers(), client_addr);
+    Ok(Json(first_run_setup_status_payload(
+        &state,
+        include_sensitive_paths,
+    )?))
 }
 
 async fn first_run_setup_complete(
@@ -14239,13 +14249,6 @@ async fn first_run_setup_complete(
         }
     }
 
-    with_required_core_store_write(&state, |store| {
-        store.set_setting_value(HUB_NAME_SETTING, hub_name)?;
-        Ok(())
-    })?;
-    save_remote_access_password(&state, remote_password)?;
-    save_kill_switch_pin(&state, kill_switch_pin)?;
-
     if let Some(path) = state.config_path.as_deref() {
         let current = read_config_file(Some(path))?;
         let updated = upsert_ini_setting(&current, "hub", "name", hub_name);
@@ -14259,6 +14262,13 @@ async fn first_run_setup_complete(
         write_config_file_for_setup(path, reticulum_config_text.to_string())?;
     }
 
+    with_required_core_store_write(&state, |store| {
+        store.set_setting_value(HUB_NAME_SETTING, hub_name)?;
+        Ok(())
+    })?;
+    save_remote_access_password(&state, remote_password)?;
+    save_kill_switch_pin(&state, kill_switch_pin)?;
+
     {
         let mut runtime = state
             .kill_switch
@@ -14269,7 +14279,7 @@ async fn first_run_setup_complete(
         runtime.updated_at_ts_ms = unix_now_ms();
     }
 
-    Ok(Json(first_run_setup_status_payload(&state)?))
+    Ok(Json(first_run_setup_status_payload(&state, true)?))
 }
 
 async fn validate_auth(State(state): State<AppState>, request: Request) -> Json<Value> {
@@ -17574,14 +17584,19 @@ fn ensure_reticulum_identity_status(
     }
 }
 
-fn first_run_setup_status_payload(state: &AppState) -> Result<Value, ApiError> {
+fn first_run_setup_status_payload(
+    state: &AppState,
+    include_sensitive_paths: bool,
+) -> Result<Value, ApiError> {
     let pin = load_kill_switch_pin(state)?;
+    let setup_required = pin.is_none();
+    let expose_paths = setup_required || include_sensitive_paths;
     let remote_password = load_stored_remote_password(state)?;
     let hub_name =
         with_required_core_store_write(state, |store| store.setting_value(HUB_NAME_SETTING))?;
     let reticulum_identity = ensure_reticulum_identity_status(state)?;
     Ok(json!({
-        "setup_required": pin.is_none(),
+        "setup_required": setup_required,
         "pin_enrolled": pin.is_some(),
         "pin_created_at": pin.as_ref().map(|secret| iso8601_from_unix_ms(secret.created_at_ts_ms)),
         "hub_name": hub_name,
@@ -17589,15 +17604,25 @@ fn first_run_setup_status_payload(state: &AppState) -> Result<Value, ApiError> {
         "remote_password_created_at": remote_password
             .as_ref()
             .map(|secret| iso8601_from_unix_ms(secret.created_at_ts_ms)),
-        "config_path": state.config_path.as_deref().map(|path| path.display().to_string()),
-        "reticulum_config_path": state
-            .reticulum_config_path
-            .as_deref()
-            .map(|path| path.display().to_string()),
+        "config_path": expose_paths
+            .then(|| state.config_path.as_deref().map(|path| path.display().to_string()))
+            .flatten(),
+        "reticulum_config_path": expose_paths
+            .then(|| {
+                state
+                    .reticulum_config_path
+                    .as_deref()
+                    .map(|path| path.display().to_string())
+            })
+            .flatten(),
         "reticulum_identity_hash": reticulum_identity.as_ref().map(|identity| identity.hash.clone()),
-        "reticulum_identity_path": reticulum_identity
-            .as_ref()
-            .map(|identity| identity.path.display().to_string()),
+        "reticulum_identity_path": expose_paths
+            .then(|| {
+                reticulum_identity
+                    .as_ref()
+                    .map(|identity| identity.path.display().to_string())
+            })
+            .flatten(),
         "reticulum_identity_created": reticulum_identity.as_ref().map(|identity| identity.created),
     }))
 }
@@ -17613,6 +17638,7 @@ enum KillSwitchArtifactKind {
     Database,
     Configuration,
     Identity,
+    Attachment,
 }
 
 #[derive(Debug, Clone)]
@@ -17627,23 +17653,6 @@ fn sqlite_sidecar_paths(path: &FsPath) -> Vec<PathBuf> {
         .into_iter()
         .map(|suffix| PathBuf::from(format!("{path_text}{suffix}")))
         .collect()
-}
-
-fn path_file_name_eq(path: &FsPath, expected: &str) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case(expected))
-}
-
-fn path_has_database_extension(path: &FsPath) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "db" | "sqlite" | "sqlite3"
-            )
-        })
 }
 
 fn push_artifact_candidate(
@@ -17661,22 +17670,12 @@ fn push_database_candidate(candidates: &mut Vec<KillSwitchArtifactCandidate>, pa
     push_artifact_candidate(candidates, path, KillSwitchArtifactKind::Database);
 }
 
-fn push_runtime_root_candidates(candidates: &mut Vec<KillSwitchArtifactCandidate>, root: &FsPath) {
-    for file_name in [
-        "rch_state.sqlite3",
-        "rth_api.sqlite",
-        "telemetry.db",
-        "reticulumd.db",
-        "rch-runtime.db",
-    ] {
+fn push_known_hub_runtime_candidates(
+    candidates: &mut Vec<KillSwitchArtifactCandidate>,
+    root: &FsPath,
+) {
+    for file_name in ["rch_state.sqlite3", "rth_api.sqlite", "telemetry.db"] {
         push_database_candidate(candidates, root.join(file_name));
-    }
-    for file_name in ["config", "config.ini", "reticulum.conf"] {
-        push_artifact_candidate(
-            candidates,
-            root.join(file_name),
-            KillSwitchArtifactKind::Configuration,
-        );
     }
     for file_name in ["identity", "reticulumd.identity"] {
         push_artifact_candidate(
@@ -17685,37 +17684,33 @@ fn push_runtime_root_candidates(candidates: &mut Vec<KillSwitchArtifactCandidate
             KillSwitchArtifactKind::Identity,
         );
     }
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path_has_database_extension(&path) {
-            push_database_candidate(candidates, path);
-        } else if path_file_name_eq(&path, "config") || path_file_name_eq(&path, "config.ini") {
-            push_artifact_candidate(candidates, path, KillSwitchArtifactKind::Configuration);
-        } else if path_file_name_eq(&path, "identity")
-            || path_file_name_eq(&path, "reticulumd.identity")
-        {
-            push_artifact_candidate(candidates, path, KillSwitchArtifactKind::Identity);
-        }
+}
+
+fn push_known_reticulum_runtime_candidates(
+    candidates: &mut Vec<KillSwitchArtifactCandidate>,
+    root: &FsPath,
+) {
+    push_database_candidate(candidates, root.join("reticulumd.db"));
+    for file_name in ["identity", "reticulumd.identity", "config"] {
+        let kind = if file_name == "config" {
+            KillSwitchArtifactKind::Configuration
+        } else {
+            KillSwitchArtifactKind::Identity
+        };
+        push_artifact_candidate(candidates, root.join(file_name), kind);
     }
 }
 
 fn kill_switch_artifact_candidates(state: &AppState) -> Vec<KillSwitchArtifactCandidate> {
     let mut candidates = Vec::new();
-    let mut roots = Vec::new();
     if let Some(path) = &state.sqlite_path {
         push_database_candidate(&mut candidates, path.as_ref().clone());
         if let Some(parent) = path.parent() {
-            roots.push(parent.to_path_buf());
+            push_known_hub_runtime_candidates(&mut candidates, parent);
         }
     }
     if let Some(path) = &state.managed_reticulumd_db_path {
         push_database_candidate(&mut candidates, path.as_ref().clone());
-        if let Some(parent) = path.parent() {
-            roots.push(parent.to_path_buf());
-        }
     }
     if let Some(path) = &state.config_path {
         push_artifact_candidate(
@@ -17723,9 +17718,6 @@ fn kill_switch_artifact_candidates(state: &AppState) -> Vec<KillSwitchArtifactCa
             path.as_ref().clone(),
             KillSwitchArtifactKind::Configuration,
         );
-        if let Some(parent) = path.parent() {
-            roots.push(parent.to_path_buf());
-        }
     }
     if let Some(path) = &state.reticulum_config_path {
         push_artifact_candidate(
@@ -17734,7 +17726,7 @@ fn kill_switch_artifact_candidates(state: &AppState) -> Vec<KillSwitchArtifactCa
             KillSwitchArtifactKind::Configuration,
         );
         if let Some(parent) = path.parent() {
-            roots.push(parent.to_path_buf());
+            push_known_reticulum_runtime_candidates(&mut candidates, parent);
         }
     }
     if let Ok(managed) = state.managed_reticulumd.read() {
@@ -17744,13 +17736,23 @@ fn kill_switch_artifact_candidates(state: &AppState) -> Vec<KillSwitchArtifactCa
                 path.clone(),
                 KillSwitchArtifactKind::Configuration,
             );
-            if let Some(parent) = path.parent() {
-                roots.push(parent.to_path_buf());
-            }
         }
     }
-    for root in roots {
-        push_runtime_root_candidates(&mut candidates, &root);
+    for category in ["file", "image"] {
+        if let Ok(path) = state.attachment_storage_path(category) {
+            push_artifact_candidate(&mut candidates, path, KillSwitchArtifactKind::Attachment);
+        }
+    }
+    if let Some(path) = &state.sqlite_path
+        && let Some(parent) = path.parent()
+    {
+        for dirname in ["files", "images"] {
+            push_artifact_candidate(
+                &mut candidates,
+                parent.join(dirname),
+                KillSwitchArtifactKind::Attachment,
+            );
+        }
     }
 
     let mut seen = HashSet::new();
@@ -17778,6 +17780,9 @@ fn kill_switch_artifact_preview(state: &AppState) -> KillSwitchArtifactReport {
             }
             KillSwitchArtifactKind::Identity => {
                 report.identity_files = report.identity_files.saturating_add(1);
+            }
+            KillSwitchArtifactKind::Attachment => {
+                report.attachment_files = report.attachment_files.saturating_add(1);
             }
         }
     }
@@ -17810,6 +17815,9 @@ fn delete_kill_switch_artifacts(state: &AppState) -> Result<KillSwitchArtifactRe
                     }
                     KillSwitchArtifactKind::Identity => {
                         report.identity_files = report.identity_files.saturating_add(1);
+                    }
+                    KillSwitchArtifactKind::Attachment => {
+                        report.attachment_files = report.attachment_files.saturating_add(1);
                     }
                 }
             }
@@ -17913,7 +17921,11 @@ fn grouped_kill_switch_targets(
             "DB",
             14,
             &["rch_file_attachments", "rch_settings"],
-            Some(artifacts.database_files),
+            Some(
+                artifacts
+                    .database_files
+                    .saturating_add(artifacts.attachment_files),
+            ),
         ),
         (
             "runtime-secrets",
@@ -47667,6 +47679,7 @@ mod tests {
         assert_eq!(wrong_pin.status(), StatusCode::UNAUTHORIZED);
 
         let correct_pin = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
@@ -47687,6 +47700,62 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["state"], "authorized");
         assert_eq!(payload["initial_pin"], serde_json::Value::Null);
+
+        let remote_addr = SocketAddr::from(([198, 51, 100, 22], 50_001));
+        let unauthenticated_status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/r3akt/setup/status")
+                    .extension(ConnectInfo(remote_addr))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("unauthenticated setup status");
+        assert_eq!(unauthenticated_status.status(), StatusCode::OK);
+        let body = unauthenticated_status
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["setup_required"], false);
+        assert_eq!(payload["config_path"], serde_json::Value::Null);
+        assert_eq!(payload["reticulum_config_path"], serde_json::Value::Null);
+        assert_eq!(payload["reticulum_identity_path"], serde_json::Value::Null);
+
+        let authenticated_status = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/r3akt/setup/status")
+                    .extension(ConnectInfo(remote_addr))
+                    .header("X-API-Key", "remote-secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("authenticated setup status");
+        assert_eq!(authenticated_status.status(), StatusCode::OK);
+        let body = authenticated_status
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["config_path"], config_path.display().to_string());
+        assert_eq!(
+            payload["reticulum_config_path"],
+            reticulum_config_path.display().to_string()
+        );
+        assert_eq!(
+            payload["reticulum_identity_path"],
+            reticulum_identity_path.display().to_string()
+        );
 
         let _ = std::fs::remove_dir_all(test_dir);
     }
@@ -47753,6 +47822,62 @@ mod tests {
                 .expect("password hash")
                 .is_none()
         );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+    }
+
+    #[tokio::test]
+    async fn first_run_setup_does_not_enroll_when_config_write_fails() {
+        let test_dir =
+            std::env::temp_dir().join(format!("r3akt-rch-setup-write-failure-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch.sqlite3");
+        let config_path = test_dir.join("rch.ini");
+        let reticulum_config_path = test_dir.join("reticulum-config-as-directory");
+        std::fs::write(&config_path, "[core]\napp_name = RCH\n").expect("config");
+        std::fs::create_dir_all(&reticulum_config_path).expect("reticulum config dir");
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path)
+            .with_reticulum_config_path(&reticulum_config_path);
+        let app = crate::create_app_with_state(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/setup/complete")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "hub_name": "Field Hub North",
+                            "remote_password": "remote-secret",
+                            "kill_switch_pin": "135790",
+                            "reticulum_config_text": "[interfaces]\n[[TCP uplink]]\ntype = TCPClientInterface\ninterface_enabled = yes\ntarget_host = 10.1.1.5\ntarget_port = 4242\n"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("complete setup");
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let store = RchSqliteStore::open(&db_path).expect("store");
+        assert!(
+            store
+                .setting_value("kill_switch_pin_hash")
+                .expect("pin hash")
+                .is_none()
+        );
+        assert!(
+            store
+                .setting_value("remote_access_password_hash")
+                .expect("password hash")
+                .is_none()
+        );
+        assert!(store.setting_value("hub_name").expect("hub name").is_none());
 
         let _ = std::fs::remove_dir_all(test_dir);
     }
@@ -61660,8 +61785,17 @@ mod tests {
         let reticulumd_db_path = test_dir.join("reticulumd.db");
         let identity_path = test_dir.join("identity");
         let reticulumd_identity_path = test_dir.join("reticulumd.identity");
+        let unrelated_db_path = test_dir.join("unrelated.sqlite3");
+        let unrelated_reticulum_db_path = reticulum_config_path
+            .parent()
+            .expect("reticulum parent")
+            .join("unrelated.db");
+        let file_storage_dir = test_dir.join("files");
+        let image_storage_dir = test_dir.join("images");
         std::fs::create_dir_all(reticulum_config_path.parent().expect("reticulum parent"))
             .expect("reticulum dir");
+        std::fs::create_dir_all(&file_storage_dir).expect("file storage dir");
+        std::fs::create_dir_all(&image_storage_dir).expect("image storage dir");
         RchSqliteStore::open(&db_path).expect("sqlite");
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
@@ -61684,15 +61818,25 @@ mod tests {
         ] {
             std::fs::write(path, "runtime-sensitive").expect("runtime file");
         }
+        for path in [
+            &unrelated_db_path,
+            &unrelated_reticulum_db_path,
+            &file_storage_dir.join("field-report.txt"),
+            &image_storage_dir.join("photo.jpg"),
+        ] {
+            std::fs::write(path, "operator-data").expect("test file");
+        }
         let preview = crate::kill_switch_artifact_preview(&state);
         assert!(preview.database_files >= 4);
         assert!(preview.configuration_files >= 2);
         assert!(preview.identity_files >= 2);
+        assert!(preview.attachment_files >= 2);
 
         let report = crate::delete_kill_switch_artifacts(&state).expect("delete artifacts");
         assert!(report.database_files >= 4);
         assert!(report.configuration_files >= 2);
         assert!(report.identity_files >= 2);
+        assert!(report.attachment_files >= 2);
         for path in [
             &db_path,
             &config_path,
@@ -61705,6 +61849,26 @@ mod tests {
         ] {
             assert!(!path.exists(), "{} should be deleted", path.display());
         }
+        assert!(
+            !file_storage_dir.exists(),
+            "{} should be deleted",
+            file_storage_dir.display()
+        );
+        assert!(
+            !image_storage_dir.exists(),
+            "{} should be deleted",
+            image_storage_dir.display()
+        );
+        assert!(
+            unrelated_db_path.exists(),
+            "{} should not be glob-deleted",
+            unrelated_db_path.display()
+        );
+        assert!(
+            unrelated_reticulum_db_path.exists(),
+            "{} should not be glob-deleted",
+            unrelated_reticulum_db_path.display()
+        );
         let _cleanup = std::fs::remove_dir_all(test_dir);
     }
 
