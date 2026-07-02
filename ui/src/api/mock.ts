@@ -1,6 +1,15 @@
 const nowIso = () => new Date().toISOString();
 
 const mockState = {
+  setup: {
+    setupRequired: true,
+    hubName: "",
+    remotePassword: "",
+    killSwitchPin: "",
+    reticulumIdentityHash: "9d0b5f62a1c349f7b8d24e6c01a3f5ab",
+    reticulumIdentityCreated: true,
+    completedAt: null as string | null
+  },
   topics: [
     { TopicID: "topic-1", TopicName: "Weather", TopicPath: "environment/weather", TopicDescription: "Sensor feed" },
     { TopicID: "topic-2", TopicName: "Logistics", TopicPath: "ops/logistics", TopicDescription: "Supply status" }
@@ -272,6 +281,18 @@ const mockState = {
         }
       }
     ]
+  },
+  killSwitch: {
+    state: "idle",
+    arm_a: false,
+    arm_b: false,
+    pin_enrolled: false,
+    pin_created_at: null as string | null,
+    initial_pin: null as string | null,
+    authorized_at: null as string | null,
+    purge_started_at: null as string | null,
+    progress_percent: 0,
+    message: "Awaiting dual arm."
   }
 };
 
@@ -300,6 +321,109 @@ let chatMessageCounter = 2;
 let attachmentCounter = 3;
 let markerCounter = 2;
 let zoneCounter = 2;
+
+const clampPercent = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+
+const byteTotal = 2_730_000_000_000;
+
+const buildKillSwitchManifest = (progressPercent: number) => {
+  const missionRecordTotal =
+    mockState.r3aktMissions.length +
+    mockState.r3aktMissionChanges.length +
+    mockState.r3aktLogEntries.length +
+    mockState.r3aktTeams.length +
+    mockState.r3aktTeamMembers.length +
+    mockState.r3aktAssets.length +
+    mockState.r3aktAssignments.length +
+    mockState.r3aktDomainEvents.length +
+    mockState.checklists.length +
+    mockState.checklistTemplates.length;
+  const totals = [
+    {
+      id: "database-tables",
+      label: "Database tables",
+      short: "DB",
+      total:
+        mockState.topics.length +
+        mockState.subscribers.length +
+        mockState.clients.length +
+        mockState.identities.length +
+        mockState.events.length +
+        42,
+      unit: "records",
+      weight: 1
+    },
+    {
+      id: "mission-records",
+      label: "Mission records",
+      short: "MR",
+      total: Math.max(1, missionRecordTotal),
+      unit: "records",
+      weight: 0.92
+    },
+    {
+      id: "files-documents",
+      label: "Files and documents",
+      short: "FD",
+      total: Math.max(1, mockState.files.length + mockState.images.length),
+      unit: "objects",
+      weight: 0.78
+    },
+    {
+      id: "telemetry-data",
+      label: "Telemetry data",
+      short: "TL",
+      total: byteTotal,
+      unit: "bytes",
+      weight: 0.64
+    },
+    {
+      id: "auth-session-data",
+      label: "Auth/session data",
+      short: "AU",
+      total: Math.max(1, mockState.identities.length + mockState.clients.length),
+      unit: "tokens",
+      weight: 0.5
+    }
+  ] as const;
+  return totals.map((target) => {
+    const targetPercent = clampPercent(progressPercent * target.weight);
+    return {
+      ...target,
+      erased: Math.round(target.total * (targetPercent / 100)),
+      state:
+        targetPercent >= 100
+          ? "erased"
+          : progressPercent > 0
+            ? "erasing"
+            : "queued"
+    };
+  });
+};
+
+const refreshKillSwitchProgress = () => {
+  if (mockState.killSwitch.state !== "deleting" || !mockState.killSwitch.purge_started_at) {
+    return;
+  }
+  const elapsedMs = Date.now() - new Date(mockState.killSwitch.purge_started_at).getTime();
+  const nextProgress = clampPercent((elapsedMs / 26000) * 100);
+  mockState.killSwitch.progress_percent = nextProgress;
+  if (nextProgress >= 100) {
+    mockState.killSwitch.state = "completed";
+    mockState.killSwitch.message = "Simulated purge completed.";
+  } else {
+    mockState.killSwitch.message = "Simulated purge in progress.";
+  }
+};
+
+const killSwitchStatusPayload = () => {
+  refreshKillSwitchProgress();
+  return {
+    ...mockState.killSwitch,
+    targets: buildKillSwitchManifest(mockState.killSwitch.progress_percent),
+    updated_at: nowIso()
+  };
+};
 
 const jsonResponse = (payload: unknown, status = 200) =>
   new Response(JSON.stringify(payload), {
@@ -331,6 +455,66 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
   const method = (options.method ?? "GET").toUpperCase();
   const url = new URL(path, "http://localhost");
   const pathname = url.pathname;
+
+  if (pathname === "/api/r3akt/setup/status" && method === "GET") {
+    return jsonResponse({
+      setup_required: mockState.setup.setupRequired,
+      pin_enrolled: mockState.killSwitch.pin_enrolled,
+      pin_created_at: mockState.killSwitch.pin_created_at,
+      hub_name: mockState.setup.hubName || null,
+      remote_password_configured: mockState.setup.remotePassword.length > 0,
+      remote_password_created_at: mockState.setup.completedAt,
+      config_path: "mock://rch.ini",
+      reticulum_config_path: "mock://reticulum/config",
+      reticulum_identity_hash: mockState.setup.reticulumIdentityHash,
+      reticulum_identity_path: "mock://reticulum/identity",
+      reticulum_identity_created: mockState.setup.reticulumIdentityCreated
+    });
+  }
+
+  if (pathname === "/api/r3akt/setup/complete" && method === "POST") {
+    const body = (await parseBody(options.body)) as Record<string, unknown> | undefined;
+    const hubName = typeof body?.hub_name === "string" ? body.hub_name.trim() : "";
+    const remotePassword =
+      typeof body?.remote_password === "string" ? body.remote_password.trim() : "";
+    const killSwitchPin =
+      typeof body?.kill_switch_pin === "string" ? body.kill_switch_pin.trim() : "";
+    if (!hubName) {
+      return jsonResponse({ detail: "Hub name is required" }, 400);
+    }
+    if (remotePassword.length < 8) {
+      return jsonResponse({ detail: "Remote access password must contain at least eight characters" }, 400);
+    }
+    if (!/^\d{6}$/.test(killSwitchPin)) {
+      return jsonResponse({ detail: "Kill switch PIN must contain exactly six digits" }, 400);
+    }
+    mockState.setup.setupRequired = false;
+    mockState.setup.hubName = hubName;
+    mockState.setup.remotePassword = remotePassword;
+    mockState.setup.killSwitchPin = killSwitchPin;
+    mockState.setup.completedAt = nowIso();
+    mockState.configText = `[hub]\nname = ${hubName}\n`;
+    if (typeof body?.reticulum_config_text === "string" && body.reticulum_config_text.trim()) {
+      mockState.reticulumConfigText = body.reticulum_config_text;
+    }
+    mockState.killSwitch.pin_enrolled = true;
+    mockState.killSwitch.pin_created_at = mockState.setup.completedAt;
+    mockState.killSwitch.initial_pin = null;
+    mockState.killSwitch.message = "Kill switch PIN enrolled by first-run setup.";
+    return jsonResponse({
+      setup_required: false,
+      pin_enrolled: true,
+      pin_created_at: mockState.killSwitch.pin_created_at,
+      hub_name: mockState.setup.hubName,
+      remote_password_configured: true,
+      remote_password_created_at: mockState.setup.completedAt,
+      config_path: "mock://rch.ini",
+      reticulum_config_path: "mock://reticulum/config",
+      reticulum_identity_hash: mockState.setup.reticulumIdentityHash,
+      reticulum_identity_path: "mock://reticulum/identity",
+      reticulum_identity_created: mockState.setup.reticulumIdentityCreated
+    });
+  }
 
   if (pathname === "/Status") {
     return jsonResponse({
@@ -388,6 +572,67 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
         }
       }
     });
+  }
+
+  if (pathname === "/api/r3akt/kill-switch/status" && method === "GET") {
+    return jsonResponse(killSwitchStatusPayload());
+  }
+
+  if (pathname === "/api/r3akt/kill-switch/arm" && method === "POST") {
+    if (!mockState.killSwitch.pin_enrolled) {
+      return jsonResponse({ detail: "First-run setup must configure the kill switch PIN" }, 409);
+    }
+    const body = (await parseBody(options.body)) as Record<string, unknown> | undefined;
+    mockState.killSwitch.arm_a = body?.arm_a === true;
+    mockState.killSwitch.arm_b = body?.arm_b === true;
+    if (mockState.killSwitch.state !== "deleting" && mockState.killSwitch.state !== "completed") {
+      mockState.killSwitch.authorized_at = null;
+      mockState.killSwitch.purge_started_at = null;
+      mockState.killSwitch.progress_percent = 0;
+      mockState.killSwitch.state =
+        mockState.killSwitch.arm_a && mockState.killSwitch.arm_b ? "armed" : "idle";
+      mockState.killSwitch.message =
+        mockState.killSwitch.state === "armed" ? "Dual arm confirmed. Awaiting PIN." : "Awaiting dual arm.";
+    }
+    return jsonResponse(killSwitchStatusPayload());
+  }
+
+  if (pathname === "/api/r3akt/kill-switch/authorize" && method === "POST") {
+    if (!mockState.killSwitch.pin_enrolled) {
+      return jsonResponse({ detail: "First-run setup must configure the kill switch PIN" }, 409);
+    }
+    const body = (await parseBody(options.body)) as Record<string, unknown> | undefined;
+    const pin = typeof body?.pin === "string" ? body.pin.trim() : "";
+    if (!mockState.killSwitch.arm_a || !mockState.killSwitch.arm_b) {
+      return jsonResponse({ detail: "Both kill-switch arms must be active before PIN authorization." }, 409);
+    }
+    if (!/^\d{6}$/.test(pin)) {
+      return jsonResponse({ detail: "PIN must contain six digits." }, 400);
+    }
+    if (pin !== mockState.setup.killSwitchPin) {
+      return jsonResponse({ detail: "Kill switch PIN rejected" }, 401);
+    }
+    if (mockState.killSwitch.state !== "deleting" && mockState.killSwitch.state !== "completed") {
+      mockState.killSwitch.state = "authorized";
+      mockState.killSwitch.authorized_at = nowIso();
+      mockState.killSwitch.initial_pin = null;
+      mockState.killSwitch.message = "PIN accepted by simulated core.";
+    }
+    return jsonResponse(killSwitchStatusPayload());
+  }
+
+  if (pathname === "/api/r3akt/kill-switch/purge" && method === "POST") {
+    if (!mockState.killSwitch.pin_enrolled) {
+      return jsonResponse({ detail: "First-run setup must configure the kill switch PIN" }, 409);
+    }
+    if (mockState.killSwitch.state !== "authorized") {
+      return jsonResponse({ detail: "Kill switch must be authorized before purge can start." }, 409);
+    }
+    mockState.killSwitch.state = "deleting";
+    mockState.killSwitch.purge_started_at = nowIso();
+    mockState.killSwitch.progress_percent = 1;
+    mockState.killSwitch.message = "Simulated purge in progress.";
+    return jsonResponse(killSwitchStatusPayload());
   }
 
   if (pathname === "/Events") {

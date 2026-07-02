@@ -62,12 +62,12 @@ use r3akt_rch_core::{
     ChatAttachmentRecord, ClientRecord as CoreClientRecord, DeliveryMode, FileAttachmentRecord,
     IdentityStateRecord as CoreIdentityStateRecord, MarkerRecord as CoreMarkerRecord,
     MessageRecord as CoreMessageRecord, MissionAuditEvent, MissionChangeRecord,
-    OutboundDeliveryPolicy, RchCore, RchSqliteStore, RetentionPolicy, SubjectOperationRight,
-    SubscriberRecord as CoreSubscriberRecord, SystemEventRecord, TelemetryRecord,
-    TopicRecord as CoreTopicRecord, Visibility, ZonePointRecord as CoreZonePointRecord,
-    ZoneRecord as CoreZoneRecord, classify_delivery_mode, is_supported_checklist_command,
-    is_supported_mission_command, normalize_topic_id, rch_mission_role_bundle_definitions,
-    rch_operation_definitions, rch_role_bundle_definitions,
+    OutboundDeliveryPolicy, RchCore, RchDatabaseWipeReport, RchSqliteStore, RetentionPolicy,
+    SubjectOperationRight, SubscriberRecord as CoreSubscriberRecord, SystemEventRecord,
+    TelemetryRecord, TopicRecord as CoreTopicRecord, Visibility,
+    ZonePointRecord as CoreZonePointRecord, ZoneRecord as CoreZoneRecord, classify_delivery_mode,
+    is_supported_checklist_command, is_supported_mission_command, normalize_topic_id,
+    rch_mission_role_bundle_definitions, rch_operation_definitions, rch_role_bundle_definitions,
 };
 #[cfg(test)]
 use r3akt_transport_rns::MessageBus;
@@ -80,6 +80,8 @@ use r3akt_transport_rns::{
     poll_lxmf_zmq_events, poll_reticulumd_events, reticulumd_event_to_envelope,
     reticulumd_message_to_envelope, send_lxmf_zmq_outbound_batch, send_lxmf_zmq_outbound_message,
 };
+use rand_core::OsRng;
+use rns_core::identity::{PRIVATE_KEY_LENGTH, PrivateIdentity};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -140,6 +142,16 @@ const WS_SYSTEM_EVENTS_DEFAULT_LIMIT: usize = 50;
 const WS_SYSTEM_EVENTS_MAX_LIMIT: usize = 200;
 const API_PAGINATION_DEFAULT_PAGE_SIZE: usize = 50;
 const API_PAGINATION_MAX_PAGE_SIZE: usize = 500;
+const KILL_SWITCH_PIN_SALT_SETTING: &str = "kill_switch_pin_salt";
+const KILL_SWITCH_PIN_HASH_SETTING: &str = "kill_switch_pin_hash";
+const KILL_SWITCH_PIN_CREATED_AT_SETTING: &str = "kill_switch_pin_created_at_ts_ms";
+const HUB_NAME_SETTING: &str = "hub_name";
+const REMOTE_ACCESS_PASSWORD_SALT_SETTING: &str = "remote_access_password_salt";
+const REMOTE_ACCESS_PASSWORD_HASH_SETTING: &str = "remote_access_password_hash";
+const REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING: &str = "remote_access_password_created_at_ts_ms";
+const KILL_SWITCH_AUTHORIZATION_TTL_MS: i64 = 120_000;
+const KILL_SWITCH_PROGRESS_WINDOW_MS: i64 = 18_000;
+type KillSwitchTargetGroup<'a> = (&'a str, &'a str, &'a str, u8, &'a [&'a str], Option<usize>);
 const GROUP_CHAT_INBOUND_TEXT_MAX_CHARS: usize = 500;
 const GROUP_CHAT_COMMAND_BODY_MAX_BYTES: usize = 1024;
 const GROUP_CHAT_JOIN_REPLAY_MAX_MESSAGES: usize = 10;
@@ -213,6 +225,8 @@ pub struct AppState {
     reticulumd_receipt_status_next_poll_ts_ms: Arc<RwLock<i64>>,
     outbound_identity_allowlist: Option<Arc<HashSet<String>>>,
     mission_change_fanout_cache: Arc<RwLock<HashMap<String, i64>>>,
+    kill_switch: Arc<RwLock<KillSwitchRuntimeState>>,
+    managed_reticulumd_db_path: Option<Arc<PathBuf>>,
     #[cfg(test)]
     rch_sqlite_lock: Arc<Mutex<()>>,
     sqlite_path: Option<Arc<PathBuf>>,
@@ -346,6 +360,92 @@ struct ManagedReticulumdState {
     stopped_ts_ms: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum KillSwitchRuntimeMode {
+    #[default]
+    Idle,
+    Armed,
+    Authorized,
+    Deleting,
+    Completed,
+    Failed,
+}
+
+impl KillSwitchRuntimeMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Armed => "armed",
+            Self::Authorized => "authorized",
+            Self::Deleting => "deleting",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct KillSwitchTargetStatus {
+    id: String,
+    label: String,
+    short: String,
+    total: usize,
+    erased: usize,
+    unit: &'static str,
+    state: &'static str,
+    weight: u8,
+}
+
+#[derive(Debug, Clone, Default)]
+struct KillSwitchArtifactReport {
+    database_files: usize,
+    configuration_files: usize,
+    identity_files: usize,
+    attachment_files: usize,
+    deleted_paths: Vec<String>,
+}
+
+impl KillSwitchArtifactReport {
+    fn total_files(&self) -> usize {
+        self.database_files
+            .saturating_add(self.configuration_files)
+            .saturating_add(self.identity_files)
+            .saturating_add(self.attachment_files)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct KillSwitchRuntimeState {
+    arm_a: bool,
+    arm_b: bool,
+    mode: KillSwitchRuntimeMode,
+    authorized_at_ts_ms: Option<i64>,
+    purge_started_at_ts_ms: Option<i64>,
+    purge_completed_at_ts_ms: Option<i64>,
+    failed_at_ts_ms: Option<i64>,
+    initial_pin_reveal: Option<String>,
+    progress_percent: u8,
+    message: String,
+    targets: Vec<KillSwitchTargetStatus>,
+    rows_deleted: usize,
+    last_error: Option<String>,
+    updated_at_ts_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+struct KillSwitchPinSecret {
+    salt: String,
+    hash: String,
+    created_at_ts_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+struct StoredPasswordSecret {
+    salt: String,
+    hash: String,
+    created_at_ts_ms: i64,
+}
+
 impl Default for RuntimeControlState {
     fn default() -> Self {
         let now_ms = unix_now_ms();
@@ -393,6 +493,8 @@ impl Default for AppState {
             reticulumd_receipt_status_next_poll_ts_ms: Arc::default(),
             outbound_identity_allowlist: None,
             mission_change_fanout_cache: Arc::default(),
+            kill_switch: Arc::default(),
+            managed_reticulumd_db_path: None,
             #[cfg(test)]
             rch_sqlite_lock: Arc::default(),
             sqlite_path: None,
@@ -527,19 +629,23 @@ impl AppState {
 
     #[must_use]
     pub fn with_managed_reticulumd(
-        self,
+        mut self,
         exe_path: impl AsRef<FsPath>,
         endpoint: impl Into<String>,
         db_path: Option<impl Into<String>>,
         config_path: Option<impl AsRef<FsPath>>,
     ) -> Self {
+        let db_path = db_path.map(Into::into);
+        self.managed_reticulumd_db_path = db_path
+            .as_ref()
+            .map(|path| Arc::new(PathBuf::from(path.as_str())));
         if let Ok(mut managed) = self.managed_reticulumd.write() {
             managed.configured = true;
             managed.exe_path = Some(exe_path.as_ref().to_path_buf());
             managed.config_path = config_path.map(|path| path.as_ref().to_path_buf());
             managed.endpoint = Some(endpoint.into());
             managed.zmq_command_endpoint = None;
-            managed.db_path = db_path.map(Into::into);
+            managed.db_path = db_path;
             managed.transport = None;
             managed.running = false;
             managed.pid = None;
@@ -574,19 +680,23 @@ impl AppState {
 
     #[must_use]
     pub fn with_managed_reticulumd_zmq(
-        self,
+        mut self,
         exe_path: impl AsRef<FsPath>,
         command_endpoint: impl Into<String>,
         db_path: Option<impl Into<String>>,
         config_path: Option<impl AsRef<FsPath>>,
     ) -> Self {
+        let db_path = db_path.map(Into::into);
+        self.managed_reticulumd_db_path = db_path
+            .as_ref()
+            .map(|path| Arc::new(PathBuf::from(path.as_str())));
         if let Ok(mut managed) = self.managed_reticulumd.write() {
             managed.configured = true;
             managed.exe_path = Some(exe_path.as_ref().to_path_buf());
             managed.config_path = config_path.map(|path| path.as_ref().to_path_buf());
             managed.endpoint = None;
             managed.zmq_command_endpoint = Some(command_endpoint.into());
-            managed.db_path = db_path.map(Into::into);
+            managed.db_path = db_path;
             managed.transport = None;
             managed.running = false;
             managed.pid = None;
@@ -986,23 +1096,31 @@ impl AppState {
         if is_local_client_addr(client_addr) {
             return true;
         }
-        let Some(expected) = &self.api_key else {
-            return client_addr.is_none();
-        };
+        if client_addr.is_none() && self.api_key.is_none() {
+            return true;
+        }
         let api_key = headers
             .get("X-API-Key")
             .and_then(|value| value.to_str().ok());
-        if api_key == Some(expected.as_str()) {
-            return true;
+        let bearer = bearer_token(headers);
+        if let Some(expected) = &self.api_key {
+            if api_key == Some(expected.as_str()) || bearer == Some(expected.as_str()) {
+                return true;
+            }
         }
-        bearer_token(headers) == Some(expected.as_str())
+        self.validate_stored_remote_password(api_key.or(bearer))
+            .unwrap_or(false)
     }
 
-    fn http_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> &'static str {
-        if self.api_key.is_none() && !is_local_client_addr(client_addr) {
-            "Remote access requires authentication; set RTH_API_KEY (RCH_API_KEY is also supported)."
+    fn http_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> String {
+        if !is_local_client_addr(client_addr)
+            && self.api_key.is_none()
+            && !self.remote_password_configured().unwrap_or(false)
+        {
+            "Remote access requires first-run setup or RTH_API_KEY (RCH_API_KEY is also supported)."
+                .to_string()
         } else {
-            "Unauthorized"
+            "Unauthorized".to_string()
         }
     }
 
@@ -1015,14 +1133,37 @@ impl AppState {
         if is_local_client_addr(client_addr) {
             return true;
         }
-        let Some(expected) = &self.api_key else {
-            return client_addr.is_none();
-        };
-        api_key == Some(expected.as_str()) || token == Some(expected.as_str())
+        if client_addr.is_none() && self.api_key.is_none() {
+            return true;
+        }
+        if let Some(expected) = &self.api_key {
+            if api_key == Some(expected.as_str()) || token == Some(expected.as_str()) {
+                return true;
+            }
+        }
+        self.validate_stored_remote_password(api_key.or(token))
+            .unwrap_or(false)
     }
 
-    fn ws_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> &'static str {
+    fn ws_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> String {
         self.http_auth_failure_detail(client_addr)
+    }
+
+    fn remote_password_configured(&self) -> Result<bool, ApiError> {
+        Ok(load_stored_remote_password(self)?.is_some())
+    }
+
+    fn validate_stored_remote_password(&self, password: Option<&str>) -> Result<bool, ApiError> {
+        let Some(password) = password.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Ok(false);
+        };
+        let Some(secret) = load_stored_remote_password(self)? else {
+            return Ok(false);
+        };
+        Ok(secure_string_eq(
+            &password_hash(&secret.salt, password),
+            &secret.hash,
+        ))
     }
 }
 
@@ -1992,6 +2133,28 @@ struct AttachmentListQuery {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct KillSwitchArmPayload {
+    #[serde(default)]
+    arm_a: bool,
+    #[serde(default)]
+    arm_b: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct KillSwitchAuthorizePayload {
+    pin: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct FirstRunSetupPayload {
+    hub_name: String,
+    remote_password: String,
+    kill_switch_pin: String,
+    #[serde(default)]
+    reticulum_config_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct AttachmentTopicPayload {
     #[serde(default, rename = "TopicID", alias = "topic_id", alias = "topicId")]
     topic_id: Option<String>,
@@ -2017,6 +2180,8 @@ pub enum ApiError {
     PayloadTooLarge(String),
     #[error("{0}")]
     ServiceUnavailable(String),
+    #[error("{0}")]
+    Conflict(String),
     #[error("Unauthorized")]
     Unauthorized,
     #[error("{0}")]
@@ -2035,6 +2200,7 @@ impl IntoResponse for ApiError {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Unauthorized | Self::UnauthorizedWithDetail(_) => StatusCode::UNAUTHORIZED,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -2297,6 +2463,19 @@ fn create_app_router(state: AppState) -> Router {
         )
         .route("/api/r3akt/events", get(list_r3akt_domain_events))
         .route("/api/r3akt/snapshots", get(list_r3akt_domain_snapshots))
+        .route("/api/r3akt/kill-switch/status", get(kill_switch_status))
+        .route(
+            "/api/r3akt/kill-switch/arm",
+            get(method_not_allowed).post(kill_switch_arm),
+        )
+        .route(
+            "/api/r3akt/kill-switch/authorize",
+            get(method_not_allowed).post(kill_switch_authorize),
+        )
+        .route(
+            "/api/r3akt/kill-switch/purge",
+            get(method_not_allowed).post(kill_switch_purge),
+        )
         .route(
             "/api/r3akt/missions",
             get(list_r3akt_missions).post(upsert_r3akt_mission),
@@ -2474,6 +2653,11 @@ fn create_app_router(state: AppState) -> Router {
         .route("/Help", get(help_text))
         .route("/Examples", get(examples_text))
         .route("/api/v1/app/info", get(app_info))
+        .route("/api/r3akt/setup/status", get(first_run_setup_status))
+        .route(
+            "/api/r3akt/setup/complete",
+            get(method_not_allowed).post(first_run_setup_complete),
+        )
         .route("/internal/topics", get(internal_list_topics))
         .route(
             "/internal/topics/{topic_id}/subscribers",
@@ -5147,8 +5331,7 @@ async fn require_http_auth(
         return normalize_framework_rejection(next.run(request).await, query_string.as_deref())
             .await;
     }
-    ApiError::UnauthorizedWithDetail(state.http_auth_failure_detail(client_addr).to_string())
-        .into_response()
+    ApiError::UnauthorizedWithDetail(state.http_auth_failure_detail(client_addr)).into_response()
 }
 
 async fn normalize_framework_rejection(response: Response, query_string: Option<&str>) -> Response {
@@ -10381,7 +10564,7 @@ fn sqlite_runtime_metrics(state: &AppState) -> Value {
         .unwrap_or_default();
     json!({
         "transactions": transactions,
-        "avg_ms": if transactions == 0 { 0 } else { total_ms / transactions },
+        "avg_ms": total_ms.checked_div(transactions).unwrap_or(0),
         "p50_ms": percentile_ms(&samples, 50),
         "p95_ms": percentile_ms(&samples, 95),
         "max_ms": state.runtime_metrics.sqlite_latency_max_ms.load(Ordering::Relaxed),
@@ -13871,6 +14054,234 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
+async fn kill_switch_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(kill_switch_status_payload(&state)?))
+}
+
+async fn kill_switch_arm(
+    State(state): State<AppState>,
+    Json(payload): Json<KillSwitchArmPayload>,
+) -> Result<Json<Value>, ApiError> {
+    require_kill_switch_pin(&state)?;
+    let now_ms = unix_now_ms();
+    {
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if matches!(
+            runtime.mode,
+            KillSwitchRuntimeMode::Deleting | KillSwitchRuntimeMode::Completed
+        ) {
+            return Err(ApiError::BadRequest(
+                "Kill switch controls are locked while purge is active or completed".to_string(),
+            ));
+        }
+        runtime.arm_a = payload.arm_a;
+        runtime.arm_b = payload.arm_b;
+        runtime.authorized_at_ts_ms = None;
+        runtime.progress_percent = 0;
+        runtime.mode = if payload.arm_a && payload.arm_b {
+            KillSwitchRuntimeMode::Armed
+        } else {
+            KillSwitchRuntimeMode::Idle
+        };
+        runtime.message = if payload.arm_a && payload.arm_b {
+            "Dual-arm gates engaged. PIN authorization is required.".to_string()
+        } else {
+            "Dual-arm controls are idle. Enter the configured PIN to authorize purge.".to_string()
+        };
+        runtime.updated_at_ts_ms = now_ms;
+    }
+    Ok(Json(kill_switch_status_payload(&state)?))
+}
+
+async fn kill_switch_authorize(
+    State(state): State<AppState>,
+    Json(payload): Json<KillSwitchAuthorizePayload>,
+) -> Result<Json<Value>, ApiError> {
+    let pin = payload.pin.trim();
+    if pin.len() != 6 || !pin.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(ApiError::BadRequest(
+            "Kill switch PIN must contain exactly six digits".to_string(),
+        ));
+    }
+    let secret = require_kill_switch_pin(&state)?;
+    let candidate_hash = kill_switch_pin_hash(&secret.salt, pin);
+    if !secure_string_eq(&candidate_hash, &secret.hash) {
+        return Err(ApiError::UnauthorizedWithDetail(
+            "Kill switch PIN rejected".to_string(),
+        ));
+    }
+    let now_ms = unix_now_ms();
+    {
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if !runtime.arm_a || !runtime.arm_b {
+            return Err(ApiError::BadRequest(
+                "Both kill switch arms must be enabled before PIN authorization".to_string(),
+            ));
+        }
+        if matches!(
+            runtime.mode,
+            KillSwitchRuntimeMode::Deleting | KillSwitchRuntimeMode::Completed
+        ) {
+            return Err(ApiError::BadRequest(
+                "Kill switch controls are locked while purge is active or completed".to_string(),
+            ));
+        }
+        runtime.mode = KillSwitchRuntimeMode::Authorized;
+        runtime.authorized_at_ts_ms = Some(now_ms);
+        runtime.initial_pin_reveal = None;
+        runtime.message =
+            "PIN accepted. Final purge command is authorized for this session.".to_string();
+        runtime.updated_at_ts_ms = now_ms;
+    }
+    Ok(Json(kill_switch_status_payload(&state)?))
+}
+
+async fn kill_switch_purge(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    require_kill_switch_pin(&state)?;
+    let preview = with_required_core_store_write(&state, |store| store.database_wipe_preview())?;
+    let artifacts = kill_switch_artifact_preview(&state);
+    let now_ms = unix_now_ms();
+    let mut already_deleting = false;
+    {
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if runtime.mode == KillSwitchRuntimeMode::Deleting {
+            already_deleting = true;
+        } else if !runtime.arm_a || !runtime.arm_b {
+            return Err(ApiError::BadRequest(
+                "Both kill switch arms must be enabled before purge".to_string(),
+            ));
+        } else if !kill_switch_auth_active(&runtime, now_ms) {
+            return Err(ApiError::UnauthorizedWithDetail(
+                "Kill switch PIN authorization is missing or expired".to_string(),
+            ));
+        } else {
+            runtime.mode = KillSwitchRuntimeMode::Deleting;
+            runtime.purge_started_at_ts_ms = Some(now_ms);
+            runtime.purge_completed_at_ts_ms = None;
+            runtime.failed_at_ts_ms = None;
+            runtime.progress_percent = 1;
+            runtime.rows_deleted = preview.rows_deleted;
+            runtime.targets =
+                grouped_kill_switch_targets(&preview, &artifacts, KillSwitchRuntimeMode::Idle, 0);
+            runtime.message =
+                "Deleting databases, configuration files, and Reticulum identity.".to_string();
+            runtime.last_error = None;
+            runtime.updated_at_ts_ms = now_ms;
+        }
+    }
+    if already_deleting {
+        return Ok(Json(kill_switch_status_payload(&state)?));
+    }
+    let purge_state = state.clone();
+    let _purge_worker =
+        tokio::task::spawn_blocking(move || run_kill_switch_purge_worker(purge_state));
+    Ok(Json(kill_switch_status_payload(&state)?))
+}
+
+async fn first_run_setup_status(
+    State(state): State<AppState>,
+    request: Request,
+) -> Result<Json<Value>, ApiError> {
+    let client_addr = request_client_addr(&request);
+    let include_sensitive_paths = state.validate_http_headers(request.headers(), client_addr);
+    Ok(Json(first_run_setup_status_payload(
+        &state,
+        include_sensitive_paths,
+    )?))
+}
+
+async fn first_run_setup_complete(
+    State(state): State<AppState>,
+    Json(payload): Json<FirstRunSetupPayload>,
+) -> Result<Json<Value>, ApiError> {
+    if load_kill_switch_pin(&state)?.is_some() {
+        return Err(ApiError::Conflict(
+            "First-run setup has already enrolled a kill switch PIN".to_string(),
+        ));
+    }
+
+    let hub_name = payload.hub_name.trim();
+    if hub_name.is_empty() {
+        return Err(ApiError::BadRequest("Hub name is required".to_string()));
+    }
+    if hub_name.chars().count() > 80 {
+        return Err(ApiError::BadRequest(
+            "Hub name must be 80 characters or fewer".to_string(),
+        ));
+    }
+
+    let remote_password = payload.remote_password.trim();
+    if remote_password.len() < 8 {
+        return Err(ApiError::BadRequest(
+            "Remote access password must contain at least eight characters".to_string(),
+        ));
+    }
+
+    let kill_switch_pin = payload.kill_switch_pin.trim();
+    if kill_switch_pin.len() != 6 || !kill_switch_pin.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(ApiError::BadRequest(
+            "Kill switch PIN must contain exactly six digits".to_string(),
+        ));
+    }
+
+    if let Some(reticulum_config_text) = payload.reticulum_config_text.as_deref() {
+        let errors = validate_ini_text(reticulum_config_text);
+        if !errors.is_empty() {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid Reticulum configuration payload: {}",
+                errors.join("; ")
+            )));
+        }
+        if !reticulum_config_text.trim().is_empty() && state.reticulum_config_path.is_none() {
+            return Err(ApiError::BadRequest(
+                "Reticulum configuration path is required before setup can save TCP interfaces"
+                    .to_string(),
+            ));
+        }
+    }
+
+    if let Some(path) = state.config_path.as_deref() {
+        let current = read_config_file(Some(path))?;
+        let updated = upsert_ini_setting(&current, "hub", "name", hub_name);
+        write_config_file_for_setup(path, updated)?;
+    }
+
+    if let (Some(path), Some(reticulum_config_text)) = (
+        state.reticulum_config_path.as_deref(),
+        payload.reticulum_config_text.as_deref(),
+    ) {
+        write_config_file_for_setup(path, reticulum_config_text.to_string())?;
+    }
+
+    with_required_core_store_write(&state, |store| {
+        store.set_setting_value(HUB_NAME_SETTING, hub_name)?;
+        Ok(())
+    })?;
+    save_remote_access_password(&state, remote_password)?;
+    save_kill_switch_pin(&state, kill_switch_pin)?;
+
+    {
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        runtime.initial_pin_reveal = None;
+        runtime.message = "Kill switch PIN enrolled by first-run setup.".to_string();
+        runtime.updated_at_ts_ms = unix_now_ms();
+    }
+
+    Ok(Json(first_run_setup_status_payload(&state, true)?))
+}
+
 async fn validate_auth(State(state): State<AppState>, request: Request) -> Json<Value> {
     let client_addr = request_client_addr(&request);
     Json(json!({
@@ -16878,6 +17289,7 @@ fn with_core_store_write(
     state: &AppState,
     operation: impl FnOnce(&mut RchSqliteStore) -> Result<(), r3akt_rch_core::RchCoreError>,
 ) -> Result<(), ApiError> {
+    ensure_kill_switch_persistence_unlocked(state)?;
     let Some(path) = &state.sqlite_path else {
         return Ok(());
     };
@@ -16893,6 +17305,14 @@ fn with_required_core_store_write<T>(
     state: &AppState,
     operation: impl FnOnce(&mut RchSqliteStore) -> Result<T, r3akt_rch_core::RchCoreError>,
 ) -> Result<T, ApiError> {
+    ensure_kill_switch_persistence_unlocked(state)?;
+    with_required_core_store_write_unchecked(state, operation)
+}
+
+fn with_required_core_store_write_unchecked<T>(
+    state: &AppState,
+    operation: impl FnOnce(&mut RchSqliteStore) -> Result<T, r3akt_rch_core::RchCoreError>,
+) -> Result<T, ApiError> {
     let path = state
         .sqlite_path
         .as_ref()
@@ -16903,6 +17323,943 @@ fn with_required_core_store_write<T>(
     let result = operation(&mut store).map_err(|error| ApiError::Internal(error.to_string()));
     record_sqlite_latency(state, started.elapsed());
     result
+}
+
+fn ensure_kill_switch_persistence_unlocked(state: &AppState) -> Result<(), ApiError> {
+    let runtime = state
+        .kill_switch
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    if matches!(
+        runtime.mode,
+        KillSwitchRuntimeMode::Deleting | KillSwitchRuntimeMode::Completed
+    ) {
+        return Err(ApiError::ServiceUnavailable(
+            "RCH persistence is locked by kill switch purge".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn sha256_lower_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+fn password_hash(salt: &str, value: &str) -> String {
+    sha256_lower_hex(format!("{salt}:{value}").as_bytes())
+}
+
+fn kill_switch_pin_hash(salt: &str, pin: &str) -> String {
+    password_hash(salt, pin)
+}
+
+fn secure_string_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right.iter())
+        .fold(0u8, |accumulator, (left, right)| {
+            accumulator | (*left ^ *right)
+        })
+        == 0
+}
+
+fn load_kill_switch_pin(state: &AppState) -> Result<Option<KillSwitchPinSecret>, ApiError> {
+    with_required_core_store_write(state, |store| {
+        let salt = store.setting_value(KILL_SWITCH_PIN_SALT_SETTING)?;
+        let hash = store.setting_value(KILL_SWITCH_PIN_HASH_SETTING)?;
+        let created_at = store.setting_value(KILL_SWITCH_PIN_CREATED_AT_SETTING)?;
+        if let (Some(salt), Some(hash), Some(created_at)) = (salt, hash, created_at) {
+            if let Ok(created_at_ts_ms) = created_at.parse::<i64>() {
+                return Ok(Some(KillSwitchPinSecret {
+                    salt,
+                    hash,
+                    created_at_ts_ms,
+                }));
+            }
+        }
+        Ok(None)
+    })
+}
+
+fn require_kill_switch_pin(state: &AppState) -> Result<KillSwitchPinSecret, ApiError> {
+    load_kill_switch_pin(state)?.ok_or_else(|| {
+        ApiError::Conflict("First-run setup must configure the kill switch PIN".to_string())
+    })
+}
+
+fn save_kill_switch_pin(state: &AppState, pin: &str) -> Result<KillSwitchPinSecret, ApiError> {
+    let salt = Uuid::new_v4().to_string();
+    let created_at_ts_ms = unix_now_ms();
+    let hash = kill_switch_pin_hash(&salt, pin);
+    with_required_core_store_write(state, |store| {
+        store.set_setting_value(KILL_SWITCH_PIN_SALT_SETTING, &salt)?;
+        store.set_setting_value(KILL_SWITCH_PIN_HASH_SETTING, &hash)?;
+        store.set_setting_value(
+            KILL_SWITCH_PIN_CREATED_AT_SETTING,
+            &created_at_ts_ms.to_string(),
+        )?;
+        Ok(())
+    })?;
+    Ok(KillSwitchPinSecret {
+        salt,
+        hash,
+        created_at_ts_ms,
+    })
+}
+
+fn load_stored_remote_password(state: &AppState) -> Result<Option<StoredPasswordSecret>, ApiError> {
+    with_required_core_store_write(state, |store| {
+        let salt = store.setting_value(REMOTE_ACCESS_PASSWORD_SALT_SETTING)?;
+        let hash = store.setting_value(REMOTE_ACCESS_PASSWORD_HASH_SETTING)?;
+        let created_at = store.setting_value(REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING)?;
+        if let (Some(salt), Some(hash), Some(created_at)) = (salt, hash, created_at) {
+            if let Ok(created_at_ts_ms) = created_at.parse::<i64>() {
+                return Ok(Some(StoredPasswordSecret {
+                    salt,
+                    hash,
+                    created_at_ts_ms,
+                }));
+            }
+        }
+        Ok(None)
+    })
+}
+
+fn save_remote_access_password(
+    state: &AppState,
+    password: &str,
+) -> Result<StoredPasswordSecret, ApiError> {
+    let salt = Uuid::new_v4().to_string();
+    let created_at_ts_ms = unix_now_ms();
+    let hash = password_hash(&salt, password);
+    with_required_core_store_write(state, |store| {
+        store.set_setting_value(REMOTE_ACCESS_PASSWORD_SALT_SETTING, &salt)?;
+        store.set_setting_value(REMOTE_ACCESS_PASSWORD_HASH_SETTING, &hash)?;
+        store.set_setting_value(
+            REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING,
+            &created_at_ts_ms.to_string(),
+        )?;
+        Ok(())
+    })?;
+    Ok(StoredPasswordSecret {
+        salt,
+        hash,
+        created_at_ts_ms,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct ReticulumIdentityStatus {
+    hash: String,
+    path: PathBuf,
+    created: bool,
+}
+
+fn reticulum_identity_path(state: &AppState) -> Option<PathBuf> {
+    state
+        .reticulum_config_path
+        .as_deref()
+        .and_then(|path| path.parent())
+        .map(|parent| parent.join("identity"))
+}
+
+fn private_identity_hash(identity: &PrivateIdentity) -> String {
+    identity.address_hash().to_hex_string()
+}
+
+fn parse_existing_reticulum_identity_hash(bytes: &[u8]) -> Option<String> {
+    if bytes.len() == PRIVATE_KEY_LENGTH {
+        if let Ok(identity) = PrivateIdentity::from_private_key_bytes(bytes) {
+            return Some(private_identity_hash(&identity));
+        }
+    }
+    let text = std::str::from_utf8(bytes).ok()?.trim();
+    if text.len() >= PRIVATE_KEY_LENGTH * 2 {
+        if let Ok(identity) = PrivateIdentity::new_from_hex_string(text) {
+            return Some(private_identity_hash(&identity));
+        }
+    }
+    if text.len() >= 32
+        && text
+            .chars()
+            .take(32)
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Some(
+            text.chars()
+                .take(32)
+                .collect::<String>()
+                .to_ascii_lowercase(),
+        );
+    }
+    None
+}
+
+fn write_reticulum_identity_file(path: &FsPath, key_bytes: &[u8]) -> Result<(), ApiError> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                ApiError::Internal(format!(
+                    "failed to create Reticulum identity directory {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true).mode(0o600);
+        let mut file = options.open(path).map_err(|error| {
+            ApiError::Internal(format!(
+                "failed to create Reticulum identity {}: {error}",
+                path.display()
+            ))
+        })?;
+        file.write_all(key_bytes).map_err(|error| {
+            ApiError::Internal(format!(
+                "failed to write Reticulum identity {}: {error}",
+                path.display()
+            ))
+        })?;
+        file.sync_all().map_err(|error| {
+            ApiError::Internal(format!(
+                "failed to sync Reticulum identity {}: {error}",
+                path.display()
+            ))
+        })?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, key_bytes).map_err(|error| {
+            ApiError::Internal(format!(
+                "failed to write Reticulum identity {}: {error}",
+                path.display()
+            ))
+        })
+    }
+}
+
+fn ensure_reticulum_identity_status(
+    state: &AppState,
+) -> Result<Option<ReticulumIdentityStatus>, ApiError> {
+    let Some(path) = reticulum_identity_path(state) else {
+        return Ok(None);
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let hash = parse_existing_reticulum_identity_hash(&bytes)
+                .unwrap_or_else(|| sha256_lower_hex(&bytes)[..32].to_string());
+            Ok(Some(ReticulumIdentityStatus {
+                hash,
+                path,
+                created: false,
+            }))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let identity = PrivateIdentity::new_from_rand(OsRng);
+            write_reticulum_identity_file(&path, &identity.to_private_key_bytes())?;
+            Ok(Some(ReticulumIdentityStatus {
+                hash: private_identity_hash(&identity),
+                path,
+                created: true,
+            }))
+        }
+        Err(error) => Err(ApiError::Internal(format!(
+            "failed to read Reticulum identity {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+fn first_run_setup_status_payload(
+    state: &AppState,
+    include_sensitive_paths: bool,
+) -> Result<Value, ApiError> {
+    let pin = load_kill_switch_pin(state)?;
+    let setup_required = pin.is_none();
+    let expose_paths = setup_required || include_sensitive_paths;
+    let remote_password = load_stored_remote_password(state)?;
+    let hub_name =
+        with_required_core_store_write(state, |store| store.setting_value(HUB_NAME_SETTING))?;
+    let reticulum_identity = ensure_reticulum_identity_status(state)?;
+    Ok(json!({
+        "setup_required": setup_required,
+        "pin_enrolled": pin.is_some(),
+        "pin_created_at": pin.as_ref().map(|secret| iso8601_from_unix_ms(secret.created_at_ts_ms)),
+        "hub_name": hub_name,
+        "remote_password_configured": remote_password.is_some(),
+        "remote_password_created_at": remote_password
+            .as_ref()
+            .map(|secret| iso8601_from_unix_ms(secret.created_at_ts_ms)),
+        "config_path": expose_paths
+            .then(|| state.config_path.as_deref().map(|path| path.display().to_string()))
+            .flatten(),
+        "reticulum_config_path": expose_paths
+            .then(|| {
+                state
+                    .reticulum_config_path
+                    .as_deref()
+                    .map(|path| path.display().to_string())
+            })
+            .flatten(),
+        "reticulum_identity_hash": reticulum_identity.as_ref().map(|identity| identity.hash.clone()),
+        "reticulum_identity_path": expose_paths
+            .then(|| {
+                reticulum_identity
+                    .as_ref()
+                    .map(|identity| identity.path.display().to_string())
+            })
+            .flatten(),
+        "reticulum_identity_created": reticulum_identity.as_ref().map(|identity| identity.created),
+    }))
+}
+
+fn kill_switch_auth_active(runtime: &KillSwitchRuntimeState, now_ms: i64) -> bool {
+    runtime.authorized_at_ts_ms.is_some_and(|authorized_at| {
+        now_ms.saturating_sub(authorized_at) <= KILL_SWITCH_AUTHORIZATION_TTL_MS
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KillSwitchArtifactKind {
+    Database,
+    Configuration,
+    Identity,
+    Attachment,
+}
+
+#[derive(Debug, Clone)]
+struct KillSwitchArtifactCandidate {
+    path: PathBuf,
+    kind: KillSwitchArtifactKind,
+}
+
+fn sqlite_sidecar_paths(path: &FsPath) -> Vec<PathBuf> {
+    let path_text = path.to_string_lossy();
+    ["-wal", "-shm", "-journal"]
+        .into_iter()
+        .map(|suffix| PathBuf::from(format!("{path_text}{suffix}")))
+        .collect()
+}
+
+fn push_artifact_candidate(
+    candidates: &mut Vec<KillSwitchArtifactCandidate>,
+    path: PathBuf,
+    kind: KillSwitchArtifactKind,
+) {
+    candidates.push(KillSwitchArtifactCandidate { path, kind });
+}
+
+fn push_database_candidate(candidates: &mut Vec<KillSwitchArtifactCandidate>, path: PathBuf) {
+    for sidecar in sqlite_sidecar_paths(&path) {
+        push_artifact_candidate(candidates, sidecar, KillSwitchArtifactKind::Database);
+    }
+    push_artifact_candidate(candidates, path, KillSwitchArtifactKind::Database);
+}
+
+fn push_known_hub_runtime_candidates(
+    candidates: &mut Vec<KillSwitchArtifactCandidate>,
+    root: &FsPath,
+) {
+    for file_name in ["rch_state.sqlite3", "rth_api.sqlite", "telemetry.db"] {
+        push_database_candidate(candidates, root.join(file_name));
+    }
+    for file_name in ["identity", "reticulumd.identity"] {
+        push_artifact_candidate(
+            candidates,
+            root.join(file_name),
+            KillSwitchArtifactKind::Identity,
+        );
+    }
+}
+
+fn push_known_reticulum_runtime_candidates(
+    candidates: &mut Vec<KillSwitchArtifactCandidate>,
+    root: &FsPath,
+) {
+    push_database_candidate(candidates, root.join("reticulumd.db"));
+    for file_name in ["identity", "reticulumd.identity", "config"] {
+        let kind = if file_name == "config" {
+            KillSwitchArtifactKind::Configuration
+        } else {
+            KillSwitchArtifactKind::Identity
+        };
+        push_artifact_candidate(candidates, root.join(file_name), kind);
+    }
+}
+
+fn kill_switch_artifact_candidates(state: &AppState) -> Vec<KillSwitchArtifactCandidate> {
+    let mut candidates = Vec::new();
+    if let Some(path) = &state.sqlite_path {
+        push_database_candidate(&mut candidates, path.as_ref().clone());
+        if let Some(parent) = path.parent() {
+            push_known_hub_runtime_candidates(&mut candidates, parent);
+        }
+    }
+    if let Some(path) = &state.managed_reticulumd_db_path {
+        push_database_candidate(&mut candidates, path.as_ref().clone());
+    }
+    if let Some(path) = &state.config_path {
+        push_artifact_candidate(
+            &mut candidates,
+            path.as_ref().clone(),
+            KillSwitchArtifactKind::Configuration,
+        );
+    }
+    if let Some(path) = &state.reticulum_config_path {
+        push_artifact_candidate(
+            &mut candidates,
+            path.as_ref().clone(),
+            KillSwitchArtifactKind::Configuration,
+        );
+        if let Some(parent) = path.parent() {
+            push_known_reticulum_runtime_candidates(&mut candidates, parent);
+        }
+    }
+    if let Ok(managed) = state.managed_reticulumd.read() {
+        if let Some(path) = &managed.config_path {
+            push_artifact_candidate(
+                &mut candidates,
+                path.clone(),
+                KillSwitchArtifactKind::Configuration,
+            );
+        }
+    }
+    for category in ["file", "image"] {
+        if let Ok(path) = state.attachment_storage_path(category) {
+            push_artifact_candidate(&mut candidates, path, KillSwitchArtifactKind::Attachment);
+        }
+    }
+    if let Some(path) = &state.sqlite_path
+        && let Some(parent) = path.parent()
+    {
+        for dirname in ["files", "images"] {
+            push_artifact_candidate(
+                &mut candidates,
+                parent.join(dirname),
+                KillSwitchArtifactKind::Attachment,
+            );
+        }
+    }
+
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            let key = candidate.path.to_string_lossy().to_string();
+            seen.insert(key)
+        })
+        .collect()
+}
+
+fn kill_switch_artifact_preview(state: &AppState) -> KillSwitchArtifactReport {
+    let mut report = KillSwitchArtifactReport::default();
+    for candidate in kill_switch_artifact_candidates(state) {
+        if !candidate.path.exists() {
+            continue;
+        }
+        match candidate.kind {
+            KillSwitchArtifactKind::Database => {
+                report.database_files = report.database_files.saturating_add(1);
+            }
+            KillSwitchArtifactKind::Configuration => {
+                report.configuration_files = report.configuration_files.saturating_add(1);
+            }
+            KillSwitchArtifactKind::Identity => {
+                report.identity_files = report.identity_files.saturating_add(1);
+            }
+            KillSwitchArtifactKind::Attachment => {
+                report.attachment_files = report.attachment_files.saturating_add(1);
+            }
+        }
+    }
+    report
+}
+
+fn delete_kill_switch_artifacts(state: &AppState) -> Result<KillSwitchArtifactReport, ApiError> {
+    let mut report = KillSwitchArtifactReport::default();
+    let mut errors = Vec::new();
+    for candidate in kill_switch_artifact_candidates(state) {
+        if !candidate.path.exists() {
+            continue;
+        }
+        let delete_result = if candidate.path.is_dir() {
+            std::fs::remove_dir_all(&candidate.path)
+        } else {
+            std::fs::remove_file(&candidate.path)
+        };
+        match delete_result {
+            Ok(()) => {
+                report
+                    .deleted_paths
+                    .push(candidate.path.display().to_string());
+                match candidate.kind {
+                    KillSwitchArtifactKind::Database => {
+                        report.database_files = report.database_files.saturating_add(1);
+                    }
+                    KillSwitchArtifactKind::Configuration => {
+                        report.configuration_files = report.configuration_files.saturating_add(1);
+                    }
+                    KillSwitchArtifactKind::Identity => {
+                        report.identity_files = report.identity_files.saturating_add(1);
+                    }
+                    KillSwitchArtifactKind::Attachment => {
+                        report.attachment_files = report.attachment_files.saturating_add(1);
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!("{}: {error}", candidate.path.display())),
+        }
+    }
+    if errors.is_empty() {
+        Ok(report)
+    } else {
+        Err(ApiError::Internal(format!(
+            "kill switch artifact deletion failed: {}",
+            errors.join("; ")
+        )))
+    }
+}
+
+fn grouped_kill_switch_targets(
+    report: &RchDatabaseWipeReport,
+    artifacts: &KillSwitchArtifactReport,
+    mode: KillSwitchRuntimeMode,
+    progress_percent: u8,
+) -> Vec<KillSwitchTargetStatus> {
+    let groups: [KillSwitchTargetGroup<'_>; 6] = [
+        (
+            "mission",
+            "Mission graph",
+            "MG",
+            24,
+            &[
+                "rch_markers",
+                "rch_zones",
+                "rch_missions",
+                "rch_mission_changes",
+                "rch_log_entries",
+                "rch_eam_snapshots",
+                "rch_teams",
+                "rch_mission_team_links",
+                "rch_mission_zone_links",
+                "rch_mission_marker_links",
+                "rch_team_members",
+                "rch_team_member_client_links",
+                "rch_assets",
+                "rch_skills",
+                "rch_team_member_skills",
+                "rch_task_skill_requirements",
+                "rch_assignments",
+                "rch_assignment_asset_links",
+            ],
+            None,
+        ),
+        (
+            "checklists",
+            "Checklist state",
+            "CL",
+            16,
+            &[
+                "rch_checklists",
+                "rch_checklist_templates",
+                "rch_checklist_columns",
+                "rch_checklist_tasks",
+                "rch_checklist_cells",
+                "rch_checklist_feed_publications",
+                "rch_command_results",
+            ],
+            None,
+        ),
+        (
+            "messaging",
+            "Topics and messages",
+            "TX",
+            20,
+            &[
+                "rch_topics",
+                "rch_subscribers",
+                "rch_messages",
+                "rch_clients",
+                "rch_identity_announces",
+                "rch_identity_states",
+                "rch_identity_rem_modes",
+                "rch_outbound_jobs",
+            ],
+            None,
+        ),
+        (
+            "telemetry",
+            "Runtime telemetry",
+            "RT",
+            12,
+            &[
+                "rch_audit_events",
+                "rch_system_events",
+                "rch_telemetry_records",
+                "rch_domain_events",
+            ],
+            None,
+        ),
+        (
+            "database-files",
+            "Database files",
+            "DB",
+            14,
+            &["rch_file_attachments", "rch_settings"],
+            Some(
+                artifacts
+                    .database_files
+                    .saturating_add(artifacts.attachment_files),
+            ),
+        ),
+        (
+            "runtime-secrets",
+            "Config and identity",
+            "ID",
+            14,
+            &[],
+            Some(
+                artifacts
+                    .configuration_files
+                    .saturating_add(artifacts.identity_files),
+            ),
+        ),
+    ];
+    let targets = groups
+        .iter()
+        .map(|(id, label, short, weight, tables, override_total)| {
+            let total = override_total.unwrap_or_else(|| {
+                report
+                    .tables
+                    .iter()
+                    .filter(|table| tables.contains(&table.table.as_str()))
+                    .map(|table| table.rows_deleted)
+                    .sum::<usize>()
+            });
+            KillSwitchTargetStatus {
+                id: (*id).to_string(),
+                label: (*label).to_string(),
+                short: (*short).to_string(),
+                total,
+                erased: 0,
+                unit: "records",
+                state: "queued",
+                weight: *weight,
+            }
+        })
+        .collect::<Vec<_>>();
+    advance_kill_switch_targets(&targets, mode, progress_percent)
+}
+
+fn advance_kill_switch_targets(
+    targets: &[KillSwitchTargetStatus],
+    mode: KillSwitchRuntimeMode,
+    progress_percent: u8,
+) -> Vec<KillSwitchTargetStatus> {
+    targets
+        .iter()
+        .scan(0u16, |cumulative_weight, target| {
+            let start = *cumulative_weight;
+            *cumulative_weight = cumulative_weight.saturating_add(u16::from(target.weight));
+            let end = *cumulative_weight;
+            let progress = u16::from(progress_percent);
+            let (state, erased) = match mode {
+                KillSwitchRuntimeMode::Completed => ("erased", target.total),
+                KillSwitchRuntimeMode::Failed if target.state == "erasing" => {
+                    ("failed", target.erased)
+                }
+                KillSwitchRuntimeMode::Failed => (target.state, target.erased),
+                KillSwitchRuntimeMode::Deleting if progress >= end => ("erased", target.total),
+                KillSwitchRuntimeMode::Deleting if progress > start => {
+                    let span = end.saturating_sub(start).max(1);
+                    let local = progress.saturating_sub(start).min(span);
+                    let erased =
+                        target.total.saturating_mul(usize::from(local)) / usize::from(span);
+                    ("erasing", erased)
+                }
+                _ => ("queued", 0),
+            };
+            let mut next = target.clone();
+            next.state = state;
+            next.erased = erased;
+            Some(next)
+        })
+        .collect()
+}
+
+fn kill_switch_elapsed_progress(elapsed_ms: i64) -> u8 {
+    let progress = (elapsed_ms.saturating_mul(96) / KILL_SWITCH_PROGRESS_WINDOW_MS).clamp(1, 96);
+    u8::try_from(progress).unwrap_or(96)
+}
+
+fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
+    if let Ok(runtime) = state.kill_switch.read() {
+        if matches!(
+            runtime.mode,
+            KillSwitchRuntimeMode::Deleting
+                | KillSwitchRuntimeMode::Completed
+                | KillSwitchRuntimeMode::Failed
+        ) {
+            let now_ms = unix_now_ms();
+            let mut progress_percent = runtime.progress_percent;
+            if runtime.mode == KillSwitchRuntimeMode::Deleting {
+                let started_at = runtime.purge_started_at_ts_ms.unwrap_or(now_ms);
+                let elapsed = now_ms.saturating_sub(started_at);
+                progress_percent = kill_switch_elapsed_progress(elapsed);
+                progress_percent = progress_percent.max(runtime.progress_percent);
+            }
+            let targets =
+                advance_kill_switch_targets(&runtime.targets, runtime.mode, progress_percent);
+            return Ok(json!({
+                "state": runtime.mode.as_str(),
+                "arm_a": runtime.arm_a,
+                "arm_b": runtime.arm_b,
+                "pin_enrolled": false,
+                "pin_created_at": Value::Null,
+                "initial_pin": Value::Null,
+                "authorized_at": runtime.authorized_at_ts_ms.map(iso8601_from_unix_ms),
+                "purge_started_at": runtime.purge_started_at_ts_ms.map(iso8601_from_unix_ms),
+                "progress_percent": progress_percent,
+                "message": runtime.message.clone(),
+                "targets": targets,
+                "updated_at": iso8601_from_unix_ms(runtime.updated_at_ts_ms),
+            }));
+        }
+    }
+    let secret = load_kill_switch_pin(state)?;
+    if secret.is_none() {
+        let now_ms = unix_now_ms();
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if runtime.updated_at_ts_ms == 0 {
+            runtime.updated_at_ts_ms = now_ms;
+        }
+        runtime.arm_a = false;
+        runtime.arm_b = false;
+        runtime.authorized_at_ts_ms = None;
+        runtime.mode = KillSwitchRuntimeMode::Idle;
+        runtime.initial_pin_reveal = None;
+        if runtime.message.is_empty() {
+            runtime.message =
+                "First-run setup must configure a kill switch PIN before purge controls unlock."
+                    .to_string();
+        }
+        return Ok(json!({
+            "state": runtime.mode.as_str(),
+            "arm_a": false,
+            "arm_b": false,
+            "pin_enrolled": false,
+            "pin_created_at": Value::Null,
+            "initial_pin": Value::Null,
+            "authorized_at": Value::Null,
+            "purge_started_at": runtime.purge_started_at_ts_ms.map(iso8601_from_unix_ms),
+            "progress_percent": runtime.progress_percent,
+            "message": runtime.message.clone(),
+            "targets": [],
+            "updated_at": iso8601_from_unix_ms(runtime.updated_at_ts_ms),
+        }));
+    }
+    let secret = secret.expect("checked above");
+    let preview = with_required_core_store_write(state, |store| store.database_wipe_preview())?;
+    let artifacts = kill_switch_artifact_preview(state);
+    let now_ms = unix_now_ms();
+    let mut runtime = state
+        .kill_switch
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    if runtime.updated_at_ts_ms == 0 {
+        runtime.updated_at_ts_ms = now_ms;
+    }
+    if runtime.mode == KillSwitchRuntimeMode::Authorized
+        && !kill_switch_auth_active(&runtime, now_ms)
+    {
+        runtime.authorized_at_ts_ms = None;
+        runtime.mode = if runtime.arm_a && runtime.arm_b {
+            KillSwitchRuntimeMode::Armed
+        } else {
+            KillSwitchRuntimeMode::Idle
+        };
+        runtime.message = "PIN authorization expired; re-enter PIN before purge.".to_string();
+        runtime.updated_at_ts_ms = now_ms;
+    }
+    if runtime.mode == KillSwitchRuntimeMode::Deleting {
+        let started_at = runtime.purge_started_at_ts_ms.unwrap_or(now_ms);
+        let elapsed = now_ms.saturating_sub(started_at);
+        let dynamic_progress = kill_switch_elapsed_progress(elapsed);
+        if dynamic_progress > runtime.progress_percent {
+            runtime.progress_percent = dynamic_progress;
+            runtime.updated_at_ts_ms = now_ms;
+        }
+    }
+    let targets = if runtime.targets.is_empty()
+        || matches!(
+            runtime.mode,
+            KillSwitchRuntimeMode::Idle
+                | KillSwitchRuntimeMode::Armed
+                | KillSwitchRuntimeMode::Authorized
+        ) {
+        grouped_kill_switch_targets(&preview, &artifacts, runtime.mode, runtime.progress_percent)
+    } else {
+        advance_kill_switch_targets(&runtime.targets, runtime.mode, runtime.progress_percent)
+    };
+    let state_name =
+        if runtime.mode == KillSwitchRuntimeMode::Idle && runtime.arm_a && runtime.arm_b {
+            KillSwitchRuntimeMode::Armed.as_str()
+        } else {
+            runtime.mode.as_str()
+        };
+    let message = if runtime.message.is_empty() {
+        "Dual-arm controls are idle. Enter the configured PIN to authorize purge.".to_string()
+    } else {
+        runtime.message.clone()
+    };
+    Ok(json!({
+        "state": state_name,
+        "arm_a": runtime.arm_a,
+        "arm_b": runtime.arm_b,
+        "pin_enrolled": true,
+        "pin_created_at": iso8601_from_unix_ms(secret.created_at_ts_ms),
+        "initial_pin": runtime.initial_pin_reveal.clone(),
+        "authorized_at": runtime.authorized_at_ts_ms.map(iso8601_from_unix_ms),
+        "purge_started_at": runtime.purge_started_at_ts_ms.map(iso8601_from_unix_ms),
+        "progress_percent": runtime.progress_percent,
+        "message": message,
+        "targets": targets,
+        "updated_at": iso8601_from_unix_ms(runtime.updated_at_ts_ms),
+    }))
+}
+
+fn clear_in_memory_state_after_database_wipe(state: &AppState) -> Result<(), ApiError> {
+    state
+        .topics
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .subscribers
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .clients
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .identity_states
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .markers
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .zones
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .messages
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .system_events
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .telemetry_records
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .mission_change_fanout_cache
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    Ok(())
+}
+
+fn run_kill_switch_purge_worker(state: AppState) {
+    let result = stop_runtime_services(&state)
+        .and_then(|()| {
+            with_required_core_store_write_unchecked(
+                &state,
+                r3akt_rch_core::RchSqliteStore::wipe_database,
+            )
+        })
+        .and_then(|report| {
+            clear_in_memory_state_after_database_wipe(&state)?;
+            let artifact_report = delete_kill_switch_artifacts(&state)?;
+            Ok((report, artifact_report))
+        });
+    let now_ms = unix_now_ms();
+    match result {
+        Ok((report, artifact_report)) => {
+            if let Ok(mut runtime) = state.kill_switch.write() {
+                runtime.mode = KillSwitchRuntimeMode::Completed;
+                runtime.purge_completed_at_ts_ms = Some(now_ms);
+                runtime.failed_at_ts_ms = None;
+                runtime.authorized_at_ts_ms = None;
+                runtime.progress_percent = 100;
+                runtime.rows_deleted = report.rows_deleted;
+                runtime.targets = grouped_kill_switch_targets(
+                    &report,
+                    &artifact_report,
+                    KillSwitchRuntimeMode::Completed,
+                    100,
+                );
+                runtime.message = format!(
+                    "Kill switch purge complete. {} persisted rows and {} runtime files erased.",
+                    report.rows_deleted,
+                    artifact_report.total_files()
+                );
+                runtime.last_error = None;
+                runtime.updated_at_ts_ms = now_ms;
+            }
+        }
+        Err(error) => {
+            if let Ok(mut runtime) = state.kill_switch.write() {
+                let mut targets = advance_kill_switch_targets(
+                    &runtime.targets,
+                    KillSwitchRuntimeMode::Deleting,
+                    runtime.progress_percent,
+                );
+                for target in &mut targets {
+                    if target.state == "erasing" {
+                        target.state = "failed";
+                    }
+                }
+                runtime.mode = KillSwitchRuntimeMode::Failed;
+                runtime.failed_at_ts_ms = Some(now_ms);
+                runtime.progress_percent = runtime.progress_percent.min(96);
+                runtime.message = format!("Database purge failed: {error}");
+                runtime.last_error = Some(error.to_string());
+                runtime.updated_at_ts_ms = now_ms;
+                runtime.targets = targets;
+            }
+        }
+    }
 }
 
 fn persist_outbound_message_row(
@@ -23986,15 +25343,6 @@ async fn control_status(State(state): State<AppState>) -> Result<Json<Value>, Ap
 }
 
 async fn control_stop(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    {
-        let mut control = state
-            .runtime_control
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        control.status = "stopping".to_string();
-        control.shutdown_requested = true;
-        control.last_stop_ts_ms = Some(unix_now_ms());
-    }
     stop_runtime_services(&state)?;
     let _ = record_system_event(
         &state,
@@ -24026,9 +25374,33 @@ async fn control_start(State(state): State<AppState>) -> Result<Json<Value>, Api
 }
 
 fn stop_runtime_services(state: &AppState) -> Result<(), ApiError> {
+    mark_runtime_shutdown_requested(state)?;
     state
         .stop_managed_reticulumd()
         .map_err(ApiError::ServiceUnavailable)?;
+    Ok(())
+}
+
+fn mark_runtime_shutdown_requested(state: &AppState) -> Result<(), ApiError> {
+    {
+        let mut control = state
+            .runtime_control
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        control.status = "stopping".to_string();
+        control.shutdown_requested = true;
+        control.last_stop_ts_ms = Some(unix_now_ms());
+    }
+    set_outbound_retry_worker_running(
+        state,
+        false,
+        Duration::from_millis(OUTBOUND_RETRY_WORKER_POLL_MS),
+    );
+    set_reticulumd_inbound_worker_running(
+        state,
+        false,
+        Duration::from_millis(RETICULUMD_INBOUND_WORKER_POLL_MS),
+    );
     Ok(())
 }
 
@@ -24669,6 +26041,65 @@ fn apply_config_file(
         "config_path": path.display().to_string(),
         "backup_path": backup_path.map(|path| path.display().to_string()),
     })))
+}
+
+fn write_config_file_for_setup(path: &PathBuf, body: String) -> Result<(), ApiError> {
+    ensure_parent_dir(path)?;
+    std::fs::write(path, body).map_err(|error| ApiError::Internal(error.to_string()))
+}
+
+fn upsert_ini_setting(config_text: &str, section: &str, key: &str, value: &str) -> String {
+    let section_header = format!("[{section}]");
+    let normalized_section = section.trim().to_ascii_lowercase();
+    let normalized_key = key.trim().to_ascii_lowercase();
+    let mut lines = config_text
+        .lines()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let mut section_start = None;
+    let mut section_end = lines.len();
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') && !trimmed.starts_with("[[") {
+            let name = trimmed
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .trim()
+                .to_ascii_lowercase();
+            if section_start.is_some() {
+                section_end = index;
+                break;
+            }
+            if name == normalized_section {
+                section_start = Some(index);
+            }
+        }
+    }
+
+    let rendered = format!("{key} = {value}");
+    if let Some(start) = section_start {
+        for line in lines.iter_mut().take(section_end).skip(start + 1) {
+            let trimmed = line.trim();
+            let equals_index = trimmed.find('=').or_else(|| trimmed.find(':'));
+            if let Some(index) = equals_index {
+                let existing_key = trimmed[..index].trim().to_ascii_lowercase();
+                if existing_key == normalized_key {
+                    line.clone_from(&rendered);
+                    return format!("{}\n", lines.join("\n"));
+                }
+            }
+        }
+        lines.insert(start + 1, rendered);
+        return format!("{}\n", lines.join("\n"));
+    }
+
+    if !lines.is_empty() && lines.last().is_some_and(|line| !line.trim().is_empty()) {
+        lines.push(String::new());
+    }
+    lines.push(section_header);
+    lines.push(rendered);
+    format!("{}\n", lines.join("\n"))
 }
 
 async fn rollback_config_text(
@@ -26556,11 +27987,8 @@ async fn authenticate_socket(
         .and_then(|value| value.get("api_key"))
         .and_then(Value::as_str);
     if !state.validate_ws_credentials(api_key, token, client_addr) {
-        let _ = send_ws_json(
-            socket,
-            ws_error("unauthorized", state.ws_auth_failure_detail(client_addr)),
-        )
-        .await;
+        let detail = state.ws_auth_failure_detail(client_addr);
+        let _ = send_ws_json(socket, ws_error("unauthorized", &detail)).await;
         let _ =
             close_socket_with_code(socket, WS_AUTH_UNAUTHORIZED_CLOSE_CODE, "unauthorized").await;
         return false;
@@ -46072,6 +47500,388 @@ mod tests {
         assert_eq!(bearer.status(), StatusCode::OK);
     }
 
+    #[tokio::test]
+    async fn first_run_setup_enrolls_user_pin_password_and_config_files() {
+        let test_dir = std::env::temp_dir().join(format!("r3akt-rch-setup-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch.sqlite3");
+        let config_path = test_dir.join("rch.ini");
+        let reticulum_config_path = test_dir.join("reticulum").join("config");
+        std::fs::write(&config_path, "[core]\napp_name = RCH\n").expect("config");
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path)
+            .with_reticulum_config_path(&reticulum_config_path);
+        let app = crate::create_app_with_state(state.clone());
+
+        let setup_status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/r3akt/setup/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("setup status");
+        assert_eq!(setup_status.status(), StatusCode::OK);
+        let body = setup_status
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["setup_required"], true);
+        assert_eq!(payload["pin_enrolled"], false);
+        let identity_hash = payload["reticulum_identity_hash"]
+            .as_str()
+            .expect("reticulum identity hash")
+            .to_string();
+        assert_eq!(identity_hash.len(), 32);
+        assert!(
+            identity_hash
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+        );
+        assert_eq!(payload["reticulum_identity_created"], true);
+        let reticulum_identity_path = reticulum_config_path
+            .parent()
+            .expect("reticulum parent")
+            .join("identity");
+        assert!(reticulum_identity_path.exists());
+
+        let kill_status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/r3akt/kill-switch/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("kill status");
+        assert_eq!(kill_status.status(), StatusCode::OK);
+        let body = kill_status
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["pin_enrolled"], false);
+        assert_eq!(payload["initial_pin"], serde_json::Value::Null);
+
+        let complete = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/setup/complete")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "hub_name": "Field Hub North",
+                            "remote_password": "remote-secret",
+                            "kill_switch_pin": "135790",
+                            "reticulum_config_text": "[interfaces]\n[[TCP uplink]]\ntype = TCPClientInterface\ninterface_enabled = yes\ntarget_host = 10.1.1.5\ntarget_port = 4242\n"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("complete setup");
+        assert_eq!(complete.status(), StatusCode::OK);
+        let body = complete
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["setup_required"], false);
+        assert_eq!(payload["pin_enrolled"], true);
+        assert_eq!(payload["hub_name"], "Field Hub North");
+        assert_eq!(
+            payload["reticulum_identity_hash"].as_str(),
+            Some(identity_hash.as_str())
+        );
+        assert_eq!(payload["reticulum_identity_created"], false);
+
+        let hub_config = std::fs::read_to_string(&config_path).expect("hub config");
+        assert!(hub_config.contains("[hub]\nname = Field Hub North"));
+        let reticulum_config =
+            std::fs::read_to_string(&reticulum_config_path).expect("reticulum config");
+        assert!(reticulum_config.contains("target_host = 10.1.1.5"));
+
+        let store = RchSqliteStore::open(&db_path).expect("store");
+        assert!(
+            store
+                .setting_value("kill_switch_pin_hash")
+                .expect("pin hash")
+                .is_some()
+        );
+        assert!(
+            store
+                .setting_value("remote_access_password_hash")
+                .expect("password hash")
+                .is_some()
+        );
+
+        let remote_addr = SocketAddr::from(([198, 51, 100, 12], 50_000));
+        let remote_auth = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/auth/validate")
+                    .extension(ConnectInfo(remote_addr))
+                    .header("X-API-Key", "remote-secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("remote auth");
+        assert_eq!(remote_auth.status(), StatusCode::OK);
+
+        let arm = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/kill-switch/arm")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({"arm_a": true, "arm_b": true}).to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("arm response");
+        assert_eq!(arm.status(), StatusCode::OK);
+
+        let wrong_pin = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/kill-switch/authorize")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"pin": "246802"}).to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("wrong pin");
+        assert_eq!(wrong_pin.status(), StatusCode::UNAUTHORIZED);
+
+        let correct_pin = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/kill-switch/authorize")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"pin": "135790"}).to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("correct pin");
+        assert_eq!(correct_pin.status(), StatusCode::OK);
+        let body = correct_pin
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["state"], "authorized");
+        assert_eq!(payload["initial_pin"], serde_json::Value::Null);
+
+        let remote_addr = SocketAddr::from(([198, 51, 100, 22], 50_001));
+        let unauthenticated_status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/r3akt/setup/status")
+                    .extension(ConnectInfo(remote_addr))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("unauthenticated setup status");
+        assert_eq!(unauthenticated_status.status(), StatusCode::OK);
+        let body = unauthenticated_status
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["setup_required"], false);
+        assert_eq!(payload["config_path"], serde_json::Value::Null);
+        assert_eq!(payload["reticulum_config_path"], serde_json::Value::Null);
+        assert_eq!(payload["reticulum_identity_path"], serde_json::Value::Null);
+
+        let authenticated_status = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/r3akt/setup/status")
+                    .extension(ConnectInfo(remote_addr))
+                    .header("X-API-Key", "remote-secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("authenticated setup status");
+        assert_eq!(authenticated_status.status(), StatusCode::OK);
+        let body = authenticated_status
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["config_path"], config_path.display().to_string());
+        assert_eq!(
+            payload["reticulum_config_path"],
+            reticulum_config_path.display().to_string()
+        );
+        assert_eq!(
+            payload["reticulum_identity_path"],
+            reticulum_identity_path.display().to_string()
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+    }
+
+    #[tokio::test]
+    async fn first_run_setup_rejects_reticulum_config_without_config_path() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "r3akt-rch-setup-no-reticulum-path-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch.sqlite3");
+        let config_path = test_dir.join("rch.ini");
+        std::fs::write(&config_path, "[core]\napp_name = RCH\n").expect("config");
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path);
+        let app = crate::create_app_with_state(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/setup/complete")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "hub_name": "Field Hub North",
+                            "remote_password": "remote-secret",
+                            "kill_switch_pin": "135790",
+                            "reticulum_config_text": "[interfaces]\n[[TCP uplink]]\ntype = TCPClientInterface\ninterface_enabled = yes\ntarget_host = 10.1.1.5\ntarget_port = 4242\n"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("complete setup");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert!(
+            payload["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("Reticulum configuration path"))
+        );
+
+        let store = RchSqliteStore::open(&db_path).expect("store");
+        assert!(
+            store
+                .setting_value("kill_switch_pin_hash")
+                .expect("pin hash")
+                .is_none()
+        );
+        assert!(
+            store
+                .setting_value("remote_access_password_hash")
+                .expect("password hash")
+                .is_none()
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+    }
+
+    #[tokio::test]
+    async fn first_run_setup_does_not_enroll_when_config_write_fails() {
+        let test_dir =
+            std::env::temp_dir().join(format!("r3akt-rch-setup-write-failure-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch.sqlite3");
+        let config_path = test_dir.join("rch.ini");
+        let reticulum_config_path = test_dir.join("reticulum-config-as-directory");
+        std::fs::write(&config_path, "[core]\napp_name = RCH\n").expect("config");
+        std::fs::create_dir_all(&reticulum_config_path).expect("reticulum config dir");
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path)
+            .with_reticulum_config_path(&reticulum_config_path);
+        let app = crate::create_app_with_state(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/setup/complete")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "hub_name": "Field Hub North",
+                            "remote_password": "remote-secret",
+                            "kill_switch_pin": "135790",
+                            "reticulum_config_text": "[interfaces]\n[[TCP uplink]]\ntype = TCPClientInterface\ninterface_enabled = yes\ntarget_host = 10.1.1.5\ntarget_port = 4242\n"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("complete setup");
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let store = RchSqliteStore::open(&db_path).expect("store");
+        assert!(
+            store
+                .setting_value("kill_switch_pin_hash")
+                .expect("pin hash")
+                .is_none()
+        );
+        assert!(
+            store
+                .setting_value("remote_access_password_hash")
+                .expect("password hash")
+                .is_none()
+        );
+        assert!(store.setting_value("hub_name").expect("hub name").is_none());
+
+        let _ = std::fs::remove_dir_all(test_dir);
+    }
+
     #[test]
     fn env_api_key_selector_matches_python_auth_helper_precedence() {
         assert_eq!(
@@ -46357,7 +48167,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(
             payload["detail"],
-            "Remote access requires authentication; set RTH_API_KEY (RCH_API_KEY is also supported)."
+            "Remote access requires first-run setup or RTH_API_KEY (RCH_API_KEY is also supported)."
         );
     }
 
@@ -46372,7 +48182,7 @@ mod tests {
         assert!(!open_state.validate_ws_credentials(None, None, remote_addr));
         assert_eq!(
             open_state.ws_auth_failure_detail(remote_addr),
-            "Remote access requires authentication; set RTH_API_KEY (RCH_API_KEY is also supported)."
+            "Remote access requires first-run setup or RTH_API_KEY (RCH_API_KEY is also supported)."
         );
 
         let keyed_state = crate::AppState::default().with_api_key("secret");
@@ -59960,5 +61770,165 @@ mod tests {
         assert_eq!(status_payload["data"]["runtime"]["status"], "running");
 
         server.abort();
+    }
+
+    #[test]
+    fn kill_switch_artifact_deletion_removes_databases_configs_and_reticulum_identity() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "r3akt-rch-kill-switch-artifacts-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch_state.sqlite3");
+        let config_path = test_dir.join("config.ini");
+        let reticulum_config_path = test_dir.join("reticulum").join("config");
+        let reticulumd_db_path = test_dir.join("reticulumd.db");
+        let identity_path = test_dir.join("identity");
+        let reticulumd_identity_path = test_dir.join("reticulumd.identity");
+        let unrelated_db_path = test_dir.join("unrelated.sqlite3");
+        let unrelated_reticulum_db_path = reticulum_config_path
+            .parent()
+            .expect("reticulum parent")
+            .join("unrelated.db");
+        let file_storage_dir = test_dir.join("files");
+        let image_storage_dir = test_dir.join("images");
+        std::fs::create_dir_all(reticulum_config_path.parent().expect("reticulum parent"))
+            .expect("reticulum dir");
+        std::fs::create_dir_all(&file_storage_dir).expect("file storage dir");
+        std::fs::create_dir_all(&image_storage_dir).expect("image storage dir");
+        RchSqliteStore::open(&db_path).expect("sqlite");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path)
+            .with_reticulum_config_path(&reticulum_config_path)
+            .with_managed_reticulumd_zmq(
+                test_dir.join("reticulumd.exe"),
+                "tcp://127.0.0.1:9100",
+                Some(reticulumd_db_path.display().to_string()),
+                Some(&reticulum_config_path),
+            );
+        for path in [
+            &config_path,
+            &reticulum_config_path,
+            &reticulumd_db_path,
+            &identity_path,
+            &reticulumd_identity_path,
+            &test_dir.join("telemetry.db"),
+            &test_dir.join("rch_state.sqlite3-wal"),
+        ] {
+            std::fs::write(path, "runtime-sensitive").expect("runtime file");
+        }
+        for path in [
+            &unrelated_db_path,
+            &unrelated_reticulum_db_path,
+            &file_storage_dir.join("field-report.txt"),
+            &image_storage_dir.join("photo.jpg"),
+        ] {
+            std::fs::write(path, "operator-data").expect("test file");
+        }
+        let preview = crate::kill_switch_artifact_preview(&state);
+        assert!(preview.database_files >= 4);
+        assert!(preview.configuration_files >= 2);
+        assert!(preview.identity_files >= 2);
+        assert!(preview.attachment_files >= 2);
+
+        let report = crate::delete_kill_switch_artifacts(&state).expect("delete artifacts");
+        assert!(report.database_files >= 4);
+        assert!(report.configuration_files >= 2);
+        assert!(report.identity_files >= 2);
+        assert!(report.attachment_files >= 2);
+        for path in [
+            &db_path,
+            &config_path,
+            &reticulum_config_path,
+            &reticulumd_db_path,
+            &identity_path,
+            &reticulumd_identity_path,
+            &test_dir.join("telemetry.db"),
+            &test_dir.join("rch_state.sqlite3-wal"),
+        ] {
+            assert!(!path.exists(), "{} should be deleted", path.display());
+        }
+        assert!(
+            !file_storage_dir.exists(),
+            "{} should be deleted",
+            file_storage_dir.display()
+        );
+        assert!(
+            !image_storage_dir.exists(),
+            "{} should be deleted",
+            image_storage_dir.display()
+        );
+        assert!(
+            unrelated_db_path.exists(),
+            "{} should not be glob-deleted",
+            unrelated_db_path.display()
+        );
+        assert!(
+            unrelated_reticulum_db_path.exists(),
+            "{} should not be glob-deleted",
+            unrelated_reticulum_db_path.display()
+        );
+        let _cleanup = std::fs::remove_dir_all(test_dir);
+    }
+
+    #[test]
+    fn kill_switch_purge_worker_stops_runtime_and_locks_persistence() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "r3akt-rch-kill-switch-worker-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch_state.sqlite3");
+        let config_path = test_dir.join("config.ini");
+        let reticulum_config_path = test_dir.join("reticulum").join("config");
+        std::fs::create_dir_all(reticulum_config_path.parent().expect("reticulum parent"))
+            .expect("reticulum dir");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path)
+            .with_reticulum_config_path(&reticulum_config_path);
+
+        crate::with_required_core_store_write(&state, |store| {
+            store.set_setting_value("purge_test", "before")?;
+            Ok(())
+        })
+        .expect("seed store");
+        std::fs::write(&config_path, "runtime-sensitive").expect("config");
+        std::fs::write(&reticulum_config_path, "runtime-sensitive").expect("reticulum config");
+
+        {
+            let mut runtime = state.kill_switch.write().expect("kill switch runtime");
+            runtime.mode = crate::KillSwitchRuntimeMode::Deleting;
+        }
+
+        crate::run_kill_switch_purge_worker(state.clone());
+
+        {
+            let runtime = state.kill_switch.read().expect("kill switch runtime");
+            assert_eq!(runtime.mode, crate::KillSwitchRuntimeMode::Completed);
+        }
+        {
+            let control = state.runtime_control.read().expect("runtime control");
+            assert!(control.shutdown_requested);
+            assert_eq!(control.status, "stopping");
+        }
+        let locked = crate::with_required_core_store_write(&state, |store| {
+            store.set_setting_value("purge_test", "after")?;
+            Ok(())
+        });
+        assert!(matches!(
+            locked,
+            Err(crate::ApiError::ServiceUnavailable(detail))
+                if detail.contains("kill switch purge")
+        ));
+        assert!(!db_path.exists(), "database should not be recreated");
+        assert!(!config_path.exists(), "config should be deleted");
+        assert!(
+            !reticulum_config_path.exists(),
+            "reticulum config should be deleted"
+        );
+
+        let _cleanup = std::fs::remove_dir_all(test_dir);
     }
 }

@@ -7,6 +7,7 @@
     :progress="bootProgress"
     :logs="bootLogs"
   />
+  <FirstRunSetupWizard v-else-if="setupRequired" @completed="handleSetupCompleted" />
   <AppShell v-else>
     <ErrorBoundary>
       <RouterView />
@@ -24,7 +25,9 @@ import AppShell from "./components/AppShell.vue";
 import BaseToast from "./components/BaseToast.vue";
 import BootScreen from "./components/BootScreen.vue";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
+import FirstRunSetupWizard from "./components/FirstRunSetupWizard.vue";
 import { endpoints } from "./api/endpoints";
+import { fetchSetupStatus } from "./api/setup";
 import { useAppStore } from "./stores/app";
 import { useConnectionStore } from "./stores/connection";
 
@@ -37,6 +40,7 @@ const bootStatus = ref<BootStatus>("pending");
 const bootAttempt = ref(0);
 const bootProgress = ref(12);
 const bootError = ref("");
+const setupRequired = ref(false);
 
 const POLL_INTERVAL_MS = 2000;
 const MIN_DISPLAY_MS = 1000;
@@ -87,12 +91,20 @@ const waitForBackend = async () => {
   const start = Date.now();
   if (import.meta.env.VITE_RTH_MOCK === "true") {
     await delay(800);
+    const setupStatus = await fetchSetupStatus();
+    setupRequired.value = setupStatus.setup_required;
     bootProgress.value = 100;
     bootStatus.value = "online";
     bootReady.value = true;
     return;
   }
   if (connectionStore.isRemoteTarget && !connectionStore.hasActiveAuthSession) {
+    try {
+      const setupStatus = await fetchSetupStatus();
+      setupRequired.value = setupStatus.setup_required;
+    } catch {
+      setupRequired.value = false;
+    }
     if (!connectionStore.hasValidAuthConfig()) {
       connectionStore.setAuthStatus("unauthenticated", connectionStore.authValidationError);
     }
@@ -105,6 +117,12 @@ const waitForBackend = async () => {
     bootStatus.value = bootAttempt.value > 1 ? "retrying" : "pending";
     try {
       await appStore.fetchAppInfo(true);
+      try {
+        const setupStatus = await fetchSetupStatus();
+        setupRequired.value = setupStatus.setup_required;
+      } catch {
+        setupRequired.value = false;
+      }
       bootStatus.value = "online";
       bootProgress.value = 100;
       const elapsed = Date.now() - start;
@@ -119,6 +137,14 @@ const waitForBackend = async () => {
       await delay(POLL_INTERVAL_MS);
     }
   }
+};
+
+const handleSetupCompleted = (remotePassword: string) => {
+  connectionStore.authMode = "apiKey";
+  connectionStore.apiKey = remotePassword;
+  connectionStore.markAuthenticated();
+  connectionStore.persist(false);
+  setupRequired.value = false;
 };
 
 onMounted(() => {
