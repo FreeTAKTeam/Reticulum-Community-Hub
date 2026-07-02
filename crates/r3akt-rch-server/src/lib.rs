@@ -14231,6 +14231,12 @@ async fn first_run_setup_complete(
                 errors.join("; ")
             )));
         }
+        if !reticulum_config_text.trim().is_empty() && state.reticulum_config_path.is_none() {
+            return Err(ApiError::BadRequest(
+                "Reticulum configuration path is required before setup can save TCP interfaces"
+                    .to_string(),
+            ));
+        }
     }
 
     with_required_core_store_write(&state, |store| {
@@ -14248,9 +14254,9 @@ async fn first_run_setup_complete(
 
     if let (Some(path), Some(reticulum_config_text)) = (
         state.reticulum_config_path.as_deref(),
-        payload.reticulum_config_text,
+        payload.reticulum_config_text.as_deref(),
     ) {
-        write_config_file_for_setup(path, reticulum_config_text)?;
+        write_config_file_for_setup(path, reticulum_config_text.to_string())?;
     }
 
     {
@@ -17273,6 +17279,7 @@ fn with_core_store_write(
     state: &AppState,
     operation: impl FnOnce(&mut RchSqliteStore) -> Result<(), r3akt_rch_core::RchCoreError>,
 ) -> Result<(), ApiError> {
+    ensure_kill_switch_persistence_unlocked(state)?;
     let Some(path) = &state.sqlite_path else {
         return Ok(());
     };
@@ -17288,6 +17295,14 @@ fn with_required_core_store_write<T>(
     state: &AppState,
     operation: impl FnOnce(&mut RchSqliteStore) -> Result<T, r3akt_rch_core::RchCoreError>,
 ) -> Result<T, ApiError> {
+    ensure_kill_switch_persistence_unlocked(state)?;
+    with_required_core_store_write_unchecked(state, operation)
+}
+
+fn with_required_core_store_write_unchecked<T>(
+    state: &AppState,
+    operation: impl FnOnce(&mut RchSqliteStore) -> Result<T, r3akt_rch_core::RchCoreError>,
+) -> Result<T, ApiError> {
     let path = state
         .sqlite_path
         .as_ref()
@@ -17298,6 +17313,22 @@ fn with_required_core_store_write<T>(
     let result = operation(&mut store).map_err(|error| ApiError::Internal(error.to_string()));
     record_sqlite_latency(state, started.elapsed());
     result
+}
+
+fn ensure_kill_switch_persistence_unlocked(state: &AppState) -> Result<(), ApiError> {
+    let runtime = state
+        .kill_switch
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    if matches!(
+        runtime.mode,
+        KillSwitchRuntimeMode::Deleting | KillSwitchRuntimeMode::Completed
+    ) {
+        return Err(ApiError::ServiceUnavailable(
+            "RCH persistence is locked by kill switch purge".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn sha256_lower_hex(bytes: &[u8]) -> String {
@@ -18160,7 +18191,10 @@ fn clear_in_memory_state_after_database_wipe(state: &AppState) -> Result<(), Api
 fn run_kill_switch_purge_worker(state: AppState) {
     let result = stop_runtime_services(&state)
         .and_then(|()| {
-            with_required_core_store_write(&state, r3akt_rch_core::RchSqliteStore::wipe_database)
+            with_required_core_store_write_unchecked(
+                &state,
+                r3akt_rch_core::RchSqliteStore::wipe_database,
+            )
         })
         .and_then(|report| {
             clear_in_memory_state_after_database_wipe(&state)?;
@@ -25297,15 +25331,6 @@ async fn control_status(State(state): State<AppState>) -> Result<Json<Value>, Ap
 }
 
 async fn control_stop(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    {
-        let mut control = state
-            .runtime_control
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        control.status = "stopping".to_string();
-        control.shutdown_requested = true;
-        control.last_stop_ts_ms = Some(unix_now_ms());
-    }
     stop_runtime_services(&state)?;
     let _ = record_system_event(
         &state,
@@ -25337,9 +25362,33 @@ async fn control_start(State(state): State<AppState>) -> Result<Json<Value>, Api
 }
 
 fn stop_runtime_services(state: &AppState) -> Result<(), ApiError> {
+    mark_runtime_shutdown_requested(state)?;
     state
         .stop_managed_reticulumd()
         .map_err(ApiError::ServiceUnavailable)?;
+    Ok(())
+}
+
+fn mark_runtime_shutdown_requested(state: &AppState) -> Result<(), ApiError> {
+    {
+        let mut control = state
+            .runtime_control
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        control.status = "stopping".to_string();
+        control.shutdown_requested = true;
+        control.last_stop_ts_ms = Some(unix_now_ms());
+    }
+    set_outbound_retry_worker_running(
+        state,
+        false,
+        Duration::from_millis(OUTBOUND_RETRY_WORKER_POLL_MS),
+    );
+    set_reticulumd_inbound_worker_running(
+        state,
+        false,
+        Duration::from_millis(RETICULUMD_INBOUND_WORKER_POLL_MS),
+    );
     Ok(())
 }
 
@@ -47642,6 +47691,72 @@ mod tests {
         let _ = std::fs::remove_dir_all(test_dir);
     }
 
+    #[tokio::test]
+    async fn first_run_setup_rejects_reticulum_config_without_config_path() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "r3akt-rch-setup-no-reticulum-path-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch.sqlite3");
+        let config_path = test_dir.join("rch.ini");
+        std::fs::write(&config_path, "[core]\napp_name = RCH\n").expect("config");
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path);
+        let app = crate::create_app_with_state(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/setup/complete")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "hub_name": "Field Hub North",
+                            "remote_password": "remote-secret",
+                            "kill_switch_pin": "135790",
+                            "reticulum_config_text": "[interfaces]\n[[TCP uplink]]\ntype = TCPClientInterface\ninterface_enabled = yes\ntarget_host = 10.1.1.5\ntarget_port = 4242\n"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("complete setup");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert!(
+            payload["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("Reticulum configuration path"))
+        );
+
+        let store = RchSqliteStore::open(&db_path).expect("store");
+        assert!(
+            store
+                .setting_value("kill_switch_pin_hash")
+                .expect("pin hash")
+                .is_none()
+        );
+        assert!(
+            store
+                .setting_value("remote_access_password_hash")
+                .expect("password hash")
+                .is_none()
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+    }
+
     #[test]
     fn env_api_key_selector_matches_python_auth_helper_precedence() {
         assert_eq!(
@@ -61590,6 +61705,66 @@ mod tests {
         ] {
             assert!(!path.exists(), "{} should be deleted", path.display());
         }
+        let _cleanup = std::fs::remove_dir_all(test_dir);
+    }
+
+    #[test]
+    fn kill_switch_purge_worker_stops_runtime_and_locks_persistence() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "r3akt-rch-kill-switch-worker-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch_state.sqlite3");
+        let config_path = test_dir.join("config.ini");
+        let reticulum_config_path = test_dir.join("reticulum").join("config");
+        std::fs::create_dir_all(reticulum_config_path.parent().expect("reticulum parent"))
+            .expect("reticulum dir");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path)
+            .with_reticulum_config_path(&reticulum_config_path);
+
+        crate::with_required_core_store_write(&state, |store| {
+            store.set_setting_value("purge_test", "before")?;
+            Ok(())
+        })
+        .expect("seed store");
+        std::fs::write(&config_path, "runtime-sensitive").expect("config");
+        std::fs::write(&reticulum_config_path, "runtime-sensitive").expect("reticulum config");
+
+        {
+            let mut runtime = state.kill_switch.write().expect("kill switch runtime");
+            runtime.mode = crate::KillSwitchRuntimeMode::Deleting;
+        }
+
+        crate::run_kill_switch_purge_worker(state.clone());
+
+        {
+            let runtime = state.kill_switch.read().expect("kill switch runtime");
+            assert_eq!(runtime.mode, crate::KillSwitchRuntimeMode::Completed);
+        }
+        {
+            let control = state.runtime_control.read().expect("runtime control");
+            assert!(control.shutdown_requested);
+            assert_eq!(control.status, "stopping");
+        }
+        let locked = crate::with_required_core_store_write(&state, |store| {
+            store.set_setting_value("purge_test", "after")?;
+            Ok(())
+        });
+        assert!(matches!(
+            locked,
+            Err(crate::ApiError::ServiceUnavailable(detail))
+                if detail.contains("kill switch purge")
+        ));
+        assert!(!db_path.exists(), "database should not be recreated");
+        assert!(!config_path.exists(), "config should be deleted");
+        assert!(
+            !reticulum_config_path.exists(),
+            "reticulum config should be deleted"
+        );
+
         let _cleanup = std::fs::remove_dir_all(test_dir);
     }
 }
