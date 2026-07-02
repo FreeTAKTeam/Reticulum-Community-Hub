@@ -1,4 +1,6 @@
 const nowIso = () => new Date().toISOString();
+const mockInitialPin = () =>
+  String(Math.floor(100000 + Math.random() * 900000));
 
 const mockState = {
   topics: [
@@ -279,7 +281,7 @@ const mockState = {
     arm_b: false,
     pin_enrolled: true,
     pin_created_at: nowIso(),
-    initial_pin: "424242" as string | null,
+    initial_pin: mockInitialPin() as string | null,
     authorized_at: null as string | null,
     purge_started_at: null as string | null,
     progress_percent: 0,
