@@ -145,6 +145,7 @@ const KILL_SWITCH_PIN_HASH_SETTING: &str = "kill_switch_pin_hash";
 const KILL_SWITCH_PIN_CREATED_AT_SETTING: &str = "kill_switch_pin_created_at_ts_ms";
 const KILL_SWITCH_AUTHORIZATION_TTL_MS: i64 = 120_000;
 const KILL_SWITCH_PROGRESS_WINDOW_MS: i64 = 18_000;
+type KillSwitchTargetGroup<'a> = (&'a str, &'a str, &'a str, u8, &'a [&'a str], Option<usize>);
 const GROUP_CHAT_INBOUND_TEXT_MAX_CHARS: usize = 500;
 const GROUP_CHAT_COMMAND_BODY_MAX_BYTES: usize = 1024;
 const GROUP_CHAT_JOIN_REPLAY_MAX_MESSAGES: usize = 10;
@@ -353,20 +354,15 @@ struct ManagedReticulumdState {
     stopped_ts_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum KillSwitchRuntimeMode {
+    #[default]
     Idle,
     Armed,
     Authorized,
     Deleting,
     Completed,
     Failed,
-}
-
-impl Default for KillSwitchRuntimeMode {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 impl KillSwitchRuntimeMode {
@@ -10506,7 +10502,7 @@ fn sqlite_runtime_metrics(state: &AppState) -> Value {
         .unwrap_or_default();
     json!({
         "transactions": transactions,
-        "avg_ms": if transactions == 0 { 0 } else { total_ms / transactions },
+        "avg_ms": total_ms.checked_div(transactions).unwrap_or(0),
         "p50_ms": percentile_ms(&samples, 50),
         "p95_ms": percentile_ms(&samples, 95),
         "max_ms": state.runtime_metrics.sqlite_latency_max_ms.load(Ordering::Relaxed),
@@ -17469,7 +17465,7 @@ fn grouped_kill_switch_targets(
     mode: KillSwitchRuntimeMode,
     progress_percent: u8,
 ) -> Vec<KillSwitchTargetStatus> {
-    let groups: [(&str, &str, &str, u8, &[&str], Option<usize>); 6] = [
+    let groups: [KillSwitchTargetGroup<'_>; 6] = [
         (
             "mission",
             "Mission graph",
@@ -17626,6 +17622,11 @@ fn advance_kill_switch_targets(
         .collect()
 }
 
+fn kill_switch_elapsed_progress(elapsed_ms: i64) -> u8 {
+    let progress = (elapsed_ms.saturating_mul(96) / KILL_SWITCH_PROGRESS_WINDOW_MS).clamp(1, 96);
+    u8::try_from(progress).unwrap_or(96)
+}
+
 fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
     if let Ok(runtime) = state.kill_switch.read() {
         if matches!(
@@ -17639,8 +17640,7 @@ fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
             if runtime.mode == KillSwitchRuntimeMode::Deleting {
                 let started_at = runtime.purge_started_at_ts_ms.unwrap_or(now_ms);
                 let elapsed = now_ms.saturating_sub(started_at);
-                progress_percent = ((elapsed.saturating_mul(96)) / KILL_SWITCH_PROGRESS_WINDOW_MS)
-                    .clamp(1, 96) as u8;
+                progress_percent = kill_switch_elapsed_progress(elapsed);
                 progress_percent = progress_percent.max(runtime.progress_percent);
             }
             let targets =
@@ -17687,8 +17687,7 @@ fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
     if runtime.mode == KillSwitchRuntimeMode::Deleting {
         let started_at = runtime.purge_started_at_ts_ms.unwrap_or(now_ms);
         let elapsed = now_ms.saturating_sub(started_at);
-        let dynamic_progress =
-            ((elapsed.saturating_mul(96)) / KILL_SWITCH_PROGRESS_WINDOW_MS).clamp(1, 96) as u8;
+        let dynamic_progress = kill_switch_elapsed_progress(elapsed);
         if dynamic_progress > runtime.progress_percent {
             runtime.progress_percent = dynamic_progress;
             runtime.updated_at_ts_ms = now_ms;
@@ -17788,7 +17787,9 @@ fn clear_in_memory_state_after_database_wipe(state: &AppState) -> Result<(), Api
 
 fn run_kill_switch_purge_worker(state: AppState) {
     let result = stop_runtime_services(&state)
-        .and_then(|()| with_required_core_store_write(&state, |store| store.wipe_database()))
+        .and_then(|()| {
+            with_required_core_store_write(&state, r3akt_rch_core::RchSqliteStore::wipe_database)
+        })
         .and_then(|report| {
             clear_in_memory_state_after_database_wipe(&state)?;
             let artifact_report = delete_kill_switch_artifacts(&state)?;

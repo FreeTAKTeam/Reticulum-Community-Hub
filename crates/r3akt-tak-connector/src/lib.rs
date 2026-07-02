@@ -18,6 +18,7 @@ use native_tls::Identity;
 use native_tls::TlsConnector;
 use prost::Message;
 use quick_xml::Reader;
+use quick_xml::XmlVersion;
 use quick_xml::events::BytesStart;
 use quick_xml::events::Event as XmlEvent;
 use time::OffsetDateTime;
@@ -374,7 +375,7 @@ fn xml_attr(
         let attr = attr.map_err(|_| ())?;
         if attr.key.as_ref() == key {
             let value = attr
-                .decode_and_unescape_value(reader.decoder())
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
                 .map_err(|_| ())?;
             return Ok(Some(value.into_owned()));
         }
