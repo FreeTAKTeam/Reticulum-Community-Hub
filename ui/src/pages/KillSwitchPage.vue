@@ -58,11 +58,8 @@
               @paste="onPinDigitPaste(index - 1, $event)"
             />
           </div>
-          <p id="kill-pin-help">First-boot PIN enrolled. Entry remains masked.</p>
-          <p v-if="initialPin" class="kill-initial-pin">
-            <span>Initial PIN</span>
-            <strong>{{ initialPin }}</strong>
-          </p>
+          <p id="kill-pin-help">Configured kill-switch PIN. Entry remains masked.</p>
+          <p v-if="pinErrorMessage" class="kill-pin-error" role="alert">{{ pinErrorMessage }}</p>
           <button class="kill-purge-button" type="submit" :disabled="!canSubmit">
             {{ actionButtonLabel }}
           </button>
@@ -238,13 +235,13 @@ const pinValue = computed(() => pinDigits.value.join(""));
 const status = ref<KillSwitchStatus | null>(null);
 const statusBusy = ref(false);
 const errorMessage = ref("");
+const pinErrorMessage = ref("");
 const orbitPhase = ref(0);
 const confirmDialogOpen = ref(false);
 let statusPollTimer: ReturnType<typeof window.setInterval> | undefined;
 let orbitFrame: number | undefined;
 
 const progress = computed(() => status.value?.progress_percent ?? 0);
-const initialPin = computed(() => status.value?.initial_pin ?? "");
 const isDeleting = computed(() => status.value?.state === "deleting");
 const isCompleted = computed(() => status.value?.state === "completed");
 const isAuthorized = computed(() => status.value?.state === "authorized");
@@ -287,7 +284,7 @@ const safetyMessage = computed(() => {
     return "Both switches must be armed before final authorization.";
   }
   if (pinValue.value.length < pinLength) {
-    return "Enter the masked first-boot PIN to enable authorization.";
+    return "Enter the configured kill-switch PIN to enable authorization.";
   }
   return status.value?.message ?? "Controls are armed. Final action is available.";
 });
@@ -412,12 +409,14 @@ const applyPinDigits = (startIndex: number, value: string) => {
 };
 
 const onPinDigitInput = (index: number, event: Event) => {
+  pinErrorMessage.value = "";
   const target = event.target as HTMLInputElement;
   applyPinDigits(index, target.value);
 };
 
 const onPinDigitPaste = (index: number, event: ClipboardEvent) => {
   event.preventDefault();
+  pinErrorMessage.value = "";
   applyPinDigits(index, event.clipboardData?.getData("text") ?? "");
 };
 
@@ -448,6 +447,10 @@ const applyStatus = (nextStatus: KillSwitchStatus) => {
   status.value = nextStatus;
   armA.value = nextStatus.arm_a;
   armB.value = nextStatus.arm_b;
+};
+
+const clearPin = () => {
+  pinDigits.value = ["", "", "", "", "", ""];
 };
 
 const refreshStatus = async () => {
@@ -558,7 +561,14 @@ const confirmPurge = () => {
   }
   confirmDialogOpen.value = false;
   void withCoreRequest(async () => {
-    await authorizeKillSwitch(pinValue.value);
+    try {
+      await authorizeKillSwitch(pinValue.value);
+    } catch (error) {
+      pinErrorMessage.value = error instanceof Error ? error.message : "Kill switch PIN rejected.";
+      clearPin();
+      window.setTimeout(() => focusPinCell(0), 0);
+      throw error;
+    }
     return startKillSwitchPurge();
   });
 };

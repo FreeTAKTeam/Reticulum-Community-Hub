@@ -80,6 +80,8 @@ use r3akt_transport_rns::{
     poll_lxmf_zmq_events, poll_reticulumd_events, reticulumd_event_to_envelope,
     reticulumd_message_to_envelope, send_lxmf_zmq_outbound_batch, send_lxmf_zmq_outbound_message,
 };
+use rand_core::OsRng;
+use rns_core::identity::{PRIVATE_KEY_LENGTH, PrivateIdentity};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -143,6 +145,10 @@ const API_PAGINATION_MAX_PAGE_SIZE: usize = 500;
 const KILL_SWITCH_PIN_SALT_SETTING: &str = "kill_switch_pin_salt";
 const KILL_SWITCH_PIN_HASH_SETTING: &str = "kill_switch_pin_hash";
 const KILL_SWITCH_PIN_CREATED_AT_SETTING: &str = "kill_switch_pin_created_at_ts_ms";
+const HUB_NAME_SETTING: &str = "hub_name";
+const REMOTE_ACCESS_PASSWORD_SALT_SETTING: &str = "remote_access_password_salt";
+const REMOTE_ACCESS_PASSWORD_HASH_SETTING: &str = "remote_access_password_hash";
+const REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING: &str = "remote_access_password_created_at_ts_ms";
 const KILL_SWITCH_AUTHORIZATION_TTL_MS: i64 = 120_000;
 const KILL_SWITCH_PROGRESS_WINDOW_MS: i64 = 18_000;
 type KillSwitchTargetGroup<'a> = (&'a str, &'a str, &'a str, u8, &'a [&'a str], Option<usize>);
@@ -426,6 +432,13 @@ struct KillSwitchRuntimeState {
 
 #[derive(Debug, Clone)]
 struct KillSwitchPinSecret {
+    salt: String,
+    hash: String,
+    created_at_ts_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+struct StoredPasswordSecret {
     salt: String,
     hash: String,
     created_at_ts_ms: i64,
@@ -1081,23 +1094,31 @@ impl AppState {
         if is_local_client_addr(client_addr) {
             return true;
         }
-        let Some(expected) = &self.api_key else {
-            return client_addr.is_none();
-        };
+        if client_addr.is_none() && self.api_key.is_none() {
+            return true;
+        }
         let api_key = headers
             .get("X-API-Key")
             .and_then(|value| value.to_str().ok());
-        if api_key == Some(expected.as_str()) {
-            return true;
+        let bearer = bearer_token(headers);
+        if let Some(expected) = &self.api_key {
+            if api_key == Some(expected.as_str()) || bearer == Some(expected.as_str()) {
+                return true;
+            }
         }
-        bearer_token(headers) == Some(expected.as_str())
+        self.validate_stored_remote_password(api_key.or(bearer))
+            .unwrap_or(false)
     }
 
-    fn http_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> &'static str {
-        if self.api_key.is_none() && !is_local_client_addr(client_addr) {
-            "Remote access requires authentication; set RTH_API_KEY (RCH_API_KEY is also supported)."
+    fn http_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> String {
+        if !is_local_client_addr(client_addr)
+            && self.api_key.is_none()
+            && !self.remote_password_configured().unwrap_or(false)
+        {
+            "Remote access requires first-run setup or RTH_API_KEY (RCH_API_KEY is also supported)."
+                .to_string()
         } else {
-            "Unauthorized"
+            "Unauthorized".to_string()
         }
     }
 
@@ -1110,14 +1131,37 @@ impl AppState {
         if is_local_client_addr(client_addr) {
             return true;
         }
-        let Some(expected) = &self.api_key else {
-            return client_addr.is_none();
-        };
-        api_key == Some(expected.as_str()) || token == Some(expected.as_str())
+        if client_addr.is_none() && self.api_key.is_none() {
+            return true;
+        }
+        if let Some(expected) = &self.api_key {
+            if api_key == Some(expected.as_str()) || token == Some(expected.as_str()) {
+                return true;
+            }
+        }
+        self.validate_stored_remote_password(api_key.or(token))
+            .unwrap_or(false)
     }
 
-    fn ws_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> &'static str {
+    fn ws_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> String {
         self.http_auth_failure_detail(client_addr)
+    }
+
+    fn remote_password_configured(&self) -> Result<bool, ApiError> {
+        Ok(load_stored_remote_password(self)?.is_some())
+    }
+
+    fn validate_stored_remote_password(&self, password: Option<&str>) -> Result<bool, ApiError> {
+        let Some(password) = password.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Ok(false);
+        };
+        let Some(secret) = load_stored_remote_password(self)? else {
+            return Ok(false);
+        };
+        Ok(secure_string_eq(
+            &password_hash(&secret.salt, password),
+            &secret.hash,
+        ))
     }
 }
 
@@ -2100,6 +2144,15 @@ struct KillSwitchAuthorizePayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct FirstRunSetupPayload {
+    hub_name: String,
+    remote_password: String,
+    kill_switch_pin: String,
+    #[serde(default)]
+    reticulum_config_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct AttachmentTopicPayload {
     #[serde(default, rename = "TopicID", alias = "topic_id", alias = "topicId")]
     topic_id: Option<String>,
@@ -2125,6 +2178,8 @@ pub enum ApiError {
     PayloadTooLarge(String),
     #[error("{0}")]
     ServiceUnavailable(String),
+    #[error("{0}")]
+    Conflict(String),
     #[error("Unauthorized")]
     Unauthorized,
     #[error("{0}")]
@@ -2143,6 +2198,7 @@ impl IntoResponse for ApiError {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Unauthorized | Self::UnauthorizedWithDetail(_) => StatusCode::UNAUTHORIZED,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -2595,6 +2651,11 @@ fn create_app_router(state: AppState) -> Router {
         .route("/Help", get(help_text))
         .route("/Examples", get(examples_text))
         .route("/api/v1/app/info", get(app_info))
+        .route("/api/r3akt/setup/status", get(first_run_setup_status))
+        .route(
+            "/api/r3akt/setup/complete",
+            get(method_not_allowed).post(first_run_setup_complete),
+        )
         .route("/internal/topics", get(internal_list_topics))
         .route(
             "/internal/topics/{topic_id}/subscribers",
@@ -5268,8 +5329,7 @@ async fn require_http_auth(
         return normalize_framework_rejection(next.run(request).await, query_string.as_deref())
             .await;
     }
-    ApiError::UnauthorizedWithDetail(state.http_auth_failure_detail(client_addr).to_string())
-        .into_response()
+    ApiError::UnauthorizedWithDetail(state.http_auth_failure_detail(client_addr)).into_response()
 }
 
 async fn normalize_framework_rejection(response: Response, query_string: Option<&str>) -> Response {
@@ -14000,7 +14060,7 @@ async fn kill_switch_arm(
     State(state): State<AppState>,
     Json(payload): Json<KillSwitchArmPayload>,
 ) -> Result<Json<Value>, ApiError> {
-    ensure_kill_switch_pin(&state)?;
+    require_kill_switch_pin(&state)?;
     let now_ms = unix_now_ms();
     {
         let mut runtime = state
@@ -14027,7 +14087,7 @@ async fn kill_switch_arm(
         runtime.message = if payload.arm_a && payload.arm_b {
             "Dual-arm gates engaged. PIN authorization is required.".to_string()
         } else {
-            "Dual-arm controls are idle. Enter the first-boot PIN to authorize purge.".to_string()
+            "Dual-arm controls are idle. Enter the configured PIN to authorize purge.".to_string()
         };
         runtime.updated_at_ts_ms = now_ms;
     }
@@ -14044,7 +14104,7 @@ async fn kill_switch_authorize(
             "Kill switch PIN must contain exactly six digits".to_string(),
         ));
     }
-    let secret = ensure_kill_switch_pin(&state)?;
+    let secret = require_kill_switch_pin(&state)?;
     let candidate_hash = kill_switch_pin_hash(&secret.salt, pin);
     if !secure_string_eq(&candidate_hash, &secret.hash) {
         return Err(ApiError::UnauthorizedWithDetail(
@@ -14081,7 +14141,7 @@ async fn kill_switch_authorize(
 }
 
 async fn kill_switch_purge(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    ensure_kill_switch_pin(&state)?;
+    require_kill_switch_pin(&state)?;
     let preview = with_required_core_store_write(&state, |store| store.database_wipe_preview())?;
     let artifacts = kill_switch_artifact_preview(&state);
     let now_ms = unix_now_ms();
@@ -14123,6 +14183,87 @@ async fn kill_switch_purge(State(state): State<AppState>) -> Result<Json<Value>,
     let _purge_worker =
         tokio::task::spawn_blocking(move || run_kill_switch_purge_worker(purge_state));
     Ok(Json(kill_switch_status_payload(&state)?))
+}
+
+async fn first_run_setup_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(first_run_setup_status_payload(&state)?))
+}
+
+async fn first_run_setup_complete(
+    State(state): State<AppState>,
+    Json(payload): Json<FirstRunSetupPayload>,
+) -> Result<Json<Value>, ApiError> {
+    if load_kill_switch_pin(&state)?.is_some() {
+        return Err(ApiError::Conflict(
+            "First-run setup has already enrolled a kill switch PIN".to_string(),
+        ));
+    }
+
+    let hub_name = payload.hub_name.trim();
+    if hub_name.is_empty() {
+        return Err(ApiError::BadRequest("Hub name is required".to_string()));
+    }
+    if hub_name.chars().count() > 80 {
+        return Err(ApiError::BadRequest(
+            "Hub name must be 80 characters or fewer".to_string(),
+        ));
+    }
+
+    let remote_password = payload.remote_password.trim();
+    if remote_password.len() < 8 {
+        return Err(ApiError::BadRequest(
+            "Remote access password must contain at least eight characters".to_string(),
+        ));
+    }
+
+    let kill_switch_pin = payload.kill_switch_pin.trim();
+    if kill_switch_pin.len() != 6 || !kill_switch_pin.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(ApiError::BadRequest(
+            "Kill switch PIN must contain exactly six digits".to_string(),
+        ));
+    }
+
+    if let Some(reticulum_config_text) = payload.reticulum_config_text.as_deref() {
+        let errors = validate_ini_text(reticulum_config_text);
+        if !errors.is_empty() {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid Reticulum configuration payload: {}",
+                errors.join("; ")
+            )));
+        }
+    }
+
+    with_required_core_store_write(&state, |store| {
+        store.set_setting_value(HUB_NAME_SETTING, hub_name)?;
+        Ok(())
+    })?;
+    save_remote_access_password(&state, remote_password)?;
+    save_kill_switch_pin(&state, kill_switch_pin)?;
+
+    if let Some(path) = state.config_path.as_deref() {
+        let current = read_config_file(Some(path))?;
+        let updated = upsert_ini_setting(&current, "hub", "name", hub_name);
+        write_config_file_for_setup(path, updated)?;
+    }
+
+    if let (Some(path), Some(reticulum_config_text)) = (
+        state.reticulum_config_path.as_deref(),
+        payload.reticulum_config_text,
+    ) {
+        write_config_file_for_setup(path, reticulum_config_text)?;
+    }
+
+    {
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        runtime.initial_pin_reveal = None;
+        runtime.message = "Kill switch PIN enrolled by first-run setup.".to_string();
+        runtime.updated_at_ts_ms = unix_now_ms();
+    }
+
+    Ok(Json(first_run_setup_status_payload(&state)?))
 }
 
 async fn validate_auth(State(state): State<AppState>, request: Request) -> Json<Value> {
@@ -17159,11 +17300,6 @@ fn with_required_core_store_write<T>(
     result
 }
 
-fn generate_kill_switch_pin() -> String {
-    let value = Uuid::new_v4().as_u128() % 1_000_000;
-    format!("{value:06}")
-}
-
 fn sha256_lower_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -17171,8 +17307,12 @@ fn sha256_lower_hex(bytes: &[u8]) -> String {
         .collect::<String>()
 }
 
+fn password_hash(salt: &str, value: &str) -> String {
+    sha256_lower_hex(format!("{salt}:{value}").as_bytes())
+}
+
 fn kill_switch_pin_hash(salt: &str, pin: &str) -> String {
-    sha256_lower_hex(format!("{salt}:{pin}").as_bytes())
+    password_hash(salt, pin)
 }
 
 fn secure_string_eq(left: &str, right: &str) -> bool {
@@ -17189,49 +17329,246 @@ fn secure_string_eq(left: &str, right: &str) -> bool {
         == 0
 }
 
-fn ensure_kill_switch_pin(state: &AppState) -> Result<KillSwitchPinSecret, ApiError> {
-    let mut generated_pin: Option<String> = None;
-    let secret = with_required_core_store_write(state, |store| {
+fn load_kill_switch_pin(state: &AppState) -> Result<Option<KillSwitchPinSecret>, ApiError> {
+    with_required_core_store_write(state, |store| {
         let salt = store.setting_value(KILL_SWITCH_PIN_SALT_SETTING)?;
         let hash = store.setting_value(KILL_SWITCH_PIN_HASH_SETTING)?;
         let created_at = store.setting_value(KILL_SWITCH_PIN_CREATED_AT_SETTING)?;
         if let (Some(salt), Some(hash), Some(created_at)) = (salt, hash, created_at) {
             if let Ok(created_at_ts_ms) = created_at.parse::<i64>() {
-                return Ok(KillSwitchPinSecret {
+                return Ok(Some(KillSwitchPinSecret {
                     salt,
                     hash,
                     created_at_ts_ms,
-                });
+                }));
             }
         }
+        Ok(None)
+    })
+}
 
-        let pin = generate_kill_switch_pin();
-        let salt = Uuid::new_v4().to_string();
-        let created_at_ts_ms = unix_now_ms();
-        let hash = kill_switch_pin_hash(&salt, &pin);
+fn require_kill_switch_pin(state: &AppState) -> Result<KillSwitchPinSecret, ApiError> {
+    load_kill_switch_pin(state)?.ok_or_else(|| {
+        ApiError::Conflict("First-run setup must configure the kill switch PIN".to_string())
+    })
+}
+
+fn save_kill_switch_pin(state: &AppState, pin: &str) -> Result<KillSwitchPinSecret, ApiError> {
+    let salt = Uuid::new_v4().to_string();
+    let created_at_ts_ms = unix_now_ms();
+    let hash = kill_switch_pin_hash(&salt, pin);
+    with_required_core_store_write(state, |store| {
         store.set_setting_value(KILL_SWITCH_PIN_SALT_SETTING, &salt)?;
         store.set_setting_value(KILL_SWITCH_PIN_HASH_SETTING, &hash)?;
         store.set_setting_value(
             KILL_SWITCH_PIN_CREATED_AT_SETTING,
             &created_at_ts_ms.to_string(),
         )?;
-        generated_pin = Some(pin);
-        Ok(KillSwitchPinSecret {
-            salt,
-            hash,
-            created_at_ts_ms,
-        })
+        Ok(())
     })?;
+    Ok(KillSwitchPinSecret {
+        salt,
+        hash,
+        created_at_ts_ms,
+    })
+}
 
-    if let Some(pin) = generated_pin {
-        let mut runtime = state
-            .kill_switch
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        runtime.initial_pin_reveal = Some(pin);
-        runtime.updated_at_ts_ms = unix_now_ms();
+fn load_stored_remote_password(state: &AppState) -> Result<Option<StoredPasswordSecret>, ApiError> {
+    with_required_core_store_write(state, |store| {
+        let salt = store.setting_value(REMOTE_ACCESS_PASSWORD_SALT_SETTING)?;
+        let hash = store.setting_value(REMOTE_ACCESS_PASSWORD_HASH_SETTING)?;
+        let created_at = store.setting_value(REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING)?;
+        if let (Some(salt), Some(hash), Some(created_at)) = (salt, hash, created_at) {
+            if let Ok(created_at_ts_ms) = created_at.parse::<i64>() {
+                return Ok(Some(StoredPasswordSecret {
+                    salt,
+                    hash,
+                    created_at_ts_ms,
+                }));
+            }
+        }
+        Ok(None)
+    })
+}
+
+fn save_remote_access_password(
+    state: &AppState,
+    password: &str,
+) -> Result<StoredPasswordSecret, ApiError> {
+    let salt = Uuid::new_v4().to_string();
+    let created_at_ts_ms = unix_now_ms();
+    let hash = password_hash(&salt, password);
+    with_required_core_store_write(state, |store| {
+        store.set_setting_value(REMOTE_ACCESS_PASSWORD_SALT_SETTING, &salt)?;
+        store.set_setting_value(REMOTE_ACCESS_PASSWORD_HASH_SETTING, &hash)?;
+        store.set_setting_value(
+            REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING,
+            &created_at_ts_ms.to_string(),
+        )?;
+        Ok(())
+    })?;
+    Ok(StoredPasswordSecret {
+        salt,
+        hash,
+        created_at_ts_ms,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct ReticulumIdentityStatus {
+    hash: String,
+    path: PathBuf,
+    created: bool,
+}
+
+fn reticulum_identity_path(state: &AppState) -> Option<PathBuf> {
+    state
+        .reticulum_config_path
+        .as_deref()
+        .and_then(|path| path.parent())
+        .map(|parent| parent.join("identity"))
+}
+
+fn private_identity_hash(identity: &PrivateIdentity) -> String {
+    identity.address_hash().to_hex_string()
+}
+
+fn parse_existing_reticulum_identity_hash(bytes: &[u8]) -> Option<String> {
+    if bytes.len() == PRIVATE_KEY_LENGTH {
+        if let Ok(identity) = PrivateIdentity::from_private_key_bytes(bytes) {
+            return Some(private_identity_hash(&identity));
+        }
     }
-    Ok(secret)
+    let text = std::str::from_utf8(bytes).ok()?.trim();
+    if text.len() >= PRIVATE_KEY_LENGTH * 2 {
+        if let Ok(identity) = PrivateIdentity::new_from_hex_string(text) {
+            return Some(private_identity_hash(&identity));
+        }
+    }
+    if text.len() >= 32
+        && text
+            .chars()
+            .take(32)
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Some(
+            text.chars()
+                .take(32)
+                .collect::<String>()
+                .to_ascii_lowercase(),
+        );
+    }
+    None
+}
+
+fn write_reticulum_identity_file(path: &FsPath, key_bytes: &[u8]) -> Result<(), ApiError> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                ApiError::Internal(format!(
+                    "failed to create Reticulum identity directory {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true).mode(0o600);
+        let mut file = options.open(path).map_err(|error| {
+            ApiError::Internal(format!(
+                "failed to create Reticulum identity {}: {error}",
+                path.display()
+            ))
+        })?;
+        file.write_all(key_bytes).map_err(|error| {
+            ApiError::Internal(format!(
+                "failed to write Reticulum identity {}: {error}",
+                path.display()
+            ))
+        })?;
+        file.sync_all().map_err(|error| {
+            ApiError::Internal(format!(
+                "failed to sync Reticulum identity {}: {error}",
+                path.display()
+            ))
+        })?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, key_bytes).map_err(|error| {
+            ApiError::Internal(format!(
+                "failed to write Reticulum identity {}: {error}",
+                path.display()
+            ))
+        })
+    }
+}
+
+fn ensure_reticulum_identity_status(
+    state: &AppState,
+) -> Result<Option<ReticulumIdentityStatus>, ApiError> {
+    let Some(path) = reticulum_identity_path(state) else {
+        return Ok(None);
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let hash = parse_existing_reticulum_identity_hash(&bytes)
+                .unwrap_or_else(|| sha256_lower_hex(&bytes)[..32].to_string());
+            Ok(Some(ReticulumIdentityStatus {
+                hash,
+                path,
+                created: false,
+            }))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let identity = PrivateIdentity::new_from_rand(OsRng);
+            write_reticulum_identity_file(&path, &identity.to_private_key_bytes())?;
+            Ok(Some(ReticulumIdentityStatus {
+                hash: private_identity_hash(&identity),
+                path,
+                created: true,
+            }))
+        }
+        Err(error) => Err(ApiError::Internal(format!(
+            "failed to read Reticulum identity {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+fn first_run_setup_status_payload(state: &AppState) -> Result<Value, ApiError> {
+    let pin = load_kill_switch_pin(state)?;
+    let remote_password = load_stored_remote_password(state)?;
+    let hub_name =
+        with_required_core_store_write(state, |store| store.setting_value(HUB_NAME_SETTING))?;
+    let reticulum_identity = ensure_reticulum_identity_status(state)?;
+    Ok(json!({
+        "setup_required": pin.is_none(),
+        "pin_enrolled": pin.is_some(),
+        "pin_created_at": pin.as_ref().map(|secret| iso8601_from_unix_ms(secret.created_at_ts_ms)),
+        "hub_name": hub_name,
+        "remote_password_configured": remote_password.is_some(),
+        "remote_password_created_at": remote_password
+            .as_ref()
+            .map(|secret| iso8601_from_unix_ms(secret.created_at_ts_ms)),
+        "config_path": state.config_path.as_deref().map(|path| path.display().to_string()),
+        "reticulum_config_path": state
+            .reticulum_config_path
+            .as_deref()
+            .map(|path| path.display().to_string()),
+        "reticulum_identity_hash": reticulum_identity.as_ref().map(|identity| identity.hash.clone()),
+        "reticulum_identity_path": reticulum_identity
+            .as_ref()
+            .map(|identity| identity.path.display().to_string()),
+        "reticulum_identity_created": reticulum_identity.as_ref().map(|identity| identity.created),
+    }))
 }
 
 fn kill_switch_auth_active(runtime: &KillSwitchRuntimeState, now_ms: i64) -> bool {
@@ -17661,7 +17998,42 @@ fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
             }));
         }
     }
-    let secret = ensure_kill_switch_pin(state)?;
+    let secret = load_kill_switch_pin(state)?;
+    if secret.is_none() {
+        let now_ms = unix_now_ms();
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if runtime.updated_at_ts_ms == 0 {
+            runtime.updated_at_ts_ms = now_ms;
+        }
+        runtime.arm_a = false;
+        runtime.arm_b = false;
+        runtime.authorized_at_ts_ms = None;
+        runtime.mode = KillSwitchRuntimeMode::Idle;
+        runtime.initial_pin_reveal = None;
+        if runtime.message.is_empty() {
+            runtime.message =
+                "First-run setup must configure a kill switch PIN before purge controls unlock."
+                    .to_string();
+        }
+        return Ok(json!({
+            "state": runtime.mode.as_str(),
+            "arm_a": false,
+            "arm_b": false,
+            "pin_enrolled": false,
+            "pin_created_at": Value::Null,
+            "initial_pin": Value::Null,
+            "authorized_at": Value::Null,
+            "purge_started_at": runtime.purge_started_at_ts_ms.map(iso8601_from_unix_ms),
+            "progress_percent": runtime.progress_percent,
+            "message": runtime.message.clone(),
+            "targets": [],
+            "updated_at": iso8601_from_unix_ms(runtime.updated_at_ts_ms),
+        }));
+    }
+    let secret = secret.expect("checked above");
     let preview = with_required_core_store_write(state, |store| store.database_wipe_preview())?;
     let artifacts = kill_switch_artifact_preview(state);
     let now_ms = unix_now_ms();
@@ -17711,7 +18083,7 @@ fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
             runtime.mode.as_str()
         };
     let message = if runtime.message.is_empty() {
-        "Dual-arm controls are idle. Enter the first-boot PIN to authorize purge.".to_string()
+        "Dual-arm controls are idle. Enter the configured PIN to authorize purge.".to_string()
     } else {
         runtime.message.clone()
     };
@@ -25610,6 +25982,65 @@ fn apply_config_file(
     })))
 }
 
+fn write_config_file_for_setup(path: &PathBuf, body: String) -> Result<(), ApiError> {
+    ensure_parent_dir(path)?;
+    std::fs::write(path, body).map_err(|error| ApiError::Internal(error.to_string()))
+}
+
+fn upsert_ini_setting(config_text: &str, section: &str, key: &str, value: &str) -> String {
+    let section_header = format!("[{section}]");
+    let normalized_section = section.trim().to_ascii_lowercase();
+    let normalized_key = key.trim().to_ascii_lowercase();
+    let mut lines = config_text
+        .lines()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let mut section_start = None;
+    let mut section_end = lines.len();
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') && !trimmed.starts_with("[[") {
+            let name = trimmed
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .trim()
+                .to_ascii_lowercase();
+            if section_start.is_some() {
+                section_end = index;
+                break;
+            }
+            if name == normalized_section {
+                section_start = Some(index);
+            }
+        }
+    }
+
+    let rendered = format!("{key} = {value}");
+    if let Some(start) = section_start {
+        for line in lines.iter_mut().take(section_end).skip(start + 1) {
+            let trimmed = line.trim();
+            let equals_index = trimmed.find('=').or_else(|| trimmed.find(':'));
+            if let Some(index) = equals_index {
+                let existing_key = trimmed[..index].trim().to_ascii_lowercase();
+                if existing_key == normalized_key {
+                    line.clone_from(&rendered);
+                    return format!("{}\n", lines.join("\n"));
+                }
+            }
+        }
+        lines.insert(start + 1, rendered);
+        return format!("{}\n", lines.join("\n"));
+    }
+
+    if !lines.is_empty() && lines.last().is_some_and(|line| !line.trim().is_empty()) {
+        lines.push(String::new());
+    }
+    lines.push(section_header);
+    lines.push(rendered);
+    format!("{}\n", lines.join("\n"))
+}
+
 async fn rollback_config_text(
     State(state): State<AppState>,
     payload: Option<Json<ConfigRollbackPayload>>,
@@ -27495,11 +27926,8 @@ async fn authenticate_socket(
         .and_then(|value| value.get("api_key"))
         .and_then(Value::as_str);
     if !state.validate_ws_credentials(api_key, token, client_addr) {
-        let _ = send_ws_json(
-            socket,
-            ws_error("unauthorized", state.ws_auth_failure_detail(client_addr)),
-        )
-        .await;
+        let detail = state.ws_auth_failure_detail(client_addr);
+        let _ = send_ws_json(socket, ws_error("unauthorized", &detail)).await;
         let _ =
             close_socket_with_code(socket, WS_AUTH_UNAUTHORIZED_CLOSE_CODE, "unauthorized").await;
         return false;
@@ -47011,6 +47439,209 @@ mod tests {
         assert_eq!(bearer.status(), StatusCode::OK);
     }
 
+    #[tokio::test]
+    async fn first_run_setup_enrolls_user_pin_password_and_config_files() {
+        let test_dir = std::env::temp_dir().join(format!("r3akt-rch-setup-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch.sqlite3");
+        let config_path = test_dir.join("rch.ini");
+        let reticulum_config_path = test_dir.join("reticulum").join("config");
+        std::fs::write(&config_path, "[core]\napp_name = RCH\n").expect("config");
+
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path)
+            .with_reticulum_config_path(&reticulum_config_path);
+        let app = crate::create_app_with_state(state.clone());
+
+        let setup_status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/r3akt/setup/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("setup status");
+        assert_eq!(setup_status.status(), StatusCode::OK);
+        let body = setup_status
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["setup_required"], true);
+        assert_eq!(payload["pin_enrolled"], false);
+        let identity_hash = payload["reticulum_identity_hash"]
+            .as_str()
+            .expect("reticulum identity hash")
+            .to_string();
+        assert_eq!(identity_hash.len(), 32);
+        assert!(
+            identity_hash
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+        );
+        assert_eq!(payload["reticulum_identity_created"], true);
+        let reticulum_identity_path = reticulum_config_path
+            .parent()
+            .expect("reticulum parent")
+            .join("identity");
+        assert!(reticulum_identity_path.exists());
+
+        let kill_status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/r3akt/kill-switch/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("kill status");
+        assert_eq!(kill_status.status(), StatusCode::OK);
+        let body = kill_status
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["pin_enrolled"], false);
+        assert_eq!(payload["initial_pin"], serde_json::Value::Null);
+
+        let complete = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/setup/complete")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "hub_name": "Field Hub North",
+                            "remote_password": "remote-secret",
+                            "kill_switch_pin": "135790",
+                            "reticulum_config_text": "[interfaces]\n[[TCP uplink]]\ntype = TCPClientInterface\ninterface_enabled = yes\ntarget_host = 10.1.1.5\ntarget_port = 4242\n"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("complete setup");
+        assert_eq!(complete.status(), StatusCode::OK);
+        let body = complete
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["setup_required"], false);
+        assert_eq!(payload["pin_enrolled"], true);
+        assert_eq!(payload["hub_name"], "Field Hub North");
+        assert_eq!(
+            payload["reticulum_identity_hash"].as_str(),
+            Some(identity_hash.as_str())
+        );
+        assert_eq!(payload["reticulum_identity_created"], false);
+
+        let hub_config = std::fs::read_to_string(&config_path).expect("hub config");
+        assert!(hub_config.contains("[hub]\nname = Field Hub North"));
+        let reticulum_config =
+            std::fs::read_to_string(&reticulum_config_path).expect("reticulum config");
+        assert!(reticulum_config.contains("target_host = 10.1.1.5"));
+
+        let store = RchSqliteStore::open(&db_path).expect("store");
+        assert!(
+            store
+                .setting_value("kill_switch_pin_hash")
+                .expect("pin hash")
+                .is_some()
+        );
+        assert!(
+            store
+                .setting_value("remote_access_password_hash")
+                .expect("password hash")
+                .is_some()
+        );
+
+        let remote_addr = SocketAddr::from(([198, 51, 100, 12], 50_000));
+        let remote_auth = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/auth/validate")
+                    .extension(ConnectInfo(remote_addr))
+                    .header("X-API-Key", "remote-secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("remote auth");
+        assert_eq!(remote_auth.status(), StatusCode::OK);
+
+        let arm = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/kill-switch/arm")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({"arm_a": true, "arm_b": true}).to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("arm response");
+        assert_eq!(arm.status(), StatusCode::OK);
+
+        let wrong_pin = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/kill-switch/authorize")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"pin": "246802"}).to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("wrong pin");
+        assert_eq!(wrong_pin.status(), StatusCode::UNAUTHORIZED);
+
+        let correct_pin = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/kill-switch/authorize")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"pin": "135790"}).to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("correct pin");
+        assert_eq!(correct_pin.status(), StatusCode::OK);
+        let body = correct_pin
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["state"], "authorized");
+        assert_eq!(payload["initial_pin"], serde_json::Value::Null);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+    }
+
     #[test]
     fn env_api_key_selector_matches_python_auth_helper_precedence() {
         assert_eq!(
@@ -47296,7 +47927,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(
             payload["detail"],
-            "Remote access requires authentication; set RTH_API_KEY (RCH_API_KEY is also supported)."
+            "Remote access requires first-run setup or RTH_API_KEY (RCH_API_KEY is also supported)."
         );
     }
 
@@ -47311,7 +47942,7 @@ mod tests {
         assert!(!open_state.validate_ws_credentials(None, None, remote_addr));
         assert_eq!(
             open_state.ws_auth_failure_detail(remote_addr),
-            "Remote access requires authentication; set RTH_API_KEY (RCH_API_KEY is also supported)."
+            "Remote access requires first-run setup or RTH_API_KEY (RCH_API_KEY is also supported)."
         );
 
         let keyed_state = crate::AppState::default().with_api_key("secret");

@@ -36,7 +36,7 @@ export const setKillSwitchArms = (armA: boolean, armB: boolean) =>
   post<KillSwitchStatus>(endpoints.killSwitchArm, { arm_a: armA, arm_b: armB });
 
 export const authorizeKillSwitch = (pin: string) =>
-  post<KillSwitchStatus>(endpoints.killSwitchAuthorize, { pin });
+  post<KillSwitchStatus>(endpoints.killSwitchAuthorize, { pin }, { suppressAuthStatus: true });
 
 export const startKillSwitchPurge = () =>
   post<KillSwitchStatus>(endpoints.killSwitchPurge);

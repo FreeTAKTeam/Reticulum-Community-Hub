@@ -37,6 +37,8 @@ r3akt-router = { path = "crates/r3akt-router" }
 r3akt-store = { path = "crates/r3akt-store" }
 r3akt-tak-connector = { path = "crates/r3akt-tak-connector" }
 r3akt-transport-rns = { path = "crates/r3akt-transport-rns" }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+rns-core = { package = "reticulum-rs-core", path = "../LXMF-rs/crates/libs/rns-core", version = ">=0.6.0, <0.7.0" }
 base64 = "0.22"
 axum = { version = "0.8", features = ["ws", "multipart"] }
 csv = "1.3"

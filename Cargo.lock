@@ -1232,6 +1232,8 @@ dependencies = [
  "r3akt-rch-bridge",
  "r3akt-rch-core",
  "r3akt-transport-rns",
+ "rand_core 0.6.4",
+ "reticulum-rs-core",
  "rmp-serde",
  "rusqlite",
  "serde",

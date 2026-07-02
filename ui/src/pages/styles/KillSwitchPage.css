@@ -258,30 +258,14 @@
   font-size: 0.78rem;
 }
 
-.kill-pin .kill-initial-pin {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+.kill-pin .kill-pin-error {
   padding: 8px 10px;
-  border: 1px solid rgba(255, 59, 122, 0.28);
+  border: 1px solid rgba(255, 59, 122, 0.38);
   border-radius: 6px;
-  background: rgba(34, 38, 48, 0.72);
-  color: rgba(216, 225, 235, 0.86);
-}
-
-.kill-initial-pin span {
-  font-family: var(--cui-font-display);
-  font-size: 0.64rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.kill-initial-pin strong {
+  background: rgba(255, 59, 122, 0.1);
   color: var(--kill-danger);
-  font-family: var(--cui-font-display);
-  font-size: 1rem;
-  letter-spacing: 0.14em;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .kill-purge-button {
