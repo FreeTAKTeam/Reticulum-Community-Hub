@@ -54,5 +54,9 @@ export const endpoints = {
   controlStop: "/Control/Stop",
   controlStatus: "/Control/Status",
   controlAnnounce: "/Control/Announce",
-  controlSync: "/Control/Sync"
+  controlSync: "/Control/Sync",
+  killSwitchStatus: "/api/r3akt/kill-switch/status",
+  killSwitchArm: "/api/r3akt/kill-switch/arm",
+  killSwitchAuthorize: "/api/r3akt/kill-switch/authorize",
+  killSwitchPurge: "/api/r3akt/kill-switch/purge"
 };

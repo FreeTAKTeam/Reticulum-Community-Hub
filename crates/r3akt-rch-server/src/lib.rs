@@ -62,12 +62,12 @@ use r3akt_rch_core::{
     ChatAttachmentRecord, ClientRecord as CoreClientRecord, DeliveryMode, FileAttachmentRecord,
     IdentityStateRecord as CoreIdentityStateRecord, MarkerRecord as CoreMarkerRecord,
     MessageRecord as CoreMessageRecord, MissionAuditEvent, MissionChangeRecord,
-    OutboundDeliveryPolicy, RchCore, RchSqliteStore, RetentionPolicy, SubjectOperationRight,
-    SubscriberRecord as CoreSubscriberRecord, SystemEventRecord, TelemetryRecord,
-    TopicRecord as CoreTopicRecord, Visibility, ZonePointRecord as CoreZonePointRecord,
-    ZoneRecord as CoreZoneRecord, classify_delivery_mode, is_supported_checklist_command,
-    is_supported_mission_command, normalize_topic_id, rch_mission_role_bundle_definitions,
-    rch_operation_definitions, rch_role_bundle_definitions,
+    OutboundDeliveryPolicy, RchCore, RchDatabaseWipeReport, RchSqliteStore, RetentionPolicy,
+    SubjectOperationRight, SubscriberRecord as CoreSubscriberRecord, SystemEventRecord,
+    TelemetryRecord, TopicRecord as CoreTopicRecord, Visibility,
+    ZonePointRecord as CoreZonePointRecord, ZoneRecord as CoreZoneRecord, classify_delivery_mode,
+    is_supported_checklist_command, is_supported_mission_command, normalize_topic_id,
+    rch_mission_role_bundle_definitions, rch_operation_definitions, rch_role_bundle_definitions,
 };
 #[cfg(test)]
 use r3akt_transport_rns::MessageBus;
@@ -140,6 +140,11 @@ const WS_SYSTEM_EVENTS_DEFAULT_LIMIT: usize = 50;
 const WS_SYSTEM_EVENTS_MAX_LIMIT: usize = 200;
 const API_PAGINATION_DEFAULT_PAGE_SIZE: usize = 50;
 const API_PAGINATION_MAX_PAGE_SIZE: usize = 500;
+const KILL_SWITCH_PIN_SALT_SETTING: &str = "kill_switch_pin_salt";
+const KILL_SWITCH_PIN_HASH_SETTING: &str = "kill_switch_pin_hash";
+const KILL_SWITCH_PIN_CREATED_AT_SETTING: &str = "kill_switch_pin_created_at_ts_ms";
+const KILL_SWITCH_AUTHORIZATION_TTL_MS: i64 = 120_000;
+const KILL_SWITCH_PROGRESS_WINDOW_MS: i64 = 18_000;
 const GROUP_CHAT_INBOUND_TEXT_MAX_CHARS: usize = 500;
 const GROUP_CHAT_COMMAND_BODY_MAX_BYTES: usize = 1024;
 const GROUP_CHAT_JOIN_REPLAY_MAX_MESSAGES: usize = 10;
@@ -213,6 +218,8 @@ pub struct AppState {
     reticulumd_receipt_status_next_poll_ts_ms: Arc<RwLock<i64>>,
     outbound_identity_allowlist: Option<Arc<HashSet<String>>>,
     mission_change_fanout_cache: Arc<RwLock<HashMap<String, i64>>>,
+    kill_switch: Arc<RwLock<KillSwitchRuntimeState>>,
+    managed_reticulumd_db_path: Option<Arc<PathBuf>>,
     #[cfg(test)]
     rch_sqlite_lock: Arc<Mutex<()>>,
     sqlite_path: Option<Arc<PathBuf>>,
@@ -346,6 +353,88 @@ struct ManagedReticulumdState {
     stopped_ts_ms: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KillSwitchRuntimeMode {
+    Idle,
+    Armed,
+    Authorized,
+    Deleting,
+    Completed,
+    Failed,
+}
+
+impl Default for KillSwitchRuntimeMode {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+impl KillSwitchRuntimeMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Armed => "armed",
+            Self::Authorized => "authorized",
+            Self::Deleting => "deleting",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct KillSwitchTargetStatus {
+    id: String,
+    label: String,
+    short: String,
+    total: usize,
+    erased: usize,
+    unit: &'static str,
+    state: &'static str,
+    weight: u8,
+}
+
+#[derive(Debug, Clone, Default)]
+struct KillSwitchArtifactReport {
+    database_files: usize,
+    configuration_files: usize,
+    identity_files: usize,
+    deleted_paths: Vec<String>,
+}
+
+impl KillSwitchArtifactReport {
+    fn total_files(&self) -> usize {
+        self.database_files
+            .saturating_add(self.configuration_files)
+            .saturating_add(self.identity_files)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct KillSwitchRuntimeState {
+    arm_a: bool,
+    arm_b: bool,
+    mode: KillSwitchRuntimeMode,
+    authorized_at_ts_ms: Option<i64>,
+    purge_started_at_ts_ms: Option<i64>,
+    purge_completed_at_ts_ms: Option<i64>,
+    failed_at_ts_ms: Option<i64>,
+    initial_pin_reveal: Option<String>,
+    progress_percent: u8,
+    message: String,
+    targets: Vec<KillSwitchTargetStatus>,
+    rows_deleted: usize,
+    last_error: Option<String>,
+    updated_at_ts_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+struct KillSwitchPinSecret {
+    salt: String,
+    hash: String,
+    created_at_ts_ms: i64,
+}
+
 impl Default for RuntimeControlState {
     fn default() -> Self {
         let now_ms = unix_now_ms();
@@ -393,6 +482,8 @@ impl Default for AppState {
             reticulumd_receipt_status_next_poll_ts_ms: Arc::default(),
             outbound_identity_allowlist: None,
             mission_change_fanout_cache: Arc::default(),
+            kill_switch: Arc::default(),
+            managed_reticulumd_db_path: None,
             #[cfg(test)]
             rch_sqlite_lock: Arc::default(),
             sqlite_path: None,
@@ -527,19 +618,23 @@ impl AppState {
 
     #[must_use]
     pub fn with_managed_reticulumd(
-        self,
+        mut self,
         exe_path: impl AsRef<FsPath>,
         endpoint: impl Into<String>,
         db_path: Option<impl Into<String>>,
         config_path: Option<impl AsRef<FsPath>>,
     ) -> Self {
+        let db_path = db_path.map(Into::into);
+        self.managed_reticulumd_db_path = db_path
+            .as_ref()
+            .map(|path| Arc::new(PathBuf::from(path.as_str())));
         if let Ok(mut managed) = self.managed_reticulumd.write() {
             managed.configured = true;
             managed.exe_path = Some(exe_path.as_ref().to_path_buf());
             managed.config_path = config_path.map(|path| path.as_ref().to_path_buf());
             managed.endpoint = Some(endpoint.into());
             managed.zmq_command_endpoint = None;
-            managed.db_path = db_path.map(Into::into);
+            managed.db_path = db_path;
             managed.transport = None;
             managed.running = false;
             managed.pid = None;
@@ -574,19 +669,23 @@ impl AppState {
 
     #[must_use]
     pub fn with_managed_reticulumd_zmq(
-        self,
+        mut self,
         exe_path: impl AsRef<FsPath>,
         command_endpoint: impl Into<String>,
         db_path: Option<impl Into<String>>,
         config_path: Option<impl AsRef<FsPath>>,
     ) -> Self {
+        let db_path = db_path.map(Into::into);
+        self.managed_reticulumd_db_path = db_path
+            .as_ref()
+            .map(|path| Arc::new(PathBuf::from(path.as_str())));
         if let Ok(mut managed) = self.managed_reticulumd.write() {
             managed.configured = true;
             managed.exe_path = Some(exe_path.as_ref().to_path_buf());
             managed.config_path = config_path.map(|path| path.as_ref().to_path_buf());
             managed.endpoint = None;
             managed.zmq_command_endpoint = Some(command_endpoint.into());
-            managed.db_path = db_path.map(Into::into);
+            managed.db_path = db_path;
             managed.transport = None;
             managed.running = false;
             managed.pid = None;
@@ -1992,6 +2091,19 @@ struct AttachmentListQuery {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct KillSwitchArmPayload {
+    #[serde(default)]
+    arm_a: bool,
+    #[serde(default)]
+    arm_b: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct KillSwitchAuthorizePayload {
+    pin: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct AttachmentTopicPayload {
     #[serde(default, rename = "TopicID", alias = "topic_id", alias = "topicId")]
     topic_id: Option<String>,
@@ -2297,6 +2409,19 @@ fn create_app_router(state: AppState) -> Router {
         )
         .route("/api/r3akt/events", get(list_r3akt_domain_events))
         .route("/api/r3akt/snapshots", get(list_r3akt_domain_snapshots))
+        .route("/api/r3akt/kill-switch/status", get(kill_switch_status))
+        .route(
+            "/api/r3akt/kill-switch/arm",
+            get(method_not_allowed).post(kill_switch_arm),
+        )
+        .route(
+            "/api/r3akt/kill-switch/authorize",
+            get(method_not_allowed).post(kill_switch_authorize),
+        )
+        .route(
+            "/api/r3akt/kill-switch/purge",
+            get(method_not_allowed).post(kill_switch_purge),
+        )
         .route(
             "/api/r3akt/missions",
             get(list_r3akt_missions).post(upsert_r3akt_mission),
@@ -13871,6 +13996,139 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
+async fn kill_switch_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(kill_switch_status_payload(&state)?))
+}
+
+async fn kill_switch_arm(
+    State(state): State<AppState>,
+    Json(payload): Json<KillSwitchArmPayload>,
+) -> Result<Json<Value>, ApiError> {
+    ensure_kill_switch_pin(&state)?;
+    let now_ms = unix_now_ms();
+    {
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if matches!(
+            runtime.mode,
+            KillSwitchRuntimeMode::Deleting | KillSwitchRuntimeMode::Completed
+        ) {
+            return Err(ApiError::BadRequest(
+                "Kill switch controls are locked while purge is active or completed".to_string(),
+            ));
+        }
+        runtime.arm_a = payload.arm_a;
+        runtime.arm_b = payload.arm_b;
+        runtime.authorized_at_ts_ms = None;
+        runtime.progress_percent = 0;
+        runtime.mode = if payload.arm_a && payload.arm_b {
+            KillSwitchRuntimeMode::Armed
+        } else {
+            KillSwitchRuntimeMode::Idle
+        };
+        runtime.message = if payload.arm_a && payload.arm_b {
+            "Dual-arm gates engaged. PIN authorization is required.".to_string()
+        } else {
+            "Dual-arm controls are idle. Enter the first-boot PIN to authorize purge.".to_string()
+        };
+        runtime.updated_at_ts_ms = now_ms;
+    }
+    Ok(Json(kill_switch_status_payload(&state)?))
+}
+
+async fn kill_switch_authorize(
+    State(state): State<AppState>,
+    Json(payload): Json<KillSwitchAuthorizePayload>,
+) -> Result<Json<Value>, ApiError> {
+    let pin = payload.pin.trim();
+    if pin.len() != 6 || !pin.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(ApiError::BadRequest(
+            "Kill switch PIN must contain exactly six digits".to_string(),
+        ));
+    }
+    let secret = ensure_kill_switch_pin(&state)?;
+    let candidate_hash = kill_switch_pin_hash(&secret.salt, pin);
+    if !secure_string_eq(&candidate_hash, &secret.hash) {
+        return Err(ApiError::UnauthorizedWithDetail(
+            "Kill switch PIN rejected".to_string(),
+        ));
+    }
+    let now_ms = unix_now_ms();
+    {
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if !runtime.arm_a || !runtime.arm_b {
+            return Err(ApiError::BadRequest(
+                "Both kill switch arms must be enabled before PIN authorization".to_string(),
+            ));
+        }
+        if matches!(
+            runtime.mode,
+            KillSwitchRuntimeMode::Deleting | KillSwitchRuntimeMode::Completed
+        ) {
+            return Err(ApiError::BadRequest(
+                "Kill switch controls are locked while purge is active or completed".to_string(),
+            ));
+        }
+        runtime.mode = KillSwitchRuntimeMode::Authorized;
+        runtime.authorized_at_ts_ms = Some(now_ms);
+        runtime.initial_pin_reveal = None;
+        runtime.message =
+            "PIN accepted. Final purge command is authorized for this session.".to_string();
+        runtime.updated_at_ts_ms = now_ms;
+    }
+    Ok(Json(kill_switch_status_payload(&state)?))
+}
+
+async fn kill_switch_purge(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    ensure_kill_switch_pin(&state)?;
+    let preview = with_required_core_store_write(&state, |store| store.database_wipe_preview())?;
+    let artifacts = kill_switch_artifact_preview(&state);
+    let now_ms = unix_now_ms();
+    let mut already_deleting = false;
+    {
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if runtime.mode == KillSwitchRuntimeMode::Deleting {
+            already_deleting = true;
+        } else if !runtime.arm_a || !runtime.arm_b {
+            return Err(ApiError::BadRequest(
+                "Both kill switch arms must be enabled before purge".to_string(),
+            ));
+        } else if !kill_switch_auth_active(&runtime, now_ms) {
+            return Err(ApiError::UnauthorizedWithDetail(
+                "Kill switch PIN authorization is missing or expired".to_string(),
+            ));
+        } else {
+            runtime.mode = KillSwitchRuntimeMode::Deleting;
+            runtime.purge_started_at_ts_ms = Some(now_ms);
+            runtime.purge_completed_at_ts_ms = None;
+            runtime.failed_at_ts_ms = None;
+            runtime.progress_percent = 1;
+            runtime.rows_deleted = preview.rows_deleted;
+            runtime.targets =
+                grouped_kill_switch_targets(&preview, &artifacts, KillSwitchRuntimeMode::Idle, 0);
+            runtime.message =
+                "Deleting databases, configuration files, and Reticulum identity.".to_string();
+            runtime.last_error = None;
+            runtime.updated_at_ts_ms = now_ms;
+        }
+    }
+    if already_deleting {
+        return Ok(Json(kill_switch_status_payload(&state)?));
+    }
+    let purge_state = state.clone();
+    let _purge_worker =
+        tokio::task::spawn_blocking(move || run_kill_switch_purge_worker(purge_state));
+    Ok(Json(kill_switch_status_payload(&state)?))
+}
+
 async fn validate_auth(State(state): State<AppState>, request: Request) -> Json<Value> {
     let client_addr = request_client_addr(&request);
     Json(json!({
@@ -16903,6 +17161,686 @@ fn with_required_core_store_write<T>(
     let result = operation(&mut store).map_err(|error| ApiError::Internal(error.to_string()));
     record_sqlite_latency(state, started.elapsed());
     result
+}
+
+fn generate_kill_switch_pin() -> String {
+    let value = Uuid::new_v4().as_u128() % 1_000_000;
+    format!("{value:06}")
+}
+
+fn sha256_lower_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+fn kill_switch_pin_hash(salt: &str, pin: &str) -> String {
+    sha256_lower_hex(format!("{salt}:{pin}").as_bytes())
+}
+
+fn secure_string_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right.iter())
+        .fold(0u8, |accumulator, (left, right)| {
+            accumulator | (*left ^ *right)
+        })
+        == 0
+}
+
+fn ensure_kill_switch_pin(state: &AppState) -> Result<KillSwitchPinSecret, ApiError> {
+    let mut generated_pin: Option<String> = None;
+    let secret = with_required_core_store_write(state, |store| {
+        let salt = store.setting_value(KILL_SWITCH_PIN_SALT_SETTING)?;
+        let hash = store.setting_value(KILL_SWITCH_PIN_HASH_SETTING)?;
+        let created_at = store.setting_value(KILL_SWITCH_PIN_CREATED_AT_SETTING)?;
+        if let (Some(salt), Some(hash), Some(created_at)) = (salt, hash, created_at) {
+            if let Ok(created_at_ts_ms) = created_at.parse::<i64>() {
+                return Ok(KillSwitchPinSecret {
+                    salt,
+                    hash,
+                    created_at_ts_ms,
+                });
+            }
+        }
+
+        let pin = generate_kill_switch_pin();
+        let salt = Uuid::new_v4().to_string();
+        let created_at_ts_ms = unix_now_ms();
+        let hash = kill_switch_pin_hash(&salt, &pin);
+        store.set_setting_value(KILL_SWITCH_PIN_SALT_SETTING, &salt)?;
+        store.set_setting_value(KILL_SWITCH_PIN_HASH_SETTING, &hash)?;
+        store.set_setting_value(
+            KILL_SWITCH_PIN_CREATED_AT_SETTING,
+            &created_at_ts_ms.to_string(),
+        )?;
+        generated_pin = Some(pin);
+        Ok(KillSwitchPinSecret {
+            salt,
+            hash,
+            created_at_ts_ms,
+        })
+    })?;
+
+    if let Some(pin) = generated_pin {
+        let mut runtime = state
+            .kill_switch
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        runtime.initial_pin_reveal = Some(pin);
+        runtime.updated_at_ts_ms = unix_now_ms();
+    }
+    Ok(secret)
+}
+
+fn kill_switch_auth_active(runtime: &KillSwitchRuntimeState, now_ms: i64) -> bool {
+    runtime.authorized_at_ts_ms.is_some_and(|authorized_at| {
+        now_ms.saturating_sub(authorized_at) <= KILL_SWITCH_AUTHORIZATION_TTL_MS
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KillSwitchArtifactKind {
+    Database,
+    Configuration,
+    Identity,
+}
+
+#[derive(Debug, Clone)]
+struct KillSwitchArtifactCandidate {
+    path: PathBuf,
+    kind: KillSwitchArtifactKind,
+}
+
+fn sqlite_sidecar_paths(path: &FsPath) -> Vec<PathBuf> {
+    let path_text = path.to_string_lossy();
+    ["-wal", "-shm", "-journal"]
+        .into_iter()
+        .map(|suffix| PathBuf::from(format!("{path_text}{suffix}")))
+        .collect()
+}
+
+fn path_file_name_eq(path: &FsPath, expected: &str) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+}
+
+fn path_has_database_extension(path: &FsPath) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "db" | "sqlite" | "sqlite3"
+            )
+        })
+}
+
+fn push_artifact_candidate(
+    candidates: &mut Vec<KillSwitchArtifactCandidate>,
+    path: PathBuf,
+    kind: KillSwitchArtifactKind,
+) {
+    candidates.push(KillSwitchArtifactCandidate { path, kind });
+}
+
+fn push_database_candidate(candidates: &mut Vec<KillSwitchArtifactCandidate>, path: PathBuf) {
+    for sidecar in sqlite_sidecar_paths(&path) {
+        push_artifact_candidate(candidates, sidecar, KillSwitchArtifactKind::Database);
+    }
+    push_artifact_candidate(candidates, path, KillSwitchArtifactKind::Database);
+}
+
+fn push_runtime_root_candidates(candidates: &mut Vec<KillSwitchArtifactCandidate>, root: &FsPath) {
+    for file_name in [
+        "rch_state.sqlite3",
+        "rth_api.sqlite",
+        "telemetry.db",
+        "reticulumd.db",
+        "rch-runtime.db",
+    ] {
+        push_database_candidate(candidates, root.join(file_name));
+    }
+    for file_name in ["config", "config.ini", "reticulum.conf"] {
+        push_artifact_candidate(
+            candidates,
+            root.join(file_name),
+            KillSwitchArtifactKind::Configuration,
+        );
+    }
+    for file_name in ["identity", "reticulumd.identity"] {
+        push_artifact_candidate(
+            candidates,
+            root.join(file_name),
+            KillSwitchArtifactKind::Identity,
+        );
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path_has_database_extension(&path) {
+            push_database_candidate(candidates, path);
+        } else if path_file_name_eq(&path, "config") || path_file_name_eq(&path, "config.ini") {
+            push_artifact_candidate(candidates, path, KillSwitchArtifactKind::Configuration);
+        } else if path_file_name_eq(&path, "identity")
+            || path_file_name_eq(&path, "reticulumd.identity")
+        {
+            push_artifact_candidate(candidates, path, KillSwitchArtifactKind::Identity);
+        }
+    }
+}
+
+fn kill_switch_artifact_candidates(state: &AppState) -> Vec<KillSwitchArtifactCandidate> {
+    let mut candidates = Vec::new();
+    let mut roots = Vec::new();
+    if let Some(path) = &state.sqlite_path {
+        push_database_candidate(&mut candidates, path.as_ref().clone());
+        if let Some(parent) = path.parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+    if let Some(path) = &state.managed_reticulumd_db_path {
+        push_database_candidate(&mut candidates, path.as_ref().clone());
+        if let Some(parent) = path.parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+    if let Some(path) = &state.config_path {
+        push_artifact_candidate(
+            &mut candidates,
+            path.as_ref().clone(),
+            KillSwitchArtifactKind::Configuration,
+        );
+        if let Some(parent) = path.parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+    if let Some(path) = &state.reticulum_config_path {
+        push_artifact_candidate(
+            &mut candidates,
+            path.as_ref().clone(),
+            KillSwitchArtifactKind::Configuration,
+        );
+        if let Some(parent) = path.parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+    if let Ok(managed) = state.managed_reticulumd.read() {
+        if let Some(path) = &managed.config_path {
+            push_artifact_candidate(
+                &mut candidates,
+                path.clone(),
+                KillSwitchArtifactKind::Configuration,
+            );
+            if let Some(parent) = path.parent() {
+                roots.push(parent.to_path_buf());
+            }
+        }
+    }
+    for root in roots {
+        push_runtime_root_candidates(&mut candidates, &root);
+    }
+
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            let key = candidate.path.to_string_lossy().to_string();
+            seen.insert(key)
+        })
+        .collect()
+}
+
+fn kill_switch_artifact_preview(state: &AppState) -> KillSwitchArtifactReport {
+    let mut report = KillSwitchArtifactReport::default();
+    for candidate in kill_switch_artifact_candidates(state) {
+        if !candidate.path.exists() {
+            continue;
+        }
+        match candidate.kind {
+            KillSwitchArtifactKind::Database => {
+                report.database_files = report.database_files.saturating_add(1);
+            }
+            KillSwitchArtifactKind::Configuration => {
+                report.configuration_files = report.configuration_files.saturating_add(1);
+            }
+            KillSwitchArtifactKind::Identity => {
+                report.identity_files = report.identity_files.saturating_add(1);
+            }
+        }
+    }
+    report
+}
+
+fn delete_kill_switch_artifacts(state: &AppState) -> Result<KillSwitchArtifactReport, ApiError> {
+    let mut report = KillSwitchArtifactReport::default();
+    let mut errors = Vec::new();
+    for candidate in kill_switch_artifact_candidates(state) {
+        if !candidate.path.exists() {
+            continue;
+        }
+        let delete_result = if candidate.path.is_dir() {
+            std::fs::remove_dir_all(&candidate.path)
+        } else {
+            std::fs::remove_file(&candidate.path)
+        };
+        match delete_result {
+            Ok(()) => {
+                report
+                    .deleted_paths
+                    .push(candidate.path.display().to_string());
+                match candidate.kind {
+                    KillSwitchArtifactKind::Database => {
+                        report.database_files = report.database_files.saturating_add(1);
+                    }
+                    KillSwitchArtifactKind::Configuration => {
+                        report.configuration_files = report.configuration_files.saturating_add(1);
+                    }
+                    KillSwitchArtifactKind::Identity => {
+                        report.identity_files = report.identity_files.saturating_add(1);
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!("{}: {error}", candidate.path.display())),
+        }
+    }
+    if errors.is_empty() {
+        Ok(report)
+    } else {
+        Err(ApiError::Internal(format!(
+            "kill switch artifact deletion failed: {}",
+            errors.join("; ")
+        )))
+    }
+}
+
+fn grouped_kill_switch_targets(
+    report: &RchDatabaseWipeReport,
+    artifacts: &KillSwitchArtifactReport,
+    mode: KillSwitchRuntimeMode,
+    progress_percent: u8,
+) -> Vec<KillSwitchTargetStatus> {
+    let groups: [(&str, &str, &str, u8, &[&str], Option<usize>); 6] = [
+        (
+            "mission",
+            "Mission graph",
+            "MG",
+            24,
+            &[
+                "rch_markers",
+                "rch_zones",
+                "rch_missions",
+                "rch_mission_changes",
+                "rch_log_entries",
+                "rch_eam_snapshots",
+                "rch_teams",
+                "rch_mission_team_links",
+                "rch_mission_zone_links",
+                "rch_mission_marker_links",
+                "rch_team_members",
+                "rch_team_member_client_links",
+                "rch_assets",
+                "rch_skills",
+                "rch_team_member_skills",
+                "rch_task_skill_requirements",
+                "rch_assignments",
+                "rch_assignment_asset_links",
+            ],
+            None,
+        ),
+        (
+            "checklists",
+            "Checklist state",
+            "CL",
+            16,
+            &[
+                "rch_checklists",
+                "rch_checklist_templates",
+                "rch_checklist_columns",
+                "rch_checklist_tasks",
+                "rch_checklist_cells",
+                "rch_checklist_feed_publications",
+                "rch_command_results",
+            ],
+            None,
+        ),
+        (
+            "messaging",
+            "Topics and messages",
+            "TX",
+            20,
+            &[
+                "rch_topics",
+                "rch_subscribers",
+                "rch_messages",
+                "rch_clients",
+                "rch_identity_announces",
+                "rch_identity_states",
+                "rch_identity_rem_modes",
+                "rch_outbound_jobs",
+            ],
+            None,
+        ),
+        (
+            "telemetry",
+            "Runtime telemetry",
+            "RT",
+            12,
+            &[
+                "rch_audit_events",
+                "rch_system_events",
+                "rch_telemetry_records",
+                "rch_domain_events",
+            ],
+            None,
+        ),
+        (
+            "database-files",
+            "Database files",
+            "DB",
+            14,
+            &["rch_file_attachments", "rch_settings"],
+            Some(artifacts.database_files),
+        ),
+        (
+            "runtime-secrets",
+            "Config and identity",
+            "ID",
+            14,
+            &[],
+            Some(
+                artifacts
+                    .configuration_files
+                    .saturating_add(artifacts.identity_files),
+            ),
+        ),
+    ];
+    let targets = groups
+        .iter()
+        .map(|(id, label, short, weight, tables, override_total)| {
+            let total = override_total.unwrap_or_else(|| {
+                report
+                    .tables
+                    .iter()
+                    .filter(|table| tables.contains(&table.table.as_str()))
+                    .map(|table| table.rows_deleted)
+                    .sum::<usize>()
+            });
+            KillSwitchTargetStatus {
+                id: (*id).to_string(),
+                label: (*label).to_string(),
+                short: (*short).to_string(),
+                total,
+                erased: 0,
+                unit: "records",
+                state: "queued",
+                weight: *weight,
+            }
+        })
+        .collect::<Vec<_>>();
+    advance_kill_switch_targets(&targets, mode, progress_percent)
+}
+
+fn advance_kill_switch_targets(
+    targets: &[KillSwitchTargetStatus],
+    mode: KillSwitchRuntimeMode,
+    progress_percent: u8,
+) -> Vec<KillSwitchTargetStatus> {
+    targets
+        .iter()
+        .scan(0u16, |cumulative_weight, target| {
+            let start = *cumulative_weight;
+            *cumulative_weight = cumulative_weight.saturating_add(u16::from(target.weight));
+            let end = *cumulative_weight;
+            let progress = u16::from(progress_percent);
+            let (state, erased) = match mode {
+                KillSwitchRuntimeMode::Completed => ("erased", target.total),
+                KillSwitchRuntimeMode::Failed if target.state == "erasing" => {
+                    ("failed", target.erased)
+                }
+                KillSwitchRuntimeMode::Failed => (target.state, target.erased),
+                KillSwitchRuntimeMode::Deleting if progress >= end => ("erased", target.total),
+                KillSwitchRuntimeMode::Deleting if progress > start => {
+                    let span = end.saturating_sub(start).max(1);
+                    let local = progress.saturating_sub(start).min(span);
+                    let erased =
+                        target.total.saturating_mul(usize::from(local)) / usize::from(span);
+                    ("erasing", erased)
+                }
+                _ => ("queued", 0),
+            };
+            let mut next = target.clone();
+            next.state = state;
+            next.erased = erased;
+            Some(next)
+        })
+        .collect()
+}
+
+fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
+    if let Ok(runtime) = state.kill_switch.read() {
+        if matches!(
+            runtime.mode,
+            KillSwitchRuntimeMode::Deleting
+                | KillSwitchRuntimeMode::Completed
+                | KillSwitchRuntimeMode::Failed
+        ) {
+            let now_ms = unix_now_ms();
+            let mut progress_percent = runtime.progress_percent;
+            if runtime.mode == KillSwitchRuntimeMode::Deleting {
+                let started_at = runtime.purge_started_at_ts_ms.unwrap_or(now_ms);
+                let elapsed = now_ms.saturating_sub(started_at);
+                progress_percent = ((elapsed.saturating_mul(96)) / KILL_SWITCH_PROGRESS_WINDOW_MS)
+                    .clamp(1, 96) as u8;
+                progress_percent = progress_percent.max(runtime.progress_percent);
+            }
+            let targets =
+                advance_kill_switch_targets(&runtime.targets, runtime.mode, progress_percent);
+            return Ok(json!({
+                "state": runtime.mode.as_str(),
+                "arm_a": runtime.arm_a,
+                "arm_b": runtime.arm_b,
+                "pin_enrolled": false,
+                "pin_created_at": Value::Null,
+                "initial_pin": Value::Null,
+                "authorized_at": runtime.authorized_at_ts_ms.map(iso8601_from_unix_ms),
+                "purge_started_at": runtime.purge_started_at_ts_ms.map(iso8601_from_unix_ms),
+                "progress_percent": progress_percent,
+                "message": runtime.message.clone(),
+                "targets": targets,
+                "updated_at": iso8601_from_unix_ms(runtime.updated_at_ts_ms),
+            }));
+        }
+    }
+    let secret = ensure_kill_switch_pin(state)?;
+    let preview = with_required_core_store_write(state, |store| store.database_wipe_preview())?;
+    let artifacts = kill_switch_artifact_preview(state);
+    let now_ms = unix_now_ms();
+    let mut runtime = state
+        .kill_switch
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    if runtime.updated_at_ts_ms == 0 {
+        runtime.updated_at_ts_ms = now_ms;
+    }
+    if runtime.mode == KillSwitchRuntimeMode::Authorized
+        && !kill_switch_auth_active(&runtime, now_ms)
+    {
+        runtime.authorized_at_ts_ms = None;
+        runtime.mode = if runtime.arm_a && runtime.arm_b {
+            KillSwitchRuntimeMode::Armed
+        } else {
+            KillSwitchRuntimeMode::Idle
+        };
+        runtime.message = "PIN authorization expired; re-enter PIN before purge.".to_string();
+        runtime.updated_at_ts_ms = now_ms;
+    }
+    if runtime.mode == KillSwitchRuntimeMode::Deleting {
+        let started_at = runtime.purge_started_at_ts_ms.unwrap_or(now_ms);
+        let elapsed = now_ms.saturating_sub(started_at);
+        let dynamic_progress =
+            ((elapsed.saturating_mul(96)) / KILL_SWITCH_PROGRESS_WINDOW_MS).clamp(1, 96) as u8;
+        if dynamic_progress > runtime.progress_percent {
+            runtime.progress_percent = dynamic_progress;
+            runtime.updated_at_ts_ms = now_ms;
+        }
+    }
+    let targets = if runtime.targets.is_empty()
+        || matches!(
+            runtime.mode,
+            KillSwitchRuntimeMode::Idle
+                | KillSwitchRuntimeMode::Armed
+                | KillSwitchRuntimeMode::Authorized
+        ) {
+        grouped_kill_switch_targets(&preview, &artifacts, runtime.mode, runtime.progress_percent)
+    } else {
+        advance_kill_switch_targets(&runtime.targets, runtime.mode, runtime.progress_percent)
+    };
+    let state_name =
+        if runtime.mode == KillSwitchRuntimeMode::Idle && runtime.arm_a && runtime.arm_b {
+            KillSwitchRuntimeMode::Armed.as_str()
+        } else {
+            runtime.mode.as_str()
+        };
+    let message = if runtime.message.is_empty() {
+        "Dual-arm controls are idle. Enter the first-boot PIN to authorize purge.".to_string()
+    } else {
+        runtime.message.clone()
+    };
+    Ok(json!({
+        "state": state_name,
+        "arm_a": runtime.arm_a,
+        "arm_b": runtime.arm_b,
+        "pin_enrolled": true,
+        "pin_created_at": iso8601_from_unix_ms(secret.created_at_ts_ms),
+        "initial_pin": runtime.initial_pin_reveal.clone(),
+        "authorized_at": runtime.authorized_at_ts_ms.map(iso8601_from_unix_ms),
+        "purge_started_at": runtime.purge_started_at_ts_ms.map(iso8601_from_unix_ms),
+        "progress_percent": runtime.progress_percent,
+        "message": message,
+        "targets": targets,
+        "updated_at": iso8601_from_unix_ms(runtime.updated_at_ts_ms),
+    }))
+}
+
+fn clear_in_memory_state_after_database_wipe(state: &AppState) -> Result<(), ApiError> {
+    state
+        .topics
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .subscribers
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .clients
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .identity_states
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .markers
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .zones
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .messages
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .system_events
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .telemetry_records
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    state
+        .mission_change_fanout_cache
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .clear();
+    Ok(())
+}
+
+fn run_kill_switch_purge_worker(state: AppState) {
+    let result = stop_runtime_services(&state)
+        .and_then(|()| with_required_core_store_write(&state, |store| store.wipe_database()))
+        .and_then(|report| {
+            clear_in_memory_state_after_database_wipe(&state)?;
+            let artifact_report = delete_kill_switch_artifacts(&state)?;
+            Ok((report, artifact_report))
+        });
+    let now_ms = unix_now_ms();
+    match result {
+        Ok((report, artifact_report)) => {
+            if let Ok(mut runtime) = state.kill_switch.write() {
+                runtime.mode = KillSwitchRuntimeMode::Completed;
+                runtime.purge_completed_at_ts_ms = Some(now_ms);
+                runtime.failed_at_ts_ms = None;
+                runtime.authorized_at_ts_ms = None;
+                runtime.progress_percent = 100;
+                runtime.rows_deleted = report.rows_deleted;
+                runtime.targets = grouped_kill_switch_targets(
+                    &report,
+                    &artifact_report,
+                    KillSwitchRuntimeMode::Completed,
+                    100,
+                );
+                runtime.message = format!(
+                    "Kill switch purge complete. {} persisted rows and {} runtime files erased.",
+                    report.rows_deleted,
+                    artifact_report.total_files()
+                );
+                runtime.last_error = None;
+                runtime.updated_at_ts_ms = now_ms;
+            }
+        }
+        Err(error) => {
+            if let Ok(mut runtime) = state.kill_switch.write() {
+                let mut targets = advance_kill_switch_targets(
+                    &runtime.targets,
+                    KillSwitchRuntimeMode::Deleting,
+                    runtime.progress_percent,
+                );
+                for target in &mut targets {
+                    if target.state == "erasing" {
+                        target.state = "failed";
+                    }
+                }
+                runtime.mode = KillSwitchRuntimeMode::Failed;
+                runtime.failed_at_ts_ms = Some(now_ms);
+                runtime.progress_percent = runtime.progress_percent.min(96);
+                runtime.message = format!("Database purge failed: {error}");
+                runtime.last_error = Some(error.to_string());
+                runtime.updated_at_ts_ms = now_ms;
+                runtime.targets = targets;
+            }
+        }
+    }
 }
 
 fn persist_outbound_message_row(
@@ -59960,5 +60898,66 @@ mod tests {
         assert_eq!(status_payload["data"]["runtime"]["status"], "running");
 
         server.abort();
+    }
+
+    #[test]
+    fn kill_switch_artifact_deletion_removes_databases_configs_and_reticulum_identity() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "r3akt-rch-kill-switch-artifacts-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&test_dir).expect("test dir");
+        let db_path = test_dir.join("rch_state.sqlite3");
+        let config_path = test_dir.join("config.ini");
+        let reticulum_config_path = test_dir.join("reticulum").join("config");
+        let reticulumd_db_path = test_dir.join("reticulumd.db");
+        let identity_path = test_dir.join("identity");
+        let reticulumd_identity_path = test_dir.join("reticulumd.identity");
+        std::fs::create_dir_all(reticulum_config_path.parent().expect("reticulum parent"))
+            .expect("reticulum dir");
+        RchSqliteStore::open(&db_path).expect("sqlite");
+        let state = crate::AppState::from_sqlite_path(&db_path)
+            .expect("state")
+            .with_config_path(&config_path)
+            .with_reticulum_config_path(&reticulum_config_path)
+            .with_managed_reticulumd_zmq(
+                test_dir.join("reticulumd.exe"),
+                "tcp://127.0.0.1:9100",
+                Some(reticulumd_db_path.display().to_string()),
+                Some(&reticulum_config_path),
+            );
+        for path in [
+            &config_path,
+            &reticulum_config_path,
+            &reticulumd_db_path,
+            &identity_path,
+            &reticulumd_identity_path,
+            &test_dir.join("telemetry.db"),
+            &test_dir.join("rch_state.sqlite3-wal"),
+        ] {
+            std::fs::write(path, "runtime-sensitive").expect("runtime file");
+        }
+        let preview = crate::kill_switch_artifact_preview(&state);
+        assert!(preview.database_files >= 4);
+        assert!(preview.configuration_files >= 2);
+        assert!(preview.identity_files >= 2);
+
+        let report = crate::delete_kill_switch_artifacts(&state).expect("delete artifacts");
+        assert!(report.database_files >= 4);
+        assert!(report.configuration_files >= 2);
+        assert!(report.identity_files >= 2);
+        for path in [
+            &db_path,
+            &config_path,
+            &reticulum_config_path,
+            &reticulumd_db_path,
+            &identity_path,
+            &reticulumd_identity_path,
+            &test_dir.join("telemetry.db"),
+            &test_dir.join("rch_state.sqlite3-wal"),
+        ] {
+            assert!(!path.exists(), "{} should be deleted", path.display());
+        }
+        let _cleanup = std::fs::remove_dir_all(test_dir);
     }
 }

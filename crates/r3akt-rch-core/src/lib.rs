@@ -387,6 +387,50 @@ const RCH_SQLITE_SCHEMA_VERSION: &str = "1";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
+const RCH_SQLITE_DATA_TABLES: &[&str] = &[
+    "rch_topics",
+    "rch_subscribers",
+    "rch_messages",
+    "rch_clients",
+    "rch_identity_announces",
+    "rch_identity_states",
+    "rch_identity_rem_modes",
+    "rch_audit_events",
+    "rch_system_events",
+    "rch_telemetry_records",
+    "rch_markers",
+    "rch_zones",
+    "rch_missions",
+    "rch_mission_changes",
+    "rch_log_entries",
+    "rch_file_attachments",
+    "rch_eam_snapshots",
+    "rch_teams",
+    "rch_mission_team_links",
+    "rch_mission_zone_links",
+    "rch_mission_marker_links",
+    "rch_team_members",
+    "rch_team_member_client_links",
+    "rch_assets",
+    "rch_skills",
+    "rch_team_member_skills",
+    "rch_task_skill_requirements",
+    "rch_assignments",
+    "rch_assignment_asset_links",
+    "rch_checklists",
+    "rch_checklist_templates",
+    "rch_checklist_columns",
+    "rch_checklist_tasks",
+    "rch_checklist_cells",
+    "rch_checklist_feed_publications",
+    "rch_command_results",
+    "rch_identity_capabilities",
+    "rch_mission_access_assignments",
+    "rch_subject_operation_rights",
+    "rch_domain_events",
+    "rch_outbound_jobs",
+    "rch_settings",
+];
 
 #[derive(Debug, Error)]
 pub enum RchCoreError {
@@ -1529,6 +1573,18 @@ pub struct TeamMemberClientLinkRecord {
 #[derive(Debug)]
 pub struct RchSqliteStore {
     connection: Connection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RchDatabaseWipeTableReport {
+    pub table: String,
+    pub rows_deleted: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RchDatabaseWipeReport {
+    pub tables: Vec<RchDatabaseWipeTableReport>,
+    pub rows_deleted: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2724,60 +2780,58 @@ impl RchSqliteStore {
     }
 
     pub fn row_count(&self, table: &str) -> Result<usize, RchCoreError> {
-        let table = match table {
-            "rch_topics"
-            | "rch_subscribers"
-            | "rch_messages"
-            | "rch_clients"
-            | "rch_identity_announces"
-            | "rch_identity_states"
-            | "rch_identity_rem_modes"
-            | "rch_audit_events"
-            | "rch_system_events"
-            | "rch_telemetry_records"
-            | "rch_markers"
-            | "rch_zones"
-            | "rch_missions"
-            | "rch_mission_changes"
-            | "rch_log_entries"
-            | "rch_eam_snapshots"
-            | "rch_teams"
-            | "rch_mission_team_links"
-            | "rch_mission_zone_links"
-            | "rch_mission_marker_links"
-            | "rch_team_members"
-            | "rch_team_member_client_links"
-            | "rch_assets"
-            | "rch_skills"
-            | "rch_team_member_skills"
-            | "rch_task_skill_requirements"
-            | "rch_assignments"
-            | "rch_assignment_asset_links"
-            | "rch_checklists"
-            | "rch_checklist_templates"
-            | "rch_checklist_columns"
-            | "rch_checklist_tasks"
-            | "rch_checklist_cells"
-            | "rch_checklist_feed_publications"
-            | "rch_command_results"
-            | "rch_identity_capabilities"
-            | "rch_mission_access_assignments"
-            | "rch_subject_operation_rights"
-            | "rch_domain_events"
-            | "rch_outbound_jobs"
-            | "rch_settings" => table,
-            _ => {
-                return Err(RchCoreError::InvalidPayload(format!(
-                    "unsupported RCH state table '{table}'"
-                )));
-            }
-        };
+        if !RCH_SQLITE_DATA_TABLES.contains(&table) {
+            return Err(RchCoreError::InvalidPayload(format!(
+                "unsupported RCH state table '{table}'"
+            )));
+        }
         let count =
             self.connection
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
                     row.get::<_, i64>(0)
                 })?;
         usize::try_from(count).map_err(|error| RchCoreError::Decode(error.to_string()))
+    }
+
+    pub fn database_wipe_preview(&self) -> Result<RchDatabaseWipeReport, RchCoreError> {
+        let mut tables = Vec::with_capacity(RCH_SQLITE_DATA_TABLES.len());
+        let mut rows_deleted = 0usize;
+        for table in RCH_SQLITE_DATA_TABLES {
+            let count = self.row_count(table)?;
+            rows_deleted = rows_deleted.saturating_add(count);
+            tables.push(RchDatabaseWipeTableReport {
+                table: (*table).to_string(),
+                rows_deleted: count,
+            });
+        }
+        Ok(RchDatabaseWipeReport {
+            tables,
+            rows_deleted,
+        })
+    }
+
+    pub fn wipe_database(&mut self) -> Result<RchDatabaseWipeReport, RchCoreError> {
+        let transaction = self.connection.transaction()?;
+        let mut tables = Vec::with_capacity(RCH_SQLITE_DATA_TABLES.len());
+        let mut rows_deleted = 0usize;
+        for table in RCH_SQLITE_DATA_TABLES {
+            let deleted = transaction.execute(&format!("DELETE FROM {table}"), [])?;
+            rows_deleted = rows_deleted.saturating_add(deleted);
+            tables.push(RchDatabaseWipeTableReport {
+                table: (*table).to_string(),
+                rows_deleted: deleted,
+            });
+        }
+        if sqlite_table_exists(&transaction, "sqlite_sequence")? {
+            transaction.execute("DELETE FROM sqlite_sequence WHERE name LIKE 'rch_%'", [])?;
+        }
+        transaction.commit()?;
+        self.migrate()?;
+        self.connection.execute_batch("VACUUM; PRAGMA optimize;")?;
+        Ok(RchDatabaseWipeReport {
+            tables,
+            rows_deleted,
+        })
     }
 
     fn migrate(&self) -> Result<(), RchCoreError> {
@@ -10451,6 +10505,15 @@ fn sqlite_table_has_column(
     Ok(false)
 }
 
+fn sqlite_table_exists(connection: &Connection, table: &str) -> Result<bool, RchCoreError> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get::<_, bool>(0),
+    )?;
+    Ok(exists)
+}
+
 fn sql_text(value: impl Into<String>) -> SqlValue {
     SqlValue::Text(value.into())
 }
@@ -13009,6 +13072,45 @@ mod tests {
                 .expect("announce count"),
             1
         );
+    }
+
+    #[test]
+    fn wipe_database_removes_persisted_rows_and_sensitive_settings() {
+        let mut store = RchSqliteStore::in_memory().expect("store");
+        store
+            .upsert_identity_announces(&[IdentityAnnounceRecord {
+                destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                announced_identity_hash: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
+                display_name: Some("REM Alpha".to_string()),
+                source_interface: Some("test".to_string()),
+                announce_capabilities: vec!["r3akt".to_string()],
+                client_type: "rem".to_string(),
+                first_seen_ts_ms: 1,
+                last_seen_ts_ms: 2,
+            }])
+            .expect("upsert announce");
+        store
+            .set_setting_value("kill_switch_pin_hash", "sensitive")
+            .expect("set sensitive setting");
+
+        let preview = store.database_wipe_preview().expect("preview wipe");
+        assert!(preview.rows_deleted >= 3);
+
+        let report = store.wipe_database().expect("wipe database");
+        assert!(report.rows_deleted >= 3);
+        assert_eq!(
+            store
+                .row_count("rch_identity_announces")
+                .expect("announce count"),
+            0
+        );
+        assert_eq!(
+            store
+                .setting_value("kill_switch_pin_hash")
+                .expect("setting lookup"),
+            None
+        );
+        assert_eq!(store.schema_version().expect("schema version"), "1");
     }
 
     #[test]
