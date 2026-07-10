@@ -27,6 +27,9 @@ const title = computed(() => {
   if (route.path.startsWith("/users/")) {
     return "Users";
   }
+  if (route.path.startsWith("/configure/")) {
+    return "Configure";
+  }
   const mapping: Record<string, string> = {
     "/": "Dashboard",
     "/missions": "Missions",

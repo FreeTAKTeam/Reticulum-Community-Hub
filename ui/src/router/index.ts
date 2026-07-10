@@ -16,6 +16,7 @@ const ChatPage = () => import("../pages/ChatPage.vue");
 const UsersPage = () => import("../pages/UsersPage.vue");
 const TeamRosterPage = () => import("../pages/TeamRosterPage.vue");
 const ConfigurePage = () => import("../pages/ConfigurePage.vue");
+const KillSwitchPage = () => import("../pages/KillSwitchPage.vue");
 const AboutPage = () => import("../pages/AboutPage.vue");
 const ConnectPage = () => import("../pages/ConnectPage.vue");
 
@@ -114,6 +115,8 @@ const router = createRouter({
     { path: "/users", name: "users", component: UsersPage },
     { path: "/users/teams/members", name: "team-roster", component: TeamRosterPage },
     { path: "/configure", name: "configure", component: ConfigurePage },
+    { path: "/configure/kill-switch", name: "configure-kill-switch", component: KillSwitchPage },
+    { path: "/kill-switch", redirect: "/configure/kill-switch" },
     { path: "/about", name: "about", component: AboutPage },
     { path: "/connect", name: "connect", component: ConnectPage }
   ]

@@ -29,7 +29,9 @@ const showHeaderBar = computed(
     route.path !== "/checklists" &&
     route.path !== "/files"
 );
-const isViewportLockedRoute = computed(() => route.path === "/" || route.path === "/chat");
+const isViewportLockedRoute = computed(
+  () => route.path === "/" || route.path === "/chat"
+);
 const shellClass = computed(() =>
   isViewportLockedRoute.value ? "h-screen overflow-hidden" : "min-h-screen"
 );

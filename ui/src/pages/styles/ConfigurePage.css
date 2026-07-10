@@ -165,6 +165,7 @@
   transition: all 0.2s ease;
   display: grid;
   gap: 2px;
+  text-decoration: none;
 }
 
 .rail-tab span {
@@ -188,6 +189,20 @@
   border-color: rgba(55, 242, 255, 0.7);
   background: rgba(55, 242, 255, 0.13);
   box-shadow: 0 0 16px rgba(55, 242, 255, 0.24);
+}
+
+.rail-tab--danger {
+  border-color: rgba(255, 59, 122, 0.32);
+  margin-top: 6px;
+}
+
+.rail-tab--danger span {
+  color: #ffd3e0;
+}
+
+.rail-tab--danger:hover {
+  border-color: rgba(255, 59, 122, 0.62);
+  box-shadow: 0 0 14px rgba(255, 59, 122, 0.16);
 }
 
 .rail-stats {

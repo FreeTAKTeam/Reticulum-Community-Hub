@@ -11,6 +11,8 @@ export interface RequestOptions {
   body?: unknown;
   timeoutMs?: number;
   retries?: number;
+  skipAuthValidation?: boolean;
+  suppressAuthStatus?: boolean;
 }
 
 const DEFAULT_TIMEOUT = 30000;
@@ -22,6 +24,22 @@ const createError = (message: string, status?: number, body?: unknown): ApiError
   error.status = status;
   error.body = body;
   return error;
+};
+
+const errorMessageFromBody = (body: unknown, fallback: string) => {
+  if (body && typeof body === "object") {
+    const record = body as Record<string, unknown>;
+    for (const key of ["detail", "message", "error"]) {
+      const value = record[key];
+      if (typeof value === "string" && value.trim()) {
+        return value;
+      }
+    }
+  }
+  if (typeof body === "string" && body.trim()) {
+    return body;
+  }
+  return fallback;
 };
 
 const withTimeout = async (promise: Promise<Response>, timeoutMs: number): Promise<Response> => {
@@ -100,7 +118,9 @@ const shouldRetry = (method: string, error: ApiError) => {
 
 const requestRaw = async (path: string, options: RequestOptions = {}): Promise<Response> => {
   const connectionStore = useConnectionStore();
-  validateAuthBeforeRequest();
+  if (!options.skipAuthValidation) {
+    validateAuthBeforeRequest();
+  }
   const url = connectionStore.resolveUrl(path);
   const headers = buildHeaders(options.body);
   const requestInit = buildRequestInit(options, headers);
@@ -121,15 +141,19 @@ const requestRaw = async (path: string, options: RequestOptions = {}): Promise<R
         } catch (error) {
           errorBody = await response.text();
         }
-        throw createError(`Request failed: ${response.status}`, response.status, errorBody);
+        throw createError(
+          errorMessageFromBody(errorBody, `Request failed: ${response.status}`),
+          response.status,
+          errorBody
+        );
       }
       connectionStore.setOnline();
       return response;
     } catch (error) {
       const apiError = error instanceof Error ? (error as ApiError) : createError("Unknown error");
-      if (apiError.status === 401) {
+      if (!options.suppressAuthStatus && apiError.status === 401) {
         connectionStore.setAuthStatus("unauthenticated", "Authentication required.");
-      } else if (apiError.status === 403) {
+      } else if (!options.suppressAuthStatus && apiError.status === 403) {
         connectionStore.setAuthStatus("forbidden", "Access denied.");
       } else if (!apiError.status && (requestInit.method ?? "GET").toUpperCase() === "GET") {
         connectionStore.setOffline(apiError.message || "Unable to reach the hub");

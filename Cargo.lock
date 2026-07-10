@@ -835,15 +835,15 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lxmf-reference"
-version = "0.7.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "201c65cd4cfee4504a12432265293b518c1030c96952c85a63ffa0ca963b7a67"
+checksum = "705500d1cebe541ec8ae475bba35ee9ef67c704a65d6a54b33647396e13841e3"
 
 [[package]]
 name = "lxmf-sdk"
-version = "0.7.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f52c47224a5aa6cca9195fb432b6d448cd19ae18106c407d4b192320473ec144"
+checksum = "2ab21f1fe5ed304671ba3a5d349afa6ad34700f1353149ea39a4d0c9fdc1347f"
 dependencies = [
  "hex",
  "hmac",
@@ -862,9 +862,9 @@ dependencies = [
 
 [[package]]
 name = "lxmf-wire"
-version = "0.7.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44dbbad1bbbffae796bb87d80424b26663911b08c57a0e2b464b1f8cf38f86c0"
+checksum = "6c76ed8013271cce4a3ea254ad405b9dfdcacc51e350c8df974508a08521a1e2"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1094,9 +1094,9 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.13.5"
+version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2796faa41db3ec313a31f7624d9286acf277b52de526150b7e69f3debf891ee5"
+checksum = "528ac67416ff8646872a3c02cad9cc4ee5dc9f9540c9b10771855c95cb2e5ae1"
 dependencies = [
  "bytes",
  "prost-derive",
@@ -1104,9 +1104,9 @@ dependencies = [
 
 [[package]]
 name = "prost-derive"
-version = "0.13.5"
+version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
+checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
  "itertools",
@@ -1117,9 +1117,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.38.4"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
 ]
@@ -1213,6 +1213,8 @@ dependencies = [
  "r3akt-rch-bridge",
  "r3akt-rch-core",
  "r3akt-transport-rns",
+ "rand_core 0.6.4",
+ "reticulum-rs-core",
  "rmp-serde",
  "rusqlite",
  "serde",
@@ -1337,9 +1339,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reticulum-rs-core"
-version = "0.7.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64c0372f2df8958260671eaff52d5cfeec50078ec427438c3f53b0ab48461a43"
+checksum = "43843bef93bed9bf9b90e5642d1c5ad1d32164e2d35e5f95db0c0648fe00c5c5"
 dependencies = [
  "aes",
  "cbc",
@@ -1358,9 +1360,9 @@ dependencies = [
 
 [[package]]
 name = "reticulum-rs-rpc"
-version = "0.7.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc8c46b5b3d9dda55b2ff18a013f5c821f50b377e7089cc17d11619b611aa63b"
+checksum = "d211bd1118b7eccc9dbe1d1bd03c84ffbec46cc226eb44d3cdead4febb2a5fa8"
 dependencies = [
  "base64",
  "ciborium",
@@ -1377,6 +1379,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2",
+ "shlex",
  "tokio",
  "zeroize",
 ]

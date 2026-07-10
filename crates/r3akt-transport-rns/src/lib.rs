@@ -2324,8 +2324,7 @@ async fn lxmf_zmq_rpc_call(
 fn lxmf_zmq_session_id() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_nanos());
     format!("r3akt-rch-{}-{now}", std::process::id())
 }
 
@@ -2333,8 +2332,7 @@ fn lxmf_zmq_session_id() -> String {
 fn lxmf_zmq_message_id() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_nanos());
     format!("sdk-zmq-rch-{now}")
 }
 
@@ -5549,17 +5547,10 @@ pub fn test_block_on<F>(future: F) -> F::Output
 where
     F: Future,
 {
-    use std::sync::Arc;
-    use std::task::{Context, Poll, Wake, Waker};
+    use std::task::{Context, Poll, Waker};
 
-    struct NoopWake;
-
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
-
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut context = Context::from_waker(&waker);
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
     let mut future = Box::pin(future);
 
     loop {

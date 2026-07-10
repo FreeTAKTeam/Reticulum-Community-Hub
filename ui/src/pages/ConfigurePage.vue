@@ -39,6 +39,10 @@
               <span>Tools</span>
               <small>Live command probes</small>
             </button>
+            <RouterLink class="rail-tab rail-tab--danger" to="/configure/kill-switch">
+              <span>Kill Switch</span>
+              <small>Database purge gate</small>
+            </RouterLink>
           </div>
           <div class="rail-stats">
             <div class="rail-stat">
@@ -197,6 +201,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { RouterLink } from "vue-router";
 import BaseButton from "../components/BaseButton.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import ReticulumConfigEditor from "../components/ReticulumConfigEditor.vue";
