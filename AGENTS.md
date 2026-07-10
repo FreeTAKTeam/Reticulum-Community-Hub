@@ -74,6 +74,21 @@ npm --prefix apps/rch-desktop install
 npm --prefix apps/rch-desktop run build
 ```
 
+## Operational Workflows
+
+- Use `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` as the local
+  server-only release gate. Use `-LiveTak -LiveReticulum` only when the
+  required live infrastructure is configured and reachable.
+- When the sibling `LXMF-rs\target\debug\reticulumd.exe` is available, use
+  `.\scripts\local-reticulum-live-gate.ps1 -IncludeZmqEventPoll` for
+  local receipt, fanout, and ZeroMQ event-poll validation. Add
+  `-IncludeZmqLoad` or `-ZmqLoadOnly` for the local ZeroMQ load gate.
+- The Rust PR quality workflow runs locked dependency fetches, release builds
+  for the RCH server and TAK service, and `cargo audit --deny warnings`.
+- The desktop release path builds the Tauri shell after
+  `npm --prefix apps/rch-desktop ci`; its sidecar preparation produces the
+  release RCH server and TAK-service binaries for `apps/rch-desktop`.
+
 For server release-candidate work, use the committed gate runner before
 claiming release readiness:
 
