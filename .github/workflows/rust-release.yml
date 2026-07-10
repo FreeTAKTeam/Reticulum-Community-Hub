@@ -42,30 +42,35 @@ jobs:
             archive_format: zip
             server_binary: target/release/r3akt-rch-server.exe
             tak_binary: target/release/r3akt-tak-service.exe
+            reticulumd_binary: ../LXMF-rs/target/release/reticulumd.exe
           - platform: macOS x64
             os: macos-15-intel
             artifact: rch-rust-full-macos-x64
             archive_format: tar.gz
             server_binary: target/release/r3akt-rch-server
             tak_binary: target/release/r3akt-tak-service
+            reticulumd_binary: ../LXMF-rs/target/release/reticulumd
           - platform: macOS arm64
             os: macos-latest
             artifact: rch-rust-full-macos-arm64
             archive_format: tar.gz
             server_binary: target/release/r3akt-rch-server
             tak_binary: target/release/r3akt-tak-service
+            reticulumd_binary: ../LXMF-rs/target/release/reticulumd
           - platform: Linux AMD64
             os: ubuntu-latest
             artifact: rch-rust-full-linux-amd64
             archive_format: tar.gz
             server_binary: target/release/r3akt-rch-server
             tak_binary: target/release/r3akt-tak-service
+            reticulumd_binary: ../LXMF-rs/target/release/reticulumd
           - platform: Linux Raspberry Pi 64
             os: ubuntu-24.04-arm
             artifact: rch-rust-full-linux-rpi64
             archive_format: tar.gz
             server_binary: target/release/r3akt-rch-server
             tak_binary: target/release/r3akt-tak-service
+            reticulumd_binary: ../LXMF-rs/target/release/reticulumd
 
     steps:
       - name: Check out RCH
@@ -78,7 +83,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
+          ref: v0.7.1
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -105,6 +110,17 @@ jobs:
         run: |
           cargo build --release -p r3akt-rch-server
           cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service
+
+      - name: Build matching ZMQ-capable reticulumd
+        working-directory: LXMF-rs
+        run: cargo build --release -p reticulumd --features zmq-pipeline-rpc
+
+      - name: Record LXMF release commit
+        id: lxmf
+        shell: pwsh
+        working-directory: LXMF-rs
+        run: |
+          "commit=$(git rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Resolve release package name
         id: package
@@ -134,6 +150,8 @@ jobs:
             -OutputDir dist `
             -ServerBinaryPath "${{ matrix.server_binary }}" `
             -TakServiceBinaryPath "${{ matrix.tak_binary }}" `
+            -ReticulumdBinaryPath "${{ matrix.reticulumd_binary }}" `
+            -LxmfCommit "${{ steps.lxmf.outputs.commit }}" `
             -IncludeTakService `
             -IncludeUi `
             -ArchiveFormat "${{ matrix.archive_format }}"
@@ -182,7 +200,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
+          ref: v0.7.1
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

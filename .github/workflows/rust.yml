@@ -19,13 +19,6 @@ jobs:
         with:
           path: rch
 
-      - name: Check out LXMF-rs
-        uses: actions/checkout@v6
-        with:
-          repository: FreeTAKTeam/LXMF-rs
-          path: LXMF-rs
-          ref: ed4a8a1e7921925023ed5583d20f75c7671e3b6e
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:

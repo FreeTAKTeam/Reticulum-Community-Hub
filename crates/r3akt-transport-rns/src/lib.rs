@@ -5,15 +5,21 @@ use std::future::Future;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use lxmf_sdk::{
+    BatchSendItem as LxmfSdkBatchSendItem, BatchSendRequest as LxmfSdkBatchSendRequest,
     Client as LxmfSdkClient, EventBatch as LxmfSdkEventBatch, EventCursor as LxmfSdkEventCursor,
-    LxmfSdk, SdkConfig as LxmfSdkConfig, SdkEvent as LxmfSdkEvent,
+    LxmfSdk, LxmfSdkIdentity, MessageHistoryListRequest as LxmfSdkMessageHistoryListRequest,
+    MessageHistoryPage as LxmfSdkMessageHistoryPage, MessageId as LxmfSdkMessageId,
+    SdkConfig as LxmfSdkConfig, SdkError as LxmfSdkError, SdkEvent as LxmfSdkEvent,
     SendRequest as LxmfSdkSendRequest, StartRequest as LxmfSdkStartRequest, ZmqEndpointRole,
     ZmqPipelineBackendClient, ZmqPipelineBackendConfig,
 };
@@ -21,25 +27,247 @@ use r3akt_protocol::{
     Destination, NodeId, Payload, ProtocolEnvelope, TelemetrySample, Topic, TopicAttachment,
     TopicMessage,
 };
-use rns_rpc::rpc::zmq::{self, ZmqRpcEnvelope, ZmqRpcEnvelopeKind};
+use rns_rpc::rpc::zmq;
+#[cfg(test)]
+use rns_rpc::rpc::zmq::{ZmqRpcEnvelope, ZmqRpcEnvelopeKind};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
 use thiserror::Error;
+#[cfg(test)]
 use zeromq::{PullSocket, PushSocket, Socket, SocketRecv, SocketSend, ZmqMessage};
 
 pub type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send + 'a>>;
 pub use lxmf_sdk::{DeliverySnapshot as LxmfDeliverySnapshot, DeliveryState as LxmfDeliveryState};
+pub use lxmf_sdk::{
+    MessageHistoryListRequest as LxmfMessageHistoryListRequest,
+    MessageHistoryPage as LxmfMessageHistoryPage,
+};
 
 const RETICULUMD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 // Match RCH's outbound dispatch deadline so a stuck ZeroMQ SDK response cannot
 // leave the operator UI waiting on a long-lived local transport operation.
 const LXMF_ZMQ_SEND_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const LXMF_ZMQ_SEND_QUEUE_CAPACITY: usize = 20_000;
-static ZMQ_SDK_OPERATION_LOCK: Mutex<()> = Mutex::new(());
-static ZMQ_SDK_SEND_ACTORS: OnceLock<
-    Mutex<BTreeMap<String, mpsc::SyncSender<ZmqSdkActorRequest>>>,
-> = OnceLock::new();
+const LXMF_ZMQ_CONTROL_QUEUE_CAPACITY: usize = 1_024;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct ZmqDataPlaneStats {
+    pub send_queue_capacity: usize,
+    pub control_queue_capacity: usize,
+    pub queue_depth: usize,
+    pub send_queue_depth: usize,
+    pub control_queue_depth: usize,
+    pub queue_max_depth: usize,
+    pub enqueued_total: u64,
+    pub backpressure_total: u64,
+    pub completed_total: u64,
+    pub failed_total: u64,
+    pub last_queue_wait_ms: u64,
+    pub max_queue_wait_ms: u64,
+    pub oldest_wait_ms: u64,
+    pub last_batch_size: usize,
+    pub max_batch_size: usize,
+    pub last_response_latency_ms: u64,
+    pub max_response_latency_ms: u64,
+    pub partial_acceptance_total: u64,
+    pub rate_limited_total: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ZmqRuntimeInfo {
+    pub runtime_id: Option<String>,
+    pub sdk_version: Option<String>,
+    pub active_contract_version: Option<u16>,
+    pub contract_release: Option<String>,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct ZmqDataPlaneMetrics {
+    runtime_info: Mutex<Option<ZmqRuntimeInfo>>,
+    queued_at: Mutex<VecDeque<Instant>>,
+    queue_depth: AtomicUsize,
+    send_queue_depth: AtomicUsize,
+    control_queue_depth: AtomicUsize,
+    queue_max_depth: AtomicUsize,
+    enqueued_total: AtomicU64,
+    backpressure_total: AtomicU64,
+    completed_total: AtomicU64,
+    failed_total: AtomicU64,
+    last_queue_wait_ms: AtomicU64,
+    max_queue_wait_ms: AtomicU64,
+    last_batch_size: AtomicUsize,
+    max_batch_size: AtomicUsize,
+    last_response_latency_ms: AtomicU64,
+    max_response_latency_ms: AtomicU64,
+    partial_acceptance_total: AtomicU64,
+    rate_limited_total: AtomicU64,
+}
+
+impl ZmqDataPlaneMetrics {
+    fn record_enqueued(&self, batch_size: usize, queued_at: Instant, is_send_lane: bool) {
+        if let Ok(mut queue) = self.queued_at.lock() {
+            queue.push_back(queued_at);
+        }
+        self.enqueued_total.fetch_add(1, Ordering::Relaxed);
+        let depth = self.queue_depth.fetch_add(1, Ordering::Relaxed) + 1;
+        if is_send_lane {
+            self.send_queue_depth.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.control_queue_depth.fetch_add(1, Ordering::Relaxed);
+        }
+        atomic_max_usize(&self.queue_max_depth, depth);
+        self.last_batch_size.store(batch_size, Ordering::Relaxed);
+        atomic_max_usize(&self.max_batch_size, batch_size);
+    }
+
+    fn record_backpressure(&self) {
+        self.backpressure_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn rollback_enqueued(&self, queued_at: Instant, is_send_lane: bool) {
+        if let Ok(mut queue) = self.queued_at.lock() {
+            if let Some(index) = queue.iter().position(|candidate| *candidate == queued_at) {
+                queue.remove(index);
+            }
+        }
+        self.queue_depth.fetch_sub(1, Ordering::Relaxed);
+        if is_send_lane {
+            self.send_queue_depth.fetch_sub(1, Ordering::Relaxed);
+        } else {
+            self.control_queue_depth.fetch_sub(1, Ordering::Relaxed);
+        }
+        self.enqueued_total.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    fn record_dequeued(&self, queued_at: Instant, is_send_lane: bool) {
+        if let Ok(mut queue) = self.queued_at.lock() {
+            if let Some(index) = queue.iter().position(|candidate| *candidate == queued_at) {
+                queue.remove(index);
+            }
+        }
+        let _ = self
+            .queue_depth
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                Some(value.saturating_sub(1))
+            });
+        let lane_depth = if is_send_lane {
+            &self.send_queue_depth
+        } else {
+            &self.control_queue_depth
+        };
+        let _ = lane_depth.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            Some(value.saturating_sub(1))
+        });
+        let wait_ms = queued_at
+            .elapsed()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        self.last_queue_wait_ms.store(wait_ms, Ordering::Relaxed);
+        atomic_max_u64(&self.max_queue_wait_ms, wait_ms);
+    }
+
+    fn record_result(
+        &self,
+        result: &Result<ZmqSdkActorResponse, TransportError>,
+        elapsed: Duration,
+    ) {
+        let latency_ms = elapsed.as_millis().try_into().unwrap_or(u64::MAX);
+        self.last_response_latency_ms
+            .store(latency_ms, Ordering::Relaxed);
+        atomic_max_u64(&self.max_response_latency_ms, latency_ms);
+        if result.is_ok() {
+            self.completed_total.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.failed_total.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Ok(ZmqSdkActorResponse::Batch(results)) = result {
+            if results.iter().any(|item| !item.accepted) && results.iter().any(|item| item.accepted)
+            {
+                self.partial_acceptance_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let batch_rate_limited = matches!(
+            result,
+            Ok(ZmqSdkActorResponse::Batch(results))
+                if results.iter().any(|item| item.error.as_ref().is_some_and(|error| error.code == "SDK_RATE_LIMITED"))
+        );
+        if batch_rate_limited
+            || matches!(result, Err(TransportError::Sdk { code, .. }) if code == "SDK_RATE_LIMITED")
+        {
+            self.rate_limited_total.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn snapshot(&self) -> ZmqDataPlaneStats {
+        let oldest_wait_ms = self
+            .queued_at
+            .lock()
+            .ok()
+            .and_then(|queue| queue.iter().min().copied())
+            .map_or(0, |queued_at| {
+                queued_at
+                    .elapsed()
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX)
+            });
+        ZmqDataPlaneStats {
+            send_queue_capacity: LXMF_ZMQ_SEND_QUEUE_CAPACITY,
+            control_queue_capacity: LXMF_ZMQ_CONTROL_QUEUE_CAPACITY,
+            queue_depth: self.queue_depth.load(Ordering::Relaxed),
+            send_queue_depth: self.send_queue_depth.load(Ordering::Relaxed),
+            control_queue_depth: self.control_queue_depth.load(Ordering::Relaxed),
+            queue_max_depth: self.queue_max_depth.load(Ordering::Relaxed),
+            enqueued_total: self.enqueued_total.load(Ordering::Relaxed),
+            backpressure_total: self.backpressure_total.load(Ordering::Relaxed),
+            completed_total: self.completed_total.load(Ordering::Relaxed),
+            failed_total: self.failed_total.load(Ordering::Relaxed),
+            last_queue_wait_ms: self.last_queue_wait_ms.load(Ordering::Relaxed),
+            max_queue_wait_ms: self.max_queue_wait_ms.load(Ordering::Relaxed),
+            oldest_wait_ms,
+            last_batch_size: self.last_batch_size.load(Ordering::Relaxed),
+            max_batch_size: self.max_batch_size.load(Ordering::Relaxed),
+            last_response_latency_ms: self.last_response_latency_ms.load(Ordering::Relaxed),
+            max_response_latency_ms: self.max_response_latency_ms.load(Ordering::Relaxed),
+            partial_acceptance_total: self.partial_acceptance_total.load(Ordering::Relaxed),
+            rate_limited_total: self.rate_limited_total.load(Ordering::Relaxed),
+        }
+    }
+
+    fn set_runtime_info(&self, runtime_info: ZmqRuntimeInfo) {
+        if let Ok(mut current) = self.runtime_info.lock() {
+            *current = Some(runtime_info);
+        }
+    }
+
+    fn runtime_info(&self) -> Option<ZmqRuntimeInfo> {
+        self.runtime_info.lock().ok().and_then(|info| info.clone())
+    }
+}
+
+fn atomic_max_usize(target: &AtomicUsize, candidate: usize) {
+    let _ = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        (candidate > current).then_some(candidate)
+    });
+}
+
+fn atomic_max_u64(target: &AtomicU64, candidate: u64) {
+    let _ = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        (candidate > current).then_some(candidate)
+    });
+}
+
+pub struct ZmqDataPlane {
+    config: ZmqPipelineBackendConfig,
+    send_sender: mpsc::SyncSender<ZmqSdkActorRequest>,
+    control_sender: mpsc::SyncSender<ZmqSdkActorRequest>,
+    metrics: Arc<ZmqDataPlaneMetrics>,
+    actor: Mutex<Option<JoinHandle<()>>>,
+}
 
 #[derive(Debug, Error)]
 pub enum TransportError {
@@ -53,6 +281,13 @@ pub enum TransportError {
     Send(String),
     #[error("transport receive failed: {0}")]
     Receive(String),
+    #[error("LXMF SDK {code}: {message}")]
+    Sdk {
+        code: String,
+        category: Option<String>,
+        retryable: bool,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -528,10 +763,7 @@ impl LxmfSdkLxmfRsAdapter<LxmfSdkClient<ZmqPipelineBackendClient>> {
                     ))
                 })?;
             let client = LxmfSdkClient::new(backend);
-            LxmfSdk::start(
-                &client,
-                LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()),
-            )
+            LxmfSdk::start(&client, rch_lxmf_start_request())
             .map_err(|error| {
                 TransportError::Send(format!(
                     "LXMF-rs ZeroMQ SDK start command_endpoint={command_endpoint} response_endpoint={response_endpoint}: {error}"
@@ -673,6 +905,19 @@ pub struct LxmfSdkOutboundBatchResult {
     pub id: String,
     pub message_id: String,
     pub destination: String,
+    pub accepted: bool,
+    pub error: Option<LxmfSdkOutboundBatchError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LxmfSdkOutboundBatchError {
+    pub code: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub retryable: bool,
 }
 
 pub fn send_lxmf_zmq_outbound_message(
@@ -700,8 +945,7 @@ pub fn enqueue_lxmf_zmq_outbound_batch(
     response_endpoint: impl Into<String>,
     batch: LxmfSdkOutboundBatch,
 ) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
-    let config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
-    enqueue_lxmf_zmq_outbound_batch_via_actor(&config, batch)
+    send_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
 }
 
 pub fn lxmf_zmq_delivery_status(
@@ -761,16 +1005,9 @@ fn run_zmq_sdk_operation<T>(
 where
     T: Send + 'static,
 {
-    std::thread::spawn(move || {
-        let _guard = ZMQ_SDK_OPERATION_LOCK.lock().map_err(|error| {
-            TransportError::Send(format!(
-                "LXMF-rs ZeroMQ SDK operation lock poisoned: {error}"
-            ))
-        })?;
-        operation()
-    })
-    .join()
-    .map_err(|_| TransportError::Send("LXMF-rs ZeroMQ SDK worker panicked".to_string()))?
+    std::thread::spawn(operation)
+        .join()
+        .map_err(|_| TransportError::Send("LXMF-rs ZeroMQ SDK worker panicked".to_string()))?
 }
 
 pub fn send_lxmf_sdk_outbound_message_with_runtime(
@@ -1032,10 +1269,29 @@ fn send_lxmf_zmq_outbound_message_direct(
 enum ZmqSdkActorPayload {
     Single(LxmfSdkOutboundMessage),
     Batch(LxmfSdkOutboundBatch),
-    EnqueueBatch(LxmfSdkOutboundBatch),
     Status(String),
     Announce,
     PollEvents { cursor: Option<String>, max: usize },
+    MessageHistory(LxmfSdkMessageHistoryListRequest),
+    Shutdown,
+}
+
+impl ZmqSdkActorPayload {
+    fn batch_size(&self) -> usize {
+        match self {
+            Self::Single(_) => 1,
+            Self::Batch(batch) => batch.messages.len(),
+            Self::Status(_)
+            | Self::Announce
+            | Self::PollEvents { .. }
+            | Self::MessageHistory(_)
+            | Self::Shutdown => 0,
+        }
+    }
+
+    fn is_send_lane(&self) -> bool {
+        matches!(self, Self::Single(_) | Self::Batch(_) | Self::Shutdown)
+    }
 }
 
 enum ZmqSdkActorResponse {
@@ -1043,18 +1299,253 @@ enum ZmqSdkActorResponse {
     Status(Option<LxmfDeliverySnapshot>),
     Announce(Option<String>),
     Events(ReticulumdEventBatch),
+    MessageHistory(LxmfSdkMessageHistoryPage),
+    Shutdown,
 }
 
 struct ZmqSdkActorRequest {
     payload: ZmqSdkActorPayload,
     response: mpsc::Sender<Result<ZmqSdkActorResponse, TransportError>>,
+    queued_at: Instant,
 }
 
 struct ZmqSdkActorSession {
-    command: PushSocket,
-    responses: PullSocket,
-    session_id: String,
-    next_request_id: u64,
+    client: LxmfSdkClient<ZmqPipelineBackendClient>,
+    runtime_info: ZmqRuntimeInfo,
+}
+
+impl ZmqDataPlane {
+    pub fn new(
+        command_endpoint: impl Into<String>,
+        response_endpoint: impl Into<String>,
+    ) -> Result<Self, TransportError> {
+        Self::new_with_timeout(
+            command_endpoint,
+            response_endpoint,
+            LXMF_ZMQ_SEND_REQUEST_TIMEOUT,
+        )
+    }
+
+    pub fn new_with_timeout(
+        command_endpoint: impl Into<String>,
+        response_endpoint: impl Into<String>,
+        request_timeout: Duration,
+    ) -> Result<Self, TransportError> {
+        let mut config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
+        config.request_timeout = request_timeout;
+        Self::from_config(config)
+    }
+
+    pub fn from_config(config: ZmqPipelineBackendConfig) -> Result<Self, TransportError> {
+        let (send_sender, send_receiver) = mpsc::sync_channel(LXMF_ZMQ_SEND_QUEUE_CAPACITY);
+        let (control_sender, control_receiver) =
+            mpsc::sync_channel(LXMF_ZMQ_CONTROL_QUEUE_CAPACITY);
+        let metrics = Arc::new(ZmqDataPlaneMetrics::default());
+        let actor_metrics = Arc::clone(&metrics);
+        let actor_config = config.clone();
+        let actor = std::thread::Builder::new()
+            .name("rch-lxmf-zmq-data-plane".to_string())
+            .spawn(move || {
+                run_zmq_data_plane_actor(
+                    &actor_config,
+                    &send_receiver,
+                    &control_receiver,
+                    &actor_metrics,
+                );
+            })
+            .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ data plane: {error}")))?;
+        Ok(Self {
+            config,
+            send_sender,
+            control_sender,
+            metrics,
+            actor: Mutex::new(Some(actor)),
+        })
+    }
+
+    #[must_use]
+    pub fn stats(&self) -> ZmqDataPlaneStats {
+        self.metrics.snapshot()
+    }
+
+    #[must_use]
+    pub fn runtime_info(&self) -> Option<ZmqRuntimeInfo> {
+        self.metrics.runtime_info()
+    }
+
+    pub fn send_message(&self, message: LxmfSdkOutboundMessage) -> Result<String, TransportError> {
+        let response = self.request(ZmqSdkActorPayload::Single(message))?;
+        let ZmqSdkActorResponse::Batch(results) = response else {
+            return Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ data plane returned non-send response".to_string(),
+            ));
+        };
+        results
+            .into_iter()
+            .next()
+            .map(|result| result.message_id)
+            .ok_or_else(|| {
+                TransportError::Send("LXMF-rs ZeroMQ response missing message_id".to_string())
+            })
+    }
+
+    pub fn send_batch(
+        &self,
+        batch: LxmfSdkOutboundBatch,
+    ) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+        if batch.messages.is_empty() {
+            return Ok(Vec::new());
+        }
+        match self.request(ZmqSdkActorPayload::Batch(batch))? {
+            ZmqSdkActorResponse::Batch(results) => Ok(results),
+            _ => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ data plane returned non-batch response".to_string(),
+            )),
+        }
+    }
+
+    pub fn enqueue_batch(
+        &self,
+        batch: LxmfSdkOutboundBatch,
+    ) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
+        self.send_batch(batch)
+    }
+
+    pub fn delivery_status(
+        &self,
+        message_id: impl Into<String>,
+    ) -> Result<Option<LxmfDeliverySnapshot>, TransportError> {
+        match self.request(ZmqSdkActorPayload::Status(message_id.into()))? {
+            ZmqSdkActorResponse::Status(snapshot) => Ok(snapshot),
+            _ => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ data plane returned non-status response".to_string(),
+            )),
+        }
+    }
+
+    pub fn announce_identity(&self) -> Result<Option<String>, TransportError> {
+        match self.request(ZmqSdkActorPayload::Announce)? {
+            ZmqSdkActorResponse::Announce(announce_id) => Ok(announce_id),
+            _ => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ data plane returned non-announce response".to_string(),
+            )),
+        }
+    }
+
+    pub fn poll_events(
+        &self,
+        cursor: Option<String>,
+        max: usize,
+    ) -> Result<ReticulumdEventBatch, TransportError> {
+        match self.request(ZmqSdkActorPayload::PollEvents { cursor, max })? {
+            ZmqSdkActorResponse::Events(batch) => Ok(batch),
+            _ => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ data plane returned non-event response".to_string(),
+            )),
+        }
+    }
+
+    pub fn message_history(
+        &self,
+        request: LxmfSdkMessageHistoryListRequest,
+    ) -> Result<LxmfSdkMessageHistoryPage, TransportError> {
+        match self.request(ZmqSdkActorPayload::MessageHistory(request))? {
+            ZmqSdkActorResponse::MessageHistory(page) => Ok(page),
+            _ => Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ data plane returned non-history response".to_string(),
+            )),
+        }
+    }
+
+    pub fn shutdown(&self) -> Result<(), TransportError> {
+        let response = self.request(ZmqSdkActorPayload::Shutdown)?;
+        if !matches!(response, ZmqSdkActorResponse::Shutdown) {
+            return Err(TransportError::Receive(
+                "LXMF-rs ZeroMQ data plane returned non-shutdown response".to_string(),
+            ));
+        }
+        let actor = self
+            .actor
+            .lock()
+            .map_err(|error| TransportError::Send(format!("ZeroMQ actor handle: {error}")))?
+            .take();
+        if let Some(actor) = actor {
+            actor.join().map_err(|_| {
+                TransportError::Send("LXMF-rs ZeroMQ data-plane actor panicked".to_string())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn request(&self, payload: ZmqSdkActorPayload) -> Result<ZmqSdkActorResponse, TransportError> {
+        let (response_tx, response_rx) = mpsc::channel();
+        self.try_enqueue(payload, response_tx)?;
+        response_rx
+            .recv_timeout(
+                self.config
+                    .request_timeout
+                    .saturating_add(Duration::from_secs(1)),
+            )
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
+                    "LXMF-rs ZeroMQ data plane timed out waiting for result".to_string(),
+                ),
+                mpsc::RecvTimeoutError::Disconnected => {
+                    TransportError::Send("LXMF-rs ZeroMQ data-plane actor stopped".to_string())
+                }
+            })?
+    }
+
+    fn try_enqueue(
+        &self,
+        payload: ZmqSdkActorPayload,
+        response: mpsc::Sender<Result<ZmqSdkActorResponse, TransportError>>,
+    ) -> Result<(), TransportError> {
+        let batch_size = payload.batch_size();
+        let is_send_lane = payload.is_send_lane();
+        let queued_at = Instant::now();
+        let request = ZmqSdkActorRequest {
+            payload,
+            response,
+            queued_at,
+        };
+        self.metrics
+            .record_enqueued(batch_size, queued_at, is_send_lane);
+        let result = if is_send_lane {
+            self.send_sender.try_send(request)
+        } else {
+            self.control_sender.try_send(request)
+        };
+        match result {
+            Ok(()) => Ok(()),
+            Err(mpsc::TrySendError::Full(_)) => {
+                self.metrics.rollback_enqueued(queued_at, is_send_lane);
+                self.metrics.record_backpressure();
+                Err(TransportError::Backpressure(format!(
+                    "LXMF-rs ZeroMQ {} queue is full",
+                    if is_send_lane { "send" } else { "control" }
+                )))
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                self.metrics.rollback_enqueued(queued_at, is_send_lane);
+                Err(TransportError::Send(
+                    "LXMF-rs ZeroMQ data-plane actor stopped".to_string(),
+                ))
+            }
+        }
+    }
+}
+
+impl Drop for ZmqDataPlane {
+    fn drop(&mut self) {
+        let (response, receiver) = mpsc::channel();
+        drop(receiver);
+        let _ = self.send_sender.try_send(ZmqSdkActorRequest {
+            payload: ZmqSdkActorPayload::Shutdown,
+            response,
+            queued_at: Instant::now(),
+        });
+    }
 }
 
 fn send_lxmf_zmq_outbound_message_via_actor(
@@ -1067,6 +1558,7 @@ fn send_lxmf_zmq_outbound_message_via_actor(
         .try_send(ZmqSdkActorRequest {
             payload: ZmqSdkActorPayload::Single(message),
             response: response_tx,
+            queued_at: Instant::now(),
         })
         .map_err(|error| match error {
             mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
@@ -1117,6 +1609,7 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
         .try_send(ZmqSdkActorRequest {
             payload: ZmqSdkActorPayload::Batch(batch),
             response: response_tx,
+            queued_at: Instant::now(),
         })
         .map_err(|error| match error {
             mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
@@ -1144,45 +1637,12 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
             ZmqSdkActorResponse::Batch(results) => Ok(results),
             ZmqSdkActorResponse::Status(_)
             | ZmqSdkActorResponse::Announce(_)
-            | ZmqSdkActorResponse::Events(_) => Err(TransportError::Receive(
+            | ZmqSdkActorResponse::Events(_)
+            | ZmqSdkActorResponse::MessageHistory(_)
+            | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-batch response".to_string(),
             )),
         })
-}
-
-fn enqueue_lxmf_zmq_outbound_batch_via_actor(
-    config: &ZmqPipelineBackendConfig,
-    batch: LxmfSdkOutboundBatch,
-) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
-    if batch.messages.is_empty() {
-        return Ok(Vec::new());
-    }
-    let expected_results = batch
-        .messages
-        .iter()
-        .map(|message| LxmfSdkOutboundBatchResult {
-            id: message.correlation_id.clone(),
-            message_id: message.correlation_id.clone(),
-            destination: message.destination.clone(),
-        })
-        .collect::<Vec<_>>();
-    let sender = zmq_sdk_actor_sender(config)?;
-    let (response_tx, response_rx) = mpsc::channel();
-    drop(response_rx);
-    sender
-        .try_send(ZmqSdkActorRequest {
-            payload: ZmqSdkActorPayload::EnqueueBatch(batch),
-            response: response_tx,
-        })
-        .map_err(|error| match error {
-            mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
-                "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
-            )),
-            mpsc::TrySendError::Disconnected(_) => {
-                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
-            }
-        })?;
-    Ok(expected_results)
 }
 
 fn lxmf_zmq_delivery_status_via_actor(
@@ -1195,6 +1655,7 @@ fn lxmf_zmq_delivery_status_via_actor(
         .try_send(ZmqSdkActorRequest {
             payload: ZmqSdkActorPayload::Status(message_id),
             response: response_tx,
+            queued_at: Instant::now(),
         })
         .map_err(|error| match error {
             mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
@@ -1222,7 +1683,9 @@ fn lxmf_zmq_delivery_status_via_actor(
             ZmqSdkActorResponse::Status(snapshot) => Ok(snapshot),
             ZmqSdkActorResponse::Batch(_)
             | ZmqSdkActorResponse::Announce(_)
-            | ZmqSdkActorResponse::Events(_) => Err(TransportError::Receive(
+            | ZmqSdkActorResponse::Events(_)
+            | ZmqSdkActorResponse::MessageHistory(_)
+            | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-status response".to_string(),
             )),
         })
@@ -1237,6 +1700,7 @@ fn announce_lxmf_zmq_identity_via_actor(
         .try_send(ZmqSdkActorRequest {
             payload: ZmqSdkActorPayload::Announce,
             response: response_tx,
+            queued_at: Instant::now(),
         })
         .map_err(|error| match error {
             mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
@@ -1264,7 +1728,9 @@ fn announce_lxmf_zmq_identity_via_actor(
             ZmqSdkActorResponse::Announce(announce_id) => Ok(announce_id),
             ZmqSdkActorResponse::Batch(_)
             | ZmqSdkActorResponse::Status(_)
-            | ZmqSdkActorResponse::Events(_) => Err(TransportError::Receive(
+            | ZmqSdkActorResponse::Events(_)
+            | ZmqSdkActorResponse::MessageHistory(_)
+            | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-announce response".to_string(),
             )),
         })
@@ -1281,6 +1747,7 @@ fn poll_lxmf_zmq_events_via_actor(
         .try_send(ZmqSdkActorRequest {
             payload: ZmqSdkActorPayload::PollEvents { cursor, max },
             response: response_tx,
+            queued_at: Instant::now(),
         })
         .map_err(|error| match error {
             mpsc::TrySendError::Full(_) => TransportError::Backpressure(format!(
@@ -1308,7 +1775,9 @@ fn poll_lxmf_zmq_events_via_actor(
             ZmqSdkActorResponse::Events(batch) => Ok(batch),
             ZmqSdkActorResponse::Batch(_)
             | ZmqSdkActorResponse::Status(_)
-            | ZmqSdkActorResponse::Announce(_) => Err(TransportError::Receive(
+            | ZmqSdkActorResponse::Announce(_)
+            | ZmqSdkActorResponse::MessageHistory(_)
+            | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-event-poll response".to_string(),
             )),
         })
@@ -1317,26 +1786,112 @@ fn poll_lxmf_zmq_events_via_actor(
 fn zmq_sdk_actor_sender(
     config: &ZmqPipelineBackendConfig,
 ) -> Result<mpsc::SyncSender<ZmqSdkActorRequest>, TransportError> {
-    let key = zmq_sdk_actor_key(config);
-    let actors = ZMQ_SDK_SEND_ACTORS.get_or_init(|| Mutex::new(BTreeMap::new()));
-    let mut actors = actors
-        .lock()
-        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK actor map: {error}")))?;
-    if let Some(sender) = actors.get(&key) {
-        return Ok(sender.clone());
-    }
     let (sender, receiver) = mpsc::sync_channel(LXMF_ZMQ_SEND_QUEUE_CAPACITY);
     let actor_config = config.clone();
     std::thread::Builder::new()
         .name("rch-lxmf-zmq-send-actor".to_string())
         .spawn(move || run_zmq_sdk_actor(actor_config, receiver))
         .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ SDK actor: {error}")))?;
-    actors.insert(key, sender.clone());
     Ok(sender)
 }
 
-fn zmq_sdk_actor_key(config: &ZmqPipelineBackendConfig) -> String {
-    format!("{}|{}", config.command_endpoint, config.response_endpoint)
+fn run_zmq_data_plane_actor(
+    config: &ZmqPipelineBackendConfig,
+    send_receiver: &mpsc::Receiver<ZmqSdkActorRequest>,
+    control_receiver: &mpsc::Receiver<ZmqSdkActorRequest>,
+    metrics: &ZmqDataPlaneMetrics,
+) {
+    let mut session: Option<ZmqSdkActorSession> = None;
+    let mut send_burst = 0_usize;
+    while let Some(request) =
+        recv_prioritized_actor_request(send_receiver, control_receiver, &mut send_burst)
+    {
+        metrics.record_dequeued(request.queued_at, request.payload.is_send_lane());
+        let response_started = Instant::now();
+        let shutting_down = matches!(request.payload, ZmqSdkActorPayload::Shutdown);
+        if shutting_down && session.is_none() {
+            let result = Ok(ZmqSdkActorResponse::Shutdown);
+            metrics.record_result(&result, response_started.elapsed());
+            let _ = request.response.send(result);
+            break;
+        }
+        if session.is_none() {
+            match open_zmq_sdk_actor_session(config) {
+                Ok(opened) => {
+                    metrics.set_runtime_info(opened.runtime_info.clone());
+                    session = Some(opened);
+                }
+                Err(error) => {
+                    let result = Err(error);
+                    metrics.record_result(&result, response_started.elapsed());
+                    let _ = request.response.send(result);
+                    continue;
+                }
+            }
+        }
+        let Some(active_session) = session.as_mut() else {
+            let result = Err(TransportError::Send(
+                "LXMF-rs ZeroMQ SDK session unavailable".to_string(),
+            ));
+            metrics.record_result(&result, response_started.elapsed());
+            let _ = request.response.send(result);
+            continue;
+        };
+        let result = send_lxmf_zmq_actor_request(active_session, request.payload);
+        metrics.record_result(&result, response_started.elapsed());
+        if result.is_err() {
+            session = None;
+        }
+        let _ = request.response.send(result);
+        if shutting_down {
+            break;
+        }
+    }
+}
+
+fn recv_prioritized_actor_request(
+    send_receiver: &mpsc::Receiver<ZmqSdkActorRequest>,
+    control_receiver: &mpsc::Receiver<ZmqSdkActorRequest>,
+    send_burst: &mut usize,
+) -> Option<ZmqSdkActorRequest> {
+    loop {
+        if *send_burst >= 32 {
+            if let Ok(request) = control_receiver.try_recv() {
+                *send_burst = 0;
+                return Some(request);
+            }
+        }
+        match send_receiver.try_recv() {
+            Ok(request) => {
+                *send_burst = send_burst.saturating_add(1);
+                return Some(request);
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return control_receiver.recv().ok();
+            }
+        }
+        match control_receiver.try_recv() {
+            Ok(request) => {
+                *send_burst = 0;
+                return Some(request);
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return send_receiver.recv().ok();
+            }
+        }
+        match send_receiver.recv_timeout(Duration::from_millis(5)) {
+            Ok(request) => {
+                *send_burst = send_burst.saturating_add(1);
+                return Some(request);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return control_receiver.recv().ok();
+            }
+        }
+    }
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -1344,21 +1899,15 @@ fn run_zmq_sdk_actor(
     config: ZmqPipelineBackendConfig,
     receiver: mpsc::Receiver<ZmqSdkActorRequest>,
 ) {
-    let runtime = match tokio::runtime::Runtime::new() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            while let Ok(request) = receiver.recv() {
-                let _ = request.response.send(Err(TransportError::Send(format!(
-                    "LXMF-rs ZeroMQ SDK runtime: {error}"
-                ))));
-            }
-            return;
-        }
-    };
     let mut session: Option<ZmqSdkActorSession> = None;
     while let Ok(request) = receiver.recv() {
+        let shutting_down = matches!(request.payload, ZmqSdkActorPayload::Shutdown);
+        if shutting_down && session.is_none() {
+            let _ = request.response.send(Ok(ZmqSdkActorResponse::Shutdown));
+            break;
+        }
         if session.is_none() {
-            match runtime.block_on(open_zmq_sdk_actor_session(&config)) {
+            match open_zmq_sdk_actor_session(&config) {
                 Ok(opened) => session = Some(opened),
                 Err(error) => {
                     let _ = request.response.send(Err(error));
@@ -1372,312 +1921,166 @@ fn run_zmq_sdk_actor(
             )));
             continue;
         };
-        let result = runtime.block_on(send_lxmf_zmq_actor_request(
-            active_session,
-            &config,
-            request.payload,
-        ));
+        let result = send_lxmf_zmq_actor_request(active_session, request.payload);
         if result.is_err() {
             session = None;
         }
         let _ = request.response.send(result);
+        if shutting_down {
+            break;
+        }
     }
 }
 
-async fn open_zmq_sdk_actor_session(
+fn open_zmq_sdk_actor_session(
     config: &ZmqPipelineBackendConfig,
 ) -> Result<ZmqSdkActorSession, TransportError> {
-    let mut command = PushSocket::new();
-    command
-        .connect(config.command_endpoint.as_str())
-        .await
-        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ command: {error}")))?;
-    let mut responses = PullSocket::new();
-    responses
-        .bind(config.response_endpoint.as_str())
-        .await
-        .map_err(|error| TransportError::Receive(format!("LXMF-rs ZeroMQ response: {error}")))?;
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let session_id = lxmf_zmq_session_id();
-    let negotiation = serde_json::json!({
-        "supported_contract_versions": [2],
-        "requested_capabilities": [],
-        "config": {
-            "profile": "desktop-local-runtime",
-            "bind_mode": "local_only",
-            "auth_mode": "local_trusted",
-            "overflow_policy": "reject",
-            "block_timeout_ms": null,
-            "rpc_backend": {
-                "listen_addr": "unix:/tmp/lxmf-rpc.sock",
-                "read_timeout_ms": 5000,
-                "write_timeout_ms": 5000,
-                "max_header_bytes": 16384,
-                "max_body_bytes": 1_048_576,
-                "token_auth": null,
-                "mtls_auth": null
-            }
-        }
-    });
-    let _ = lxmf_zmq_rpc_call(
-        &mut command,
-        &mut responses,
-        config,
-        session_id.as_str(),
-        1,
-        "sdk_negotiate_v2",
-        Some(negotiation),
-    )
-    .await?;
+    let backend = ZmqPipelineBackendClient::new(config.clone()).map_err(transport_sdk_error)?;
+    let client = LxmfSdkClient::new(backend);
+    let handle = LxmfSdk::start(&client, rch_lxmf_start_request()).map_err(transport_sdk_error)?;
+    let runtime_info = ZmqRuntimeInfo {
+        runtime_id: Some(handle.runtime_id),
+        sdk_version: Some(lxmf_sdk::SDK_VERSION.to_string()),
+        active_contract_version: Some(handle.active_contract_version),
+        contract_release: Some(lxmf_sdk::CONTRACT_RELEASE.to_string()),
+        capabilities: handle.effective_capabilities,
+    };
     Ok(ZmqSdkActorSession {
-        command,
-        responses,
-        session_id,
-        next_request_id: 2,
+        client,
+        runtime_info,
     })
 }
 
-async fn send_lxmf_zmq_actor_request(
+fn rch_lxmf_start_request() -> LxmfSdkStartRequest {
+    LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default())
+        .with_requested_capabilities(["sdk.capability.batch_send", "sdk.capability.async_events"])
+}
+
+fn transport_sdk_error(error: LxmfSdkError) -> TransportError {
+    TransportError::Sdk {
+        code: error.machine_code,
+        category: Some(format!("{:?}", error.category)),
+        retryable: error.retryable,
+        message: error.message,
+    }
+}
+
+fn send_lxmf_zmq_actor_request(
     session: &mut ZmqSdkActorSession,
-    config: &ZmqPipelineBackendConfig,
     payload: ZmqSdkActorPayload,
 ) -> Result<ZmqSdkActorResponse, TransportError> {
     match payload {
         ZmqSdkActorPayload::Single(message) => {
             let destination = message.destination.clone();
-            let result = send_lxmf_zmq_actor_single_message(session, config, message).await?;
+            let result = send_lxmf_zmq_actor_single_message(session, message)?;
             Ok(ZmqSdkActorResponse::Batch(vec![
                 LxmfSdkOutboundBatchResult {
                     id: result.clone(),
                     message_id: result,
                     destination,
+                    accepted: true,
+                    error: None,
                 },
             ]))
         }
-        ZmqSdkActorPayload::Batch(batch) => send_lxmf_zmq_actor_batch(session, config, batch)
-            .await
-            .map(ZmqSdkActorResponse::Batch),
-        ZmqSdkActorPayload::EnqueueBatch(batch) => {
-            send_lxmf_zmq_actor_enqueue_batch(session, config, batch)
-                .await
-                .map(ZmqSdkActorResponse::Batch)
+        ZmqSdkActorPayload::Batch(batch) => {
+            send_lxmf_zmq_actor_batch(session, batch).map(ZmqSdkActorResponse::Batch)
         }
         ZmqSdkActorPayload::Status(message_id) => {
-            send_lxmf_zmq_actor_status(session, config, &message_id)
-                .await
-                .map(ZmqSdkActorResponse::Status)
+            send_lxmf_zmq_actor_status(session, &message_id).map(ZmqSdkActorResponse::Status)
         }
-        ZmqSdkActorPayload::Announce => send_lxmf_zmq_actor_announce(session, config)
-            .await
-            .map(ZmqSdkActorResponse::Announce),
+        ZmqSdkActorPayload::Announce => {
+            send_lxmf_zmq_actor_announce(session).map(ZmqSdkActorResponse::Announce)
+        }
         ZmqSdkActorPayload::PollEvents { cursor, max } => {
-            send_lxmf_zmq_actor_poll_events(session, config, cursor, max)
-                .await
-                .map(ZmqSdkActorResponse::Events)
+            send_lxmf_zmq_actor_poll_events(session, cursor, max).map(ZmqSdkActorResponse::Events)
         }
+        ZmqSdkActorPayload::MessageHistory(request) => session
+            .client
+            .backend()
+            .list_message_history(request)
+            .map(ZmqSdkActorResponse::MessageHistory)
+            .map_err(transport_sdk_error),
+        ZmqSdkActorPayload::Shutdown => Ok(ZmqSdkActorResponse::Shutdown),
     }
 }
 
-async fn send_lxmf_zmq_actor_single_message(
+fn send_lxmf_zmq_actor_single_message(
     session: &mut ZmqSdkActorSession,
-    config: &ZmqPipelineBackendConfig,
     message: LxmfSdkOutboundMessage,
 ) -> Result<String, TransportError> {
-    let request_id = session.next_request_id;
-    session.next_request_id = session.next_request_id.saturating_add(1);
-    let result = lxmf_zmq_rpc_call(
-        &mut session.command,
-        &mut session.responses,
-        config,
-        session.session_id.as_str(),
-        request_id,
-        "sdk_send_v2",
-        Some(lxmf_sdk_outbound_send_params(message)),
-    )
-    .await?;
-    result
-        .get("message_id")
-        .and_then(JsonValue::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| {
-            TransportError::Send("LXMF-rs ZeroMQ SDK response missing message_id".to_string())
-        })
+    LxmfSdk::send(&session.client, lxmf_sdk_send_request(message))
+        .map(|message_id| message_id.0)
+        .map_err(transport_sdk_error)
 }
 
-async fn send_lxmf_zmq_actor_batch(
+fn send_lxmf_zmq_actor_batch(
     session: &mut ZmqSdkActorSession,
-    config: &ZmqPipelineBackendConfig,
     batch: LxmfSdkOutboundBatch,
 ) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
-    let request_id = session.next_request_id;
-    session.next_request_id = session.next_request_id.saturating_add(1);
     let destinations = batch
         .messages
         .iter()
         .map(|message| (message.correlation_id.clone(), message.destination.clone()))
         .collect::<BTreeMap<_, _>>();
-    let result = lxmf_zmq_rpc_call(
-        &mut session.command,
-        &mut session.responses,
-        config,
-        session.session_id.as_str(),
-        request_id,
-        "sdk_send_batch_v2",
-        Some(lxmf_sdk_outbound_batch_params(batch)),
-    )
-    .await?;
-    if result
-        .get("rejected_count")
-        .and_then(JsonValue::as_u64)
-        .unwrap_or(0)
-        > 0
-    {
-        return Err(TransportError::Send(format!(
-            "LXMF-rs ZeroMQ SDK batch rejected {} messages",
-            result
-                .get("rejected_count")
-                .and_then(JsonValue::as_u64)
-                .unwrap_or(0)
-        )));
-    }
-    let items = result
-        .get("results")
-        .and_then(JsonValue::as_array)
-        .ok_or_else(|| {
-            TransportError::Send("LXMF-rs ZeroMQ SDK batch response missing results".to_string())
-        })?;
-    let mut output = Vec::with_capacity(items.len());
-    for item in items {
-        let id = item
-            .get("id")
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| {
-                TransportError::Send("LXMF-rs ZeroMQ SDK batch item missing id".to_string())
-            })?
-            .to_string();
-        let message_id = item
-            .get("message_id")
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| {
-                TransportError::Send("LXMF-rs ZeroMQ SDK batch item missing message_id".to_string())
-            })?
-            .to_string();
-        let destination = destinations.get(&id).cloned().unwrap_or_default();
+    let request = lxmf_sdk_batch_send_request(batch)?;
+    let result = session
+        .client
+        .backend()
+        .send_batch(request)
+        .map_err(transport_sdk_error)?;
+    let mut output = Vec::with_capacity(result.results.len());
+    for item in result.results {
+        let message_id = item.message_id.unwrap_or_default();
+        if item.accepted && message_id.is_empty() {
+            return Err(TransportError::Send(
+                "LXMF-rs ZeroMQ SDK accepted batch item missing message_id".to_string(),
+            ));
+        }
+        let destination = destinations.get(&item.id).cloned().unwrap_or_default();
         output.push(LxmfSdkOutboundBatchResult {
-            id,
+            id: item.id,
             message_id,
             destination,
+            accepted: item.accepted,
+            error: item.error.map(|error| LxmfSdkOutboundBatchError {
+                code: error.code,
+                message: error.message,
+                category: error.category,
+                retryable: error.retryable,
+            }),
         });
     }
     Ok(output)
 }
 
-async fn send_lxmf_zmq_actor_enqueue_batch(
+fn send_lxmf_zmq_actor_status(
     session: &mut ZmqSdkActorSession,
-    config: &ZmqPipelineBackendConfig,
-    batch: LxmfSdkOutboundBatch,
-) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
-    let expected_results = batch
-        .messages
-        .iter()
-        .map(|message| LxmfSdkOutboundBatchResult {
-            id: message.correlation_id.clone(),
-            message_id: message.correlation_id.clone(),
-            destination: message.destination.clone(),
-        })
-        .collect::<Vec<_>>();
-    let request_id = session.next_request_id;
-    session.next_request_id = session.next_request_id.saturating_add(1);
-    let rpc_request = ReticulumdRpcRequest {
-        id: request_id,
-        method: "sdk_send_batch_v2".to_string(),
-        params: Some(lxmf_sdk_outbound_batch_params(batch)),
-    };
-    let payload =
-        encode_frame(&rpc_request).map_err(|error| TransportError::Send(error.to_string()))?;
-    let envelope = ZmqRpcEnvelope::request(
-        session.session_id.clone(),
-        request_id,
-        config.response_endpoint.clone(),
-        payload,
-        None,
-    );
-    let encoded = zmq::encode_envelope(&envelope)
-        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ envelope: {error}")))?;
-    session
-        .command
-        .send(ZmqMessage::from(encoded))
-        .await
-        .map_err(|error| TransportError::Send(format!("LXMF-rs ZeroMQ command: {error}")))?;
-    Ok(expected_results)
-}
-
-async fn send_lxmf_zmq_actor_status(
-    session: &mut ZmqSdkActorSession,
-    config: &ZmqPipelineBackendConfig,
     message_id: &str,
 ) -> Result<Option<LxmfDeliverySnapshot>, TransportError> {
-    let request_id = session.next_request_id;
-    session.next_request_id = session.next_request_id.saturating_add(1);
-    let result = lxmf_zmq_rpc_call(
-        &mut session.command,
-        &mut session.responses,
-        config,
-        session.session_id.as_str(),
-        request_id,
-        "sdk_status_v2",
-        Some(serde_json::json!({ "message_id": message_id })),
-    )
-    .await?;
-    delivery_snapshot_from_status_result(&result, message_id)
+    LxmfSdk::status(&session.client, LxmfSdkMessageId(message_id.to_string()))
+        .map_err(transport_sdk_error)
 }
 
-async fn send_lxmf_zmq_actor_announce(
+fn send_lxmf_zmq_actor_announce(
     session: &mut ZmqSdkActorSession,
-    config: &ZmqPipelineBackendConfig,
 ) -> Result<Option<String>, TransportError> {
-    let request_id = session.next_request_id;
-    session.next_request_id = session.next_request_id.saturating_add(1);
-    let result = lxmf_zmq_rpc_call(
-        &mut session.command,
-        &mut session.responses,
-        config,
-        session.session_id.as_str(),
-        request_id,
-        "sdk_identity_announce_now_v2",
-        Some(serde_json::json!({})),
-    )
-    .await?;
-    Ok(result
-        .get("announce_id")
-        .and_then(JsonValue::as_str)
-        .map(str::to_string))
+    LxmfSdkIdentity::identity_announce_now(&session.client)
+        .map(|_| None)
+        .map_err(transport_sdk_error)
 }
 
-async fn send_lxmf_zmq_actor_poll_events(
+fn send_lxmf_zmq_actor_poll_events(
     session: &mut ZmqSdkActorSession,
-    config: &ZmqPipelineBackendConfig,
     cursor: Option<String>,
     max: usize,
 ) -> Result<ReticulumdEventBatch, TransportError> {
-    let request_id = session.next_request_id;
-    session.next_request_id = session.next_request_id.saturating_add(1);
-    let result = lxmf_zmq_rpc_call(
-        &mut session.command,
-        &mut session.responses,
-        config,
-        session.session_id.as_str(),
-        request_id,
-        "sdk_poll_events_v2",
-        Some(serde_json::json!({
-            "cursor": cursor,
-            "max": max.clamp(1, 256),
-        })),
+    let batch = LxmfSdk::poll_events(
+        &session.client,
+        cursor.map(LxmfSdkEventCursor),
+        max.clamp(1, 256),
     )
-    .await?;
-    let batch: LxmfSdkEventBatch = serde_json::from_value(result).map_err(|error| {
-        TransportError::Receive(format!("LXMF-rs ZeroMQ SDK event batch: {error}"))
-    })?;
+    .map_err(transport_sdk_error)?;
     Ok(lxmf_sdk_event_batch_to_reticulumd_event_batch(batch))
 }
 
@@ -1696,6 +2099,75 @@ fn lxmf_sdk_event_batch_to_reticulumd_event_batch(
     }
 }
 
+fn lxmf_sdk_payload(title: String, content: String, fields: JsonValue) -> JsonValue {
+    let mut payload = match fields {
+        JsonValue::Object(map) => JsonValue::Object(map),
+        other => serde_json::json!({ "fields": other }),
+    };
+    if let JsonValue::Object(map) = &mut payload {
+        map.insert("title".to_string(), JsonValue::String(title));
+        map.insert("content".to_string(), JsonValue::String(content));
+    }
+    payload
+}
+
+fn lxmf_sdk_send_request(message: LxmfSdkOutboundMessage) -> LxmfSdkSendRequest {
+    let correlation_id = message.correlation_id;
+    let mut request = LxmfSdkSendRequest::new(
+        message.source,
+        message.destination,
+        lxmf_sdk_payload(message.title, message.content, message.fields),
+    )
+    .with_correlation_id(correlation_id.clone())
+    .with_idempotency_key(correlation_id);
+    if let Some(delivery_method) = message.delivery_method {
+        request = request.with_delivery_method(delivery_method);
+    }
+    if let Some(stamp_cost) = message.stamp_cost {
+        request = request.with_stamp_cost(stamp_cost);
+    }
+    if let Some(include_ticket) = message.include_ticket {
+        request = request.with_include_ticket(include_ticket);
+    }
+    request.with_try_propagation_on_fail(message.try_propagation_on_fail)
+}
+
+fn lxmf_sdk_batch_send_request(
+    batch: LxmfSdkOutboundBatch,
+) -> Result<LxmfSdkBatchSendRequest, TransportError> {
+    let messages: Vec<LxmfSdkBatchSendItem> = batch
+        .messages
+        .into_iter()
+        .map(|message| {
+            let correlation_id = message.correlation_id;
+            let mut item = LxmfSdkBatchSendItem::new(
+                correlation_id.clone(),
+                message.destination,
+                lxmf_sdk_payload(message.title, message.content, message.fields),
+            )
+            .with_correlation_id(correlation_id.clone())
+            .with_idempotency_key(correlation_id);
+            if let Some(delivery_method) = message.delivery_method {
+                item = item.with_delivery_method(delivery_method);
+            }
+            if let Some(stamp_cost) = message.stamp_cost {
+                item = item.with_stamp_cost(stamp_cost);
+            }
+            if let Some(include_ticket) = message.include_ticket {
+                item = item.with_include_ticket(include_ticket);
+            }
+            item.with_try_propagation_on_fail(message.try_propagation_on_fail)
+        })
+        .collect();
+    serde_json::from_value(serde_json::json!({
+        "batch_id": batch.batch_id,
+        "source": batch.source,
+        "messages": messages,
+    }))
+    .map_err(|error| TransportError::Encode(format!("LXMF SDK batch request: {error}")))
+}
+
+#[cfg(test)]
 fn lxmf_sdk_outbound_send_params(message: LxmfSdkOutboundMessage) -> JsonValue {
     let mut fields = match message.fields {
         JsonValue::Object(map) => JsonValue::Object(map),
@@ -1732,6 +2204,7 @@ fn lxmf_sdk_outbound_send_params(message: LxmfSdkOutboundMessage) -> JsonValue {
     })
 }
 
+#[cfg(test)]
 fn lxmf_sdk_outbound_batch_params(batch: LxmfSdkOutboundBatch) -> JsonValue {
     let messages = batch
         .messages
@@ -1779,37 +2252,7 @@ fn lxmf_sdk_outbound_batch_params(batch: LxmfSdkOutboundBatch) -> JsonValue {
     })
 }
 
-#[must_use]
-pub fn lxmf_sdk_shared_outbound_batch_params(batch: LxmfSdkSharedOutboundBatch) -> JsonValue {
-    let recipients = batch
-        .recipients
-        .into_iter()
-        .map(|recipient| {
-            serde_json::json!({
-                "id": recipient.correlation_id,
-                "destination": recipient.destination,
-                "method": recipient.delivery_method,
-                "stamp_cost": recipient.stamp_cost,
-                "include_ticket": recipient.include_ticket,
-                "try_propagation_on_fail": recipient.try_propagation_on_fail,
-                "text_only": recipient.text_only,
-            })
-        })
-        .collect::<Vec<_>>();
-    serde_json::json!({
-        "method": "sdk_send_shared_batch_v1",
-        "batch_id": batch.batch_id,
-        "source": batch.source,
-        "common_payload": {
-            "bytes": batch.common_payload.bytes,
-            "title": batch.common_payload.title,
-            "content": batch.common_payload.content,
-            "fields": batch.common_payload.fields,
-        },
-        "recipients": recipients,
-    })
-}
-
+#[cfg(test)]
 async fn lxmf_zmq_rpc_call(
     command: &mut PushSocket,
     responses: &mut PullSocket,
@@ -1864,10 +2307,12 @@ async fn lxmf_zmq_rpc_call(
                 let response: ReticulumdRpcResponse = decode_frame(&envelope.payload)
                     .map_err(|error| TransportError::Receive(format!("LXMF-rs ZeroMQ RPC frame: {error}")))?;
                 if let Some(error) = response.error {
-                    return Err(TransportError::Send(format!(
-                        "LXMF-rs ZeroMQ SDK {}: {}",
-                        error.code, error.message
-                    )));
+                    return Err(TransportError::Sdk {
+                        code: error.machine_code.unwrap_or(error.code),
+                        category: error.category,
+                        retryable: error.retryable.unwrap_or(false),
+                        message: error.message,
+                    });
                 }
                 return Ok(response.result.unwrap_or(JsonValue::Null));
             }
@@ -1875,6 +2320,7 @@ async fn lxmf_zmq_rpc_call(
     }
 }
 
+#[cfg(test)]
 fn lxmf_zmq_session_id() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1883,6 +2329,7 @@ fn lxmf_zmq_session_id() -> String {
     format!("r3akt-rch-{}-{now}", std::process::id())
 }
 
+#[cfg(test)]
 fn lxmf_zmq_message_id() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3246,12 +3693,30 @@ mod tests {
         (endpoint, server)
     }
 
+    static NEXT_ZMQ_TEST_PORT: AtomicU64 = AtomicU64::new(30_000);
+
+    fn next_zmq_test_ports() -> (u16, u16) {
+        loop {
+            let command_port = NEXT_ZMQ_TEST_PORT.fetch_add(2, Ordering::Relaxed);
+            let Ok(command_port) = u16::try_from(command_port) else {
+                panic!("exhausted ZeroMQ test port range");
+            };
+            let Some(response_port) = command_port.checked_add(1) else {
+                panic!("exhausted ZeroMQ test port range");
+            };
+            let Ok(command) = TcpListener::bind(("127.0.0.1", command_port)) else {
+                continue;
+            };
+            let Ok(response) = TcpListener::bind(("127.0.0.1", response_port)) else {
+                continue;
+            };
+            drop((command, response));
+            return (command_port, response_port);
+        }
+    }
+
     fn unused_zmq_endpoint_pair() -> (String, String) {
-        let command = TcpListener::bind("127.0.0.1:0").expect("reserve command tcp port");
-        let response = TcpListener::bind("127.0.0.1:0").expect("reserve response tcp port");
-        let command_port = command.local_addr().expect("command local addr").port();
-        let response_port = response.local_addr().expect("response local addr").port();
-        drop((command, response));
+        let (command_port, response_port) = next_zmq_test_ports();
         (
             format!("tcp://localhost:{command_port}"),
             format!("tcp://localhost:{response_port}"),
@@ -3259,15 +3724,25 @@ mod tests {
     }
 
     fn unused_zmq_endpoint_pair_v4() -> (String, String) {
-        let command = TcpListener::bind("127.0.0.1:0").expect("reserve command tcp port");
-        let response = TcpListener::bind("127.0.0.1:0").expect("reserve response tcp port");
-        let command_port = command.local_addr().expect("command local addr").port();
-        let response_port = response.local_addr().expect("response local addr").port();
-        drop((command, response));
+        let (command_port, response_port) = next_zmq_test_ports();
         (
             format!("tcp://127.0.0.1:{command_port}"),
             format!("tcp://127.0.0.1:{response_port}"),
         )
+    }
+
+    fn test_batch_message(id: &str, destination: &str) -> LxmfSdkOutboundBatchMessage {
+        LxmfSdkOutboundBatchMessage {
+            destination: destination.to_string(),
+            title: "RCH".to_string(),
+            content: "payload".to_string(),
+            fields: serde_json::json!({}),
+            delivery_method: Some("direct".to_string()),
+            stamp_cost: None,
+            include_ticket: None,
+            try_propagation_on_fail: false,
+            correlation_id: id.to_string(),
+        }
     }
 
     fn spawn_zmq_sequence_server(
@@ -3293,10 +3768,15 @@ mod tests {
                         .lock()
                         .expect("captured requests")
                         .push(RecordedRpcCall {
-                            method: request.method,
+                            method: request.method.clone(),
                             params: request.params.unwrap_or(serde_json::Value::Null),
                             response_endpoint: envelope.response_endpoint.clone(),
                         });
+                    let response = if request.method == "sdk_negotiate_v2" {
+                        complete_test_negotiation_response(response)
+                    } else {
+                        response
+                    };
                     let rpc_response = ReticulumdRpcResponse {
                         id: envelope.request_id,
                         result: Some(response),
@@ -3330,9 +3810,10 @@ mod tests {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn spawn_zmq_single_send_load_server(
         command_endpoint: String,
-        expected_message_count: usize,
+        expected_request_count: usize,
         captured_methods: Arc<Mutex<Vec<String>>>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
@@ -3345,7 +3826,7 @@ mod tests {
                     .expect("bind command endpoint");
                 let mut response_socket = None;
                 let mut sent_messages = 0usize;
-                for _ in 0..=expected_message_count {
+                for _ in 0..=expected_request_count {
                     let Some(envelope) = recv_zmq_request_envelope(&mut commands).await else {
                         return;
                     };
@@ -3358,18 +3839,57 @@ mod tests {
                         .push(method.clone());
                     let result = match method.as_str() {
                         "sdk_negotiate_v2" => serde_json::json!({
-                            "accepted_contract_version": 2,
-                            "effective_capabilities": [],
+                            "active_contract_version": 2,
+                            "effective_capabilities": [
+                                "sdk.capability.cursor_replay",
+                                "sdk.capability.receipt_terminality",
+                                "sdk.capability.config_revision_cas",
+                                "sdk.capability.idempotency_ttl",
+                                "sdk.capability.batch_send",
+                                "sdk.capability.async_events",
+                                "sdk.capability.identity_discovery"
+                            ],
+                            "effective_limits": {
+                                "max_poll_events": 256,
+                                "max_event_bytes": 1_048_576,
+                                "max_batch_bytes": 16_777_216,
+                                "max_extension_keys": 64,
+                                "idempotency_ttl_ms": 86_400_000
+                            },
                             "runtime_id": "test-runtime",
-                            "profile": "desktop-local-runtime",
-                            "limits": {},
-                            "config_revision": 1,
-                            "features": {},
+                            "contract_release": "v2.5",
+                            "schema_namespace": "v2",
+                            "sdk_version": "0.7.1"
                         }),
                         "sdk_send_v2" => {
                             let message_id = format!("daemon-message-{sent_messages:05}");
                             sent_messages += 1;
                             serde_json::json!({ "message_id": message_id })
+                        }
+                        "sdk_send_batch_v2" => {
+                            let request = request.params.as_ref().expect("batch params");
+                            let batch_id = request["batch_id"].clone();
+                            let results = request["messages"]
+                                .as_array()
+                                .expect("batch messages")
+                                .iter()
+                                .map(|message| {
+                                    let message_id = format!("daemon-message-{sent_messages:05}");
+                                    sent_messages += 1;
+                                    serde_json::json!({
+                                        "id": message["id"],
+                                        "message_id": message_id,
+                                        "accepted": true,
+                                        "error": null
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            serde_json::json!({
+                                "batch_id": batch_id,
+                                "accepted_count": results.len(),
+                                "rejected_count": 0,
+                                "results": results
+                            })
                         }
                         other => panic!("unexpected ZeroMQ SDK method: {other}"),
                     };
@@ -3409,6 +3929,61 @@ mod tests {
                 }
             });
         })
+    }
+
+    fn complete_test_negotiation_response(mut response: serde_json::Value) -> serde_json::Value {
+        let Some(object) = response.as_object_mut() else {
+            return response;
+        };
+        if !object.contains_key("active_contract_version") {
+            let version = object
+                .get("accepted_contract_version")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!(2));
+            object.insert("active_contract_version".to_string(), version);
+        }
+        let capabilities = object
+            .entry("effective_capabilities".to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(capabilities) = capabilities.as_array_mut() {
+            for required in [
+                "sdk.capability.cursor_replay",
+                "sdk.capability.receipt_terminality",
+                "sdk.capability.config_revision_cas",
+                "sdk.capability.idempotency_ttl",
+                "sdk.capability.batch_send",
+                "sdk.capability.async_events",
+                "sdk.capability.identity_discovery",
+            ] {
+                if !capabilities
+                    .iter()
+                    .any(|value| value.as_str() == Some(required))
+                {
+                    capabilities.push(serde_json::json!(required));
+                }
+            }
+        }
+        object
+            .entry("effective_limits".to_string())
+            .or_insert_with(|| {
+                serde_json::json!({
+                    "max_poll_events": 256,
+                    "max_event_bytes": 1_048_576,
+                    "max_batch_bytes": 16_777_216,
+                    "max_extension_keys": 64,
+                    "idempotency_ttl_ms": 86_400_000
+                })
+            });
+        object
+            .entry("contract_release".to_string())
+            .or_insert_with(|| serde_json::json!("v2.5"));
+        object
+            .entry("schema_namespace".to_string())
+            .or_insert_with(|| serde_json::json!("v2"));
+        object
+            .entry("sdk_version".to_string())
+            .or_insert_with(|| serde_json::json!("0.7.1"));
+        response
     }
 
     async fn recv_zmq_request_envelope(commands: &mut PullSocket) -> Option<ZmqRpcEnvelope> {
@@ -3573,50 +4148,150 @@ mod tests {
     }
 
     #[test]
-    fn lxmf_zmq_shared_batch_params_keep_common_payload_once() {
-        let params = lxmf_sdk_shared_outbound_batch_params(LxmfSdkSharedOutboundBatch {
-            batch_id: "shared-1".to_string(),
-            source: "source-destination".to_string(),
-            common_payload: LxmfSdkSharedPayload {
-                bytes: Some("c2hhcmVkLWJsb2I=".to_string()),
-                title: "RCH".to_string(),
-                content: "shared body".to_string(),
-                fields: serde_json::json!({ "content": "shared body", "topic": "direct" }),
-            },
-            recipients: vec![
-                LxmfSdkSharedRecipient {
-                    destination: "dst-a".to_string(),
-                    delivery_method: Some("direct".to_string()),
-                    stamp_cost: None,
-                    include_ticket: Some(false),
-                    try_propagation_on_fail: false,
-                    correlation_id: "message-a".to_string(),
-                    text_only: false,
-                },
-                LxmfSdkSharedRecipient {
-                    destination: "dst-b".to_string(),
-                    delivery_method: Some("propagated".to_string()),
-                    stamp_cost: Some(16),
-                    include_ticket: Some(true),
-                    try_propagation_on_fail: true,
-                    correlation_id: "message-b".to_string(),
-                    text_only: true,
-                },
+    fn zmq_data_plane_preserves_typed_partial_batch_acceptance() {
+        let (command_endpoint, response_endpoint) = unused_zmq_endpoint_pair_v4();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let server = spawn_zmq_sequence_server(
+            command_endpoint.clone(),
+            vec![
+                serde_json::json!({
+                    "runtime_id": "runtime-rch-zmq",
+                    "sdk_version": "0.7.1",
+                    "active_contract_version": 2,
+                    "contract_release": "sdk-v2",
+                    "effective_capabilities": [
+                        "sdk.capability.batch_send",
+                        "sdk.capability.async_events"
+                    ]
+                }),
+                serde_json::json!({
+                    "batch_id": "batch-partial",
+                    "accepted_count": 1,
+                    "rejected_count": 1,
+                    "results": [
+                        {
+                            "id": "message-a",
+                            "message_id": "daemon-a",
+                            "accepted": true,
+                            "error": null
+                        },
+                        {
+                            "id": "message-b",
+                            "message_id": null,
+                            "accepted": false,
+                            "error": {
+                                "code": "SDK_RATE_LIMITED",
+                                "message": "batch lane saturated",
+                                "category": "rate_limit",
+                                "retryable": true
+                            }
+                        }
+                    ]
+                }),
             ],
-        });
+            Arc::clone(&captured),
+        );
+        let data_plane =
+            ZmqDataPlane::new(command_endpoint, response_endpoint).expect("data plane");
+        let results = data_plane
+            .send_batch(LxmfSdkOutboundBatch {
+                batch_id: "batch-partial".to_string(),
+                source: "source".to_string(),
+                messages: vec![
+                    test_batch_message("message-a", "destination-a"),
+                    test_batch_message("message-b", "destination-b"),
+                ],
+            })
+            .expect("typed partial result");
+        let stats = data_plane.stats();
+        let runtime_info = data_plane.runtime_info().expect("runtime info");
+        data_plane.shutdown().expect("shutdown");
+        server.join().expect("server joined");
 
-        assert_eq!(params["method"], "sdk_send_shared_batch_v1");
-        assert_eq!(params["batch_id"], "shared-1");
-        assert_eq!(params["source"], "source-destination");
-        assert_eq!(params["common_payload"]["bytes"], "c2hhcmVkLWJsb2I=");
-        assert_eq!(params["common_payload"]["content"], "shared body");
-        let recipients = params["recipients"].as_array().expect("recipients");
-        assert_eq!(recipients.len(), 2);
-        assert_eq!(recipients[0]["id"], "message-a");
-        assert_eq!(recipients[0]["destination"], "dst-a");
-        assert!(recipients[0].get("content").is_none());
-        assert_eq!(recipients[1]["text_only"], true);
-        assert_eq!(recipients[1]["stamp_cost"], 16);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].accepted);
+        assert_eq!(results[0].message_id, "daemon-a");
+        assert!(!results[1].accepted);
+        let error = results[1].error.as_ref().expect("typed error");
+        assert_eq!(error.code, "SDK_RATE_LIMITED");
+        assert!(error.retryable);
+        assert_eq!(stats.partial_acceptance_total, 1);
+        assert_eq!(stats.rate_limited_total, 1);
+        assert_eq!(stats.last_batch_size, 2);
+        assert_eq!(runtime_info.sdk_version.as_deref(), Some("0.7.1"));
+        assert_eq!(runtime_info.active_contract_version, Some(2));
+    }
+
+    #[test]
+    fn zmq_data_plane_prioritizes_sends_with_bounded_control_fairness() {
+        let (send_tx, send_rx) = mpsc::sync_channel(64);
+        let (control_tx, control_rx) = mpsc::sync_channel(4);
+        for index in 0..33 {
+            let (response, _) = mpsc::channel();
+            send_tx
+                .send(ZmqSdkActorRequest {
+                    payload: ZmqSdkActorPayload::Single(LxmfSdkOutboundMessage {
+                        source: "source".to_string(),
+                        destination: format!("destination-{index}"),
+                        title: "RCH".to_string(),
+                        content: "payload".to_string(),
+                        fields: serde_json::json!({}),
+                        delivery_method: Some("direct".to_string()),
+                        stamp_cost: None,
+                        include_ticket: None,
+                        try_propagation_on_fail: false,
+                        correlation_id: format!("message-{index}"),
+                    }),
+                    response,
+                    queued_at: Instant::now(),
+                })
+                .expect("queue send");
+        }
+        let (response, _) = mpsc::channel();
+        control_tx
+            .send(ZmqSdkActorRequest {
+                payload: ZmqSdkActorPayload::Status("status-message".to_string()),
+                response,
+                queued_at: Instant::now(),
+            })
+            .expect("queue control");
+
+        let mut burst = 0;
+        for _ in 0..32 {
+            let request = recv_prioritized_actor_request(&send_rx, &control_rx, &mut burst)
+                .expect("send request");
+            assert!(request.payload.is_send_lane());
+        }
+        let control = recv_prioritized_actor_request(&send_rx, &control_rx, &mut burst)
+            .expect("control request");
+        assert!(matches!(control.payload, ZmqSdkActorPayload::Status(_)));
+        assert_eq!(burst, 0);
+    }
+
+    #[test]
+    fn zmq_data_plane_shuts_down_without_opening_sockets_and_rejects_new_work() {
+        let data_plane = ZmqDataPlane::new_with_timeout(
+            "tcp://127.0.0.1:1",
+            "tcp://127.0.0.1:2",
+            Duration::from_millis(50),
+        )
+        .expect("data plane");
+        data_plane.shutdown().expect("clean shutdown");
+        let error = data_plane
+            .send_message(LxmfSdkOutboundMessage {
+                source: "source".to_string(),
+                destination: "destination".to_string(),
+                title: "RCH".to_string(),
+                content: "payload".to_string(),
+                fields: serde_json::json!({}),
+                delivery_method: Some("direct".to_string()),
+                stamp_cost: None,
+                include_ticket: None,
+                try_propagation_on_fail: false,
+                correlation_id: "after-shutdown".to_string(),
+            })
+            .expect_err("work after shutdown must fail");
+        assert!(matches!(error, TransportError::Send(_)));
     }
 
     #[test]
@@ -3668,25 +4343,27 @@ mod tests {
     }
 
     #[test]
-    fn lxmf_zmq_outbound_ten_thousand_regular_single_messages_complete() {
+    fn lxmf_zmq_outbound_ten_thousand_batched_messages_complete() {
         const MESSAGE_COUNT: usize = 10_000;
+        const BATCH_SIZE: usize = 1_000;
+        const BATCH_COUNT: usize = MESSAGE_COUNT / BATCH_SIZE;
 
         let (command_endpoint, response_endpoint) = unused_zmq_endpoint_pair_v4();
         let captured_methods = Arc::new(Mutex::new(Vec::new()));
         let server = spawn_zmq_single_send_load_server(
             command_endpoint.clone(),
-            MESSAGE_COUNT,
+            BATCH_COUNT,
             Arc::clone(&captured_methods),
         );
 
         let started = std::time::Instant::now();
         let mut config = rch_local_zmq_pipeline_config(command_endpoint, response_endpoint);
         config.request_timeout = Duration::from_secs(10);
-        for index in 0..MESSAGE_COUNT {
-            let message_id = send_lxmf_zmq_outbound_message_via_actor(
-                &config,
-                LxmfSdkOutboundMessage {
-                    source: "source-destination".to_string(),
+        let data_plane = ZmqDataPlane::from_config(config).expect("data plane");
+        for batch_index in 0..BATCH_COUNT {
+            let start = batch_index * BATCH_SIZE;
+            let messages = (start..start + BATCH_SIZE)
+                .map(|index| LxmfSdkOutboundBatchMessage {
                     destination: format!("destination-{index:05}"),
                     title: "RCH".to_string(),
                     content: format!("payload {index}"),
@@ -3696,21 +4373,30 @@ mod tests {
                     include_ticket: None,
                     try_propagation_on_fail: false,
                     correlation_id: format!("bulk-message-{index:05}"),
-                },
-            )
-            .unwrap_or_else(|error| panic!("message {index} failed: {error}"));
-            assert_eq!(message_id, format!("daemon-message-{index:05}"));
+                })
+                .collect();
+            let results = data_plane
+                .send_batch(LxmfSdkOutboundBatch {
+                    batch_id: format!("bulk-batch-{batch_index:03}"),
+                    source: "source-destination".to_string(),
+                    messages,
+                })
+                .unwrap_or_else(|error| panic!("batch {batch_index} failed: {error}"));
+            assert_eq!(results.len(), BATCH_SIZE);
+            assert!(results.iter().all(|result| result.accepted));
         }
         let elapsed = started.elapsed();
+        let stats = data_plane.stats();
+        data_plane.shutdown().expect("shutdown data plane");
         server.join().expect("join zmq load server");
 
         let captured_methods = captured_methods.lock().expect("captured methods");
         let sdk_send_count = captured_methods
             .iter()
-            .filter(|method| method.as_str() == "sdk_send_v2")
+            .filter(|method| method.as_str() == "sdk_send_batch_v2")
             .count();
         println!(
-            "10k_zmq_single_messages_result status=completed requested={} sdk_send_v2={} rpc_requests_captured={} elapsed_ms={} messages_per_sec={:.1}",
+            "10k_zmq_batched_messages_result status=completed requested={} sdk_send_batch_v2={} rpc_requests_captured={} elapsed_ms={} messages_per_sec={:.1}",
             MESSAGE_COUNT,
             sdk_send_count,
             captured_methods.len(),
@@ -3722,8 +4408,10 @@ mod tests {
             captured_methods.first().map(String::as_str),
             Some("sdk_negotiate_v2")
         );
-        assert_eq!(sdk_send_count, MESSAGE_COUNT);
-        assert_eq!(captured_methods.len(), MESSAGE_COUNT + 1);
+        assert_eq!(sdk_send_count, BATCH_COUNT);
+        assert_eq!(captured_methods.len(), BATCH_COUNT + 1);
+        assert_eq!(stats.completed_total, BATCH_COUNT as u64);
+        assert_eq!(stats.max_batch_size, BATCH_SIZE);
     }
 
     #[test]
@@ -3871,10 +4559,8 @@ mod tests {
             captured[1].params["fields"]["9"][0]["command_type"],
             "checklist.create.online"
         );
-        assert_eq!(
-            captured[1].params["fields"]["_sdk"]["correlation_id"],
-            "message-1"
-        );
+        assert_eq!(captured[1].params["correlation_id"], "message-1");
+        assert_eq!(captured[1].params["idempotency_key"], "message-1");
     }
 
     #[test]
@@ -4001,10 +4687,10 @@ mod tests {
             Arc::clone(&captured),
         );
 
-        let message_id = send_lxmf_zmq_outbound_message(
-            command_endpoint.clone(),
-            response_endpoint.clone(),
-            LxmfSdkOutboundMessage {
+        let data_plane =
+            ZmqDataPlane::new(command_endpoint, response_endpoint.clone()).expect("data plane");
+        let message_id = data_plane
+            .send_message(LxmfSdkOutboundMessage {
                 source: "source-destination".to_string(),
                 destination: "target-destination".to_string(),
                 title: "RCH".to_string(),
@@ -4015,16 +4701,13 @@ mod tests {
                 include_ticket: None,
                 try_propagation_on_fail: false,
                 correlation_id: "message-1".to_string(),
-            },
-        )
-        .expect("send");
-        let batch = poll_lxmf_zmq_events(
-            command_endpoint,
-            response_endpoint.clone(),
-            Some("cursor-0".to_string()),
-            32,
-        )
-        .expect("poll");
+            })
+            .expect("send");
+        let batch = data_plane
+            .poll_events(Some("cursor-0".to_string()), 32)
+            .expect("poll");
+        let stats = data_plane.stats();
+        data_plane.shutdown().expect("shutdown data plane");
         server.join().expect("server joined");
 
         assert_eq!(message_id, "sdk-zmq-rch-1");
@@ -4035,6 +4718,8 @@ mod tests {
         assert_eq!(captured[0].method, "sdk_negotiate_v2");
         assert_eq!(captured[1].method, "sdk_send_v2");
         assert_eq!(captured[2].method, "sdk_poll_events_v2");
+        assert_eq!(stats.completed_total, 2);
+        assert_eq!(stats.queue_depth, 0);
         assert_eq!(
             captured[0].response_endpoint.as_deref(),
             Some(response_endpoint.as_str())
@@ -4065,17 +4750,16 @@ mod tests {
             command_endpoint.clone(),
             vec![
                 serde_json::json!({"runtime_id": "runtime-rch-zmq"}),
-                serde_json::json!({"announce_id": "announce-zmq-1"}),
+                serde_json::json!({"accepted": true}),
             ],
             Arc::clone(&captured),
         );
 
-        let announce_id = announce_lxmf_zmq_identity(command_endpoint, response_endpoint)
-            .expect("announce")
-            .expect("announce id");
+        let announce_id =
+            announce_lxmf_zmq_identity(command_endpoint, response_endpoint).expect("announce");
         server.join().expect("server joined");
 
-        assert_eq!(announce_id, "announce-zmq-1");
+        assert_eq!(announce_id, None);
         let captured = captured.lock().expect("captured requests");
         assert_eq!(captured.len(), 2);
         assert_eq!(captured[0].method, "sdk_negotiate_v2");
@@ -4150,9 +4834,8 @@ mod tests {
                 serde_json::json!({
                     "message": {
                         "message_id": "sdk-message-1",
-                        "state": "delivered",
-                        "terminal": true,
-                        "last_updated_ms": 1_700_000_000_000_u64,
+                        "receipt_status": "delivered",
+                        "timestamp": 1_700_000_000_i64,
                         "attempts": 2,
                         "reason_code": null
                     }

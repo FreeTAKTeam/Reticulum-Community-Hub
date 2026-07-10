@@ -44,9 +44,9 @@ database and validate `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`,
 and at least one topic/chat/checklist/mission flow.
 
 GitHub PR quality control is handled by
-`.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.85, checks
+`.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.88, checks
 out the sibling `LXMF-rs` workspace beside RCH, and exposes separate required
-checks for formatting, clippy with `-D warnings`, locked workspace tests,
+checks for formatting, clippy with `-D warnings`, the Rust 1.85 minimum-version check, locked workspace tests,
 release server/TAK-service builds, and `cargo audit`.
 
 The Python parity plus Rust capability gate is tracked in
@@ -184,6 +184,13 @@ Release blockers cleared in the latest parity pass:
   sends, normal RCH LXMF field payload sends, batched fanout payloads, and
   inbound SDK event conversion. Server runtime southbound traffic uses the
   ZeroMQ SDK pipeline only.
+- ZeroMQ is the permanent LXMF data plane for send, ordered batch acceptance,
+  delivery status, and event traffic. RPC is an optional administration
+  channel and must not be called from HTTP delivery or fanout hot paths.
+- Production dependencies use released LXMF `0.7.1`. The matching
+  ZMQ-capable `reticulumd` is bundled and described by
+  `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
+  the scheduled compatibility workflow.
 - Multi-recipient dispatch now uses `sdk_send_batch_v2` over ZeroMQ so a topic
   fanout enters `reticulumd` as one bounded batch request instead of one RPC
   call per recipient.

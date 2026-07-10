@@ -835,11 +835,15 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lxmf-reference"
-version = "0.5.1"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "201c65cd4cfee4504a12432265293b518c1030c96952c85a63ffa0ca963b7a67"
 
 [[package]]
 name = "lxmf-sdk"
-version = "0.5.1"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f52c47224a5aa6cca9195fb432b6d448cd19ae18106c407d4b192320473ec144"
 dependencies = [
  "hex",
  "hmac",
@@ -858,7 +862,9 @@ dependencies = [
 
 [[package]]
 name = "lxmf-wire"
-version = "0.5.1"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44dbbad1bbbffae796bb87d80424b26663911b08c57a0e2b464b1f8cf38f86c0"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -949,9 +955,9 @@ dependencies = [
 
 [[package]]
 name = "num-conv"
-version = "0.2.2"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
+checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
 
 [[package]]
 name = "num-traits"
@@ -1140,31 +1146,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "r3akt-identity"
-version = "0.1.0"
-dependencies = [
- "r3akt-protocol",
- "serde",
- "time",
-]
-
-[[package]]
-name = "r3akt-node"
-version = "0.1.0"
-dependencies = [
- "r3akt-identity",
- "r3akt-profile-rch",
- "r3akt-protocol",
- "r3akt-rch-core",
- "r3akt-router",
- "r3akt-store",
- "r3akt-transport-rns",
- "serde_json",
- "thiserror 2.0.18",
- "time",
-]
-
-[[package]]
 name = "r3akt-profile-rch"
 version = "0.1.0"
 dependencies = [
@@ -1247,25 +1228,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "r3akt-router"
-version = "0.1.0"
-dependencies = [
- "r3akt-protocol",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "r3akt-store"
-version = "0.1.0"
-dependencies = [
- "r3akt-protocol",
- "rusqlite",
- "thiserror 2.0.18",
- "time",
-]
-
-[[package]]
 name = "r3akt-tak-connector"
 version = "0.1.0"
 dependencies = [
@@ -1336,21 +1298,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rch-ingest-sim"
-version = "0.1.0"
-dependencies = [
- "r3akt-identity",
- "r3akt-node",
- "r3akt-profile-rch",
- "r3akt-protocol",
- "r3akt-rch-core",
- "r3akt-router",
- "r3akt-store",
- "r3akt-transport-rns",
- "serde_json",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1390,7 +1337,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reticulum-rs-core"
-version = "0.5.1"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64c0372f2df8958260671eaff52d5cfeec50078ec427438c3f53b0ab48461a43"
 dependencies = [
  "aes",
  "cbc",
@@ -1409,7 +1358,9 @@ dependencies = [
 
 [[package]]
 name = "reticulum-rs-rpc"
-version = "0.5.1"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc8c46b5b3d9dda55b2ff18a013f5c821f50b377e7089cc17d11619b611aa63b"
 dependencies = [
  "base64",
  "ciborium",
@@ -1701,19 +1652,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sim-agent"
-version = "0.1.0"
-dependencies = [
- "r3akt-identity",
- "r3akt-node",
- "r3akt-protocol",
- "r3akt-router",
- "r3akt-store",
- "r3akt-transport-rns",
- "serde_json",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1829,9 +1767,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.47"
+version = "0.3.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c"
+checksum = "f9e442fc33d7fdb45aa9bfeb312c095964abdf596f7567261062b2a7107aaabd"
 dependencies = [
  "deranged",
  "itoa",
@@ -1844,15 +1782,15 @@ dependencies = [
 
 [[package]]
 name = "time-core"
-version = "0.1.8"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca"
+checksum = "8b36ee98fd31ec7426d599183e8fe26932a8dc1fb76ddb6214d05493377d34ca"
 
 [[package]]
 name = "time-macros"
-version = "0.2.27"
+version = "0.2.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e70e4c5a0e0a8a4823ad65dfe1a6930e4f4d756dcd9dd7939022b5e8c501215"
+checksum = "71e552d1249bf61ac2a52db88179fd0673def1e1ad8243a00d9ec9ed71fee3dd"
 dependencies = [
  "num-conv",
  "time-core",

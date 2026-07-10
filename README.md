@@ -33,12 +33,10 @@ Crates:
   encode/decode.
 - `r3akt-identity`: node identity, trust records, and tested enrollment
   decision helpers.
-- `r3akt-transport-rns`: `MessageBus` trait, bounded mock transport with
-  backpressure, an LXMF-rs adapter boundary that accepts raw LXMF payload bytes,
-  and a `reticulumd` RPC-backed `LxmfRsAdapter` for sending/polling R3AKT
-  MessagePack envelopes through LXMF-rs. This crate depends on the inspected
-  sibling LXMF-rs `lxmf-wire` package at `crates/libs/lxmf-core` and exposes
-  helpers for packing/unpacking LXMF-rs `WireMessage` storage bytes.
+- `r3akt-transport-rns`: `MessageBus` trait, bounded mock transport, LXMF wire
+  helpers, and the lifecycle-managed ZeroMQ data plane. Production builds pin
+  released LXMF `0.7.1`; the sibling checkout is used only by the scheduled
+  compatibility job and to build the matching bundled daemon.
 - `r3akt-profile-rch`: RCH LXMF field profile for `FIELD_COMMANDS` (`0x09`),
   `FIELD_RESULTS` (`0x0A`), and `FIELD_EVENT` (`0x0D`) command/result/event
   conversion.
@@ -107,8 +105,9 @@ Crates:
   migration experiments. It loads Rust RCH core state from SQLite, executes a
   mission command or topic query, saves state, returns RCH-style field
   responses with `FIELD_RESULTS`/`FIELD_EVENT` keys, and can send outbound RCH
-  payloads through the legacy LXMF-rs `reticulumd` RPC endpoint for migration
-  experiments.
+  payloads through a legacy RPC compatibility adapter used only by migration
+  experiments. The production server does not use this bridge as a delivery
+  data plane.
 - `r3akt-rch-server`: long-running Rust HTTP server for the UI-facing backend
   replacement path. The current slice exposes Python-compatible OpenAPI
   metadata, `/Help`, `/Examples`, `/Status`, `/api/v1/app/info`, auth
@@ -121,8 +120,9 @@ Crates:
   contracts.
   When configured with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and
   `--reticulumd-source`, outbound delivery uses the LXMF-rs ZeroMQ SDK
-  pipeline. For the initial server package, ZeroMQ is mandatory for southbound
-  command dispatch and daemon event polling. Multi-destination fanout is sent
+  pipeline. ZeroMQ is the permanent southbound data plane, not a migration
+  shim. RPC is optional and control-only; request and fanout delivery paths do
+  not use it. Multi-destination fanout is sent
   to the daemon as one `sdk_send_batch_v2` ZeroMQ request, so the server no
   longer performs one daemon send per recipient.
   Remaining backend service contracts should continue to be ported in small
@@ -147,20 +147,11 @@ Crates:
   database stays separate from the Python RCH application database unless the
   disabled-by-default bridge is deliberately configured to use the same path for
   a migration experiment.
-- `r3akt-router`: topic subscriptions, fanout, and dispatch recording for tests.
-- `r3akt-store`: durable inbox/outbox trait, dedupe, audit records, retention,
-  typed readback, in-memory store, and SQLite-backed store.
-- `r3akt-node`: embeddable runtime path tying validation, persistence, dedupe,
-  routing, ACK emission, bounded batch polling, audit, and metrics counters
-  together.
-- `examples/sim-agent`: local heartbeat/topic/command simulation over the mock
-  transport.
-- `examples/rch-ingest-sim`: RCH `FIELD_COMMANDS` MessagePack ingestion
-  simulation that converts a mission command into a typed runtime envelope,
-  executes the first RCH core command layer, and emits an RCH `FIELD_RESULTS`
-  ACK.
-- `crates/r3akt-node/tests/rch_vertical.rs`: integration coverage for the same
-  RCH field-command to runtime to result-ACK path.
+- The retired generic `r3akt-node`, `r3akt-router`, and `r3akt-store` prototypes
+  are no longer workspace members. Their useful delivery-policy and persistence
+  coverage belongs in `r3akt-rch-core`, `r3akt-rch-server`, and
+  `r3akt-transport-rns`; remaining source directories are cleanup candidates,
+  not supported runtime architecture.
 
 ## Sister Repository Findings
 
@@ -169,10 +160,10 @@ Crates:
 Found at `C:\Users\broth\Documents\work\ATAK\src\LXMF-rs`, remote
 `https://github.com/FreeTAKTeam/LXMF-rs`.
 
-Current Rust RCH verification targets the LXMF-rs `v0.5.1` release commit
-`81acffc1409a760aeb9d7b09dc9a76b4be304a59`. The sibling dependency packages
-resolved by `r3akt-transport-rns` are `lxmf-wire` `0.2.0`, `lxmf-sdk` `0.2.1`,
-`reticulum-rs-rpc` `0.3.0`, and their `lxmf-reference` `0.1.0` dependency.
+Production Rust RCH builds use the released LXMF-rs `0.7.1` crates exactly:
+`lxmf-wire`, `lxmf-sdk`, `reticulum-rs-rpc`, `reticulum-rs-core`, and
+`lxmf-reference`. The sibling checkout is used only for coordinated
+compatibility CI and building the matching ZMQ-capable `reticulumd` sidecar.
 
 It contains real Rust Reticulum/LXMF crates, including the `lxmf-wire` package
 at `crates/libs/lxmf-core`, `lxmf-sdk`, `reticulum-rs-transport`,
@@ -181,9 +172,9 @@ MessagePack for LXMF payloads and exposes `WireMessage` packing, unpacking,
 message IDs, signing, and verification. This milestone does not invent a
 Reticulum/LXMF implementation. `r3akt-transport-rns` now includes a ZeroMQ
 SDK-backed adapter for R3AKT MessagePack envelopes, normal RCH outbound LXMF
-field payloads, and batched multi-recipient sends. The older `reticulumd` RPC
-adapter remains in the crate for legacy tests and migration tooling, but the
-Rust server runtime no longer uses it for southbound dispatch or event polling.
+field payloads, and batched multi-recipient sends. RPC remains available only
+for administration operations that do not have an appropriate SDK operation;
+it is never a delivery data plane.
 
 Gap: the ZeroMQ SDK path has unit coverage for outbound payload mapping and
 inbound SDK event conversion, plus local live-daemon validation for
@@ -262,7 +253,7 @@ path was checked and was not present.
 
 | Component | Found in repo | Reuse decision | Reason | Follow-up needed |
 | --- | --- | --- | --- | --- |
-| LXMF wire/runtime | LXMF-rs | Reuse `lxmf-core` for wire-message byte helpers; wrap live transport via `LxmfRsAdapter` and `MessageBus`; added a `reticulumd` RPC adapter for R3AKT envelope send/poll plus opt-in Rust-server live direct-receipt and multi-recipient fanout validation hooks | Real Rust LXMF/RNS crates exist; avoid fake transport | Keep local live receipt/fanout validation in the release gate and add broader real-network validation before default-branch switch |
+| LXMF wire/runtime | LXMF-rs | Use released LXMF `0.7.1` with a lifecycle-owned ZeroMQ SDK actor for send, batch, status, and event traffic; keep RPC control-only | Real Rust LXMF/RNS crates exist and ZeroMQ preserves bounded batching | Keep local live receipt/fanout validation in the release gate and add broader real-network validation before default-branch switch |
 | MessagePack payloads | LXMF-rs, REM, RCH | Implemented in `r3akt-protocol` with `rmp-serde` | All sister repos use or document MsgPack on hot path | Add golden vectors against RCH/REM command envelopes |
 | RCH field IDs | REM, RCH docs | Implemented in `r3akt-profile-rch` with Python-generated `FIELD_COMMANDS`, `FIELD_RESULTS` accepted/result/rejected, and `FIELD_EVENT` MessagePack fixtures plus RCH status mapping and event encode/decode coverage; product-specific command fixtures now cover REM checklist create commands with topics and EAM upsert fanout commands without optional correlation/topic fields, and event decoding accepts Python mission-sync's single-object event envelope with event ID/source/timestamp/topics | Core envelopes stay transport-neutral while the RCH profile preserves field compatibility | Add Python-generated hex fixtures for any future product-specific payload variants introduced by the UI/runtime |
 | Durable local state | REM, RCH | Added `DurableStore`, `MemoryStore`, `SqliteStore` | REM and RCH both persist runtime/message state | Add migrations for production inbox/outbox schemas |
@@ -282,7 +273,7 @@ path was checked and was not present.
 | Checklist sync | RCH, REM | Added template, online/offline checklist, row/cell/status, upload, feed publication, and CSV import command paths with Python-compatible silent success and rejection shape; CSV import now preserves quoted cells and ignores invalid UTF-8 bytes like Python; online checklist creation, checklist upload, task-row creation, idempotent existing-task row updates, row styling, cell edits, status changes, and task-row deletes now emit Python-style mission-change deltas when tied to a mission; checklist delete now has focused coverage for task/cell/requirement/assignment cleanup plus the Python-style `checklist.deleted` audit event without an auto mission-change | Checklist sync is already a Rust/mobile overlap surface and a core RCH parity domain | Add broader golden Python vectors for serialized checklist payloads and checklist listener/fanout edges |
 | Backpressure/metrics | REM | Implemented bounded mock queues and `NodeMetrics` | REM already uses bounded send permits; shared runtime should expose pressure early | Add production queue telemetry and tracing subscribers |
 | Identity/trust | RCH, REM, LXMF-rs | Added Rust identity/trust/enrollment directory helpers; RCH moderation, REM mode, capability grants, and team-member links are persisted in `r3akt-rch-core` | Product identity models differ today | Bind directory decisions to LXMF-rs identities and expose enrollment workflows through RCH HTTP when the UI needs them |
-| RCH delivery contract | RCH | Implemented `RTHDelivery` build/validate, routing mode classification, Python-compatible envelope failure text for TTL and future clock-skew rejection, and Python-compatible presence-aware direct-vs-propagated outbound delivery policy in `r3akt-rch-core`; `r3akt-rch-server` persists method/reason dispatch metadata, accepted/failed/queued/in-progress state, direct pending-receipt and pending-dispatch diagnostics, receipt timeout finalization, stale-dispatch cleanup, polls `reticulumd` `sdk_status_v2` for terminal receipt state, exposes opt-in live direct-receipt and multi-recipient fanout validation hooks, and passes the selected method to `reticulumd` RPC | This is central to switching Python ingestion and outbound delivery to Rust safely | Add broader edge-case fixtures for dispatch failure metadata; keep local live LXMF receipt/fanout validation green |
+| RCH delivery contract | RCH | Implemented `RTHDelivery` build/validate, routing mode classification, Python-compatible envelope failure text for TTL and future clock-skew rejection, and Python-compatible presence-aware direct-vs-propagated outbound delivery policy in `r3akt-rch-core`; `r3akt-rch-server` persists method/reason dispatch metadata, accepted/failed/queued/in-progress state, direct pending-receipt and pending-dispatch diagnostics, receipt timeout finalization, stale-dispatch cleanup, and uses the lifecycle ZeroMQ SDK actor for batch admission, typed status, and events | This is central to switching Python ingestion and outbound delivery to Rust safely | Add broader edge-case fixtures for dispatch failure metadata; keep local live LXMF receipt/fanout validation green |
 | RCH core state | RCH | Added `RchCoreSnapshot`, row-level `RchSqliteStore` tables, explicit `0001_rch_core_snapshot.sql` migration, schema-version preservation, and `/diagnostics/runtime` persistence metadata | Backend switching needs topic/subscriber/message/mission/log/command replay state to survive process restarts and expose the opened schema | Add Python bridge access patterns once contracts are fixed |
 | Mission-sync response lifecycle | RCH | Added `MissionSyncResponse` and `handle_mission_sync_command` accepted/result/rejected sequencing, with authorization rejection before acceptance and accepted-then-result/rejected execution responses | Python RCH emits separate accepted and result/rejected replies for executable mission-sync commands | Add more Python golden vectors for command-specific rejection details |
 | Mission-sync authorization | RCH | Added RCH capability requirements for implemented commands plus persisted grants, mission-access roles, explicit operation grants/revokes, and bridge controls | Python RCH rejects unauthorized command issuers before execution while mission registry rights can grant scoped operations | Add more team-derived role edge-case vectors for registry commands |
@@ -292,20 +283,10 @@ path was checked and was not present.
 
 ## Runtime Path
 
-`r3akt-node` implements the first vertical slice:
-
-1. poll `MessageBus`
-2. decode already typed `ProtocolEnvelope`
-3. validate schema, source, topic, and TTL
-4. persist inbound envelope before processing
-5. dedupe by `dedupe_key` or envelope ID
-6. dispatch through `TopicRouter`
-7. emit `AckAccepted`, `AckRejected`, and `AckCompleted` envelopes
-8. record audit entries for receive, persistence, routing, duplicate drops, and
-   ACK emission
-9. update `NodeMetrics` counters for accepted, rejected, duplicate, routed,
-   ACK, and empty-poll outcomes
-10. optionally process a bounded batch with `poll_batch(max_messages)`
+The supported runtime path is `r3akt-rch-server` -> bounded
+`Arc<ZmqDataPlane>` -> released LXMF SDK 0.7.1 -> `reticulumd`. RCH persists
+outbound intent before admission, retries only pre-admission failures, and
+hands network scheduling and receipts to `reticulumd` after SDK acceptance.
 
 ## Functional Equivalence Direction
 
@@ -326,9 +307,8 @@ RCH parity should proceed in this order:
    mission-message, marker/zone, mission CRUD, teams, members, assets, skills,
    assignments, and checklist-sync to the remaining mission-sync command
    families.
-3. Keep the live-daemon E2E coverage for the `reticulumd` RPC-backed LXMF-rs
-   adapter in the verification gate and add equivalent coverage for the Python
-   outbound bridge path while it remains part of migration tooling.
+3. Keep live-daemon E2E coverage for the ZeroMQ LXMF data plane in the
+   verification gate. RPC compatibility coverage is control-only.
 4. Add golden test vectors from Python RCH for `FIELD_COMMANDS`,
    `FIELD_RESULTS`, `FIELD_EVENT`, `RTHDelivery`, topic APIs, and mission-sync
    command responses.
@@ -463,9 +443,9 @@ Implemented route contracts in this first slice:
 - `GET /Control/Status`
 - `POST /Control/Stop`
 - `POST /Control/Start`
-- `POST /Control/Announce` dispatches `sdk_identity_announce_now_v2` through
-  the configured LXMF-rs `reticulumd` RPC endpoint and records a Rust system
-  event; without an RPC endpoint it preserves Python's `503` unavailable shape
+- `POST /Control/Announce` prefers the ZeroMQ SDK identity operation and uses
+  optional RPC only as a control compatibility fallback; it records a Rust
+  system event and preserves Python's `503` unavailable shape when unavailable
 - `POST /Control/Sync` lists peers through the configured LXMF-rs
   `reticulumd` RPC endpoint, requests `peer_sync` for the selected propagation
   peer, records a Rust system event, and preserves Python's `503` unavailable
@@ -740,7 +720,8 @@ Current local verification snapshot, refreshed on 2026-05-11:
   mandatory ZeroMQ SDK endpoints.
 - `.github/workflows/rust-pr-quality.yml` runs PR quality-control checks for
   Rust formatting, clippy with warnings denied, locked workspace tests, release
-  binary builds, and `cargo audit` against Rust 1.85.
+  binary builds, and `cargo audit` on Rust 1.88 while separately preserving the
+  workspace Rust 1.85 minimum-version check.
 - `.github/workflows/rust.yml` runs the committed release gate runner with
   `-ServerOnlyAlpha` so push and PR CI still cover the alpha verifier, the
   server release build, and the ZeroMQ-configured release HTTP smoke.
@@ -772,7 +753,7 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - Repeatable local three-node `reticulumd.exe` receipt/fanout/ZeroMQ event
   validation is available through `scripts/local-reticulum-live-gate.ps1`; the
   latest run on 2026-05-30 passed direct receipt, two-recipient fanout, and
-  `sdk_poll_events_v2` over the LXMF-rs ZeroMQ RPC loop with
+  `sdk_poll_events_v2` over the LXMF-rs ZeroMQ data plane with
   `-IncludeZmqEventPoll -DiscoverySettleSeconds 10 -ReceiptPollAttempts 180`.
 - Controlled external RMAP Reticulum validation passed on 2026-05-11 by running
   `scripts/local-reticulum-live-gate.ps1` with
@@ -803,9 +784,9 @@ Current local verification snapshot, refreshed on 2026-05-11:
 - The voice routing parity pass confirms voice-capable LXMF peers remain in
   chat/fanout routing; voice is additional capability metadata, not a
   voice-only destination class.
-- The reticulumd inbound worker parity pass verifies current event polling,
-  `list_messages`, announce import, stream cursor reset, and diagnostics
-  behavior without order-dependent background-worker races.
+- The reticulumd inbound worker parity pass verifies ZeroMQ event polling,
+  announce events, message-history stream-gap recovery, cursor reset, and
+  diagnostics without RPC projection polling in production.
 - The direct delivery parity pass verifies SDK direct-send methods,
   SDK-prefixed receipt status IDs, retry scheduling after receipt timeout, and
   propagated fallback after direct-send failure.
@@ -927,7 +908,7 @@ try {
 }
 ```
 
-Live reticulumd RPC adapter check with a local self-loopback daemon:
+Legacy RPC control-adapter regression check (not a production delivery path):
 
 ```powershell
 $rpc = "127.0.0.1:7777"
@@ -968,7 +949,7 @@ Controlled external RMAP Reticulum receipt and fanout validation:
   -ReceiptPollDelayMs 1000
 ```
 
-Optional live Reticulum receipt validation against a real reachable peer:
+Optional legacy RPC receipt fixture (not the production ZMQ delivery gate):
 
 ```powershell
 $env:R3AKT_RETICULUMD_RPC_ENDPOINT = "127.0.0.1:7777"
@@ -977,7 +958,7 @@ $env:R3AKT_RETICULUMD_RECEIPT_DESTINATION = "<reachable-peer-destination>"
 cargo test -p r3akt-rch-server live_reticulumd_direct_send_receipt_is_delivered_when_configured -- --nocapture
 ```
 
-Optional live Reticulum fanout validation against two or more reachable peers:
+Optional legacy RPC fanout fixture (not the production ZMQ delivery gate):
 
 ```powershell
 $env:R3AKT_RETICULUMD_RPC_ENDPOINT = "127.0.0.1:7777"
@@ -986,27 +967,13 @@ $env:R3AKT_RETICULUMD_FANOUT_DESTINATIONS = "<peer-a-destination>,<peer-b-destin
 cargo test -p r3akt-rch-server live_reticulumd_topic_fanout_receipts_are_delivered_when_configured -- --nocapture
 ```
 
-Optional live Reticulum event/announce validation against real reachable peers:
+Optional legacy RPC announce-list fixture. Production event and announce
+projection is validated through the ZeroMQ harness above:
 
 ```powershell
 $env:R3AKT_RETICULUMD_RPC_ENDPOINT = "127.0.0.1:7777"
 $env:R3AKT_RETICULUMD_EXPECT_ANNOUNCE = "1"
 cargo test -p r3akt-transport-rns live_reticulumd_rpc_adapter_lists_announces_when_configured -- --nocapture
-
-$server = Start-Process -FilePath ".\target\debug\r3akt-rch-server.exe" `
-  -ArgumentList "--bind","127.0.0.1:8080","--api-key","secret","--reticulumd-rpc",$env:R3AKT_RETICULUMD_RPC_ENDPOINT,"--reticulumd-source","<local-destination>" `
-  -WorkingDirectory (Get-Location).Path -WindowStyle Hidden -PassThru
-try {
-  Start-Sleep -Seconds 3
-  $diag = Invoke-RestMethod -Headers @{ "X-API-Key" = "secret" } -Uri "http://127.0.0.1:8080/diagnostics/runtime"
-  $diag.reticulumd_inbound.event_polls_total
-  $diag.reticulumd_inbound.events_seen_total
-  $diag.reticulumd_inbound.announces_imported_total
-  $diag.reticulumd_inbound.last_event_cursor
-  $diag.reticulumd_inbound.last_event_type
-} finally {
-  Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
-}
 ```
 
 Optional live TAK keepalive and reconnect push smokes:

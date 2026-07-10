@@ -1,0 +1,61 @@
+name: LXMF main compatibility
+
+on:
+  schedule:
+    - cron: "17 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  transport:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Check out current LXMF main
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          ref: main
+          path: LXMF-rs
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+          components: clippy
+
+      - name: Patch only this compatibility build to sibling sources
+        shell: pwsh
+        working-directory: rch
+        run: |
+          New-Item -ItemType Directory -Force .cargo | Out-Null
+          @'
+          [patch.crates-io]
+          lxmf-wire = { path = "../../LXMF-rs/crates/libs/lxmf-core" }
+          lxmf-sdk = { path = "../../LXMF-rs/crates/libs/lxmf-sdk" }
+          reticulum-rs-rpc = { path = "../../LXMF-rs/crates/libs/rns-rpc" }
+          '@ | Set-Content -LiteralPath .cargo/config.toml -Encoding utf8
+          $manifest = Get-Content -LiteralPath crates/r3akt-transport-rns/Cargo.toml -Raw
+          $manifest = $manifest -replace 'version = "=0\.7\.1"', 'version = "*"'
+          Set-Content -LiteralPath crates/r3akt-transport-rns/Cargo.toml -Value $manifest -Encoding utf8
+          cargo update -p lxmf-wire -p lxmf-sdk -p reticulum-rs-rpc
+
+      - name: Prove sibling sources are selected
+        shell: pwsh
+        working-directory: rch
+        run: |
+          $tree = cargo tree -p r3akt-transport-rns
+          $tree
+          if (($tree | Select-String -SimpleMatch '/LXMF-rs/crates/libs/').Count -lt 3) {
+            throw 'Compatibility build did not resolve all LXMF dependencies from the sibling checkout'
+          }
+
+      - name: Check current LXMF main without changing production lockfile
+        working-directory: rch
+        run: cargo check -p r3akt-transport-rns

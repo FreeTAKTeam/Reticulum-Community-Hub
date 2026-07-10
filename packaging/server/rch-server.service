@@ -1,7 +1,8 @@
 [Unit]
 Description=Reticulum Community Hub Rust Server
-After=network-online.target
+After=network-online.target reticulumd.service
 Wants=network-online.target
+Requires=reticulumd.service
 
 [Service]
 Type=simple

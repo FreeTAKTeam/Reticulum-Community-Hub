@@ -25,7 +25,11 @@
     "active": true,
     "targets": ["nsis", "appimage"],
     "icon": ["icons/icon.png", "icons/icon.ico"],
-    "externalBin": ["binaries/r3akt-rch-server", "binaries/r3akt-tak-service"],
+    "externalBin": [
+      "binaries/reticulumd",
+      "binaries/r3akt-rch-server",
+      "binaries/r3akt-tak-service"
+    ],
     "windows": {
       "nsis": {
         "installMode": "perMachine"

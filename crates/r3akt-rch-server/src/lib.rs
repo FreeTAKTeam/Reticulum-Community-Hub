@@ -71,14 +71,15 @@ use r3akt_rch_core::{
 };
 #[cfg(test)]
 use r3akt_transport_rns::MessageBus;
+#[cfg(test)]
+use r3akt_transport_rns::delivery_snapshot_from_status_result;
 use r3akt_transport_rns::{
-    LxmfDeliverySnapshot, LxmfDeliveryState, LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage,
-    LxmfSdkOutboundMessage, LxmfSdkSharedOutboundBatch, LxmfSdkSharedPayload,
-    LxmfSdkSharedRecipient, ReticulumdAnnounceRecord, announce_lxmf_zmq_identity,
-    delivery_snapshot_from_status_result, delivery_snapshot_receipt_status,
-    enqueue_lxmf_zmq_outbound_batch, list_reticulumd_announces, lxmf_shared_batch_to_legacy_batch,
-    poll_lxmf_zmq_events, poll_reticulumd_events, reticulumd_event_to_envelope,
-    reticulumd_message_to_envelope, send_lxmf_zmq_outbound_batch, send_lxmf_zmq_outbound_message,
+    LxmfDeliverySnapshot, LxmfDeliveryState, LxmfMessageHistoryListRequest, LxmfSdkOutboundBatch,
+    LxmfSdkOutboundBatchMessage, LxmfSdkOutboundBatchResult, LxmfSdkOutboundMessage,
+    LxmfSdkSharedOutboundBatch, LxmfSdkSharedPayload, LxmfSdkSharedRecipient,
+    ReticulumdAnnounceRecord, ZmqDataPlane, delivery_snapshot_receipt_status,
+    list_reticulumd_announces, lxmf_shared_batch_to_legacy_batch, poll_reticulumd_events,
+    reticulumd_event_to_envelope, reticulumd_message_to_envelope,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -106,13 +107,12 @@ const OUTBOUND_PROPAGATION_STAMP_COST: u32 = 16;
 const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
 const RETICULUMD_RECEIPT_STATUS_PASS_INTERVAL_MS: i64 = 10_000;
 const RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS: usize = 4;
-const RETICULUMD_SECURITY_RATE_LIMIT_CODE: &str = "SDK_SECURITY_RATE_LIMITED";
 const CONTROL_SYNC_PROPAGATION_FETCH_TIMEOUT_SECS: f64 = 45.0;
 #[cfg(not(test))]
 const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 70_000;
 #[cfg(test)]
 const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 200;
-const RETICULUMD_INBOUND_WORKER_POLL_MS: u64 = 1_000;
+const RETICULUMD_INBOUND_WORKER_POLL_MS: u64 = 100;
 const RETICULUMD_LIST_MESSAGE_POLL_MS: u64 = 5_000;
 const RETICULUMD_EVENT_POLL_MAX: usize = 64;
 const RETICULUMD_ANNOUNCE_IMPORT_LIMIT: usize = 5000;
@@ -200,10 +200,12 @@ pub struct AppState {
     telemetry_events: broadcast::Sender<TelemetryRecord>,
     internal_events: broadcast::Sender<Value>,
     runtime_metrics: Arc<RuntimeMetricCounters>,
+    sqlite_blocking_permits: Arc<tokio::sync::Semaphore>,
     reticulumd_rpc_endpoint: Option<Arc<String>>,
     reticulumd_source: Option<Arc<String>>,
     lxmf_zmq_command_endpoint: Option<Arc<String>>,
     lxmf_zmq_response_endpoint: Option<Arc<String>>,
+    lxmf_zmq_data_plane: Option<Arc<ZmqDataPlane>>,
     runtime_control: Arc<RwLock<RuntimeControlState>>,
     managed_reticulumd: Arc<RwLock<ManagedReticulumdState>>,
     managed_reticulumd_process: Arc<Mutex<Option<Child>>>,
@@ -380,10 +382,12 @@ impl Default for AppState {
             telemetry_events,
             internal_events,
             runtime_metrics: Arc::default(),
+            sqlite_blocking_permits: Arc::new(tokio::sync::Semaphore::new(8)),
             reticulumd_rpc_endpoint: None,
             reticulumd_source: None,
             lxmf_zmq_command_endpoint: None,
             lxmf_zmq_response_endpoint: None,
+            lxmf_zmq_data_plane: None,
             runtime_control: Arc::default(),
             managed_reticulumd: Arc::default(),
             managed_reticulumd_process: Arc::default(),
@@ -565,11 +569,62 @@ impl AppState {
         source: impl Into<String>,
     ) -> Self {
         let source = source.into();
-        self.lxmf_zmq_command_endpoint = Some(Arc::new(command_endpoint.into()));
-        self.lxmf_zmq_response_endpoint = Some(Arc::new(response_endpoint.into()));
+        let command_endpoint = command_endpoint.into();
+        let response_endpoint = response_endpoint.into();
+        let request_timeout = if cfg!(test) {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_secs(3)
+        };
+        self.lxmf_zmq_data_plane = ZmqDataPlane::new_with_timeout(
+            command_endpoint.clone(),
+            response_endpoint.clone(),
+            request_timeout,
+        )
+        .map(Arc::new)
+        .ok();
+        self.lxmf_zmq_command_endpoint = Some(Arc::new(command_endpoint));
+        self.lxmf_zmq_response_endpoint = Some(Arc::new(response_endpoint));
         self.reticulumd_source = Some(Arc::new(source.clone()));
         self.prune_telemetry_for_local_source(&source);
         self
+    }
+
+    pub fn verify_lxmf_zmq_data_plane(&self) -> Result<(), String> {
+        let Some(data_plane) = &self.lxmf_zmq_data_plane else {
+            if self.lxmf_zmq_command_endpoint.is_some() || self.lxmf_zmq_response_endpoint.is_some()
+            {
+                return Err("ZeroMQ data-plane actor failed to initialize".to_string());
+            }
+            return Ok(());
+        };
+        data_plane
+            .delivery_status("rch-startup-capability-probe")
+            .map_err(|error| format!("ZeroMQ capability negotiation failed: {error}"))?;
+        let info = data_plane
+            .runtime_info()
+            .ok_or("ZeroMQ daemon did not return negotiation metadata")?;
+        if info.active_contract_version != Some(2) {
+            return Err(format!(
+                "ZeroMQ daemon negotiated unsupported contract {:?}",
+                info.active_contract_version
+            ));
+        }
+        for capability in ["sdk.capability.batch_send", "sdk.capability.async_events"] {
+            if !info.capabilities.iter().any(|value| value == capability) {
+                return Err(format!(
+                    "ZeroMQ daemon is missing required capability {capability}"
+                ));
+            }
+        }
+        if self.reticulumd_rpc_endpoint.is_some() {
+            if let Err(error) = ensure_outbound_propagation_node_selected(self) {
+                eprintln!(
+                    "optional RPC propagation-node control initialization did not complete: {error}"
+                );
+            }
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -633,6 +688,12 @@ impl AppState {
         let mut command = Command::new(exe_path);
         if let Some(zmq_command_endpoint) = zmq_command_endpoint {
             command.arg("--zmq-rpc-command").arg(zmq_command_endpoint);
+            if cfg!(windows) {
+                // LXMF 0.7.1's Windows daemon exits when its default Unix RPC
+                // loop is unavailable. An OS-assigned loopback listener keeps
+                // the process alive; RCH does not use it as a data plane.
+                command.arg("--rpc").arg("127.0.0.1:0");
+            }
         } else if let Some(endpoint) = endpoint {
             command.arg("--rpc").arg(endpoint);
         }
@@ -2689,6 +2750,7 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
         if event_poll_transport == ReticulumdEventPollTransport::None {
             return;
         }
+        let rpc_projection_fallback = event_poll_transport == ReticulumdEventPollTransport::Rpc;
         let Some(source) = state.reticulumd_source.as_deref().map(ToOwned::to_owned) else {
             return;
         };
@@ -2798,7 +2860,7 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
             let should_poll_list_messages = last_list_message_poll.is_none_or(|last_poll| {
                 last_poll.elapsed() >= Duration::from_millis(RETICULUMD_LIST_MESSAGE_POLL_MS)
             });
-            if should_poll_list_messages && endpoint.is_some() {
+            if should_poll_list_messages && endpoint.is_some() && rpc_projection_fallback {
                 last_list_message_poll = Some(std::time::Instant::now());
                 let worker_state = state.clone();
                 let worker_endpoint = endpoint.clone().unwrap_or_default();
@@ -2846,7 +2908,7 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
             let should_poll_announces = event_poll_ok
                 && last_announce_list_poll
                     .is_none_or(|last_poll| last_poll.elapsed() >= announce_list_poll_interval);
-            if should_poll_announces && endpoint.is_some() {
+            if should_poll_announces && endpoint.is_some() && rpc_projection_fallback {
                 last_announce_list_poll = Some(std::time::Instant::now());
                 let worker_state = state.clone();
                 let worker_endpoint = endpoint.clone().unwrap_or_default();
@@ -2983,6 +3045,9 @@ pub fn shutdown_runtime_for_exit(state: &AppState) -> Result<(), String> {
         false,
         Duration::from_millis(RETICULUMD_INBOUND_WORKER_POLL_MS),
     );
+    if let Some(data_plane) = &state.lxmf_zmq_data_plane {
+        data_plane.shutdown().map_err(|error| error.to_string())?;
+    }
     state.stop_managed_reticulumd()?;
     Ok(())
 }
@@ -3236,14 +3301,71 @@ fn process_lxmf_zmq_event_worker_tick(
     source: &str,
     cursor: Option<String>,
 ) -> Result<ReticulumdEventWorkerReport, ApiError> {
-    let batch = poll_lxmf_zmq_events(
-        command_endpoint,
-        response_endpoint,
-        cursor,
-        RETICULUMD_EVENT_POLL_MAX,
-    )
-    .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let _ = (command_endpoint, response_endpoint);
+    let data_plane = state.lxmf_zmq_data_plane.as_ref().ok_or_else(|| {
+        ApiError::ServiceUnavailable("ZeroMQ data plane is unavailable".to_string())
+    })?;
+    let batch = data_plane
+        .poll_events(cursor, RETICULUMD_EVENT_POLL_MAX)
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    if batch
+        .events
+        .iter()
+        .any(|event| event.event_type == "StreamGap")
+    {
+        let recovered = recover_lxmf_zmq_history_after_stream_gap(state, source)?;
+        let _ = record_system_event(
+            state,
+            "reticulumd_event_stream_gap_recovered",
+            "Recovered retained LXMF messages after a ZeroMQ event stream gap",
+            json!({ "recovered_messages": recovered }),
+        );
+    }
     process_reticulumd_event_batch(state, source, batch)
+}
+
+fn recover_lxmf_zmq_history_after_stream_gap(
+    state: &AppState,
+    source: &str,
+) -> Result<usize, ApiError> {
+    let data_plane = state.lxmf_zmq_data_plane.as_ref().ok_or_else(|| {
+        ApiError::ServiceUnavailable("ZeroMQ data plane is unavailable".to_string())
+    })?;
+    let mut cursor = None;
+    let mut recovered = 0_usize;
+    for _ in 0..100 {
+        let page = data_plane
+            .message_history(LxmfMessageHistoryListRequest {
+                peer_id: None,
+                conversation_id: None,
+                include_receipts: Some(false),
+                limit: Some(1_000),
+                before_ts: None,
+                cursor: cursor.clone(),
+            })
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        for message in page
+            .messages
+            .iter()
+            .filter(|message| message.direction.eq_ignore_ascii_case("in"))
+        {
+            let value = serde_json::to_value(message)
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            if let Some(envelope) = reticulumd_message_to_envelope(&value, source)
+                .map_err(|error| ApiError::Internal(error.to_string()))?
+            {
+                process_reticulumd_inbound_envelope(state, &envelope)?;
+                record_reticulumd_inbound_worker_received(state, &envelope);
+                recovered = recovered.saturating_add(1);
+            }
+        }
+        let next_cursor = page.next_cursor;
+        if next_cursor.is_none() || next_cursor == cursor {
+            break;
+        }
+        cursor = next_cursor;
+    }
+    Ok(recovered)
 }
 
 fn process_reticulumd_event_batch(
@@ -9904,11 +10026,15 @@ fn openapi_yaml_single_quoted(value: &str) -> String {
 }
 
 async fn status_snapshot(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(status_payload(&state)?))
+    tokio::task::spawn_blocking(move || status_payload(&state).map(Json))
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
 }
 
 async fn runtime_diagnostics(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(runtime_diagnostics_payload(&state)?))
+    tokio::task::spawn_blocking(move || runtime_diagnostics_payload(&state).map(Json))
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
 }
 
 fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
@@ -10051,10 +10177,41 @@ fn lxmf_sdk_diagnostics_payload(
         recent_reconciliation_errors =
             recent_reconciliation_errors.split_off(recent_reconciliation_errors.len() - 10);
     }
+    let data_plane = state
+        .lxmf_zmq_data_plane
+        .as_ref()
+        .map(|plane| plane.stats());
+    let runtime_info = state
+        .lxmf_zmq_data_plane
+        .as_ref()
+        .and_then(|plane| plane.runtime_info());
     Ok(json!({
         "configured": state.lxmf_zmq_command_endpoint.is_some()
             && state.lxmf_zmq_response_endpoint.is_some(),
         "transport": "zeromq",
+        "data_plane": "zmq",
+        "actor": {
+            "lifecycle_managed": data_plane.is_some(),
+            "send_queue_capacity": data_plane.map(|stats| stats.send_queue_capacity),
+            "control_queue_capacity": data_plane.map(|stats| stats.control_queue_capacity),
+            "queue_depth": data_plane.map(|stats| stats.queue_depth),
+            "send_queue_depth": data_plane.map(|stats| stats.send_queue_depth),
+            "control_queue_depth": data_plane.map(|stats| stats.control_queue_depth),
+            "queue_max_depth": data_plane.map(|stats| stats.queue_max_depth),
+            "enqueued_total": data_plane.map(|stats| stats.enqueued_total),
+            "rejected_total": data_plane.map(|stats| stats.backpressure_total),
+            "completed_total": data_plane.map(|stats| stats.completed_total),
+            "failed_total": data_plane.map(|stats| stats.failed_total),
+            "last_queue_wait_ms": data_plane.map(|stats| stats.last_queue_wait_ms),
+            "max_queue_wait_ms": data_plane.map(|stats| stats.max_queue_wait_ms),
+            "oldest_wait_ms": data_plane.map(|stats| stats.oldest_wait_ms),
+            "last_batch_size": data_plane.map(|stats| stats.last_batch_size),
+            "max_batch_size": data_plane.map(|stats| stats.max_batch_size),
+            "last_response_latency_ms": data_plane.map(|stats| stats.last_response_latency_ms),
+            "max_response_latency_ms": data_plane.map(|stats| stats.max_response_latency_ms),
+            "partial_acceptance_total": data_plane.map(|stats| stats.partial_acceptance_total),
+            "sdk_rate_limited_total": data_plane.map(|stats| stats.rate_limited_total),
+        },
         "contract": {
             "version": 2,
             "release": "sdk-v2",
@@ -10066,6 +10223,7 @@ fn lxmf_sdk_diagnostics_payload(
                 "propagation_status"
             ]
         },
+        "negotiated": runtime_info,
         "event_cursor": {
             "cursor": inbound["last_event_cursor"].clone(),
             "stream_gaps_total": inbound["stream_gaps_total"].clone(),
@@ -10397,7 +10555,10 @@ fn persistence_diagnostics(state: &AppState) -> Result<Value, ApiError> {
             "schema_version": null,
         }));
     };
-    let store = RchSqliteStore::open(path.as_ref())
+    let store = RchSqliteStore::open_read_only(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let storage = store
+        .storage_stats()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     Ok(json!({
         "configured": true,
@@ -10406,6 +10567,10 @@ fn persistence_diagnostics(state: &AppState) -> Result<Value, ApiError> {
         "schema_version": store
             .schema_version()
             .map_err(|error| ApiError::Internal(error.to_string()))?,
+        "storage": storage,
+        "compaction_threshold_percent": 20.0,
+        "incremental_vacuum_enabled": storage.auto_vacuum == 2,
+        "compaction_recommended": storage.free_percent > 20.0,
     }))
 }
 
@@ -10871,9 +11036,20 @@ fn outbound_delivery_diagnostics_with_refresh(
 }
 
 fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
-    let Some(endpoint) = &state.reticulumd_rpc_endpoint else {
+    let data_plane = state.lxmf_zmq_data_plane.as_deref();
+    #[cfg(not(test))]
+    if data_plane.is_none() {
         return Ok(());
-    };
+    }
+    #[cfg(test)]
+    let mut rpc_test_client = state
+        .reticulumd_rpc_endpoint
+        .as_deref()
+        .map(ReticulumdRpcClient::new);
+    #[cfg(test)]
+    if data_plane.is_none() && rpc_test_client.is_none() {
+        return Ok(());
+    }
     let now_ms = unix_now_ms();
     let next_poll_ts_ms = *state
         .reticulumd_receipt_status_next_poll_ts_ms
@@ -10926,10 +11102,9 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
         *next_poll_ts_ms = now_ms.saturating_add(RETICULUMD_RECEIPT_STATUS_PASS_INTERVAL_MS);
     }
 
-    let mut client = ReticulumdRpcClient::new(endpoint.as_str());
-    let mut rpc_budget = RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS;
+    let mut status_budget = RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS;
     for (message, message_id, targets) in pending_messages {
-        if rpc_budget == 0 {
+        if status_budget == 0 {
             break;
         }
         if targets.is_empty() {
@@ -10952,7 +11127,23 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
             )
         });
         for target in poll_targets {
-            match reticulumd_delivery_status(&mut client, &target.message_id, &mut rpc_budget) {
+            let status_result = if let Some(data_plane) = data_plane {
+                zmq_delivery_status(data_plane, &target.message_id, &mut status_budget)
+            } else {
+                #[cfg(test)]
+                {
+                    test_rpc_delivery_status(
+                        rpc_test_client.as_mut().expect("test RPC client"),
+                        &target.message_id,
+                        &mut status_budget,
+                    )
+                }
+                #[cfg(not(test))]
+                {
+                    ReticulumdStatusPollResult::Stopped { error: None }
+                }
+            };
+            match status_result {
                 ReticulumdStatusPollResult::Found(delivery_status) => {
                     statuses.push(ReticulumdReceiptTarget {
                         message_id: target.message_id.clone(),
@@ -10972,11 +11163,11 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
                             &error,
                         )?;
                     }
-                    rpc_budget = 0;
+                    status_budget = 0;
                     break;
                 }
             }
-            if rpc_budget == 0 {
+            if status_budget == 0 {
                 break;
             }
         }
@@ -11170,6 +11361,20 @@ fn reticulumd_receipt_targets_for_message(
     targets
 }
 
+fn stored_reticulumd_receipt_targets(
+    message: &OutboundMessageRecord,
+) -> Vec<ReticulumdReceiptTarget> {
+    if message
+        .delivery_metadata
+        .get("reticulumd_receipt_targets")
+        .and_then(Value::as_array)
+        .is_none()
+    {
+        return Vec::new();
+    }
+    reticulumd_receipt_targets_for_message(message)
+}
+
 fn update_reticulumd_receipt_target_statuses(
     state: &AppState,
     message_id: &str,
@@ -11263,60 +11468,80 @@ enum ReticulumdStatusPollResult {
     Stopped { error: Option<String> },
 }
 
-#[derive(Debug)]
-struct ReticulumdStatusPollError {
-    code: Option<String>,
-    message: String,
-}
-
-impl ReticulumdStatusPollError {
-    fn transport(message: String) -> Self {
-        Self {
-            code: None,
-            message,
-        }
-    }
-
-    fn rpc(error: r3akt_rch_bridge::ReticulumdRpcError) -> Self {
-        let message = if error.message.trim().is_empty() {
-            error.code.clone()
-        } else {
-            format!("{}: {}", error.code, error.message)
-        };
-        Self {
-            code: Some(error.code),
-            message,
-        }
-    }
-
-    fn is_rate_limited(&self) -> bool {
-        self.code
-            .as_deref()
-            .is_some_and(|code| code == RETICULUMD_SECURITY_RATE_LIMIT_CODE)
-    }
-}
-
-fn reticulumd_delivery_status(
-    client: &mut ReticulumdRpcClient,
+fn zmq_delivery_status(
+    data_plane: &ZmqDataPlane,
     message_id: &str,
-    rpc_budget: &mut usize,
+    status_budget: &mut usize,
 ) -> ReticulumdStatusPollResult {
     for candidate in reticulumd_status_message_id_candidates(message_id) {
-        if *rpc_budget == 0 {
+        if *status_budget == 0 {
             return ReticulumdStatusPollResult::Stopped { error: None };
         }
-        *rpc_budget -= 1;
-        match reticulumd_delivery_status_for_message_id(client, &candidate) {
-            Ok(Some(status)) => return ReticulumdStatusPollResult::Found(status),
-            Ok(None) => {}
-            Err(error) if error.is_rate_limited() => {
-                return ReticulumdStatusPollResult::Stopped {
-                    error: Some(error.message),
-                };
+        *status_budget -= 1;
+        match data_plane.delivery_status(candidate) {
+            Ok(Some(snapshot)) => {
+                return ReticulumdStatusPollResult::Found(ReticulumdDeliveryStatus {
+                    receipt_status: delivery_snapshot_receipt_status(&snapshot),
+                    snapshot,
+                });
             }
+            Ok(None) => {}
             Err(error) => {
                 return ReticulumdStatusPollResult::Stopped {
-                    error: Some(error.message),
+                    error: Some(error.to_string()),
+                };
+            }
+        }
+    }
+    ReticulumdStatusPollResult::NotFound
+}
+
+#[cfg(test)]
+fn test_rpc_delivery_status(
+    client: &mut ReticulumdRpcClient,
+    message_id: &str,
+    status_budget: &mut usize,
+) -> ReticulumdStatusPollResult {
+    for candidate in reticulumd_status_message_id_candidates(message_id) {
+        if *status_budget == 0 {
+            return ReticulumdStatusPollResult::Stopped { error: None };
+        }
+        *status_budget -= 1;
+        let response = match client.call("sdk_status_v2", Some(json!({ "message_id": candidate })))
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return ReticulumdStatusPollResult::Stopped {
+                    error: Some(error.to_string()),
+                };
+            }
+        };
+        if let Some(error) = response.error {
+            return ReticulumdStatusPollResult::Stopped {
+                error: Some(reticulumd_rpc_error_text(&error)),
+            };
+        }
+        let Some(result) = response.result else {
+            continue;
+        };
+        match delivery_snapshot_from_status_result(&result, &candidate) {
+            Ok(Some(snapshot)) => {
+                let receipt_status = result
+                    .get("message")
+                    .unwrap_or(&result)
+                    .get("receipt_status")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| delivery_snapshot_receipt_status(&snapshot));
+                return ReticulumdStatusPollResult::Found(ReticulumdDeliveryStatus {
+                    receipt_status,
+                    snapshot,
+                });
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return ReticulumdStatusPollResult::Stopped {
+                    error: Some(error.to_string()),
                 };
             }
         }
@@ -11331,47 +11556,6 @@ fn reticulumd_status_message_id_candidates(message_id: &str) -> Vec<String> {
     } else {
         vec![format!("sdk-{message_id}"), message_id.to_string()]
     }
-}
-
-fn reticulumd_delivery_status_for_message_id(
-    client: &mut ReticulumdRpcClient,
-    message_id: &str,
-) -> Result<Option<ReticulumdDeliveryStatus>, ReticulumdStatusPollError> {
-    let response = client
-        .call("sdk_status_v2", Some(json!({ "message_id": message_id })))
-        .map_err(|error| ReticulumdStatusPollError::transport(error.to_string()))?;
-    if let Some(error) = response.error {
-        let error = ReticulumdStatusPollError::rpc(error);
-        if error.is_rate_limited() {
-            return Err(error);
-        }
-        return Ok(None);
-    }
-    let Some(result) = response.result.as_ref() else {
-        return Ok(None);
-    };
-    let snapshot = delivery_snapshot_from_status_result(result, message_id)
-        .map_err(|error| ReticulumdStatusPollError::transport(error.to_string()))?;
-    let Some(snapshot) = snapshot else {
-        return Ok(None);
-    };
-    let receipt_status = raw_reticulumd_receipt_status(result)
-        .unwrap_or_else(|| delivery_snapshot_receipt_status(&snapshot));
-    Ok(Some(ReticulumdDeliveryStatus {
-        receipt_status,
-        snapshot,
-    }))
-}
-
-fn raw_reticulumd_receipt_status(result: &Value) -> Option<String> {
-    result
-        .get("message")
-        .unwrap_or(result)
-        .get("receipt_status")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|status| !status.is_empty())
-        .map(str::to_string)
 }
 
 fn sdk_delivery_snapshot_metadata_json(snapshot: &LxmfDeliverySnapshot) -> Value {
@@ -11686,7 +11870,7 @@ fn mark_reticulumd_status_delivery_failure(
     receipt_status: &str,
 ) -> Result<(), ApiError> {
     let now_ms = unix_now_ms();
-    let (message, queued_propagation_fallback) = {
+    let message = {
         let mut messages = state
             .messages
             .write()
@@ -11700,139 +11884,30 @@ fn mark_reticulumd_status_delivery_failure(
         }) else {
             return Ok(());
         };
-        if rem_auto_status_failure_should_retry_auto(message, receipt_status) {
-            let attempts = outbound_attempts(message).saturating_add(1);
-            let retry_reason = rem_auto_status_failure_retry_reason(receipt_status);
-            let next_attempt_at_ts_ms = now_ms.saturating_add(
-                rem_auto_status_failure_retry_backoff_ms(message, receipt_status, attempts),
-            );
-            message.delivery_state = "queued".to_string();
-            message.delivery_method = "auto".to_string();
-            message.delivery_policy_reason = "rem_auto".to_string();
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "acked": false,
-                    "attempts": attempts,
-                    "rem_auto_failure_status": receipt_status,
-                    "rem_auto_failed_at_ts_ms": now_ms,
-                    "dispatch_status": "queued",
-                    "error": receipt_status,
-                    "receipt_pending": false,
-                    "receipt_status": receipt_status,
-                    "retry_reason": retry_reason,
-                    "retry_scheduled": true,
-                    "next_attempt_at_ts_ms": next_attempt_at_ts_ms,
-                }),
-            );
-            (message.clone(), false)
-        } else if rem_auto_status_failure_should_retry_propagated(message, receipt_status) {
-            let attempts = outbound_attempts(message).saturating_add(1);
-            let retry_reason = rem_auto_status_failure_retry_reason(receipt_status);
-            message.delivery_state = "queued".to_string();
-            message.delivery_method = "propagated".to_string();
-            message.delivery_policy_reason = "rem_auto_propagation_fallback".to_string();
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "acked": false,
-                    "attempts": attempts,
-                    "rem_auto_failure_status": receipt_status,
-                    "rem_auto_failed_at_ts_ms": now_ms,
-                    "dispatch_status": "queued",
-                    "error": receipt_status,
-                    "fallback_reason": "rem_auto_status_failure",
-                    "receipt_pending": false,
-                    "receipt_status": receipt_status,
-                    "retry_reason": retry_reason,
-                    "retry_scheduled": true,
-                    "next_attempt_at_ts_ms": now_ms,
-                }),
-            );
-            (message.clone(), true)
-        } else {
-            let direct_fallback_destinations =
-                direct_status_failure_propagation_destinations(message, receipt_status);
-            if direct_fallback_destinations.is_empty() {
-                message.delivery_state = "failed".to_string();
-                merge_delivery_metadata(
-                    &mut message.delivery_metadata,
-                    json!({
-                        "acked": false,
-                        "dispatch_status": "failed",
-                        "error": receipt_status,
-                        "receipt_pending": false,
-                        "receipt_status": receipt_status,
-                        "delivery_failed_ts_ms": now_ms,
-                    }),
-                );
-                (message.clone(), false)
-            } else {
-                let delivered_destinations = delivered_reticulumd_receipt_destinations(message);
-                let attempts = outbound_attempts(message).saturating_add(1);
-                message.delivery_state = "queued".to_string();
-                message.delivery_method = "propagated".to_string();
-                message.delivery_policy_reason = if is_rem_command_message(message) {
-                    "rem_direct_failure_fallback".to_string()
-                } else {
-                    "direct_failure_fallback".to_string()
-                };
-                clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
-                let mut fallback_metadata = json!({
-                    "acked": false,
-                    "attempts": attempts,
-                    "direct_failure_status": receipt_status,
-                    "direct_failed_at_ts_ms": now_ms,
-                    "dispatch_status": "queued",
-                    "error": receipt_status,
-                    "fallback_reason": "direct_status_failure",
-                    "receipt_pending": false,
-                    "receipt_status": receipt_status,
-                    "retry_reason": "direct_status_failure",
-                    "retry_scheduled": true,
-                    "next_attempt_at_ts_ms": now_ms,
-                    "target_destinations": direct_fallback_destinations,
-                });
-                if !delivered_destinations.is_empty() {
-                    merge_delivery_metadata(
-                        &mut fallback_metadata,
-                        json!({
-                            "delivered_destinations": delivered_destinations.clone(),
-                            "exclude_destinations": delivered_destinations,
-                            "partial_delivery": true,
-                        }),
-                    );
-                }
-                merge_delivery_metadata(&mut message.delivery_metadata, fallback_metadata);
-                (message.clone(), true)
-            }
-        }
+        message.delivery_state = "failed".to_string();
+        merge_delivery_metadata(
+            &mut message.delivery_metadata,
+            json!({
+                "acked": false,
+                "dispatch_status": "failed",
+                "error": receipt_status,
+                "receipt_pending": false,
+                "receipt_status": receipt_status,
+                "delivery_failed_ts_ms": now_ms,
+                "retry_scheduled": false,
+                "retry_owner": "reticulumd",
+            }),
+        );
+        message.clone()
     };
     persist_outbound_message_row(state, &message)?;
     broadcast_message_event(&state, &message);
-    if message.delivery_method == "direct" || queued_propagation_fallback {
+    if message.delivery_method == "direct" {
         if let Some(destination) = message.destination.as_deref() {
             mark_direct_delivery_failure(state, destination)?;
         }
-        if queued_propagation_fallback {
-            for destination in outbound_target_destinations(&message).unwrap_or_default() {
-                mark_direct_delivery_failure(state, destination.as_str())?;
-            }
-        }
     }
     let destination = message.destination.as_deref().unwrap_or("unknown");
-    if queued_propagation_fallback {
-        let _ = record_system_event(
-            state,
-            "message_propagation_queued",
-            &format!("Direct delivery failed; queued message for propagation to {destination}"),
-            outbound_delivery_callback_metadata(
-                outbound_delivery_propagation_metadata(&message, "direct_status_failure"),
-                "propagation_fallback",
-            ),
-        )?;
-        return Ok(());
-    }
     if normalized_delivery_state(&message) == "queued" {
         let retry_reason = message
             .delivery_metadata
@@ -11857,131 +11932,6 @@ fn mark_reticulumd_status_delivery_failure(
         ),
     )?;
     Ok(())
-}
-
-fn rem_auto_status_failure_should_retry_auto(
-    message: &OutboundMessageRecord,
-    receipt_status: &str,
-) -> bool {
-    if !matches!(message.delivery_method.as_str(), "auto" | "direct")
-        || !is_rem_command_message(message)
-    {
-        return false;
-    }
-    let attempts = outbound_attempts(message);
-    let max_attempts = outbound_max_attempts(message).max(5);
-    if attempts >= max_attempts {
-        return false;
-    }
-    let status = receipt_status.trim().to_ascii_lowercase();
-    rem_auto_status_failure_is_retryable(status.as_str())
-}
-
-fn rem_auto_status_failure_should_retry_propagated(
-    message: &OutboundMessageRecord,
-    receipt_status: &str,
-) -> bool {
-    if !matches!(message.delivery_method.as_str(), "auto" | "direct")
-        || !is_rem_command_message(message)
-        || message.destination.is_none()
-    {
-        return false;
-    }
-    let attempts = outbound_attempts(message);
-    let max_attempts = outbound_max_attempts(message).max(5);
-    if attempts < max_attempts {
-        return false;
-    }
-    let status = receipt_status.trim().to_ascii_lowercase();
-    rem_auto_status_failure_is_retryable(status.as_str())
-}
-
-fn direct_status_failure_propagation_destinations(
-    message: &OutboundMessageRecord,
-    receipt_status: &str,
-) -> Vec<String> {
-    if !matches!(message.delivery_method.as_str(), "auto" | "direct")
-        || message.destination.is_none()
-    {
-        if message.delivery_method != "direct"
-            || message.delivery_mode != DeliveryMode::Fanout
-            || is_rem_command_message(message)
-        {
-            return Vec::new();
-        }
-        let mut destinations = Vec::new();
-        let mut seen = HashSet::new();
-        for target in reticulumd_receipt_targets_for_message(message) {
-            let retryable = target
-                .status
-                .as_deref()
-                .is_some_and(direct_status_failure_is_retryable);
-            if !retryable {
-                continue;
-            }
-            if let Some(destination) = normalize_identity_key(target.destination.as_str()) {
-                if seen.insert(destination.clone()) {
-                    destinations.push(destination);
-                }
-            }
-        }
-        return destinations;
-    }
-    if is_rem_command_message(message) {
-        return Vec::new();
-    }
-    if !direct_status_failure_is_retryable(receipt_status) {
-        return Vec::new();
-    }
-    message
-        .destination
-        .as_deref()
-        .and_then(normalize_identity_key)
-        .into_iter()
-        .collect()
-}
-
-fn direct_status_failure_is_retryable(status: &str) -> bool {
-    let status = status.trim().to_ascii_lowercase();
-    reticulumd_status_is_retryable_link_failure(status.as_str())
-        || (status.starts_with("failed") && status.contains("peer not announced"))
-}
-
-fn rem_auto_status_failure_is_retryable(status: &str) -> bool {
-    reticulumd_status_is_retryable_link_failure(status)
-        || (status.starts_with("failed") && status.contains("peer not announced"))
-}
-
-fn reticulumd_status_is_retryable_link_failure(status: &str) -> bool {
-    status.starts_with("failed")
-        && (status.contains("link activation timed out")
-            || status.contains("attempting to create a link")
-            || status.contains("failed to create a link"))
-}
-
-fn rem_auto_status_failure_retry_reason(receipt_status: &str) -> &'static str {
-    if receipt_status
-        .trim()
-        .to_ascii_lowercase()
-        .contains("peer not announced")
-    {
-        "peer_not_announced"
-    } else {
-        "rem_auto_status_failure"
-    }
-}
-
-fn rem_auto_status_failure_retry_backoff_ms(
-    message: &OutboundMessageRecord,
-    receipt_status: &str,
-    attempts: u64,
-) -> i64 {
-    if rem_auto_status_failure_retry_reason(receipt_status) == "peer_not_announced" {
-        return i64::try_from(RETICULUMD_ANNOUNCE_LIST_POLL_MS)
-            .unwrap_or(i64::MAX)
-            .max(OUTBOUND_RETRY_BACKOFF_MS);
-    }
-    outbound_backoff_ms(message).saturating_mul(i64::try_from(attempts).unwrap_or(i64::MAX))
 }
 
 fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
@@ -12128,7 +12078,6 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
     let now_ms = unix_now_ms();
     let mut changed_messages = Vec::new();
     let mut timeout_events = Vec::new();
-    let mut retry_events = Vec::new();
     let mut messages = state
         .messages
         .write()
@@ -12138,44 +12087,6 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
             continue;
         }
         let attempts = outbound_attempts(message).saturating_add(1);
-        let max_attempts = outbound_effective_max_attempts_for_retry(message, false);
-        if (message.delivery_method != "propagated"
-            || is_rem_command_message(message)
-            || propagated_multi_recipient_allows_partial_success(message))
-            && outbound_retry_attempt_allowed(message, attempts, max_attempts)
-        {
-            let next_attempt_at_ts_ms = now_ms.saturating_add(
-                outbound_backoff_ms(message).saturating_mul(i64::try_from(attempts).unwrap_or(1)),
-            );
-            let exclude_destinations = delivered_reticulumd_receipt_destinations(message);
-            message.delivery_state = "queued".to_string();
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "acked": false,
-                    "attempts": attempts,
-                    "dispatch_status": "queued",
-                    "error": "delivery_receipt_timeout",
-                    "receipt_pending": false,
-                    "receipt_timeout": true,
-                    "receipt_timeout_at_ts_ms": now_ms,
-                    "retry_reason": "delivery_receipt_timeout",
-                    "retry_scheduled": true,
-                    "next_attempt_at_ts_ms": next_attempt_at_ts_ms,
-                    "exclude_destinations": exclude_destinations,
-                }),
-            );
-            retry_events.push((
-                message
-                    .destination
-                    .as_deref()
-                    .unwrap_or("broadcast")
-                    .to_string(),
-                outbound_delivery_retry_metadata(message, "delivery_receipt_timeout"),
-            ));
-            changed_messages.push(message.clone());
-            continue;
-        }
         let active_reticulumd_status = reticulumd_receipt_targets_for_message(message)
             .iter()
             .find_map(|target| {
@@ -12217,6 +12128,8 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
                 "receipt_pending": false,
                 "receipt_timeout": true,
                 "receipt_timeout_at_ts_ms": now_ms,
+                "retry_scheduled": false,
+                "retry_owner": "reticulumd",
             }),
         );
         timeout_events.push((
@@ -12241,34 +12154,7 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
             metadata,
         )?;
     }
-    for (destination, metadata) in retry_events {
-        let _ = record_system_event(
-            state,
-            "message_delivery_retrying",
-            &format!("Retrying message delivery to {destination}"),
-            metadata,
-        )?;
-    }
     Ok(())
-}
-
-fn delivered_reticulumd_receipt_destinations(message: &OutboundMessageRecord) -> Vec<String> {
-    reticulumd_receipt_targets_for_message(message)
-        .into_iter()
-        .filter(|target| {
-            target
-                .status
-                .as_deref()
-                .is_some_and(|status| status.eq_ignore_ascii_case("delivered"))
-        })
-        .filter_map(|target| {
-            if target.destination.trim().is_empty() {
-                None
-            } else {
-                Some(target.destination)
-            }
-        })
-        .collect()
 }
 
 fn outbound_delivery_failure_metadata(message: &OutboundMessageRecord, reason: &str) -> Value {
@@ -12873,7 +12759,8 @@ fn app_info_payload(state: &AppState) -> Value {
             .and_then(|path| config_section_value(path.as_ref(), "hub", &["display_name"])),
         reticulum_destination.as_deref(),
     );
-    let has_reticulum_runtime = state.reticulumd_rpc_endpoint.is_some();
+    let has_reticulum_runtime =
+        state.lxmf_zmq_data_plane.is_some() || state.reticulumd_rpc_endpoint.is_some();
     json!({
         "is_transport_enabled": has_reticulum_runtime,
         "is_connected_to_shared_instance": has_reticulum_runtime,
@@ -13027,14 +12914,16 @@ async fn internal_post_message(
     if text.is_empty() {
         return Err(ApiError::BadRequest("text is required".to_string()));
     }
-    let message = record_outbound_message(
-        &state,
-        text,
+    let message = record_outbound_message_deferred_async(
+        state.clone(),
+        text.to_string(),
         Some(topic_id.to_string()),
         None,
         Vec::new(),
         false,
-    )?;
+        json!({}),
+    )
+    .await?;
     let _ = state.internal_events.send(internal_message_published_event(
         topic_id,
         &message.message_id,
@@ -13623,7 +13512,7 @@ fn announce_capability_list(state: &AppState) -> Vec<&'static str> {
         "telemetry_relay",
         "attachments",
     ];
-    if state.reticulumd_rpc_endpoint.is_some() {
+    if state.lxmf_zmq_data_plane.is_some() || state.reticulumd_rpc_endpoint.is_some() {
         capabilities.push("federation");
     }
     capabilities
@@ -14012,6 +13901,7 @@ fn outbound_target_destinations_from_metadata(delivery_metadata: &Value) -> Opti
     Some(destinations)
 }
 
+#[cfg(test)]
 fn record_outbound_message(
     state: &AppState,
     content: &str,
@@ -14040,6 +13930,18 @@ fn record_outbound_message_with_metadata(
     compact_id: bool,
     delivery_metadata: Value,
 ) -> Result<OutboundMessageRecord, ApiError> {
+    #[cfg(test)]
+    let dispatch_mode =
+        if state.reticulumd_rpc_endpoint.is_some() && state.lxmf_zmq_data_plane.is_none() {
+            // Keep legacy RPC-only fixtures synchronous without allowing RPC into
+            // the production data plane. Production and every ZMQ-backed test use
+            // durable deferred admission.
+            OutboundDispatchMode::Inline
+        } else {
+            OutboundDispatchMode::Deferred
+        };
+    #[cfg(not(test))]
+    let dispatch_mode = OutboundDispatchMode::Deferred;
     record_outbound_message_with_metadata_mode(
         state,
         content,
@@ -14048,7 +13950,9 @@ fn record_outbound_message_with_metadata(
         attachments,
         compact_id,
         delivery_metadata,
-        OutboundDispatchMode::Inline,
+        // Northbound request tasks stop after durable SQLite admission. The
+        // bounded outbound worker owns all blocking transport acceptance work.
+        dispatch_mode,
     )
 }
 
@@ -14071,6 +13975,35 @@ fn record_outbound_message_deferred_with_metadata(
         delivery_metadata,
         OutboundDispatchMode::Deferred,
     )
+}
+
+async fn record_outbound_message_deferred_async(
+    state: AppState,
+    content: String,
+    topic_id: Option<String>,
+    destination: Option<String>,
+    attachments: Vec<ChatAttachmentRecord>,
+    compact_id: bool,
+    delivery_metadata: Value,
+) -> Result<OutboundMessageRecord, ApiError> {
+    let permit = Arc::clone(&state.sqlite_blocking_permits)
+        .acquire_owned()
+        .await
+        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        record_outbound_message_deferred_with_metadata(
+            &state,
+            &content,
+            topic_id,
+            destination,
+            attachments,
+            compact_id,
+            delivery_metadata,
+        )
+    })
+    .await
+    .map_err(|error| ApiError::Internal(error.to_string()))?
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14187,17 +14120,52 @@ fn record_outbound_message_with_metadata_mode(
     persist_outbound_message_row(state, &message)?;
     broadcast_message_event(state, &message);
     if effective_dispatch_mode == OutboundDispatchMode::Deferred {
+        let _ = record_system_event(
+            state,
+            "message_sent",
+            "Message admitted for deferred Rust northbound delivery",
+            json!({
+                "message_id": message.message_id,
+                "topic_id": message.topic_id,
+                "destination": message.destination,
+                "delivery_method": message.delivery_method,
+                "delivery_policy_reason": message.delivery_policy_reason,
+                "reticulumd_dispatch_count": 0,
+                "dispatch_status": "queued_deferred",
+            }),
+        );
         return Ok(message);
     }
     let dispatch_report = match dispatch_outbound_message(state, &message) {
         Ok(dispatch_report) => {
+            if !dispatch_report.retryable_rejected_destinations.is_empty() {
+                if let Some(retry_message) =
+                    schedule_zmq_pre_admission_retry(state, &message, &dispatch_report)?
+                {
+                    return Ok(retry_message);
+                }
+            }
+            if dispatch_report.count == 0 && !dispatch_report.rejected.is_empty() {
+                return mark_outbound_dispatch_failed(
+                    state,
+                    &message,
+                    format!(
+                        "ZMQ batch rejected all {} recipient(s) before admission",
+                        dispatch_report.rejected.len()
+                    ),
+                );
+            }
             let dispatch_count = dispatch_report.count;
             let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.deferred {
                 ("queued", "queued_deferred", false)
             } else if dispatch_count > 0 {
                 (
                     delivery_accepted_state(&message, dispatch_count),
-                    "accepted",
+                    if dispatch_report.rejected.is_empty() {
+                        "accepted"
+                    } else {
+                        "partially_accepted"
+                    },
                     false,
                 )
             } else {
@@ -14210,6 +14178,9 @@ fn record_outbound_message_with_metadata_mode(
                 "dispatch_status": dispatch_status,
                 "reticulumd_dispatch_count": dispatch_count,
                 "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
+                "zmq_partial_acceptance": dispatch_count > 0 && !dispatch_report.rejected.is_empty(),
+                "zmq_rejected_count": dispatch_report.rejected.len(),
+                "zmq_rejections": dispatch_report.rejected,
                 "receipt_pending": receipt_pending,
                 "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
                 "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
@@ -14311,7 +14282,7 @@ fn dispatch_outbound_message(
         }
         return Ok(DispatchReport::default());
     }
-    let (Some(command_endpoint), Some(response_endpoint)) = (
+    let (Some(_command_endpoint), Some(_response_endpoint)) = (
         state.lxmf_zmq_command_endpoint.as_deref(),
         state.lxmf_zmq_response_endpoint.as_deref(),
     ) else {
@@ -14321,9 +14292,9 @@ fn dispatch_outbound_message(
         .reticulumd_source
         .as_ref()
         .map_or("r3akt-rch-server", |value| value.as_str());
-    if should_select_outbound_propagation_node(message) {
-        ensure_outbound_propagation_node_selected(state, message)?;
-    }
+    let data_plane = state.lxmf_zmq_data_plane.as_ref().ok_or_else(|| {
+        ApiError::ServiceUnavailable("ZeroMQ data plane is unavailable".to_string())
+    })?;
     let destinations = outbound_destinations(state, message)?;
     let fanout_destination_count = destinations.len();
     let fanout_requires_child_ids = fanout_destination_count > 1;
@@ -14377,12 +14348,7 @@ fn dispatch_outbound_message(
             recipients,
         };
         let batch = lxmf_shared_batch_to_legacy_batch(shared_batch);
-        let deferred_dispatch = should_enqueue_without_waiting_for_zmq_response(message);
-        let batch_result = if deferred_dispatch {
-            enqueue_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
-        } else {
-            send_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
-        };
+        let batch_result = data_plane.send_batch(batch);
         let results = batch_result.map_err(|error| {
             let error = error.to_string();
             if message.delivery_method == "direct"
@@ -14394,17 +14360,7 @@ fn dispatch_outbound_message(
             }
             ApiError::ServiceUnavailable(error)
         })?;
-        for result in results {
-            report.count += 1;
-            report.receipts.push(ReticulumdReceiptTarget {
-                message_id: result.message_id,
-                destination: result.destination,
-                status: None,
-                sdk_snapshot: None,
-                last_poll_ts_ms: None,
-            });
-        }
-        report.deferred = deferred_dispatch;
+        record_zmq_batch_results(&mut report, results);
         return Ok(report);
     }
 
@@ -14422,7 +14378,7 @@ fn dispatch_outbound_message(
                 .cloned()
                 .unwrap_or_else(|| json!({})),
         );
-        if should_enqueue_without_waiting_for_zmq_response(message) {
+        if message.delivery_method == "propagated" {
             let batch = LxmfSdkOutboundBatch {
                 batch_id: format!(
                     "{}-single-{}",
@@ -14442,39 +14398,27 @@ fn dispatch_outbound_message(
                     correlation_id: message_id,
                 }],
             };
-            let results =
-                enqueue_lxmf_zmq_outbound_batch(command_endpoint, response_endpoint, batch)
-                    .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
-            for result in results {
-                report.count += 1;
-                report.receipts.push(ReticulumdReceiptTarget {
-                    message_id: result.message_id,
-                    destination: result.destination,
-                    status: None,
-                    sdk_snapshot: None,
-                    last_poll_ts_ms: None,
-                });
-            }
-            report.deferred = true;
+            let results = data_plane
+                .send_batch(batch)
+                .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+            record_zmq_batch_results(&mut report, results);
             continue;
         }
-        let dispatch_result = send_lxmf_zmq_outbound_message(
-            command_endpoint,
-            response_endpoint,
-            LxmfSdkOutboundMessage {
-                source: source.to_string(),
-                destination: destination.clone(),
-                title: outbound_lxmf_title(&dispatch_message).to_string(),
-                content: outbound_lxmf_content(&dispatch_message).to_string(),
-                fields,
-                delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
-                stamp_cost: lxmf_sdk_stamp_cost(message),
-                include_ticket: lxmf_sdk_include_ticket(message),
-                try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
-                correlation_id: message_id.clone(),
-            },
-        )
-        .map_err(|error| error.to_string());
+        let outbound = LxmfSdkOutboundMessage {
+            source: source.to_string(),
+            destination: destination.clone(),
+            title: outbound_lxmf_title(&dispatch_message).to_string(),
+            content: outbound_lxmf_content(&dispatch_message).to_string(),
+            fields,
+            delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
+            stamp_cost: lxmf_sdk_stamp_cost(message),
+            include_ticket: lxmf_sdk_include_ticket(message),
+            try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
+            correlation_id: message_id.clone(),
+        };
+        let dispatch_result = data_plane
+            .send_message(outbound)
+            .map_err(|error| error.to_string());
         let reticulumd_message_id = match dispatch_result {
             Ok(reticulumd_message_id) => reticulumd_message_id,
             Err(error) => {
@@ -14498,13 +14442,7 @@ fn dispatch_outbound_message(
     Ok(report)
 }
 
-fn ensure_outbound_propagation_node_selected(
-    state: &AppState,
-    message: &OutboundMessageRecord,
-) -> Result<(), ApiError> {
-    if message.delivery_method != "propagated" {
-        return Ok(());
-    }
+fn ensure_outbound_propagation_node_selected(state: &AppState) -> Result<(), ApiError> {
     let Some(endpoint) = state.reticulumd_rpc_endpoint.as_deref() else {
         return Ok(());
     };
@@ -14555,18 +14493,11 @@ fn ensure_outbound_propagation_node_selected(
     Ok(())
 }
 
-fn should_select_outbound_propagation_node(message: &OutboundMessageRecord) -> bool {
-    message.delivery_method == "propagated"
-        && !matches!(
-            message.delivery_mode,
-            DeliveryMode::Broadcast | DeliveryMode::Fanout
-        )
-}
-
 fn reticulumd_rpc_error_text(error: &r3akt_rch_bridge::ReticulumdRpcError) -> String {
     format!("{}: {}", error.code, error.message)
 }
 
+#[cfg(test)]
 fn should_enqueue_without_waiting_for_zmq_response(message: &OutboundMessageRecord) -> bool {
     message.delivery_method == "propagated"
 }
@@ -14659,7 +14590,7 @@ fn lxmf_sdk_include_ticket(message: &OutboundMessageRecord) -> Option<bool> {
 }
 
 fn lxmf_sdk_try_propagation_on_fail(message: &OutboundMessageRecord) -> bool {
-    message.delivery_method == "direct" && is_rem_command_message(message)
+    message.delivery_method == "direct"
 }
 
 #[derive(Default)]
@@ -14667,20 +14598,44 @@ struct DispatchReport {
     count: usize,
     deferred: bool,
     receipts: Vec<ReticulumdReceiptTarget>,
+    rejected: Vec<Value>,
+    retryable_rejected_destinations: Vec<String>,
+}
+
+fn record_zmq_batch_results(report: &mut DispatchReport, results: Vec<LxmfSdkOutboundBatchResult>) {
+    for result in results {
+        if result.accepted {
+            report.count += 1;
+            report.receipts.push(ReticulumdReceiptTarget {
+                message_id: result.message_id,
+                destination: result.destination,
+                status: None,
+                sdk_snapshot: None,
+                last_poll_ts_ms: None,
+            });
+        } else {
+            let destination = result.destination.clone();
+            if result.error.as_ref().is_some_and(|error| error.retryable) {
+                report
+                    .retryable_rejected_destinations
+                    .push(destination.clone());
+            }
+            report.rejected.push(json!({
+                "id": result.id,
+                "destination": destination,
+                "error": result.error,
+            }));
+        }
+    }
 }
 
 fn outbound_dispatch_message_id(
     message: &OutboundMessageRecord,
     destination: &str,
     index: usize,
-    fanout_requires_child_ids: bool,
+    _fanout_requires_child_ids: bool,
 ) -> String {
-    let attempt = outbound_attempts(message);
-    if attempt > 0 {
-        let suffix = dispatch_destination_suffix(destination, index);
-        return format!("{}-retry{attempt}-{suffix}", message.message_id);
-    }
-    if !fanout_requires_child_ids || index == 0 {
+    if message.delivery_mode == DeliveryMode::Targeted {
         return message.message_id.clone();
     }
     let suffix = dispatch_destination_suffix(destination, index);
@@ -14843,27 +14798,96 @@ fn process_due_outbound_retry_messages(
             continue;
         }
         if dispatch_report.count == 0 {
+            if !dispatch_report.retryable_rejected_destinations.is_empty() {
+                if let Some(retry_message) =
+                    schedule_zmq_pre_admission_retry(state, &message, &dispatch_report)?
+                {
+                    let _ = record_system_event(
+                        state,
+                        "message_delivery_retrying",
+                        "Retrying recipients rejected before LXMF admission",
+                        outbound_delivery_retry_metadata(
+                            &retry_message,
+                            "zmq_pre_admission_rejected",
+                        ),
+                    )?;
+                    continue;
+                }
+            }
+            report.failed += 1;
+            let failed_message = mark_outbound_dispatch_failed(
+                state,
+                &message,
+                format!(
+                    "ZMQ batch rejected all {} recipient(s) before admission",
+                    dispatch_report.rejected.len()
+                ),
+            )?;
+            let _ = record_system_event(
+                state,
+                "message_delivery_failed",
+                "LXMF rejected all recipients before admission",
+                outbound_delivery_failure_metadata(&failed_message, "zmq_pre_admission_rejected"),
+            )?;
             continue;
         }
+        if !dispatch_report.retryable_rejected_destinations.is_empty() {
+            if let Some(retry_message) =
+                schedule_zmq_pre_admission_retry(state, &message, &dispatch_report)?
+            {
+                report.dispatched += dispatch_report.count;
+                let _ = record_system_event(
+                    state,
+                    "message_delivery_retrying",
+                    "Retrying only recipients rejected before LXMF admission",
+                    outbound_delivery_retry_metadata(&retry_message, "zmq_partial_pre_admission"),
+                )?;
+                continue;
+            }
+        }
+        let mut receipt_targets = stored_reticulumd_receipt_targets(&message);
+        for target in &dispatch_report.receipts {
+            if !receipt_targets.iter().any(|existing| {
+                existing.message_id == target.message_id
+                    && existing.destination == target.destination
+            }) {
+                receipt_targets.push(target.clone());
+            }
+        }
+        let prior_dispatch_count = message
+            .delivery_metadata
+            .get("reticulumd_dispatch_count")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0);
+        let total_dispatch_count = prior_dispatch_count.saturating_add(dispatch_report.count);
         let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.deferred {
             ("queued", "queued_deferred", false)
         } else {
             (
-                delivery_accepted_state(&message, dispatch_report.count),
-                "accepted",
+                delivery_accepted_state(&message, total_dispatch_count),
+                if dispatch_report.rejected.is_empty() {
+                    "accepted"
+                } else {
+                    "partially_accepted"
+                },
                 false,
             )
         };
         let receipt_pending = reticulumd_receipt_pending_after_dispatch(
             &message,
-            dispatch_report.count,
+            total_dispatch_count,
             delivery_state,
         );
         let receipt_registered_ts_ms = unix_now_ms();
         let mut delivery_update = json!({
             "dispatch_status": dispatch_status,
-            "reticulumd_dispatch_count": dispatch_report.count,
-            "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
+            "reticulumd_dispatch_count": total_dispatch_count,
+            "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&receipt_targets),
+            "zmq_partial_acceptance": dispatch_report.count > 0 && !dispatch_report.rejected.is_empty(),
+            "zmq_rejected_count": dispatch_report.rejected.len(),
+            "zmq_rejections": dispatch_report.rejected,
+            "target_destinations": Value::Null,
             "receipt_pending": receipt_pending,
             "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
             "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
@@ -14871,11 +14895,11 @@ fn process_due_outbound_retry_messages(
         });
         merge_delivery_metadata(
             &mut delivery_update,
-            shared_fanout_delivery_metadata(&message, dispatch_report.count),
+            shared_fanout_delivery_metadata(&message, total_dispatch_count),
         );
         let success_metadata = outbound_delivery_metadata(
             &message,
-            dispatch_report.count,
+            total_dispatch_count,
             delivery_state == "propagated" || delivery_state == "delivered",
             delivery_update,
         );
@@ -15100,6 +15124,71 @@ fn schedule_outbound_retry_after_failure(
             "retry_scheduled": true,
             "rate_limit_retry_budget": rate_limit_retry_budget,
             "next_attempt_at_ts_ms": next_attempt_at_ts_ms,
+        }),
+    );
+    let retry_message = stored.clone();
+    drop(messages);
+    persist_outbound_message_row(state, &retry_message)?;
+    broadcast_message_event(state, &retry_message);
+    Ok(Some(retry_message))
+}
+
+fn schedule_zmq_pre_admission_retry(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+    dispatch_report: &DispatchReport,
+) -> Result<Option<OutboundMessageRecord>, ApiError> {
+    let attempts = outbound_attempts(message).saturating_add(1);
+    let max_attempts = outbound_effective_max_attempts_for_retry(message, false);
+    if !outbound_retry_attempt_allowed(message, attempts, max_attempts) {
+        return Ok(None);
+    }
+    let next_attempt_at_ts_ms = unix_now_ms().saturating_add(
+        outbound_backoff_ms(message).saturating_mul(i64::try_from(attempts).unwrap_or(i64::MAX)),
+    );
+    let mut receipt_targets = stored_reticulumd_receipt_targets(message);
+    for target in &dispatch_report.receipts {
+        if !receipt_targets.iter().any(|existing| {
+            existing.message_id == target.message_id && existing.destination == target.destination
+        }) {
+            receipt_targets.push(target.clone());
+        }
+    }
+    let previous_count = message
+        .delivery_metadata
+        .get("reticulumd_dispatch_count")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let accepted_count = previous_count.saturating_add(dispatch_report.count);
+    let mut messages = state
+        .messages
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let Some(stored) = messages
+        .iter_mut()
+        .find(|stored| stored.message_id == message.message_id)
+    else {
+        return Ok(None);
+    };
+    stored.delivery_state = "queued".to_string();
+    merge_delivery_metadata(
+        &mut stored.delivery_metadata,
+        json!({
+            "acked": false,
+            "attempts": attempts,
+            "dispatch_status": if accepted_count > 0 { "partially_accepted_retrying" } else { "queued" },
+            "error": "zmq_pre_admission_rejected",
+            "next_attempt_at_ts_ms": next_attempt_at_ts_ms,
+            "receipt_pending": false,
+            "reticulumd_dispatch_count": accepted_count,
+            "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&receipt_targets),
+            "retry_reason": "zmq_pre_admission_rejected",
+            "retry_scheduled": true,
+            "target_destinations": dispatch_report.retryable_rejected_destinations,
+            "zmq_partial_acceptance": accepted_count > 0,
+            "zmq_rejected_count": dispatch_report.rejected.len(),
+            "zmq_rejections": dispatch_report.rejected,
         }),
     );
     let retry_message = stored.clone();
@@ -16249,23 +16338,15 @@ fn client_should_appear_in_client_list(record: &ClientRecord) -> bool {
     client_has_network_announce(record)
 }
 
-fn refresh_reticulumd_announces_for_state(state: &AppState) {
-    if let Some(endpoint) = state.reticulumd_rpc_endpoint.as_deref() {
-        let _ = import_reticulumd_announces_with_options(state, endpoint, 5000, false);
-    }
-}
-
+#[cfg(test)]
 fn broadcast_client_records_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiError> {
-    broadcast_client_records_for_state_with_refresh(state, true)
+    broadcast_client_records_for_state_with_refresh(state, false)
 }
 
 fn broadcast_client_records_for_state_with_refresh(
     state: &AppState,
-    refresh_announces: bool,
+    _refresh_announces: bool,
 ) -> Result<Vec<ClientRecord>, ApiError> {
-    if refresh_announces {
-        refresh_reticulumd_announces_for_state(state);
-    }
     let mut records = client_records_for_state(state)?;
     records.sort_by(|left, right| left.identity.cmp(&right.identity));
     Ok(records)
@@ -16273,15 +16354,9 @@ fn broadcast_client_records_for_state_with_refresh(
 
 fn broadcast_outbound_client_records_for_message(
     state: &AppState,
-    message: &OutboundMessageRecord,
+    _message: &OutboundMessageRecord,
 ) -> Result<Vec<ClientRecord>, ApiError> {
-    if should_enqueue_without_waiting_for_zmq_response(message) {
-        return broadcast_outbound_client_records_for_state_with_refresh(state, false);
-    }
-    broadcast_outbound_client_records_for_state_with_refresh(
-        state,
-        !should_enqueue_without_waiting_for_zmq_response(message),
-    )
+    broadcast_outbound_client_records_for_state_with_refresh(state, false)
 }
 
 fn broadcast_outbound_client_records_for_state_with_refresh(
@@ -16290,11 +16365,8 @@ fn broadcast_outbound_client_records_for_state_with_refresh(
 ) -> Result<Vec<ClientRecord>, ApiError> {
     let now = unix_now_ms();
     let routing_context = outbound_destination_routing_context(state)?;
-    let records = if refresh_announces {
-        broadcast_client_records_for_state(state)?
-    } else {
-        broadcast_client_records_for_state_with_refresh(state, false)?
-    };
+    let _ = refresh_announces;
+    let records = broadcast_client_records_for_state_with_refresh(state, false)?;
     Ok(records
         .into_iter()
         .filter(|client| {
@@ -16377,6 +16449,23 @@ fn outbound_destinations(
             None => topic_subscriber_destinations(state, topic_id)?,
         };
         for destination in topic_destinations {
+            let delivery_destination = outbound_destination_for_message_with_context(
+                message,
+                &destination,
+                &routing_context,
+            );
+            if !destination_excluded(&excluded, &destination, &delivery_destination)
+                && outbound_identity_allowed(state, &destination, &delivery_destination)
+            {
+                push_unique_destination_with_seen(
+                    &mut destinations,
+                    &mut seen_destinations,
+                    delivery_destination,
+                );
+            }
+        }
+    } else if let Some(target_destinations) = outbound_target_destinations(message) {
+        for destination in target_destinations {
             let delivery_destination = outbound_destination_for_message_with_context(
                 message,
                 &destination,
@@ -20079,15 +20168,16 @@ async fn send_message(
     let content = payload.content;
     let topic_id = normalize_optional_text(payload.topic_id);
     let destination = normalize_optional_text(payload.destination);
-    let _ = record_outbound_message_deferred_with_metadata(
-        &state,
-        &content,
+    let _ = record_outbound_message_deferred_async(
+        state.clone(),
+        content,
         topic_id,
         destination,
         Vec::new(),
         false,
         json!({}),
-    )?;
+    )
+    .await?;
     Ok(Json(json!({ "sent": true })))
 }
 
@@ -20241,15 +20331,16 @@ async fn send_chat_message(
             &attachment_files,
         )?,
     });
-    let message = record_outbound_message_deferred_with_metadata(
-        &state,
-        &content,
+    let message = record_outbound_message_deferred_async(
+        state.clone(),
+        content,
         topic_id,
         destination,
         attachments,
         true,
         delivery_metadata,
-    )?;
+    )
+    .await?;
     let response = chat_message_payload(message.clone());
     Ok(Json(response))
 }
@@ -24040,23 +24131,27 @@ fn start_runtime_services(state: &AppState) -> Result<(), ApiError> {
 }
 
 async fn control_announce(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    let announce_id = if let Some(endpoint) = &state.reticulumd_rpc_endpoint {
-        let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint.as_str());
-        let response = control_announce_call_with_fallback(&mut client)?;
-        response
-            .result
-            .as_ref()
-            .and_then(|result| result.get("announce_id"))
-            .cloned()
-            .unwrap_or(Value::Null)
-    } else if let (Some(command_endpoint), Some(response_endpoint)) = (
-        &state.lxmf_zmq_command_endpoint,
-        &state.lxmf_zmq_response_endpoint,
-    ) {
-        announce_lxmf_zmq_identity(command_endpoint.as_str(), response_endpoint.as_str())
+    let announce_id = if let Some(data_plane) = &state.lxmf_zmq_data_plane {
+        let data_plane = Arc::clone(data_plane);
+        tokio::task::spawn_blocking(move || data_plane.announce_identity())
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?
             .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?
             .map(Value::String)
             .unwrap_or(Value::Null)
+    } else if let Some(endpoint) = &state.reticulumd_rpc_endpoint {
+        let endpoint = Arc::clone(endpoint);
+        tokio::task::spawn_blocking(move || {
+            let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint.as_str());
+            control_announce_call_with_fallback(&mut client)
+        })
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))??
+        .result
+        .as_ref()
+        .and_then(|result| result.get("announce_id"))
+        .cloned()
+        .unwrap_or(Value::Null)
     } else {
         return Err(ApiError::ServiceUnavailable(
             "Announce unavailable".to_string(),
@@ -26436,14 +26531,17 @@ async fn handle_message_socket(
                             .and_then(Value::as_str)
                             .map(str::to_string),
                     );
-                    match record_outbound_message(
-                        &state,
-                        content,
+                    match record_outbound_message_deferred_async(
+                        state.clone(),
+                        content.to_string(),
                         topic_id,
                         destination,
                         Vec::new(),
                         false,
-                    ) {
+                        json!({}),
+                    )
+                    .await
+                    {
                         Ok(_) => {
                             let _ = send_ws_json(
                                 &mut socket,
@@ -26660,6 +26758,8 @@ mod tests {
     use std::collections::HashSet;
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpListener as StdTcpListener};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -26672,10 +26772,9 @@ mod tests {
     use r3akt_rch_bridge::{ReticulumdRpcError, ReticulumdRpcRequest, ReticulumdRpcResponse};
     use r3akt_rch_core::{FileAttachmentRecord, RchCore, RchSqliteStore};
     use r3akt_transport_rns::{
-        LxmfRsTransport, LxmfSdkOutboundBatch, LxmfSdkOutboundBatchMessage,
-        ReticulumdAnnounceRecord, ReticulumdEventBatch, ReticulumdEventRecord,
-        ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport, poll_lxmf_zmq_events,
-        send_lxmf_zmq_outbound_batch,
+        LxmfMessageHistoryListRequest, LxmfRsTransport, LxmfSdkOutboundBatch,
+        LxmfSdkOutboundBatchMessage, ReticulumdAnnounceRecord, ReticulumdEventBatch,
+        ReticulumdEventRecord, ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport, ZmqDataPlane,
     };
     use rusqlite::Connection;
     use serde::Serialize;
@@ -47025,7 +47124,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "1");
+        assert_eq!(payload["persistence"]["schema_version"], "2");
         assert!(
             payload["persistence"]["path"]
                 .as_str()
@@ -50249,18 +50348,21 @@ mod tests {
         let run_id = Uuid::new_v4().to_string();
         let expected_by_receiver =
             load_expected_content_by_receiver(&run_id, requested_messages, receiver_count);
+        let received_progress = Arc::new(AtomicUsize::new(0));
         let poll_started = Instant::now();
         let mut receiver_threads = Vec::with_capacity(receiver_count);
         for receiver_index in 0..receiver_count {
             let command_endpoint = command_endpoints[receiver_index + 1].clone();
             let response_endpoint = receiver_response_endpoints[receiver_index].clone();
             let expected = expected_by_receiver[receiver_index].clone();
+            let received_progress = Arc::clone(&received_progress);
             receiver_threads.push(thread::spawn(move || {
                 poll_zmq_load_receiver(
                     receiver_index,
                     command_endpoint,
                     response_endpoint,
                     expected,
+                    received_progress,
                     poll_attempts,
                     poll_delay_ms,
                 )
@@ -50269,38 +50371,85 @@ mod tests {
         thread::sleep(Duration::from_millis(250));
 
         let send_started = Instant::now();
-        let mut sender_threads = Vec::with_capacity(sender_clients);
-        for (sender_index, response_endpoint) in sender_response_endpoints
-            .iter()
-            .take(sender_clients)
-            .cloned()
-            .enumerate()
-        {
-            let command_endpoint = command_endpoints[0].clone();
-            let source = destinations[0].clone();
-            let destinations = destinations[1..=receiver_count].to_vec();
-            let run_id = run_id.clone();
-            sender_threads.push(thread::spawn(move || {
-                send_zmq_load_messages(
-                    sender_index,
-                    sender_clients,
-                    requested_messages,
-                    receiver_count,
-                    command_endpoint,
-                    response_endpoint,
-                    source,
-                    destinations,
-                    run_id,
-                )
-            }));
-        }
-
         let mut accepted_count = 0usize;
         let mut first_send_error = None;
-        for sender in sender_threads {
-            let result = sender.join().expect("join ZeroMQ load sender");
-            accepted_count = accepted_count.saturating_add(result.accepted);
-            first_send_error = first_send_error.or(result.first_error);
+        let sender_data_planes = sender_response_endpoints
+            .iter()
+            .take(sender_clients)
+            .map(|response_endpoint| {
+                ZmqDataPlane::new(command_endpoints[0].clone(), response_endpoint.clone())
+                    .map(Arc::new)
+                    .expect("create persistent ZeroMQ load sender")
+            })
+            .collect::<Vec<_>>();
+        let wave_size = live_env_usize("R3AKT_ZMQ_LOAD_WAVE_SIZE", 800).clamp(1, 800);
+        let wave_delay_ms = live_env_u64("R3AKT_ZMQ_LOAD_WAVE_DELAY_MS", 0);
+        for wave_start in (0..requested_messages).step_by(wave_size) {
+            let wave_end = wave_start.saturating_add(wave_size).min(requested_messages);
+            let accepted_before_wave = accepted_count;
+            let mut sender_threads = Vec::with_capacity(sender_clients);
+            for (sender_index, data_plane) in sender_data_planes.iter().cloned().enumerate() {
+                let source = destinations[0].clone();
+                let destinations = destinations[1..=receiver_count].to_vec();
+                let run_id = run_id.clone();
+                sender_threads.push(thread::spawn(move || {
+                    send_zmq_load_messages(
+                        sender_index,
+                        sender_clients,
+                        wave_start,
+                        wave_end,
+                        receiver_count,
+                        data_plane,
+                        source,
+                        destinations,
+                        run_id,
+                    )
+                }));
+            }
+            for sender in sender_threads {
+                let result = sender.join().expect("join ZeroMQ load sender");
+                accepted_count = accepted_count.saturating_add(result.accepted);
+                first_send_error = first_send_error.or(result.first_error);
+            }
+            println!(
+                "live_zmq_load_wave phase=accepted range={wave_start}..{wave_end} accepted_total={accepted_count} received_total={}",
+                received_progress.load(Ordering::Relaxed)
+            );
+            let expected_wave_acceptance = wave_end.saturating_sub(wave_start);
+            let wave_acceptance = accepted_count.saturating_sub(accepted_before_wave);
+            if wave_acceptance != expected_wave_acceptance {
+                first_send_error.get_or_insert_with(|| {
+                    format!(
+                        "wave {wave_start}..{wave_end} accepted {wave_acceptance}/{expected_wave_acceptance}"
+                    )
+                });
+                break;
+            }
+            let wave_deadline = Instant::now() + Duration::from_secs(60);
+            while received_progress.load(Ordering::Relaxed) < accepted_count
+                && Instant::now() < wave_deadline
+            {
+                thread::sleep(Duration::from_millis(25));
+            }
+            if received_progress.load(Ordering::Relaxed) < accepted_count {
+                first_send_error.get_or_insert_with(|| {
+                    format!(
+                        "receiver projection did not catch up after wave {wave_start}..{wave_end}: accepted={accepted_count} received={}",
+                        received_progress.load(Ordering::Relaxed)
+                    )
+                });
+                break;
+            }
+            println!(
+                "live_zmq_load_wave phase=received range={wave_start}..{wave_end} accepted_total={accepted_count} received_total={}",
+                received_progress.load(Ordering::Relaxed)
+            );
+            if wave_delay_ms > 0 {
+                thread::sleep(Duration::from_millis(wave_delay_ms));
+            }
+        }
+        for data_plane in sender_data_planes {
+            let _ = data_plane.shutdown();
         }
         let send_elapsed = send_started.elapsed();
 
@@ -50425,19 +50574,22 @@ mod tests {
     fn send_zmq_load_messages(
         sender_index: usize,
         sender_clients: usize,
-        requested_messages: usize,
+        sequence_start: usize,
+        sequence_end: usize,
         receiver_count: usize,
-        command_endpoint: String,
-        response_endpoint: String,
+        data_plane: Arc<ZmqDataPlane>,
         source: String,
         destinations: Vec<String>,
         run_id: String,
     ) -> ZmqLoadSendResult {
         let mut accepted = 0usize;
         let mut first_error = None;
-        let mut batch_index = 0usize;
+        let mut batch_index = sequence_start / ZMQ_LOAD_BATCH_CHUNK_SIZE;
+        let batch_delay_ms = live_env_u64("R3AKT_ZMQ_LOAD_BATCH_DELAY_MS", 250);
         let mut pending = Vec::with_capacity(ZMQ_LOAD_BATCH_CHUNK_SIZE);
-        for sequence in (sender_index..requested_messages).step_by(sender_clients) {
+        for sequence in
+            (sequence_start.saturating_add(sender_index)..sequence_end).step_by(sender_clients)
+        {
             let receiver_index = sequence % receiver_count;
             let content = load_content(&run_id, sequence, receiver_index);
             pending.push(LxmfSdkOutboundBatchMessage {
@@ -50457,9 +50609,8 @@ mod tests {
             });
             if pending.len() >= ZMQ_LOAD_BATCH_CHUNK_SIZE {
                 accepted = accepted.saturating_add(send_zmq_load_batch(
+                    data_plane.as_ref(),
                     &mut first_error,
-                    command_endpoint.as_str(),
-                    response_endpoint.as_str(),
                     source.as_str(),
                     run_id.as_str(),
                     sender_index,
@@ -50467,13 +50618,15 @@ mod tests {
                     std::mem::take(&mut pending),
                 ));
                 batch_index = batch_index.saturating_add(1);
+                if batch_delay_ms > 0 {
+                    thread::sleep(Duration::from_millis(batch_delay_ms));
+                }
             }
         }
         if !pending.is_empty() {
             accepted = accepted.saturating_add(send_zmq_load_batch(
+                data_plane.as_ref(),
                 &mut first_error,
-                command_endpoint.as_str(),
-                response_endpoint.as_str(),
                 source.as_str(),
                 run_id.as_str(),
                 sender_index,
@@ -50489,9 +50642,8 @@ mod tests {
 
     #[allow(clippy::too_many_arguments)]
     fn send_zmq_load_batch(
+        data_plane: &ZmqDataPlane,
         first_error: &mut Option<String>,
-        command_endpoint: &str,
-        response_endpoint: &str,
         source: &str,
         run_id: &str,
         sender_index: usize,
@@ -50499,16 +50651,22 @@ mod tests {
         messages: Vec<LxmfSdkOutboundBatchMessage>,
     ) -> usize {
         let message_count = messages.len();
-        match send_lxmf_zmq_outbound_batch(
-            command_endpoint.to_string(),
-            response_endpoint.to_string(),
-            LxmfSdkOutboundBatch {
-                batch_id: format!("load-{run_id}-sender-{sender_index}-batch-{batch_index}"),
-                source: source.to_string(),
-                messages,
-            },
-        ) {
-            Ok(results) => results.len(),
+        match data_plane.send_batch(LxmfSdkOutboundBatch {
+            batch_id: format!("load-{run_id}-sender-{sender_index}-batch-{batch_index}"),
+            source: source.to_string(),
+            messages,
+        }) {
+            Ok(results) => {
+                if let Some(rejected) = results.iter().find(|result| !result.accepted) {
+                    first_error.get_or_insert_with(|| {
+                        format!(
+                            "sender {sender_index} batch {batch_index} rejected id={} destination={} error={:?}",
+                            rejected.id, rejected.destination, rejected.error
+                        )
+                    });
+                }
+                results.iter().filter(|result| result.accepted).count()
+            }
             Err(error) => {
                 first_error.get_or_insert_with(|| {
                     format!(
@@ -50525,32 +50683,61 @@ mod tests {
         command_endpoint: String,
         response_endpoint: String,
         mut expected: HashSet<String>,
+        received_progress: Arc<AtomicUsize>,
         poll_attempts: usize,
         poll_delay_ms: u64,
     ) -> ZmqLoadReceiverResult {
         let expected_count = expected.len();
         let mut cursor = None;
         let mut last_error = None;
+        let data_plane = match ZmqDataPlane::new(command_endpoint, response_endpoint) {
+            Ok(data_plane) => data_plane,
+            Err(error) => {
+                return ZmqLoadReceiverResult {
+                    receiver_index,
+                    expected: expected_count,
+                    received: 0,
+                    remaining_samples: expected.into_iter().take(5).collect(),
+                    last_error: Some(error.to_string()),
+                };
+            }
+        };
         for _ in 0..poll_attempts {
-            match poll_lxmf_zmq_events(
-                command_endpoint.clone(),
-                response_endpoint.clone(),
-                cursor.clone(),
-                crate::RETICULUMD_EVENT_POLL_MAX,
-            ) {
+            match data_plane.poll_events(cursor.clone(), crate::RETICULUMD_EVENT_POLL_MAX) {
                 Ok(batch) => {
                     cursor = batch.next_cursor.clone();
-                    remove_seen_load_messages(&mut expected, &batch);
+                    let received = remove_seen_load_messages(&mut expected, &batch);
+                    received_progress.fetch_add(received, Ordering::Relaxed);
+                    if received == 0 && !expected.is_empty() {
+                        match recover_zmq_load_messages_from_history(&data_plane, &mut expected) {
+                            Ok(recovered) => {
+                                received_progress.fetch_add(recovered, Ordering::Relaxed);
+                            }
+                            Err(error) => last_error = Some(error),
+                        }
+                    }
                     if expected.is_empty() {
                         break;
                     }
                 }
                 Err(error) => {
-                    last_error = Some(error.to_string());
+                    let error = error.to_string();
+                    eprintln!(
+                        "live_zmq_load_receiver_error receiver={} cursor={:?} error={error}",
+                        receiver_index + 1,
+                        cursor
+                    );
+                    last_error = Some(error);
+                    // Re-negotiate from the daemon's current retained event window.
+                    // Expected-message de-duplication makes replay safe and lets the
+                    // gate prove stream-gap recovery instead of stalling forever on
+                    // an expired cursor.
+                    cursor = None;
                 }
             }
             thread::sleep(Duration::from_millis(poll_delay_ms));
         }
+        let _ = data_plane.shutdown();
         let received = expected_count.saturating_sub(expected.len());
         let remaining_samples = expected.into_iter().take(5).collect::<Vec<_>>();
         ZmqLoadReceiverResult {
@@ -50562,7 +50749,11 @@ mod tests {
         }
     }
 
-    fn remove_seen_load_messages(expected: &mut HashSet<String>, batch: &ReticulumdEventBatch) {
+    fn remove_seen_load_messages(
+        expected: &mut HashSet<String>,
+        batch: &ReticulumdEventBatch,
+    ) -> usize {
+        let mut removed = 0;
         for event in &batch.events {
             if !matches!(
                 event.event_type.as_str(),
@@ -50571,9 +50762,33 @@ mod tests {
                 continue;
             }
             if let Some(content) = load_event_content(event) {
-                expected.remove(content);
+                removed += usize::from(expected.remove(content));
             }
         }
+        removed
+    }
+
+    fn recover_zmq_load_messages_from_history(
+        data_plane: &ZmqDataPlane,
+        expected: &mut HashSet<String>,
+    ) -> Result<usize, String> {
+        let request: LxmfMessageHistoryListRequest = serde_json::from_value(json!({
+            "peer_id": null,
+            "conversation_id": null,
+            "include_receipts": false,
+            "limit": 1000,
+            "before_ts": null,
+            "cursor": null
+        }))
+        .map_err(|error| error.to_string())?;
+        let page = data_plane
+            .message_history(request)
+            .map_err(|error| error.to_string())?;
+        let before = expected.len();
+        for message in page.messages {
+            expected.remove(message.content.as_str());
+        }
+        Ok(before.saturating_sub(expected.len()))
     }
 
     fn load_event_content(event: &ReticulumdEventRecord) -> Option<&str> {
@@ -51214,10 +51429,7 @@ mod tests {
         assert_eq!(report.failed, 0);
         let request = rpc_server.join().expect("rpc server");
         let params = request.params.expect("params");
-        assert_eq!(
-            params["id"],
-            format!("sdk-{}-retry1-targetdestin", message.message_id)
-        );
+        assert_eq!(params["id"], format!("sdk-{}", message.message_id));
         assert_eq!(params["destination"], "target-destination");
         assert_eq!(params["content"], "worker retry");
 
@@ -51317,7 +51529,7 @@ mod tests {
     }
 
     #[test]
-    fn outbound_retry_worker_marks_group_chat_shared_fanout_metadata() {
+    fn outbound_retry_worker_does_not_fabricate_group_chat_batch_acceptance() {
         let state = crate::AppState::default().with_lxmf_zmq_sdk(
             unused_zmq_endpoint_for_rch_test(),
             unused_zmq_endpoint_for_rch_test(),
@@ -51368,23 +51580,19 @@ mod tests {
             .find(|stored| stored.message_id == message.message_id)
             .expect("stored message");
         assert_eq!(stored.delivery_state, "queued");
-        assert_eq!(
-            stored.delivery_metadata["dispatch_status"],
-            "queued_deferred"
+        assert_eq!(stored.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        assert!(
+            stored
+                .delivery_metadata
+                .get("reticulumd_dispatch_count")
+                .is_none()
         );
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
-        assert_eq!(stored.delivery_metadata["reticulumd_dispatch_count"], 2);
-        assert_eq!(
-            stored.delivery_metadata["fanout_payload_model"],
-            "shared_common_payload_v1"
-        );
-        assert_eq!(
-            stored.delivery_metadata["shared_payload_recipient_count"],
-            2
-        );
-        assert_eq!(
-            stored.delivery_metadata["shared_payload_expanded_at"],
-            "lxmf_legacy_batch_boundary"
+        assert!(
+            stored
+                .delivery_metadata
+                .get("fanout_payload_model")
+                .is_none()
         );
     }
 
@@ -51442,22 +51650,17 @@ mod tests {
             .expect("stored message")
             .clone();
         assert_eq!(stored.delivery_state, "queued");
-        assert_eq!(
-            stored.delivery_metadata["dispatch_status"],
-            "queued_deferred"
-        );
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
-        assert_eq!(stored.delivery_metadata["reticulumd_dispatch_count"], 2);
-        assert_eq!(
-            stored.delivery_metadata["reticulumd_receipt_targets"][0]["status"],
-            "pending"
+        assert_eq!(stored.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        assert!(
+            stored
+                .delivery_metadata
+                .get("reticulumd_dispatch_count")
+                .is_none()
         );
         let payload = crate::chat_message_payload(stored);
         assert_eq!(payload["State"], "queued");
-        assert_eq!(
-            payload["DeliveryMetadata"]["dispatch_status"],
-            "queued_deferred"
-        );
+        assert_eq!(payload["DeliveryMetadata"]["dispatch_status"], "queued");
         let events = state.system_events.read().expect("events");
         assert!(
             events
@@ -51541,13 +51744,10 @@ mod tests {
             .find(|stored| stored.message_id == message.message_id)
             .expect("updated message");
         assert_eq!(updated.delivery_state, "queued");
-        assert_eq!(
-            updated.delivery_metadata["dispatch_status"],
-            "queued_deferred"
-        );
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
-        assert!(updated.delivery_metadata.get("error").is_none());
-        assert!(updated.delivery_metadata.get("retry_reason").is_none());
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
+        assert!(updated.delivery_metadata.get("error").is_some());
+        assert!(updated.delivery_metadata.get("retry_reason").is_some());
     }
 
     #[test]
@@ -53299,7 +53499,7 @@ mod tests {
     }
 
     #[test]
-    fn rem_command_receipt_timeout_uses_extended_retry_budget() {
+    fn rem_command_receipt_timeout_does_not_resend_after_acceptance() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-receipt-timeout-retry-{}.db",
             Uuid::new_v4()
@@ -53345,25 +53545,19 @@ mod tests {
 
         let messages = state.messages.read().expect("messages");
         let updated = messages.first().expect("message");
-        assert_eq!(updated.delivery_state, "queued");
+        assert_eq!(updated.delivery_state, "failed");
         assert_eq!(updated.delivery_metadata["attempts"], 3);
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(
-            updated.delivery_metadata["retry_reason"],
-            "delivery_receipt_timeout"
-        );
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(updated.delivery_metadata["retry_owner"], "reticulumd");
         assert_eq!(updated.delivery_metadata["receipt_pending"], false);
         drop(messages);
 
         let events = state.system_events.read().expect("events");
-        let retry_event = events
+        let failure_event = events
             .iter()
-            .find(|event| event.event_type == "message_delivery_retrying")
-            .expect("retry event");
-        assert_eq!(
-            retry_event.metadata["retry_reason"],
-            "delivery_receipt_timeout"
-        );
+            .find(|event| event.event_type == "message_delivery_failed")
+            .expect("failure event");
+        assert_eq!(failure_event.event_type, "message_delivery_failed");
         drop(events);
 
         let _ = std::fs::remove_file(db_path);
@@ -56539,7 +56733,7 @@ mod tests {
     }
 
     #[test]
-    fn reticulumd_direct_status_failure_marks_generic_cooldown() {
+    fn reticulumd_direct_status_failure_marks_cooldown_without_resend() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-generic-status-direct-cooldown-{}.db",
             Uuid::new_v4()
@@ -56590,14 +56784,11 @@ mod tests {
             .iter()
             .find(|message| message.message_id == "pending-generic-direct")
             .expect("stored message");
-        assert_eq!(stored.delivery_state, "queued");
-        assert_eq!(stored.delivery_method, "propagated");
-        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
-        assert_eq!(
-            stored.delivery_metadata["fallback_reason"],
-            "direct_status_failure"
-        );
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(stored.delivery_state, "failed");
+        assert_eq!(stored.delivery_method, "direct");
+        assert_eq!(stored.delivery_policy_reason, "fresh_presence");
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(stored.delivery_metadata["retry_owner"], "reticulumd");
         drop(messages);
 
         let decision = crate::outbound_delivery_decision(
@@ -56614,7 +56805,7 @@ mod tests {
     }
 
     #[test]
-    fn reticulumd_auto_direct_status_failure_queues_generic_propagation_fallback() {
+    fn reticulumd_auto_direct_status_failure_does_not_resend() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-generic-auto-status-direct-cooldown-{}.db",
             Uuid::new_v4()
@@ -56665,21 +56856,18 @@ mod tests {
             .iter()
             .find(|message| message.message_id == "pending-generic-auto-direct")
             .expect("stored message");
-        assert_eq!(stored.delivery_state, "queued");
-        assert_eq!(stored.delivery_method, "propagated");
-        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
-        assert_eq!(
-            stored.delivery_metadata["fallback_reason"],
-            "direct_status_failure"
-        );
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(stored.delivery_state, "failed");
+        assert_eq!(stored.delivery_method, "auto");
+        assert_eq!(stored.delivery_policy_reason, "fresh_presence");
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(stored.delivery_metadata["retry_owner"], "reticulumd");
         drop(messages);
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
-    fn reticulumd_direct_link_create_failure_queues_generic_propagation_fallback() {
+    fn reticulumd_direct_link_create_failure_does_not_resend_after_acceptance() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-generic-status-link-create-failure-{}.db",
             Uuid::new_v4()
@@ -56730,14 +56918,11 @@ mod tests {
             .iter()
             .find(|message| message.message_id == "pending-generic-link-create")
             .expect("stored message");
-        assert_eq!(stored.delivery_state, "queued");
-        assert_eq!(stored.delivery_method, "propagated");
-        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
-        assert_eq!(
-            stored.delivery_metadata["fallback_reason"],
-            "direct_status_failure"
-        );
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(stored.delivery_state, "failed");
+        assert_eq!(stored.delivery_method, "direct");
+        assert_eq!(stored.delivery_policy_reason, "fresh_presence");
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(stored.delivery_metadata["retry_owner"], "reticulumd");
         drop(messages);
 
         let decision = crate::outbound_delivery_decision(
@@ -56754,7 +56939,7 @@ mod tests {
     }
 
     #[test]
-    fn reticulumd_direct_peer_not_announced_queues_generic_propagation_fallback() {
+    fn reticulumd_direct_peer_not_announced_does_not_resend_after_acceptance() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-generic-status-peer-not-announced-{}.db",
             Uuid::new_v4()
@@ -56814,45 +56999,22 @@ mod tests {
             .iter()
             .find(|message| message.message_id == "pending-generic-peer-not-announced")
             .expect("stored message");
-        assert_eq!(stored.delivery_state, "queued");
-        assert_eq!(stored.delivery_method, "propagated");
-        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
+        assert_eq!(stored.delivery_state, "failed");
+        assert_eq!(stored.delivery_method, "direct");
+        assert_eq!(stored.delivery_policy_reason, "fanout_route");
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(stored.delivery_metadata["retry_owner"], "reticulumd");
         assert_eq!(
-            stored.delivery_metadata["fallback_reason"],
-            "direct_status_failure"
+            stored.delivery_metadata["reticulumd_receipt_targets"][0]["destination"],
+            generic_destination
         );
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
-        assert!(
-            stored.delivery_metadata["target_destinations"]
-                .as_array()
-                .expect("target destinations")
-                .iter()
-                .any(|value| value.as_str() == Some(generic_destination))
-        );
-        for cleared_key in [
-            "dispatch_started_ts_ms",
-            "dispatch_deadline_ts_ms",
-            "receipt_deadline_ts_ms",
-            "receipt_last_poll_ts_ms",
-            "receipt_registered_ts_ms",
-            "reticulumd_receipt_targets",
-            "sdk_delivery_state",
-            "sdk_message_id",
-            "sdk_reason_code",
-            "sdk_terminal",
-        ] {
-            assert!(
-                stored.delivery_metadata.get(cleared_key).is_none(),
-                "stale direct metadata key should be cleared: {cleared_key}"
-            );
-        }
         drop(messages);
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
-    fn reticulumd_fanout_peer_not_announced_preserves_delivered_targets_for_propagation_fallback() {
+    fn reticulumd_fanout_failure_preserves_receipts_without_resend() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-fanout-partial-peer-not-announced-{}.db",
             Uuid::new_v4()
@@ -56915,31 +57077,17 @@ mod tests {
             .iter()
             .find(|message| message.message_id == "pending-fanout-partial-peer-not-announced")
             .expect("stored message");
-        assert_eq!(stored.delivery_state, "queued");
-        assert_eq!(stored.delivery_method, "propagated");
-        assert_eq!(stored.delivery_policy_reason, "direct_failure_fallback");
+        assert_eq!(stored.delivery_state, "failed");
+        assert_eq!(stored.delivery_method, "direct");
+        assert_eq!(stored.delivery_policy_reason, "fanout_route");
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(stored.delivery_metadata["retry_owner"], "reticulumd");
         assert_eq!(
-            stored.delivery_metadata["fallback_reason"],
-            "direct_status_failure"
-        );
-        assert_eq!(
-            stored.delivery_metadata["target_destinations"],
-            json!([unannounced_destination])
-        );
-        assert_eq!(
-            stored.delivery_metadata["exclude_destinations"],
-            json!([delivered_destination])
-        );
-        assert_eq!(
-            stored.delivery_metadata["delivered_destinations"],
-            json!([delivered_destination])
-        );
-        assert_eq!(stored.delivery_metadata["partial_delivery"], true);
-        assert!(
-            stored
-                .delivery_metadata
-                .get("reticulumd_receipt_targets")
-                .is_none()
+            stored.delivery_metadata["reticulumd_receipt_targets"]
+                .as_array()
+                .expect("receipt targets")
+                .len(),
+            2
         );
         drop(messages);
 
@@ -56947,7 +57095,7 @@ mod tests {
     }
 
     #[test]
-    fn reticulumd_auto_status_failure_requeues_rem_command_for_auto_retry() {
+    fn reticulumd_auto_status_failure_does_not_resend_after_acceptance() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-status-propagation-retry-{}.db",
@@ -57013,22 +57161,19 @@ mod tests {
         .expect("mark failure");
 
         let queued = state.messages.read().expect("messages")[0].clone();
-        assert_eq!(queued.delivery_state, "queued");
+        assert_eq!(queued.delivery_state, "failed");
         assert_eq!(queued.delivery_method, "auto");
         assert_eq!(queued.delivery_policy_reason, "rem_auto");
-        assert_eq!(queued.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(queued.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(
-            queued.delivery_metadata["retry_reason"],
-            "rem_auto_status_failure"
-        );
+        assert_eq!(queued.delivery_metadata["dispatch_status"], "failed");
+        assert_eq!(queued.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(queued.delivery_metadata["retry_owner"], "reticulumd");
         drop(rpc_server);
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
-    fn reticulumd_auto_peer_not_announced_requeues_rem_command_with_announce_backoff() {
+    fn reticulumd_auto_peer_not_announced_does_not_resend_after_acceptance() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-peer-not-announced-retry-{}.db",
@@ -57070,7 +57215,6 @@ mod tests {
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
             .with_reticulumd_rpc(endpoint, "source-destination");
-        let before_retry = crate::unix_now_ms();
         crate::mark_reticulumd_status_delivery_failure(
             &state,
             "pending-rem-command-not-announced",
@@ -57079,30 +57223,19 @@ mod tests {
         .expect("mark failure");
 
         let queued = state.messages.read().expect("messages")[0].clone();
-        assert_eq!(queued.delivery_state, "queued");
+        assert_eq!(queued.delivery_state, "failed");
         assert_eq!(queued.delivery_method, "auto");
         assert_eq!(queued.delivery_policy_reason, "rem_auto");
-        assert_eq!(queued.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(queued.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(
-            queued.delivery_metadata["retry_reason"],
-            "peer_not_announced"
-        );
-        assert!(
-            queued.delivery_metadata["next_attempt_at_ts_ms"]
-                .as_i64()
-                .expect("next attempt")
-                >= before_retry
-                    + i64::try_from(crate::RETICULUMD_ANNOUNCE_LIST_POLL_MS).unwrap_or(i64::MAX)
-                    - 1_000
-        );
+        assert_eq!(queued.delivery_metadata["dispatch_status"], "failed");
+        assert_eq!(queued.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(queued.delivery_metadata["retry_owner"], "reticulumd");
         drop(rpc_server);
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
-    fn reticulumd_auto_status_failure_falls_back_to_propagation_after_retry_budget() {
+    fn reticulumd_auto_status_failure_never_falls_back_after_acceptance() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-status-propagation-fallback-{}.db",
@@ -57154,18 +57287,12 @@ mod tests {
         .expect("mark failure");
 
         let queued = state.messages.read().expect("messages")[0].clone();
-        assert_eq!(queued.delivery_state, "queued");
-        assert_eq!(queued.delivery_method, "propagated");
-        assert_eq!(
-            queued.delivery_policy_reason,
-            "rem_auto_propagation_fallback"
-        );
-        assert_eq!(queued.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(queued.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(
-            queued.delivery_metadata["fallback_reason"],
-            "rem_auto_status_failure"
-        );
+        assert_eq!(queued.delivery_state, "failed");
+        assert_eq!(queued.delivery_method, "auto");
+        assert_eq!(queued.delivery_policy_reason, "rem_auto");
+        assert_eq!(queued.delivery_metadata["dispatch_status"], "failed");
+        assert_eq!(queued.delivery_metadata["retry_scheduled"], false);
+        assert_eq!(queued.delivery_metadata["retry_owner"], "reticulumd");
         drop(rpc_server);
 
         let _ = std::fs::remove_file(db_path);
@@ -58033,10 +58160,9 @@ mod tests {
 
     #[test]
     fn broadcast_dispatch_does_not_sleep_between_hundred_recipients() {
-        let mut responses = vec![empty_reticulumd_announce_response()];
-        for index in 0..100 {
-            responses.push(json!({"message_id": format!("message-{index}")}));
-        }
+        let responses = (0..100)
+            .map(|index| json!({"message_id": format!("message-{index}")}))
+            .collect();
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(responses);
         let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "source-destination");
         let now = crate::unix_now_ms();
@@ -58072,8 +58198,7 @@ mod tests {
             "dispatch slept between recipients: {elapsed:?}"
         );
         let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 101);
-        assert_eq!(requests[0].method, "list_announces");
+        assert_eq!(requests.len(), 100);
         assert_eq!(
             requests
                 .iter()
@@ -58115,7 +58240,7 @@ mod tests {
     }
 
     #[test]
-    fn propagated_single_dispatch_enqueues_zmq_without_waiting_for_response() {
+    fn propagated_single_dispatch_requires_zmq_pre_admission_ack() {
         let state = crate::AppState::default().with_lxmf_zmq_sdk(
             unused_zmq_endpoint_for_rch_test(),
             unused_zmq_endpoint_for_rch_test(),
@@ -58137,17 +58262,17 @@ mod tests {
         };
 
         let started = Instant::now();
-        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
+        let error = match crate::dispatch_outbound_message(&state, &message) {
+            Err(error) => error,
+            Ok(_) => panic!("unbound ZMQ endpoint must not fabricate acceptance"),
+        };
         let elapsed = started.elapsed();
 
-        assert_eq!(report.count, 1);
         assert!(
             elapsed < Duration::from_secs(2),
-            "propagated dispatch waited for a ZeroMQ response: {elapsed:?}"
+            "bounded ZMQ pre-admission timeout took too long: {elapsed:?}"
         );
-        assert_eq!(report.receipts.len(), 1);
-        assert_eq!(report.receipts[0].message_id, "propagated-single");
-        assert_eq!(report.receipts[0].destination, "target-destination");
+        assert!(error.to_string().contains("ZeroMQ"));
     }
 
     #[test]
@@ -58184,21 +58309,17 @@ mod tests {
             attachments: Vec::new(),
         };
 
-        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
-
-        assert_eq!(report.count, 2);
-        assert_eq!(report.receipts.len(), 2);
+        let destinations = crate::outbound_destinations(&state, &message).expect("destinations");
+        assert_eq!(destinations.len(), 2);
         assert!(
-            report
-                .receipts
+            destinations
                 .iter()
-                .any(|receipt| receipt.destination == "22c8ba9c883e06c7e540ed6dc87ceecf")
+                .any(|destination| destination == "22c8ba9c883e06c7e540ed6dc87ceecf")
         );
         assert!(
-            report
-                .receipts
+            destinations
                 .iter()
-                .any(|receipt| receipt.destination == "77b2539b72259af927e48c0f90721767")
+                .any(|destination| destination == "77b2539b72259af927e48c0f90721767")
         );
     }
 
@@ -58328,9 +58449,11 @@ mod tests {
             attachments: Vec::new(),
         };
 
-        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
-
-        assert_eq!(report.count, 2);
+        let error = match crate::dispatch_outbound_message(&state, &message) {
+            Err(error) => error,
+            Ok(_) => panic!("unbound ZMQ endpoint must fail before admission"),
+        };
+        assert!(error.to_string().contains("ZeroMQ"));
         let requests = rpc_server.join().expect("rpc server");
         assert!(
             requests.is_empty(),
@@ -58389,17 +58512,14 @@ mod tests {
             attachments: Vec::new(),
         };
 
-        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
-
-        assert_eq!(report.count, 1);
-        assert_eq!(report.receipts.len(), 1);
-        assert_eq!(report.receipts[0].destination, fresh_identity);
+        let destinations = crate::outbound_destinations(&state, &message).expect("destinations");
+        assert_eq!(destinations, vec![fresh_identity.to_string()]);
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
-    fn propagated_dispatch_selects_propagation_node_before_zmq_enqueue() {
+    fn startup_control_selects_propagation_node_outside_zmq_dispatch() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
             json!({ "peer": null }),
             json!({
@@ -58412,31 +58532,8 @@ mod tests {
             }),
             json!({ "peer": "propagation-node" }),
         ]);
-        let state = crate::AppState::default()
-            .with_reticulumd_rpc(endpoint, "source-destination")
-            .with_lxmf_zmq_sdk(
-                unused_zmq_endpoint_for_rch_test(),
-                unused_zmq_endpoint_for_rch_test(),
-                "source-destination",
-            );
-        let message = crate::OutboundMessageRecord {
-            message_id: "propagated-select-node".to_string(),
-            topic_id: None,
-            destination: Some("target-destination".to_string()),
-            sender: "northbound".to_string(),
-            content: "propagated select node".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
-            delivery_method: "propagated".to_string(),
-            delivery_policy_reason: "direct_failure_fallback".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({}),
-            created_ts_ms: crate::unix_now_ms(),
-            attachments: Vec::new(),
-        };
-
-        let report = crate::dispatch_outbound_message(&state, &message).expect("dispatch");
-
-        assert_eq!(report.count, 1);
+        let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "source-destination");
+        crate::ensure_outbound_propagation_node_selected(&state).expect("control selection");
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 3);
         assert_eq!(requests[0].method, "get_outbound_propagation_node");
@@ -58446,6 +58543,88 @@ mod tests {
             requests[2].params,
             Some(json!({ "peer": "propagation-node" }))
         );
+    }
+
+    #[test]
+    fn partial_zmq_admission_retries_only_rejected_recipients() {
+        let state = crate::AppState::default();
+        let message = crate::OutboundMessageRecord {
+            message_id: "partial-admission-parent".to_string(),
+            topic_id: Some("ops".to_string()),
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "shared fanout".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Fanout,
+            delivery_method: "direct".to_string(),
+            delivery_policy_reason: "fanout_route".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({ "attempts": 0, "max_attempts": 3 }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        state
+            .messages
+            .write()
+            .expect("messages")
+            .push(message.clone());
+        let report = crate::DispatchReport {
+            count: 1,
+            deferred: false,
+            receipts: vec![crate::ReticulumdReceiptTarget {
+                message_id: "accepted-child".to_string(),
+                destination: "accepted-destination".to_string(),
+                status: None,
+                sdk_snapshot: None,
+                last_poll_ts_ms: None,
+            }],
+            rejected: vec![json!({
+                "id": "rejected-child",
+                "destination": "rejected-destination",
+                "error": { "code": "SDK_SECURITY_RATE_LIMITED", "retryable": true }
+            })],
+            retryable_rejected_destinations: vec!["rejected-destination".to_string()],
+        };
+
+        let retry = crate::schedule_zmq_pre_admission_retry(&state, &message, &report)
+            .expect("schedule")
+            .expect("retry message");
+
+        assert_eq!(retry.delivery_state, "queued");
+        assert_eq!(
+            retry.delivery_metadata["target_destinations"],
+            json!(["rejected-destination"])
+        );
+        assert_eq!(retry.delivery_metadata["reticulumd_dispatch_count"], 1);
+        assert_eq!(
+            retry.delivery_metadata["reticulumd_receipt_targets"][0]["destination"],
+            "accepted-destination"
+        );
+        assert_eq!(retry.delivery_metadata["retry_scheduled"], true);
+    }
+
+    #[test]
+    fn zmq_retry_keeps_stable_recipient_idempotency_key() {
+        let mut message = crate::OutboundMessageRecord {
+            message_id: "stable-idempotency-parent".to_string(),
+            topic_id: None,
+            destination: None,
+            sender: "northbound".to_string(),
+            content: "stable retry".to_string(),
+            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
+            delivery_method: "propagated".to_string(),
+            delivery_policy_reason: "broadcast_unannounced".to_string(),
+            delivery_state: "queued".to_string(),
+            delivery_metadata: json!({ "attempts": 0 }),
+            created_ts_ms: crate::unix_now_ms(),
+            attachments: Vec::new(),
+        };
+        let first = crate::outbound_dispatch_message_id(&message, "recipient-destination", 3, true);
+        message.delivery_metadata["attempts"] = json!(5);
+        let retry =
+            crate::outbound_dispatch_message_id(&message, "recipient-destination", 0, false);
+
+        assert_eq!(first, retry);
+        assert_eq!(retry, "stable-idempotency-parent-fanout-recipientdes");
     }
 
     fn unused_zmq_endpoint_for_rch_test() -> String {

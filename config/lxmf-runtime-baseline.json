@@ -1,0 +1,20 @@
+{
+  "repository": "FreeTAKTeam/LXMF-rs",
+  "release_tag": "v0.7.1",
+  "sdk_version": "0.7.1",
+  "daemon_package": "reticulumd",
+  "daemon_features": ["zmq-pipeline-rpc"],
+  "contract_version": 2,
+  "contract_release": "sdk-v2",
+  "data_plane": "zmq",
+  "required_capabilities": [
+    "sdk.capability.batch_send",
+    "sdk.capability.async_events"
+  ],
+  "required_operations": [
+    "sdk_send_batch_v2",
+    "sdk_status_v2",
+    "sdk_poll_events_v2",
+    "sdk_identity_announce_now_v2"
+  ]
+}

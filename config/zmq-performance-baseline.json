@@ -1,0 +1,12 @@
+{
+  "captured_from": "origin/main@8e6f742",
+  "captured_at_utc": "2026-07-10",
+  "lxmf_version": "0.5.1",
+  "messages": 10000,
+  "workload": "legacy_10000_single_message_round_trips",
+  "elapsed_ms": 2546,
+  "messages_per_second": 3927.1,
+  "maximum_regression_percent": 5.0,
+  "minimum_messages_per_second": 3730.745,
+  "comparable_to_batched_projection": false
+}

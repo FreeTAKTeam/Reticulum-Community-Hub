@@ -245,5 +245,5 @@ CREATE TABLE IF NOT EXISTS rch_outbound_jobs (
     payload BLOB NOT NULL
 );
 
-INSERT OR REPLACE INTO rch_settings (setting_key, setting_value)
+INSERT OR IGNORE INTO rch_settings (setting_key, setting_value)
 VALUES ('schema_version', '1');

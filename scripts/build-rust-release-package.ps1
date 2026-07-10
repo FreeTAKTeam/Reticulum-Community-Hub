@@ -4,6 +4,8 @@ param(
     [string] $OutputDir = "dist",
     [string] $ServerBinaryPath,
     [string] $TakServiceBinaryPath,
+    [Parameter(Mandatory = $true)] [string] $ReticulumdBinaryPath,
+    [Parameter(Mandatory = $true)] [string] $LxmfCommit,
     [switch] $IncludeTakService,
     [switch] $IncludeUi,
     [ValidateSet("auto", "zip", "tar.gz")] [string] $ArchiveFormat = "auto"
@@ -55,6 +57,9 @@ if ($IncludeTakService -and [string]::IsNullOrWhiteSpace($TakServiceBinaryPath))
 }
 
 $serverBinary = Resolve-RequiredPath -Path $ServerBinaryPath -Label "server binary"
+$reticulumdBinary = Resolve-RequiredPath -Path $ReticulumdBinaryPath -Label "reticulumd binary"
+$lxmfBaselinePath = Resolve-RequiredPath -Path "config/lxmf-runtime-baseline.json" -Label "LXMF runtime baseline"
+$lxmfBaseline = Get-Content -LiteralPath $lxmfBaselinePath -Raw | ConvertFrom-Json
 $takServiceBinary = $null
 if ($IncludeTakService) {
     $takServiceBinary = Resolve-RequiredPath -Path $TakServiceBinaryPath -Label "TAK service binary"
@@ -79,6 +84,13 @@ New-Item -ItemType Directory -Force -Path `
     (Join-Path $resolvedStage "packaging/windows") | Out-Null
 
 Copy-Item -LiteralPath $serverBinary -Destination (Join-Path $resolvedStage "bin") -Force
+$stagedReticulumdBinary = Join-Path (Join-Path $resolvedStage "bin") (Split-Path -Leaf $reticulumdBinary)
+Copy-Item -LiteralPath $reticulumdBinary -Destination $stagedReticulumdBinary -Force
+$reticulumdHash = Get-FileHash -LiteralPath $reticulumdBinary -Algorithm SHA256
+$stagedReticulumdHash = Get-FileHash -LiteralPath $stagedReticulumdBinary -Algorithm SHA256
+if ($stagedReticulumdHash.Hash -ne $reticulumdHash.Hash) {
+    throw "Staged reticulumd checksum mismatch: source=$($reticulumdHash.Hash) staged=$($stagedReticulumdHash.Hash)"
+}
 if ($IncludeTakService) {
     Copy-Item -LiteralPath $takServiceBinary -Destination (Join-Path $resolvedStage "bin") -Force
     New-Item -ItemType Directory -Force -Path (Join-Path $resolvedStage "packaging/tak-service") | Out-Null
@@ -105,9 +117,26 @@ $manifest = [ordered]@{
     git_ref = [Environment]::GetEnvironmentVariable("GITHUB_REF_NAME")
     git_sha = [Environment]::GetEnvironmentVariable("GITHUB_SHA")
     includes_server = $true
+    includes_reticulumd = $true
     includes_tak_service = [bool]$IncludeTakService
     includes_ui = [bool]$IncludeUi
-    binaries = @((Split-Path -Leaf $serverBinary))
+    binaries = @((Split-Path -Leaf $serverBinary), (Split-Path -Leaf $reticulumdBinary))
+    lxmf = [ordered]@{
+        repository = $lxmfBaseline.repository
+        release_tag = $lxmfBaseline.release_tag
+        commit = $LxmfCommit
+        sdk_version = $lxmfBaseline.sdk_version
+        daemon_sha256 = $reticulumdHash.Hash
+        daemon_checksum_verified = $true
+        daemon_features = $lxmfBaseline.daemon_features
+        data_plane = $lxmfBaseline.data_plane
+        contract_version = $lxmfBaseline.contract_version
+        contract_release = $lxmfBaseline.contract_release
+        required_capabilities = $lxmfBaseline.required_capabilities
+        required_operations = $lxmfBaseline.required_operations
+        command_endpoint_env = "RCH_LXMF_ZMQ_COMMAND"
+        response_endpoint_env = "RCH_LXMF_ZMQ_RESPONSE"
+    }
 }
 if ($IncludeTakService) {
     $manifest.binaries += (Split-Path -Leaf $takServiceBinary)

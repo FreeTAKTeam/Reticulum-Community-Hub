@@ -1,0 +1,18 @@
+[Unit]
+Description=RCH bundled Reticulum/LXMF daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rch
+Group=rch
+EnvironmentFile=/etc/rch/rch-server.env
+ExecStart=/opt/rch/bin/reticulumd --db ${RCH_RETICULUMD_DB_PATH} --zmq-rpc-command ${RCH_LXMF_ZMQ_COMMAND}
+Restart=on-failure
+RestartSec=5
+StateDirectory=rch
+LogsDirectory=rch
+
+[Install]
+WantedBy=multi-user.target

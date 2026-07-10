@@ -177,6 +177,15 @@ where
     )?
     .with_api_bind(api_bind);
     state.start_managed_reticulumd()?;
+    let verification_state = state.clone();
+    let verification_result =
+        tokio::task::spawn_blocking(move || verification_state.verify_lxmf_zmq_data_plane())
+            .await
+            .map_err(|error| format!("ZeroMQ startup verification task failed: {error}"))?;
+    if let Err(error) = verification_result {
+        let _ = state.stop_managed_reticulumd();
+        return Err(error.into());
+    }
     let app = create_app_for_runtime(state.clone(), ui_dist_path.as_ref());
     let outbound_worker = r3akt_rch_server::spawn_outbound_delivery_worker(state.clone());
     let inbound_worker = r3akt_rch_server::spawn_reticulumd_inbound_worker(state.clone());

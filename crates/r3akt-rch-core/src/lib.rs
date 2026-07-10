@@ -383,7 +383,8 @@ const RCH_ROLE_BUNDLES: &[RchRoleBundleDefinition] = &[
 ];
 
 const RCH_SQLITE_MIGRATION_SQL: &str = include_str!("../migrations/0001_rch_core_snapshot.sql");
-const RCH_SQLITE_SCHEMA_VERSION: &str = "1";
+const RCH_SQLITE_MIGRATION_2_SQL: &str = include_str!("../migrations/0002_ordered_migrations.sql");
+const RCH_SQLITE_SCHEMA_VERSION: &str = "2";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -1531,6 +1532,23 @@ pub struct RchSqliteStore {
     connection: Connection,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct SqliteStorageStats {
+    pub page_count: u64,
+    pub free_page_count: u64,
+    pub page_size: u64,
+    pub free_percent: f64,
+    pub auto_vacuum: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct SqliteCompactionReport {
+    pub before: SqliteStorageStats,
+    pub after: SqliteStorageStats,
+    pub compacted: bool,
+    pub requires_incremental_mode_conversion: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RchSqliteConnectionProfile {
     ReadOnly,
@@ -1766,6 +1784,99 @@ impl RchSqliteStore {
         Ok(())
     }
 
+    pub fn integrity_check(&self) -> Result<(), RchCoreError> {
+        let result: String = self
+            .connection
+            .query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+        if result == "ok" {
+            Ok(())
+        } else {
+            Err(RchCoreError::InvalidPayload(format!(
+                "SQLite integrity check failed: {result}"
+            )))
+        }
+    }
+
+    pub fn storage_stats(&self) -> Result<SqliteStorageStats, RchCoreError> {
+        let page_count = sqlite_pragma_u64(&self.connection, "page_count")?;
+        let free_page_count = sqlite_pragma_u64(&self.connection, "freelist_count")?;
+        let page_size = sqlite_pragma_u64(&self.connection, "page_size")?;
+        let auto_vacuum = self
+            .connection
+            .query_row("PRAGMA auto_vacuum", [], |row| row.get::<_, i64>(0))?;
+        let free_percent = if page_count == 0 {
+            0.0
+        } else {
+            let basis_points =
+                u128::from(free_page_count).saturating_mul(10_000) / u128::from(page_count);
+            f64::from(u32::try_from(basis_points).unwrap_or(10_000)) / 100.0
+        };
+        Ok(SqliteStorageStats {
+            page_count,
+            free_page_count,
+            page_size,
+            free_percent,
+            auto_vacuum,
+        })
+    }
+
+    pub fn backup_to(&self, path: impl AsRef<Path>) -> Result<(), RchCoreError> {
+        let mut destination = Connection::open(path)?;
+        let backup = rusqlite::backup::Backup::new(&self.connection, &mut destination)?;
+        backup.run_to_completion(128, Duration::from_millis(10), None)?;
+        Ok(())
+    }
+
+    pub fn enable_incremental_vacuum_with_backup(
+        &self,
+        backup_path: impl AsRef<Path>,
+    ) -> Result<SqliteStorageStats, RchCoreError> {
+        self.integrity_check()?;
+        self.backup_to(backup_path)?;
+        self.connection
+            .execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM; PRAGMA optimize;")?;
+        self.integrity_check()?;
+        self.storage_stats()
+    }
+
+    pub fn compact_if_free_percent_exceeds(
+        &self,
+        threshold_percent: f64,
+        max_pages: u64,
+    ) -> Result<SqliteCompactionReport, RchCoreError> {
+        let before = self.storage_stats()?;
+        let threshold_percent = threshold_percent.clamp(0.0, 100.0);
+        if before.free_percent <= threshold_percent || before.free_page_count == 0 {
+            return Ok(SqliteCompactionReport {
+                before,
+                after: before,
+                compacted: false,
+                requires_incremental_mode_conversion: false,
+            });
+        }
+        // SQLite reports 2 for INCREMENTAL. Existing databases must be
+        // converted with the explicit backup + full VACUUM operation above.
+        if before.auto_vacuum != 2 {
+            return Ok(SqliteCompactionReport {
+                before,
+                after: before,
+                compacted: false,
+                requires_incremental_mode_conversion: true,
+            });
+        }
+        let pages = before.free_page_count.min(max_pages.max(1));
+        self.connection.execute_batch(&format!(
+            "PRAGMA incremental_vacuum({pages}); PRAGMA optimize;"
+        ))?;
+        let after = self.storage_stats()?;
+        Ok(SqliteCompactionReport {
+            before,
+            after,
+            compacted: after.free_page_count < before.free_page_count,
+            requires_incremental_mode_conversion: false,
+        })
+    }
+
     pub fn upsert_identity_announces(
         &mut self,
         records: &[IdentityAnnounceRecord],
@@ -1896,6 +2007,42 @@ impl RchSqliteStore {
     pub fn load_identity_announces(&self) -> Result<Vec<IdentityAnnounceRecord>, RchCoreError> {
         self.load_payload_rows::<IdentityAnnounceRecord>(
             "SELECT payload FROM rch_identity_announces ORDER BY destination_hash",
+        )
+    }
+
+    pub fn list_messages_page(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<MessageRecord>, RchCoreError> {
+        self.load_payload_page(
+            "SELECT payload FROM rch_messages ORDER BY created_ts_ms DESC, id DESC LIMIT ?1 OFFSET ?2",
+            limit,
+            offset,
+        )
+    }
+
+    pub fn list_system_events_page(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SystemEventRecord>, RchCoreError> {
+        self.load_payload_page(
+            "SELECT payload FROM rch_system_events ORDER BY id DESC LIMIT ?1 OFFSET ?2",
+            limit,
+            offset,
+        )
+    }
+
+    pub fn list_telemetry_page(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<TelemetryRecord>, RchCoreError> {
+        self.load_payload_page(
+            "SELECT payload FROM rch_telemetry_records ORDER BY timestamp_s DESC, id DESC LIMIT ?1 OFFSET ?2",
+            limit,
+            offset,
         )
     }
 
@@ -2781,60 +2928,104 @@ impl RchSqliteStore {
     }
 
     fn migrate(&self) -> Result<(), RchCoreError> {
-        self.connection.execute_batch(RCH_SQLITE_MIGRATION_SQL)?;
-        if !sqlite_table_has_column(
-            &self.connection,
-            "rch_checklist_feed_publications",
-            "published_ts_ms",
-        )? {
-            self.connection.execute(
-                "ALTER TABLE rch_checklist_feed_publications
-                 ADD COLUMN published_ts_ms INTEGER NOT NULL DEFAULT 0",
+        let has_existing_schema = self.connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?;
+        let has_migration_history = self.connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'rch_schema_migrations'
+            )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?;
+        let migration_2_applied = has_migration_history
+            && self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM rch_schema_migrations WHERE version = 2)",
                 [],
+                |row| row.get::<_, bool>(0),
             )?;
+        if migration_2_applied {
+            return Ok(());
         }
-        if !sqlite_table_has_column(&self.connection, "rch_checklist_columns", "display_order")? {
+        if has_existing_schema {
+            self.integrity_check()?;
+            self.backup_before_migration(2)?;
+        }
+        self.connection.execute_batch("BEGIN IMMEDIATE;")?;
+        let migration_result = (|| -> Result<(), RchCoreError> {
+            self.connection.execute_batch(RCH_SQLITE_MIGRATION_SQL)?;
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS rch_schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    applied_ts_ms INTEGER NOT NULL
+                 );",
+            )?;
             self.connection.execute(
-                "ALTER TABLE rch_checklist_columns
-                 ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0",
-                [],
+                "INSERT OR IGNORE INTO rch_schema_migrations (version, name, applied_ts_ms)
+                 VALUES (1, 'rch_core_snapshot', ?1)",
+                [utc_now_ms()],
             )?;
-        }
-        for (column, definition) in [
-            ("delivery_state", "TEXT NOT NULL DEFAULT 'queued'"),
-            ("dispatch_status", "TEXT NOT NULL DEFAULT 'queued'"),
-            ("next_attempt_at_ts_ms", "INTEGER"),
-            ("attempts", "INTEGER NOT NULL DEFAULT 0"),
-            ("priority", "INTEGER NOT NULL DEFAULT 0"),
-            ("batch_id", "TEXT"),
-            ("created_ts_ms", "INTEGER NOT NULL DEFAULT 0"),
-        ] {
-            if !sqlite_table_has_column(&self.connection, "rch_messages", column)? {
+            if !sqlite_table_has_column(
+                &self.connection,
+                "rch_checklist_feed_publications",
+                "published_ts_ms",
+            )? {
                 self.connection.execute(
-                    &format!("ALTER TABLE rch_messages ADD COLUMN {column} {definition}"),
+                    "ALTER TABLE rch_checklist_feed_publications
+                 ADD COLUMN published_ts_ms INTEGER NOT NULL DEFAULT 0",
                     [],
                 )?;
             }
-        }
-        if !sqlite_table_has_column(&self.connection, "rch_mission_changes", "mission_uid")? {
-            self.connection.execute(
+            if !sqlite_table_has_column(&self.connection, "rch_checklist_columns", "display_order")?
+            {
+                self.connection.execute(
+                    "ALTER TABLE rch_checklist_columns
+                 ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )?;
+            }
+            for (column, definition) in [
+                ("delivery_state", "TEXT NOT NULL DEFAULT 'queued'"),
+                ("dispatch_status", "TEXT NOT NULL DEFAULT 'queued'"),
+                ("next_attempt_at_ts_ms", "INTEGER"),
+                ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+                ("priority", "INTEGER NOT NULL DEFAULT 0"),
+                ("batch_id", "TEXT"),
+                ("created_ts_ms", "INTEGER NOT NULL DEFAULT 0"),
+            ] {
+                if !sqlite_table_has_column(&self.connection, "rch_messages", column)? {
+                    self.connection.execute(
+                        &format!("ALTER TABLE rch_messages ADD COLUMN {column} {definition}"),
+                        [],
+                    )?;
+                }
+            }
+            if !sqlite_table_has_column(&self.connection, "rch_mission_changes", "mission_uid")? {
+                self.connection.execute(
                 "ALTER TABLE rch_mission_changes ADD COLUMN mission_uid TEXT NOT NULL DEFAULT ''",
                 [],
             )?;
-        }
-        for (column, definition) in [
-            ("mission_uid", "TEXT NOT NULL DEFAULT ''"),
-            ("task_uid", "TEXT NOT NULL DEFAULT ''"),
-            ("team_member_rns_identity", "TEXT NOT NULL DEFAULT ''"),
-        ] {
-            if !sqlite_table_has_column(&self.connection, "rch_assignments", column)? {
-                self.connection.execute(
-                    &format!("ALTER TABLE rch_assignments ADD COLUMN {column} {definition}"),
-                    [],
-                )?;
             }
-        }
-        self.connection.execute_batch(
+            for (column, definition) in [
+                ("mission_uid", "TEXT NOT NULL DEFAULT ''"),
+                ("task_uid", "TEXT NOT NULL DEFAULT ''"),
+                ("team_member_rns_identity", "TEXT NOT NULL DEFAULT ''"),
+            ] {
+                if !sqlite_table_has_column(&self.connection, "rch_assignments", column)? {
+                    self.connection.execute(
+                        &format!("ALTER TABLE rch_assignments ADD COLUMN {column} {definition}"),
+                        [],
+                    )?;
+                }
+            }
+            self.connection.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_rch_messages_queue_due
                 ON rch_messages (delivery_state, dispatch_status, next_attempt_at_ts_ms, priority, id);
              CREATE INDEX IF NOT EXISTS idx_rch_messages_batch
@@ -2874,7 +3065,40 @@ impl RchSqliteStore {
              CREATE INDEX IF NOT EXISTS idx_rch_outbound_jobs_batch
                 ON rch_outbound_jobs (batch_id);",
         )?;
+            self.connection.execute_batch(RCH_SQLITE_MIGRATION_2_SQL)?;
+            self.connection.execute(
+                "INSERT INTO rch_schema_migrations (version, name, applied_ts_ms)
+             VALUES (2, 'ordered_migrations', ?1)",
+                [utc_now_ms()],
+            )?;
+            self.connection.execute(
+                "INSERT OR REPLACE INTO rch_settings (setting_key, setting_value)
+             VALUES ('schema_version', ?1)",
+                [RCH_SQLITE_SCHEMA_VERSION],
+            )?;
+            Ok(())
+        })();
+        match migration_result {
+            Ok(()) => self.connection.execute_batch("COMMIT;")?,
+            Err(error) => {
+                let _ = self.connection.execute_batch("ROLLBACK;");
+                return Err(error);
+            }
+        }
+        self.integrity_check()?;
         Ok(())
+    }
+
+    fn backup_before_migration(&self, version: u32) -> Result<(), RchCoreError> {
+        let path: String = self.connection.query_row(
+            "SELECT file FROM pragma_database_list WHERE name = 'main'",
+            [],
+            |row| row.get(0),
+        )?;
+        if path.trim().is_empty() {
+            return Ok(());
+        }
+        self.backup_to(format!("{path}.pre-migration-v{version}.bak"))
     }
 
     fn load_payload_rows<T>(&self, sql: &str) -> Result<Vec<T>, RchCoreError>
@@ -2883,6 +3107,28 @@ impl RchSqliteStore {
     {
         let mut statement = self.connection.prepare(sql)?;
         let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(decode_msgpack(&row?)?);
+        }
+        Ok(records)
+    }
+
+    fn load_payload_page<T>(
+        &self,
+        sql: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<T>, RchCoreError>
+    where
+        T: DeserializeOwned,
+    {
+        let limit = i64::try_from(limit.clamp(1, 10_000))
+            .map_err(|error| RchCoreError::Decode(error.to_string()))?;
+        let offset =
+            i64::try_from(offset).map_err(|error| RchCoreError::Decode(error.to_string()))?;
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(params![limit, offset], |row| row.get::<_, Vec<u8>>(0))?;
         let mut records = Vec::new();
         for row in rows {
             records.push(decode_msgpack(&row?)?);
@@ -2965,6 +3211,11 @@ fn configure_sqlite_connection(
         }
     }
     Ok(())
+}
+
+fn sqlite_pragma_u64(connection: &Connection, name: &str) -> Result<u64, RchCoreError> {
+    let value = connection.query_row(&format!("PRAGMA {name}"), [], |row| row.get::<_, i64>(0))?;
+    u64::try_from(value).map_err(|error| RchCoreError::Decode(error.to_string()))
 }
 
 impl RchCore {
@@ -16460,7 +16711,7 @@ mod tests {
 
         let mut store = RchSqliteStore::in_memory().expect("sqlite");
         core.save_to_sqlite(&mut store).expect("save");
-        assert_eq!(store.schema_version().expect("schema version"), "1");
+        assert_eq!(store.schema_version().expect("schema version"), "2");
         assert_sqlite_snapshot_counts(&store);
 
         let mut restored = RchCore::load_from_sqlite(&store)
@@ -16488,6 +16739,26 @@ mod tests {
             busy_timeout_ms,
             i64::try_from(RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS).expect("busy timeout fits in i64")
         );
+    }
+
+    #[test]
+    fn sqlite_store_records_ordered_migrations_and_safe_compaction_state() {
+        let store = RchSqliteStore::in_memory().expect("sqlite");
+        let migration_count: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM rch_schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("migration count");
+        let stats = store.storage_stats().expect("storage stats");
+        let report = store
+            .compact_if_free_percent_exceeds(100.0, 100)
+            .expect("no-op compaction");
+
+        assert_eq!(migration_count, 2);
+        assert!(stats.page_count > 0);
+        assert!(!report.compacted);
+        assert!(!report.requires_incremental_mode_conversion);
     }
 
     #[test]
@@ -16525,7 +16796,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "1");
+        assert_eq!(store.schema_version().expect("schema version"), "2");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");
@@ -16574,7 +16845,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "1");
+        assert_eq!(store.schema_version().expect("schema version"), "2");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");

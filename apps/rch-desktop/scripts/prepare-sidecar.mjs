@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(appDir, "..", "..");
+const lxmfRoot = resolve(repoRoot, "..", "LXMF-rs");
 const binariesDir = join(appDir, "src-tauri", "binaries");
 const targetTriple = execFileSync("rustc", ["--print", "host-tuple"], {
   encoding: "utf8",
@@ -21,11 +22,13 @@ const sidecars = [
   {
     packageName: "r3akt-rch-server",
     binaryName: "r3akt-rch-server",
+    cargoRoot: repoRoot,
     cargoArgs: ["build", "--release", "-p", "r3akt-rch-server"],
   },
   {
     packageName: "r3akt-tak-connector",
     binaryName: "r3akt-tak-service",
+    cargoRoot: repoRoot,
     cargoArgs: [
       "build",
       "--release",
@@ -35,15 +38,33 @@ const sidecars = [
       "r3akt-tak-service",
     ],
   },
+  {
+    packageName: "reticulumd",
+    binaryName: "reticulumd",
+    cargoRoot: lxmfRoot,
+    cargoArgs: [
+      "build",
+      "--release",
+      "-p",
+      "reticulumd",
+      "--features",
+      "zmq-pipeline-rpc",
+    ],
+  },
 ];
 
 for (const sidecar of sidecars) {
   execFileSync("cargo", sidecar.cargoArgs, {
-    cwd: repoRoot,
+    cwd: sidecar.cargoRoot,
     stdio: "inherit",
   });
 
-  const source = join(repoRoot, "target", "release", `${sidecar.binaryName}${exeSuffix}`);
+  const source = join(
+    sidecar.cargoRoot,
+    "target",
+    "release",
+    `${sidecar.binaryName}${exeSuffix}`,
+  );
   const destination = join(binariesDir, `${sidecar.binaryName}-${targetTriple}${exeSuffix}`);
 
   if (!existsSync(source)) {

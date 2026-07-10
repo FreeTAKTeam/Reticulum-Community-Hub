@@ -3,12 +3,13 @@
 The Rust packaging line now has two release package shapes:
 
 - Server package: deployable `r3akt-rch-server` binary, `r3akt-tak-service`
-  binary, mandatory ZeroMQ southbound configuration, shared UI bundle, service
+  binary, checksum-recorded LXMF `0.7.1` `reticulumd` binary with ZeroMQ
+  support, mandatory ZeroMQ southbound configuration, shared UI bundle, service
   helper files, config templates, and checksums. Current release CI builds
   Windows x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64
   server archives.
-- Desktop packages: Tauri bundles from `apps/rch-desktop` with the Rust server
-  and TAK service sidecars. Current CI builds Windows x64 NSIS and Linux x64
+- Desktop packages: Tauri bundles from `apps/rch-desktop` with `reticulumd`,
+  the Rust server, and TAK service sidecars. Current CI builds Windows x64 NSIS and Linux x64
   AppImage artifacts.
 
 Python 2.9.x packaging remains on `rch-python` and keeps using the existing
@@ -39,9 +40,10 @@ Draft notes for the latest Rust preview are in
 `docs/release-notes-v3.0.0-preview.4.md`.
 
 Pull request quality control is handled by
-`.github/workflows/rust-pr-quality.yml`. It runs Rust 1.85 formatting, clippy,
+`.github/workflows/rust-pr-quality.yml`. It runs Rust 1.88 formatting, clippy,
 locked workspace tests, release builds for the server and TAK service, and
-`cargo audit` before release packaging is considered.
+`cargo audit`; the workspace separately verifies its declared Rust 1.85
+minimum version.
 
 ## Python Store Migration
 

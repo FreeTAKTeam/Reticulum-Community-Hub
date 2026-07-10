@@ -14,7 +14,10 @@ param(
     [int]$LoadSenderClients = 4,
     [int]$LoadReceiverCount = 0,
     [int]$LoadPollAttempts = 240,
-    [int]$LoadPollDelayMs = 250
+    [int]$LoadPollDelayMs = 25,
+    [int]$LoadBatchDelayMs = 250,
+    [int]$LoadWaveSize = 800,
+    [int]$LoadWaveDelayMs = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -112,6 +115,23 @@ function Write-NodeConfig {
     Set-Content -LiteralPath $Path -Value $config.ToString() -Encoding utf8
 }
 
+function Invoke-CargoGate {
+    param([string[]]$Arguments)
+
+    $savedPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell surfaces normal Cargo stderr progress as a
+        # NativeCommandError when Stop is active. Preserve Cargo's real exit
+        # code instead of treating progress output as a terminating error.
+        $ErrorActionPreference = "Continue"
+        & cargo @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
+        $cargoExit = $LASTEXITCODE
+        return $cargoExit
+    } finally {
+        $ErrorActionPreference = $savedPreference
+    }
+}
+
 $tempRoot = Join-Path $env:TEMP ("r3akt-local-reticulum-live-" + [guid]::NewGuid().ToString("N"))
 $processes = @()
 $savedEnv = @{
@@ -133,6 +153,9 @@ $savedEnv = @{
     R3AKT_ZMQ_LOAD_RECEIVER_COUNT = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_RECEIVER_COUNT")
     R3AKT_ZMQ_LOAD_POLL_ATTEMPTS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_POLL_ATTEMPTS")
     R3AKT_ZMQ_LOAD_POLL_DELAY_MS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_POLL_DELAY_MS")
+    R3AKT_ZMQ_LOAD_BATCH_DELAY_MS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_BATCH_DELAY_MS")
+    R3AKT_ZMQ_LOAD_WAVE_SIZE = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_WAVE_SIZE")
+    R3AKT_ZMQ_LOAD_WAVE_DELAY_MS = [Environment]::GetEnvironmentVariable("R3AKT_ZMQ_LOAD_WAVE_DELAY_MS")
 }
 
 try {
@@ -244,31 +267,34 @@ try {
         $env:R3AKT_ZMQ_LOAD_RECEIVER_COUNT = "$LoadReceiverCount"
         $env:R3AKT_ZMQ_LOAD_POLL_ATTEMPTS = "$LoadPollAttempts"
         $env:R3AKT_ZMQ_LOAD_POLL_DELAY_MS = "$LoadPollDelayMs"
+        $env:R3AKT_ZMQ_LOAD_BATCH_DELAY_MS = "$LoadBatchDelayMs"
+        $env:R3AKT_ZMQ_LOAD_WAVE_SIZE = "$LoadWaveSize"
+        $env:R3AKT_ZMQ_LOAD_WAVE_DELAY_MS = "$LoadWaveDelayMs"
     }
 
     if (-not $ZmqLoadOnly) {
-        cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_direct_send_receipt_is_delivered_when_configured -- --nocapture
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+        $cargoExit = Invoke-CargoGate -Arguments @("+$RustToolchain", "test", "-p", "r3akt-rch-server", "live_reticulumd_direct_send_receipt_is_delivered_when_configured", "--", "--nocapture")
+        if ($cargoExit -ne 0) {
+            exit $cargoExit
         }
 
-        cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_topic_fanout_receipts_are_delivered_when_configured -- --nocapture
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+        $cargoExit = Invoke-CargoGate -Arguments @("+$RustToolchain", "test", "-p", "r3akt-rch-server", "live_reticulumd_topic_fanout_receipts_are_delivered_when_configured", "--", "--nocapture")
+        if ($cargoExit -ne 0) {
+            exit $cargoExit
         }
     }
 
     if ($IncludeZmqEventPoll -and -not $ZmqLoadOnly) {
-        cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_zmq_event_poll_succeeds_when_configured -- --nocapture
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+        $cargoExit = Invoke-CargoGate -Arguments @("+$RustToolchain", "test", "-p", "r3akt-rch-server", "live_reticulumd_zmq_event_poll_succeeds_when_configured", "--", "--nocapture")
+        if ($cargoExit -ne 0) {
+            exit $cargoExit
         }
     }
 
     if ($IncludeZmqLoad) {
-        cargo "+$RustToolchain" test -p r3akt-rch-server live_reticulumd_zmq_load_delivers_to_local_clients_when_configured -- --ignored --nocapture
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+        $cargoExit = Invoke-CargoGate -Arguments @("+$RustToolchain", "test", "-p", "r3akt-rch-server", "live_reticulumd_zmq_load_delivers_to_local_clients_when_configured", "--", "--ignored", "--nocapture")
+        if ($cargoExit -ne 0) {
+            exit $cargoExit
         }
     }
 } finally {

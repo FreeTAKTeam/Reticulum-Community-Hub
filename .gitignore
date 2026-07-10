@@ -180,4 +180,5 @@ electron/dist-release/
 # Tauri desktop generated binaries and metadata
 apps/rch-desktop/src-tauri/binaries/r3akt-rch-server-*
 apps/rch-desktop/src-tauri/binaries/r3akt-tak-service-*
+apps/rch-desktop/src-tauri/binaries/reticulumd-*
 apps/rch-desktop/src-tauri/gen/
