@@ -97,6 +97,12 @@ jobs:
           cache: npm
           cache-dependency-path: rch/ui/package-lock.json
 
+      - name: Install Linux reticulumd dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Install UI dependencies
         working-directory: rch
         run: npm --prefix ui ci
@@ -227,7 +233,9 @@ jobs:
             libssl-dev \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
+            libdbus-1-dev \
             libxdo-dev \
+            pkg-config \
             librsvg2-dev \
             patchelf \
             wget
