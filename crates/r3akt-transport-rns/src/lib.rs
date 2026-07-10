@@ -3857,7 +3857,7 @@ mod tests {
                             "runtime_id": "test-runtime",
                             "contract_release": "v2.5",
                             "schema_namespace": "v2",
-                            "sdk_version": "0.7.1"
+                            "sdk_version": "0.8.0"
                         }),
                         "sdk_send_v2" => {
                             let message_id = format!("daemon-message-{sent_messages:05}");
@@ -3980,7 +3980,7 @@ mod tests {
             .or_insert_with(|| serde_json::json!("v2"));
         object
             .entry("sdk_version".to_string())
-            .or_insert_with(|| serde_json::json!("0.7.1"));
+            .or_insert_with(|| serde_json::json!("0.8.0"));
         response
     }
 
@@ -4154,7 +4154,7 @@ mod tests {
             vec![
                 serde_json::json!({
                     "runtime_id": "runtime-rch-zmq",
-                    "sdk_version": "0.7.1",
+                    "sdk_version": "0.8.0",
                     "active_contract_version": 2,
                     "contract_release": "sdk-v2",
                     "effective_capabilities": [
@@ -4216,7 +4216,7 @@ mod tests {
         assert_eq!(stats.partial_acceptance_total, 1);
         assert_eq!(stats.rate_limited_total, 1);
         assert_eq!(stats.last_batch_size, 2);
-        assert_eq!(runtime_info.sdk_version.as_deref(), Some("0.7.1"));
+        assert_eq!(runtime_info.sdk_version.as_deref(), Some("0.8.0"));
         assert_eq!(runtime_info.active_contract_version, Some(2));
     }
 

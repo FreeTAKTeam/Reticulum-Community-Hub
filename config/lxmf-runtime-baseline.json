@@ -1,7 +1,7 @@
 {
   "repository": "FreeTAKTeam/LXMF-rs",
-  "release_tag": "v0.7.1",
-  "sdk_version": "0.7.1",
+  "release_tag": "v0.8.0",
+  "sdk_version": "0.8.0",
   "daemon_package": "reticulumd",
   "daemon_features": ["zmq-pipeline-rpc"],
   "contract_version": 2,

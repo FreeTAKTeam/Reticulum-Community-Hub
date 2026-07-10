@@ -40,11 +40,15 @@ jobs:
           lxmf-wire = { path = "../../LXMF-rs/crates/libs/lxmf-core" }
           lxmf-sdk = { path = "../../LXMF-rs/crates/libs/lxmf-sdk" }
           reticulum-rs-rpc = { path = "../../LXMF-rs/crates/libs/rns-rpc" }
+          reticulum-rs-core = { path = "../../LXMF-rs/crates/libs/rns-core" }
           '@ | Set-Content -LiteralPath .cargo/config.toml -Encoding utf8
-          $manifest = Get-Content -LiteralPath crates/r3akt-transport-rns/Cargo.toml -Raw
-          $manifest = $manifest -replace 'version = "=0\.7\.1"', 'version = "*"'
-          Set-Content -LiteralPath crates/r3akt-transport-rns/Cargo.toml -Value $manifest -Encoding utf8
-          cargo update -p lxmf-wire -p lxmf-sdk -p reticulum-rs-rpc
+          $transportManifest = Get-Content -LiteralPath crates/r3akt-transport-rns/Cargo.toml -Raw
+          $transportManifest = $transportManifest -replace 'version = "=0\.8\.0"', 'version = "*"'
+          Set-Content -LiteralPath crates/r3akt-transport-rns/Cargo.toml -Value $transportManifest -Encoding utf8
+          $workspaceManifest = Get-Content -LiteralPath Cargo.toml -Raw
+          $workspaceManifest = $workspaceManifest -replace 'version = "=0\.8\.0"', 'version = "*"'
+          Set-Content -LiteralPath Cargo.toml -Value $workspaceManifest -Encoding utf8
+          cargo update -p lxmf-wire -p lxmf-sdk -p reticulum-rs-rpc -p reticulum-rs-core
 
       - name: Prove sibling sources are selected
         shell: pwsh
@@ -52,7 +56,7 @@ jobs:
         run: |
           $tree = cargo tree -p r3akt-transport-rns
           $tree
-          if (($tree | Select-String -SimpleMatch '/LXMF-rs/crates/libs/').Count -lt 3) {
+          if (($tree | Select-String -SimpleMatch '/LXMF-rs/crates/libs/').Count -lt 4) {
             throw 'Compatibility build did not resolve all LXMF dependencies from the sibling checkout'
           }
 

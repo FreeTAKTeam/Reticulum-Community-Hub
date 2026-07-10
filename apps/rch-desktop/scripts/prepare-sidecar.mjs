@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(appDir, "..", "..");
-const lxmfRoot = resolve(repoRoot, "..", "LXMF-rs");
+const lxmfRoot = process.env.RCH_LXMF_ROOT
+  ? resolve(process.env.RCH_LXMF_ROOT)
+  : resolve(repoRoot, "..", "LXMF-rs");
 const binariesDir = join(appDir, "src-tauri", "binaries");
 const targetTriple = execFileSync("rustc", ["--print", "host-tuple"], {
   encoding: "utf8",

@@ -799,7 +799,7 @@ impl AppState {
         if let Some(zmq_command_endpoint) = zmq_command_endpoint {
             command.arg("--zmq-rpc-command").arg(zmq_command_endpoint);
             if cfg!(windows) {
-                // LXMF 0.7.1's Windows daemon exits when its default Unix RPC
+                // The Windows daemon exits when its default Unix RPC
                 // loop is unavailable. An OS-assigned loopback listener keeps
                 // the process alive; RCH does not use it as a data plane.
                 command.arg("--rpc").arg("127.0.0.1:0");

@@ -13361,7 +13361,7 @@ mod tests {
                 .expect("setting lookup"),
             None
         );
-        assert_eq!(store.schema_version().expect("schema version"), "1");
+        assert_eq!(store.schema_version().expect("schema version"), "2");
     }
 
     #[test]
