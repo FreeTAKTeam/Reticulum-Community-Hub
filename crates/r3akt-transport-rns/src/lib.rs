@@ -24,8 +24,8 @@ use lxmf_sdk::{
     ZmqPipelineBackendClient, ZmqPipelineBackendConfig,
 };
 use r3akt_protocol::{
-    Destination, NodeId, Payload, ProtocolEnvelope, TelemetrySample, Topic, TopicAttachment,
-    TopicMessage,
+    Command, Destination, NodeId, Payload, ProtocolEnvelope, TelemetrySample, Topic,
+    TopicAttachment, TopicMessage,
 };
 use rns_rpc::rpc::zmq;
 #[cfg(test)]
@@ -2363,6 +2363,22 @@ fn direct_lxmf_message_envelope(
     let fields = message.get("fields").and_then(JsonValue::as_object);
     let source = optional_message_string(message, &["source", "source_hash", "source_id"])
         .unwrap_or("unknown");
+    if let Some(command) = direct_lxmf_mission_command(fields) {
+        let mut envelope = ProtocolEnvelope::new(
+            NodeId::new(source),
+            Destination::Node(NodeId::new(local_source)),
+            Topic::new("rem-directory"),
+            Payload::Command(command),
+        );
+        if let Some(message_id) = message
+            .get("id")
+            .and_then(JsonValue::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            envelope = envelope.with_dedupe_key(message_id);
+        }
+        return Some(envelope);
+    }
     if let Some(telemetry) = direct_lxmf_telemetry(fields, message) {
         let topic = Topic::new("telemetry");
         return Some(
@@ -2426,6 +2442,36 @@ fn direct_lxmf_message_envelope(
                 .unwrap_or(local_source),
         ),
     )
+}
+
+fn direct_lxmf_mission_command(
+    fields: Option<&serde_json::Map<String, JsonValue>>,
+) -> Option<Command> {
+    let commands = fields?.get("9")?;
+    let command = commands
+        .as_array()
+        .and_then(|commands| commands.first())
+        .unwrap_or(commands);
+    let command_type = command
+        .get("command_type")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let command_id = command
+        .get("command_id")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    Some(Command {
+        name: command_type.to_string(),
+        args: command
+            .get("args")
+            .cloned()
+            .filter(JsonValue::is_object)
+            .unwrap_or_else(|| serde_json::json!({})),
+        correlation_id: command_id,
+    })
 }
 
 pub fn reticulumd_message_to_envelope(
@@ -4961,6 +5007,49 @@ mod tests {
         );
         assert_eq!(message.attachments[0].category, "file");
         assert_eq!(rpc.calls[0].method, "list_messages");
+    }
+
+    #[test]
+    fn reticulumd_rpc_adapter_maps_field_commands_mission_envelope() {
+        let mut rpc = RecordingReticulumdRpc::with_responses(vec![serde_json::json!({
+            "messages": [{
+                "id": "directory-command-1",
+                "source": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "destination": "local-destination",
+                "fields": {
+                    "9": [{
+                        "command_id": "hub-directory-123",
+                        "command_type": "rem.registry.team_peers.list",
+                        "source": {
+                            "rns_identity": "11111111111111111111111111111111"
+                        },
+                        "timestamp": "2026-07-16T12:00:00Z",
+                        "args": {}
+                    }]
+                }
+            }]
+        })]);
+        let mut adapter = ReticulumdRpcLxmfRsAdapter::new(
+            "local-destination",
+            ReticulumdRpcTransport::from_rpc(&mut rpc),
+        );
+
+        let frame = crate::test_block_on(adapter.receive_frame())
+            .expect("receive")
+            .expect("frame");
+        let envelope = ProtocolEnvelope::decode_msgpack(&frame.bytes).expect("envelope");
+
+        assert_eq!(
+            envelope.source.to_string(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(envelope.stable_dedupe_key(), "directory-command-1");
+        let Payload::Command(command) = envelope.payload else {
+            panic!("expected command");
+        };
+        assert_eq!(command.name, "rem.registry.team_peers.list");
+        assert_eq!(command.correlation_id.as_deref(), Some("hub-directory-123"));
+        assert_eq!(command.args, serde_json::json!({}));
     }
 
     #[test]
