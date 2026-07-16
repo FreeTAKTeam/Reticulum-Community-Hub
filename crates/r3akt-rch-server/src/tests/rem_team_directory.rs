@@ -77,25 +77,20 @@ async fn reticulumd_inbound_team_peer_directory_returns_only_shared_team_rem_pee
         let mut store = RchSqliteStore::open(&db_path).expect("store");
         store.save_snapshot(&core.snapshot()).expect("snapshot");
     }
-    let envelope = r3akt_protocol::ProtocolEnvelope::new(
-        r3akt_protocol::NodeId::new(CALLER_DESTINATION),
-        r3akt_protocol::Destination::Node(r3akt_protocol::NodeId::new("local-destination")),
-        r3akt_protocol::Topic::new("rem-directory"),
-        r3akt_protocol::Payload::Command(r3akt_protocol::Command {
-            name: "rem.registry.team_peers.list".to_string(),
-            args: json!({}),
-            correlation_id: Some("hub-directory-123".to_string()),
-        }),
-    )
-    .with_dedupe_key("dedupe-team-directory");
-    let payload_b64 = BASE64_STANDARD.encode(envelope.encode_msgpack().expect("msgpack"));
     let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results_and_accept_timeout(
         vec![
             json!({
                 "messages": [{
                     "id": "lxmf-team-directory-1",
+                    "source": CALLER_DESTINATION,
                     "destination": "local-destination",
-                    "fields": { "r3akt_payload_b64": payload_b64 }
+                    "fields": { crate::FIELD_COMMANDS.to_string(): [{
+                        "command_id": "hub-directory-123",
+                        "command_type": "rem.registry.team_peers.list",
+                        "source": { "rns_identity": CALLER_IDENTITY },
+                        "timestamp": "2026-07-16T12:00:00Z",
+                        "args": {}
+                    }] }
                 }]
             }),
             json!({"message_id": "accepted-reply"}),
