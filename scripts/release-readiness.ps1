@@ -100,8 +100,10 @@ function Get-ReleaseBinary {
 
 function Invoke-ServerSmoke {
     if ($PlanOnly) {
-        if ($ServerOnlyAlpha) {
+        if ($ServerOnlyAlpha -and $LiveReticulum) {
             Write-Host "PLAN: start target/release/r3akt-rch-server with mandatory ZeroMQ SDK endpoints and validate /Status, /openapi.json, /Help, /api/v1/app/info, /diagnostics/runtime"
+        } elseif ($ServerOnlyAlpha) {
+            Write-Host "PLAN: start target/release/r3akt-rch-server without external Reticulum infrastructure and validate /Status, /openapi.json, /Help, /api/v1/app/info, /diagnostics/runtime"
         } else {
             Write-Host "PLAN: start target/release/r3akt-rch-server and validate /Status, /openapi.json, /Help, /api/v1/app/info"
         }
@@ -116,7 +118,7 @@ function Invoke-ServerSmoke {
     $db = Join-Path ([System.IO.Path]::GetTempPath()) ("r3akt-rch-release-smoke-" + [guid]::NewGuid().ToString() + ".sqlite3")
     $headers = @{ "X-API-Key" = $ApiKey }
     $serverArgs = @("--bind", $Bind, "--api-key", $ApiKey, "--db-path", $db)
-    if ($ServerOnlyAlpha) {
+    if ($ServerOnlyAlpha -and $LiveReticulum) {
         $serverArgs += @(
             "--lxmf-zmq-command", $LxmfZmqCommand,
             "--lxmf-zmq-response", $LxmfZmqResponse,
@@ -157,7 +159,7 @@ function Invoke-ServerSmoke {
         Invoke-RestMethod -Headers $headers -Uri "$baseUrl/api/v1/app/info" | Out-Null
         if ($ServerOnlyAlpha) {
             $diagnostics = Invoke-RestMethod -Headers $headers -Uri "$baseUrl/diagnostics/runtime"
-            if (-not $diagnostics.reticulumd_source_configured) {
+            if ($LiveReticulum -and -not $diagnostics.reticulumd_source_configured) {
                 throw "Server-only alpha smoke expected a configured Reticulum source for mandatory ZeroMQ."
             }
         }
