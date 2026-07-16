@@ -4606,6 +4606,17 @@ impl RchCore {
                 "REM announce capabilities are required",
             ))];
         }
+        if command.command_type == "rem.registry.team_peers.list"
+            && self
+                .shared_team_uids_for_rem_source(source_identity.as_str())
+                .is_empty()
+        {
+            return vec![MissionSyncResponse::rem_results(Self::rejected_result(
+                command,
+                "unauthorized",
+                "TEAM membership is required",
+            ))];
+        }
 
         let mut responses = vec![MissionSyncResponse::rem_results(Self::accepted_result(
             command,
@@ -4818,9 +4829,9 @@ impl RchCore {
         command: &MissionCommandEnvelope,
     ) -> Result<Option<EventEnvelope>, RchCoreError> {
         match command.command_type.as_str() {
-            "rem.registry.mode.set" | "rem.registry.peers.list" => {
-                self.apply_rem_registry_command(command)
-            }
+            "rem.registry.mode.set"
+            | "rem.registry.peers.list"
+            | "rem.registry.team_peers.list" => self.apply_rem_registry_command(command),
             "mission.join"
             | "mission.leave"
             | "mission.pause"
@@ -4961,20 +4972,27 @@ impl RchCore {
                 command,
                 self.rem_peer_registry_payload(),
             ))),
+            "rem.registry.team_peers.list" => Ok(Some(Self::event(
+                "rem.registry.team_peers.listed",
+                command,
+                self.rem_team_peer_registry_payload(&command.source.rns_identity),
+            ))),
             other => Err(RchCoreError::UnsupportedCommand(other.to_string())),
         }
     }
 
+    fn identity_announce_has_rem_capabilities(record: &IdentityAnnounceRecord) -> bool {
+        let capabilities: HashSet<_> = record
+            .announce_capabilities
+            .iter()
+            .map(String::as_str)
+            .collect();
+        capabilities.contains("r3akt") && capabilities.contains("emergencymessages")
+    }
+
     fn identity_has_rem_announce_capabilities(&self, identity: &str) -> bool {
         self.identity_announce_for_identity(identity)
-            .is_some_and(|record| {
-                let capabilities: HashSet<_> = record
-                    .announce_capabilities
-                    .iter()
-                    .map(String::as_str)
-                    .collect();
-                capabilities.contains("r3akt") && capabilities.contains("emergencymessages")
-            })
+            .is_some_and(Self::identity_announce_has_rem_capabilities)
     }
 
     fn identity_announce_for_identity(&self, identity: &str) -> Option<&IdentityAnnounceRecord> {
@@ -5003,6 +5021,185 @@ impl RchCore {
         self.identity_rem_modes
             .values()
             .any(|record| record.mode.trim().eq_ignore_ascii_case("connected"))
+    }
+
+    fn canonical_identity_for_rem_source(&self, source: &str) -> Option<String> {
+        let source = normalize_hash(Some(source))?;
+        self.identity_announce_for_identity(&source)
+            .and_then(|record| {
+                record
+                    .announced_identity_hash
+                    .as_deref()
+                    .and_then(|identity| normalize_hash(Some(identity)))
+            })
+            .or(Some(source))
+    }
+
+    fn shared_team_uids_for_rem_source(&self, source: &str) -> HashSet<String> {
+        let Some(identity) = self.canonical_identity_for_rem_source(source) else {
+            return HashSet::new();
+        };
+        self.team_members
+            .values()
+            .filter(|member| {
+                normalize_hash(Some(&member.rns_identity)).as_deref() == Some(identity.as_str())
+                    || member.client_identities.iter().any(|client_identity| {
+                        normalize_hash(Some(client_identity)).as_deref() == Some(identity.as_str())
+                    })
+                    || self
+                        .team_member_client_links
+                        .contains(&(member.uid.clone(), identity.clone()))
+            })
+            .filter_map(|member| member.team_uid.clone())
+            .collect()
+    }
+
+    fn team_member_identities_for_teams(&self, team_uids: &HashSet<String>) -> HashSet<String> {
+        let mut identities = HashSet::new();
+        for member in self.team_members.values().filter(|member| {
+            member
+                .team_uid
+                .as_ref()
+                .is_some_and(|team_uid| team_uids.contains(team_uid))
+        }) {
+            if let Some(identity) = normalize_hash(Some(&member.rns_identity)) {
+                identities.insert(identity);
+            }
+            identities.extend(
+                member
+                    .client_identities
+                    .iter()
+                    .filter_map(|identity| normalize_hash(Some(identity))),
+            );
+            identities.extend(
+                self.team_member_client_links
+                    .iter()
+                    .filter(|(member_uid, _)| member_uid == &member.uid)
+                    .filter_map(|(_, identity)| normalize_hash(Some(identity))),
+            );
+        }
+        identities
+    }
+
+    fn rem_team_peer_registry_payload(&self, source: &str) -> Value {
+        let team_uids = self.shared_team_uids_for_rem_source(source);
+        let team_identities = self.team_member_identities_for_teams(&team_uids);
+        let requester_identity = self.canonical_identity_for_rem_source(source);
+        let requester_destination = normalize_hash(Some(source));
+        let cutoff_ms = utc_now_ms().saturating_sub(RECENT_ANNOUNCE_WINDOW_MS);
+        let rem_modes: HashMap<String, String> = self
+            .identity_rem_modes
+            .iter()
+            .map(|(identity, record)| {
+                let mode = record.mode.trim().to_ascii_lowercase();
+                (
+                    identity.clone(),
+                    if mode.is_empty() {
+                        "autonomous".to_string()
+                    } else {
+                        mode
+                    },
+                )
+            })
+            .collect();
+        let mut candidates: HashMap<String, (&IdentityAnnounceRecord, String)> = HashMap::new();
+        for record in self.identity_announces.values() {
+            let identity = record
+                .announced_identity_hash
+                .as_deref()
+                .and_then(|value| normalize_hash(Some(value)))
+                .or_else(|| normalize_hash(Some(&record.destination_hash)));
+            let Some(identity) = identity else {
+                continue;
+            };
+            if !team_identities.contains(&identity)
+                || requester_identity.as_deref() == Some(identity.as_str())
+                || requester_destination.as_deref()
+                    == normalize_hash(Some(&record.destination_hash)).as_deref()
+                || record.last_seen_ts_ms < cutoff_ms
+                || !record.client_type.trim().eq_ignore_ascii_case("rem")
+                || !Self::identity_announce_has_rem_capabilities(record)
+            {
+                continue;
+            }
+            if self
+                .identity_states
+                .get(&identity)
+                .is_some_and(|state| state.is_banned || state.is_blackholed)
+            {
+                continue;
+            }
+            let source = record
+                .source_interface
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map_or_else(|| "identity".to_string(), str::to_ascii_lowercase);
+            let replace = candidates
+                .get(&identity)
+                .is_none_or(|(_, existing_source)| {
+                    source == "destination" && existing_source != "destination"
+                });
+            if replace {
+                candidates.insert(identity, (record, source));
+            }
+        }
+
+        let effective_connected_mode = candidates.iter().any(|(identity, (record, _))| {
+            rem_modes
+                .get(identity)
+                .or_else(|| {
+                    normalize_hash(Some(&record.destination_hash))
+                        .as_ref()
+                        .and_then(|destination| rem_modes.get(destination))
+                })
+                .is_some_and(|mode| mode == "connected")
+        });
+        let mut items = candidates
+            .into_iter()
+            .map(|(identity, (record, source))| {
+                let destination_hash = if source == "destination" {
+                    normalize_hash(Some(&record.destination_hash))
+                        .unwrap_or_else(|| identity.clone())
+                } else {
+                    identity.clone()
+                };
+                json!({
+                    "identity": identity.clone(),
+                    "destination_hash": destination_hash,
+                    "display_name": record
+                        .display_name
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty()),
+                    "announce_capabilities": record.announce_capabilities.clone(),
+                    "client_type": record.client_type.trim().to_ascii_lowercase(),
+                    "registered_mode": rem_modes
+                        .get(&identity)
+                        .or_else(|| {
+                            normalize_hash(Some(&record.destination_hash))
+                                .as_ref()
+                                .and_then(|destination| rem_modes.get(destination))
+                        })
+                        .cloned()
+                        .unwrap_or_else(|| "autonomous".to_string()),
+                    "last_seen": millis_to_rfc3339(record.last_seen_ts_ms),
+                    "status": "active",
+                })
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left["identity"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(right["identity"].as_str().unwrap_or_default())
+        });
+
+        json!({
+            "scope": "shared_teams",
+            "effective_connected_mode": effective_connected_mode,
+            "items": items,
+        })
     }
 
     fn rem_peer_registry_payload(&self) -> Value {
@@ -10371,7 +10568,7 @@ pub fn is_supported_mission_command(command_type: &str) -> bool {
 pub fn is_supported_rem_registry_command(command_type: &str) -> bool {
     matches!(
         command_type,
-        "rem.registry.mode.set" | "rem.registry.peers.list"
+        "rem.registry.mode.set" | "rem.registry.peers.list" | "rem.registry.team_peers.list"
     )
 }
 
@@ -13268,6 +13465,16 @@ mod tests {
             correlation_id: Some("corr-1".to_string()),
             topics: Vec::new(),
         }
+    }
+
+    fn command_from(
+        source_identity: &str,
+        command_type: &str,
+        args: Value,
+    ) -> MissionCommandEnvelope {
+        let mut command = command(command_type, args);
+        command.source.rns_identity = source_identity.to_string();
+        command
     }
 
     #[test]
@@ -16683,6 +16890,175 @@ mod tests {
                 .iter()
                 .any(|event| event.event_type == "rem.registry.peers.listed")
         );
+    }
+
+    #[test]
+    fn rem_team_peer_registry_returns_only_recent_shared_team_rem_destinations() {
+        const CALLER_IDENTITY: &str = "11111111111111111111111111111111";
+        const CALLER_CLIENT_IDENTITY: &str = "99999999999999999999999999999999";
+        const CALLER_DESTINATION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const TEAMMATE_IDENTITY: &str = "22222222222222222222222222222222";
+        const TEAMMATE_DESTINATION: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        const LINKED_MEMBER_IDENTITY: &str = "33333333333333333333333333333333";
+        const LINKED_CLIENT_IDENTITY: &str = "44444444444444444444444444444444";
+        const LINKED_DESTINATION: &str = "cccccccccccccccccccccccccccccccc";
+        const OUTSIDER_IDENTITY: &str = "55555555555555555555555555555555";
+        const BLOCKED_IDENTITY: &str = "66666666666666666666666666666666";
+        const STALE_IDENTITY: &str = "77777777777777777777777777777777";
+        const GENERIC_IDENTITY: &str = "88888888888888888888888888888888";
+
+        let mut core = RchCore::new();
+        for (uid, name) in [("team-alpha", "Alpha"), ("team-bravo", "Bravo")] {
+            core.handle_command(&command(
+                "mission.registry.team.upsert",
+                json!({ "uid": uid, "team_name": name }),
+            ));
+        }
+        for (uid, team_uid, identity) in [
+            ("member-caller", "team-alpha", CALLER_IDENTITY),
+            ("member-teammate", "team-alpha", TEAMMATE_IDENTITY),
+            ("member-linked", "team-alpha", LINKED_MEMBER_IDENTITY),
+            ("member-blocked", "team-alpha", BLOCKED_IDENTITY),
+            ("member-stale", "team-alpha", STALE_IDENTITY),
+            ("member-generic", "team-alpha", GENERIC_IDENTITY),
+            ("member-outsider", "team-bravo", OUTSIDER_IDENTITY),
+        ] {
+            core.handle_command(&command(
+                "mission.registry.team_member.upsert",
+                json!({
+                    "uid": uid,
+                    "team_uid": team_uid,
+                    "rns_identity": identity,
+                    "display_name": uid,
+                }),
+            ));
+        }
+        core.handle_command(&command(
+            "mission.registry.team_member.client.link",
+            json!({
+                "team_member_uid": "member-linked",
+                "client_identity": LINKED_CLIENT_IDENTITY,
+            }),
+        ));
+        core.handle_command(&command(
+            "mission.registry.team_member.client.link",
+            json!({
+                "team_member_uid": "member-caller",
+                "client_identity": CALLER_CLIENT_IDENTITY,
+            }),
+        ));
+
+        let rem_capabilities = vec![
+            "r3akt".to_string(),
+            "EmergencyMessages".to_string(),
+            "Telemetry".to_string(),
+        ];
+        for (identity, destination, name) in [
+            (CALLER_CLIENT_IDENTITY, CALLER_DESTINATION, "Caller"),
+            (TEAMMATE_IDENTITY, TEAMMATE_DESTINATION, "Teammate"),
+            (LINKED_CLIENT_IDENTITY, LINKED_DESTINATION, "Linked client"),
+        ] {
+            core.record_identity_announce(
+                identity,
+                None,
+                Some(format!("{name} identity")),
+                Some("identity".to_string()),
+                rem_capabilities.clone(),
+            )
+            .expect("identity announce");
+            core.record_identity_announce(
+                destination,
+                Some(identity.to_string()),
+                Some(format!("{name} destination")),
+                Some("destination".to_string()),
+                rem_capabilities.clone(),
+            )
+            .expect("destination announce");
+        }
+        for identity in [OUTSIDER_IDENTITY, BLOCKED_IDENTITY, STALE_IDENTITY] {
+            core.record_identity_announce(
+                identity,
+                None,
+                Some(identity.to_string()),
+                Some("identity".to_string()),
+                rem_capabilities.clone(),
+            )
+            .expect("REM announce");
+        }
+        core.record_identity_announce(
+            GENERIC_IDENTITY,
+            None,
+            Some("Generic client".to_string()),
+            Some("identity".to_string()),
+            vec!["r3akt".to_string()],
+        )
+        .expect("generic announce");
+        core.set_identity_state(BLOCKED_IDENTITY, true, false)
+            .expect("blocked state");
+        core.identity_announces
+            .get_mut(STALE_IDENTITY)
+            .expect("stale announce")
+            .last_seen_ts_ms = utc_now_ms() - RECENT_ANNOUNCE_WINDOW_MS - 1;
+        core.set_identity_rem_mode(LINKED_DESTINATION, "semi_autonomous")
+            .expect("teammate mode");
+        core.set_identity_rem_mode(OUTSIDER_IDENTITY, "connected")
+            .expect("outsider connected mode");
+
+        let responses = core.handle_mission_sync_command(&command_from(
+            CALLER_DESTINATION,
+            "rem.registry.team_peers.list",
+            json!({}),
+        ));
+
+        assert_eq!(responses.len(), 2);
+        assert_eq!(
+            responses[0].results_field().expect("accepted")["status"],
+            "accepted"
+        );
+        assert_eq!(
+            responses[1].event_field().expect("event")["event_type"],
+            "rem.registry.team_peers.listed"
+        );
+        let result = &responses[1].results_field().expect("result")["result"];
+        assert_eq!(result["scope"], "shared_teams");
+        assert_eq!(result["effective_connected_mode"], false);
+        let items = result["items"].as_array().expect("items");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["identity"], TEAMMATE_IDENTITY);
+        assert_eq!(items[0]["destination_hash"], TEAMMATE_DESTINATION);
+        assert_eq!(items[0]["display_name"], "Teammate destination");
+        assert_eq!(items[1]["identity"], LINKED_CLIENT_IDENTITY);
+        assert_eq!(items[1]["destination_hash"], LINKED_DESTINATION);
+        assert_eq!(items[1]["registered_mode"], "semi_autonomous");
+        assert!(items.iter().all(|item| item["client_type"] == "rem"));
+        assert!(items.iter().all(|item| item["status"] == "active"));
+    }
+
+    #[test]
+    fn rem_team_peer_registry_rejects_rem_callers_without_team_membership() {
+        const CALLER_IDENTITY: &str = "11111111111111111111111111111111";
+        const CALLER_DESTINATION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let mut core = RchCore::new();
+        core.record_identity_announce(
+            CALLER_DESTINATION,
+            Some(CALLER_IDENTITY.to_string()),
+            Some("Unrostered REM".to_string()),
+            Some("destination".to_string()),
+            vec!["r3akt".to_string(), "EmergencyMessages".to_string()],
+        )
+        .expect("caller announce");
+
+        let responses = core.handle_mission_sync_command(&command_from(
+            CALLER_DESTINATION,
+            "rem.registry.team_peers.list",
+            json!({}),
+        ));
+
+        assert_eq!(responses.len(), 1);
+        let result = responses[0].results_field().expect("rejected");
+        assert_eq!(result["status"], "rejected");
+        assert_eq!(result["reason_code"], "unauthorized");
+        assert_eq!(result["reason"], "TEAM membership is required");
     }
 
     #[test]
