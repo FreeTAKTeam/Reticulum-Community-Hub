@@ -94,3 +94,49 @@ The old verbose southbound command envelope is intentionally unsupported for REM
 fanout. Receivers should not expect RCH to provide command IDs, correlations,
 source metadata, timestamps, topics, `snapshot_json`, or a second encoded field
 copy for REM southbound commands.
+
+## Team Peer Directory
+
+REM clients operating in semi-autonomous mode request their authoritative peer
+directory over LXMF with `rem.registry.team_peers.list`. The request uses the
+normal mission-style command envelope in `FIELD_COMMANDS` (`0x09`):
+
+```json
+{
+  "command_id": "hub-directory-123",
+  "command_type": "rem.registry.team_peers.list",
+  "timestamp": "2026-07-16T12:00:00Z",
+  "source": { "rns_identity": "<requesting REM identity>" },
+  "args": {}
+}
+```
+
+RCH requires the caller to have REM announce capabilities and to be linked to a
+TEAM member. It returns only recent, active, non-moderated REM destinations from
+teams shared with that member. Primary TEAM member identities and explicitly
+linked client identities are both eligible. The caller's own identity is
+excluded.
+
+The terminal `FIELD_RESULTS` (`0x0a`) result payload is:
+
+```json
+{
+  "scope": "shared_teams",
+  "effective_connected_mode": false,
+  "items": [
+    {
+      "identity": "<TEAM member identity>",
+      "destination_hash": "<lxmf.delivery destination>",
+      "display_name": "Field Phone",
+      "announce_capabilities": ["r3akt", "emergencymessages", "telemetry"],
+      "client_type": "rem",
+      "registered_mode": "semi_autonomous",
+      "last_seen": "2026-07-16T12:00:00Z",
+      "status": "active"
+    }
+  ]
+}
+```
+
+`rem.registry.peers.list` remains available as the legacy unscoped REM registry
+command, and `GET /api/rem/peers` remains the operator-facing HTTP registry.

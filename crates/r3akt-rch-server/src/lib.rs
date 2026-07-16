@@ -12794,7 +12794,11 @@ const CHECKLIST_SYNC_COMMANDS: &[&str] = &[
     "checklist.task.status.set",
 ];
 
-const REM_REGISTRY_COMMANDS: &[&str] = &["rem.registry.mode.set", "rem.registry.peers.list"];
+const REM_REGISTRY_COMMANDS: &[&str] = &[
+    "rem.registry.mode.set",
+    "rem.registry.peers.list",
+    "rem.registry.team_peers.list",
+];
 
 fn command_help_text() -> String {
     let mut lines = vec![
@@ -12885,6 +12889,8 @@ fn supported_commands_document() -> String {
         "`rem.registry.mode.set` accepts `autonomous`, `semi_autonomous`, or `connected`."
             .to_string(),
         "`rem.registry.peers.list` returns active REM peers and `effective_connected_mode`."
+            .to_string(),
+        "`rem.registry.team_peers.list` returns recent REM-capable peers in teams shared with the requesting REM identity."
             .to_string(),
         String::new(),
     ]);
@@ -28182,6 +28188,8 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    mod rem_team_directory;
+
     use crate::BASE64_STANDARD;
     use std::collections::HashSet;
     use std::io::{Read, Write};
@@ -49059,6 +49067,7 @@ mod tests {
                     "mission.registry.eam.upsert",
                     "checklist.template.list",
                     "rem.registry.mode.set",
+                    "rem.registry.team_peers.list",
                     "TelemetryRequest",
                 ],
                 vec!["migration slice"],
@@ -49071,6 +49080,7 @@ mod tests {
                     "mission.registry.mission.list",
                     "checklist.task.status.set",
                     "rem.registry.peers.list",
+                    "rem.registry.team_peers.list",
                 ],
                 vec!["Topic create example:"],
             ),

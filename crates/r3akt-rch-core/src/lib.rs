@@ -23,6 +23,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 pub mod python_migration;
+mod rem_team_directory;
 
 pub const DELIVERY_ENVELOPE_FIELD: &str = "RTHDelivery";
 pub const DELIVERY_SCHEMA_VERSION: &str = "1";
@@ -4606,6 +4607,17 @@ impl RchCore {
                 "REM announce capabilities are required",
             ))];
         }
+        if command.command_type == "rem.registry.team_peers.list"
+            && self
+                .shared_team_uids_for_rem_source(source_identity.as_str())
+                .is_empty()
+        {
+            return vec![MissionSyncResponse::rem_results(Self::rejected_result(
+                command,
+                "unauthorized",
+                "TEAM membership is required",
+            ))];
+        }
 
         let mut responses = vec![MissionSyncResponse::rem_results(Self::accepted_result(
             command,
@@ -4818,9 +4830,9 @@ impl RchCore {
         command: &MissionCommandEnvelope,
     ) -> Result<Option<EventEnvelope>, RchCoreError> {
         match command.command_type.as_str() {
-            "rem.registry.mode.set" | "rem.registry.peers.list" => {
-                self.apply_rem_registry_command(command)
-            }
+            "rem.registry.mode.set"
+            | "rem.registry.peers.list"
+            | "rem.registry.team_peers.list" => self.apply_rem_registry_command(command),
             "mission.join"
             | "mission.leave"
             | "mission.pause"
@@ -4961,42 +4973,13 @@ impl RchCore {
                 command,
                 self.rem_peer_registry_payload(),
             ))),
+            "rem.registry.team_peers.list" => Ok(Some(Self::event(
+                "rem.registry.team_peers.listed",
+                command,
+                self.rem_team_peer_registry_payload(&command.source.rns_identity),
+            ))),
             other => Err(RchCoreError::UnsupportedCommand(other.to_string())),
         }
-    }
-
-    fn identity_has_rem_announce_capabilities(&self, identity: &str) -> bool {
-        self.identity_announce_for_identity(identity)
-            .is_some_and(|record| {
-                let capabilities: HashSet<_> = record
-                    .announce_capabilities
-                    .iter()
-                    .map(String::as_str)
-                    .collect();
-                capabilities.contains("r3akt") && capabilities.contains("emergencymessages")
-            })
-    }
-
-    fn identity_announce_for_identity(&self, identity: &str) -> Option<&IdentityAnnounceRecord> {
-        let identity = normalize_hash(Some(identity))?;
-        if let Some(record) = self.identity_announces.get(&identity) {
-            return Some(record);
-        }
-        self.identity_announces
-            .values()
-            .filter(|record| {
-                record
-                    .announced_identity_hash
-                    .as_deref()
-                    .is_some_and(|announced| announced == identity)
-            })
-            .max_by_key(|record| {
-                (
-                    record.source_interface.as_deref() == Some("identity"),
-                    record.display_name.is_some(),
-                    record.last_seen_ts_ms,
-                )
-            })
     }
 
     fn effective_rem_connected_mode(&self) -> bool {
@@ -10371,7 +10354,7 @@ pub fn is_supported_mission_command(command_type: &str) -> bool {
 pub fn is_supported_rem_registry_command(command_type: &str) -> bool {
     matches!(
         command_type,
-        "rem.registry.mode.set" | "rem.registry.peers.list"
+        "rem.registry.mode.set" | "rem.registry.peers.list" | "rem.registry.team_peers.list"
     )
 }
 
@@ -13254,6 +13237,8 @@ mod tests {
 
     use super::*;
 
+    mod rem_team_directory;
+
     fn command(command_type: &str, args: Value) -> MissionCommandEnvelope {
         let suffix = args.to_string();
         MissionCommandEnvelope {
@@ -13269,7 +13254,6 @@ mod tests {
             topics: Vec::new(),
         }
     }
-
     #[test]
     fn rch_topic_and_hash_normalization_match_python_contract() {
         assert_eq!(

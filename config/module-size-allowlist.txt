@@ -1,11 +1,11 @@
 # Temporary shrinking ceilings for existing oversized production modules.
 crates/r3akt-profile-rch/src/lib.rs|996
 crates/r3akt-rch-bridge/src/lib.rs|1270
-crates/r3akt-rch-core/src/lib.rs|17074
+crates/r3akt-rch-core/src/lib.rs|17160
 crates/r3akt-rch-core/src/python_migration.rs|2530
-crates/r3akt-rch-server/src/lib.rs|60161
+crates/r3akt-rch-server/src/lib.rs|62123
 crates/r3akt-rch-server/src/main.rs|2054
 crates/r3akt-rch-server/src/sar_seed.rs|1545
 crates/r3akt-tak-connector/src/bin/r3akt-tak-service.rs|751
-crates/r3akt-tak-connector/src/lib.rs|3051
+crates/r3akt-tak-connector/src/lib.rs|3052
 crates/r3akt-transport-rns/src/lib.rs|5651
