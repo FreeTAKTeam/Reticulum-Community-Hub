@@ -83,7 +83,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.8.0
+          ref: 7cafc5b4be21ff4f777d0f2300cfb79e5d0da23c # v0.9.5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -206,7 +206,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: v0.8.0
+          ref: 7cafc5b4be21ff4f777d0f2300cfb79e5d0da23c # v0.9.5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
