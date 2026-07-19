@@ -64,7 +64,7 @@ identifiers do not exist until after this source is committed.
 | Tauri sidecars and desktop AppImage build | Passed using Rust 1.88 and the pinned LXMF-rs v0.9.5 daemon binary |
 | committed release-readiness gate | Passed, including HTTP smoke and automatic Ubuntu multiarch OpenSSL discovery |
 | local Reticulum receipt/fanout/event/load gate | Passed: direct receipt, topic fanout, ZeroMQ event poll, and 500/500 load messages received |
-| hosted PR checks | Pending |
+| hosted PR checks | Passed on PR #211: Rust PR Quality Control run `29691085761` and committed release-readiness run `29691085811` (nine checks total) |
 | published asset/checksum/manifest audit | Pending |
 
 ## External limitations
