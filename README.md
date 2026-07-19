@@ -35,7 +35,7 @@ Crates:
   decision helpers.
 - `r3akt-transport-rns`: `MessageBus` trait, bounded mock transport, LXMF wire
   helpers, and the lifecycle-managed ZeroMQ data plane. Production builds pin
-  released LXMF `0.8.0`; the sibling checkout is used only by the scheduled
+  released LXMF `0.9.5`; the sibling checkout is used only by the scheduled
   compatibility job and to build the matching bundled daemon.
 - `r3akt-profile-rch`: RCH LXMF field profile for `FIELD_COMMANDS` (`0x09`),
   `FIELD_RESULTS` (`0x0A`), and `FIELD_EVENT` (`0x0D`) command/result/event
@@ -160,7 +160,7 @@ Crates:
 Found at `C:\Users\broth\Documents\work\ATAK\src\LXMF-rs`, remote
 `https://github.com/FreeTAKTeam/LXMF-rs`.
 
-Production Rust RCH builds use the released LXMF-rs `0.8.0` crates exactly:
+Production Rust RCH builds use the released LXMF-rs `0.9.5` crates exactly:
 `lxmf-wire`, `lxmf-sdk`, `reticulum-rs-rpc`, `reticulum-rs-core`, and
 `lxmf-reference`. The sibling checkout is used only for coordinated
 compatibility CI and building the matching ZMQ-capable `reticulumd` sidecar.
@@ -253,7 +253,7 @@ path was checked and was not present.
 
 | Component | Found in repo | Reuse decision | Reason | Follow-up needed |
 | --- | --- | --- | --- | --- |
-| LXMF wire/runtime | LXMF-rs | Use released LXMF `0.8.0` with a lifecycle-owned ZeroMQ SDK actor for send, batch, status, and event traffic; keep RPC control-only | Real Rust LXMF/RNS crates exist and ZeroMQ preserves bounded batching | Keep local live receipt/fanout validation in the release gate and add broader real-network validation before default-branch switch |
+| LXMF wire/runtime | LXMF-rs | Use released LXMF `0.9.5` with a lifecycle-owned ZeroMQ SDK actor for send, batch, status, and event traffic; keep RPC control-only | Real Rust LXMF/RNS crates exist and ZeroMQ preserves bounded batching | Keep local live receipt/fanout validation in the release gate and add broader real-network validation before default-branch switch |
 | MessagePack payloads | LXMF-rs, REM, RCH | Implemented in `r3akt-protocol` with `rmp-serde` | All sister repos use or document MsgPack on hot path | Add golden vectors against RCH/REM command envelopes |
 | RCH field IDs | REM, RCH docs | Implemented in `r3akt-profile-rch` with Python-generated `FIELD_COMMANDS`, `FIELD_RESULTS` accepted/result/rejected, and `FIELD_EVENT` MessagePack fixtures plus RCH status mapping and event encode/decode coverage; product-specific command fixtures now cover REM checklist create commands with topics and EAM upsert fanout commands without optional correlation/topic fields, and event decoding accepts Python mission-sync's single-object event envelope with event ID/source/timestamp/topics | Core envelopes stay transport-neutral while the RCH profile preserves field compatibility | Add Python-generated hex fixtures for any future product-specific payload variants introduced by the UI/runtime |
 | Durable local state | REM, RCH | Added `DurableStore`, `MemoryStore`, `SqliteStore` | REM and RCH both persist runtime/message state | Add migrations for production inbox/outbox schemas |
@@ -284,7 +284,7 @@ path was checked and was not present.
 ## Runtime Path
 
 The supported runtime path is `r3akt-rch-server` -> bounded
-`Arc<ZmqDataPlane>` -> released LXMF SDK 0.8.0 -> `reticulumd`. RCH persists
+`Arc<ZmqDataPlane>` -> released LXMF SDK 0.9.5 -> `reticulumd`. RCH persists
 outbound intent before admission, retries only pre-admission failures, and
 hands network scheduling and receipts to `reticulumd` after SDK acceptance.
 

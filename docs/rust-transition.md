@@ -187,7 +187,7 @@ Release blockers cleared in the latest parity pass:
 - ZeroMQ is the permanent LXMF data plane for send, ordered batch acceptance,
   delivery status, and event traffic. RPC is an optional administration
   channel and must not be called from HTTP delivery or fanout hot paths.
-- Production dependencies use released LXMF `0.8.0`. The matching
+- Production dependencies use released LXMF `0.9.5`. The matching
   ZMQ-capable `reticulumd` is bundled and described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
   the scheduled compatibility workflow.

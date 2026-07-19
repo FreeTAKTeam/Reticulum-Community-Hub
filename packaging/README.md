@@ -3,7 +3,7 @@
 The Rust packaging line now has two release package shapes:
 
 - Server package: deployable `r3akt-rch-server` binary, `r3akt-tak-service`
-  binary, checksum-recorded LXMF `0.8.0` `reticulumd` binary with ZeroMQ
+  binary, checksum-recorded LXMF `0.9.5` `reticulumd` binary with ZeroMQ
   support, mandatory ZeroMQ southbound configuration, shared UI bundle, service
   helper files, config templates, and checksums. Current release CI builds
   Windows x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64

@@ -8,10 +8,10 @@ repository.workspace = true
 
 [dependencies]
 base64.workspace = true
-lxmf = { package = "lxmf-wire", version = "=0.8.0", default-features = false, features = ["std"] }
-lxmf-sdk = { version = "=0.8.0", default-features = false, features = ["zmq-pipeline-backend"] }
+lxmf = { package = "lxmf-wire", version = "=0.9.5", default-features = false, features = ["std"] }
+lxmf-sdk = { version = "=0.9.5", default-features = false, features = ["zmq-pipeline-backend"] }
 r3akt-protocol.workspace = true
-rns-rpc = { package = "reticulum-rs-rpc", version = "=0.8.0" }
+rns-rpc = { package = "reticulum-rs-rpc", version = "=0.9.5" }
 rmp-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true
