@@ -488,7 +488,7 @@
       :submitting="checklistTemplateSubmitting"
       :template-options="checklistTemplateOptions"
       :select-options="checklistTemplateSelectOptions"
-      :selected-template-option="selectedChecklistTemplateOption"
+      :selected-template-option="selectedChecklistTemplateOption ?? undefined"
       @close="closeChecklistTemplateModal"
       @update:checklist-name-draft="checklistTemplateNameDraft = $event"
       @update:selection-uid="checklistTemplateSelectionKey = $event"

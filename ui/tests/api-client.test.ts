@@ -66,7 +66,57 @@ describe("api client", () => {
     globalThis.fetch = fetchMock as any;
 
     const connectionStore = useConnectionStore();
-    await expect(request("/Status")).rejects.toBeDefined();
+    await expect(request("/Status", { retries: 0 })).rejects.toMatchObject({
+      status: 401,
+      message: "unauthorized",
+      body: { detail: "unauthorized" }
+    });
     expect(connectionStore.authStatus).toBe("unauthenticated");
+  });
+
+  it("preserves text error status and body", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response("invalid topic", {
+        status: 400,
+        headers: { "Content-Type": "text/plain" }
+      })
+    ) as any;
+
+    await expect(request("/Topic", { retries: 0 })).rejects.toMatchObject({
+      status: 400,
+      message: "invalid topic",
+      body: "invalid topic"
+    });
+  });
+
+  it("preserves malformed JSON error text", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response("{not-json", {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      })
+    ) as any;
+
+    await expect(request("/Status", { retries: 0 })).rejects.toMatchObject({
+      status: 500,
+      message: "{not-json",
+      body: "{not-json"
+    });
+  });
+
+  it("sets forbidden auth state without losing the server detail", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: "operator role required" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" }
+      })
+    ) as any;
+
+    const connectionStore = useConnectionStore();
+    await expect(request("/Status", { retries: 0 })).rejects.toMatchObject({
+      status: 403,
+      message: "operator role required"
+    });
+    expect(connectionStore.authStatus).toBe("forbidden");
   });
 });

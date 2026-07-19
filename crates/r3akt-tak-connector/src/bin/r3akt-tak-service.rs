@@ -1,3 +1,13 @@
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
+
 use std::collections::HashSet;
 use std::env;
 use std::io::{Read, Write};
@@ -5,13 +15,13 @@ use std::net::TcpStream;
 use std::thread;
 use std::time::Duration as StdDuration;
 
+use chrono::{DateTime, Utc};
 use r3akt_tak_connector::{
     ChatEventInput, CotPayload, CotPayloadKind, LocationSnapshot, TakClearSender,
     TakConnectionConfig, TakConnector, TakCotReceiver, TakCotSender, TakInboundCotEvent,
     TakInboundCotResult, TakInboundService, TakSocketReceiver,
 };
 use serde_json::{Value, json};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 fn main() {
     if let Err(error) = run() {
@@ -223,11 +233,7 @@ fn bridge_rch_to_tak(
         if state.telemetry.insert(key) {
             let payload = CotPayload {
                 kind: CotPayloadKind::Location,
-                xml: connector.build_location_xml(
-                    &snapshot,
-                    OffsetDateTime::now_utc(),
-                    label.as_deref(),
-                ),
+                xml: connector.build_location_xml(&snapshot, Utc::now(), label.as_deref()),
             };
             sender.send(&payload)?;
         }
@@ -244,7 +250,7 @@ fn bridge_rch_to_tak(
         let key = input
             .message_uuid
             .clone()
-            .unwrap_or_else(|| format!("{}:{}", input.timestamp.unix_timestamp(), input.content));
+            .unwrap_or_else(|| format!("{}:{}", input.timestamp.timestamp(), input.content));
         if state.chat.insert(key) {
             let payload = CotPayload {
                 kind: CotPayloadKind::Chat,
@@ -292,7 +298,7 @@ fn location_snapshot_from_entry(
             speed: json_f64(location, "speed").unwrap_or(0.0),
             bearing: json_f64(location, "bearing").unwrap_or(0.0),
             accuracy: json_f64(location, "accuracy").unwrap_or(0.0),
-            updated_at: OffsetDateTime::from_unix_timestamp(timestamp).ok()?,
+            updated_at: DateTime::from_timestamp(timestamp, 0)?,
             peer_hash: Some(peer),
         },
         label,
@@ -308,8 +314,8 @@ fn chat_input_from_message(message: &Value) -> Option<ChatEventInput> {
     let timestamp = message
         .get("CreatedAt")
         .and_then(Value::as_str)
-        .and_then(|value| OffsetDateTime::parse(value, &Rfc3339).ok())
-        .unwrap_or_else(OffsetDateTime::now_utc);
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map_or_else(Utc::now, |value| value.with_timezone(&Utc));
     Some(ChatEventInput {
         content: content.to_string(),
         sender_label: "RCH".to_string(),

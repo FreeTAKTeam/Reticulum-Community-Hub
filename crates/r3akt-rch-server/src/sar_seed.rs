@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
-use std::fmt::{self, Write as _};
-use std::io::{Read, Write};
+use std::fmt;
+use std::io::{Read, Write as IoWrite};
 use std::net::TcpStream;
 use std::time::Duration;
 
@@ -201,12 +201,7 @@ impl SarHttpClient {
         bytes: &[u8],
     ) -> Result<Value, SarSeedError> {
         let boundary = format!("{SCENARIO_ID}-boundary");
-        let sha256 = Sha256::digest(bytes)
-            .iter()
-            .fold(String::new(), |mut output, byte| {
-                write!(&mut output, "{byte:02x}").expect("write sha256 hex");
-                output
-            });
+        let sha256 = format!("{:x}", Sha256::digest(bytes));
         let body =
             multipart_attachment_body(&boundary, filename, media_type, bytes, &sha256, topic_id);
         let response = self.request(
@@ -235,10 +230,14 @@ impl SarHttpClient {
             body.len()
         );
         if let Some(api_key) = &self.api_key {
-            write!(&mut request, "X-API-Key: {api_key}\r\n").expect("write request header");
+            request.push_str("X-API-Key: ");
+            request.push_str(api_key);
+            request.push_str("\r\n");
         }
         if let Some(content_type) = content_type {
-            write!(&mut request, "Content-Type: {content_type}\r\n").expect("write request header");
+            request.push_str("Content-Type: ");
+            request.push_str(content_type);
+            request.push_str("\r\n");
         }
         request.push_str("\r\n");
         stream.write_all(request.as_bytes())?;

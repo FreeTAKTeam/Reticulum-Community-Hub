@@ -3,12 +3,24 @@
     clippy::module_name_repetitions,
     clippy::too_many_lines
 )]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
+
+mod text;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use chrono::{DateTime, SecondsFormat, Utc};
 use r3akt_profile_rch::{
     CommandResultEnvelope, CommandResultStatus, EventEnvelope, MissionCommandEnvelope,
 };
@@ -19,8 +31,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
+
+use text::decode_utf8_ignoring_errors;
 
 pub mod python_migration;
 mod rem_team_directory;
@@ -768,7 +781,7 @@ pub fn validate_delivery_envelope(
     }
     let created_at = object.get("Created-At").and_then(value_as_str);
     if let Some(created_at) = created_at.as_ref().filter(|value| !value.trim().is_empty()) {
-        OffsetDateTime::parse(created_at, &Rfc3339)
+        DateTime::parse_from_rfc3339(created_at)
             .map_err(|_| RchCoreError::Delivery("Created-At must be RFC3339 UTC".to_string()))?;
     }
 
@@ -3136,7 +3149,9 @@ impl RchSqliteStore {
         match migration_result {
             Ok(()) => self.connection.execute_batch("COMMIT;")?,
             Err(error) => {
-                let _ = self.connection.execute_batch("ROLLBACK;");
+                if let Err(rollback_error) = self.connection.execute_batch("ROLLBACK;") {
+                    eprintln!("SQLite migration rollback failed: {rollback_error}");
+                }
                 return Err(error);
             }
         }
@@ -4797,12 +4812,11 @@ impl RchCore {
                     content_type: content_type.clone(),
                     ttl_seconds: envelope.ttl_seconds,
                     priority: DEFAULT_PRIORITY,
-                    born_at_ms: Some(envelope.timestamp.unix_timestamp() * 1000),
+                    born_at_ms: Some(envelope.timestamp.timestamp() * 1000),
                     created_at: Some(
                         envelope
                             .timestamp
-                            .format(&Rfc3339)
-                            .unwrap_or_else(|_| utc_now_rfc3339()),
+                            .to_rfc3339_opts(SecondsFormat::AutoSi, true),
                     ),
                 })?;
                 self.record_message(
@@ -5995,7 +6009,7 @@ impl RchCore {
                 let assignment = self
                     .mission_access_assignments
                     .get(&(mission_uid.clone(), subject_type, subject_id))
-                    .expect("mission access assignment was just inserted");
+                    .ok_or(RchCoreError::AssignmentNotFound)?;
                 Ok(Some(Self::event(
                     "mission.registry.rights.mission_access.assigned",
                     command,
@@ -8069,7 +8083,7 @@ impl RchCore {
         let template = self
             .checklist_templates
             .get_mut(template_uid)
-            .expect("template exists");
+            .ok_or_else(|| RchCoreError::InvalidPayload("template disappeared".to_string()))?;
         if let Some(name) = optional_text(patch, &["template_name", "name"]) {
             template.template_name = name;
         }
@@ -8926,7 +8940,7 @@ impl RchCore {
             let task = self
                 .checklist_tasks
                 .get_mut(&task_uid)
-                .expect("task exists");
+                .ok_or_else(|| RchCoreError::InvalidPayload("task disappeared".to_string()))?;
             let (status, is_late) =
                 derive_task_status(&task.user_status, task.due_ts_ms, task.completed_ts_ms);
             task.task_status = status;
@@ -12089,8 +12103,8 @@ fn optional_timestamp_ms(args: &Value, keys: &[&str]) -> Result<Option<i64>, Rch
             "timestamp must be RFC3339 or Unix time".to_string(),
         ));
     };
-    OffsetDateTime::parse(text, &Rfc3339)
-        .map(|timestamp| Some(timestamp.unix_timestamp() * 1000))
+    DateTime::parse_from_rfc3339(text)
+        .map(|timestamp| Some(timestamp.timestamp() * 1000))
         .map_err(|_| RchCoreError::InvalidPayload("timestamp must be RFC3339".to_string()))
 }
 
@@ -12890,30 +12904,6 @@ fn normalize_csv_header(value: &str) -> String {
         .join(" ")
 }
 
-fn decode_utf8_ignoring_errors(bytes: &[u8]) -> String {
-    let mut decoded = String::new();
-    let mut remaining = bytes;
-    while !remaining.is_empty() {
-        match std::str::from_utf8(remaining) {
-            Ok(valid) => {
-                decoded.push_str(valid);
-                break;
-            }
-            Err(error) => {
-                let valid_up_to = error.valid_up_to();
-                if valid_up_to > 0 {
-                    decoded.push_str(
-                        std::str::from_utf8(&remaining[..valid_up_to]).expect("valid prefix"),
-                    );
-                }
-                let skip = error.error_len().unwrap_or(1);
-                remaining = &remaining[(valid_up_to + skip).min(remaining.len())..];
-            }
-        }
-    }
-    decoded
-}
-
 fn parse_due_minutes(value: &str) -> Option<i64> {
     let text = value.trim().strip_prefix('+').unwrap_or(value.trim());
     if text.is_empty() {
@@ -12973,25 +12963,18 @@ fn normalize_enum(
 }
 
 fn utc_now_ms() -> i64 {
-    let millis = OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000;
-    match i64::try_from(millis) {
-        Ok(value) => value,
-        Err(_) if millis.is_negative() => i64::MIN,
-        Err(_) => i64::MAX,
-    }
+    Utc::now().timestamp_millis()
 }
 
 fn utc_now_rfc3339() -> String {
-    OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+    Utc::now().to_rfc3339_opts(SecondsFormat::AutoSi, true)
 }
 
 fn millis_to_rfc3339(timestamp_ms: i64) -> String {
-    OffsetDateTime::from_unix_timestamp(timestamp_ms / 1000)
-        .ok()
-        .and_then(|timestamp| timestamp.format(&Rfc3339).ok())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+    DateTime::from_timestamp_millis(timestamp_ms).map_or_else(
+        || "1970-01-01T00:00:00Z".to_string(),
+        |timestamp| timestamp.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+    )
 }
 
 fn checklist_task_row_added_delta(checklist_payload: &Value, args: &Value) -> Option<Value> {

@@ -65,7 +65,8 @@ The simplest route is to use a package from [GitHub Releases](https://github.com
 
 Requirements:
 
-- Rust 1.85 or newer;
+- Rust 1.85 or newer for the server workspace, and Rust 1.88 or newer for the
+  Tauri desktop shell;
 - a local Reticulum configuration;
 - [`LXMF-rs`](https://github.com/FreeTAKTeam/LXMF-rs) `reticulumd` for live LXMF transport;
 - Node.js and npm only when building the web or desktop interface.
@@ -96,6 +97,24 @@ After startup, useful local endpoints include:
 - `http://127.0.0.1:8080/Help`
 - `http://127.0.0.1:8080/openapi.json`
 - `http://127.0.0.1:8080/diagnostics/runtime`
+
+## Examples
+
+The maintained [examples guide](docs/examples.md) walks through server startup,
+authentication, health and runtime diagnostics, topics, direct/topic/broadcast
+chat, files, missions and checklists, WebSockets, Reticulum ZeroMQ attachment,
+and the standalone TAK sidecar. The live server also exposes a compact
+plaintext quick reference at `GET /Examples`.
+
+For a first authenticated request:
+
+```bash
+curl -H 'X-API-Key: change-this-preview-key' \
+  http://127.0.0.1:8080/Status
+```
+
+For operational deployment and failure diagnosis, continue with the
+[operations and troubleshooting guide](docs/operations-and-troubleshooting.md).
 
 ## Main components
 

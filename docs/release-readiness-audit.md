@@ -5,7 +5,11 @@ It is intentionally stricter than a green CI badge: the initial Rust alpha is
 not release-ready until every required local, CI, server-package, ZeroMQ, REM,
 and Reticulum gate is either passed or recorded as an explicit alpha risk.
 
-Audit date: 2026-06-22
+Audit date: 2026-06-22; preview.9 supplement: 2026-07-19
+
+The table retains historical evidence. Current preview.9 findings, validation,
+limitations, and artifact identity are tracked in
+[`stabilization-v3.0.0-preview.9.md`](stabilization-v3.0.0-preview.9.md).
 
 ## Objective
 
@@ -22,7 +26,7 @@ server-package-only milestone, not the full stable 3.0 release.
 | Rust core preserves Python-shaped domain behavior | `crates/r3akt-rch-core/src/lib.rs` tests | Core tests cover topics, clients, missions, teams, members, assets, skills, assignments, checklists, EAM, delivery policy, authorization, SQLite migration, and Python-shaped responses | Passed locally |
 | TAK is a separate service, not embedded in `r3akt-rch-server` | `crates/r3akt-tak-connector/src/bin/r3akt-tak-service.rs`, packaging files | `r3akt-tak-service` bridges RCH telemetry/chat to TAK and TAK CoT to RCH marker routes through northbound HTTP; `r3akt-rch-server` does not own TAK socket lifecycle | Passed locally |
 | Voice is an additional LXMF chat capability, not a voice-only destination class | `crates/r3akt-rch-server/src/lib.rs` tests | Voice-capable peer routing tests keep voice-capable identities in chat/fanout routing | Passed locally |
-| Rust MSRV gate is valid for Rust 1.85 | `.github/workflows/rust-pr-quality.yml`, `.github/workflows/rust.yml`, local `cargo +1.85.0` checks | PR quality control and the push release gate use Rust 1.85. The `Rust workspace` workflow run `26696071362` passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`, running `scripts/release-readiness.ps1 -ServerOnlyAlpha` with Rust 1.85. | Passed in CI |
+| Rust MSRV gate is valid for Rust 1.85 | `.github/workflows/rust-pr-quality.yml`, local `cargo +1.85.0` checks | PR quality control has a dedicated Rust 1.85 locked workspace check plus denied-warning rustdoc; Rust 1.88 remains the normal release toolchain. Historical `Rust workspace` run `26696071362` passed the committed gate on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. | Dedicated workflow defined; preview.9 run pending |
 | PR Rust quality control is explicit and branch-protectable | `.github/workflows/rust-pr-quality.yml` | Pull requests into `rust-next` or `main` get separate checks for `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`, release builds for `r3akt-rch-server` and `r3akt-tak-service`, and `cargo audit --deny warnings`. The workflow is branch-protectable; current push evidence is provided by the stricter committed alpha gate in `Rust workspace` run `26696071362`. | Workflow defined; push gate passed |
 | Release CI gate runs the committed alpha verifier | `.github/workflows/rust.yml`, `scripts/release-readiness.ps1` | CI invokes `scripts/release-readiness.ps1 -ServerOnlyAlpha`, which runs Rust format, clippy, workspace tests, the server release build, and the ZeroMQ-configured release HTTP smoke. `Rust workspace` run `26696071362` passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. | Passed in CI |
 | Server release binary builds and smokes with ZeroMQ configured | `scripts/release-readiness.ps1` | Alpha runner builds `r3akt-rch-server`, starts it with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source`, and validates `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, and `/diagnostics/runtime` against a temporary SQLite DB. This passed locally through `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` on 2026-05-28 against LXMF-rs `origin/main` `cbccf0f`. The Rust workspace baseline now targets LXMF-rs `v0.9.5` commit `7cafc5b4be21ff4f777d0f2300cfb79e5d0da23c`; on 2026-07-18, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and the focused release-critical crate tests passed against that baseline. Earlier release-build and local workflow-YAML checks passed before publishing `v3.0.0-preview.2` against the prior `v0.5.0` baseline. | Passed locally |
@@ -45,6 +49,14 @@ cargo test -p r3akt-rch-server
 cargo test -p r3akt-rch-core
 cargo test -p r3akt-transport-rns
 cargo test -p r3akt-tak-connector
+cargo +1.85.0 check --workspace --all-targets --locked
+cargo audit --deny warnings
+$env:RUSTDOCFLAGS = "-D warnings"; cargo doc --workspace --no-deps
+npm --prefix ui ci
+npm --prefix ui run lint
+npm --prefix ui run typecheck
+npm --prefix ui run test
+npm --prefix ui run build
 cargo build --release -p r3akt-rch-server
 .\scripts\release-readiness.ps1 -ServerOnlyAlpha
 .\scripts\local-reticulum-live-gate.ps1 -IncludeZmqEventPoll -IncludeZmqLoad -DiscoverySettleSeconds 10 -ReceiptPollAttempts 180

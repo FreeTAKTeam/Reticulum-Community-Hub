@@ -1,8 +1,8 @@
 [package]
 name = "rch-desktop"
-version = "3.0.0-preview.8"
+version = "3.0.0-preview.9"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "EPL-2.0"
 repository = "https://github.com/FreeTAKTeam/Reticulum-Community-Hub"
 
@@ -14,7 +14,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 
 [lints.rust]
-unsafe_code = "warn"
+unsafe_code = "forbid"
 
 [lints.clippy]
 all = "warn"

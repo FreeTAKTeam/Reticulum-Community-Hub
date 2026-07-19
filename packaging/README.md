@@ -21,9 +21,9 @@ The server-only alpha gate remains `scripts/release-readiness.ps1
 shape: manual workflow artifacts on `workflow_dispatch` and file attachment
 when a GitHub release is published. Server package names include the resolved
 release version, for example
-`rch-rust-full-windows-x64-v3.0.0-preview.8.zip`; the same version, Git ref,
+`rch-rust-full-windows-x64-v3.0.0-preview.9.zip`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
-Manual workflow runs default to `v3.0.0-preview.8` and can override that label
+Manual workflow runs default to `v3.0.0-preview.9` and can override that label
 with the `release_version` input. While `main` remains the default branch,
 GitHub does not expose `workflow_dispatch` for workflows that only exist on
 `rust-next`, so the release workflow also runs on relevant `rust-next` pushes
@@ -37,7 +37,12 @@ passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. It uploaded
 artifacts matched their SHA-256 sidecars.
 
 Draft notes for the latest Rust preview are in
-`docs/release-notes-v3.0.0-preview.8.md`.
+`docs/release-notes-v3.0.0-preview.9.md`.
+
+Local desktop builds normally compile `reticulumd` from the sibling
+`LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
+LXMF 0.9.5 `reticulumd` path when that checkout is intentionally dirty; hosted
+packages always build the pinned clean LXMF commit.
 
 Pull request quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. It runs Rust 1.88 formatting, clippy,

@@ -1,4 +1,13 @@
 #![allow(clippy::missing_errors_doc)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
 
 use std::collections::BTreeMap;
 

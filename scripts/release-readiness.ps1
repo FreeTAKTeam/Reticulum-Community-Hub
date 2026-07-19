@@ -22,6 +22,55 @@ function Test-Windows {
     return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 }
 
+function Initialize-LinuxOpenSslEnvironment {
+    if (Test-Windows) {
+        return
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:OPENSSL_LIB_DIR) -and
+        -not [string]::IsNullOrWhiteSpace($env:CFLAGS)) {
+        return
+    }
+
+    $opensslHeader = Get-ChildItem -Path "/usr/include" -Filter "opensslconf.h" -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -ne $opensslHeader -and [string]::IsNullOrWhiteSpace($env:CFLAGS)) {
+        $multiarchInclude = Split-Path -Parent (Split-Path -Parent $opensslHeader.FullName)
+        $env:CFLAGS = "-I$multiarchInclude"
+        Write-Host "Discovered OpenSSL multiarch headers at $multiarchInclude"
+    }
+
+    $opensslLibrary = Get-ChildItem -Path "/usr/lib" -Filter "libssl.so" -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -ne $opensslLibrary -and [string]::IsNullOrWhiteSpace($env:OPENSSL_LIB_DIR)) {
+        $env:OPENSSL_LIB_DIR = Split-Path -Parent $opensslLibrary.FullName
+        Write-Host "Discovered OpenSSL libraries at $env:OPENSSL_LIB_DIR"
+    }
+}
+
+function Optimize-LinuxDesktopWatchBudget {
+    if (Test-Windows) {
+        return
+    }
+
+    $watchLimitPath = "/proc/sys/fs/inotify/max_user_watches"
+    if (-not (Test-Path $watchLimitPath)) {
+        return
+    }
+    $watchLimit = 0
+    if (-not [int]::TryParse((Get-Content -LiteralPath $watchLimitPath -Raw).Trim(), [ref] $watchLimit)) {
+        return
+    }
+    if ($watchLimit -le 131072) {
+        Write-Host "Low inotify watch limit detected ($watchLimit); removing disposable Rust debug artifacts before Tauri packaging."
+        Invoke-Native cargo @("clean", "--profile", "dev")
+        Invoke-Native cargo @(
+            "clean",
+            "--manifest-path", "apps/rch-desktop/src-tauri/Cargo.toml",
+            "--profile", "dev"
+        )
+    }
+}
+
 function Invoke-Native {
     param(
         [Parameter(Mandatory = $true)] [string] $FilePath,
@@ -169,6 +218,8 @@ function Invoke-ServerSmoke {
     }
 }
 
+Initialize-LinuxOpenSslEnvironment
+
 Invoke-Step "Rust formatting" {
     Invoke-RustFormatCheck
 }
@@ -183,6 +234,20 @@ if (-not $SkipWorkspaceTests) {
     Invoke-Step "Rust workspace tests" {
         Invoke-Native cargo @("test", "--workspace", "--", "--test-threads=1")
     }
+}
+
+Invoke-Step "Rust documentation" {
+    $previousRustdocFlags = $env:RUSTDOCFLAGS
+    try {
+        $env:RUSTDOCFLAGS = "-D warnings"
+        Invoke-Native cargo @("doc", "--workspace", "--no-deps")
+    } finally {
+        $env:RUSTDOCFLAGS = $previousRustdocFlags
+    }
+}
+
+Invoke-Step "Documentation links" {
+    & (Join-Path (Get-Location).Path "scripts/check-doc-links.ps1")
 }
 
 Invoke-Step "Build RCH server release binary" {
@@ -202,6 +267,9 @@ if (-not $SkipUi -and -not $ServerOnlyAlpha) {
     Invoke-Step "Shared UI lint" {
         Invoke-Native npm @("--prefix", "ui", "run", "lint")
     }
+    Invoke-Step "Shared UI type-check" {
+        Invoke-Native npm @("--prefix", "ui", "run", "typecheck")
+    }
     Invoke-Step "Shared UI tests" {
         Invoke-Native npm @("--prefix", "ui", "run", "test")
     }
@@ -211,8 +279,12 @@ if (-not $SkipUi -and -not $ServerOnlyAlpha) {
 }
 
 if (-not $SkipDesktop -and -not $ServerOnlyAlpha) {
-    Invoke-Step "Desktop sidecar preparation" {
-        Invoke-Native npm @("--prefix", "apps/rch-desktop", "run", "prepare:sidecar")
+    Invoke-Step "Desktop install" {
+        Invoke-Native npm @("--prefix", "apps/rch-desktop", "ci")
+    }
+    Invoke-Step "Desktop build" {
+        Optimize-LinuxDesktopWatchBudget
+        Invoke-Native npm @("--prefix", "apps/rch-desktop", "run", "build")
     }
 }
 

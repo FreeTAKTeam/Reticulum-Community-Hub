@@ -1,0 +1,42 @@
+RCH HTTP and WebSocket examples
+================================
+
+Set these shell variables first:
+  RCH_URL=http://127.0.0.1:8080
+  RCH_KEY=change-this-preview-key
+
+Status and diagnostics:
+  curl -H "X-API-Key: $RCH_KEY" "$RCH_URL/Status"
+  curl -H "X-API-Key: $RCH_KEY" "$RCH_URL/diagnostics/runtime"
+
+Create and list topics:
+  curl -X POST -H "X-API-Key: $RCH_KEY" -H "Content-Type: application/json" \
+    -d '{"TopicID":"ops","TopicName":"Operations","TopicPath":"ops","TopicDescription":"Operational traffic"}' \
+    "$RCH_URL/Topic"
+  curl -H "X-API-Key: $RCH_KEY" "$RCH_URL/Topic"
+
+Send chat:
+  curl -X POST -H "X-API-Key: $RCH_KEY" -H "Content-Type: application/json" \
+    -d '{"Content":"Radio check","Scope":"dm","Destination":"<lxmf-destination>"}' "$RCH_URL/Chat/Message"
+  curl -X POST -H "X-API-Key: $RCH_KEY" -H "Content-Type: application/json" \
+    -d '{"Content":"Team update","Scope":"topic","TopicID":"ops"}' "$RCH_URL/Chat/Message"
+  curl -X POST -H "X-API-Key: $RCH_KEY" -H "Content-Type: application/json" \
+    -d '{"Content":"Broadcast update","Scope":"broadcast"}' "$RCH_URL/Chat/Message"
+
+Upload a file:
+  curl -X POST -H "X-API-Key: $RCH_KEY" \
+    -F category=file -F topic_id=ops -F file=@./report.txt "$RCH_URL/Chat/Attachment"
+
+Mission and checklist discovery:
+  curl -H "X-API-Key: $RCH_KEY" "$RCH_URL/api/r3akt/missions"
+  curl -H "X-API-Key: $RCH_KEY" "$RCH_URL/api/r3akt/checklists"
+
+WebSocket authentication message (send immediately after connecting):
+  {"type":"auth","data":{"api_key":"change-this-preview-key"}}
+  ws://127.0.0.1:8080/events/system
+  ws://127.0.0.1:8080/telemetry/stream
+  ws://127.0.0.1:8080/messages/stream
+
+Reticulum delivery requires --lxmf-zmq-command, --lxmf-zmq-response, and
+--reticulumd-source. TAK runs separately as r3akt-tak-service. See
+docs/examples.md for complete startup and payload examples.

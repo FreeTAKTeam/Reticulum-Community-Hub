@@ -328,7 +328,7 @@ const isExpiredRecord = (
   if (!record) {
     return false;
   }
-  if (record.ttlSeconds === null || record.ttlSeconds === undefined || record.ttlSeconds === "") {
+  if (record.ttlSeconds === null || record.ttlSeconds === undefined) {
     return false;
   }
   const ttlSeconds = Number(record.ttlSeconds);
@@ -371,7 +371,7 @@ export const toMissionMemberStatusSummary = (
       ...createUnknownMissionMemberStatus(),
       reportedAt: String(record.reportedAt ?? "").trim(),
       ttlSeconds:
-        record.ttlSeconds === null || record.ttlSeconds === undefined || record.ttlSeconds === ""
+        record.ttlSeconds === null || record.ttlSeconds === undefined
           ? null
           : Number.isFinite(Number(record.ttlSeconds))
             ? Number(record.ttlSeconds)
@@ -409,7 +409,7 @@ export const toMissionMemberStatusSummary = (
     scorePercent: getScorePercent(dimensionStatuses),
     reportedAt: String(record.reportedAt ?? "").trim(),
     ttlSeconds:
-      record.ttlSeconds === null || record.ttlSeconds === undefined || record.ttlSeconds === ""
+      record.ttlSeconds === null || record.ttlSeconds === undefined
         ? null
         : Number.isFinite(Number(record.ttlSeconds))
           ? Number(record.ttlSeconds)

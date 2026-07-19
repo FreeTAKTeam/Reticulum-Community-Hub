@@ -8,6 +8,9 @@ const repoRoot = resolve(appDir, "..", "..");
 const lxmfRoot = process.env.RCH_LXMF_ROOT
   ? resolve(process.env.RCH_LXMF_ROOT)
   : resolve(repoRoot, "..", "LXMF-rs");
+const prebuiltReticulumd = process.env.RCH_RETICULUMD_BINARY
+  ? resolve(process.env.RCH_RETICULUMD_BINARY)
+  : undefined;
 const binariesDir = join(appDir, "src-tauri", "binaries");
 const targetTriple = execFileSync("rustc", ["--print", "host-tuple"], {
   encoding: "utf8",
@@ -44,6 +47,7 @@ const sidecars = [
     packageName: "reticulumd",
     binaryName: "reticulumd",
     cargoRoot: lxmfRoot,
+    prebuiltBinary: prebuiltReticulumd,
     cargoArgs: [
       "build",
       "--release",
@@ -56,17 +60,26 @@ const sidecars = [
 ];
 
 for (const sidecar of sidecars) {
-  execFileSync("cargo", sidecar.cargoArgs, {
-    cwd: sidecar.cargoRoot,
-    stdio: "inherit",
-  });
+  if (sidecar.prebuiltBinary && !existsSync(sidecar.prebuiltBinary)) {
+    throw new Error(
+      `Configured ${sidecar.packageName} binary does not exist: ${sidecar.prebuiltBinary}`,
+    );
+  }
+  if (!sidecar.prebuiltBinary) {
+    execFileSync("cargo", sidecar.cargoArgs, {
+      cwd: sidecar.cargoRoot,
+      stdio: "inherit",
+    });
+  }
 
-  const source = join(
-    sidecar.cargoRoot,
-    "target",
-    "release",
-    `${sidecar.binaryName}${exeSuffix}`,
-  );
+  const source =
+    sidecar.prebuiltBinary ??
+    join(
+      sidecar.cargoRoot,
+      "target",
+      "release",
+      `${sidecar.binaryName}${exeSuffix}`,
+    );
   const destination = join(binariesDir, `${sidecar.binaryName}-${targetTriple}${exeSuffix}`);
 
   if (!existsSync(source)) {

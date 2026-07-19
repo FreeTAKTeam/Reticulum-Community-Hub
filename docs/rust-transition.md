@@ -37,6 +37,9 @@ cargo test -p r3akt-rch-server
 cargo test -p r3akt-rch-core
 cargo test -p r3akt-transport-rns
 cargo test -p r3akt-tak-connector
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+cargo audit --deny warnings
+npm --prefix ui run typecheck
 ```
 
 The live smoke test should start `r3akt-rch-server` with a temporary SQLite
@@ -44,10 +47,12 @@ database and validate `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`,
 and at least one topic/chat/checklist/mission flow.
 
 GitHub PR quality control is handled by
-`.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.88, checks
-out the sibling `LXMF-rs` workspace beside RCH, and exposes separate required
-checks for formatting, clippy with `-D warnings`, the Rust 1.85 minimum-version check, locked workspace tests,
-release server/TAK-service builds, and `cargo audit`.
+`.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.88 for the
+normal quality gates and Rust 1.85 for a locked minimum-version workspace
+check. It exposes separate required checks for formatting, clippy with
+`-D warnings`, MSRV and denied-warning rustdoc, locked workspace tests, UI
+lint/type-check/tests/build, release server/TAK-service builds, and
+`cargo audit`.
 
 The Python parity plus Rust capability gate is tracked in
 `docs/release-contract-matrix.json` and generated with
@@ -78,6 +83,10 @@ capabilities.
   is not part of `rust-next`.
 
 ## Current Validation Snapshot
+
+The dated evidence below is historical. The current preview.9 evidence and
+exact artifact metadata are maintained in
+[`stabilization-v3.0.0-preview.9.md`](stabilization-v3.0.0-preview.9.md).
 
 Validated during the root Rust import and refreshed on 2026-05-11:
 

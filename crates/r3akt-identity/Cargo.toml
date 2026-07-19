@@ -8,8 +8,8 @@ repository.workspace = true
 
 [dependencies]
 r3akt-protocol.workspace = true
+chrono.workspace = true
 serde.workspace = true
-time.workspace = true
 
 [lints]
 workspace = true

@@ -1,4 +1,15 @@
 #![allow(clippy::items_after_test_module, clippy::missing_errors_doc)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
+
+mod actor_helpers;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
@@ -33,6 +44,10 @@ use rns_rpc::rpc::zmq::{ZmqRpcEnvelope, ZmqRpcEnvelopeKind};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
 use thiserror::Error;
+
+use actor_helpers::{
+    atomic_max_u64, atomic_max_usize, recv_prioritized_actor_request, send_actor_response,
+};
 #[cfg(test)]
 use zeromq::{PullSocket, PushSocket, Socket, SocketRecv, SocketSend, ZmqMessage};
 
@@ -127,10 +142,13 @@ impl ZmqDataPlaneMetrics {
     }
 
     fn rollback_enqueued(&self, queued_at: Instant, is_send_lane: bool) {
-        if let Ok(mut queue) = self.queued_at.lock() {
-            if let Some(index) = queue.iter().position(|candidate| *candidate == queued_at) {
-                queue.remove(index);
+        match self.queued_at.lock() {
+            Ok(mut queue) => {
+                if let Some(index) = queue.iter().position(|candidate| *candidate == queued_at) {
+                    queue.remove(index);
+                }
             }
+            Err(error) => eprintln!("ZeroMQ queue metrics lock poisoned during rollback: {error}"),
         }
         self.queue_depth.fetch_sub(1, Ordering::Relaxed);
         if is_send_lane {
@@ -142,24 +160,31 @@ impl ZmqDataPlaneMetrics {
     }
 
     fn record_dequeued(&self, queued_at: Instant, is_send_lane: bool) {
-        if let Ok(mut queue) = self.queued_at.lock() {
-            if let Some(index) = queue.iter().position(|candidate| *candidate == queued_at) {
-                queue.remove(index);
+        match self.queued_at.lock() {
+            Ok(mut queue) => {
+                if let Some(index) = queue.iter().position(|candidate| *candidate == queued_at) {
+                    queue.remove(index);
+                }
             }
+            Err(error) => eprintln!("ZeroMQ queue metrics lock poisoned during dequeue: {error}"),
         }
-        let _ = self
+        match self
             .queue_depth
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 Some(value.saturating_sub(1))
-            });
+            }) {
+            Ok(_) | Err(_) => {}
+        }
         let lane_depth = if is_send_lane {
             &self.send_queue_depth
         } else {
             &self.control_queue_depth
         };
-        let _ = lane_depth.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        match lane_depth.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             Some(value.saturating_sub(1))
-        });
+        }) {
+            Ok(_) | Err(_) => {}
+        }
         let wait_ms = queued_at
             .elapsed()
             .as_millis()
@@ -203,18 +228,19 @@ impl ZmqDataPlaneMetrics {
     }
 
     fn snapshot(&self) -> ZmqDataPlaneStats {
-        let oldest_wait_ms = self
-            .queued_at
-            .lock()
-            .ok()
-            .and_then(|queue| queue.iter().min().copied())
-            .map_or(0, |queued_at| {
+        let oldest_wait_ms = match self.queued_at.lock() {
+            Ok(queue) => queue.iter().min().copied().map_or(0, |queued_at| {
                 queued_at
                     .elapsed()
                     .as_millis()
                     .try_into()
                     .unwrap_or(u64::MAX)
-            });
+            }),
+            Err(error) => {
+                eprintln!("ZeroMQ queue metrics lock poisoned during snapshot: {error}");
+                0
+            }
+        };
         ZmqDataPlaneStats {
             send_queue_capacity: LXMF_ZMQ_SEND_QUEUE_CAPACITY,
             control_queue_capacity: LXMF_ZMQ_CONTROL_QUEUE_CAPACITY,
@@ -239,26 +265,21 @@ impl ZmqDataPlaneMetrics {
     }
 
     fn set_runtime_info(&self, runtime_info: ZmqRuntimeInfo) {
-        if let Ok(mut current) = self.runtime_info.lock() {
-            *current = Some(runtime_info);
+        match self.runtime_info.lock() {
+            Ok(mut current) => *current = Some(runtime_info),
+            Err(error) => eprintln!("ZeroMQ runtime info lock poisoned during update: {error}"),
         }
     }
 
     fn runtime_info(&self) -> Option<ZmqRuntimeInfo> {
-        self.runtime_info.lock().ok().and_then(|info| info.clone())
+        match self.runtime_info.lock() {
+            Ok(info) => info.clone(),
+            Err(error) => {
+                eprintln!("ZeroMQ runtime info lock poisoned during read: {error}");
+                None
+            }
+        }
     }
-}
-
-fn atomic_max_usize(target: &AtomicUsize, candidate: usize) {
-    let _ = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-        (candidate > current).then_some(candidate)
-    });
-}
-
-fn atomic_max_u64(target: &AtomicU64, candidate: u64) {
-    let _ = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-        (candidate > current).then_some(candidate)
-    });
 }
 
 pub struct ZmqDataPlane {
@@ -1540,11 +1561,13 @@ impl Drop for ZmqDataPlane {
     fn drop(&mut self) {
         let (response, receiver) = mpsc::channel();
         drop(receiver);
-        let _ = self.send_sender.try_send(ZmqSdkActorRequest {
+        if let Err(error) = self.send_sender.try_send(ZmqSdkActorRequest {
             payload: ZmqSdkActorPayload::Shutdown,
             response,
             queued_at: Instant::now(),
-        });
+        }) {
+            eprintln!("failed to enqueue best-effort ZeroMQ shutdown during drop: {error}");
+        }
     }
 }
 
@@ -1812,7 +1835,7 @@ fn run_zmq_data_plane_actor(
         if shutting_down && session.is_none() {
             let result = Ok(ZmqSdkActorResponse::Shutdown);
             metrics.record_result(&result, response_started.elapsed());
-            let _ = request.response.send(result);
+            send_actor_response(&request.response, result, "shutdown");
             break;
         }
         if session.is_none() {
@@ -1824,7 +1847,7 @@ fn run_zmq_data_plane_actor(
                 Err(error) => {
                     let result = Err(error);
                     metrics.record_result(&result, response_started.elapsed());
-                    let _ = request.response.send(result);
+                    send_actor_response(&request.response, result, "session startup failure");
                     continue;
                 }
             }
@@ -1834,7 +1857,7 @@ fn run_zmq_data_plane_actor(
                 "LXMF-rs ZeroMQ SDK session unavailable".to_string(),
             ));
             metrics.record_result(&result, response_started.elapsed());
-            let _ = request.response.send(result);
+            send_actor_response(&request.response, result, "missing session");
             continue;
         };
         let result = send_lxmf_zmq_actor_request(active_session, request.payload);
@@ -1842,54 +1865,9 @@ fn run_zmq_data_plane_actor(
         if result.is_err() {
             session = None;
         }
-        let _ = request.response.send(result);
+        send_actor_response(&request.response, result, "request completion");
         if shutting_down {
             break;
-        }
-    }
-}
-
-fn recv_prioritized_actor_request(
-    send_receiver: &mpsc::Receiver<ZmqSdkActorRequest>,
-    control_receiver: &mpsc::Receiver<ZmqSdkActorRequest>,
-    send_burst: &mut usize,
-) -> Option<ZmqSdkActorRequest> {
-    loop {
-        if *send_burst >= 32 {
-            if let Ok(request) = control_receiver.try_recv() {
-                *send_burst = 0;
-                return Some(request);
-            }
-        }
-        match send_receiver.try_recv() {
-            Ok(request) => {
-                *send_burst = send_burst.saturating_add(1);
-                return Some(request);
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => {
-                return control_receiver.recv().ok();
-            }
-        }
-        match control_receiver.try_recv() {
-            Ok(request) => {
-                *send_burst = 0;
-                return Some(request);
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => {
-                return send_receiver.recv().ok();
-            }
-        }
-        match send_receiver.recv_timeout(Duration::from_millis(5)) {
-            Ok(request) => {
-                *send_burst = send_burst.saturating_add(1);
-                return Some(request);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return control_receiver.recv().ok();
-            }
         }
     }
 }
@@ -1903,29 +1881,37 @@ fn run_zmq_sdk_actor(
     while let Ok(request) = receiver.recv() {
         let shutting_down = matches!(request.payload, ZmqSdkActorPayload::Shutdown);
         if shutting_down && session.is_none() {
-            let _ = request.response.send(Ok(ZmqSdkActorResponse::Shutdown));
+            send_actor_response(
+                &request.response,
+                Ok(ZmqSdkActorResponse::Shutdown),
+                "legacy actor shutdown",
+            );
             break;
         }
         if session.is_none() {
             match open_zmq_sdk_actor_session(&config) {
                 Ok(opened) => session = Some(opened),
                 Err(error) => {
-                    let _ = request.response.send(Err(error));
+                    send_actor_response(&request.response, Err(error), "legacy session startup");
                     continue;
                 }
             }
         }
         let Some(active_session) = session.as_mut() else {
-            let _ = request.response.send(Err(TransportError::Send(
-                "LXMF-rs ZeroMQ SDK session unavailable".to_string(),
-            )));
+            send_actor_response(
+                &request.response,
+                Err(TransportError::Send(
+                    "LXMF-rs ZeroMQ SDK session unavailable".to_string(),
+                )),
+                "legacy missing session",
+            );
             continue;
         };
         let result = send_lxmf_zmq_actor_request(active_session, request.payload);
         if result.is_err() {
             session = None;
         }
-        let _ = request.response.send(result);
+        send_actor_response(&request.response, result, "legacy request completion");
         if shutting_down {
             break;
         }

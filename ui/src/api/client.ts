@@ -42,6 +42,18 @@ const errorMessageFromBody = (body: unknown, fallback: string) => {
   return fallback;
 };
 
+const parseErrorBody = async (response: Response): Promise<unknown> => {
+  const bodyText = await response.text();
+  if (!bodyText) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(bodyText) as unknown;
+  } catch {
+    return bodyText;
+  }
+};
+
 const withTimeout = async (promise: Promise<Response>, timeoutMs: number): Promise<Response> => {
   let timeoutId: number | undefined;
   const timeoutPromise = new Promise<Response>((_, reject) => {
@@ -135,12 +147,7 @@ const requestRaw = async (path: string, options: RequestOptions = {}): Promise<R
         ? await mockFetch(path, { method: requestInit.method, body: options.body })
         : await withTimeout(fetch(url, requestInit), timeoutMs);
       if (!response.ok) {
-        let errorBody: unknown = undefined;
-        try {
-          errorBody = await response.json();
-        } catch (error) {
-          errorBody = await response.text();
-        }
+        const errorBody = await parseErrorBody(response);
         throw createError(
           errorMessageFromBody(errorBody, `Request failed: ${response.status}`),
           response.status,
