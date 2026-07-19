@@ -271,7 +271,12 @@ jobs:
             throw "No desktop artifacts matched ${{ matrix.bundle_glob }}"
           }
           foreach ($file in $files) {
-            Copy-Item -LiteralPath $file.FullName -Destination $dist -Force
+            # GitHub replaces spaces in uploaded release asset names with dots.
+            # Normalize before hashing so a downloaded asset can be verified by
+            # its adjacent checksum file without manually renaming it.
+            $assetName = $file.Name -replace '\s+', '.'
+            $destination = Join-Path $dist $assetName
+            Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
           }
           Get-ChildItem -LiteralPath $dist -File | ForEach-Object {
             $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
