@@ -73,6 +73,10 @@ The Rust implementation covers the principal northbound route families and persi
 
 Remaining release work is mainly external validation, less common parity cases, migration tooling for existing Python databases, and final packaging evidence.
 
+The retired `r3akt-node`, `r3akt-router`, and `r3akt-store` prototypes are no
+longer part of the source tree. Supported examples compile as workspace
+members against `r3akt-identity`, `r3akt-profile-rch`, and `r3akt-rch-core`.
+
 ## Local server
 
 A local HTTP-only development process can be started with:
@@ -108,13 +112,19 @@ Minimum Rust checks:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo +1.85.0 check --workspace --all-targets --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+cargo audit --deny warnings
 cargo build --release -p r3akt-rch-server
+npm --prefix ui run typecheck
 ```
 
 The repository also provides:
 
 - `scripts/release-readiness.ps1` for the server alpha gate;
 - `scripts/local-reticulum-live-gate.ps1` for local multi-daemon delivery, fanout, event polling, and load checks;
+- `docs/examples.md` for maintained northbound, WebSocket, Reticulum, and TAK examples;
+- `docs/operations-and-troubleshooting.md` for deployment diagnostics and failure handling;
 - GitHub Actions workflows for formatting, clippy, workspace tests, release builds, audit checks, packaging, and artifact publication.
 
 Live TAK and external Reticulum checks require explicitly configured infrastructure and must not run with copied public endpoints or credentials.

@@ -1,24 +1,29 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll, Waker};
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
 
-use r3akt_identity::NodeIdentity;
-use r3akt_node::R3aktNode;
+use r3akt_identity::{EnrollmentRequest, IdentityDirectory, NodeIdentity};
 use r3akt_profile_rch::{
-    MissionCommandEnvelope, RchSource, ack_to_result, decode_commands, encode_commands,
-    encode_results,
+    MissionCommandEnvelope, RchSource, decode_commands, encode_commands, encode_results,
 };
-use r3akt_protocol::{NodeId, Payload, Topic};
+use r3akt_protocol::NodeId;
 use r3akt_rch_core::RchCore;
-use r3akt_router::TopicRouter;
-use r3akt_store::MemoryStore;
-use r3akt_transport_rns::MockTransport;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    block_on(run())
-}
+    let identity = NodeIdentity::new(
+        NodeId::new("rch-rust-runtime"),
+        "RCH Rust Runtime",
+        "example-public-key",
+    );
+    let mut directory = IdentityDirectory::new();
+    directory.submit_enrollment(EnrollmentRequest::new(identity))?;
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let inbound_fields = encode_commands(&[MissionCommandEnvelope {
         command_id: "cmd-rch-1".to_string(),
         source: RchSource {
@@ -36,57 +41,24 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         topics: vec!["mission-alpha".to_string()],
     }])?;
 
-    let decoded = decode_commands(&inbound_fields)?;
-    let envelope = decoded[0].to_protocol_envelope(Topic::new("mission-alpha"));
-    let mut rch_core = RchCore::new();
-    let core_outcome = rch_core.handle_command(&decoded[0]);
-    let mission_sync_responses = rch_core.handle_mission_sync_command(&decoded[0]);
+    let command = decode_commands(&inbound_fields)?
+        .into_iter()
+        .next()
+        .ok_or("encoded command batch was empty")?;
+    let mut core = RchCore::new();
+    let outcome = core.handle_command(&command);
+    let responses = core.handle_mission_sync_command(&command);
+    let encoded_results = encode_results(&[outcome.result])?;
 
-    let mut transport = MockTransport::new();
-    transport.push_inbound(envelope)?;
-    let identity = NodeIdentity::new(NodeId::new("rch-rust-runtime"), "RCH Rust Runtime", "dev");
-    let store = MemoryStore::new();
-    let mut router = TopicRouter::new();
-    router.subscribe(
-        NodeId::new("rch-rust-runtime"),
-        &Topic::new("mission-alpha"),
-    );
-
-    let mut node = R3aktNode::new(identity, transport, store, router);
-    let outcome = node.poll_once().await?;
-    let (_, transport, _, _) = node.into_parts();
-    let outbound = transport.outbound()?;
-    let accepted_ack = outbound
-        .iter()
-        .find(|candidate| matches!(candidate.payload, Payload::AckAccepted(_)))
-        .ok_or("runtime did not emit AckAccepted")?;
-    let result = ack_to_result(accepted_ack)?;
-    let result_fields = encode_results(&[result])?;
-
-    println!("decoded RCH commands: {}", decoded.len());
-    println!("runtime outcome: {:?}", outcome.status);
-    println!("RCH core outcome: {:?}", core_outcome.result.status);
     println!(
-        "RCH mission-sync responses: {}",
-        mission_sync_responses.len()
+        "identity enrollment pending: {}",
+        directory
+            .enrollment(&NodeId::new("rch-rust-runtime"))
+            .is_some()
     );
-    println!("RCH topics after command: {}", rch_core.topics().len());
-    println!("encoded FIELD_RESULTS bytes: {}", result_fields.len());
+    println!("decoded command: {}", command.command_type);
+    println!("topics after command: {}", core.topics().len());
+    println!("mission-sync responses: {}", responses.len());
+    println!("encoded FIELD_RESULTS bytes: {}", encoded_results.len());
     Ok(())
-}
-
-fn block_on<F>(future: F) -> F::Output
-where
-    F: Future,
-{
-    let waker = Waker::noop();
-    let mut context = Context::from_waker(waker);
-    let mut future = Box::pin(future);
-
-    loop {
-        match Pin::new(&mut future).poll(&mut context) {
-            Poll::Ready(output) => return output,
-            Poll::Pending => std::thread::yield_now(),
-        }
-    }
 }

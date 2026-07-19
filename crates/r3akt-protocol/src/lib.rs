@@ -1,11 +1,20 @@
 #![allow(clippy::missing_errors_doc)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
 
 use std::fmt;
 
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
-use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 pub const SCHEMA_VERSION: u16 = 1;
@@ -125,7 +134,7 @@ pub struct Envelope<T> {
     pub source: NodeId,
     pub destination: Destination,
     pub topic: Topic,
-    pub timestamp: OffsetDateTime,
+    pub timestamp: DateTime<Utc>,
     pub ttl_seconds: u32,
     pub payload: T,
 }
@@ -140,7 +149,7 @@ impl<T> Envelope<T> {
             source,
             destination,
             topic,
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: Utc::now(),
             ttl_seconds: 300,
             payload,
         }
@@ -181,7 +190,7 @@ impl<T> Envelope<T> {
         }
     }
 
-    pub fn validate_basic(&self, now: OffsetDateTime) -> Result<(), ProtocolError> {
+    pub fn validate_basic(&self, now: DateTime<Utc>) -> Result<(), ProtocolError> {
         if self.schema_version != SCHEMA_VERSION {
             return Err(ProtocolError::UnsupportedSchema(self.schema_version));
         }
@@ -243,7 +252,7 @@ pub struct Heartbeat {
 pub struct HealthTelemetry {
     pub status: HealthStatus,
     pub metrics: Vec<TelemetryMetric>,
-    pub observed_at: OffsetDateTime,
+    pub observed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -378,10 +387,10 @@ mod tests {
             }),
         )
         .with_ttl(1);
-        envelope.timestamp = OffsetDateTime::now_utc() - Duration::seconds(5);
+        envelope.timestamp = Utc::now() - Duration::seconds(5);
 
         assert!(matches!(
-            envelope.validate_basic(OffsetDateTime::now_utc()),
+            envelope.validate_basic(Utc::now()),
             Err(ProtocolError::Expired)
         ));
     }

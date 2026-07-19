@@ -16,6 +16,71 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  msrv-docs:
+    name: MSRV and Rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Check minimum supported Rust version
+        working-directory: rch
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Build workspace documentation with denied warnings
+        working-directory: rch
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --locked
+
+      - name: Validate local documentation links
+        shell: pwsh
+        working-directory: rch
+        run: ./scripts/check-doc-links.ps1
+
+  ui-quality:
+    name: UI Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RCH
+        uses: actions/checkout@v6
+        with:
+          path: rch
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: rch/ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: rch
+        run: npm --prefix ui ci
+
+      - name: Lint UI
+        working-directory: rch
+        run: npm --prefix ui run lint
+
+      - name: Type-check UI
+        working-directory: rch
+        run: npm --prefix ui run typecheck
+
+      - name: Test UI
+        working-directory: rch
+        run: npm --prefix ui run test
+
+      - name: Build UI
+        working-directory: rch
+        run: npm --prefix ui run build
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

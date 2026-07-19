@@ -1,3 +1,10 @@
+#![deny(
+    clippy::expect_used,
+    clippy::let_underscore_must_use,
+    clippy::panic,
+    clippy::unwrap_used
+)]
+
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -14,7 +21,7 @@ struct BackendProcess {
 }
 
 fn main() {
-    tauri::Builder::default()
+    if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(BackendProcess::default())
         .setup(|app| {
@@ -23,11 +30,16 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::CloseRequested { .. }) {
-                stop_backend(window.app_handle());
+                if let Err(error) = stop_backend(window.app_handle()) {
+                    eprintln!("failed to stop RCH desktop sidecars cleanly: {error}");
+                }
             }
         })
         .run(tauri::generate_context!())
-        .expect("failed to run RCH desktop");
+    {
+        eprintln!("failed to run RCH desktop: {error}");
+        std::process::exit(1);
+    }
 }
 
 fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -53,13 +65,16 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
             "127.0.0.1:0".to_string(),
         ])
         .spawn()?;
-    *app.state::<BackendProcess>()
-        .reticulumd
-        .lock()
-        .expect("reticulumd lock") = Some(reticulumd_child);
+    store_process(
+        &app.state::<BackendProcess>().reticulumd,
+        reticulumd_child,
+        "reticulumd",
+    )?;
 
     if let Err(error) = wait_for_loopback_port(zmq_command_port, Duration::from_secs(10)) {
-        stop_backend(app);
+        if let Err(stop_error) = stop_backend(app) {
+            eprintln!("failed to clean up sidecars after reticulumd startup error: {stop_error}");
+        }
         return Err(error.into());
     }
 
@@ -83,8 +98,6 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
         "127.0.0.1:8000".to_string(),
         "--db-path".to_string(),
         db_path.to_string_lossy().to_string(),
-        "--api-key".to_string(),
-        "local-desktop".to_string(),
         "--lxmf-zmq-command".to_string(),
         zmq_command,
         "--lxmf-zmq-response".to_string(),
@@ -97,15 +110,19 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     let (mut rx, child) = match server {
         Ok(server) => server,
         Err(error) => {
-            stop_backend(app);
+            if let Err(stop_error) = stop_backend(app) {
+                eprintln!("failed to clean up reticulumd after server startup error: {stop_error}");
+            }
             return Err(error.into());
         }
     };
 
-    *app.state::<BackendProcess>()
-        .server
-        .lock()
-        .expect("backend lock") = Some(child);
+    if let Err(error) = store_process(&app.state::<BackendProcess>().server, child, "RCH server") {
+        if let Err(stop_error) = stop_backend(app) {
+            eprintln!("failed to clean up reticulumd after server tracking error: {stop_error}");
+        }
+        return Err(error);
+    }
 
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
@@ -127,25 +144,60 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-fn stop_backend(app: &tauri::AppHandle) {
-    if let Some(child) = app
-        .state::<BackendProcess>()
-        .server
-        .lock()
-        .expect("backend lock")
-        .take()
-    {
-        let _ = child.kill();
+fn store_process(
+    slot: &Mutex<Option<CommandChild>>,
+    child: CommandChild,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut process = match slot.lock() {
+        Ok(process) => process,
+        Err(error) => {
+            let cleanup_detail = child.kill().err().map_or_else(String::new, |cleanup| {
+                format!("; cleanup failed: {cleanup}")
+            });
+            return Err(std::io::Error::other(format!(
+                "{label} process lock poisoned: {error}{cleanup_detail}"
+            ))
+            .into());
+        }
+    };
+    if process.is_some() {
+        let cleanup_detail = child.kill().err().map_or_else(String::new, |cleanup| {
+            format!("; cleanup failed: {cleanup}")
+        });
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{label} process is already running{cleanup_detail}"),
+        )
+        .into());
     }
-    if let Some(child) = app
-        .state::<BackendProcess>()
-        .reticulumd
+    *process = Some(child);
+    Ok(())
+}
+
+fn stop_process(
+    slot: &Mutex<Option<CommandChild>>,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let child = slot
         .lock()
-        .expect("reticulumd lock")
-        .take()
-    {
-        let _ = child.kill();
+        .map_err(|error| std::io::Error::other(format!("{label} process lock poisoned: {error}")))?
+        .take();
+    if let Some(child) = child {
+        child
+            .kill()
+            .map_err(|error| std::io::Error::other(format!("failed to stop {label}: {error}")))?;
     }
+    Ok(())
+}
+
+fn stop_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let processes = app.state::<BackendProcess>();
+    let server_result = stop_process(&processes.server, "RCH server");
+    let reticulumd_result = stop_process(&processes.reticulumd, "reticulumd");
+    server_result?;
+    reticulumd_result?;
+    Ok(())
 }
 
 fn unused_loopback_port() -> std::io::Result<u16> {

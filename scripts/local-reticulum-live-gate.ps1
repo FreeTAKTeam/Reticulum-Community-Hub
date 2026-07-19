@@ -132,7 +132,12 @@ function Invoke-CargoGate {
     }
 }
 
-$tempRoot = Join-Path $env:TEMP ("r3akt-local-reticulum-live-" + [guid]::NewGuid().ToString("N"))
+$tempBase = if (-not [string]::IsNullOrWhiteSpace($env:TEMP)) {
+    $env:TEMP
+} else {
+    [System.IO.Path]::GetTempPath()
+}
+$tempRoot = Join-Path $tempBase ("r3akt-local-reticulum-live-" + [guid]::NewGuid().ToString("N"))
 $processes = @()
 $savedEnv = @{
     R3AKT_RETICULUMD_RPC_ENDPOINT = [Environment]::GetEnvironmentVariable("R3AKT_RETICULUMD_RPC_ENDPOINT")
@@ -216,12 +221,17 @@ try {
             $args += @("--zmq-rpc-command", $zmqCommandEndpoints[$idx])
         }
         $args += @("--config", $configPath)
-        $processes += Start-Process -FilePath $ReticulumdExe `
-            -ArgumentList $args `
-            -WindowStyle Hidden `
-            -RedirectStandardOutput $stdoutPath `
-            -RedirectStandardError $stderrPath `
-            -PassThru
+        $startParameters = @{
+            FilePath = $ReticulumdExe
+            ArgumentList = $args
+            RedirectStandardOutput = $stdoutPath
+            RedirectStandardError = $stderrPath
+            PassThru = $true
+        }
+        if ($IsWindows) {
+            $startParameters.WindowStyle = "Hidden"
+        }
+        $processes += Start-Process @startParameters
     }
 
     $destinations = @()

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/r3akt-identity",
     "crates/r3akt-protocol",
     "crates/r3akt-profile-rch",
     "crates/r3akt-rch-core",
@@ -7,6 +8,7 @@ members = [
     "crates/r3akt-rch-bridge",
     "crates/r3akt-tak-connector",
     "crates/r3akt-transport-rns",
+    "examples/rch-ingest-sim",
 ]
 exclude = [
     "apps/rch-desktop/src-tauri",
@@ -20,6 +22,7 @@ license = "EPL-2.0"
 repository = "https://github.com/FreeTAKTeam/Reticulum-Community-Hub"
 
 [workspace.dependencies]
+r3akt-identity = { path = "crates/r3akt-identity" }
 r3akt-protocol = { path = "crates/r3akt-protocol" }
 r3akt-profile-rch = { path = "crates/r3akt-profile-rch" }
 r3akt-rch-bridge = { path = "crates/r3akt-rch-bridge" }
@@ -30,6 +33,8 @@ r3akt-transport-rns = { path = "crates/r3akt-transport-rns" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 rns-core = { package = "reticulum-rs-core", version = "=0.9.5" }
 base64 = "0.22"
+argon2 = "0.5"
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde", "std"] }
 axum = { version = "0.8", features = ["ws", "multipart"] }
 csv = "1.3"
 futures-util = "0.3"
@@ -47,12 +52,11 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 rmp-serde = "1.3"
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }
 thiserror = "2.0"
-time = { version = "0.3.45", features = ["formatting", "macros", "parsing", "serde"] }
 uuid = { version = "1.8", features = ["serde", "v4", "v7"] }
 zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "tcp-transport"] }
 
 [workspace.lints.rust]
-unsafe_code = "warn"
+unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"

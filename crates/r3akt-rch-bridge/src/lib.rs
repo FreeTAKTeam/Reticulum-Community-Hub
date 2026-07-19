@@ -1,4 +1,13 @@
 #![allow(clippy::missing_errors_doc)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
 
 use r3akt_profile_rch::{CommandResultEnvelope, CommandResultStatus, MissionCommandEnvelope};
 use r3akt_rch_core::{MissionSyncResponse, RchCore, RchCoreError, RchSqliteStore};
@@ -483,7 +492,7 @@ fn handle_state_update_request(core: &mut RchCore, request: BridgeRequest) -> Br
         | BridgeRequest::ListSubscribers
         | BridgeRequest::ListMarkers
         | BridgeRequest::ListZones
-        | BridgeRequest::StateSnapshot => unreachable!("non-state bridge request"),
+        | BridgeRequest::StateSnapshot => false,
     };
     BridgeResponse::StateUpdated { ok }
 }

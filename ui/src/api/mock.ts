@@ -773,13 +773,15 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     const category = form?.get("category") === "image" ? "image" : "file";
     const uploaded = form?.get("file");
     const file = uploaded instanceof File ? uploaded : null;
+    const topicEntry = form?.get("topic_id");
+    const topicId = typeof topicEntry === "string" ? topicEntry.trim() : "";
     const attachment = {
       FileID: attachmentCounter++,
       Name: file?.name ?? "mock-upload.bin",
       MediaType: file?.type || (category === "image" ? "image/png" : "application/octet-stream"),
       Size: file?.size ?? 2048,
       Category: category,
-      TopicID: typeof form?.get("topic_id") === "string" && form.get("topic_id")?.trim() ? String(form.get("topic_id")).trim() : null,
+      TopicID: topicId,
       CreatedAt: nowIso()
     };
     if (category === "image") {
@@ -965,7 +967,6 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
         return jsonResponse({ detail: "team_member_uid/subjectId and callsign are required" }, 400);
       }
       const nextRecord = {
-        ...body,
         subjectType: "member",
         subjectId,
         callsign,
@@ -981,6 +982,8 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
             : typeof body?.reported_at === "string"
               ? body.reported_at
               : nowIso(),
+        overallStatus: typeof body?.overallStatus === "string" ? body.overallStatus : "Unknown",
+        securityStatus: typeof body?.securityStatus === "string" ? body.securityStatus : "Unknown",
         capabilityStatus:
           typeof body?.capabilityStatus === "string"
             ? body.capabilityStatus
@@ -989,14 +992,11 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
             : typeof body?.securityCapability === "string"
               ? body.securityCapability
               : "Unknown",
-        securityCapability:
-          typeof body?.capabilityStatus === "string"
-            ? body.capabilityStatus
-            : typeof body?.capability_status === "string"
-              ? body.capability_status
-            : typeof body?.securityCapability === "string"
-              ? body.securityCapability
-              : "Unknown"
+        preparednessStatus:
+          typeof body?.preparednessStatus === "string" ? body.preparednessStatus : "Unknown",
+        medicalStatus: typeof body?.medicalStatus === "string" ? body.medicalStatus : "Unknown",
+        mobilityStatus: typeof body?.mobilityStatus === "string" ? body.mobilityStatus : "Unknown",
+        commsStatus: typeof body?.commsStatus === "string" ? body.commsStatus : "Unknown"
       };
       const existingIndex = mockState.emergencyActionMessages.findIndex((entry) => entry.subjectId === subjectId);
       if (existingIndex >= 0) {

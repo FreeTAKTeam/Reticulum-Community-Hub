@@ -1,4 +1,16 @@
 #![allow(clippy::missing_errors_doc)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
+
+mod cot_time;
+mod worker_timing;
 
 use std::collections::VecDeque;
 use std::fs;
@@ -13,6 +25,7 @@ use std::thread;
 use std::time::Duration as StdDuration;
 use std::time::Instant;
 
+use chrono::{DateTime, Duration, Utc};
 use native_tls::Certificate;
 use native_tls::Identity;
 use native_tls::TlsConnector;
@@ -21,9 +34,10 @@ use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::events::BytesStart;
 use quick_xml::events::Event as XmlEvent;
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
+
+use cot_time::{format_cot_micros, format_cot_millis, format_cot_seconds};
+use worker_timing::{tak_inbound_interval_after_report, tak_worker_interval_after_report};
 
 pub const EVENT_TYPE_LOCATION: &str = "a-f-G-U-C";
 pub const EVENT_HOW: &str = "h-g-i-g-o";
@@ -58,6 +72,8 @@ pub enum TakConnectorError {
     Send(String),
     #[error("TAK service is not running")]
     ServiceStopped,
+    #[error("TAK worker lifecycle failed: {0}")]
+    Worker(String),
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -245,12 +261,12 @@ fn encode_u64_varint(mut value: u64, output: &mut Vec<u8>) {
 }
 
 fn parse_cot_timestamp_millis(value: &str) -> Option<u64> {
-    let timestamp = OffsetDateTime::parse(value, &Rfc3339).ok()?;
-    let nanos = timestamp.unix_timestamp_nanos();
-    if nanos.is_negative() {
+    let timestamp = DateTime::parse_from_rfc3339(value).ok()?;
+    let millis = timestamp.timestamp_millis();
+    if millis.is_negative() {
         return None;
     }
-    u64::try_from(nanos / 1_000_000).ok()
+    u64::try_from(millis).ok()
 }
 
 fn cot_detail_xml(xml: &str) -> Option<String> {
@@ -391,7 +407,7 @@ pub struct LocationSnapshot {
     pub speed: f64,
     pub bearing: f64,
     pub accuracy: f64,
-    pub updated_at: OffsetDateTime,
+    pub updated_at: DateTime<Utc>,
     pub peer_hash: Option<String>,
 }
 
@@ -401,7 +417,7 @@ pub struct ChatEventInput {
     pub sender_label: String,
     pub topic_id: Option<String>,
     pub source_hash: Option<String>,
-    pub timestamp: OffsetDateTime,
+    pub timestamp: DateTime<Utc>,
     pub message_uuid: Option<String>,
 }
 
@@ -425,7 +441,7 @@ impl TakConnector {
     pub fn build_location_xml(
         &self,
         snapshot: &LocationSnapshot,
-        now: OffsetDateTime,
+        now: DateTime<Utc>,
         identity_label: Option<&str>,
     ) -> String {
         let uid = uid_from_hash(snapshot.peer_hash.as_deref(), &self.config.callsign);
@@ -434,7 +450,9 @@ impl TakConnector {
             .filter(|value| !value.is_empty())
             .map_or_else(|| uid.clone(), ToOwned::to_owned);
         let stale_delta = self.config.poll_interval_seconds.max(1.0) * 2.0;
-        let stale = now + time::Duration::seconds_f64(stale_delta);
+        let stale = now
+            + Duration::from_std(StdDuration::from_secs_f64(stale_delta))
+                .unwrap_or_else(|_| Duration::seconds(2));
         let endpoint = cot_endpoint(self.config.cot_url.as_str());
         let endpoint_attr = endpoint
             .as_ref()
@@ -481,7 +499,7 @@ impl TakConnector {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let event_uid = format!("GeoChat.{sender_uid}.{chatroom}.{message_id}");
-        let stale = input.timestamp + time::Duration::hours(24);
+        let stale = input.timestamp + Duration::hours(24);
         let remarks_source = if sender_uid.is_empty() {
             "LXMF.CLIENT".to_string()
         } else {
@@ -514,8 +532,8 @@ impl TakConnector {
     }
 
     #[must_use]
-    pub fn build_ping_xml(&self, now: OffsetDateTime) -> String {
-        let stale = now + time::Duration::seconds(120);
+    pub fn build_ping_xml(&self, now: DateTime<Utc>) -> String {
+        let stale = now + Duration::seconds(120);
         let flow_tag_name = format!("{}-v0.0.0", sanitize_flow_tag_name(&self.config.callsign));
         format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\" ?>\n<event version=\"2.0\" type=\"{}\" uid=\"{}\" how=\"{}\" time=\"{}\" start=\"{}\" stale=\"{}\"><point lat=\"0.0\" lon=\"0.0\" le=\"{}\" hae=\"{}\" ce=\"{}\" /><detail><_flow-tags_ {}=\"{}\" /></detail></event>",
@@ -534,8 +552,8 @@ impl TakConnector {
     }
 
     #[must_use]
-    pub fn build_keepalive_xml(&self, now: OffsetDateTime) -> String {
-        let stale = now + time::Duration::hours(1);
+    pub fn build_keepalive_xml(&self, now: DateTime<Utc>) -> String {
+        let stale = now + Duration::hours(1);
         format!(
             "<event version=\"2.0\" type=\"{}\" uid=\"{}\" how=\"{}\" time=\"{}\" start=\"{}\" stale=\"{}\" />",
             KEEPALIVE_EVENT_TYPE,
@@ -595,7 +613,7 @@ impl TakOutboundQueue {
         &mut self,
         connector: &TakConnector,
         snapshot: &LocationSnapshot,
-        now: OffsetDateTime,
+        now: DateTime<Utc>,
         identity_label: Option<&str>,
     ) -> Result<(), TakConnectorError> {
         self.push(CotPayload {
@@ -618,7 +636,7 @@ impl TakOutboundQueue {
     pub fn enqueue_ping(
         &mut self,
         connector: &TakConnector,
-        now: OffsetDateTime,
+        now: DateTime<Utc>,
     ) -> Result<(), TakConnectorError> {
         self.push(CotPayload {
             kind: CotPayloadKind::Ping,
@@ -629,7 +647,7 @@ impl TakOutboundQueue {
     pub fn enqueue_keepalive(
         &mut self,
         connector: &TakConnector,
-        now: OffsetDateTime,
+        now: DateTime<Utc>,
     ) -> Result<(), TakConnectorError> {
         self.push(CotPayload {
             kind: CotPayloadKind::Keepalive,
@@ -1025,7 +1043,11 @@ pub fn drain_queue_to_sender(
     let mut sent = 0;
     while let Some(payload) = queue.pending.front().cloned() {
         sender.send(&payload)?;
-        let _ = queue.pop();
+        queue.pop().ok_or_else(|| {
+            TakConnectorError::Worker(
+                "outbound queue changed while removing a delivered payload".to_string(),
+            )
+        })?;
         sent += 1;
     }
     Ok(sent)
@@ -1164,10 +1186,19 @@ where
         let handle = thread::spawn(move || {
             let mut current_interval = interval;
             while !worker_stop.load(Ordering::SeqCst) {
-                if let Ok(mut service) = worker_service.lock() {
-                    if let Ok(report) = service.poll_once() {
-                        current_interval =
-                            tak_inbound_interval_after_report(current_interval, interval, &report);
+                match worker_service.lock() {
+                    Ok(mut service) => {
+                        if let Ok(report) = service.poll_once() {
+                            current_interval = tak_inbound_interval_after_report(
+                                current_interval,
+                                interval,
+                                &report,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("TAK inbound worker service lock poisoned: {error}");
+                        break;
                     }
                 }
                 thread::sleep(current_interval);
@@ -1186,15 +1217,19 @@ where
         Arc::clone(&self.service)
     }
 
-    pub fn shutdown(&mut self) -> Option<TakInboundStatus> {
+    pub fn shutdown(&mut self) -> Result<TakInboundStatus, TakConnectorError> {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            handle
+                .join()
+                .map_err(|_| TakConnectorError::Worker("inbound worker panicked".to_string()))?;
         }
-        self.service.lock().ok().map(|mut service| {
-            service.stop();
-            service.status()
-        })
+        let mut service = self
+            .service
+            .lock()
+            .map_err(|error| TakConnectorError::Worker(format!("inbound service lock: {error}")))?;
+        service.stop();
+        Ok(service.status())
     }
 }
 
@@ -1287,7 +1322,7 @@ impl<S: TakCotSender> TakService<S> {
     pub fn enqueue_location(
         &mut self,
         snapshot: &LocationSnapshot,
-        now: OffsetDateTime,
+        now: DateTime<Utc>,
         identity_label: Option<&str>,
     ) -> Result<TakServiceDispatchReport, TakConnectorError> {
         self.ensure_running()?;
@@ -1299,7 +1334,7 @@ impl<S: TakCotSender> TakService<S> {
 
     pub fn enqueue_ping(
         &mut self,
-        now: OffsetDateTime,
+        now: DateTime<Utc>,
     ) -> Result<TakServiceDispatchReport, TakConnectorError> {
         self.ensure_running()?;
         let enqueue_result = self.queue.enqueue_ping(&self.connector, now);
@@ -1308,7 +1343,7 @@ impl<S: TakCotSender> TakService<S> {
 
     pub fn enqueue_keepalive(
         &mut self,
-        now: OffsetDateTime,
+        now: DateTime<Utc>,
     ) -> Result<TakServiceDispatchReport, TakConnectorError> {
         self.ensure_running()?;
         let enqueue_result = self.queue.enqueue_keepalive(&self.connector, now);
@@ -1397,24 +1432,11 @@ where
             let mut last_keepalive: Option<Instant> = None;
             let mut current_interval = interval;
             while !worker_stop.load(Ordering::SeqCst) {
-                if let Ok(mut service) = worker_service.lock() {
-                    let mut send_failed = false;
-                    if service.is_running() && !service.queue.is_empty() {
-                        if let Ok(report) = service.flush_once() {
-                            current_interval = tak_worker_interval_after_report(
-                                current_interval,
-                                interval,
-                                &report,
-                            );
-                            send_failed = report.error.is_some();
-                        }
-                    }
-                    if service.is_running() && !send_failed {
-                        let now = Instant::now();
-                        if last_ping
-                            .is_none_or(|last| now.duration_since(last) >= keepalive_interval)
-                        {
-                            if let Ok(report) = service.enqueue_ping(OffsetDateTime::now_utc()) {
+                match worker_service.lock() {
+                    Ok(mut service) => {
+                        let mut send_failed = false;
+                        if service.is_running() && !service.queue.is_empty() {
+                            if let Ok(report) = service.flush_once() {
                                 current_interval = tak_worker_interval_after_report(
                                     current_interval,
                                     interval,
@@ -1422,22 +1444,41 @@ where
                                 );
                                 send_failed = report.error.is_some();
                             }
-                            last_ping = Some(now);
                         }
-                        if !send_failed
-                            && last_keepalive
+                        if service.is_running() && !send_failed {
+                            let now = Instant::now();
+                            if last_ping
                                 .is_none_or(|last| now.duration_since(last) >= keepalive_interval)
-                        {
-                            if let Ok(report) = service.enqueue_keepalive(OffsetDateTime::now_utc())
                             {
-                                current_interval = tak_worker_interval_after_report(
-                                    current_interval,
-                                    interval,
-                                    &report,
-                                );
+                                if let Ok(report) = service.enqueue_ping(Utc::now()) {
+                                    current_interval = tak_worker_interval_after_report(
+                                        current_interval,
+                                        interval,
+                                        &report,
+                                    );
+                                    send_failed = report.error.is_some();
+                                }
+                                last_ping = Some(now);
                             }
-                            last_keepalive = Some(now);
+                            if !send_failed
+                                && last_keepalive.is_none_or(|last| {
+                                    now.duration_since(last) >= keepalive_interval
+                                })
+                            {
+                                if let Ok(report) = service.enqueue_keepalive(Utc::now()) {
+                                    current_interval = tak_worker_interval_after_report(
+                                        current_interval,
+                                        interval,
+                                        &report,
+                                    );
+                                }
+                                last_keepalive = Some(now);
+                            }
                         }
+                    }
+                    Err(error) => {
+                        eprintln!("TAK outbound worker service lock poisoned: {error}");
+                        break;
                     }
                 }
                 thread::sleep(current_interval);
@@ -1456,49 +1497,28 @@ where
         Arc::clone(&self.service)
     }
 
-    pub fn shutdown(&mut self) -> Option<TakServiceStatus> {
+    pub fn shutdown(&mut self) -> Result<TakServiceStatus, TakConnectorError> {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            handle
+                .join()
+                .map_err(|_| TakConnectorError::Worker("outbound worker panicked".to_string()))?;
         }
-        self.service.lock().ok().map(|mut service| {
-            service.stop();
-            service.status()
-        })
+        let mut service = self.service.lock().map_err(|error| {
+            TakConnectorError::Worker(format!("outbound service lock: {error}"))
+        })?;
+        service.stop();
+        Ok(service.status())
     }
-}
-
-fn tak_worker_interval_after_report(
-    current_interval: StdDuration,
-    base_interval: StdDuration,
-    report: &TakServiceDispatchReport,
-) -> StdDuration {
-    if report.error.is_some() {
-        return current_interval
-            .saturating_mul(2)
-            .min(TAK_WORKER_MAX_BACKOFF);
-    }
-    base_interval
-}
-
-fn tak_inbound_interval_after_report(
-    current_interval: StdDuration,
-    base_interval: StdDuration,
-    report: &TakInboundPollReport,
-) -> StdDuration {
-    if report.error.is_some() {
-        return current_interval
-            .saturating_mul(2)
-            .min(TAK_WORKER_MAX_BACKOFF);
-    }
-    base_interval
 }
 
 impl<S> Drop for TakServiceWorker<S> {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            if handle.join().is_err() {
+                eprintln!("TAK outbound worker panicked during drop");
+            }
         }
     }
 }
@@ -1507,7 +1527,9 @@ impl<R> Drop for TakInboundWorker<R> {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            if handle.join().is_err() {
+                eprintln!("TAK inbound worker panicked during drop");
+            }
         }
     }
 }
@@ -1531,44 +1553,6 @@ pub fn uid_from_hash(peer_hash: Option<&str>, fallback_callsign: &str) -> String
 pub fn cot_endpoint(cot_url: &str) -> Option<String> {
     let parsed = CotUrl::parse(cot_url).ok()?;
     Some(format!("{}:{}", parsed.host_port, parsed.scheme))
-}
-
-fn format_cot_seconds(timestamp: OffsetDateTime) -> String {
-    let timestamp = timestamp
-        .to_offset(time::UtcOffset::UTC)
-        .replace_nanosecond(0)
-        .expect("zero nanosecond is valid");
-    timestamp
-        .format(&Rfc3339)
-        .expect("UTC timestamp should format")
-        .replace("+00:00", "Z")
-}
-
-fn format_cot_millis(timestamp: OffsetDateTime) -> String {
-    let timestamp = timestamp.to_offset(time::UtcOffset::UTC);
-    let nanos = timestamp.nanosecond();
-    let millis_nanos = (nanos / 1_000_000) * 1_000_000;
-    let timestamp = timestamp
-        .replace_nanosecond(millis_nanos)
-        .expect("millisecond nanosecond is valid");
-    timestamp
-        .format(&Rfc3339)
-        .expect("UTC timestamp should format")
-        .replace("+00:00", "Z")
-}
-
-fn format_cot_micros(timestamp: OffsetDateTime) -> String {
-    let timestamp = timestamp.to_offset(time::UtcOffset::UTC);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
-        timestamp.year(),
-        u8::from(timestamp.month()),
-        timestamp.day(),
-        timestamp.hour(),
-        timestamp.minute(),
-        timestamp.second(),
-        timestamp.microsecond(),
-    )
 }
 
 fn format_float(value: f64) -> String {
@@ -1615,6 +1599,7 @@ fn sanitize_flow_tag_name(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cot_time::test_datetime;
     use std::io::ErrorKind;
     use std::io::Read;
     use std::net::TcpListener;
@@ -1622,7 +1607,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::thread;
-    use time::macros::datetime;
 
     const TEST_TLS_CERT: &str = r"-----BEGIN CERTIFICATE-----
 MIIDJTCCAg2gAwIBAgIUb/3y7pel5CjZq//+KyM8mXbo70IwDQYJKoZIhvcNAQEL
@@ -1871,11 +1855,12 @@ fN59G+INtr0cPXmM6zCYs+c=
             speed: 2.5,
             bearing: 180.0,
             accuracy: 4.0,
-            updated_at: datetime!(2025-01-01 00:00:00 UTC),
+            updated_at: test_datetime("2025-01-01T00:00:00Z"),
             peer_hash: Some("userhash1".to_string()),
         };
 
-        let xml = connector.build_location_xml(&snapshot, datetime!(2025-01-01 00:00:05 UTC), None);
+        let xml =
+            connector.build_location_xml(&snapshot, test_datetime("2025-01-01T00:00:05Z"), None);
 
         assert!(xml.contains("uid=\"userhash1\""));
         assert!(xml.contains("type=\"a-f-G-U-C\""));
@@ -1902,13 +1887,13 @@ fN59G+INtr0cPXmM6zCYs+c=
             speed: 0.0,
             bearing: 0.0,
             accuracy: 0.0,
-            updated_at: datetime!(2025-01-01 00:00:00 UTC),
+            updated_at: test_datetime("2025-01-01T00:00:00Z"),
             peer_hash: Some("aa:bb:cc:dd".to_string()),
         };
 
         let xml = connector.build_location_xml(
             &snapshot,
-            datetime!(2025-01-01 00:00:00 UTC),
+            test_datetime("2025-01-01T00:00:00Z"),
             Some("Display Name"),
         );
 
@@ -1930,7 +1915,7 @@ fN59G+INtr0cPXmM6zCYs+c=
             sender_label: "Peer A".to_string(),
             topic_id: Some("mission.alpha".to_string()),
             source_hash: Some("aa:bb:cc:dd".to_string()),
-            timestamp: datetime!(2025-01-01 00:00:00.123 UTC),
+            timestamp: test_datetime("2025-01-01T00:00:00.123Z"),
             message_uuid: Some("message-1".to_string()),
         };
 
@@ -1957,7 +1942,7 @@ fN59G+INtr0cPXmM6zCYs+c=
             sender_label: "Peer A".to_string(),
             topic_id: None,
             source_hash: None,
-            timestamp: datetime!(2025-01-01 00:00:00 UTC),
+            timestamp: test_datetime("2025-01-01T00:00:00Z"),
             message_uuid: None,
         };
 
@@ -1973,7 +1958,7 @@ fN59G+INtr0cPXmM6zCYs+c=
             callsign: "Hub@Node".to_string(),
             ..TakConnectionConfig::default()
         });
-        let now = datetime!(2025-01-01 00:00:00.123456 UTC);
+        let now = test_datetime("2025-01-01T00:00:00.123456Z");
 
         let ping = connector.build_ping_xml(now);
         let keepalive = connector.build_keepalive_xml(now);
@@ -2117,7 +2102,7 @@ fN59G+INtr0cPXmM6zCYs+c=
         let connector = TakConnector::new(config);
         let payload = CotPayload {
             kind: CotPayloadKind::Keepalive,
-            xml: connector.build_keepalive_xml(datetime!(2025-01-01 00:00:00 UTC)),
+            xml: connector.build_keepalive_xml(test_datetime("2025-01-01T00:00:00Z")),
         };
 
         sender.send(&payload).expect("send tls payload");
@@ -2183,7 +2168,7 @@ fN59G+INtr0cPXmM6zCYs+c=
         let connector = TakConnector::new(config);
         let payload = CotPayload {
             kind: CotPayloadKind::Keepalive,
-            xml: connector.build_keepalive_xml(datetime!(2025-01-01 00:00:00 UTC)),
+            xml: connector.build_keepalive_xml(test_datetime("2025-01-01T00:00:00Z")),
         };
 
         sender.send(&payload).expect("send tls payload");
@@ -2289,21 +2274,21 @@ fN59G+INtr0cPXmM6zCYs+c=
             speed: 0.0,
             bearing: 0.0,
             accuracy: 3.0,
-            updated_at: datetime!(2025-01-01 00:00:00 UTC),
+            updated_at: test_datetime("2025-01-01T00:00:00Z"),
             peer_hash: Some("peer-a".to_string()),
         };
         queue
             .enqueue_location(
                 &connector,
                 &snapshot,
-                datetime!(2025-01-01 00:00:01 UTC),
+                test_datetime("2025-01-01T00:00:01Z"),
                 None,
             )
             .expect("enqueue location");
         let second = queue.enqueue_location(
             &connector,
             &snapshot,
-            datetime!(2025-01-01 00:00:02 UTC),
+            test_datetime("2025-01-01T00:00:02Z"),
             None,
         );
 
@@ -2332,7 +2317,7 @@ fN59G+INtr0cPXmM6zCYs+c=
             sender_label: "Peer A".to_string(),
             topic_id: Some("ops".to_string()),
             source_hash: Some("peer-a".to_string()),
-            timestamp: datetime!(2025-01-01 00:00:00 UTC),
+            timestamp: test_datetime("2025-01-01T00:00:00Z"),
             message_uuid: Some("msg-1".to_string()),
         };
 
@@ -2374,10 +2359,10 @@ fN59G+INtr0cPXmM6zCYs+c=
         service.start();
 
         let ping = service
-            .enqueue_ping(datetime!(2025-01-01 00:00:00 UTC))
+            .enqueue_ping(test_datetime("2025-01-01T00:00:00Z"))
             .expect("ping dispatch");
         let keepalive = service
-            .enqueue_keepalive(datetime!(2025-01-01 00:00:01 UTC))
+            .enqueue_keepalive(test_datetime("2025-01-01T00:00:01Z"))
             .expect("keepalive dispatch");
 
         assert_eq!(ping.sent, 1);
@@ -2468,10 +2453,10 @@ fN59G+INtr0cPXmM6zCYs+c=
                     speed: 2.5,
                     bearing: 180.0,
                     accuracy: 5.0,
-                    updated_at: datetime!(2026-05-11 12:00:00 UTC),
+                    updated_at: test_datetime("2026-05-11T12:00:00Z"),
                     peer_hash: Some("proto-peer".to_string()),
                 },
-                datetime!(2026-05-11 12:00:01 UTC),
+                test_datetime("2026-05-11T12:00:01Z"),
                 Some("Proto Peer"),
             ),
         };
@@ -2513,7 +2498,7 @@ fN59G+INtr0cPXmM6zCYs+c=
             TakClearSender::from_config(&outbound_config).expect("outbound sender");
         let keepalive = CotPayload {
             kind: CotPayloadKind::Keepalive,
-            xml: outbound_connector.build_keepalive_xml(datetime!(2026-05-11 12:00:00 UTC)),
+            xml: outbound_connector.build_keepalive_xml(test_datetime("2026-05-11T12:00:00Z")),
         };
 
         outbound_sender.send(&keepalive).expect("send outbound cot");
@@ -2584,7 +2569,7 @@ fN59G+INtr0cPXmM6zCYs+c=
         let connector = TakConnector::new(config);
         let payload = CotPayload {
             kind: CotPayloadKind::Keepalive,
-            xml: connector.build_keepalive_xml(OffsetDateTime::now_utc()),
+            xml: connector.build_keepalive_xml(Utc::now()),
         };
 
         sender.send(&payload).expect("send live TAK keepalive");
@@ -2601,7 +2586,7 @@ fN59G+INtr0cPXmM6zCYs+c=
         for _ in 0..2 {
             let payload = CotPayload {
                 kind: CotPayloadKind::Keepalive,
-                xml: connector.build_keepalive_xml(OffsetDateTime::now_utc()),
+                xml: connector.build_keepalive_xml(Utc::now()),
             };
             sender
                 .send(&payload)
@@ -2682,7 +2667,7 @@ fN59G+INtr0cPXmM6zCYs+c=
         let inbound_connector = TakConnector::new(inbound_config.clone());
         let hello = CotPayload {
             kind: CotPayloadKind::Keepalive,
-            xml: inbound_connector.build_keepalive_xml(OffsetDateTime::now_utc()),
+            xml: inbound_connector.build_keepalive_xml(Utc::now()),
         };
         let encoded = encode_outbound_cot_payload(&hello, inbound_config.tak_proto);
         stream
@@ -2696,7 +2681,7 @@ fN59G+INtr0cPXmM6zCYs+c=
 
         let outbound_connector = TakConnector::new(outbound_config.clone());
         let sender = TakClearSender::from_config(outbound_config)?;
-        let now = OffsetDateTime::now_utc();
+        let now = Utc::now();
         let probe_uid = format!("R3AKT-LIVE-PROBE-{}", Uuid::new_v4().simple());
         let payload = CotPayload {
             kind: CotPayloadKind::Location,
@@ -2809,7 +2794,7 @@ fN59G+INtr0cPXmM6zCYs+c=
             sender_label: "Peer A".to_string(),
             topic_id: Some("ops".to_string()),
             source_hash: Some("peer-a".to_string()),
-            timestamp: datetime!(2025-01-01 00:00:00 UTC),
+            timestamp: test_datetime("2025-01-01T00:00:00Z"),
             message_uuid: Some("msg-1".to_string()),
         };
         let mut service = TakService::new(TakConnectionConfig::default(), 4, RecordingSender);
@@ -2848,7 +2833,7 @@ fN59G+INtr0cPXmM6zCYs+c=
             sender_label: "Peer A".to_string(),
             topic_id: Some("ops".to_string()),
             source_hash: Some("peer-a".to_string()),
-            timestamp: datetime!(2025-01-01 00:00:00 UTC),
+            timestamp: test_datetime("2025-01-01T00:00:00Z"),
             message_uuid: Some("msg-1".to_string()),
         };
         let mut service = TakService::new(TakConnectionConfig::default(), 4, FailingSender);
@@ -3012,7 +2997,7 @@ fN59G+INtr0cPXmM6zCYs+c=
             sender_label: "Peer A".to_string(),
             topic_id: Some("ops".to_string()),
             source_hash: Some("peer-a".to_string()),
-            timestamp: datetime!(2025-01-01 00:00:00 UTC),
+            timestamp: test_datetime("2025-01-01T00:00:00Z"),
             message_uuid: Some("msg-1".to_string()),
         };
         let mut service = TakService::new(

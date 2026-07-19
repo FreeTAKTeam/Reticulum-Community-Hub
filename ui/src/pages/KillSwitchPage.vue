@@ -238,7 +238,7 @@ const errorMessage = ref("");
 const pinErrorMessage = ref("");
 const orbitPhase = ref(0);
 const confirmDialogOpen = ref(false);
-let statusPollTimer: ReturnType<typeof window.setInterval> | undefined;
+let statusPollTimer: number | undefined;
 let orbitFrame: number | undefined;
 
 const progress = computed(() => status.value?.progress_percent ?? 0);

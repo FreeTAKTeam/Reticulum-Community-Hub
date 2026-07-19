@@ -1,4 +1,13 @@
 #![allow(clippy::float_cmp, clippy::single_match_else)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
 
 use std::env;
 use std::fs;
@@ -183,7 +192,9 @@ where
             .await
             .map_err(|error| format!("ZeroMQ startup verification task failed: {error}"))?;
     if let Err(error) = verification_result {
-        let _ = state.stop_managed_reticulumd();
+        if let Err(stop_error) = state.stop_managed_reticulumd() {
+            eprintln!("reticulumd cleanup after ZeroMQ verification failure failed: {stop_error}");
+        }
         return Err(error.into());
     }
     let app = create_app_for_runtime(state.clone(), ui_dist_path.as_ref());
@@ -200,9 +211,19 @@ where
         eprintln!("r3akt-rch-server shutdown warning: {error}");
     }
     outbound_worker.abort();
-    let _ = outbound_worker.await;
+    match outbound_worker.await {
+        Err(error) if !error.is_cancelled() => {
+            eprintln!("outbound worker join failed during shutdown: {error}");
+        }
+        Ok(()) | Err(_) => {}
+    }
     inbound_worker.abort();
-    let _ = inbound_worker.await;
+    match inbound_worker.await {
+        Err(error) if !error.is_cancelled() => {
+            eprintln!("inbound worker join failed during shutdown: {error}");
+        }
+        Ok(()) | Err(_) => {}
+    }
     serve_result?;
     Ok(())
 }
@@ -789,9 +810,7 @@ fn configure_detached_process(command: &mut Command) {
 fn configure_detached_process(_command: &mut Command) {}
 
 fn current_timestamp_rfc3339() -> String {
-    time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| time::OffsetDateTime::now_utc().unix_timestamp().to_string())
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
 }
 
 fn control_port(args: &ControlArgs, state: Option<&ControlState>) -> u16 {
@@ -938,8 +957,8 @@ impl ControlClient {
     fn request(&self, method: &str, path: &str) -> Option<ControlResponse> {
         let address = format!("{DEFAULT_HOST}:{}", self.port).parse().ok()?;
         let mut stream = TcpStream::connect_timeout(&address, self.timeout).ok()?;
-        let _ = stream.set_read_timeout(Some(self.timeout));
-        let _ = stream.set_write_timeout(Some(self.timeout));
+        stream.set_read_timeout(Some(self.timeout)).ok()?;
+        stream.set_write_timeout(Some(self.timeout)).ok()?;
         let api_key_header = self
             .api_key
             .as_deref()

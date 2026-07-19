@@ -6,7 +6,7 @@ on:
       release_version:
         description: "Version label to embed in manually built artifacts"
         required: false
-        default: "v3.0.0-preview.8"
+        default: "v3.0.0-preview.9"
   release:
     types: [published]
   push:
@@ -109,7 +109,11 @@ jobs:
 
       - name: Build UI
         working-directory: rch
-        run: npm --prefix ui run build
+        run: |
+          npm --prefix ui run lint
+          npm --prefix ui run typecheck
+          npm --prefix ui run test
+          npm --prefix ui run build
 
       - name: Build server and TAK service
         working-directory: rch
@@ -250,7 +254,11 @@ jobs:
 
       - name: Build Tauri desktop package
         working-directory: rch
-        run: npm --prefix apps/rch-desktop run build
+        run: |
+          npm --prefix ui run lint
+          npm --prefix ui run typecheck
+          npm --prefix ui run test
+          npm --prefix apps/rch-desktop run build
 
       - name: Stage desktop package files
         shell: pwsh

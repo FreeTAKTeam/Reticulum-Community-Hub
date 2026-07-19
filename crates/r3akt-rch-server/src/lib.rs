@@ -27,6 +27,17 @@
     clippy::unnecessary_wraps
 )]
 #![recursion_limit = "512"]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
+
+mod auth;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::pending;
@@ -52,6 +63,7 @@ use axum::routing::get;
 use axum::{Extension, Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use futures_util::SinkExt;
 #[cfg(test)]
 use r3akt_profile_rch::FIELD_EVENT;
@@ -86,12 +98,19 @@ use rns_core::identity::{PRIVATE_KEY_LENGTH, PrivateIdentity};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use time::format_description::well_known::Rfc3339;
-use time::{OffsetDateTime, PrimitiveDateTime};
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use uuid::Uuid;
+
+#[cfg(test)]
+use auth::password_hash;
+use auth::{
+    AuthThrottleState, argon2id_hash, is_argon2id_phc, load_kill_switch_pin,
+    load_stored_remote_password, openapi_auth_validation_operation, require_kill_switch_pin,
+    save_kill_switch_pin, save_kill_switch_pin_secret, save_remote_access_password,
+    verify_versioned_secret,
+};
 
 const CHAT_ATTACHMENT_MAX_BYTES: usize = 8 * 1024 * 1024;
 const OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS: i64 = 30_000;
@@ -149,6 +168,10 @@ const HUB_NAME_SETTING: &str = "hub_name";
 const REMOTE_ACCESS_PASSWORD_SALT_SETTING: &str = "remote_access_password_salt";
 const REMOTE_ACCESS_PASSWORD_HASH_SETTING: &str = "remote_access_password_hash";
 const REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING: &str = "remote_access_password_created_at_ts_ms";
+const AUTH_FAILURE_LIMIT: usize = 5;
+const AUTH_FAILURE_WINDOW_MS: i64 = 5 * 60 * 1000;
+const AUTH_LOCKOUT_MS: i64 = 5 * 60 * 1000;
+const AUTH_LOCKOUT_RETRY_AFTER_SECS: u64 = 5 * 60;
 const KILL_SWITCH_AUTHORIZATION_TTL_MS: i64 = 120_000;
 const KILL_SWITCH_PROGRESS_WINDOW_MS: i64 = 18_000;
 type KillSwitchTargetGroup<'a> = (&'a str, &'a str, &'a str, u8, &'a [&'a str], Option<usize>);
@@ -237,6 +260,7 @@ pub struct AppState {
     ui_dist_path: Option<Arc<PathBuf>>,
     api_bind: Option<Arc<SocketAddr>>,
     api_key: Option<Arc<String>>,
+    auth_throttle: Arc<Mutex<AuthThrottleState>>,
     system_status_fanout_mode: SystemStatusFanoutMode,
 }
 
@@ -507,6 +531,7 @@ impl Default for AppState {
             ui_dist_path: None,
             api_bind: None,
             api_key: None,
+            auth_throttle: Arc::default(),
             system_status_fanout_mode: SystemStatusFanoutMode::EventOnly,
         }
     }
@@ -682,13 +707,17 @@ impl AppState {
         } else {
             Duration::from_secs(3)
         };
-        self.lxmf_zmq_data_plane = ZmqDataPlane::new_with_timeout(
+        self.lxmf_zmq_data_plane = match ZmqDataPlane::new_with_timeout(
             command_endpoint.clone(),
             response_endpoint.clone(),
             request_timeout,
-        )
-        .map(Arc::new)
-        .ok();
+        ) {
+            Ok(data_plane) => Some(Arc::new(data_plane)),
+            Err(error) => {
+                eprintln!("failed to initialize LXMF ZeroMQ data plane: {error}");
+                None
+            }
+        };
         self.lxmf_zmq_command_endpoint = Some(Arc::new(command_endpoint));
         self.lxmf_zmq_response_endpoint = Some(Arc::new(response_endpoint));
         self.reticulumd_source = Some(Arc::new(source.clone()));
@@ -745,18 +774,21 @@ impl AppState {
         self.managed_reticulumd_db_path = db_path
             .as_ref()
             .map(|path| Arc::new(PathBuf::from(path.as_str())));
-        if let Ok(mut managed) = self.managed_reticulumd.write() {
-            managed.configured = true;
-            managed.exe_path = Some(exe_path.as_ref().to_path_buf());
-            managed.config_path = config_path.map(|path| path.as_ref().to_path_buf());
-            managed.endpoint = None;
-            managed.zmq_command_endpoint = Some(command_endpoint.into());
-            managed.db_path = db_path;
-            managed.transport = None;
-            managed.running = false;
-            managed.pid = None;
-            managed.started_ts_ms = None;
-            managed.stopped_ts_ms = None;
+        match self.managed_reticulumd.write() {
+            Ok(mut managed) => {
+                managed.configured = true;
+                managed.exe_path = Some(exe_path.as_ref().to_path_buf());
+                managed.config_path = config_path.map(|path| path.as_ref().to_path_buf());
+                managed.endpoint = None;
+                managed.zmq_command_endpoint = Some(command_endpoint.into());
+                managed.db_path = db_path;
+                managed.transport = None;
+                managed.running = false;
+                managed.pid = None;
+                managed.started_ts_ms = None;
+                managed.stopped_ts_ms = None;
+            }
+            Err(error) => eprintln!("managed reticulumd state lock poisoned: {error}"),
         }
         self
     }
@@ -846,7 +878,7 @@ impl AppState {
                 Ok(Some(_status)) => {}
                 Ok(None) => {
                     child.kill().map_err(|error| error.to_string())?;
-                    let _ = child.wait();
+                    child.wait().map_err(|error| error.to_string())?;
                 }
                 Err(error) => return Err(error.to_string()),
             }
@@ -857,19 +889,25 @@ impl AppState {
     }
 
     fn mark_managed_reticulumd_started(&self, pid: u32) {
-        if let Ok(mut managed) = self.managed_reticulumd.write() {
-            managed.configured = true;
-            managed.pid = Some(pid);
-            managed.running = true;
-            managed.started_ts_ms = Some(unix_now_ms());
-            managed.stopped_ts_ms = None;
+        match self.managed_reticulumd.write() {
+            Ok(mut managed) => {
+                managed.configured = true;
+                managed.pid = Some(pid);
+                managed.running = true;
+                managed.started_ts_ms = Some(unix_now_ms());
+                managed.stopped_ts_ms = None;
+            }
+            Err(error) => eprintln!("managed reticulumd state lock poisoned after start: {error}"),
         }
     }
 
     fn mark_managed_reticulumd_stopped(&self) {
-        if let Ok(mut managed) = self.managed_reticulumd.write() {
-            managed.running = false;
-            managed.stopped_ts_ms = Some(unix_now_ms());
+        match self.managed_reticulumd.write() {
+            Ok(mut managed) => {
+                managed.running = false;
+                managed.stopped_ts_ms = Some(unix_now_ms());
+            }
+            Err(error) => eprintln!("managed reticulumd state lock poisoned after stop: {error}"),
         }
     }
 
@@ -1151,80 +1189,6 @@ impl AppState {
         std::env::current_dir()
             .map(|path| path.join("RTH_Store").join(dirname))
             .map_err(|error| ApiError::Internal(error.to_string()))
-    }
-
-    fn validate_http_headers(&self, headers: &HeaderMap, client_addr: Option<SocketAddr>) -> bool {
-        if is_local_client_addr(client_addr) {
-            return true;
-        }
-        if client_addr.is_none() && self.api_key.is_none() {
-            return true;
-        }
-        let api_key = headers
-            .get("X-API-Key")
-            .and_then(|value| value.to_str().ok());
-        let bearer = bearer_token(headers);
-        if let Some(expected) = &self.api_key {
-            if api_key == Some(expected.as_str()) || bearer == Some(expected.as_str()) {
-                return true;
-            }
-        }
-        self.validate_stored_remote_password(api_key.or(bearer))
-            .unwrap_or(false)
-    }
-
-    fn http_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> String {
-        if !is_local_client_addr(client_addr)
-            && self.api_key.is_none()
-            && !self.remote_password_configured().unwrap_or(false)
-        {
-            "Remote access requires first-run setup or RTH_API_KEY (RCH_API_KEY is also supported)."
-                .to_string()
-        } else {
-            "Unauthorized".to_string()
-        }
-    }
-
-    fn validate_ws_credentials(
-        &self,
-        api_key: Option<&str>,
-        token: Option<&str>,
-        client_addr: Option<SocketAddr>,
-    ) -> bool {
-        if is_local_client_addr(client_addr) {
-            return true;
-        }
-        if client_addr.is_none() && self.api_key.is_none() {
-            return true;
-        }
-        if let Some(expected) = &self.api_key {
-            if api_key == Some(expected.as_str()) || token == Some(expected.as_str()) {
-                return true;
-            }
-        }
-        self.validate_stored_remote_password(api_key.or(token))
-            .unwrap_or(false)
-    }
-
-    fn ws_auth_failure_detail(&self, client_addr: Option<SocketAddr>) -> String {
-        self.http_auth_failure_detail(client_addr)
-    }
-
-    fn remote_password_configured(&self) -> Result<bool, ApiError> {
-        Ok(load_stored_remote_password(self)?.is_some())
-    }
-
-    fn validate_stored_remote_password(&self, password: Option<&str>) -> Result<bool, ApiError> {
-        let Some(password) = password.map(str::trim).filter(|value| !value.is_empty()) else {
-            return Ok(false);
-        };
-        let Some(secret) = load_stored_remote_password(self)? else {
-            return Ok(false);
-        };
-        Ok(secure_string_eq(
-            &password_hash(&secret.salt, password),
-            &secret.hash,
-        ))
     }
 }
 
@@ -2247,6 +2211,11 @@ pub enum ApiError {
     Unauthorized,
     #[error("{0}")]
     UnauthorizedWithDetail(String),
+    #[error("{detail}")]
+    TooManyRequests {
+        detail: String,
+        retry_after_secs: u64,
+    },
     #[error("{0}")]
     Internal(String),
 }
@@ -2263,10 +2232,37 @@ impl IntoResponse for ApiError {
             Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Unauthorized | Self::UnauthorizedWithDetail(_) => StatusCode::UNAUTHORIZED,
+            Self::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         if let Self::PydanticValidation(payload) = self {
             return (status, Json(payload)).into_response();
+        }
+        if let Self::Internal(detail) = self {
+            let request_id = Uuid::now_v7().to_string();
+            eprintln!("request_id={request_id} unexpected server error: {detail}");
+            let mut response = (
+                status,
+                Json(ErrorBody {
+                    detail: "An unexpected server error occurred".to_string(),
+                }),
+            )
+                .into_response();
+            if let Ok(value) = request_id.parse() {
+                response.headers_mut().insert("x-request-id", value);
+            }
+            return response;
+        }
+        if let Self::TooManyRequests {
+            detail,
+            retry_after_secs,
+        } = self
+        {
+            let mut response = (status, Json(ErrorBody { detail })).into_response();
+            if let Ok(value) = retry_after_secs.to_string().parse() {
+                response.headers_mut().insert(header::RETRY_AFTER, value);
+            }
+            return response;
         }
         (
             status,
@@ -2862,7 +2858,7 @@ pub fn spawn_local_telemetry_sampler_with_interval(
         loop {
             ticker.tick().await;
             if let Err(error) = record_local_time_telemetry(&state, &peer_destination) {
-                let _ = record_system_event(
+                record_system_event_best_effort(
                     &state,
                     "telemetry_error",
                     "Local telemetry sampler failed to record a snapshot",
@@ -3109,7 +3105,7 @@ pub fn spawn_reticulumd_inbound_worker_with_interval(
                     Ok(Ok(_)) => {}
                     Ok(Err(error)) => {
                         let error = error.to_string();
-                        let _ = record_system_event(
+                        record_system_event_best_effort(
                             &state,
                             "reticulumd_announce_import_error",
                             "Reticulumd announce list import failed",
@@ -3498,7 +3494,7 @@ fn process_lxmf_zmq_event_worker_tick(
         .any(|event| event.event_type == "StreamGap")
     {
         let recovered = recover_lxmf_zmq_history_after_stream_gap(state, source)?;
-        let _ = record_system_event(
+        record_system_event_best_effort(
             state,
             "reticulumd_event_stream_gap_recovered",
             "Recovered retained LXMF messages after a ZeroMQ event stream gap",
@@ -4115,7 +4111,7 @@ fn process_reticulumd_inbound_envelope(
             state.record_telemetry(
                 envelope.source.to_string(),
                 health_telemetry_payload(telemetry),
-                telemetry.observed_at.unix_timestamp(),
+                telemetry.observed_at.timestamp(),
                 None,
             )?;
             record_system_event(
@@ -4131,7 +4127,7 @@ fn process_reticulumd_inbound_envelope(
                 telemetry.telemetry.clone(),
                 telemetry
                     .timestamp_s
-                    .unwrap_or_else(|| envelope.timestamp.unix_timestamp()),
+                    .unwrap_or_else(|| envelope.timestamp.timestamp()),
                 None,
             )?;
             record_system_event(
@@ -4270,7 +4266,7 @@ fn record_inbound_topic_message(
             "reticulumd_inbound": true,
             "attachment_count": attachments.len(),
         }),
-        created_ts_ms: envelope.timestamp.unix_timestamp_nanos() as i64 / 1_000_000,
+        created_ts_ms: envelope.timestamp.timestamp_millis(),
         attachments,
     };
     let mut messages = state
@@ -4369,13 +4365,13 @@ fn unique_inbound_attachment_path(base_path: &FsPath, name: &str) -> PathBuf {
         .and_then(|value| value.to_str())
         .map(|value| format!(".{value}"))
         .unwrap_or_default();
-    for index in 1.. {
+    for index in 1..=u64::MAX {
         let candidate = base_path.join(format!("{stem}_{index}{suffix}"));
         if !candidate.exists() {
             return candidate;
         }
     }
-    unreachable!()
+    base_path.join(format!("{stem}_{}{suffix}", Uuid::new_v4().simple()))
 }
 
 fn guess_inbound_attachment_media_type(name: &str, category: &str) -> &'static str {
@@ -4992,8 +4988,7 @@ fn mission_sync_command_from_reticulumd(
         .unwrap_or_else(|| envelope.id.to_string());
     let timestamp = envelope
         .timestamp
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| iso8601_from_unix_ms(unix_now_ms()));
+        .to_rfc3339_opts(SecondsFormat::AutoSi, true);
     MissionCommandEnvelope {
         command_id,
         source: RchSource::new(envelope.source.to_string()),
@@ -5383,7 +5378,7 @@ fn reticulumd_inbound_envelope_metadata(envelope: &ProtocolEnvelope) -> Value {
         "topic": envelope.topic.to_string(),
         "envelope_id": envelope.id.to_string(),
         "dedupe_key": envelope.dedupe_key,
-        "timestamp": envelope.timestamp.format(&Rfc3339).ok(),
+        "timestamp": envelope.timestamp.to_rfc3339_opts(SecondsFormat::AutoSi, true),
         "ttl_seconds": envelope.ttl_seconds,
         "correlation_id": envelope.correlation_id(),
     })
@@ -5411,7 +5406,7 @@ fn health_telemetry_payload(telemetry: &HealthTelemetry) -> Value {
         json!({
             "status": format!("{:?}", telemetry.status),
             "metrics": [],
-            "observed_at": telemetry.observed_at.format(&Rfc3339).ok(),
+            "observed_at": telemetry.observed_at.to_rfc3339_opts(SecondsFormat::AutoSi, true),
         })
     })
 }
@@ -5448,12 +5443,19 @@ async fn require_http_auth(
             .await;
     }
     let client_addr = request_client_addr(&request);
-    if state.validate_http_headers(request.headers(), client_addr) {
-        let query_string = request.uri().query().map(ToString::to_string);
-        return normalize_framework_rejection(next.run(request).await, query_string.as_deref())
-            .await;
+    match state.validate_http_headers(request.headers(), client_addr) {
+        Ok(true) => {
+            let query_string = request.uri().query().map(ToString::to_string);
+            return normalize_framework_rejection(next.run(request).await, query_string.as_deref())
+                .await;
+        }
+        Ok(false) => {}
+        Err(error) => return error.into_response(),
     }
-    ApiError::UnauthorizedWithDetail(state.http_auth_failure_detail(client_addr)).into_response()
+    match state.http_auth_failure_detail(client_addr) {
+        Ok(detail) => ApiError::UnauthorizedWithDetail(detail).into_response(),
+        Err(error) => error.into_response(),
+    }
 }
 
 async fn normalize_framework_rejection(response: Response, query_string: Option<&str>) -> Response {
@@ -7575,7 +7577,7 @@ fn openapi_components() -> Value {
                 "properties": {
                     "detail": {
                         "type": "string",
-                        "description": "Human-readable error message."
+                        "description": "Human-readable expected error. Unexpected 500 responses use a stable generic detail and X-Request-ID header."
                     },
                     "errors": {
                         "type": "array",
@@ -8749,7 +8751,7 @@ fn openapi_document() -> Value {
                 "get": openapi_text_response_operation(Vec::new(), None, "Help text.")
             },
             "/Examples": {
-                "get": openapi_text_response_operation(Vec::new(), None, "Example command text.")
+                "get": openapi_text_response_operation(Vec::new(), None, "HTTP, WebSocket, Reticulum, TAK, and LXMF command examples.")
             },
             "/Status": {
                 "get": openapi_schema_response_operation(Vec::new(), "Status", "Status snapshot.")
@@ -8765,11 +8767,7 @@ fn openapi_document() -> Value {
                 )
             },
             "/api/v1/auth/validate": {
-                "get": openapi_schema_response_operation(
-                    Vec::new(),
-                    "AuthValidationResponse",
-                    "Authentication validation response."
-                )
+                "get": openapi_auth_validation_operation()
             },
             "/Events": {
                 "get": openapi_array_response_operation(Vec::new(), "Event", "Recent events.")
@@ -10066,13 +10064,9 @@ fn write_openapi_yaml_value(value: &Value, indent: usize, output: &mut String) {
                     output.push_str(": ");
                     output.push_str(&openapi_yaml_scalar(nested));
                     output.push('\n');
-                } else if openapi_yaml_is_empty_collection(nested) {
+                } else if let Some(empty_collection) = openapi_yaml_empty_collection(nested) {
                     output.push_str(": ");
-                    output.push_str(match nested {
-                        Value::Array(_) => "[]",
-                        Value::Object(_) => "{}",
-                        _ => unreachable!("empty collection check only matches arrays/objects"),
-                    });
+                    output.push_str(empty_collection);
                     output.push('\n');
                 } else {
                     output.push_str(":\n");
@@ -10092,13 +10086,9 @@ fn write_openapi_yaml_value(value: &Value, indent: usize, output: &mut String) {
                     output.push(' ');
                     output.push_str(&openapi_yaml_scalar(nested));
                     output.push('\n');
-                } else if openapi_yaml_is_empty_collection(nested) {
+                } else if let Some(empty_collection) = openapi_yaml_empty_collection(nested) {
                     output.push(' ');
-                    output.push_str(match nested {
-                        Value::Array(_) => "[]",
-                        Value::Object(_) => "{}",
-                        _ => unreachable!("empty collection check only matches arrays/objects"),
-                    });
+                    output.push_str(empty_collection);
                     output.push('\n');
                 } else {
                     output.push('\n');
@@ -10125,9 +10115,12 @@ fn openapi_yaml_is_scalar(value: &Value) -> bool {
     )
 }
 
-fn openapi_yaml_is_empty_collection(value: &Value) -> bool {
-    matches!(value, Value::Array(values) if values.is_empty())
-        || matches!(value, Value::Object(object) if object.is_empty())
+fn openapi_yaml_empty_collection(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Array(values) if values.is_empty() => Some("[]"),
+        Value::Object(object) if object.is_empty() => Some("{}"),
+        _ => None,
+    }
 }
 
 fn openapi_yaml_scalar(value: &Value) -> String {
@@ -10136,7 +10129,7 @@ fn openapi_yaml_scalar(value: &Value) -> String {
         Value::Bool(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
         Value::String(value) => openapi_yaml_string(value),
-        Value::Array(_) | Value::Object(_) => unreachable!("compound values are emitted by caller"),
+        Value::Array(_) | Value::Object(_) => openapi_yaml_single_quoted(&value.to_string()),
     }
 }
 
@@ -12097,7 +12090,7 @@ fn mark_reticulumd_status_delivery_failure(
             .get("retry_reason")
             .and_then(Value::as_str)
             .unwrap_or("rem_auto_status_failure");
-        let _ = record_system_event(
+        record_system_event(
             state,
             "message_delivery_retrying",
             &format!("Retrying message delivery to {destination}"),
@@ -12105,7 +12098,7 @@ fn mark_reticulumd_status_delivery_failure(
         )?;
         return Ok(());
     }
-    let _ = record_system_event(
+    record_system_event(
         state,
         "message_delivery_failed",
         &format!("Message delivery failed for {destination}"),
@@ -12643,9 +12636,14 @@ async fn help_text() -> impl IntoResponse {
 }
 
 async fn examples_text() -> impl IntoResponse {
+    let mut examples = include_str!("../../../docs/examples-endpoint.txt")
+        .trim_end()
+        .to_string();
+    examples.push_str("\n\n");
+    examples.push_str(&supported_commands_document());
     (
         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-        supported_commands_document(),
+        examples,
     )
 }
 
@@ -13113,10 +13111,12 @@ async fn internal_post_message(
         json!({}),
     )
     .await?;
-    let _ = state.internal_events.send(internal_message_published_event(
+    if let Err(error) = state.internal_events.send(internal_message_published_event(
         topic_id,
         &message.message_id,
-    ));
+    )) {
+        eprintln!("internal message event had no active receiver: {error}");
+    }
     Ok(Json(json!({ "accepted": true })))
 }
 
@@ -13993,21 +13993,30 @@ async fn kill_switch_arm(
 
 async fn kill_switch_authorize(
     State(state): State<AppState>,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(payload): Json<KillSwitchAuthorizePayload>,
 ) -> Result<Json<Value>, ApiError> {
+    let client_addr = connect_info.map(|Extension(ConnectInfo(address))| address);
+    state.ensure_auth_attempt_allowed("kill-switch-pin", client_addr)?;
     let pin = payload.pin.trim();
     if pin.len() != 6 || !pin.bytes().all(|byte| byte.is_ascii_digit()) {
+        state.record_auth_failure("kill-switch-pin", client_addr)?;
         return Err(ApiError::BadRequest(
             "Kill switch PIN must contain exactly six digits".to_string(),
         ));
     }
     let secret = require_kill_switch_pin(&state)?;
-    let candidate_hash = kill_switch_pin_hash(&secret.salt, pin);
-    if !secure_string_eq(&candidate_hash, &secret.hash) {
+    if !verify_versioned_secret(&secret.salt, &secret.hash, pin)? {
+        state.record_auth_failure("kill-switch-pin", client_addr)?;
         return Err(ApiError::UnauthorizedWithDetail(
             "Kill switch PIN rejected".to_string(),
         ));
     }
+    if !is_argon2id_phc(&secret.hash) {
+        let hash = argon2id_hash(pin)?;
+        save_kill_switch_pin_secret(&state, &secret.salt, &hash, secret.created_at_ts_ms)?;
+    }
+    state.clear_auth_failures("kill-switch-pin", client_addr)?;
     let now_ms = unix_now_ms();
     {
         let mut runtime = state
@@ -14087,7 +14096,7 @@ async fn first_run_setup_status(
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
     let client_addr = request_client_addr(&request);
-    let include_sensitive_paths = state.validate_http_headers(request.headers(), client_addr);
+    let include_sensitive_paths = state.validate_http_headers(request.headers(), client_addr)?;
     Ok(Json(first_run_setup_status_payload(
         &state,
         include_sensitive_paths,
@@ -14537,7 +14546,7 @@ fn record_outbound_message_with_metadata_mode(
     persist_outbound_message_row(state, &message)?;
     broadcast_message_event(state, &message);
     if effective_dispatch_mode == OutboundDispatchMode::Deferred {
-        let _ = record_system_event(
+        record_system_event_best_effort(
             state,
             "message_sent",
             "Message admitted for deferred Rust northbound delivery",
@@ -14668,7 +14677,7 @@ fn record_outbound_message_with_metadata_mode(
             return Err(error);
         }
     };
-    let _ = record_system_event(
+    record_system_event_best_effort(
         state,
         "message_sent",
         "Message sent from Rust northbound",
@@ -14772,7 +14781,13 @@ fn dispatch_outbound_message(
                 && direct_failure_error_should_trigger_cooldown(error.as_str())
             {
                 for destination in &destinations {
-                    let _ = mark_direct_delivery_failure(state, destination.as_str());
+                    if let Err(mark_error) =
+                        mark_direct_delivery_failure(state, destination.as_str())
+                    {
+                        eprintln!(
+                            "Failed to record direct-delivery cooldown for {destination}: {mark_error}"
+                        );
+                    }
                 }
             }
             ApiError::ServiceUnavailable(error)
@@ -14968,7 +14983,11 @@ fn dispatch_outbound_message_legacy_rpc_for_tests(
             if message.delivery_method == "direct"
                 && direct_failure_error_should_trigger_cooldown(error.to_string().as_str())
             {
-                let _ = mark_direct_delivery_failure(state, destination.as_str());
+                if let Err(mark_error) = mark_direct_delivery_failure(state, destination.as_str()) {
+                    eprintln!(
+                        "Failed to record direct-delivery cooldown for {destination}: {mark_error}"
+                    );
+                }
             }
             ApiError::ServiceUnavailable(error.to_string())
         })?;
@@ -16755,11 +16774,6 @@ fn client_should_appear_in_client_list(record: &ClientRecord) -> bool {
     client_has_network_announce(record)
 }
 
-#[cfg(test)]
-fn broadcast_client_records_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiError> {
-    broadcast_client_records_for_state_with_refresh(state, false)
-}
-
 fn broadcast_client_records_for_state_with_refresh(
     state: &AppState,
     _refresh_announces: bool,
@@ -17443,113 +17457,6 @@ fn sha256_lower_hex(bytes: &[u8]) -> String {
         .collect::<String>()
 }
 
-fn password_hash(salt: &str, value: &str) -> String {
-    sha256_lower_hex(format!("{salt}:{value}").as_bytes())
-}
-
-fn kill_switch_pin_hash(salt: &str, pin: &str) -> String {
-    password_hash(salt, pin)
-}
-
-fn secure_string_eq(left: &str, right: &str) -> bool {
-    let left = left.as_bytes();
-    let right = right.as_bytes();
-    if left.len() != right.len() {
-        return false;
-    }
-    left.iter()
-        .zip(right.iter())
-        .fold(0u8, |accumulator, (left, right)| {
-            accumulator | (*left ^ *right)
-        })
-        == 0
-}
-
-fn load_kill_switch_pin(state: &AppState) -> Result<Option<KillSwitchPinSecret>, ApiError> {
-    with_required_core_store_write(state, |store| {
-        let salt = store.setting_value(KILL_SWITCH_PIN_SALT_SETTING)?;
-        let hash = store.setting_value(KILL_SWITCH_PIN_HASH_SETTING)?;
-        let created_at = store.setting_value(KILL_SWITCH_PIN_CREATED_AT_SETTING)?;
-        if let (Some(salt), Some(hash), Some(created_at)) = (salt, hash, created_at) {
-            if let Ok(created_at_ts_ms) = created_at.parse::<i64>() {
-                return Ok(Some(KillSwitchPinSecret {
-                    salt,
-                    hash,
-                    created_at_ts_ms,
-                }));
-            }
-        }
-        Ok(None)
-    })
-}
-
-fn require_kill_switch_pin(state: &AppState) -> Result<KillSwitchPinSecret, ApiError> {
-    load_kill_switch_pin(state)?.ok_or_else(|| {
-        ApiError::Conflict("First-run setup must configure the kill switch PIN".to_string())
-    })
-}
-
-fn save_kill_switch_pin(state: &AppState, pin: &str) -> Result<KillSwitchPinSecret, ApiError> {
-    let salt = Uuid::new_v4().to_string();
-    let created_at_ts_ms = unix_now_ms();
-    let hash = kill_switch_pin_hash(&salt, pin);
-    with_required_core_store_write(state, |store| {
-        store.set_setting_value(KILL_SWITCH_PIN_SALT_SETTING, &salt)?;
-        store.set_setting_value(KILL_SWITCH_PIN_HASH_SETTING, &hash)?;
-        store.set_setting_value(
-            KILL_SWITCH_PIN_CREATED_AT_SETTING,
-            &created_at_ts_ms.to_string(),
-        )?;
-        Ok(())
-    })?;
-    Ok(KillSwitchPinSecret {
-        salt,
-        hash,
-        created_at_ts_ms,
-    })
-}
-
-fn load_stored_remote_password(state: &AppState) -> Result<Option<StoredPasswordSecret>, ApiError> {
-    with_required_core_store_write(state, |store| {
-        let salt = store.setting_value(REMOTE_ACCESS_PASSWORD_SALT_SETTING)?;
-        let hash = store.setting_value(REMOTE_ACCESS_PASSWORD_HASH_SETTING)?;
-        let created_at = store.setting_value(REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING)?;
-        if let (Some(salt), Some(hash), Some(created_at)) = (salt, hash, created_at) {
-            if let Ok(created_at_ts_ms) = created_at.parse::<i64>() {
-                return Ok(Some(StoredPasswordSecret {
-                    salt,
-                    hash,
-                    created_at_ts_ms,
-                }));
-            }
-        }
-        Ok(None)
-    })
-}
-
-fn save_remote_access_password(
-    state: &AppState,
-    password: &str,
-) -> Result<StoredPasswordSecret, ApiError> {
-    let salt = Uuid::new_v4().to_string();
-    let created_at_ts_ms = unix_now_ms();
-    let hash = password_hash(&salt, password);
-    with_required_core_store_write(state, |store| {
-        store.set_setting_value(REMOTE_ACCESS_PASSWORD_SALT_SETTING, &salt)?;
-        store.set_setting_value(REMOTE_ACCESS_PASSWORD_HASH_SETTING, &hash)?;
-        store.set_setting_value(
-            REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING,
-            &created_at_ts_ms.to_string(),
-        )?;
-        Ok(())
-    })?;
-    Ok(StoredPasswordSecret {
-        salt,
-        hash,
-        created_at_ts_ms,
-    })
-}
-
 #[derive(Debug, Clone)]
 struct ReticulumIdentityStatus {
     hash: String,
@@ -17838,15 +17745,15 @@ fn kill_switch_artifact_candidates(state: &AppState) -> Vec<KillSwitchArtifactCa
             push_artifact_candidate(&mut candidates, path, KillSwitchArtifactKind::Attachment);
         }
     }
-    if let Some(path) = &state.sqlite_path
-        && let Some(parent) = path.parent()
-    {
-        for dirname in ["files", "images"] {
-            push_artifact_candidate(
-                &mut candidates,
-                parent.join(dirname),
-                KillSwitchArtifactKind::Attachment,
-            );
+    if let Some(path) = &state.sqlite_path {
+        if let Some(parent) = path.parent() {
+            for dirname in ["files", "images"] {
+                push_artifact_candidate(
+                    &mut candidates,
+                    parent.join(dirname),
+                    KillSwitchArtifactKind::Attachment,
+                );
+            }
         }
     }
 
@@ -18136,8 +18043,7 @@ fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
             }));
         }
     }
-    let secret = load_kill_switch_pin(state)?;
-    if secret.is_none() {
+    let Some(secret) = load_kill_switch_pin(state)? else {
         let now_ms = unix_now_ms();
         let mut runtime = state
             .kill_switch
@@ -18170,8 +18076,7 @@ fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
             "targets": [],
             "updated_at": iso8601_from_unix_ms(runtime.updated_at_ts_ms),
         }));
-    }
-    let secret = secret.expect("checked above");
+    };
     let preview = with_required_core_store_write(state, |store| store.database_wipe_preview())?;
     let artifacts = kill_switch_artifact_preview(state);
     let now_ms = unix_now_ms();
@@ -18483,6 +18388,17 @@ fn record_system_event(
     persist_system_event_row(state, &event)?;
     broadcast_system_event(state, &event);
     Ok(event)
+}
+
+fn record_system_event_best_effort(
+    state: &AppState,
+    event_type: &str,
+    message: &str,
+    metadata: Value,
+) {
+    if let Err(error) = record_system_event(state, event_type, message, metadata) {
+        eprintln!("Failed to record system event {event_type}: {error}");
+    }
 }
 
 fn mission_change_payload(change: &MissionChangeRecord) -> Value {
@@ -18909,6 +18825,8 @@ fn command_fanout_recipients_for_state(state: &AppState) -> Result<Vec<ClientRec
             &annotations,
         ));
     }
+
+    recipients.sort_by(|left, right| left.identity.cmp(&right.identity));
 
     Ok(recipients)
 }
@@ -22735,16 +22653,10 @@ fn validate_eam_reported_at_field(value: Option<&Value>) -> Result<(), ApiError>
             "reported_at: input should be a valid datetime".to_string(),
         ));
     };
-    if OffsetDateTime::parse(text, &Rfc3339).is_ok() {
+    if DateTime::parse_from_rfc3339(text).is_ok() {
         return Ok(());
     }
-    if text.len() >= 19
-        && PrimitiveDateTime::parse(
-            &text[..19],
-            time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]"),
-        )
-        .is_ok()
-    {
+    if text.len() >= 19 && NaiveDateTime::parse_from_str(&text[..19], "%Y-%m-%dT%H:%M:%S").is_ok() {
         return Ok(());
     }
     Err(ApiError::Unprocessable(
@@ -22981,7 +22893,7 @@ fn record_marker_activity(
         .next_back()
         .unwrap_or("updated")
         .to_string();
-    let _ = record_system_event(
+    record_system_event(
         state,
         &event_type.replace('.', "_"),
         &format!("Marker {action}: {}", marker.name),
@@ -22995,7 +22907,7 @@ fn record_marker_activity(
         Some(marker.name.clone()),
     )?;
     let fanout_summary = fanout_marker_activity_to_recipients(state, event_type, marker)?;
-    let _ = record_system_event(
+    record_system_event(
         state,
         "marker_telemetry_recorded",
         "Marker telemetry recorded",
@@ -23834,9 +23746,7 @@ fn checklist_command(state: &AppState, command_type: &str, args: Value) -> Resul
     let command = MissionCommandEnvelope {
         command_id: Uuid::new_v4().to_string(),
         source: RchSource::new("rust-rch-http"),
-        timestamp: OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string()),
+        timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::AutoSi, true),
         command_type: command_type.to_string(),
         args,
         correlation_id: None,
@@ -24591,7 +24501,7 @@ async fn link_r3akt_mission_zone(
         &zone_id,
         &payload,
     )?;
-    let _ = record_system_event(
+    record_system_event(
         &state,
         "mission.registry.mission.zone.linked",
         "Mission zone link notification",
@@ -24623,7 +24533,7 @@ async fn unlink_r3akt_mission_zone(
         &zone_id,
         &payload,
     )?;
-    let _ = record_system_event(
+    record_system_event(
         &state,
         "mission.registry.mission.zone.unlinked",
         "Mission zone unlink notification",
@@ -24672,7 +24582,7 @@ async fn link_r3akt_mission_marker(
         &marker_id,
         &payload,
     )?;
-    let _ = record_system_event(
+    record_system_event(
         &state,
         "mission.registry.mission.marker.linked",
         "Mission marker link notification",
@@ -24704,7 +24614,7 @@ async fn unlink_r3akt_mission_marker(
         &marker_id,
         &payload,
     )?;
-    let _ = record_system_event(
+    record_system_event(
         &state,
         "mission.registry.mission.marker.unlinked",
         "Mission marker unlink notification",
@@ -24817,9 +24727,7 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
     let command = MissionCommandEnvelope {
         command_id: Uuid::new_v4().to_string(),
         source: RchSource::new("rust-rch-http"),
-        timestamp: OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string()),
+        timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::AutoSi, true),
         command_type: command_type.to_string(),
         args,
         correlation_id: None,
@@ -25441,7 +25349,7 @@ async fn control_status(State(state): State<AppState>) -> Result<Json<Value>, Ap
 
 async fn control_stop(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     stop_runtime_services(&state)?;
-    let _ = record_system_event(
+    record_system_event_best_effort(
         &state,
         "control_stop_requested",
         "Rust runtime stop requested",
@@ -25461,7 +25369,7 @@ async fn control_start(State(state): State<AppState>) -> Result<Json<Value>, Api
         control.last_start_ts_ms = Some(unix_now_ms());
     }
     start_runtime_services(&state)?;
-    let _ = record_system_event(
+    record_system_event_best_effort(
         &state,
         "control_start_requested",
         "Rust runtime start requested",
@@ -25535,7 +25443,7 @@ async fn control_announce(State(state): State<AppState>) -> Result<Json<Value>, 
             "Announce unavailable".to_string(),
         ));
     };
-    let _ = record_system_event(
+    record_system_event_best_effort(
         &state,
         "control_announce_requested",
         "Rust runtime Reticulum announce requested",
@@ -25591,7 +25499,7 @@ async fn control_sync(State(state): State<AppState>) -> Result<Json<Value>, ApiE
             "Control sync worker failed: {error}"
         ))),
         Err(_) => {
-            let _ = record_system_event(
+            record_system_event_best_effort(
                 &state,
                 "control_sync_timeout",
                 "Rust runtime propagation sync timed out",
@@ -25676,7 +25584,7 @@ fn control_sync_blocking(state: &AppState) -> Result<Value, ApiError> {
         "rpc_result": rpc_result,
         "fetch_result": fetch_result,
     });
-    let _ = record_system_event(
+    record_system_event_best_effort(
         &state,
         "control_sync_requested",
         "Rust runtime propagation sync requested",
@@ -26640,10 +26548,19 @@ fn delete_attachment_record(
     category: &str,
 ) -> Result<Value, ApiError> {
     let attachment = get_attachment_record(state, file_id, category)?;
-    delete_file_attachment_row(state, file_id, category)?;
     if !attachment.path.trim().is_empty() {
-        let _ = std::fs::remove_file(&attachment.path);
+        match std::fs::remove_file(&attachment.path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(ApiError::Internal(format!(
+                    "failed to delete attachment file {}: {error}",
+                    attachment.path
+                )));
+            }
+        }
     }
+    delete_file_attachment_row(state, file_id, category)?;
     Ok(attachment_to_python_value(&attachment))
 }
 
@@ -26707,16 +26624,10 @@ fn attachment_to_python_value(record: &FileAttachmentRecord) -> Value {
 }
 
 fn millis_to_rfc3339_local(ms: i64) -> String {
-    let Ok(timestamp) = OffsetDateTime::from_unix_timestamp(ms / 1000) else {
-        return "1970-01-01T00:00:00Z".to_string();
-    };
-    let Ok(timestamp) = timestamp.replace_nanosecond(((ms.rem_euclid(1000)) as u32) * 1_000_000)
-    else {
-        return "1970-01-01T00:00:00Z".to_string();
-    };
-    timestamp
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+    DateTime::from_timestamp_millis(ms).map_or_else(
+        || "1970-01-01T00:00:00Z".to_string(),
+        |timestamp| timestamp.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+    )
 }
 
 async fn list_clients(
@@ -27428,21 +27339,20 @@ fn paginated_client_payload(records: &[ClientRecord], page: usize, per_page: usi
 }
 
 fn unix_now_ms() -> i64 {
-    i64::try_from(OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000).unwrap_or(0)
+    Utc::now().timestamp_millis()
 }
 
 fn iso8601_from_unix_ms(ts_ms: i64) -> String {
-    match OffsetDateTime::from_unix_timestamp_nanos(i128::from(ts_ms) * 1_000_000) {
-        Ok(timestamp) => timestamp
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string()),
-        Err(_) => "1970-01-01T00:00:00Z".to_string(),
-    }
+    DateTime::from_timestamp_millis(ts_ms).map_or_else(
+        || "1970-01-01T00:00:00Z".to_string(),
+        |timestamp| timestamp.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+    )
 }
 
 fn unix_ms_from_iso8601(timestamp: &str) -> Option<i64> {
-    let parsed = OffsetDateTime::parse(timestamp, &Rfc3339).ok()?;
-    i64::try_from(parsed.unix_timestamp_nanos() / 1_000_000).ok()
+    DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|parsed| parsed.timestamp_millis())
 }
 
 fn normalize_identity_key(identity: &str) -> Option<String> {
@@ -27610,7 +27520,7 @@ async fn handle_system_socket(
                 }
             }
             _ = &mut inactivity_timeout => {
-                let _ = close_inactive_socket(&mut socket).await;
+                close_inactive_socket(&mut socket).await;
                 break;
             }
             inbound = socket.recv() => {
@@ -27622,7 +27532,7 @@ async fn handle_system_socket(
                     continue;
                 };
                 let Ok(parsed) = parse_ws_json(&payload) else {
-                    let _ = send_bad_request(&mut socket, "WebSocket payload must be a JSON object").await;
+                    send_bad_request(&mut socket, "WebSocket payload must be a JSON object").await;
                     continue;
                 };
                 let message_type = parsed
@@ -27648,19 +27558,23 @@ async fn handle_system_socket(
                             .unwrap_or(WS_SYSTEM_EVENTS_DEFAULT_LIMIT)
                             .min(WS_SYSTEM_EVENTS_MAX_LIMIT);
                         if include_status {
-                            let _ = send_ws_json(
+                            send_ws_json_best_effort(
                                 &mut socket,
                                 ws_message("system.status", status_payload_for_ws(&state)),
                             )
                             .await;
                         }
-                        if include_events {
-                            let _ = send_system_event_replay(&mut socket, &state, events_limit).await;
+                        if include_events
+                            && send_system_event_replay(&mut socket, &state, events_limit)
+                                .await
+                                .is_err()
+                        {
+                            break;
                         }
                     }
                     "pong" => {}
                     _ => {
-                        let _ = send_bad_request(&mut socket, "Unsupported message").await;
+                        send_bad_request(&mut socket, "Unsupported message").await;
                     }
                 }
             }
@@ -27674,7 +27588,7 @@ async fn handle_system_socket(
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
                 if include_events {
-                    let _ = send_ws_json(
+                    send_ws_json_best_effort(
                         &mut socket,
                         ws_message("system.event", system_event_payload_for_state(&state, event)),
                     )
@@ -27738,7 +27652,7 @@ async fn handle_telemetry_socket(
                 }
             }
             _ = &mut inactivity_timeout => {
-                let _ = close_inactive_socket(&mut socket).await;
+                close_inactive_socket(&mut socket).await;
                 break;
             }
             inbound = socket.recv() => {
@@ -27750,7 +27664,7 @@ async fn handle_telemetry_socket(
                     continue;
                 };
                 let Ok(parsed) = parse_ws_json(&payload) else {
-                    let _ = send_bad_request(&mut socket, "WebSocket payload must be a JSON object").await;
+                    send_bad_request(&mut socket, "WebSocket payload must be a JSON object").await;
                     continue;
                 };
                 let message_type = parsed
@@ -27763,7 +27677,7 @@ async fn handle_telemetry_socket(
                         let Some(since) = data
                             .and_then(|value| value.get("since"))
                             .and_then(Value::as_i64) else {
-                                let _ = send_bad_request(
+                                send_bad_request(
                                     &mut socket,
                                     "Telemetry subscription requires a numeric 'since' field",
                                 )
@@ -27785,7 +27699,7 @@ async fn handle_telemetry_socket(
                                     allowed_destinations = match topic_subscriber_destinations(&state, topic_id) {
                                         Ok(destinations) => Some(destinations),
                                         Err(error) => {
-                                            let _ = send_ws_json(
+                                            send_ws_json_best_effort(
                                                 &mut socket,
                                                 ws_error("service_unavailable", &error.to_string()),
                                             )
@@ -27797,20 +27711,20 @@ async fn handle_telemetry_socket(
                                     allowed_destinations = None;
                                 }
                                 event_receiver = follow.then(|| state.telemetry_events.subscribe());
-                                let _ = send_ws_json(
+                                send_ws_json_best_effort(
                                     &mut socket,
                                     ws_message("telemetry.snapshot", json!({"entries": entries})),
                                 )
                                 .await;
                             }
                             Err(ApiError::NotFound(detail)) => {
-                                let _ = send_ws_json(&mut socket, ws_error("not_found", &detail)).await;
+                                send_ws_json_best_effort(&mut socket, ws_error("not_found", &detail)).await;
                             }
                             Err(ApiError::BadRequest(detail)) => {
-                                let _ = send_bad_request(&mut socket, &detail).await;
+                                send_bad_request(&mut socket, &detail).await;
                             }
                             Err(error) => {
-                                let _ = send_ws_json(
+                                send_ws_json_best_effort(
                                     &mut socket,
                                     ws_error("service_unavailable", &error.to_string()),
                                 )
@@ -27820,7 +27734,7 @@ async fn handle_telemetry_socket(
                     }
                     "pong" => {}
                     _ => {
-                        let _ = send_bad_request(&mut socket, "Unsupported message").await;
+                        send_bad_request(&mut socket, "Unsupported message").await;
                     }
                 }
             }
@@ -27841,7 +27755,7 @@ async fn handle_telemetry_socket(
                 if !telemetry_matches_subscription(&record, allowed_destinations.as_deref()) {
                     continue;
                 }
-                let _ = send_ws_json(
+                send_ws_json_best_effort(
                     &mut socket,
                     ws_message("telemetry.update", json!({"entry": telemetry_payload(record)})),
                 )
@@ -27882,7 +27796,7 @@ async fn handle_message_socket(
                 }
             }
             _ = &mut inactivity_timeout => {
-                let _ = close_inactive_socket(&mut socket).await;
+                close_inactive_socket(&mut socket).await;
                 break;
             }
             inbound = socket.recv() => {
@@ -27894,7 +27808,7 @@ async fn handle_message_socket(
                     continue;
                 };
         let Ok(parsed) = parse_ws_json(&payload) else {
-            let _ = send_ws_json(
+            send_ws_json_best_effort(
                 &mut socket,
                 ws_error("bad_request", "WebSocket payload must be a JSON object"),
             )
@@ -27925,7 +27839,7 @@ async fn handle_message_socket(
                     .and_then(Value::as_bool)
                     .unwrap_or(true);
                 event_receiver = follow.then(|| state.message_events.subscribe());
-                let _ = send_ws_json(
+                send_ws_json_best_effort(
                     &mut socket,
                     ws_message(
                         "message.subscribed",
@@ -27945,16 +27859,14 @@ async fn handle_message_socket(
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 if content.trim().is_empty() {
-                    let _ =
-                        send_bad_request(&mut socket, "Message send requires non-empty 'content'")
+                    send_bad_request(&mut socket, "Message send requires non-empty 'content'")
                             .await;
                 } else {
                     if data
                         .and_then(|value| value.get("destination"))
                         .is_some_and(|value| !value.is_string() && !value.is_null())
                     {
-                        let _ =
-                            send_bad_request(&mut socket, "Message destination must be a string")
+                        send_bad_request(&mut socket, "Message destination must be a string")
                                 .await;
                         continue;
                     }
@@ -27980,17 +27892,17 @@ async fn handle_message_socket(
                     .await
                     {
                         Ok(_) => {
-                            let _ = send_ws_json(
+                            send_ws_json_best_effort(
                                 &mut socket,
                                 ws_message("message.sent", json!({"ok": true})),
                             )
                             .await;
                         }
                         Err(ApiError::BadRequest(detail)) => {
-                            let _ = send_bad_request(&mut socket, &detail).await;
+                            send_bad_request(&mut socket, &detail).await;
                         }
                         Err(error) => {
-                            let _ = send_ws_json(
+                            send_ws_json_best_effort(
                                 &mut socket,
                                 ws_error("service_unavailable", &error.to_string()),
                             )
@@ -28001,7 +27913,7 @@ async fn handle_message_socket(
             }
             "pong" => {}
             _ => {
-                let _ = send_bad_request(&mut socket, "Unsupported message").await;
+                send_bad_request(&mut socket, "Unsupported message").await;
             }
         }
             }
@@ -28025,7 +27937,7 @@ async fn handle_message_socket(
                 if !message_visible_in_chat(&message) {
                     continue;
                 }
-                let _ = send_ws_json(
+                send_ws_json_best_effort(
                     &mut socket,
                     ws_message("message.receive", json!({"entry": chat_message_payload(message)})),
                 )
@@ -28057,30 +27969,40 @@ async fn authenticate_socket(
     let payload = match tokio::time::timeout(WS_AUTH_TIMEOUT, socket.recv()).await {
         Ok(Some(Ok(Message::Text(payload)))) => payload,
         Ok(_) => {
-            let _ = socket.close().await;
+            if let Err(error) = socket.close().await {
+                eprintln!("WebSocket close after invalid authentication frame failed: {error}");
+            }
             return false;
         }
         Err(_) => {
-            let _ = send_ws_json(socket, ws_error("timeout", "Authentication timed out")).await;
-            let _ =
-                close_socket_with_code(socket, WS_AUTH_TIMEOUT_CLOSE_CODE, "auth timeout").await;
+            send_ws_json_best_effort(socket, ws_error("timeout", "Authentication timed out")).await;
+            close_socket_with_code_best_effort(socket, WS_AUTH_TIMEOUT_CLOSE_CODE, "auth timeout")
+                .await;
             return false;
         }
     };
     let Ok(parsed) = parse_ws_json(&payload) else {
-        let _ = send_ws_json(
+        send_ws_json_best_effort(
             socket,
             ws_error("bad_request", "WebSocket payload must be a JSON object"),
         )
         .await;
-        let _ = close_socket_with_code(socket, WS_AUTH_BAD_REQUEST_CLOSE_CODE, "bad auth request")
-            .await;
+        close_socket_with_code_best_effort(
+            socket,
+            WS_AUTH_BAD_REQUEST_CLOSE_CODE,
+            "bad auth request",
+        )
+        .await;
         return false;
     };
     if parsed.get("type").and_then(Value::as_str) != Some("auth") {
-        let _ = send_ws_json(socket, ws_error("bad_request", "Auth message required")).await;
-        let _ = close_socket_with_code(socket, WS_AUTH_BAD_REQUEST_CLOSE_CODE, "bad auth request")
-            .await;
+        send_ws_json_best_effort(socket, ws_error("bad_request", "Auth message required")).await;
+        close_socket_with_code_best_effort(
+            socket,
+            WS_AUTH_BAD_REQUEST_CLOSE_CODE,
+            "bad auth request",
+        )
+        .await;
         return false;
     }
     let data = parsed.get("data").and_then(Value::as_object);
@@ -28090,12 +28012,59 @@ async fn authenticate_socket(
     let api_key = data
         .and_then(|value| value.get("api_key"))
         .and_then(Value::as_str);
-    if !state.validate_ws_credentials(api_key, token, client_addr) {
-        let detail = state.ws_auth_failure_detail(client_addr);
-        let _ = send_ws_json(socket, ws_error("unauthorized", &detail)).await;
-        let _ =
-            close_socket_with_code(socket, WS_AUTH_UNAUTHORIZED_CLOSE_CODE, "unauthorized").await;
-        return false;
+    match state.validate_ws_credentials(api_key, token, client_addr) {
+        Ok(true) => {}
+        Ok(false) => {
+            let detail = state
+                .ws_auth_failure_detail(client_addr)
+                .unwrap_or_else(|error| {
+                    eprintln!("WebSocket authentication storage failure: {error}");
+                    "Authentication service unavailable".to_string()
+                });
+            if let Err(error) = send_ws_json(socket, ws_error("unauthorized", &detail)).await {
+                eprintln!("failed to send WebSocket authentication rejection: {error}");
+            }
+            if let Err(error) =
+                close_socket_with_code(socket, WS_AUTH_UNAUTHORIZED_CLOSE_CODE, "unauthorized")
+                    .await
+            {
+                eprintln!("failed to close unauthorized WebSocket: {error}");
+            }
+            return false;
+        }
+        Err(ApiError::TooManyRequests { detail, .. }) => {
+            if let Err(error) = send_ws_json(socket, ws_error("rate_limited", &detail)).await {
+                eprintln!("failed to send WebSocket rate-limit rejection: {error}");
+            }
+            if let Err(error) =
+                close_socket_with_code(socket, WS_AUTH_UNAUTHORIZED_CLOSE_CODE, "rate limited")
+                    .await
+            {
+                eprintln!("failed to close rate-limited WebSocket: {error}");
+            }
+            return false;
+        }
+        Err(error) => {
+            eprintln!("WebSocket authentication storage failure: {error}");
+            if let Err(send_error) = send_ws_json(
+                socket,
+                ws_error("service_unavailable", "Authentication service unavailable"),
+            )
+            .await
+            {
+                eprintln!("failed to send WebSocket authentication failure: {send_error}");
+            }
+            if let Err(close_error) = close_socket_with_code(
+                socket,
+                WS_AUTH_UNAUTHORIZED_CLOSE_CODE,
+                "authentication unavailable",
+            )
+            .await
+            {
+                eprintln!("failed to close WebSocket after authentication failure: {close_error}");
+            }
+            return false;
+        }
     }
     send_ws_json(socket, ws_message("auth.ok", json!({})))
         .await
@@ -28117,9 +28086,7 @@ fn parse_ws_json(payload: &str) -> Result<Value, serde_json::Error> {
 fn ws_message(message_type: &str, data: Value) -> Value {
     json!({
         "type": message_type,
-        "ts": OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string()),
+        "ts": Utc::now().to_rfc3339_opts(SecondsFormat::AutoSi, true),
         "data": data
     })
 }
@@ -28143,7 +28110,16 @@ fn ws_error(code: &str, message: &str) -> Value {
 }
 
 async fn send_ws_json(socket: &mut WebSocket, payload: Value) -> Result<(), axum::Error> {
-    socket.send(Message::Text(payload.to_string().into())).await
+    socket
+        .send(Message::Text(payload.to_string().into()))
+        .await
+        .inspect_err(|error| eprintln!("WebSocket send failed: {error}"))
+}
+
+async fn send_ws_json_best_effort(socket: &mut WebSocket, payload: Value) {
+    if send_ws_json(socket, payload).await.is_err() {
+        // `send_ws_json` records the socket error with operational context.
+    }
 }
 
 fn reset_ws_inactivity_timeout(timeout: &mut std::pin::Pin<Box<tokio::time::Sleep>>) {
@@ -28152,9 +28128,9 @@ fn reset_ws_inactivity_timeout(timeout: &mut std::pin::Pin<Box<tokio::time::Slee
         .reset(tokio::time::Instant::now() + WS_INACTIVITY_TIMEOUT);
 }
 
-async fn close_inactive_socket(socket: &mut WebSocket) -> Result<(), axum::Error> {
-    let _ = send_ws_json(socket, ws_inactivity_timeout_message()).await;
-    close_socket_with_code(socket, WS_INACTIVITY_CLOSE_CODE, "keepalive timeout").await
+async fn close_inactive_socket(socket: &mut WebSocket) {
+    send_ws_json_best_effort(socket, ws_inactivity_timeout_message()).await;
+    close_socket_with_code_best_effort(socket, WS_INACTIVITY_CLOSE_CODE, "keepalive timeout").await;
 }
 
 async fn close_socket_with_code(
@@ -28168,10 +28144,19 @@ async fn close_socket_with_code(
             reason: reason.to_string().into(),
         })))
         .await
+        .inspect_err(|error| {
+            eprintln!("WebSocket close failed (code={code}, reason={reason}): {error}");
+        })
 }
 
-async fn send_bad_request(socket: &mut WebSocket, message: &str) -> Result<(), axum::Error> {
-    send_ws_json(socket, ws_error("bad_request", message)).await
+async fn close_socket_with_code_best_effort(socket: &mut WebSocket, code: u16, reason: &str) {
+    if close_socket_with_code(socket, code, reason).await.is_err() {
+        // `close_socket_with_code` records the socket error and close metadata.
+    }
+}
+
+async fn send_bad_request(socket: &mut WebSocket, message: &str) {
+    send_ws_json_best_effort(socket, ws_error("bad_request", message)).await;
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -28188,6 +28173,7 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    mod auth;
     mod rem_team_directory;
 
     use crate::BASE64_STANDARD;
@@ -28215,7 +28201,6 @@ mod tests {
     use rusqlite::Connection;
     use serde::Serialize;
     use serde_json::{Value, json};
-    use sha2::{Digest, Sha256};
     use tokio::net::TcpListener;
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::Message;
@@ -28479,40 +28464,6 @@ mod tests {
             "WebSocket client timed out waiting for keepalive pong"
         );
         assert_eq!(crate::WS_INACTIVITY_CLOSE_CODE, 4004);
-    }
-
-    fn multipart_attachment_body(
-        boundary: &str,
-        category: &str,
-        filename: &str,
-        media_type: &str,
-        bytes: &[u8],
-        sha256: &str,
-        topic_id: &str,
-    ) -> Vec<u8> {
-        let mut body = Vec::new();
-        for (name, value) in [
-            ("category", category),
-            ("sha256", sha256),
-            ("topic_id", topic_id),
-        ] {
-            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-            body.extend_from_slice(
-                format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes(),
-            );
-            body.extend_from_slice(value.as_bytes());
-            body.extend_from_slice(b"\r\n");
-        }
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(
-            format!("Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n")
-                .as_bytes(),
-        );
-        body.extend_from_slice(format!("Content-Type: {media_type}\r\n\r\n").as_bytes());
-        body.extend_from_slice(bytes);
-        body.extend_from_slice(b"\r\n");
-        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-        body
     }
 
     fn parse_http_body(request: &[u8]) -> Vec<u8> {
@@ -30742,8 +30693,7 @@ mod tests {
                 metrics: vec![r3akt_protocol::TelemetryMetric::new(
                     "battery", 41.0, "percent",
                 )],
-                observed_at: time::OffsetDateTime::from_unix_timestamp(1_714_000_222)
-                    .expect("timestamp"),
+                observed_at: chrono::DateTime::from_timestamp(1_714_000_222, 0).expect("timestamp"),
             }),
         );
         let payload_b64 = BASE64_STANDARD.encode(envelope.encode_msgpack().expect("msgpack"));
@@ -35755,403 +35705,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "route mutations now enqueue deferred outbound delivery metadata"]
-    async fn chat_message_routes_persist_and_list_python_shapes() {
-        let db_path = std::env::temp_dir().join(format!("r3akt-rch-chat-{}.db", Uuid::new_v4()));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret"),
-        );
-
-        let missing_auth = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Chat/Messages")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("missing auth response");
-        assert_eq!(missing_auth.status(), StatusCode::UNAUTHORIZED);
-
-        let empty = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Chat/Messages")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("empty response");
-        assert_eq!(empty.status(), StatusCode::OK);
-        let body = empty.into_body().collect().await.expect("body").to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload, json!([]));
-
-        let sent = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Message")
-                    .header("X-API-Key", "secret")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"Content":"Hello chat","Scope":"topic","TopicID":"ops"}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("chat send response");
-        assert_eq!(sent.status(), StatusCode::OK);
-        let body = sent.into_body().collect().await.expect("body").to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert!(payload["MessageID"].as_str().is_some());
-        assert_eq!(payload["Direction"], "outbound");
-        assert_eq!(payload["Scope"], "topic");
-        assert_eq!(payload["State"], "queued");
-        assert_eq!(payload["Content"], "Hello chat");
-        assert_eq!(payload["TopicID"], "ops");
-        assert_eq!(payload["Attachments"], json!([]));
-        assert_eq!(
-            payload["DeliveryMetadata"],
-            json!({
-                "method": "direct",
-                "delivery_policy_reason": "topic_direct",
-                "delivery_receipt_required": false,
-                "max_attempts": 1
-            })
-        );
-        assert!(payload["CreatedAt"].as_str().is_some());
-        assert!(payload["UpdatedAt"].as_str().is_some());
-
-        let listed = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Chat/Messages?limit=10&topic_id=ops")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("listed response");
-        assert_eq!(listed.status(), StatusCode::OK);
-        let body = listed.into_body().collect().await.expect("body").to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload.as_array().expect("messages").len(), 1);
-        assert_eq!(payload[0]["Content"], "Hello chat");
-        assert_eq!(payload[0]["State"], "queued");
-        assert_eq!(payload[0]["DeliveryMetadata"]["method"], "direct");
-        assert_eq!(
-            payload[0]["DeliveryMetadata"]["delivery_policy_reason"],
-            "topic_direct"
-        );
-        assert_eq!(
-            payload[0]["DeliveryMetadata"]["dispatch_status"],
-            "not_configured"
-        );
-        assert_eq!(
-            payload[0]["DeliveryMetadata"]["reticulumd_dispatch_count"],
-            0
-        );
-        assert_eq!(payload[0]["DeliveryMetadata"]["route_type"], "fanout");
-        assert_eq!(payload[0]["DeliveryMetadata"]["topic_id"], "ops");
-        assert_eq!(payload[0]["DeliveryMetadata"]["attempts"], 0);
-        assert_eq!(payload[0]["DeliveryMetadata"]["delivery_mode"], "direct");
-        assert_eq!(payload[0]["DeliveryMetadata"]["acked"], false);
-        assert_eq!(
-            payload[0]["DeliveryMetadata"]["delivery_receipt_required"],
-            false
-        );
-        assert_eq!(payload[0]["DeliveryMetadata"]["max_attempts"], 1);
-
-        let negative_limit = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Chat/Messages?limit=-5")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("negative limit response");
-        assert_eq!(negative_limit.status(), StatusCode::OK);
-        let body = negative_limit
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload.as_array().expect("messages").len(), 1);
-        assert_eq!(payload[0]["Content"], "Hello chat");
-
-        for (body, expected_message) in [
-            (
-                r#"{"Content":"hello","Scope":"invalid"}"#,
-                "Value error, Scope must be dm, topic, or broadcast",
-            ),
-            (
-                r#"{"Content":"hello","Scope":"dm"}"#,
-                "Value error, Destination is required for DM scope",
-            ),
-            (
-                r#"{"Content":"hello","Scope":"topic"}"#,
-                "Value error, TopicID is required for topic scope",
-            ),
-            (
-                r#"{"Content":"   ","Scope":"broadcast"}"#,
-                "Value error, Content or attachments are required",
-            ),
-        ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(Method::POST)
-                        .uri("/Chat/Message")
-                        .header("X-API-Key", "secret")
-                        .header("content-type", "application/json")
-                        .body(Body::from(body))
-                        .expect("request"),
-                )
-                .await
-                .expect("chat validation response");
-            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-            let body_bytes = response
-                .into_body()
-                .collect()
-                .await
-                .expect("body")
-                .to_bytes();
-            let payload: serde_json::Value = serde_json::from_slice(&body_bytes).expect("json");
-            assert_eq!(payload["detail"][0]["type"], "value_error");
-            assert_eq!(payload["detail"][0]["loc"], json!(["body"]));
-            assert_eq!(payload["detail"][0]["msg"], expected_message);
-        }
-
-        let missing_scope = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Message")
-                    .header("X-API-Key", "secret")
-                    .header("content-type", "application/json")
-                    .body(Body::from("{}"))
-                    .expect("request"),
-            )
-            .await
-            .expect("missing scope response");
-        assert_eq!(missing_scope.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let body = missing_scope
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["detail"][0]["type"], "missing");
-        assert_eq!(payload["detail"][0]["loc"], json!(["body", "scope"]));
-
-        let diagnostics = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-        let body = diagnostics
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["outbound_delivery"]["total"], 1);
-        assert_eq!(payload["outbound_delivery"]["queued"], 1);
-        assert_eq!(payload["outbound_delivery"]["queue_depth"], 0);
-        assert_eq!(payload["outbound_delivery"]["pending_dispatches"], 0);
-        assert_eq!(
-            payload["outbound_delivery"]["oldest_pending_dispatch_age_ms"],
-            0
-        );
-        assert_eq!(payload["outbound_delivery"]["timeout_total"], 0);
-        assert_eq!(payload["outbound_delivery"]["worker_count"], 0);
-        assert_eq!(payload["outbound_delivery"]["dispatch_not_configured"], 1);
-        assert_eq!(payload["outbound_delivery"]["reticulumd_dispatch_count"], 0);
-        assert_eq!(payload["outbound_delivery"]["pending_receipts"], 0);
-        assert_eq!(payload["outbound_delivery"]["receipt_timeout_total"], 0);
-        assert_eq!(
-            payload["outbound_delivery"]["oldest_pending_receipt_age_ms"],
-            0
-        );
-
-        let attachment_bytes = b"report bytes";
-        let attachment_hash = Sha256::digest(attachment_bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let boundary = format!("r3akt-boundary-{}", Uuid::new_v4().simple());
-        let uploaded = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Attachment")
-                    .header("X-API-Key", "secret")
-                    .header(
-                        "content-type",
-                        format!("multipart/form-data; boundary={boundary}"),
-                    )
-                    .body(Body::from(multipart_attachment_body(
-                        &boundary,
-                        "file",
-                        "report.txt",
-                        "text/plain",
-                        attachment_bytes,
-                        &attachment_hash,
-                        "ops",
-                    )))
-                    .expect("request"),
-            )
-            .await
-            .expect("upload response");
-        assert_eq!(uploaded.status(), StatusCode::OK);
-        let body = uploaded
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let uploaded_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        let file_id = uploaded_payload["FileID"].as_u64().expect("file id");
-        assert_eq!(uploaded_payload["Name"], "report.txt");
-        assert_eq!(uploaded_payload["Category"], "file");
-        assert_eq!(uploaded_payload["MediaType"], "text/plain");
-        assert_eq!(uploaded_payload["TopicID"], "ops");
-        assert_eq!(uploaded_payload["Size"], attachment_bytes.len() as u64);
-
-        let raw = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri(format!("/File/{file_id}/raw"))
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("raw response");
-        assert_eq!(raw.status(), StatusCode::OK);
-        assert_eq!(
-            raw.headers()
-                .get("content-type")
-                .and_then(|value| value.to_str().ok()),
-            Some("text/plain")
-        );
-        let body = raw.into_body().collect().await.expect("body").to_bytes();
-        assert_eq!(body.as_ref(), attachment_bytes);
-
-        let sent_with_attachment = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Message")
-                    .header("X-API-Key", "secret")
-                    .header("content-type", "application/json")
-                    .body(Body::from(format!(
-                        r#"{{"Scope":"topic","TopicID":"ops","FileIDs":[{file_id}]}}"#
-                    )))
-                    .expect("request"),
-            )
-            .await
-            .expect("chat attachment send response");
-        assert_eq!(sent_with_attachment.status(), StatusCode::OK);
-        let body = sent_with_attachment
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["Content"], "");
-        assert_eq!(payload["Attachments"][0]["FileID"], file_id);
-        assert_eq!(payload["Attachments"][0]["Name"], "report.txt");
-
-        let restored_app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("restored state")
-                .with_api_key("secret"),
-        );
-        let restored = restored_app
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Chat/Messages")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("restored response");
-        assert_eq!(restored.status(), StatusCode::OK);
-        let body = restored
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        let restored_messages = payload.as_array().expect("restored messages");
-        assert_eq!(restored_messages.len(), 2);
-        assert!(restored_messages.iter().any(|message| {
-            message["Attachments"]
-                .as_array()
-                .is_some_and(|attachments| !attachments.is_empty())
-        }));
-
-        let missing_attachment = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Message")
-                    .header("X-API-Key", "secret")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"Content":"With file","Scope":"topic","TopicID":"ops","FileIDs":[99]}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("missing attachment response");
-        assert_eq!(missing_attachment.status(), StatusCode::NOT_FOUND);
-
-        if let Some(path) = uploaded_payload["Path"].as_str() {
-            let _ = std::fs::remove_file(path);
-        }
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
     async fn rem_peer_registry_route_matches_python_empty_shape() {
         let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
 
@@ -38506,298 +38059,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "legacy generic markdown southbound compatibility removed for Rust 3.0"]
-    async fn mission_zone_link_sends_rem_command_and_generic_markdown() {
-        let db_path =
-            std::env::temp_dir().join(format!("r3akt-rch-zone-fanout-{}.db", Uuid::new_v4()));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let now = crate::unix_now_ms();
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        snapshot.clients = vec![
-            test_client("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now),
-            test_client("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", now),
-        ];
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("REM Phone".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "telemetry".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("LXMF Peer".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec!["group_chat".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-        ];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret");
-        let app = crate::create_app_with_state(state.clone());
-
-        let mission = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/r3akt/missions")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"uid":"zone-mission","mission_name":"Zone Mission"}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("mission response");
-        assert_eq!(mission.status(), StatusCode::OK);
-
-        let zone = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/zones")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"name":"Link Zone","points":[{"lat":45.0,"lon":-63.0},{"lat":45.1,"lon":-63.1},{"lat":45.2,"lon":-63.2}]}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("zone response");
-        assert_eq!(zone.status(), StatusCode::CREATED);
-        let body = zone.into_body().collect().await.expect("body").to_bytes();
-        let zone_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        let zone_id = zone_payload["zone_id"].as_str().expect("zone id");
-
-        let linked = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::PUT)
-                    .uri(format!("/api/r3akt/missions/zone-mission/zones/{zone_id}"))
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("link response");
-        let status = linked.status();
-        let body = linked.into_body().collect().await.expect("body").to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        let rem = snapshot
-            .messages
-            .iter()
-            .find(|message| {
-                message.destination.as_deref() == Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-            })
-            .expect("rem message");
-        assert_eq!(rem.content, crate::REM_COMMAND_PLACEHOLDER_BODY);
-        assert_eq!(
-            rem.delivery_metadata["dispatch_status"],
-            json!("queued_deferred")
-        );
-        let command = &rem.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0];
-        assert_eq!(
-            command["command_type"],
-            "mission.registry.mission.zone.link"
-        );
-        assert_eq!(command["args"]["mission_uid"], "zone-mission");
-        assert_eq!(command["args"]["zone_id"], zone_id);
-
-        let generic = snapshot
-            .messages
-            .iter()
-            .find(|message| {
-                message.destination.as_deref() == Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-            })
-            .expect("generic message");
-        assert_eq!(
-            generic.content,
-            "### Mission Zone Mission\n- Update: Zone linked\n- Zone: Link Zone"
-        );
-        assert!(
-            generic.delivery_metadata["lxmf_fields"]
-                .get(crate::FIELD_COMMANDS.to_string())
-                .is_none()
-        );
-        assert_eq!(
-            generic.delivery_metadata["delivery_receipt_required"],
-            false
-        );
-        assert_eq!(generic.delivery_metadata["max_attempts"], 1);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "legacy generic markdown southbound compatibility removed for Rust 3.0"]
-    async fn mission_marker_link_sends_rem_command_and_generic_markdown() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-marker-link-fanout-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let now = crate::unix_now_ms();
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        snapshot.clients = vec![
-            test_client("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now),
-            test_client("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", now),
-        ];
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("REM Phone".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "telemetry".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("LXMF Peer".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec!["group_chat".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-        ];
-        snapshot.missions = vec![r3akt_rch_core::MissionRecord {
-            uid: "marker-link-mission".to_string(),
-            mission_name: "Marker Link Mission".to_string(),
-            description: String::new(),
-            topic_id: None,
-            path: None,
-            classification: None,
-            tool: None,
-            keywords: Vec::new(),
-            parent_uid: None,
-            feeds: Vec::new(),
-            password_hash: None,
-            default_role: None,
-            mission_priority: None,
-            mission_status: "ACTIVE".to_string(),
-            owner_role: None,
-            token: None,
-            invite_only: false,
-            expiration: None,
-            mission_rde_role: None,
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.markers = vec![r3akt_rch_core::MarkerRecord {
-            local_id: "marker-alpha".to_string(),
-            object_destination_hash: "markerhashalpha".to_string(),
-            origin_rch: "RCH".to_string(),
-            marker_type: "friendly".to_string(),
-            symbol: "friendly".to_string(),
-            name: "Link Marker".to_string(),
-            category: "friendly".to_string(),
-            lat: 45.5,
-            lon: -63.2,
-            notes: None,
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret"),
-        );
-
-        let linked = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::PUT)
-                    .uri("/api/r3akt/missions/marker-link-mission/markers/markerhashalpha")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("link response");
-        let status = linked.status();
-        let body = linked.into_body().collect().await.expect("body").to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        let rem = snapshot
-            .messages
-            .iter()
-            .find(|message| {
-                message.destination.as_deref() == Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-            })
-            .expect("rem message");
-        assert_eq!(rem.content, crate::REM_COMMAND_PLACEHOLDER_BODY);
-        assert_eq!(
-            rem.delivery_metadata["dispatch_status"],
-            json!("queued_deferred")
-        );
-        let command = &rem.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0];
-        assert_eq!(
-            command["command_type"],
-            "mission.registry.mission.marker.link"
-        );
-        assert_eq!(command["args"]["mission_uid"], "marker-link-mission");
-        assert_eq!(command["args"]["marker_id"], "markerhashalpha");
-
-        let generic = snapshot
-            .messages
-            .iter()
-            .find(|message| {
-                message.destination.as_deref() == Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-            })
-            .expect("generic message");
-        assert_eq!(
-            generic.content,
-            "### Mission Marker Link Mission\n- Update: Marker linked\n- Marker: Link Marker"
-        );
-        assert!(
-            generic.delivery_metadata["lxmf_fields"]
-                .get(crate::FIELD_COMMANDS.to_string())
-                .is_none()
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
     async fn marker_create_does_not_send_markdown_to_rem_owned_generic_identity() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
             "message_id": "message"
@@ -38881,169 +38142,6 @@ mod tests {
             params["fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"],
             "mission.registry.telemetry.upsert"
         );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    #[ignore = "legacy generic/voice marker fanout removed; REM command fanout is covered separately"]
-    fn marker_fanout_skips_stale_rem_and_dedupes_generic_peer_names() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-marker-active-dedupe-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let now = crate::unix_now_ms();
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        snapshot.clients = vec![
-            test_client("activerempeer", now),
-            test_client("newpixelpeer", now),
-            test_client("pixelvoicepeer", now),
-        ];
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "activerempeer".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=S8".to_string()),
-                source_interface: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "telemetry".to_string(),
-                    "name=S8".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "stalerempeer".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
-                source_interface: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "telemetry".to_string(),
-                    "name=Poco".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now - crate::REM_PEER_ACTIVE_WINDOW_MS - 10_000,
-                last_seen_ts_ms: now - crate::REM_PEER_ACTIVE_WINDOW_MS - 10_000,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "s8genericpeer".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("S8".to_string()),
-                source_interface: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
-                announce_capabilities: vec!["group_chat".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "sameinterfacepixelpeer".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Pixel".to_string()),
-                source_interface: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
-                announce_capabilities: vec!["group_chat".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now - 5_000,
-                last_seen_ts_ms: now - 5_000,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "pixelrempeer".to_string(),
-                announced_identity_hash: None,
-                display_name: Some(
-                    "R3AKT,EMergencyMessages,Telemetry;name=emergency-ops-mobile".to_string(),
-                ),
-                source_interface: Some("cccccccccccccccccccccccccccccccc".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "telemetry".to_string(),
-                    "name=emergency-ops-mobile".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "oldpixelpeer".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Pixel".to_string()),
-                source_interface: Some("cccccccccccccccccccccccccccccccc".to_string()),
-                announce_capabilities: vec!["group_chat".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now - 10_000,
-                last_seen_ts_ms: now - 10_000,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "newpixelpeer".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Pixel".to_string()),
-                source_interface: Some("cccccccccccccccccccccccccccccccc".to_string()),
-                announce_capabilities: vec!["group_chat".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "pixelvoicepeer".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Anonymous Peer".to_string()),
-                source_interface: Some("cccccccccccccccccccccccccccccccc".to_string()),
-                announce_capabilities: vec!["telephony".to_string(), "voice".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-        ];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let marker = crate::MarkerRecord {
-            local_id: "marker".to_string(),
-            object_destination_hash: "markerhash".to_string(),
-            origin_rch: "RCH".to_string(),
-            marker_type: "friendly".to_string(),
-            symbol: "friendly".to_string(),
-            name: "Active Fanout".to_string(),
-            category: "friendly".to_string(),
-            lat: 45.0,
-            lon: -63.0,
-            notes: None,
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        };
-
-        let result = crate::fanout_marker_activity_to_recipients(&state, "marker.created", &marker)
-            .expect("fanout result");
-
-        assert_eq!(result["attempted"], true);
-        assert_eq!(result["recipient_count"], 3);
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        let mut destinations = snapshot
-            .messages
-            .iter()
-            .filter_map(|message| message.destination.clone())
-            .collect::<Vec<_>>();
-        destinations.sort();
-        assert_eq!(
-            destinations,
-            vec![
-                "activerempeer".to_string(),
-                "newpixelpeer".to_string(),
-                "pixelvoicepeer".to_string()
-            ]
-        );
-        assert!(snapshot.messages.iter().all(|message| {
-            message.delivery_state == "queued"
-                && message.delivery_metadata["dispatch_status"] == "queued_deferred"
-                && message.delivery_metadata["deferred_dispatch"] == true
-        }));
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -40147,199 +39245,6 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["name"], "import");
         assert_eq!(payload["tasks"].as_array().expect("tasks").len(), 1);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "legacy generic checklist markdown fanout removed for Rust 3.0"]
-    async fn checklist_csv_import_fans_out_to_current_users_with_rem_replication() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(4);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-checklist-import-current-users-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        snapshot.clients = vec![
-            r3akt_rch_core::ClientRecord {
-                identity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-                nickname: None,
-                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
-                paused: false,
-                text_only: false,
-                last_chat_ts_ms: None,
-            },
-            r3akt_rch_core::ClientRecord {
-                identity: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-                nickname: None,
-                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
-                paused: false,
-                text_only: false,
-                last_chat_ts_ms: None,
-            },
-        ];
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=S8".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "name=s8".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Pixel Sideband".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec!["group_chat".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "cccccccccccccccccccccccccccccccc".to_string(),
-                announced_identity_hash: None,
-                display_name: Some(
-                    "R3AKT,EMergencyMessages,Telemetry;name=AnnounceOnly".to_string(),
-                ),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "name=announceonly".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-        ];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
-        let app = crate::create_app_with_state(state.clone());
-        let csv_payload = BASE64_STANDARD.encode("Due,Task\n10,Camera sensor\n20,Radio link\n");
-        let imported = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/checklists/import/csv")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(format!(
-                        r#"{{"csv_filename":"Cameras Sensors and Radio Links Emplacement Tasks.csv","csv_base64":"{csv_payload}"}}"#
-                    )))
-                    .expect("request"),
-            )
-            .await
-            .expect("import response");
-        let status = imported.status();
-        let body = imported
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(
-            payload["name"],
-            "Cameras Sensors and Radio Links Emplacement Tasks"
-        );
-
-        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
-        assert_eq!(report.processed, 4);
-        assert_eq!(report.dispatched, 4, "{report:?}");
-        assert_eq!(report.failed, 0, "{report:?}");
-        let requests = rpc_server.join().expect("rpc server");
-        let destinations = requests
-            .iter()
-            .map(|request| {
-                request.params.as_ref().expect("params")["destination"]
-                    .as_str()
-                    .expect("destination")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            destinations,
-            vec![
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            ]
-        );
-        let rem_command_types = requests
-            .iter()
-            .take(3)
-            .map(|request| {
-                request.params.as_ref().expect("params")["fields"]
-                    [crate::FIELD_COMMANDS.to_string()][0]["command_type"]
-                    .as_str()
-                    .expect("command type")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            rem_command_types,
-            vec![
-                "checklist.create.online",
-                "checklist.task.row.add",
-                "checklist.task.row.add",
-            ]
-        );
-        let create_command = &requests[0].params.as_ref().expect("params")["fields"]
-            [crate::FIELD_COMMANDS.to_string()][0];
-        assert_eq!(create_command["args"]["total_tasks"], 2);
-        assert!(
-            create_command["args"]["mission_uid"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
-        );
-        assert!(create_command["args"]["columns"].as_array().is_some());
-        let row_command = &requests[1].params.as_ref().expect("params")["fields"]
-            [crate::FIELD_COMMANDS.to_string()][0];
-        assert_eq!(row_command["args"]["checklist_uid"], payload["uid"]);
-        assert_eq!(row_command["args"]["task"]["legacy_value"], "Camera sensor");
-        assert_eq!(row_command["args"]["task"]["legacy_value"], "Camera sensor");
-        assert!(
-            requests[1].params.as_ref().expect("params")["fields"]
-                .get(crate::LXMF_FIELDS_MSGPACK_B64_KEY)
-                .is_none()
-        );
-        assert_eq!(
-            requests[0].params.as_ref().expect("params")["content"],
-            crate::REM_COMMAND_PLACEHOLDER_BODY
-        );
-        let generic = requests[3].params.as_ref().expect("generic params");
-        assert_eq!(generic["title"], "RCH");
-        assert!(generic["content"].as_str().is_some_and(|content| {
-            content.contains("Checklist Cameras Sensors and Radio Links Emplacement Tasks created")
-                && content.contains("- Task: Camera sensor")
-                && content.contains("- Task: Radio link")
-        }));
-        assert!(
-            generic["fields"]
-                .get(crate::FIELD_COMMANDS.to_string())
-                .is_none()
-        );
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -42354,153 +41259,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "legacy mission delta/generic fanout removed for Rust 3.0"]
-    async fn mission_change_listener_fans_out_to_mission_team_recipients() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(2);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-mission-change-fanout-{}.db",
-            Uuid::new_v4()
-        ));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        for (method, uri, body) in [
-            (
-                Method::POST,
-                "/api/r3akt/missions",
-                r#"{"uid":"mission-fanout","mission_name":"Mission Fanout"}"#,
-            ),
-            (
-                Method::POST,
-                "/api/r3akt/teams",
-                r#"{"uid":"team-fanout","team_name":"Team Fanout"}"#,
-            ),
-            (
-                Method::PUT,
-                "/api/r3akt/teams/team-fanout/missions/mission-fanout",
-                "{}",
-            ),
-            (
-                Method::POST,
-                "/api/r3akt/team-members",
-                r#"{"uid":"member-fanout","team_uid":"team-fanout","rns_identity":"abcdefabcdefabcdefabcdefabcdefab","display_name":"Fanout Member"}"#,
-            ),
-            (
-                Method::PUT,
-                "/api/r3akt/team-members/member-fanout/clients/1234567890abcdef1234567890abcdef",
-                "{}",
-            ),
-        ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri(uri)
-                        .header("X-API-Key", "secret")
-                        .header(axum::http::header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(body))
-                        .expect("request"),
-                )
-                .await
-                .expect("setup response");
-            assert_eq!(response.status(), StatusCode::OK, "{uri}");
-        }
-
-        let change = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/r3akt/mission-changes")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"uid":"change-fanout","mission_uid":"mission-fanout","name":"Change Fanout","change_type":"ADD_CONTENT","delta":{"source_event_type":"mission.assignment.updated"}}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("change response");
-        let status = change.status();
-        let body = change.into_body().collect().await.expect("body").to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let requests = rpc_server.join().expect("rpc server");
-        let destinations = requests
-            .iter()
-            .map(|request| {
-                request.params.as_ref().expect("params")["destination"]
-                    .as_str()
-                    .expect("destination")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            destinations,
-            vec![
-                "abcdefabcdefabcdefabcdefabcdefab",
-                "1234567890abcdef1234567890abcdef"
-            ]
-        );
-        let params = requests[0].params.as_ref().expect("params");
-        assert_eq!(requests[0].method, "send_message_v2");
-        assert_eq!(params["method"], "propagated");
-        assert_eq!(params["source"], "source-destination");
-        assert_eq!(params["destination"], "abcdefabcdefabcdefabcdefabcdefab");
-        assert_eq!(
-            params["content"],
-            "r3akt mission delta mission-fanout change-fanout"
-        );
-        assert_eq!(
-            params["fields"][crate::FIELD_EVENT.to_string()]["event_type"],
-            "mission.registry.mission_change.upserted"
-        );
-        assert_eq!(
-            params["fields"][crate::FIELD_EVENT.to_string()]["payload"]["mission_change_uid"],
-            "change-fanout"
-        );
-        assert_eq!(
-            params["fields"]["r3akt_mission_delta"]["delta"]["source_event_type"],
-            "mission.assignment.updated"
-        );
-
-        let events = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Events")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("events response");
-        assert_eq!(events.status(), StatusCode::OK);
-        let body = events.into_body().collect().await.expect("body").to_bytes();
-        let events_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        let listener_event = events_payload
-            .as_array()
-            .expect("events")
-            .iter()
-            .find(|event| event["type"] == "mission.registry.mission_change.upserted")
-            .expect("listener event");
-        assert_eq!(
-            listener_event["metadata"]["recipient_fanout"]["recipient_count"],
-            2
-        );
-        assert_eq!(listener_event["metadata"]["recipient_fanout"]["sent"], 2);
-        assert_eq!(listener_event["metadata"]["recipient_fanout"]["failed"], 0);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
     async fn mission_change_listener_uses_rem_checklist_commands_for_connected_rem_peers() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-checklist-fanout-{}.db",
@@ -43726,678 +42484,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "legacy mixed REM plus generic markdown fanout removed for Rust 3.0"]
-    async fn mission_change_listener_sends_commands_to_rem_and_markdown_to_generic_autonomous_peers()
-     {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(3);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-autonomous-mixed-checklist-fanout-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        snapshot.clients = vec![
-            r3akt_rch_core::ClientRecord {
-                identity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-                nickname: None,
-                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
-                paused: false,
-                text_only: false,
-                last_chat_ts_ms: None,
-            },
-            r3akt_rch_core::ClientRecord {
-                identity: "cccccccccccccccccccccccccccccccc".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-                nickname: None,
-                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
-                paused: false,
-                text_only: false,
-                last_chat_ts_ms: None,
-            },
-        ];
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=S8".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "name=s8".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: 1_700_000_000_000,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("S8".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec!["s8".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: 1_700_000_000_000,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "dddddddddddddddddddddddddddddddd".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("piXel".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec!["pixel".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: 1_700_000_000_000,
-                last_seen_ts_ms: now - 10_000,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "cccccccccccccccccccccccccccccccc".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Pixel".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec!["pixel".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: 1_700_000_000_000,
-                last_seen_ts_ms: now,
-            },
-        ];
-        snapshot.missions = vec![r3akt_rch_core::MissionRecord {
-            uid: "mission-autonomous-mixed".to_string(),
-            mission_name: "Mission Autonomous Mixed".to_string(),
-            description: String::new(),
-            topic_id: None,
-            path: None,
-            classification: None,
-            tool: None,
-            keywords: Vec::new(),
-            parent_uid: None,
-            feeds: Vec::new(),
-            password_hash: None,
-            default_role: None,
-            mission_priority: None,
-            mission_status: "ACTIVE".to_string(),
-            owner_role: None,
-            token: None,
-            invite_only: false,
-            expiration: None,
-            mission_rde_role: None,
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
-        let app = crate::create_app_with_state(state.clone());
-
-        let change = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/r3akt/mission-changes")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r##"{"uid":"change-autonomous-mixed-created","mission_uid":"mission-autonomous-mixed","name":"mission.checklist.created","change_type":"ADD_CONTENT","delta":{"source_event_type":"mission.checklist.created","checklists":[{"uid":"checklist-autonomous-mixed","mission_uid":"mission-autonomous-mixed","name":"Autonomous Mixed Checklist","columns":[{"column_uid":"column-alpha","column_name":"Task"}],"tasks":[{"checklist_uid":"checklist-autonomous-mixed","task_uid":"task-autonomous-mixed","number":1,"legacy_value":"Autonomous mixed row"}]}]}}"##,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("change response");
-        let status = change.status();
-        let body = change.into_body().collect().await.expect("body").to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
-        assert_eq!(report.processed, 3);
-        assert_eq!(report.dispatched, 3);
-        assert_eq!(report.failed, 0);
-        let requests = rpc_server.join().expect("rpc server");
-        let destinations = requests
-            .iter()
-            .map(|request| {
-                request.params.as_ref().expect("params")["destination"]
-                    .as_str()
-                    .expect("destination")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            destinations,
-            vec![
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "cccccccccccccccccccccccccccccccc",
-            ]
-        );
-        for request in requests.iter().take(2) {
-            let params = request.params.as_ref().expect("params");
-            assert_eq!(params["title"], "");
-            assert!(
-                params["fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"]
-                    .as_str()
-                    .is_some_and(|command| command.starts_with("checklist."))
-            );
-        }
-        let rem_contents = requests
-            .iter()
-            .take(2)
-            .map(|request| {
-                request.params.as_ref().expect("params")["content"]
-                    .as_str()
-                    .expect("content")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            rem_contents,
-            vec![
-                crate::REM_COMMAND_PLACEHOLDER_BODY,
-                crate::REM_COMMAND_PLACEHOLDER_BODY,
-            ]
-        );
-        let generic = requests[2].params.as_ref().expect("generic params");
-        assert_eq!(generic["title"], "RCH");
-        assert!(
-            generic["content"]
-                .as_str()
-                .is_some_and(|content| content.contains("Autonomous Mixed Checklist"))
-        );
-        assert!(
-            generic["fields"]
-                .get(crate::FIELD_COMMANDS.to_string())
-                .is_none()
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "legacy generic markdown southbound compatibility removed for Rust 3.0"]
-    async fn mission_change_listener_sends_markdown_to_generic_lxmf_peers() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-generic-markdown-fanout-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: "11111111111111111111111111111111".to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Generic Peer".to_string()),
-            source_interface: Some("identity".to_string()),
-            announce_capabilities: vec!["group_chat".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: 1_700_000_000_000,
-            last_seen_ts_ms: crate::unix_now_ms(),
-        }];
-        let now = crate::unix_now_ms();
-        snapshot.missions = vec![r3akt_rch_core::MissionRecord {
-            uid: "mission-generic".to_string(),
-            mission_name: "Mission Generic".to_string(),
-            description: String::new(),
-            topic_id: None,
-            path: None,
-            classification: None,
-            tool: None,
-            keywords: Vec::new(),
-            parent_uid: None,
-            feeds: Vec::new(),
-            password_hash: None,
-            default_role: None,
-            mission_priority: None,
-            mission_status: "ACTIVE".to_string(),
-            owner_role: None,
-            token: None,
-            invite_only: false,
-            expiration: None,
-            mission_rde_role: None,
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.teams = vec![r3akt_rch_core::TeamRecord {
-            uid: "team-generic".to_string(),
-            mission_uid: Some("mission-generic".to_string()),
-            mission_uids: vec!["mission-generic".to_string()],
-            color: None,
-            team_name: "Team Generic".to_string(),
-            team_description: String::new(),
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.mission_team_links = vec![r3akt_rch_core::MissionTeamLinkRecord {
-            mission_uid: "mission-generic".to_string(),
-            team_uid: "team-generic".to_string(),
-        }];
-        snapshot.team_members = vec![r3akt_rch_core::TeamMemberRecord {
-            uid: "member-generic".to_string(),
-            team_uid: Some("team-generic".to_string()),
-            rns_identity: "11111111111111111111111111111111".to_string(),
-            display_name: "Generic Peer".to_string(),
-            icon: None,
-            role: None,
-            callsign: Some("GENERIC".to_string()),
-            freq: None,
-            email: None,
-            phone: None,
-            modulation: None,
-            availability: None,
-            certifications: Vec::new(),
-            last_active: None,
-            client_identities: Vec::new(),
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.checklists = vec![r3akt_rch_core::ChecklistRecord {
-            uid: "checklist-generic".to_string(),
-            mission_uid: Some("mission-generic".to_string()),
-            template_uid: None,
-            template_version: None,
-            template_name: None,
-            name: "Generic Checklist".to_string(),
-            description: String::new(),
-            start_ts_ms: now,
-            mode: "online".to_string(),
-            sync_state: "synced".to_string(),
-            origin_type: "rust".to_string(),
-            checklist_status: "ACTIVE".to_string(),
-            created_by_team_member_rns_identity: "11111111111111111111111111111111".to_string(),
-            created_ts_ms: now,
-            updated_ts_ms: now,
-            uploaded_ts_ms: None,
-            progress_percent: 0.0,
-            pending_count: 1,
-            late_count: 0,
-            complete_count: 0,
-        }];
-        snapshot.checklist_columns = vec![r3akt_rch_core::ChecklistColumnRecord {
-            column_uid: "column-summary".to_string(),
-            checklist_uid: Some("checklist-generic".to_string()),
-            template_uid: None,
-            column_name: "Summary".to_string(),
-            display_order: 1,
-            column_type: "SHORT_STRING".to_string(),
-            column_editable: true,
-            background_color: None,
-            text_color: None,
-            is_removable: false,
-            system_key: None,
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.checklist_tasks = vec![r3akt_rch_core::ChecklistTaskRecord {
-            task_uid: "task-generic".to_string(),
-            checklist_uid: "checklist-generic".to_string(),
-            number: 7,
-            user_status: "PENDING".to_string(),
-            task_status: "PENDING".to_string(),
-            is_late: false,
-            custom_status: None,
-            due_relative_minutes: None,
-            due_ts_ms: None,
-            notes: None,
-            row_background_color: None,
-            line_break_enabled: false,
-            completed_ts_ms: None,
-            completed_by_team_member_rns_identity: None,
-            legacy_value: None,
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.checklist_cells = vec![r3akt_rch_core::ChecklistCellRecord {
-            cell_uid: "cell-generic-summary".to_string(),
-            task_uid: "task-generic".to_string(),
-            column_uid: "column-summary".to_string(),
-            value: Some("Resolved task label".to_string()),
-            updated_ts_ms: now,
-            updated_by_team_member_rns_identity: None,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let change = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/r3akt/mission-changes")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"uid":"change-generic","mission_uid":"mission-generic","name":"mission.checklist.task.row.added","change_type":"ADD_CONTENT","delta":{"source_event_type":"mission.checklist.task.row.added","tasks":[{"op":"row_added","checklist_uid":"checklist-generic","task_uid":"task-generic"}]}}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("change response");
-        let status = change.status();
-        let body = change.into_body().collect().await.expect("body").to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let request = rpc_server.join().expect("rpc server");
-        let params = request.params.expect("params");
-        assert_eq!(params["destination"], "11111111111111111111111111111111");
-        assert_eq!(params["title"], "RCH");
-        assert_eq!(
-            params["content"],
-            "### Mission Mission Generic\nTask Resolved task label added\n- Checklist: Generic Checklist"
-        );
-        assert_eq!(params["fields"][crate::LXMF_FIELD_RENDERER.to_string()], 2);
-        assert_eq!(
-            params["fields"][crate::FIELD_EVENT.to_string()]["event_type"],
-            "mission.registry.mission_change.upserted"
-        );
-        assert!(params["fields"].get("r3akt_mission_delta").is_none());
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "legacy generic checklist markdown fanout removed for Rust 3.0"]
-    async fn checklist_upload_sends_human_markdown_to_generic_lxmf_peers() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-generic-checklist-upload-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: "11111111111111111111111111111111".to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Generic Peer".to_string()),
-            source_interface: Some("identity".to_string()),
-            announce_capabilities: vec!["group_chat".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: now,
-            last_seen_ts_ms: now,
-        }];
-        snapshot.missions = vec![r3akt_rch_core::MissionRecord {
-            uid: "mission-generic-upload".to_string(),
-            mission_name: "Mission Generic Upload".to_string(),
-            description: String::new(),
-            topic_id: None,
-            path: None,
-            classification: None,
-            tool: None,
-            keywords: Vec::new(),
-            parent_uid: None,
-            feeds: Vec::new(),
-            password_hash: None,
-            default_role: None,
-            mission_priority: None,
-            mission_status: "ACTIVE".to_string(),
-            owner_role: None,
-            token: None,
-            invite_only: false,
-            expiration: None,
-            mission_rde_role: None,
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.teams = vec![r3akt_rch_core::TeamRecord {
-            uid: "team-generic-upload".to_string(),
-            mission_uid: Some("mission-generic-upload".to_string()),
-            mission_uids: vec!["mission-generic-upload".to_string()],
-            color: None,
-            team_name: "Team Generic Upload".to_string(),
-            team_description: String::new(),
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.mission_team_links = vec![r3akt_rch_core::MissionTeamLinkRecord {
-            mission_uid: "mission-generic-upload".to_string(),
-            team_uid: "team-generic-upload".to_string(),
-        }];
-        snapshot.team_members = vec![r3akt_rch_core::TeamMemberRecord {
-            uid: "member-generic-upload".to_string(),
-            team_uid: Some("team-generic-upload".to_string()),
-            rns_identity: "11111111111111111111111111111111".to_string(),
-            display_name: "Generic Peer".to_string(),
-            icon: None,
-            role: None,
-            callsign: Some("GENERIC".to_string()),
-            freq: None,
-            email: None,
-            phone: None,
-            modulation: None,
-            availability: None,
-            certifications: Vec::new(),
-            last_active: None,
-            client_identities: Vec::new(),
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
-        let app = crate::create_app_with_state(state.clone());
-
-        let change = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/r3akt/mission-changes")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"uid":"change-generic-upload","mission_uid":"mission-generic-upload","name":"mission.checklist.uploaded","change_type":"ADD_CONTENT","delta":{"source_event_type":"mission.checklist.uploaded","checklists":[{"uid":"checklist-upload","mission_uid":"mission-generic-upload","name":"Uploaded Checklist","tasks":[{"task_uid":"task-one","number":1,"legacy_value":"Confirm radio check"},{"task_uid":"task-two","number":2,"legacy_value":"Stage med kit"}]}]}}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("change response");
-        let status = change.status();
-        let body = change.into_body().collect().await.expect("body").to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
-        assert_eq!(report.processed, 1);
-        assert_eq!(report.dispatched, 1, "{report:?}");
-        assert_eq!(report.failed, 0, "{report:?}");
-        let request = rpc_server.join().expect("rpc server");
-        let params = request.params.expect("params");
-        assert_eq!(params["destination"], "11111111111111111111111111111111");
-        assert_eq!(params["title"], "RCH");
-        assert_eq!(
-            params["content"],
-            "### Mission Mission Generic Upload\nChecklist Uploaded Checklist uploaded\n- Checklist: Uploaded Checklist\n- Tasks: 2\n- Task: Confirm radio check\n- Task: Stage med kit"
-        );
-        assert!(
-            params["fields"]
-                .get(crate::FIELD_COMMANDS.to_string())
-                .is_none()
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "legacy generic markdown southbound compatibility removed for Rust 3.0"]
-    async fn assignment_asset_link_fanout_uses_python_generic_markdown_shape() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-assignment-asset-generic-{}.db",
-            Uuid::new_v4()
-        ));
-
-        fn seed_command(core: &mut RchCore, command_type: &str, args: serde_json::Value) {
-            let command = r3akt_profile_rch::MissionCommandEnvelope {
-                command_id: format!("seed-{command_type}"),
-                source: r3akt_profile_rch::RchSource::new("seed"),
-                timestamp: "2026-05-11T00:00:00Z".to_string(),
-                command_type: command_type.to_string(),
-                args,
-                correlation_id: None,
-                topics: Vec::new(),
-            };
-            let outcome = core.handle_command(&command);
-            assert_eq!(
-                outcome.result.status,
-                r3akt_profile_rch::CommandResultStatus::Accepted,
-                "{command_type}: {:?}",
-                outcome.result
-            );
-        }
-
-        let mut core = RchCore::new();
-        seed_command(
-            &mut core,
-            "mission.registry.mission.upsert",
-            json!({ "uid": "mission-assignment", "mission_name": "Mission Assignment" }),
-        );
-        seed_command(
-            &mut core,
-            "mission.registry.team.upsert",
-            json!({ "uid": "team-assignment", "team_name": "Team Assignment" }),
-        );
-        seed_command(
-            &mut core,
-            "mission.registry.team.mission.link",
-            json!({ "team_uid": "team-assignment", "mission_uid": "mission-assignment" }),
-        );
-        seed_command(
-            &mut core,
-            "mission.registry.team_member.upsert",
-            json!({
-                "uid": "member-assignment",
-                "team_uid": "team-assignment",
-                "rns_identity": "11111111111111111111111111111111",
-                "display_name": "Generic Peer"
-            }),
-        );
-        seed_command(
-            &mut core,
-            "checklist.template.create",
-            json!({
-                "template": {
-                    "uid": "template-assignment",
-                    "name": "Assignment Template",
-                    "description": "Template for assignment fanout"
-                }
-            }),
-        );
-        seed_command(
-            &mut core,
-            "checklist.create.online",
-            json!({
-                "checklist_uid": "checklist-assignment",
-                "mission_uid": "mission-assignment",
-                "template_uid": "template-assignment",
-                "name": "Assignment Checklist"
-            }),
-        );
-        seed_command(
-            &mut core,
-            "checklist.task.row.add",
-            json!({
-                "checklist_uid": "checklist-assignment",
-                "task_uid": "task-assignment",
-                "number": 1,
-                "notes": "Deliver antenna",
-                "legacy_value": "Deliver antenna"
-            }),
-        );
-        seed_command(
-            &mut core,
-            "mission.registry.asset.upsert",
-            json!({ "asset_uid": "asset-radio", "name": "Mesh Radio" }),
-        );
-        seed_command(
-            &mut core,
-            "mission.registry.assignment.upsert",
-            json!({
-                "assignment_uid": "assignment-radio",
-                "mission_uid": "mission-assignment",
-                "task_uid": "task-assignment",
-                "team_member_rns_identity": "11111111111111111111111111111111",
-                "status": "PENDING"
-            }),
-        );
-
-        let mut snapshot = core.snapshot();
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: "11111111111111111111111111111111".to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Generic Peer".to_string()),
-            source_interface: Some("identity".to_string()),
-            announce_capabilities: vec!["group_chat".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: 1_700_000_000_000,
-            last_seen_ts_ms: crate::unix_now_ms(),
-        }];
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::PUT)
-                    .uri("/api/r3akt/assignments/assignment-radio/assets/asset-radio")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("link response");
-        let status = response.status();
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let request = rpc_server.join().expect("rpc server");
-        let params = request.params.expect("params");
-        assert_eq!(params["destination"], "11111111111111111111111111111111");
-        assert_eq!(params["title"], "RCH");
-        assert_eq!(
-            params["content"],
-            "### Mission Mission Assignment\n- Update: Assignment asset linked\n- Detail: Deliver antenna\n- Asset: Mesh Radio"
-        );
-        assert_eq!(params["fields"][crate::LXMF_FIELD_RENDERER.to_string()], 2);
-        assert_eq!(
-            params["fields"][crate::FIELD_EVENT.to_string()]["event_type"],
-            "mission.registry.mission_change.upserted"
-        );
-        assert!(
-            params["fields"]
-                .get(crate::FIELD_COMMANDS.to_string())
-                .is_none()
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
     async fn log_entry_fanout_sends_rem_field_commands_shape() {
         let db_path =
             std::env::temp_dir().join(format!("r3akt-rch-rem-log-command-{}.db", Uuid::new_v4()));
@@ -44725,124 +42811,6 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
     }
 
-    #[tokio::test]
-    #[ignore = "legacy generic markdown southbound compatibility removed for Rust 3.0"]
-    async fn log_entry_fanout_uses_python_generic_markdown_shape() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-log-generic-markdown-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        snapshot.clients = vec![test_client("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", now)];
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Generic Log Peer".to_string()),
-            source_interface: Some("identity".to_string()),
-            announce_capabilities: vec!["group_chat".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: 1_700_000_000_000,
-            last_seen_ts_ms: now,
-        }];
-        snapshot.missions = vec![r3akt_rch_core::MissionRecord {
-            uid: "mission-log-fanout".to_string(),
-            mission_name: "Mission Log Fanout".to_string(),
-            description: String::new(),
-            topic_id: None,
-            path: None,
-            classification: None,
-            tool: None,
-            keywords: Vec::new(),
-            parent_uid: None,
-            feeds: Vec::new(),
-            password_hash: None,
-            default_role: None,
-            mission_priority: None,
-            mission_status: "ACTIVE".to_string(),
-            owner_role: None,
-            token: None,
-            invite_only: false,
-            expiration: None,
-            mission_rde_role: None,
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.teams = vec![r3akt_rch_core::TeamRecord {
-            uid: "team-log-fanout".to_string(),
-            mission_uid: Some("mission-log-fanout".to_string()),
-            mission_uids: vec!["mission-log-fanout".to_string()],
-            color: None,
-            team_name: "Team Log Fanout".to_string(),
-            team_description: String::new(),
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        snapshot.mission_team_links = vec![r3akt_rch_core::MissionTeamLinkRecord {
-            mission_uid: "mission-log-fanout".to_string(),
-            team_uid: "team-log-fanout".to_string(),
-        }];
-        snapshot.team_members = vec![r3akt_rch_core::TeamMemberRecord {
-            uid: "member-log-fanout".to_string(),
-            team_uid: Some("team-log-fanout".to_string()),
-            rns_identity: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB".to_string(),
-            display_name: "Generic Log Peer".to_string(),
-            icon: None,
-            role: None,
-            callsign: Some("LOG".to_string()),
-            freq: None,
-            email: None,
-            phone: None,
-            modulation: None,
-            availability: None,
-            certifications: Vec::new(),
-            last_active: None,
-            client_identities: Vec::new(),
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let log = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/r3akt/log-entries")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"entry_uid":"log-fanout","mission_uid":"mission-log-fanout","callsign":"Alpha","content":"Smoke log update"}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("log response");
-        let status = log.status();
-        let body = log.into_body().collect().await.expect("body").to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let request = rpc_server.join().expect("rpc server");
-        let params = request.params.expect("params");
-        assert_eq!(params["destination"], "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-        assert_eq!(
-            params["content"],
-            "### Mission Log Update\nMission: mission-log-fanout\n\nFrom: Alpha\n\nSmoke log update"
-        );
-        assert_eq!(params["fields"][crate::LXMF_FIELD_RENDERER.to_string()], 2);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
     #[test]
     fn generic_mission_change_recipients_use_pixel_chat_identity_once_when_voice_announced() {
         let db_path = std::env::temp_dir().join(format!(
@@ -44944,7 +42912,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fanout selection now distinguishes then skips non-REM at command send sites"]
     fn command_fanout_recipients_are_current_users_not_announced_rem_peers() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-command-current-users-{}.db",
@@ -45041,111 +43008,6 @@ mod tests {
         assert_eq!(identities, vec![rem_user, generic_user]);
         assert_eq!(recipients[0].client_type.as_str(), "rem");
         assert_eq!(recipients[1].client_type.as_str(), "generic_lxmf");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "legacy generic markdown southbound compatibility removed for Rust 3.0"]
-    async fn eam_status_fanout_sends_python_generic_markdown_shape() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
-            "message_id": "message"
-        })]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-eam-generic-markdown-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        snapshot.clients = vec![test_client("genericeampeer", now)];
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: "genericeampeer".to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Generic EAM Peer".to_string()),
-            source_interface: Some("identity".to_string()),
-            announce_capabilities: vec!["group_chat".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: 1_700_000_000_000,
-            last_seen_ts_ms: now,
-        }];
-        snapshot.identity_rem_modes = vec![r3akt_rch_core::IdentityRemModeRecord {
-            identity: "connected-controller".to_string(),
-            mode: "connected".to_string(),
-            updated_ts_ms: now,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let team = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/r3akt/teams")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"uid":"team-eam-generic","team_name":"Team EAM Generic"}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("team response");
-        assert_eq!(team.status(), StatusCode::OK);
-
-        let eam = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/EmergencyActionMessage")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{
-                            "callsign":"Alpha",
-                            "team_member_uid":"member-eam-generic",
-                            "team_uid":"team-eam-generic",
-                            "reported_by":"Operator",
-                            "security_status":"Green",
-                            "capability_status":"Yellow",
-                            "preparedness_status":"Green",
-                            "notes":"Bring med kit",
-                            "source":{"rns_identity":"peer-a","display_name":"Peer A"}
-                        }"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("eam response");
-        let status = eam.status();
-        let body = eam.into_body().collect().await.expect("body").to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let requests = rpc_server.join().expect("rpc server");
-        let send_request = requests
-            .iter()
-            .find(|request| request.method == "sdk_send_v2")
-            .expect("send request");
-        let params = send_request.params.as_ref().expect("params");
-        assert_eq!(params["destination"], "genericeampeer");
-        assert_eq!(
-            params["content"],
-            "### Emergency Message Updated\nCallsign: Alpha\n\nTeam: Team EAM Generic\n\nOverall: Yellow\n\nNotes: Bring med kit"
-        );
-        assert_eq!(params["fields"][crate::LXMF_FIELD_RENDERER.to_string()], 2);
-        assert!(
-            params["fields"]
-                .get(crate::FIELD_COMMANDS.to_string())
-                .is_none()
-        );
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -45411,132 +43273,6 @@ mod tests {
         assert!(
             outbound.delivery_metadata["lxmf_fields"]
                 .get(crate::LXMF_FIELD_RENDERER.to_string())
-                .is_none()
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "legacy generic markdown southbound compatibility removed for Rust 3.0"]
-    async fn eam_delete_fanout_sends_python_generic_markdown_shape() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(2);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-eam-delete-generic-markdown-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        snapshot.clients = vec![test_client("genericdeleteeampeer", now)];
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: "genericdeleteeampeer".to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Generic Delete EAM Peer".to_string()),
-            source_interface: Some("identity".to_string()),
-            announce_capabilities: vec!["group_chat".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: 1_700_000_000_000,
-            last_seen_ts_ms: now,
-        }];
-        snapshot.identity_rem_modes = vec![r3akt_rch_core::IdentityRemModeRecord {
-            identity: "connected-controller".to_string(),
-            mode: "connected".to_string(),
-            updated_ts_ms: now,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let team = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/r3akt/teams")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"uid":"team-eam-delete-generic","team_name":"Team EAM Delete Generic"}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("team response");
-        assert_eq!(team.status(), StatusCode::OK);
-
-        let created = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/EmergencyActionMessage")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{
-                            "callsign":"Delete Alpha",
-                            "team_member_uid":"member-eam-delete-generic",
-                            "team_uid":"team-eam-delete-generic",
-                            "reported_by":"Operator",
-                            "security_status":"Green",
-                            "capability_status":"Green",
-                            "preparedness_status":"Green",
-                            "source":{"rns_identity":"peer-delete-a"}
-                        }"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("create response");
-        assert_eq!(created.status(), StatusCode::OK);
-
-        let deleted = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::DELETE)
-                    .uri("/api/EmergencyActionMessage/Delete%20Alpha")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("delete response");
-        let status = deleted.status();
-        let body = deleted
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 2);
-        let params = requests
-            .iter()
-            .filter_map(|request| request.params.as_ref())
-            .find(|params| {
-                params["content"]
-                    .as_str()
-                    .is_some_and(|content| content.contains("Emergency Message Deleted"))
-            })
-            .expect("delete params");
-        assert_eq!(params["destination"], "genericdeleteeampeer");
-        assert_eq!(
-            params["content"],
-            "### Emergency Message Deleted\nCallsign: Delete Alpha\n\nTeam: Team EAM Delete Generic"
-        );
-        assert_eq!(params["fields"][crate::LXMF_FIELD_RENDERER.to_string()], 2);
-        assert!(
-            params["fields"]
-                .get(crate::FIELD_COMMANDS.to_string())
                 .is_none()
         );
 
@@ -48284,21 +46020,53 @@ mod tests {
         let remote_addr = Some(SocketAddr::from(([198, 51, 100, 10], 50_000)));
 
         let open_state = crate::AppState::default();
-        assert!(open_state.validate_ws_credentials(None, None, None));
-        assert!(open_state.validate_ws_credentials(None, None, local_addr));
-        assert!(!open_state.validate_ws_credentials(None, None, remote_addr));
+        assert!(
+            open_state
+                .validate_ws_credentials(None, None, None)
+                .expect("auth validation")
+        );
+        assert!(
+            open_state
+                .validate_ws_credentials(None, None, local_addr)
+                .expect("auth validation")
+        );
+        assert!(
+            !open_state
+                .validate_ws_credentials(None, None, remote_addr)
+                .expect("auth validation")
+        );
         assert_eq!(
-            open_state.ws_auth_failure_detail(remote_addr),
+            open_state
+                .ws_auth_failure_detail(remote_addr)
+                .expect("auth failure detail"),
             "Remote access requires first-run setup or RTH_API_KEY (RCH_API_KEY is also supported)."
         );
 
         let keyed_state = crate::AppState::default().with_api_key("secret");
-        assert!(keyed_state.validate_ws_credentials(None, None, local_addr));
-        assert!(keyed_state.validate_ws_credentials(Some("secret"), None, remote_addr));
-        assert!(keyed_state.validate_ws_credentials(None, Some("secret"), remote_addr));
-        assert!(!keyed_state.validate_ws_credentials(Some("wrong"), None, remote_addr));
+        assert!(
+            keyed_state
+                .validate_ws_credentials(None, None, local_addr)
+                .expect("auth validation")
+        );
+        assert!(
+            keyed_state
+                .validate_ws_credentials(Some("secret"), None, remote_addr)
+                .expect("auth validation")
+        );
+        assert!(
+            keyed_state
+                .validate_ws_credentials(None, Some("secret"), remote_addr)
+                .expect("auth validation")
+        );
+        assert!(
+            !keyed_state
+                .validate_ws_credentials(Some("wrong"), None, remote_addr)
+                .expect("auth validation")
+        );
         assert_eq!(
-            keyed_state.ws_auth_failure_detail(remote_addr),
+            keyed_state
+                .ws_auth_failure_detail(remote_addr)
+                .expect("auth failure detail"),
             "Unauthorized"
         );
     }
@@ -49346,140 +47114,6 @@ mod tests {
         server.abort();
     }
 
-    #[tokio::test]
-    #[ignore = "route handlers now enqueue direct sends for the outbound worker"]
-    async fn message_route_dispatches_direct_send_through_reticulumd_rpc() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path =
-            std::env::temp_dir().join(format!("r3akt-rch-reticulumd-send-{}.db", Uuid::new_v4()));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "direct from rust server",
-                            "destination": "target-destination"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let request = rpc_server.join().expect("rpc server");
-        assert_eq!(request.method, "send_message_v2");
-        let params = request.params.expect("params");
-        assert_eq!(params["source"], "source-destination");
-        assert_eq!(params["destination"], "target-destination");
-        assert_eq!(params["title"], "RCH");
-        assert_eq!(params["content"], "direct from rust server");
-        assert_eq!(params["method"], "propagated");
-        assert!(params["id"].as_str().is_some());
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages.len(), 1);
-        assert_eq!(snapshot.messages[0].content, "direct from rust server");
-        assert_eq!(snapshot.messages[0].delivery_method, "propagated");
-        assert_eq!(
-            snapshot.messages[0].delivery_policy_reason,
-            "no_fresh_presence"
-        );
-        assert_eq!(
-            snapshot.messages[0].destination.as_deref(),
-            Some("target-destination")
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "route handlers now enqueue replies for the outbound worker"]
-    async fn reticulumd_inbound_topic_message_marks_source_present_for_direct_reply() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-inbound-topic-presence-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
-        let app = crate::create_app_with_state(state.clone());
-        let inbound_source = "c9ded55aad183600fd8c4e2ad341a7e1";
-        let envelope = r3akt_protocol::ProtocolEnvelope::new(
-            r3akt_protocol::NodeId::new(inbound_source),
-            r3akt_protocol::Destination::Node(r3akt_protocol::NodeId::new(
-                "91b88974692dfc49bbf7cbe971e0cea9",
-            )),
-            r3akt_protocol::Topic::new("direct"),
-            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
-                body: "ciccio".to_string(),
-                content_type: "text/plain".to_string(),
-                correlation_id: None,
-                attachments: Vec::new(),
-            }),
-        );
-        crate::process_reticulumd_inbound_envelope(&state, &envelope).expect("process inbound");
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "reply after inbound presence",
-                            "destination": inbound_source
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let request = rpc_server.join().expect("rpc server");
-        assert_eq!(request.method, "sdk_send_v2");
-        let params = request.params.expect("params");
-        assert_eq!(params["destination"], inbound_source);
-        assert!(params.get("method").is_none());
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        let reply = snapshot
-            .messages
-            .iter()
-            .find(|message| message.content == "reply after inbound presence")
-            .expect("reply message");
-        assert_eq!(reply.delivery_method, "direct");
-        assert_eq!(reply.delivery_policy_reason, "fresh_presence");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
     #[test]
     fn rem_checklist_dispatch_uses_stored_human_readable_text_body() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
@@ -49563,630 +47197,6 @@ mod tests {
             message.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"],
             "mission.registry.eam.upsert"
         );
-    }
-
-    #[tokio::test]
-    #[ignore = "route handlers now enqueue attachment sends for the outbound worker"]
-    async fn chat_message_route_dispatches_lxmf_attachment_fields_through_reticulumd_rpc() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-reticulumd-chat-attachment-{}.db",
-            Uuid::new_v4()
-        ));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let attachment_bytes = b"attachment from rust";
-        let attachment_hash = Sha256::digest(attachment_bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let boundary = format!("r3akt-boundary-{}", Uuid::new_v4().simple());
-        let uploaded = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Attachment")
-                    .header("X-API-Key", "secret")
-                    .header(
-                        axum::http::header::CONTENT_TYPE,
-                        format!("multipart/form-data; boundary={boundary}"),
-                    )
-                    .body(Body::from(multipart_attachment_body(
-                        &boundary,
-                        "file",
-                        "report.txt",
-                        "text/plain",
-                        attachment_bytes,
-                        &attachment_hash,
-                        "ops",
-                    )))
-                    .expect("request"),
-            )
-            .await
-            .expect("upload response");
-        assert_eq!(uploaded.status(), StatusCode::OK);
-        let body = uploaded
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let uploaded_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        let file_id = uploaded_payload["FileID"].as_u64().expect("file id");
-
-        let message = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "scope": "dm",
-                            "destination": "target-destination",
-                            "content": "with attachment",
-                            "file_ids": [file_id]
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(message.status(), StatusCode::OK);
-        let body = message
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let response_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert!(
-            response_payload["DeliveryMetadata"]
-                .get("lxmf_fields")
-                .is_none()
-        );
-
-        let request = rpc_server.join().expect("rpc server");
-        assert_eq!(request.method, "send_message_v2");
-        let params = request.params.expect("params");
-        assert_eq!(params["source"], "source-destination");
-        assert_eq!(params["destination"], "target-destination");
-        assert_eq!(params["content"], "with attachment");
-        assert_eq!(params["fields"]["attachments"][0]["name"], "report.txt");
-        assert_eq!(
-            params["fields"]["attachments"][0]["data"],
-            "base64:YXR0YWNobWVudCBmcm9tIHJ1c3Q="
-        );
-        assert!(
-            params["fields"]
-                .get(crate::FIELD_EVENT.to_string())
-                .is_none()
-        );
-
-        if let Some(path) = uploaded_payload["Path"].as_str() {
-            let _ = std::fs::remove_file(path);
-        }
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "route handlers now enqueue direct sends for the outbound worker"]
-    async fn message_route_uses_direct_reticulumd_send_for_live_present_target() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path =
-            std::env::temp_dir().join(format!("r3akt-rch-reticulumd-live-{}.db", Uuid::new_v4()));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let joined = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/RCH?identity=target-destination")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("join response");
-        assert_eq!(joined.status(), StatusCode::OK);
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "direct from rust server",
-                            "destination": "target-destination"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let request = rpc_server.join().expect("rpc server");
-        let params = request.params.expect("params");
-        assert_eq!(request.method, "sdk_send_v2");
-        assert!(params.get("method").is_none());
-
-        let diagnostics = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-        let body = diagnostics
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let diagnostics_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["pending_receipts"],
-            1
-        );
-        assert_eq!(diagnostics_payload["outbound_delivery"]["sent"], 1);
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["receipt_timeout_total"],
-            0
-        );
-        assert!(
-            diagnostics_payload["outbound_delivery"]["oldest_pending_receipt_age_ms"]
-                .as_i64()
-                .expect("pending receipt age")
-                >= 0
-        );
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_method, "direct");
-        assert_eq!(
-            snapshot.messages[0].delivery_policy_reason,
-            "fresh_presence"
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["dispatch_status"],
-            "accepted"
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["reticulumd_dispatch_count"],
-            1
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_pending"],
-            true
-        );
-        assert!(
-            snapshot.messages[0].delivery_metadata["receipt_registered_ts_ms"]
-                .as_i64()
-                .is_some()
-        );
-        assert!(
-            snapshot.messages[0].delivery_metadata["receipt_deadline_ts_ms"]
-                .as_i64()
-                .expect("receipt deadline")
-                >= snapshot.messages[0].delivery_metadata["receipt_registered_ts_ms"]
-                    .as_i64()
-                    .expect("receipt registered")
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "delivery receipts are now observed by worker/callback paths after deferred dispatch"]
-    async fn chat_dm_polls_reticulumd_receipt_failure_after_send() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
-            json!({ "message_id": "message" }),
-            json!({
-                "message": {
-                    "id": "message",
-                    "receipt_status": "failed: peer not announced"
-                }
-            }),
-        ]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-chat-dm-receipt-failure-{}.db",
-            Uuid::new_v4()
-        ));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let joined = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/RCH?identity=target-destination")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("join response");
-        assert_eq!(joined.status(), StatusCode::OK);
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "scope": "dm",
-                            "destination": "target-destination",
-                            "content": "chat dm receipt failure"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("chat response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert!(
-            matches!(payload["State"].as_str(), Some("sent" | "queued")),
-            "unexpected initial state: {}",
-            payload["State"]
-        );
-        assert_eq!(
-            payload["DeliveryMetadata"]["delivery_receipt_required"],
-            true
-        );
-
-        let diagnostics = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].method, "sdk_send_v2");
-        assert_eq!(requests[1].method, "sdk_status_v2");
-
-        let snapshot = RchSqliteStore::open(&db_path)
-            .expect("open sqlite")
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        assert_eq!(snapshot.messages[0].delivery_state, "failed");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_pending"],
-            false
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_status"],
-            "failed: peer not announced"
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "internal receipt callback setup previously depended on synchronous route dispatch"]
-    async fn internal_delivery_receipt_clears_pending_direct_receipt_like_python_callback() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-reticulumd-receipt-callback-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let app = crate::create_app_with_state(state.clone());
-
-        let joined = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/RCH?identity=target-destination")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("join response");
-        assert_eq!(joined.status(), StatusCode::OK);
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "direct receipt callback",
-                            "destination": "target-destination"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let _request = rpc_server.join().expect("rpc server");
-        let message_id = state
-            .messages
-            .read()
-            .expect("messages")
-            .first()
-            .expect("message")
-            .message_id
-            .clone();
-
-        let receipt = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/internal/delivery-receipt")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "MessageID": message_id,
-                            "AcknowledgementType": "delivery_receipt"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("receipt response");
-        assert_eq!(receipt.status(), StatusCode::OK);
-        let body = receipt
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["status"], "delivered");
-        assert_eq!(payload["message"]["delivery_state"], "delivered");
-        assert_eq!(payload["message"]["delivery_metadata"]["acked"], true);
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["receipt_pending"],
-            false
-        );
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["acknowledgement_type"],
-            "delivery_receipt"
-        );
-        assert_eq!(payload["event"]["event_type"], "message_delivered");
-        assert_eq!(
-            payload["event"]["metadata"]["callback_source"],
-            "reticulumd_internal_adapter"
-        );
-        assert_eq!(
-            payload["event"]["metadata"]["callback_type"],
-            "delivery_receipt"
-        );
-
-        let diagnostics = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-        let body = diagnostics
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let diagnostics_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["pending_receipts"],
-            0
-        );
-        assert_eq!(diagnostics_payload["outbound_delivery"]["failed"], 0);
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["receipt_timeout_total"],
-            0
-        );
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["callbacks"]["total"],
-            1
-        );
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["callbacks"]["delivery_receipt_total"],
-            1
-        );
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["callbacks"]["delivery_failure_total"],
-            0
-        );
-        assert!(
-            diagnostics_payload["outbound_delivery"]["callbacks"]["last_callback_ts_ms"]
-                .as_i64()
-                .is_some()
-        );
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_pending"],
-            false
-        );
-        assert_eq!(snapshot.messages[0].delivery_metadata["acked"], true);
-        assert!(
-            snapshot.messages[0].delivery_metadata["receipt_ack_ts_ms"]
-                .as_i64()
-                .is_some()
-        );
-        let delivered_event = snapshot
-            .system_events
-            .iter()
-            .find(|event| event.event_type == "message_delivered")
-            .expect("delivery event");
-        assert_eq!(
-            delivered_event.metadata["acknowledgement_type"],
-            "delivery_receipt"
-        );
-        assert_eq!(
-            delivered_event.metadata["callback_source"],
-            "reticulumd_internal_adapter"
-        );
-        assert_eq!(
-            delivered_event.metadata["callback_type"],
-            "delivery_receipt"
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    #[ignore = "diagnostics is snapshot-only; worker owns receipt polling"]
-    fn outbound_diagnostics_polls_reticulumd_delivered_receipt_status() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
-            "message": {
-                "id": "message",
-                "receipt_status": "delivered"
-            }
-        })]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-status-poll-delivered-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "status poll delivered",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "sent",
-            json!({
-                "dispatch_status": "accepted",
-                "reticulumd_dispatch_count": 1,
-                "receipt_pending": true,
-                "receipt_registered_ts_ms": crate::unix_now_ms(),
-                "receipt_deadline_ts_ms": crate::unix_now_ms() + 30_000,
-            }),
-        )
-        .expect("mark pending receipt");
-        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_receipts"], 0);
-        assert_eq!(diagnostics["sent"], 0);
-        assert_eq!(diagnostics["failed"], 0);
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].method, "sdk_status_v2");
-        assert_eq!(
-            requests[0].params.as_ref().expect("params")["message_id"],
-            format!("sdk-{}", message.message_id)
-        );
-
-        let snapshot = RchSqliteStore::open(&db_path)
-            .expect("open sqlite")
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
-        assert_eq!(snapshot.messages[0].delivery_metadata["acked"], true);
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_pending"],
-            false
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_status"],
-            "delivered"
-        );
-        let event = snapshot
-            .system_events
-            .iter()
-            .find(|event| event.event_type == "message_delivered")
-            .expect("delivery event");
-        assert_eq!(event.metadata["callback_type"], "delivery_receipt");
-
-        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
@@ -51126,7 +48136,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "diagnostics is snapshot-only; worker owns receipt polling"]
     fn outbound_diagnostics_polls_reticulumd_delivered_status_for_propagated_target() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
             "message": {
@@ -51352,7 +48361,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "diagnostics is snapshot-only; worker owns receipt polling"]
     fn outbound_diagnostics_polls_reticulumd_failure_without_required_receipt() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
             "message": {
@@ -51423,91 +48431,6 @@ mod tests {
         );
         assert_eq!(
             snapshot.messages[0].delivery_metadata["error"],
-            "failed: link activation timed out"
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    #[ignore = "diagnostics is snapshot-only; worker owns receipt polling"]
-    fn outbound_diagnostics_polls_raw_reticulumd_id_for_propagated_failure() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_responses(vec![
-            (
-                None,
-                Some(ReticulumdRpcError {
-                    code: "NOT_FOUND".to_string(),
-                    message: "message not found".to_string(),
-                    ..Default::default()
-                }),
-            ),
-            (
-                Some(json!({
-                    "message": {
-                        "id": "message",
-                        "receipt_status": "failed: link activation timed out"
-                    }
-                })),
-                None,
-            ),
-        ]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-status-poll-raw-id-failed-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let message = crate::record_outbound_message(
-            &state,
-            "status poll raw id failed",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "propagated",
-            json!({
-                "dispatch_status": "accepted",
-                "delivery_receipt_required": false,
-                "reticulumd_dispatch_count": 1,
-                "reticulumd_receipt_targets": [{
-                    "message_id": message.message_id.clone(),
-                    "destination": "target-destination",
-                    "status": "pending"
-                }],
-                "receipt_pending": false,
-            }),
-        )
-        .expect("mark propagated without receipt");
-        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_receipts"], 0);
-        assert_eq!(diagnostics["failed"], 1);
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].method, "sdk_status_v2");
-        assert_eq!(requests[1].method, "sdk_status_v2");
-        assert_eq!(
-            requests[0].params.as_ref().expect("params")["message_id"],
-            format!("sdk-{}", message.message_id)
-        );
-        assert_eq!(
-            requests[1].params.as_ref().expect("params")["message_id"],
-            message.message_id
-        );
-
-        let snapshot = RchSqliteStore::open(&db_path)
-            .expect("open sqlite")
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        assert_eq!(snapshot.messages[0].delivery_state, "failed");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_status"],
             "failed: link activation timed out"
         );
 
@@ -52618,168 +49541,6 @@ mod tests {
             .and_then(|message| message.get("content"))
             .and_then(Value::as_str)
             .or_else(|| event.payload.get("content").and_then(Value::as_str))
-    }
-
-    #[tokio::test]
-    #[ignore = "internal failure callback setup previously depended on synchronous route dispatch"]
-    async fn internal_delivery_failure_marks_pending_direct_receipt_failed_like_python_callback() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-reticulumd-failure-callback-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let app = crate::create_app_with_state(state.clone());
-
-        let joined = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/RCH?identity=target-destination")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("join response");
-        assert_eq!(joined.status(), StatusCode::OK);
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "direct failure callback",
-                            "destination": "target-destination"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let _request = rpc_server.join().expect("rpc server");
-        let message_id = state
-            .messages
-            .read()
-            .expect("messages")
-            .first()
-            .expect("message")
-            .message_id
-            .clone();
-
-        let failure = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/internal/delivery-failure")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "MessageID": message_id,
-                            "Reason": "delivery_failed"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("failure response");
-        assert_eq!(failure.status(), StatusCode::OK);
-        let body = failure
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["status"], "failed");
-        assert_eq!(payload["message"]["delivery_state"], "failed");
-        assert_eq!(payload["message"]["delivery_metadata"]["acked"], false);
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["receipt_pending"],
-            false
-        );
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["error"],
-            "delivery_failed"
-        );
-        assert_eq!(payload["event"]["event_type"], "message_delivery_failed");
-
-        let diagnostics = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-        let body = diagnostics
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let diagnostics_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["pending_receipts"],
-            0
-        );
-        assert_eq!(diagnostics_payload["outbound_delivery"]["failed"], 1);
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["receipt_timeout_total"],
-            0
-        );
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "failed");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_pending"],
-            false
-        );
-        assert_eq!(snapshot.messages[0].delivery_metadata["acked"], false);
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["error"],
-            "delivery_failed"
-        );
-        assert!(
-            snapshot.messages[0].delivery_metadata["delivery_failed_ts_ms"]
-                .as_i64()
-                .is_some()
-        );
-        let failed_event = snapshot
-            .system_events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_failed")
-            .expect("delivery failure event");
-        assert_eq!(failed_event.metadata["failure_reason"], "delivery_failed");
-
-        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
@@ -55125,161 +51886,6 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
     }
 
-    #[tokio::test]
-    #[ignore = "runtime diagnostics is snapshot-only; worker finalizes receipts"]
-    async fn runtime_diagnostics_finalizes_expired_direct_receipt() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-reticulumd-receipt-timeout-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
-        let app = crate::create_app_with_state(state.clone());
-
-        let joined = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/RCH?identity=target-destination")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("join response");
-        assert_eq!(joined.status(), StatusCode::OK);
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "direct receipt timeout",
-                            "destination": "target-destination"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let request = rpc_server.join().expect("rpc server");
-        let params = request.params.expect("params");
-        assert!(params.get("method").is_none());
-
-        {
-            let mut messages = state.messages.write().expect("messages");
-            let message = messages.first_mut().expect("message");
-            crate::merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "receipt_deadline_ts_ms": crate::unix_now_ms() - 1,
-                }),
-            );
-        }
-        state.persist().expect("persist expired receipt marker");
-
-        let diagnostics = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-        let body = diagnostics
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let diagnostics_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["pending_receipts"],
-            0
-        );
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["receipt_timeout_total"],
-            1
-        );
-        assert_eq!(diagnostics_payload["outbound_delivery"]["timeout_total"], 0);
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["timed_out_sends"],
-            0
-        );
-        assert_eq!(diagnostics_payload["outbound_delivery"]["failed"], 0);
-        assert_eq!(diagnostics_payload["outbound_delivery"]["retry_total"], 1);
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "queued");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["dispatch_status"],
-            "queued"
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["error"],
-            "delivery_receipt_timeout"
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_pending"],
-            false
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_timeout"],
-            true
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["retry_scheduled"],
-            true
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["retry_reason"],
-            "delivery_receipt_timeout"
-        );
-        let retry_event = snapshot
-            .system_events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_retrying")
-            .expect("delivery retry system event");
-        assert_eq!(
-            retry_event.message,
-            "Retrying message delivery to target-destination"
-        );
-        assert_eq!(
-            retry_event.metadata["MessageID"],
-            snapshot.messages[0].message_id
-        );
-        assert_eq!(
-            retry_event.metadata["retry_reason"],
-            "delivery_receipt_timeout"
-        );
-        assert_eq!(
-            retry_event.metadata["DeliveryMetadata"]["receipt_timeout"],
-            true
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
     #[test]
     fn runtime_diagnostics_does_not_finalize_expired_receipts() {
         let state = crate::AppState::default();
@@ -55379,401 +51985,6 @@ mod tests {
             .expect("failure event");
         assert_eq!(failure_event.event_type, "message_delivery_failed");
         drop(events);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "route handlers now enqueue direct sends, so cooldown is worker-driven"]
-    async fn direct_reticulumd_failure_cools_down_next_targeted_send_to_propagated() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_responses(vec![
-            (
-                None,
-                Some(ReticulumdRpcError {
-                    code: "send_failed".to_string(),
-                    message: "offline".to_string(),
-                    ..ReticulumdRpcError::default()
-                }),
-            ),
-            (Some(json!({ "message_id": "message" })), None),
-        ]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-reticulumd-cooldown-{}.db",
-            Uuid::new_v4()
-        ));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let joined = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/RCH?identity=target-destination")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("join response");
-        assert_eq!(joined.status(), StatusCode::OK);
-
-        for (content, expected_status) in [
-            ("first send should retry", StatusCode::OK),
-            ("second send should propagate", StatusCode::OK),
-        ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(Method::POST)
-                        .uri("/Message")
-                        .header("X-API-Key", "secret")
-                        .header(axum::http::header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(
-                            json!({
-                                "content": content,
-                                "destination": "target-destination"
-                            })
-                            .to_string(),
-                        ))
-                        .expect("request"),
-                )
-                .await
-                .expect("message response");
-            assert_eq!(response.status(), expected_status);
-        }
-
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].method, "sdk_send_v2");
-        assert!(
-            requests[0]
-                .params
-                .as_ref()
-                .expect("params")
-                .get("method")
-                .is_none()
-        );
-        assert_eq!(
-            requests[1].params.as_ref().expect("params")["method"],
-            "propagated"
-        );
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(
-            snapshot.messages[0].delivery_policy_reason,
-            "fresh_presence"
-        );
-        assert_eq!(
-            snapshot.messages[1].delivery_policy_reason,
-            "direct_cooldown"
-        );
-        assert_eq!(snapshot.messages[0].delivery_state, "queued");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["dispatch_status"],
-            "queued"
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["retry_reason"],
-            "send_error"
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["retry_scheduled"],
-            true
-        );
-        assert!(
-            snapshot.messages[0].delivery_metadata["error"]
-                .as_str()
-                .expect("error string")
-                .contains("reticulumd RPC send_failed: offline")
-        );
-        assert_eq!(snapshot.messages[1].delivery_state, "propagated");
-        assert_eq!(
-            snapshot.messages[1].delivery_metadata["dispatch_status"],
-            "accepted"
-        );
-        assert_eq!(
-            snapshot.messages[1].delivery_metadata["reticulumd_dispatch_count"],
-            1
-        );
-        let retry_event = snapshot
-            .system_events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_retrying")
-            .expect("send retry system event");
-        assert_eq!(
-            retry_event.message,
-            "Retrying message delivery to target-destination"
-        );
-        assert_eq!(
-            retry_event.metadata["MessageID"],
-            snapshot.messages[0].message_id
-        );
-        assert_eq!(retry_event.metadata["retry_reason"], "send_error");
-        assert!(
-            retry_event.metadata["DeliveryMetadata"]["error"]
-                .as_str()
-                .expect("retry event error")
-                .contains("reticulumd RPC send_failed: offline")
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "topic fanout now enqueues for the outbound worker"]
-    async fn chat_topic_send_fans_out_through_reticulumd_rpc_subscribers() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_for_request_count(2);
-        let db_path =
-            std::env::temp_dir().join(format!("r3akt-rch-reticulumd-topic-{}.db", Uuid::new_v4()));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "source-destination"),
-        );
-
-        let topic = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Topic")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "TopicID": "ops",
-                            "TopicName": "Ops",
-                            "TopicPath": "ops"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("topic response");
-        assert_eq!(topic.status(), StatusCode::OK);
-
-        for destination in ["dest-a", "dest-b"] {
-            let subscriber = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(Method::POST)
-                        .uri("/Subscriber/Add")
-                        .header("X-API-Key", "secret")
-                        .header(axum::http::header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(
-                            json!({
-                                "Destination": destination,
-                                "TopicID": "ops"
-                            })
-                            .to_string(),
-                        ))
-                        .expect("request"),
-                )
-                .await
-                .expect("subscriber response");
-            assert_eq!(subscriber.status(), StatusCode::OK);
-        }
-
-        let message = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "scope": "topic",
-                            "topic_id": "ops",
-                            "content": "topic fanout from rust"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(message.status(), StatusCode::OK);
-
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 2);
-        let mut message_ids = requests
-            .iter()
-            .map(|request| {
-                request.params.as_ref().expect("params")["id"]
-                    .as_str()
-                    .expect("message id")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        message_ids.sort();
-        message_ids.dedup();
-        assert_eq!(message_ids.len(), 2);
-        assert!(message_ids.iter().any(|id| id.contains("-fanout-")));
-        let mut destinations = requests
-            .iter()
-            .map(|request| {
-                assert_eq!(request.method, "sdk_send_v2");
-                let params = request.params.as_ref().expect("params");
-                assert_eq!(params["source"], "source-destination");
-                assert_eq!(params["content"], "topic fanout from rust");
-                assert!(params.get("method").is_none());
-                params["destination"]
-                    .as_str()
-                    .expect("destination")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        destinations.sort();
-        assert_eq!(destinations, vec!["dest-a", "dest-b"]);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "topic fanout now enqueues for the outbound worker"]
-    async fn chat_topic_send_fans_out_to_fifty_members_reliably() {
-        const MEMBER_COUNT: usize = 50;
-
-        let (endpoint, rpc_server) =
-            fake_reticulumd_rpc_server_for_request_count_with_accept_timeout(
-                MEMBER_COUNT,
-                Duration::from_secs(15),
-            );
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-reticulumd-topic-fifty-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "source-destination");
-        let app = crate::create_app_with_state(state.clone());
-
-        let topic = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Topic")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "TopicID": "ops-50",
-                            "TopicName": "Ops 50",
-                            "TopicPath": "ops/50"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("topic response");
-        assert_eq!(topic.status(), StatusCode::OK);
-
-        for index in 0..MEMBER_COUNT {
-            let destination = format!("{index:032x}");
-            let subscriber = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(Method::POST)
-                        .uri("/Subscriber/Add")
-                        .header("X-API-Key", "secret")
-                        .header(axum::http::header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(
-                            json!({
-                                "Destination": destination,
-                                "TopicID": "ops-50"
-                            })
-                            .to_string(),
-                        ))
-                        .expect("request"),
-                )
-                .await
-                .expect("subscriber response");
-            assert_eq!(subscriber.status(), StatusCode::OK);
-        }
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Chat/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "scope": "topic",
-                            "topic_id": "ops-50",
-                            "content": "topic fanout to fifty members"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), MEMBER_COUNT);
-        let mut destinations = requests
-            .iter()
-            .map(|request| {
-                assert_eq!(request.method, "sdk_send_v2");
-                let params = request.params.as_ref().expect("params");
-                assert_eq!(params["source"], "source-destination");
-                assert_eq!(params["content"], "topic fanout to fifty members");
-                assert!(params.get("method").is_none());
-                params["destination"]
-                    .as_str()
-                    .expect("destination")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        destinations.sort();
-        destinations.dedup();
-        assert_eq!(destinations.len(), MEMBER_COUNT);
-        assert_eq!(
-            destinations.first().map(String::as_str),
-            Some("00000000000000000000000000000000")
-        );
-        assert_eq!(
-            destinations.last().map(String::as_str),
-            Some("00000000000000000000000000000031")
-        );
-
-        let stored = state
-            .messages
-            .read()
-            .expect("messages")
-            .iter()
-            .find(|message| message.content == "topic fanout to fifty members")
-            .cloned()
-            .expect("stored topic message");
-        assert_eq!(stored.delivery_mode, r3akt_rch_core::DeliveryMode::Fanout);
-        assert_eq!(stored.delivery_state, "sent");
-        assert_eq!(stored.delivery_metadata["dispatch_status"], "accepted");
-        assert_eq!(
-            stored.delivery_metadata["reticulumd_dispatch_count"],
-            MEMBER_COUNT
-        );
-        assert_eq!(stored.delivery_metadata["receipt_pending"], false);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -57622,123 +53833,6 @@ mod tests {
             crate::outbound_destinations(&state, &broadcast).expect("broadcast destinations"),
             Vec::<String>::new()
         );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    #[ignore = "broadcast route now enqueues fanout for the outbound worker"]
-    fn broadcast_includes_stale_columba_chat_identity() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-broadcast-refresh-stale-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let stale_ts_ms = (crate::unix_now_ms()
-            .saturating_sub(crate::OUTBOUND_BROADCAST_ACTIVE_WINDOW_MS)
-            .saturating_sub(1_000)
-            / 1000)
-            * 1000;
-        let stale_ts = stale_ts_ms / 1000;
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "6521979f1165965b24731061ef4a6906".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Pixel".to_string()),
-                source_interface: Some("app_data_utf8".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "name=pixel".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: stale_ts_ms,
-                last_seen_ts_ms: stale_ts_ms,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "fb4c70e20cfac047b899ca2f3671b50a".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Pixel".to_string()),
-                source_interface: Some("delivery_app_data".to_string()),
-                announce_capabilities: Vec::new(),
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: stale_ts_ms,
-                last_seen_ts_ms: stale_ts_ms,
-            },
-        ];
-        snapshot.clients = vec![r3akt_rch_core::ClientRecord {
-            identity: "fb4c70e20cfac047b899ca2f3671b50a".to_string(),
-            first_seen_ts_ms: stale_ts_ms,
-            last_seen_ts_ms: stale_ts_ms,
-            nickname: None,
-            role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.to_string(),
-            paused: false,
-            text_only: false,
-            last_chat_ts_ms: None,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-        let announce_response = json!({
-            "announces": [
-                {
-                    "id": "announce-pixel-rem-stale",
-                    "peer": "6521979f1165965b24731061ef4a6906",
-                    "timestamp": stale_ts,
-                    "name": "R3AKT,EMergencyMessages,Telemetry;name=Pixel",
-                    "name_source": "app_data_utf8",
-                    "first_seen": stale_ts,
-                    "seen_count": 1,
-                    "app_data_hex": null,
-                    "capabilities": [],
-                    "rssi": null,
-                    "snr": null,
-                    "q": null,
-                    "stamp_cost": null,
-                    "stamp_cost_flexibility": null,
-                    "peering_cost": null
-                },
-                {
-                    "id": "announce-pixel-generic-stale",
-                    "peer": "fb4c70e20cfac047b899ca2f3671b50a",
-                    "timestamp": stale_ts,
-                    "name": "Pixel",
-                    "name_source": "delivery_app_data",
-                    "first_seen": stale_ts,
-                    "seen_count": 1,
-                    "app_data_hex": null,
-                    "capabilities": [],
-                    "rssi": null,
-                    "snr": null,
-                    "q": null,
-                    "stamp_cost": null,
-                    "stamp_cost_flexibility": null,
-                    "peering_cost": null
-                }
-            ],
-            "next_cursor": null
-        });
-        let (endpoint, rpc_server) =
-            fake_reticulumd_rpc_server_with_results(vec![announce_response]);
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_reticulumd_rpc(endpoint, "53ef0ae8313c044deb4a5256a878a6de");
-
-        let records = crate::broadcast_client_records_for_state(&state).expect("broadcast records");
-
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].identity, "fb4c70e20cfac047b899ca2f3671b50a");
-        assert_eq!(records[0].client_type, "generic_lxmf");
-        assert!(!records[0].is_rem_capable);
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests[0].method, "list_announces");
-        let snapshot = crate::with_rch_snapshot(&state, false, |snapshot| Ok(snapshot.clone()))
-            .expect("snapshot");
-        let pixel_rem = snapshot
-            .identity_announces
-            .iter()
-            .find(|record| record.destination_hash == "6521979f1165965b24731061ef4a6906")
-            .expect("pixel rem");
-        assert_eq!(pixel_rem.last_seen_ts_ms, stale_ts_ms);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -60516,87 +56610,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "deferred outbound sends no longer emit message_sent during the request"]
-    async fn events_route_persists_northbound_events_with_python_shape() {
-        let db_path =
-            std::env::temp_dir().join(format!("r3akt-rch-system-events-{}.db", Uuid::new_v4()));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret"),
-        );
-
-        let send_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({"content":"event-backed send","topic_id":"events"}).to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("send response");
-        assert_eq!(send_response.status(), StatusCode::OK);
-
-        let events_response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Events")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("events response");
-        assert_eq!(events_response.status(), StatusCode::OK);
-        let body = events_response
-            .into_body()
-            .collect()
-            .await
-            .expect("events body")
-            .to_bytes();
-        let events: serde_json::Value = serde_json::from_slice(&body).expect("events json");
-        assert_eq!(events[0]["type"], "message_sent");
-        assert_eq!(events[0]["message"], "Message sent from Rust northbound");
-        assert_eq!(events[0]["metadata"]["topic_id"], "events");
-        assert_eq!(events[0]["origin"], "rust");
-        assert!(events[0]["timestamp"].as_str().is_some());
-
-        let restarted = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("restart state")
-                .with_api_key("secret"),
-        );
-        let restart_response = restarted
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Events")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("restart events response");
-        let body = restart_response
-            .into_body()
-            .collect()
-            .await
-            .expect("restart body")
-            .to_bytes();
-        let restarted_events: serde_json::Value =
-            serde_json::from_slice(&body).expect("restart events json");
-        assert_eq!(restarted_events[0]["type"], "message_sent");
-        assert_eq!(restarted_events[0]["metadata"]["topic_id"], "events");
-    }
-
-    #[tokio::test]
     async fn events_route_marks_recovered_delivery_failures_superseded() {
         let state = crate::AppState::default().with_api_key("secret");
         let message = crate::OutboundMessageRecord {
@@ -61619,194 +57632,6 @@ mod tests {
         assert_eq!(restored_records[0].timestamp_s, 3);
 
         let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    #[ignore = "telemetry route now persists row-level records immediately"]
-    async fn telemetry_route_persists_entries_with_python_shape() {
-        let db_path =
-            std::env::temp_dir().join(format!("r3akt-rch-telemetry-{}.db", Uuid::new_v4()));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret");
-        state
-            .record_telemetry(
-                "peer-a",
-                json!({"location":{"latitude":45.5,"longitude":-63.2}}),
-                1_714_000_000,
-                Some("Alpha".to_string()),
-            )
-            .expect("record telemetry");
-        state
-            .record_telemetry(
-                "peer-a",
-                json!({"location":{"latitude":46.0,"longitude":-64.0}}),
-                1_714_000_050,
-                Some("Alpha Latest".to_string()),
-            )
-            .expect("record newer telemetry");
-        state
-            .record_telemetry(
-                "peer-b",
-                json!({"battery":{"percent":99}}),
-                1_714_000_060,
-                Some("Battery Only".to_string()),
-            )
-            .expect("record non-location telemetry");
-        state
-            .record_telemetry(
-                "peer-c",
-                json!({"location":{"latitude":44.0,"longitude":-62.0}}),
-                1_714_000_040,
-                Some("Charlie".to_string()),
-            )
-            .expect("record second peer telemetry");
-        let app = crate::create_app_with_state(state);
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Telemetry?since=1713999999")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("telemetry response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["entries"].as_array().expect("entries").len(), 2);
-        assert_eq!(payload["entries"][0]["peer_destination"], "peer-a");
-        assert_eq!(payload["entries"][0]["timestamp"], 1_714_000_050);
-        assert_eq!(payload["entries"][0]["display_name"], "Alpha Latest");
-        assert_eq!(payload["entries"][0]["identity_label"], "Alpha Latest");
-        assert_eq!(
-            payload["entries"][0]["telemetry"]["location"]["latitude"],
-            46.0
-        );
-        assert_eq!(payload["entries"][1]["peer_destination"], "peer-c");
-
-        let flushed = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Command/FlushTelemetry")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("flush response");
-        assert_eq!(flushed.status(), StatusCode::OK);
-        let body = flushed
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload, json!({ "deleted": 4 }));
-
-        let after_flush = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Telemetry?since=0")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("after flush response");
-        assert_eq!(after_flush.status(), StatusCode::OK);
-        let body = after_flush
-            .into_body()
-            .collect()
-            .await
-            .expect("after flush body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("after flush json");
-        assert_eq!(payload["entries"], json!([]));
-
-        for uri in ["/Telemetry", "/Telemetry?since=not-a-number"] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(Method::GET)
-                        .uri(uri)
-                        .header("X-API-Key", "secret")
-                        .body(Body::empty())
-                        .expect("request"),
-                )
-                .await
-                .expect("invalid telemetry query response");
-            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{uri}");
-        }
-
-        let events = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Events")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("events response");
-        assert_eq!(events.status(), StatusCode::OK);
-        let body = events
-            .into_body()
-            .collect()
-            .await
-            .expect("events body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("events json");
-        assert_eq!(payload[0]["type"], "telemetry_flushed");
-        assert_eq!(payload[0]["metadata"]["deleted"], 4);
-
-        let restarted = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("restart state")
-                .with_api_key("secret"),
-        );
-        let restart_response = restarted
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/Telemetry?since=1714000001")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("restart response");
-        let body = restart_response
-            .into_body()
-            .collect()
-            .await
-            .expect("restart body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("restart json");
-        assert_eq!(payload["entries"], json!([]));
-        let snapshot = RchSqliteStore::open(&db_path)
-            .expect("store")
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert!(snapshot.telemetry_records.is_empty());
-        assert_eq!(snapshot.system_events[0].event_type, "telemetry_flushed");
     }
 
     #[tokio::test]

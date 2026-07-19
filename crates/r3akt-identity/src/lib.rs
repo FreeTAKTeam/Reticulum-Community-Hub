@@ -1,10 +1,19 @@
 #![allow(clippy::missing_errors_doc)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::let_underscore_must_use,
+        clippy::panic,
+        clippy::unwrap_used
+    )
+)]
 
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
 use r3akt_protocol::NodeId;
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeIdentity {
@@ -40,7 +49,7 @@ pub enum TrustLevel {
 pub struct TrustRecord {
     pub node_id: NodeId,
     pub level: TrustLevel,
-    pub updated_at: OffsetDateTime,
+    pub updated_at: DateTime<Utc>,
     pub reason: Option<String>,
 }
 
@@ -50,7 +59,7 @@ impl TrustRecord {
         Self {
             node_id,
             level: TrustLevel::Unknown,
-            updated_at: OffsetDateTime::now_utc(),
+            updated_at: Utc::now(),
             reason: None,
         }
     }
@@ -59,7 +68,7 @@ impl TrustRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnrollmentRequest {
     pub identity: NodeIdentity,
-    pub requested_at: OffsetDateTime,
+    pub requested_at: DateTime<Utc>,
     pub attestation_hint: Option<String>,
 }
 
@@ -68,7 +77,7 @@ impl EnrollmentRequest {
     pub fn new(identity: NodeIdentity) -> Self {
         Self {
             identity,
-            requested_at: OffsetDateTime::now_utc(),
+            requested_at: Utc::now(),
             attestation_hint: None,
         }
     }
@@ -141,7 +150,7 @@ impl IdentityDirectory {
         let trust = TrustRecord {
             node_id: node_id.clone(),
             level: TrustLevel::Trusted,
-            updated_at: OffsetDateTime::now_utc(),
+            updated_at: Utc::now(),
             reason,
         };
         self.trust.insert(node_id.clone(), trust.clone());
@@ -177,7 +186,7 @@ impl IdentityDirectory {
             TrustRecord {
                 node_id: node_id.clone(),
                 level: TrustLevel::Revoked,
-                updated_at: OffsetDateTime::now_utc(),
+                updated_at: Utc::now(),
                 reason,
             },
         );

@@ -1,16 +1,13 @@
 #![allow(clippy::too_many_lines, clippy::similar_names)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, NaiveDate, NaiveTime, SecondsFormat, Utc};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OpenFlags, Row, Transaction, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use time::{
-    Date, Month, OffsetDateTime, PrimitiveDateTime, Time, format_description::well_known::Rfc3339,
-};
 
 use crate::{RchSqliteStore, TelemetryRecord};
 
@@ -145,7 +142,7 @@ pub fn migrate_python_database(
         "INSERT OR REPLACE INTO rch_settings (setting_key, setting_value) VALUES (?1, ?2)",
         params![
             "python_migration_completed_at",
-            OffsetDateTime::now_utc().format(&Rfc3339)?
+            Utc::now().to_rfc3339_opts(SecondsFormat::AutoSi, true)
         ],
     )?;
     transaction.commit()?;
@@ -490,13 +487,13 @@ fn merge_telemetry_value(telemetry: &mut Map<String, Value>, key: &str, value: V
 }
 
 fn blob_to_hex(value: &[u8]) -> String {
-    value.iter().fold(
-        String::with_capacity(value.len().saturating_mul(2)),
-        |mut output, byte| {
-            let _ = write!(output, "{byte:02x}");
-            output
-        },
-    )
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(value.len().saturating_mul(2));
+    for byte in value {
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    output
 }
 
 fn normalize_setting_segment(value: &str) -> String {
@@ -1790,8 +1787,8 @@ fn parse_datetime_ms(value: &str) -> Option<i64> {
     if let Ok(ms) = value.parse::<i64>() {
         return Some(ms);
     }
-    if let Ok(timestamp) = OffsetDateTime::parse(value, &Rfc3339) {
-        return nanos_to_ms(timestamp.unix_timestamp_nanos());
+    if let Ok(timestamp) = DateTime::parse_from_rfc3339(value) {
+        return Some(timestamp.timestamp_millis());
     }
     parse_python_datetime_ms(value)
 }
@@ -1803,33 +1800,25 @@ fn parse_python_datetime_ms(value: &str) -> Option<i64> {
     let time = parts.next()?;
     let mut date_parts = date.split('-');
     let year = date_parts.next()?.parse::<i32>().ok()?;
-    let month = Month::try_from(date_parts.next()?.parse::<u8>().ok()?).ok()?;
-    let day = date_parts.next()?.parse::<u8>().ok()?;
+    let month = date_parts.next()?.parse::<u32>().ok()?;
+    let day = date_parts.next()?.parse::<u32>().ok()?;
     let mut time_parts = time.split(':');
-    let hour = time_parts.next()?.parse::<u8>().ok()?;
-    let minute = time_parts.next()?.parse::<u8>().ok()?;
+    let hour = time_parts.next()?.parse::<u32>().ok()?;
+    let minute = time_parts.next()?.parse::<u32>().ok()?;
     let second_part = time_parts.next()?;
     let (second_text, fraction_text) = second_part
         .split_once('.')
         .map_or((second_part, ""), |(second, fraction)| (second, fraction));
-    let second = second_text.parse::<u8>().ok()?;
+    let second = second_text.parse::<u32>().ok()?;
     let nanos = if fraction_text.is_empty() {
         0
     } else {
         let padded = format!("{fraction_text:0<9}");
         padded.get(..9)?.parse::<u32>().ok()?
     };
-    let date = Date::from_calendar_date(year, month, day).ok()?;
-    let time = Time::from_hms_nano(hour, minute, second, nanos).ok()?;
-    nanos_to_ms(
-        PrimitiveDateTime::new(date, time)
-            .assume_utc()
-            .unix_timestamp_nanos(),
-    )
-}
-
-fn nanos_to_ms(nanos: i128) -> Option<i64> {
-    i64::try_from(nanos / 1_000_000).ok()
+    let date = NaiveDate::from_ymd_opt(year, month, day)?;
+    let time = NaiveTime::from_hms_nano_opt(hour, minute, second, nanos)?;
+    Some(date.and_time(time).and_utc().timestamp_millis())
 }
 
 #[cfg(test)]
