@@ -4554,6 +4554,13 @@ impl RchCore {
                 format!("Unsupported mission command '{}'", command.command_type),
             ))];
         }
+        if let Err((reason_code, reason)) = self.validate_rem_team_scope(command) {
+            return vec![MissionSyncResponse::results(Self::rejected_result(
+                command,
+                reason_code,
+                reason,
+            ))];
+        }
         if let Some(required_capability) = required_capability(command.command_type.as_str()) {
             if self.authorization_required
                 && !self.has_identity_capability(&command.source.rns_identity, required_capability)
@@ -4672,6 +4679,13 @@ impl RchCore {
                 format!("Unsupported checklist command '{}'", command.command_type),
             ))];
         }
+        if let Err((reason_code, reason)) = self.validate_rem_team_scope(command) {
+            return vec![MissionSyncResponse::results(Self::rejected_result(
+                command,
+                reason_code,
+                reason,
+            ))];
+        }
         if let Some(required_capability) =
             checklist_required_capability(command.command_type.as_str())
         {
@@ -4738,6 +4752,37 @@ impl RchCore {
         reason: impl Into<String>,
     ) -> CommandResultEnvelope {
         Self::rejected_result_with_capabilities(command, reason_code, reason, Vec::new())
+    }
+
+    fn validate_rem_team_scope(
+        &self,
+        command: &MissionCommandEnvelope,
+    ) -> Result<(), (&'static str, String)> {
+        let Some(team_uid) = command
+            .args
+            .get("_rem_team_uid")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(());
+        };
+        if canonical_team_for_uid(team_uid).is_none() {
+            return Err((
+                "invalid_team",
+                "FIELD_GROUP must contain a canonical TEAM UID".to_string(),
+            ));
+        }
+        if !self
+            .shared_team_uids_for_rem_source(&command.source.rns_identity)
+            .contains(team_uid)
+        {
+            return Err((
+                "unauthorized_team",
+                "The REM caller is not a member of the requested TEAM".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn rejected_result_with_capabilities(

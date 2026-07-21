@@ -67,7 +67,9 @@ use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use futures_util::SinkExt;
 #[cfg(test)]
 use r3akt_profile_rch::FIELD_EVENT;
-use r3akt_profile_rch::{CommandResultStatus, FIELD_COMMANDS, MissionCommandEnvelope, RchSource};
+use r3akt_profile_rch::{
+    CommandResultStatus, FIELD_COMMANDS, FIELD_GROUP, MissionCommandEnvelope, RchSource,
+};
 use r3akt_protocol::{Destination, HealthTelemetry, Payload, ProtocolEnvelope};
 use r3akt_rch_bridge::{ReticulumdRpc, ReticulumdRpcClient};
 use r3akt_rch_core::{
@@ -4946,6 +4948,16 @@ fn process_reticulumd_inbound_mission_sync_command(
     };
     let mut core = RchCore::from_snapshot(snapshot.clone())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let team_uid = command
+        .args
+        .get("_rem_team_uid")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let team_destinations = team_uid.as_deref().map(|team_uid| {
+        core.rem_team_routing_destinations(envelope.source.to_string().as_str(), team_uid)
+    });
     let responses = if checklist {
         core.handle_checklist_sync_command(&mission_command)
     } else {
@@ -4970,8 +4982,14 @@ fn process_reticulumd_inbound_mission_sync_command(
             envelope.topic.to_string().as_str(),
             command,
             &response,
+            team_uid.as_deref(),
         )?;
-        fanout_mission_sync_response_to_team(state, &response)?;
+        fanout_mission_sync_response_to_team(
+            state,
+            &response,
+            team_uid.as_deref(),
+            team_destinations.as_deref(),
+        )?;
     }
     Ok(())
 }
@@ -5006,7 +5024,9 @@ fn send_mission_sync_response_to_source(
     topic: &str,
     command: &r3akt_protocol::Command,
     response: &r3akt_rch_core::MissionSyncResponse,
+    team_uid: Option<&str>,
 ) -> Result<OutboundMessageRecord, ApiError> {
+    let lxmf_fields = mission_response_fields(response, team_uid)?;
     record_outbound_message_with_metadata(
         state,
         response.content.as_str(),
@@ -5022,25 +5042,48 @@ fn send_mission_sync_response_to_source(
             "inbound_topic": topic,
             "command": command.name,
             "correlation_id": command.correlation_id,
-            "lxmf_fields": response.fields,
+            "lxmf_fields": lxmf_fields,
         }),
     )
+}
+
+fn mission_response_fields(
+    response: &r3akt_rch_core::MissionSyncResponse,
+    team_uid: Option<&str>,
+) -> Result<Value, ApiError> {
+    let mut fields = serde_json::to_value(&response.fields).map_err(|error| {
+        ApiError::Internal(format!(
+            "failed to serialize mission response LXMF fields: {error}"
+        ))
+    })?;
+    if let (Some(team_uid), Some(fields)) = (team_uid, fields.as_object_mut()) {
+        fields.insert(FIELD_GROUP.to_string(), json!(team_uid));
+    }
+    Ok(fields)
 }
 
 fn fanout_mission_sync_response_to_team(
     state: &AppState,
     response: &r3akt_rch_core::MissionSyncResponse,
+    team_uid: Option<&str>,
+    team_destinations: Option<&[String]>,
 ) -> Result<(), ApiError> {
     let Some(event) = response.event_field() else {
         return Ok(());
     };
-    let Some(mission_uid) = mission_uid_from_response_fields(response) else {
-        return Ok(());
+    let mission_uid = mission_uid_from_response_fields(response);
+    let destinations = if let Some(destinations) = team_destinations {
+        destinations.to_vec()
+    } else {
+        let Some(mission_uid) = mission_uid.as_deref() else {
+            return Ok(());
+        };
+        mission_team_member_destinations(state, mission_uid)?
     };
-    let destinations = mission_team_member_destinations(state, mission_uid.as_str())?;
     if destinations.is_empty() {
         return Ok(());
     }
+    let lxmf_fields = mission_response_fields(response, team_uid)?;
     let event_type = event
         .get("event_type")
         .and_then(Value::as_str)
@@ -5058,7 +5101,8 @@ fn fanout_mission_sync_response_to_team(
                 "source": "r3akt-rch-server",
                 "direction": "outbound",
                 "mission_uid": mission_uid,
-                "lxmf_fields": response.fields,
+                "team_uid": team_uid,
+                "lxmf_fields": lxmf_fields.clone(),
             }),
         )?;
     }
@@ -12888,7 +12932,9 @@ fn supported_commands_document() -> String {
             .to_string(),
         "`rem.registry.peers.list` returns active REM peers and `effective_connected_mode`."
             .to_string(),
-        "`rem.registry.team_peers.list` returns recent REM-capable peers in teams shared with the requesting REM identity."
+        "`rem.registry.team_peers.list` returns a versioned canonical TEAM directory, caller memberships, durable REM-member destinations, and legacy recent `items`."
+            .to_string(),
+        "Team-scoped REM commands use LXMF `FIELD_GROUP` (`0x0B`); RCH validates caller membership and constrains Connected-mode fanout to that TEAM."
             .to_string(),
         String::new(),
     ]);

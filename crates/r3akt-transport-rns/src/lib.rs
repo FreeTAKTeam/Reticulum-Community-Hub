@@ -2349,7 +2349,17 @@ fn direct_lxmf_message_envelope(
     let fields = message.get("fields").and_then(JsonValue::as_object);
     let source = optional_message_string(message, &["source", "source_hash", "source_id"])
         .unwrap_or("unknown");
-    if let Some(command) = direct_lxmf_mission_command(fields) {
+    if let Some(mut command) = direct_lxmf_mission_command(fields) {
+        if let Some(team_uid) = fields.and_then(|fields| {
+            optional_field_string(fields, &["11", "FIELD_GROUP", "group", "Group"])
+        }) {
+            if let Some(args) = command.args.as_object_mut() {
+                args.insert(
+                    "_rem_team_uid".to_string(),
+                    JsonValue::String(team_uid.to_string()),
+                );
+            }
+        }
         let mut envelope = ProtocolEnvelope::new(
             NodeId::new(source),
             Destination::Node(NodeId::new(local_source)),
@@ -5003,6 +5013,7 @@ mod tests {
                 "source": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "destination": "local-destination",
                 "fields": {
+                    "11": "43341e5c822d99857fa6e8641f2ca9c0",
                     "9": [{
                         "command_id": "hub-directory-123",
                         "command_type": "rem.registry.team_peers.list",
@@ -5035,7 +5046,12 @@ mod tests {
         };
         assert_eq!(command.name, "rem.registry.team_peers.list");
         assert_eq!(command.correlation_id.as_deref(), Some("hub-directory-123"));
-        assert_eq!(command.args, serde_json::json!({}));
+        assert_eq!(
+            command.args,
+            serde_json::json!({
+                "_rem_team_uid": "43341e5c822d99857fa6e8641f2ca9c0"
+            })
+        );
     }
 
     #[test]
