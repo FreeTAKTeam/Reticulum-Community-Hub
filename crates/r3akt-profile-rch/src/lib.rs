@@ -15,10 +15,8 @@ use r3akt_protocol::{Ack, Command, Destination, NodeId, Payload, ProtocolEnvelop
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const FIELD_COMMANDS: i64 = 0x09;
-pub const FIELD_RESULTS: i64 = 0x0A;
-pub const FIELD_GROUP: i64 = 0x0B;
-pub const FIELD_EVENT: i64 = 0x0D;
+mod fields;
+pub use fields::{FIELD_COMMANDS, FIELD_EVENT, FIELD_GROUP, FIELD_RESULTS};
 const MECP_PREFIX: &str = "MECP/";
 
 #[derive(Debug, Error)]
