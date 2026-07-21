@@ -24,7 +24,7 @@ repository = "https://github.com/FreeTAKTeam/Reticulum-Community-Hub"
 [workspace.dependencies]
 r3akt-identity = { path = "crates/r3akt-identity" }
 r3akt-protocol = { path = "crates/r3akt-protocol" }
-r3akt-shared-mesh-delivery = { package = "r3akt-mesh-delivery", git = "https://github.com/FreeTAKTeam/R3AKTClient.git", rev = "8e7b31f1bc70939a445327db8f102dd1d5fc5335" }
+r3akt-shared-mesh-delivery = { package = "r3akt-mesh-delivery", git = "https://github.com/FreeTAKTeam/R3AKTClient.git", rev = "0ea390daee818ffc1eb624aa327c1210fc41b78d" }
 r3akt-profile-rch = { path = "crates/r3akt-profile-rch" }
 r3akt-rch-bridge = { path = "crates/r3akt-rch-bridge" }
 r3akt-rch-core = { path = "crates/r3akt-rch-core" }

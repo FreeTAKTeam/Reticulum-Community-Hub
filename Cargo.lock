@@ -1212,7 +1212,7 @@ dependencies = [
 [[package]]
 name = "r3akt-mesh-delivery"
 version = "0.1.0"
-source = "git+https://github.com/FreeTAKTeam/R3AKTClient.git?rev=8e7b31f1bc70939a445327db8f102dd1d5fc5335#8e7b31f1bc70939a445327db8f102dd1d5fc5335"
+source = "git+https://github.com/FreeTAKTeam/R3AKTClient.git?rev=0ea390daee818ffc1eb624aa327c1210fc41b78d#0ea390daee818ffc1eb624aa327c1210fc41b78d"
 dependencies = [
  "chrono",
  "hex",
