@@ -1210,6 +1210,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "r3akt-mesh-delivery"
+version = "0.1.0"
+source = "git+https://github.com/FreeTAKTeam/R3AKTClient.git?rev=8e7b31f1bc70939a445327db8f102dd1d5fc5335#8e7b31f1bc70939a445327db8f102dd1d5fc5335"
+dependencies = [
+ "chrono",
+ "hex",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "r3akt-profile-rch"
 version = "0.1.0"
 dependencies = [
@@ -1253,6 +1267,7 @@ dependencies = [
  "base64",
  "chrono",
  "csv",
+ "r3akt-mesh-delivery",
  "r3akt-profile-rch",
  "r3akt-protocol",
  "rmp-serde",

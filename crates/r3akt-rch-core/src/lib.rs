@@ -25,6 +25,11 @@ use r3akt_profile_rch::{
     CommandResultEnvelope, CommandResultStatus, EventEnvelope, MissionCommandEnvelope,
 };
 use r3akt_protocol::{Destination, NodeId, Payload, ProtocolEnvelope, Topic, TopicMessage};
+pub use r3akt_shared_mesh_delivery::{
+    DEFAULT_PRIORITY, DEFAULT_TTL_SECONDS, DELIVERY_SCHEMA_VERSION, DeliveryEnvelope, DeliveryMode,
+    OutboundDeliveryDecision, OutboundDeliveryPolicy, RECENT_ANNOUNCE_WINDOW_MS,
+    RECENT_RUNTIME_PRESENCE_WINDOW_MS,
+};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OpenFlags, Transaction, params, params_from_iter};
 use serde::de::DeserializeOwned;
@@ -39,20 +44,9 @@ pub mod python_migration;
 mod rem_team_directory;
 
 pub const DELIVERY_ENVELOPE_FIELD: &str = "RTHDelivery";
-pub const DELIVERY_SCHEMA_VERSION: &str = "1";
-pub const DEFAULT_TTL_SECONDS: u32 = 300;
-pub const DEFAULT_PRIORITY: i32 = 0;
 pub const MAX_CLOCK_SKEW_SECONDS: i64 = 300;
-pub const RECENT_ANNOUNCE_WINDOW_MS: i64 = 60 * 60 * 1000;
-pub const RECENT_RUNTIME_PRESENCE_WINDOW_MS: i64 = 60 * 60 * 1000;
 pub const DEFAULT_ROSTER_ROLE: &str = "user";
 const DEFAULT_LOG_MISSION_UID: &str = "mission-default";
-
-const ACCEPTED_CONTENT_TYPES: [&str; 3] = [
-    "text/plain; schema=lxmf.chat.v1",
-    "application/json; schema=event.v1",
-    "application/cbor; schema=lxmf.v1",
-];
 
 pub const ROLE_FIELD_OPERATOR: &str = "FIELD_OPERATOR";
 pub const ROLE_TEAM_LEAD: &str = "TEAM_LEAD";
@@ -501,183 +495,6 @@ impl RchCoreError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeliveryMode {
-    Targeted,
-    Fanout,
-    Broadcast,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OutboundDeliveryDecision {
-    pub method: String,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct OutboundDeliveryPolicy {
-    presence_observed_at: HashMap<String, i64>,
-    direct_failure_cooldowns: HashMap<String, i64>,
-}
-
-impl OutboundDeliveryPolicy {
-    pub fn mark_presence(&mut self, identity: &str, observed_ts_ms: i64) {
-        let Some(identity) = normalize_hash(Some(identity)) else {
-            return;
-        };
-        self.presence_observed_at
-            .entry(identity.clone())
-            .and_modify(|current| {
-                if observed_ts_ms > *current {
-                    *current = observed_ts_ms;
-                }
-            })
-            .or_insert(observed_ts_ms);
-        if self
-            .direct_failure_cooldowns
-            .get(identity.as_str())
-            .is_some_and(|failed_at| observed_ts_ms > *failed_at)
-        {
-            self.direct_failure_cooldowns.remove(identity.as_str());
-        }
-    }
-
-    pub fn mark_direct_failure(&mut self, identity: &str, failed_ts_ms: i64) {
-        let Some(identity) = normalize_hash(Some(identity)) else {
-            return;
-        };
-        self.direct_failure_cooldowns
-            .entry(identity)
-            .and_modify(|current| {
-                if failed_ts_ms > *current {
-                    *current = failed_ts_ms;
-                }
-            })
-            .or_insert(failed_ts_ms);
-    }
-
-    #[must_use]
-    pub fn delivery_decision(
-        &mut self,
-        route_type: DeliveryMode,
-        identity: Option<&str>,
-        announce_last_seen_ts_ms: Option<i64>,
-        has_live_connection: bool,
-        now_ts_ms: i64,
-    ) -> OutboundDeliveryDecision {
-        match route_type {
-            DeliveryMode::Broadcast => {
-                return propagated_decision("broadcast_route");
-            }
-            DeliveryMode::Fanout => {
-                return propagated_decision("fanout_route");
-            }
-            DeliveryMode::Targeted => {}
-        }
-
-        let Some(identity) = identity.and_then(|value| normalize_hash(Some(value))) else {
-            return propagated_decision("missing_identity");
-        };
-        let latest_presence =
-            self.latest_presence(identity.as_str(), announce_last_seen_ts_ms, now_ts_ms);
-        let cooldown_started_at = self
-            .direct_failure_cooldowns
-            .get(identity.as_str())
-            .copied();
-
-        if let Some(latest_presence) = latest_presence {
-            if cooldown_started_at.is_some_and(|cooldown| latest_presence <= cooldown) {
-                return propagated_decision("direct_cooldown");
-            }
-            if cooldown_started_at.is_some() {
-                self.direct_failure_cooldowns.remove(identity.as_str());
-            }
-            return direct_decision("fresh_presence");
-        }
-
-        if has_live_connection {
-            if cooldown_started_at.is_some() {
-                return propagated_decision("direct_cooldown");
-            }
-            return direct_decision("live_connection");
-        }
-
-        propagated_decision("no_fresh_presence")
-    }
-
-    fn latest_presence(
-        &mut self,
-        identity: &str,
-        announce_last_seen_ts_ms: Option<i64>,
-        now_ts_ms: i64,
-    ) -> Option<i64> {
-        let runtime_presence = self.runtime_presence(identity, now_ts_ms);
-        let announce_presence = announce_last_seen_ts_ms
-            .filter(|last_seen| *last_seen >= now_ts_ms - RECENT_ANNOUNCE_WINDOW_MS);
-        runtime_presence.into_iter().chain(announce_presence).max()
-    }
-
-    fn runtime_presence(&mut self, identity: &str, now_ts_ms: i64) -> Option<i64> {
-        let observed_at = self.presence_observed_at.get(identity).copied()?;
-        if observed_at < now_ts_ms - RECENT_RUNTIME_PRESENCE_WINDOW_MS {
-            self.presence_observed_at.remove(identity);
-            None
-        } else {
-            Some(observed_at)
-        }
-    }
-}
-
-fn direct_decision(reason: &str) -> OutboundDeliveryDecision {
-    OutboundDeliveryDecision {
-        method: "direct".to_string(),
-        reason: reason.to_string(),
-    }
-}
-
-fn propagated_decision(reason: &str) -> OutboundDeliveryDecision {
-    OutboundDeliveryDecision {
-        method: "propagated".to_string(),
-        reason: reason.to_string(),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeliveryEnvelope {
-    pub message_id: String,
-    pub content_type: String,
-    pub schema_version: String,
-    pub ttl_seconds: u32,
-    pub priority: i32,
-    pub sender: String,
-    pub born_at_ms: i64,
-    pub created_at: Option<String>,
-    pub topic_id: Option<String>,
-}
-
-impl DeliveryEnvelope {
-    #[must_use]
-    pub fn to_json(&self) -> Value {
-        let mut payload = json!({
-            "Message-ID": self.message_id,
-            "Content-Type": self.content_type,
-            "Schema-Version": self.schema_version,
-            "TTL": self.ttl_seconds,
-            "Priority": self.priority,
-            "Sender": self.sender,
-            "Born": self.born_at_ms,
-        });
-        if let Some(created_at) = &self.created_at {
-            payload["Created-At"] = Value::String(created_at.clone());
-        }
-        if let Some(topic_id) = &self.topic_id {
-            payload["TopicID"] = Value::String(topic_id.clone());
-        }
-        payload
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildDeliveryEnvelope {
     pub sender: String,
@@ -712,7 +529,7 @@ pub fn build_delivery_envelope(
     let now_ms = utc_now_ms();
     let envelope = DeliveryEnvelope {
         message_id: normalize_message_id(request.message_id.as_deref()),
-        content_type: normalize_content_type(Some(&request.content_type))?,
+        content_type: request.content_type.trim().to_ascii_lowercase(),
         schema_version: DELIVERY_SCHEMA_VERSION.to_string(),
         ttl_seconds: request.ttl_seconds,
         priority: request.priority,
@@ -730,95 +547,20 @@ pub fn validate_delivery_envelope(
     payload: &Value,
     now_ms: i64,
 ) -> Result<DeliveryEnvelope, RchCoreError> {
-    let object = payload
-        .as_object()
-        .ok_or_else(|| RchCoreError::Delivery("delivery envelope must be an object".to_string()))?;
-    for field in [
-        "Content-Type",
-        "Schema-Version",
-        "TTL",
-        "Priority",
-        "Sender",
-        "Message-ID",
-        "Born",
-    ] {
-        if !object.contains_key(field) {
-            return Err(RchCoreError::Delivery(format!(
-                "Missing delivery fields: {field}"
-            )));
-        }
-    }
-
-    let content_type = normalize_content_type(value_as_str(&object["Content-Type"]).as_deref())?;
-    let schema_version = value_as_str(&object["Schema-Version"]).unwrap_or_default();
-    if schema_version != DELIVERY_SCHEMA_VERSION {
-        return Err(RchCoreError::Delivery(format!(
-            "Unsupported Schema-Version '{schema_version}'"
-        )));
-    }
-    let ttl_seconds = value_as_i64(&object["TTL"])
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| RchCoreError::Delivery("TTL must be greater than zero".to_string()))?;
-    if ttl_seconds == 0 {
-        return Err(RchCoreError::Delivery(
-            "TTL must be greater than zero".to_string(),
-        ));
-    }
-    let priority = value_as_i64(&object["Priority"])
-        .and_then(|value| i32::try_from(value).ok())
-        .ok_or_else(|| RchCoreError::Delivery("Priority is invalid".to_string()))?;
-    let sender = normalize_hash(value_as_str(&object["Sender"]).as_deref())
-        .ok_or_else(|| RchCoreError::Delivery("Sender is required".to_string()))?;
-    let born_at_ms = value_as_i64(&object["Born"])
-        .ok_or_else(|| RchCoreError::Delivery("Born is invalid".to_string()))?;
-    if born_at_ms - now_ms > MAX_CLOCK_SKEW_SECONDS * 1000 {
-        return Err(RchCoreError::Delivery(
-            "Clock skew exceeds delivery budget".to_string(),
-        ));
-    }
-    if now_ms - born_at_ms > i64::from(ttl_seconds) * 1000 {
-        return Err(RchCoreError::Delivery("Message exceeded TTL".to_string()));
-    }
-    let created_at = object.get("Created-At").and_then(value_as_str);
-    if let Some(created_at) = created_at.as_ref().filter(|value| !value.trim().is_empty()) {
-        DateTime::parse_from_rfc3339(created_at)
-            .map_err(|_| RchCoreError::Delivery("Created-At must be RFC3339 UTC".to_string()))?;
-    }
-
-    Ok(DeliveryEnvelope {
-        message_id: normalize_message_id(value_as_str(&object["Message-ID"]).as_deref()),
-        content_type,
-        schema_version,
-        ttl_seconds,
-        priority,
-        sender,
-        born_at_ms,
-        created_at: created_at.filter(|value| !value.trim().is_empty()),
-        topic_id: object
-            .get("TopicID")
-            .and_then(value_as_str)
-            .and_then(|value| normalize_topic_id(Some(value.as_str()))),
-    })
+    r3akt_shared_mesh_delivery::validate_delivery_envelope(payload, now_ms)
+        .map_err(|error| shared_delivery_error(&error))
 }
 
 pub fn classify_delivery_mode(
     topic_id: Option<&str>,
     destination: Option<&str>,
 ) -> Result<DeliveryMode, RchCoreError> {
-    let normalized_topic = normalize_topic_id(topic_id);
-    let normalized_destination = normalize_hash(destination);
-    if normalized_topic.is_some() && normalized_destination.is_some() {
-        return Err(RchCoreError::Delivery(
-            "topic_id and destination are mutually exclusive routing modes".to_string(),
-        ));
-    }
-    if normalized_destination.is_some() {
-        return Ok(DeliveryMode::Targeted);
-    }
-    if normalized_topic.is_some() {
-        return Ok(DeliveryMode::Fanout);
-    }
-    Ok(DeliveryMode::Broadcast)
+    r3akt_shared_mesh_delivery::classify_delivery_mode(topic_id, destination)
+        .map_err(|error| shared_delivery_error(&error))
+}
+
+fn shared_delivery_error(error: &r3akt_shared_mesh_delivery::MeshDeliveryError) -> RchCoreError {
+    RchCoreError::Delivery(error.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -10701,19 +10443,6 @@ pub fn normalize_message_id(value: Option<&str>) -> String {
         .unwrap_or_else(|| Uuid::new_v4().simple().to_string())
 }
 
-fn normalize_content_type(value: Option<&str>) -> Result<String, RchCoreError> {
-    let content_type = value
-        .map(|value| value.trim().to_ascii_lowercase())
-        .unwrap_or_default();
-    if ACCEPTED_CONTENT_TYPES.contains(&content_type.as_str()) {
-        Ok(content_type)
-    } else {
-        Err(RchCoreError::Delivery(format!(
-            "Unsupported Content-Type '{content_type}'"
-        )))
-    }
-}
-
 fn bytes_to_lower_hex(value: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(value.len() * 2);
@@ -13222,6 +12951,13 @@ mod tests {
 
     mod rem_team_directory;
 
+    fn delivery_decision(method: &str, reason: &str) -> OutboundDeliveryDecision {
+        OutboundDeliveryDecision {
+            method: method.to_string(),
+            reason: reason.to_string(),
+        }
+    }
+
     fn command(command_type: &str, args: Value) -> MissionCommandEnvelope {
         let suffix = args.to_string();
         MissionCommandEnvelope {
@@ -13506,7 +13242,7 @@ mod tests {
                 false,
                 now
             ),
-            propagated_decision("no_fresh_presence")
+            delivery_decision("propagated", "no_fresh_presence")
         );
 
         policy.mark_presence(identity.as_str(), now - 1_000);
@@ -13518,7 +13254,7 @@ mod tests {
                 false,
                 now
             ),
-            direct_decision("fresh_presence")
+            delivery_decision("direct", "fresh_presence")
         );
 
         policy.mark_direct_failure(identity.as_str(), now);
@@ -13530,7 +13266,7 @@ mod tests {
                 false,
                 now
             ),
-            propagated_decision("direct_cooldown")
+            delivery_decision("propagated", "direct_cooldown")
         );
 
         assert_eq!(
@@ -13541,7 +13277,7 @@ mod tests {
                 false,
                 now + 1_000
             ),
-            direct_decision("fresh_presence")
+            delivery_decision("direct", "fresh_presence")
         );
     }
 
@@ -13563,11 +13299,11 @@ mod tests {
                 true,
                 now
             ),
-            propagated_decision("fanout_route")
+            delivery_decision("propagated", "fanout_route")
         );
         assert_eq!(
             policy.delivery_decision(DeliveryMode::Broadcast, None, None, true, now),
-            propagated_decision("broadcast_route")
+            delivery_decision("propagated", "broadcast_route")
         );
         assert_eq!(
             policy.delivery_decision(
@@ -13577,7 +13313,7 @@ mod tests {
                 false,
                 now
             ),
-            propagated_decision("no_fresh_presence")
+            delivery_decision("propagated", "no_fresh_presence")
         );
         assert_eq!(
             policy.delivery_decision(
@@ -13587,7 +13323,7 @@ mod tests {
                 true,
                 now
             ),
-            direct_decision("live_connection")
+            delivery_decision("direct", "live_connection")
         );
     }
 
