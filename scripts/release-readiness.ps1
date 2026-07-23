@@ -12,7 +12,7 @@ param(
     [string] $ApiKey = "release-smoke",
     [string] $LxmfZmqCommand = "tcp://localhost:9100",
     [string] $LxmfZmqResponse = "tcp://localhost:9101",
-    [string] $ReticulumdSource = "release-smoke-source"
+    [string] $ReticulumdSource = ""
 )
 
 $ErrorActionPreference = "Stop"
