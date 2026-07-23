@@ -341,11 +341,9 @@ fn apply_runtime_config(
         state = state.with_reticulum_config_path(path);
     }
     if let Some(endpoint) = &args.reticulumd_rpc {
-        let source = args
-            .reticulumd_source
-            .as_deref()
-            .ok_or("--reticulumd-source is required with --reticulumd-rpc")?;
-        state = state.with_reticulumd_rpc(endpoint.as_str(), source);
+        if let Some(source) = args.reticulumd_source.as_deref() {
+            state = state.with_reticulumd_rpc(endpoint.as_str(), source);
+        }
     }
     if let (Some(command), Some(response)) = (&args.lxmf_zmq_command, &args.lxmf_zmq_response) {
         state = state
@@ -1406,7 +1404,11 @@ where
             _ => return Err(format!("unsupported argument {arg}").into()),
         }
     }
-    if reticulumd_rpc.is_some() && reticulumd_source.is_none() {
+    if reticulumd_rpc.is_some()
+        && reticulumd_source.is_none()
+        && lxmf_zmq_command.is_none()
+        && lxmf_zmq_response.is_none()
+    {
         return Err("--reticulumd-source is required with --reticulumd-rpc".into());
     }
     if reticulumd_source.is_some()
@@ -2022,6 +2024,25 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "--reticulumd-source is required with --reticulumd-rpc"
+        );
+    }
+
+    #[test]
+    fn parse_args_accepts_reticulumd_rpc_without_source_when_zmq_is_configured() {
+        let args = super::parse_args([
+            "--reticulumd-rpc",
+            "127.0.0.1:4242",
+            "--lxmf-zmq-command",
+            "tcp://localhost:9100",
+            "--lxmf-zmq-response",
+            "tcp://localhost:9101",
+        ])
+        .expect("ZMQ owns the RCH service identity");
+
+        assert!(args.reticulumd_source.is_none());
+        assert_eq!(
+            args.lxmf_zmq_command.as_deref(),
+            Some("tcp://localhost:9100")
         );
     }
 
