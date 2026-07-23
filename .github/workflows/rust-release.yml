@@ -28,6 +28,9 @@ on:
 permissions:
   contents: write
 
+env:
+  LXMF_REF: d61ed1171d07720e5cfba3d3b0a9c83496732221
+
 jobs:
   server-package:
     name: Full server package (${{ matrix.platform }})
@@ -83,7 +86,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: 7cafc5b4be21ff4f777d0f2300cfb79e5d0da23c # v0.9.5
+          ref: ${{ env.LXMF_REF }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -210,7 +213,7 @@ jobs:
         with:
           repository: FreeTAKTeam/LXMF-rs
           path: LXMF-rs
-          ref: 7cafc5b4be21ff4f777d0f2300cfb79e5d0da23c # v0.9.5
+          ref: ${{ env.LXMF_REF }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

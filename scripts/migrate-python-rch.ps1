@@ -62,7 +62,6 @@ if ((Test-Path -LiteralPath $targetDb) -and -not $Force) {
 
 Copy-LegacyFile -Source $legacyConfig -Destination (Join-Path $targetDataDirPath "config.ini")
 Copy-LegacyFile -Source (Join-Path $sourceStorePath "identity") -Destination (Join-Path $targetDataDirPath "identity")
-Copy-LegacyFile -Source (Join-Path $sourceStorePath "identity") -Destination (Join-Path $targetDataDirPath "reticulumd.identity")
 Copy-LegacyFile -Source (Join-Path $sourceStorePath "telemetry.db") -Destination (Join-Path $targetDataDirPath "telemetry.db")
 
 if (-not $SkipRuntimeFiles) {

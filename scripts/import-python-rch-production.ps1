@@ -219,6 +219,49 @@ function Invoke-Migrator {
     & cargo @cargoArgs @MigratorArgs | Tee-Object -FilePath $ReportPath
 }
 
+function Get-ReticulumIdentitySummary {
+    param(
+        [string] $RchIdentity,
+        [string] $DaemonIdentity,
+        [string] $CargoToolchain
+    )
+    if (-not (Test-Path -LiteralPath $RchIdentity -PathType Leaf)) {
+        return [pscustomobject]@{
+            daemon_identity_hash = $null
+            rch_identity_hash = $null
+            rch_delivery_destination = $null
+            status = "rch_identity_missing"
+        }
+    }
+    $identityArgs = @("--rch-identity", $RchIdentity)
+    if (Test-Path -LiteralPath $DaemonIdentity -PathType Leaf) {
+        $identityArgs += @("--daemon-identity", $DaemonIdentity)
+    }
+    $reportExe = if (Test-Path -LiteralPath ".\target\release\rch_identity_report.exe" -PathType Leaf) {
+        ".\target\release\rch_identity_report.exe"
+    } elseif (Test-Path -LiteralPath ".\target\debug\rch_identity_report.exe" -PathType Leaf) {
+        ".\target\debug\rch_identity_report.exe"
+    } else {
+        ""
+    }
+    if ($reportExe) {
+        $raw = & $reportExe @identityArgs
+    } else {
+        $cargoArgs = @()
+        if ($CargoToolchain) {
+            $cargoArgs += $CargoToolchain
+        }
+        $cargoArgs += @("run", "--quiet", "-p", "r3akt-rch-server", "--bin", "rch_identity_report", "--")
+        $raw = & cargo @cargoArgs @identityArgs
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "Reticulum identity report failed"
+    }
+    $summary = ($raw -join "`n") | ConvertFrom-Json
+    $summary | Add-Member -NotePropertyName status -NotePropertyValue "ready"
+    return $summary
+}
+
 $sourceRootPath = Resolve-FullPath $SourceRoot
 if (-not $LegacyStore) {
     $LegacyStore = Join-Path $sourceRootPath "RTH_Store"
@@ -251,6 +294,10 @@ $runtimeDirectories = [ordered]@{
     images = New-DirectoryInventory -Role "RTH images" -Path (Join-Path $legacyStorePath "images")
     lxmf = New-DirectoryInventory -Role "RTH LXMF runtime data" -Path (Join-Path $legacyStorePath "lxmf")
 }
+$identitySummary = Get-ReticulumIdentitySummary `
+    -RchIdentity (Join-Path $legacyStorePath "identity") `
+    -DaemonIdentity $TransportIdentity `
+    -CargoToolchain $CargoToolchain
 $preflight = [ordered]@{
     legacy_database = New-PathInventory -Role "rth_api.sqlite" -Path $legacyDb
     rth_config = New-PathInventory -Role "RTH config.ini" -Path $legacyConfig
@@ -272,6 +319,7 @@ $plan = [pscustomobject]@{
     skip_runtime_files = [bool]$SkipRuntimeFiles
     preflight = $preflight
     runtime_directories = $runtimeDirectories
+    identity_summary = $identitySummary
 }
 
 if (-not (Test-Path -LiteralPath $legacyDb -PathType Leaf)) {

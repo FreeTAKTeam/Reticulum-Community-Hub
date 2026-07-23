@@ -23,6 +23,8 @@ const DEFAULT_PORT: u16 = 8000;
 const DEFAULT_MANAGED_RETICULUMD_TRANSPORT: &str = "127.0.0.1:0";
 const DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT: &str = "tcp://localhost:9100";
 const DEFAULT_LXMF_ZMQ_RESPONSE_ENDPOINT: &str = "tcp://localhost:9101";
+const DEFAULT_RCH_DISPLAY_NAME: &str = "RCH";
+const DEFAULT_RCH_ANNOUNCE_INTERVAL_SECONDS: u64 = 300;
 const DEFAULT_STORAGE_PATH: &str = "RTH_Store";
 const DEFAULT_LOG_LEVEL_NAME: &str = "debug";
 const STATE_FILENAME: &str = "rch_state.json";
@@ -47,6 +49,13 @@ struct ServerArgs {
     system_status_fanout_mode: Option<String>,
     outbound_allowlist: Vec<String>,
     prompt_python_import: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HubServiceConfig {
+    identity_path: PathBuf,
+    display_name: String,
+    announce_interval: StdDuration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,16 +185,26 @@ where
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
     let api_bind = listener.local_addr()?;
     let reticulum_config_path = resolve_reticulum_config_path(&args);
+    let hub_service_config = resolve_hub_service_config(&args)?;
     let managed_reticulumd_launch =
         ManagedReticulumdLaunch::from_args(&args, reticulum_config_path.clone());
     let ui_dist_path = args.ui_dist_path.clone().or_else(env_ui_dist_path);
-    let state = build_runtime_state(
+    let mut state = build_runtime_state(
         &args,
         &managed_reticulumd_launch,
         reticulum_config_path.as_deref(),
+        &hub_service_config,
     )?
     .with_api_bind(api_bind);
     state.start_managed_reticulumd()?;
+    if let Err(error) = state.register_lxmf_zmq_service_identity() {
+        if let Err(stop_error) = state.stop_managed_reticulumd() {
+            eprintln!(
+                "reticulumd cleanup after RCH identity registration failure failed: {stop_error}"
+            );
+        }
+        return Err(error.into());
+    }
     let verification_state = state.clone();
     let verification_result =
         tokio::task::spawn_blocking(move || verification_state.verify_lxmf_zmq_data_plane())
@@ -200,6 +219,10 @@ where
     let app = create_app_for_runtime(state.clone(), ui_dist_path.as_ref());
     let outbound_worker = r3akt_rch_server::spawn_outbound_delivery_worker(state.clone());
     let inbound_worker = r3akt_rch_server::spawn_reticulumd_inbound_worker(state.clone());
+    let announce_worker = r3akt_rch_server::spawn_rch_identity_announce_worker(
+        state.clone(),
+        hub_service_config.announce_interval,
+    );
     println!("r3akt-rch-server listening on http://{}", args.bind);
     let serve_result = axum::serve(
         listener,
@@ -224,6 +247,13 @@ where
         }
         Ok(()) | Err(_) => {}
     }
+    announce_worker.abort();
+    match announce_worker.await {
+        Err(error) if !error.is_cancelled() => {
+            eprintln!("RCH announce worker join failed during shutdown: {error}");
+        }
+        Ok(()) | Err(_) => {}
+    }
     serve_result?;
     Ok(())
 }
@@ -232,6 +262,7 @@ fn build_runtime_state(
     args: &ServerArgs,
     managed_reticulumd_launch: &ManagedReticulumdLaunch,
     reticulum_config_path: Option<&Path>,
+    hub_service_config: &HubServiceConfig,
 ) -> Result<r3akt_rch_server::AppState, Box<dyn std::error::Error>> {
     let api_key = args
         .api_key
@@ -255,6 +286,7 @@ fn build_runtime_state(
         state,
         args,
         reticulum_config_path,
+        hub_service_config,
         api_key,
         system_status_fanout_mode,
     )?;
@@ -294,6 +326,7 @@ fn apply_runtime_config(
     mut state: r3akt_rch_server::AppState,
     args: &ServerArgs,
     reticulum_config_path: Option<&Path>,
+    hub_service_config: &HubServiceConfig,
     api_key: Option<String>,
     system_status_fanout_mode: Option<String>,
 ) -> Result<r3akt_rch_server::AppState, Box<dyn std::error::Error>> {
@@ -308,20 +341,79 @@ fn apply_runtime_config(
         state = state.with_reticulum_config_path(path);
     }
     if let Some(endpoint) = &args.reticulumd_rpc {
-        let source = args
-            .reticulumd_source
-            .as_deref()
-            .ok_or("--reticulumd-source is required with --reticulumd-rpc")?;
-        state = state.with_reticulumd_rpc(endpoint.as_str(), source);
+        if let Some(source) = args.reticulumd_source.as_deref() {
+            state = state.with_reticulumd_rpc(endpoint.as_str(), source);
+        }
     }
     if let (Some(command), Some(response)) = (&args.lxmf_zmq_command, &args.lxmf_zmq_response) {
-        let source = args
-            .reticulumd_source
-            .as_deref()
-            .ok_or("--reticulumd-source is required with --lxmf-zmq-command")?;
-        state = state.with_lxmf_zmq_sdk(command.as_str(), response.as_str(), source);
+        state = state
+            .with_lxmf_zmq_sdk_identity(
+                command.as_str(),
+                response.as_str(),
+                args.reticulumd_source.as_deref(),
+                hub_service_config.identity_path.as_path(),
+                hub_service_config.display_name.clone(),
+            )
+            .map_err(|error| format!("RCH service identity registration failed: {error}"))?;
     }
     Ok(state)
+}
+
+fn resolve_hub_service_config(
+    args: &ServerArgs,
+) -> Result<HubServiceConfig, Box<dyn std::error::Error>> {
+    let config_content = args
+        .config_path
+        .as_ref()
+        .and_then(|path| fs::read_to_string(path).ok());
+    let display_name = config_content
+        .as_deref()
+        .and_then(|content| ini_value(content, "hub", "display_name"))
+        .unwrap_or_else(|| DEFAULT_RCH_DISPLAY_NAME.to_string());
+    let interval_seconds = config_content
+        .as_deref()
+        .and_then(|content| ini_value(content, "hub", "announce_interval"))
+        .map(|value| {
+            value.parse::<u64>().map_err(|error| {
+                format!("[hub].announce_interval must be a positive integer: {error}")
+            })
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_RCH_ANNOUNCE_INTERVAL_SECONDS);
+    if interval_seconds == 0 {
+        return Err("[hub].announce_interval must be greater than zero".into());
+    }
+    let data_dir = args
+        .db_path
+        .as_deref()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            args.config_path
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_STORAGE_PATH));
+    let identity_path = config_content
+        .as_deref()
+        .and_then(|content| ini_value(content, "hub", "identity_path"))
+        .map(expand_user_path)
+        .map_or_else(
+            || data_dir.join("identity"),
+            |path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    data_dir.join(path)
+                }
+            },
+        );
+    Ok(HubServiceConfig {
+        identity_path,
+        display_name,
+        announce_interval: StdDuration::from_secs(interval_seconds),
+    })
 }
 
 fn resolve_reticulum_config_path(args: &ServerArgs) -> Option<PathBuf> {
@@ -549,10 +641,6 @@ fn copy_python_runtime_files(
         &target_dir.join("config.ini"),
     )?;
     copy_file_if_exists(&source_store.join("identity"), &target_dir.join("identity"))?;
-    copy_file_if_exists(
-        &source_store.join("identity"),
-        &target_dir.join("reticulumd.identity"),
-    )?;
     copy_file_if_exists(
         &source_store.join("telemetry.db"),
         &target_dir.join("telemetry.db"),
@@ -1316,7 +1404,11 @@ where
             _ => return Err(format!("unsupported argument {arg}").into()),
         }
     }
-    if reticulumd_rpc.is_some() && reticulumd_source.is_none() {
+    if reticulumd_rpc.is_some()
+        && reticulumd_source.is_none()
+        && lxmf_zmq_command.is_none()
+        && lxmf_zmq_response.is_none()
+    {
         return Err("--reticulumd-source is required with --reticulumd-rpc".into());
     }
     if reticulumd_source.is_some()
@@ -1334,17 +1426,11 @@ where
     if lxmf_zmq_response.is_some() && lxmf_zmq_command.is_none() {
         lxmf_zmq_command = Some(DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT.to_string());
     }
-    if lxmf_zmq_command.is_some() && reticulumd_source.is_none() {
-        return Err("--reticulumd-source is required with --lxmf-zmq-command".into());
-    }
     if reticulumd_exe.is_some() && reticulumd_rpc.is_none() && lxmf_zmq_command.is_none() {
         lxmf_zmq_command = Some(DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT.to_string());
     }
     if lxmf_zmq_command.is_some() && lxmf_zmq_response.is_none() {
         lxmf_zmq_response = Some(DEFAULT_LXMF_ZMQ_RESPONSE_ENDPOINT.to_string());
-    }
-    if lxmf_zmq_command.is_some() && reticulumd_source.is_none() {
-        return Err("--reticulumd-source is required with --lxmf-zmq-command".into());
     }
     if reticulumd_db_path.is_some() && reticulumd_exe.is_none() {
         return Err("--reticulumd-db-path is only valid with --reticulumd-exe".into());
@@ -1697,10 +1783,6 @@ mod tests {
         );
         assert_eq!(args.reticulumd_rpc.as_deref(), Some("127.0.0.1:4242"));
         assert_eq!(
-            args.reticulumd_source.as_deref(),
-            Some("source-destination")
-        );
-        assert_eq!(
             args.reticulumd_exe.as_deref(),
             Some(std::path::Path::new("reticulumd.exe"))
         );
@@ -1895,11 +1977,7 @@ mod tests {
             std::fs::read_to_string(target_dir.join("identity")).expect("identity"),
             "identity-bytes"
         );
-        assert_eq!(
-            std::fs::read_to_string(target_dir.join("reticulumd.identity"))
-                .expect("reticulumd identity"),
-            "identity-bytes"
-        );
+        assert!(!target_dir.join("reticulumd.identity").exists());
         assert_eq!(
             std::fs::read_to_string(target_dir.join("telemetry.db")).expect("telemetry"),
             "telemetry"
@@ -1950,20 +2028,43 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_rejects_managed_reticulumd_without_rpc_endpoint() {
-        let error = super::parse_args(["--reticulumd-exe", "reticulumd.exe"]).expect_err("error");
+    fn parse_args_accepts_reticulumd_rpc_without_source_when_zmq_is_configured() {
+        let args = super::parse_args([
+            "--reticulumd-rpc",
+            "127.0.0.1:4242",
+            "--lxmf-zmq-command",
+            "tcp://localhost:9100",
+            "--lxmf-zmq-response",
+            "tcp://localhost:9101",
+        ])
+        .expect("ZMQ owns the RCH service identity");
+
+        assert!(args.reticulumd_source.is_none());
+        assert_eq!(
+            args.lxmf_zmq_command.as_deref(),
+            Some("tcp://localhost:9100")
+        );
+    }
+
+    #[test]
+    fn parse_args_accepts_managed_reticulumd_with_generated_zmq_endpoints() {
+        let args =
+            super::parse_args(["--reticulumd-exe", "reticulumd.exe"]).expect("managed daemon");
 
         assert_eq!(
-            error.to_string(),
-            "--reticulumd-source is required with --lxmf-zmq-command"
+            args.lxmf_zmq_command.as_deref(),
+            Some(super::DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT)
         );
+        assert_eq!(
+            args.lxmf_zmq_response.as_deref(),
+            Some(super::DEFAULT_LXMF_ZMQ_RESPONSE_ENDPOINT)
+        );
+        assert!(args.reticulumd_source.is_none());
     }
 
     #[test]
     fn parse_args_accepts_zero_mq_sdk_endpoints() {
         let args = super::parse_args([
-            "--reticulumd-source",
-            "source-destination",
             "--lxmf-zmq-command",
             "tcp://localhost:9100",
             "--lxmf-zmq-response",
@@ -1973,10 +2074,8 @@ mod tests {
         ])
         .expect("args");
 
-        assert_eq!(
-            args.reticulumd_source.as_deref(),
-            Some("source-destination")
-        );
+        assert!(args.reticulumd_source.is_none());
+
         assert_eq!(
             args.lxmf_zmq_command.as_deref(),
             Some("tcp://localhost:9100")
@@ -2025,6 +2124,51 @@ mod tests {
             error.to_string(),
             "--reticulumd-transport is only valid with --reticulumd-exe"
         );
+    }
+
+    #[test]
+    fn hub_service_config_uses_canonical_identity_name_and_interval() {
+        let data_dir =
+            std::env::temp_dir().join(format!("r3akt-rch-hub-config-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let config_path = data_dir.join("config.ini");
+        std::fs::write(
+            &config_path,
+            "[hub]\ndisplay_name = Field RCH\nidentity_path = preserved.identity\nannounce_interval = 42\n",
+        )
+        .expect("config");
+        let mut args = test_server_args(Some(config_path), None);
+        args.db_path = Some(data_dir.join("rch_state.sqlite3"));
+
+        let config = super::resolve_hub_service_config(&args).expect("hub config");
+
+        assert_eq!(config.display_name, "Field RCH");
+        assert_eq!(config.identity_path, data_dir.join("preserved.identity"));
+        assert_eq!(config.announce_interval.as_secs(), 42);
+        std::fs::remove_dir_all(data_dir).expect("cleanup");
+    }
+
+    #[test]
+    fn hub_service_config_defaults_and_rejects_zero_interval() {
+        let data_dir =
+            std::env::temp_dir().join(format!("r3akt-rch-hub-default-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let mut args = test_server_args(None, None);
+        args.db_path = Some(data_dir.join("rch_state.sqlite3"));
+        let defaults = super::resolve_hub_service_config(&args).expect("defaults");
+        assert_eq!(defaults.display_name, "RCH");
+        assert_eq!(defaults.identity_path, data_dir.join("identity"));
+        assert_eq!(defaults.announce_interval.as_secs(), 300);
+
+        let config_path = data_dir.join("config.ini");
+        std::fs::write(&config_path, "[hub]\nannounce_interval = 0\n").expect("config");
+        args.config_path = Some(config_path);
+        let error = super::resolve_hub_service_config(&args).expect_err("zero interval");
+        assert_eq!(
+            error.to_string(),
+            "[hub].announce_interval must be greater than zero"
+        );
+        std::fs::remove_dir_all(data_dir).expect("cleanup");
     }
 
     fn create_runtime_import_legacy_db(path: &std::path::Path) {
