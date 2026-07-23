@@ -891,15 +891,11 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lxmf-reference"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11857f307becf0d15895335921c124d2a450e5c3b83612a6e6d64d7e23d73564"
+version = "0.9.6"
 
 [[package]]
 name = "lxmf-sdk"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "401fb72f118f02bc9ce30c0bb1d0822dc9824324ca7ee3977a888b469dee6a8c"
+version = "0.9.6"
 dependencies = [
  "hex",
  "hmac",
@@ -918,9 +914,7 @@ dependencies = [
 
 [[package]]
 name = "lxmf-wire"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f085711ee980f35f52571c6683060510066d55f3aac8b57f18ab48c841fb8708"
+version = "0.9.6"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1414,9 +1408,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reticulum-rs-core"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec4f1b0d2d20a30dc35787cfff8a063086ef320f6ef0dede344a13fc1a96be56"
+version = "0.9.6"
 dependencies = [
  "aes",
  "cbc",
@@ -1435,9 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "reticulum-rs-rpc"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1ee77690c30d43ee60c9d4dbfb8a2298f024eac51e0dd4a6898077fc35140a0"
+version = "0.9.6"
 dependencies = [
  "base64",
  "ciborium",

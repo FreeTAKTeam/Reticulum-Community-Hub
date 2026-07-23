@@ -39,7 +39,7 @@
 
 mod auth;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::future::pending;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path as FsPath, PathBuf};
@@ -89,9 +89,9 @@ use r3akt_transport_rns::{
     LxmfDeliverySnapshot, LxmfDeliveryState, LxmfMessageHistoryListRequest, LxmfSdkOutboundBatch,
     LxmfSdkOutboundBatchMessage, LxmfSdkOutboundBatchResult, LxmfSdkOutboundMessage,
     LxmfSdkSharedOutboundBatch, LxmfSdkSharedPayload, LxmfSdkSharedRecipient,
-    ReticulumdAnnounceRecord, ZmqDataPlane, delivery_snapshot_receipt_status,
-    list_reticulumd_announces, lxmf_shared_batch_to_legacy_batch, poll_reticulumd_events,
-    reticulumd_event_to_envelope, reticulumd_message_to_envelope,
+    RchServiceIdentityConfig, ReticulumdAnnounceRecord, ZmqDataPlane,
+    delivery_snapshot_receipt_status, list_reticulumd_announces, lxmf_shared_batch_to_legacy_batch,
+    poll_reticulumd_events, reticulumd_event_to_envelope, reticulumd_message_to_envelope,
 };
 use rand_core::OsRng;
 use rns_core::identity::{PRIVATE_KEY_LENGTH, PrivateIdentity};
@@ -241,6 +241,8 @@ pub struct AppState {
     lxmf_zmq_command_endpoint: Option<Arc<String>>,
     lxmf_zmq_response_endpoint: Option<Arc<String>>,
     lxmf_zmq_data_plane: Option<Arc<ZmqDataPlane>>,
+    rch_service_identity_config: Option<Arc<RchServiceIdentityConfig>>,
+    rch_source_assertion: Option<Arc<String>>,
     runtime_control: Arc<RwLock<RuntimeControlState>>,
     managed_reticulumd: Arc<RwLock<ManagedReticulumdState>>,
     managed_reticulumd_process: Arc<Mutex<Option<Child>>>,
@@ -512,6 +514,8 @@ impl Default for AppState {
             lxmf_zmq_command_endpoint: None,
             lxmf_zmq_response_endpoint: None,
             lxmf_zmq_data_plane: None,
+            rch_service_identity_config: None,
+            rch_source_assertion: None,
             runtime_control: Arc::default(),
             managed_reticulumd: Arc::default(),
             managed_reticulumd_process: Arc::default(),
@@ -723,6 +727,75 @@ impl AppState {
         self.reticulumd_source = Some(Arc::new(source.clone()));
         self.prune_telemetry_for_local_source(&source);
         self
+    }
+
+    pub fn with_lxmf_zmq_sdk_identity(
+        mut self,
+        command_endpoint: impl Into<String>,
+        response_endpoint: impl Into<String>,
+        source_assertion: Option<&str>,
+        identity_path: &FsPath,
+        display_name: impl Into<String>,
+    ) -> Result<Self, String> {
+        let display_name = display_name.into();
+        let private_key = load_or_create_rch_identity_bytes(identity_path)?;
+        let command_endpoint = command_endpoint.into();
+        let response_endpoint = response_endpoint.into();
+        let request_timeout = if cfg!(test) {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_secs(3)
+        };
+        let data_plane = ZmqDataPlane::new_with_timeout(
+            command_endpoint.clone(),
+            response_endpoint.clone(),
+            request_timeout,
+        )
+        .map_err(|error| format!("failed to initialize LXMF ZeroMQ data plane: {error}"))?;
+        let identity_config = RchServiceIdentityConfig {
+            private_key,
+            display_name,
+            capabilities: vec![
+                "r3akt".to_string(),
+                "emergencymessages".to_string(),
+                "telemetry".to_string(),
+            ],
+            metadata: BTreeMap::from([("service".to_string(), Value::String("rch".to_string()))]),
+        };
+        self.lxmf_zmq_data_plane = Some(Arc::new(data_plane));
+        self.lxmf_zmq_command_endpoint = Some(Arc::new(command_endpoint));
+        self.lxmf_zmq_response_endpoint = Some(Arc::new(response_endpoint));
+        self.rch_service_identity_config = Some(Arc::new(identity_config));
+        self.rch_source_assertion = source_assertion
+            .map(str::trim)
+            .filter(|expected| !expected.is_empty())
+            .map(|expected| Arc::new(expected.to_string()));
+        Ok(self)
+    }
+
+    pub fn register_lxmf_zmq_service_identity(&mut self) -> Result<(), String> {
+        let (Some(data_plane), Some(config)) = (
+            self.lxmf_zmq_data_plane.as_ref(),
+            self.rch_service_identity_config.as_ref(),
+        ) else {
+            return Ok(());
+        };
+        let identity = data_plane
+            .register_identity(config.as_ref().clone())
+            .map_err(|error| format!("failed to register RCH service identity: {error}"))?;
+        let source = identity.delivery_destination.ok_or_else(|| {
+            "reticulumd did not return the RCH LXMF delivery destination".to_string()
+        })?;
+        if let Some(expected) = self.rch_source_assertion.as_deref() {
+            if !expected.eq_ignore_ascii_case(source.as_str()) {
+                return Err(format!(
+                    "--reticulumd-source assertion mismatch: configured {expected}, derived {source}"
+                ));
+            }
+        }
+        self.reticulumd_source = Some(Arc::new(source.clone()));
+        self.prune_telemetry_for_local_source(&source);
+        Ok(())
     }
 
     pub fn verify_lxmf_zmq_data_plane(&self) -> Result<(), String> {
@@ -2771,6 +2844,58 @@ pub fn spawn_outbound_delivery_worker(state: AppState) -> tokio::task::JoinHandl
         state,
         Duration::from_millis(OUTBOUND_RETRY_WORKER_POLL_MS),
     )
+}
+
+pub fn spawn_rch_identity_announce_worker(
+    state: AppState,
+    announce_interval: Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        if announce_interval.is_zero() {
+            return;
+        }
+        let mut ticker = tokio::time::interval(announce_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Registration performs the initial announce; the first periodic tick
+        // therefore starts after a complete configured interval.
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            if runtime_shutdown_requested(&state) {
+                return;
+            }
+            let Some(data_plane) = state.lxmf_zmq_data_plane.clone() else {
+                return;
+            };
+            match tokio::task::spawn_blocking(move || data_plane.announce_identity()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    record_system_event_best_effort(
+                        &state,
+                        "identity_announce_error",
+                        "Periodic RCH identity announce failed",
+                        json!({
+                            "operation": "sdk_identity_announce_now_v2",
+                            "exception_type": "TransportError",
+                            "exception_message": error.to_string(),
+                        }),
+                    );
+                }
+                Err(error) => {
+                    record_system_event_best_effort(
+                        &state,
+                        "identity_announce_error",
+                        "Periodic RCH identity announce task failed",
+                        json!({
+                            "operation": "sdk_identity_announce_now_v2",
+                            "exception_type": "JoinError",
+                            "exception_message": error.to_string(),
+                        }),
+                    );
+                }
+            }
+        }
+    })
 }
 
 pub fn spawn_outbound_delivery_worker_with_interval(
@@ -13009,6 +13134,10 @@ fn app_info_storage_root(state: &AppState) -> PathBuf {
 
 fn config_section_value(path: &FsPath, section: &str, keys: &[&str]) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
+    config_text_section_value(content.as_str(), section, keys)
+}
+
+fn config_text_section_value(content: &str, section: &str, keys: &[&str]) -> Option<String> {
     let mut in_section = false;
     for line in content.lines() {
         let line = line.trim();
@@ -17551,6 +17680,39 @@ fn write_reticulum_identity_file(path: &FsPath, key_bytes: &[u8]) -> Result<(), 
                 path.display()
             ))
         })
+    }
+}
+
+pub fn load_or_create_rch_identity_bytes(path: &FsPath) -> Result<Vec<u8>, String> {
+    match std::fs::read(path) {
+        Ok(bytes) if bytes.len() == PRIVATE_KEY_LENGTH => {
+            PrivateIdentity::from_private_key_bytes(bytes.as_slice())
+                .map_err(|error| format!("invalid RCH identity {}: {error:?}", path.display()))?;
+            Ok(bytes)
+        }
+        Ok(bytes) => {
+            let text = std::str::from_utf8(bytes.as_slice())
+                .map(str::trim)
+                .map_err(|error| {
+                    format!(
+                        "RCH identity {} is neither raw key bytes nor UTF-8 hex: {error}",
+                        path.display()
+                    )
+                })?;
+            let identity = PrivateIdentity::new_from_hex_string(text)
+                .map_err(|error| format!("invalid RCH identity {}: {error:?}", path.display()))?;
+            Ok(identity.to_private_key_bytes().to_vec())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let identity = PrivateIdentity::new_from_rand(OsRng);
+            write_reticulum_identity_file(path, &identity.to_private_key_bytes())
+                .map_err(|error| error.to_string())?;
+            Ok(identity.to_private_key_bytes().to_vec())
+        }
+        Err(error) => Err(format!(
+            "failed to read RCH identity {}: {error}",
+            path.display()
+        )),
     }
 }
 
@@ -26002,7 +26164,46 @@ async fn apply_config_text(
     State(state): State<AppState>,
     body: String,
 ) -> Result<Json<Value>, ApiError> {
-    apply_config_file(state.config_path.clone(), body, ConfigFileKind::Hub)
+    let display_name = config_text_section_value(&body, "hub", &["display_name"])
+        .unwrap_or_else(|| "RCH".to_string());
+    let response = apply_config_file(state.config_path.clone(), body, ConfigFileKind::Hub)?;
+    if let Some(data_plane) = state.lxmf_zmq_data_plane.clone() {
+        let identity = tokio::task::spawn_blocking(move || {
+            data_plane.update_identity_announce(
+                display_name,
+                vec![
+                    "r3akt".to_string(),
+                    "emergencymessages".to_string(),
+                    "telemetry".to_string(),
+                ],
+                BTreeMap::from([("service".to_string(), Value::String("rch".to_string()))]),
+            )
+        })
+        .await
+        .map_err(|error| {
+            ApiError::ServiceUnavailable(format!(
+                "RCH identity announce update task failed: {error}"
+            ))
+        })?
+        .map_err(|error| {
+            ApiError::ServiceUnavailable(format!("RCH identity announce update failed: {error}"))
+        })?;
+        let expected_source = state
+            .reticulumd_source
+            .as_deref()
+            .map(String::as_str)
+            .unwrap_or("");
+        if identity
+            .delivery_destination
+            .as_deref()
+            .is_none_or(|destination| !destination.eq_ignore_ascii_case(expected_source))
+        {
+            return Err(ApiError::ServiceUnavailable(
+                "RCH identity update returned an unexpected delivery destination".to_string(),
+            ));
+        }
+    }
+    Ok(response)
 }
 
 async fn apply_reticulum_config_text(

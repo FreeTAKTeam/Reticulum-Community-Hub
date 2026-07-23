@@ -170,9 +170,11 @@ function Invoke-ServerSmoke {
     if ($ServerOnlyAlpha -and $LiveReticulum) {
         $serverArgs += @(
             "--lxmf-zmq-command", $LxmfZmqCommand,
-            "--lxmf-zmq-response", $LxmfZmqResponse,
-            "--reticulumd-source", $ReticulumdSource
+            "--lxmf-zmq-response", $LxmfZmqResponse
         )
+        if ($ReticulumdSource) {
+            $serverArgs += @("--reticulumd-source", $ReticulumdSource)
+        }
     }
 
     $startArgs = @{

@@ -5,7 +5,7 @@ param(
     [string] $ApiKey = "change-me",
     [string] $LxmfZmqCommand = "tcp://localhost:9100",
     [string] $LxmfZmqResponse = "tcp://localhost:9101",
-    [string] $ReticulumdSource = "change-me"
+    [string] $ReticulumdSource = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,9 +20,11 @@ $args = @(
     "--bind", $Bind,
     "--db-path", $db,
     "--lxmf-zmq-command", $LxmfZmqCommand,
-    "--lxmf-zmq-response", $LxmfZmqResponse,
-    "--reticulumd-source", $ReticulumdSource
+    "--lxmf-zmq-response", $LxmfZmqResponse
 )
+if ($ReticulumdSource) {
+    $args += @("--reticulumd-source", $ReticulumdSource)
+}
 
 if (Test-Path $ui) {
     $args += @("--ui-dist-path", $ui)
