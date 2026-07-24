@@ -42,6 +42,7 @@ use text::decode_utf8_ignoring_errors;
 
 pub mod python_migration;
 mod rem_team_directory;
+mod rem_team_scope;
 
 pub const DELIVERY_ENVELOPE_FIELD: &str = "RTHDelivery";
 pub const MAX_CLOCK_SKEW_SECONDS: i64 = 300;
@@ -4302,6 +4303,9 @@ impl RchCore {
                 format!("Unsupported mission command '{}'", command.command_type),
             ))];
         }
+        if let Some(rejection) = self.rem_team_scope_rejection(command) {
+            return vec![rejection];
+        }
         if let Some(required_capability) = required_capability(command.command_type.as_str()) {
             if self.authorization_required
                 && !self.has_identity_capability(&command.source.rns_identity, required_capability)
@@ -4419,6 +4423,9 @@ impl RchCore {
                 "unknown_command",
                 format!("Unsupported checklist command '{}'", command.command_type),
             ))];
+        }
+        if let Some(rejection) = self.rem_team_scope_rejection(command) {
+            return vec![rejection];
         }
         if let Some(required_capability) =
             checklist_required_capability(command.command_type.as_str())
