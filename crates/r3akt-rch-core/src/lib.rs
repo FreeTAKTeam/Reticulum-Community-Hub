@@ -547,8 +547,14 @@ pub fn validate_delivery_envelope(
     payload: &Value,
     now_ms: i64,
 ) -> Result<DeliveryEnvelope, RchCoreError> {
-    r3akt_shared_mesh_delivery::validate_delivery_envelope(payload, now_ms)
-        .map_err(|error| shared_delivery_error(&error))
+    let mut envelope = r3akt_shared_mesh_delivery::validate_delivery_envelope(payload, now_ms)
+        .map_err(|error| shared_delivery_error(&error))?;
+    envelope.message_id = normalize_message_id(Some(&envelope.message_id));
+    envelope.topic_id = envelope
+        .topic_id
+        .as_deref()
+        .and_then(|topic_id| normalize_topic_id(Some(topic_id)));
+    Ok(envelope)
 }
 
 pub fn classify_delivery_mode(
@@ -13214,6 +13220,41 @@ mod tests {
             Some("018f053d7dec70008000000000000002")
         );
         assert_eq!(envelope.priority, 3);
+    }
+
+    #[test]
+    fn delivery_envelope_reapplies_rch_id_normalization_after_shared_validation() {
+        let mut payload = json!({
+            "Born": 1_700_000_000_000_i64,
+            "Content-Type": "text/plain; schema=lxmf.chat.v1",
+            "Message-ID": "018f053d-7dec-7000-8000-000000000001",
+            "Priority": 3,
+            "Schema-Version": "1",
+            "Sender": "abcdef",
+            "TTL": 300,
+            "TopicID": "018f053d-7dec-7000-8000-000000000002",
+        });
+
+        let normalized =
+            validate_delivery_envelope(&payload, 1_700_000_000_000).expect("valid envelope");
+        assert_eq!(normalized.message_id, "018f053d7dec70008000000000000001");
+        assert_eq!(
+            normalized.topic_id.as_deref(),
+            Some("018f053d7dec70008000000000000002")
+        );
+
+        payload["Message-ID"] = json!("  ");
+        payload["TopicID"] = json!("  ");
+        let generated =
+            validate_delivery_envelope(&payload, 1_700_000_000_000).expect("valid blank IDs");
+        assert_eq!(generated.message_id.len(), 32);
+        assert!(
+            generated
+                .message_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
+        assert_eq!(generated.topic_id, None);
     }
 
     #[test]
