@@ -1,9 +1,10 @@
 # AGENTS.md - RCH Rust Edition
 
-This branch is the Rust transition branch for Reticulum Community Hub. The
-Python implementation is preserved on `rch-python`; do not reintroduce Python,
-Vue, or Electron source into `rust-next` unless the user explicitly asks for a
-compatibility artifact.
+This is the Rust product line for Reticulum Community Hub. The Python
+implementation is preserved on `rch-python`. The existing shared Vue UI in
+`ui/` and Tauri shell in `apps/rch-desktop/` are supported; the historical
+Rust-only restriction does not prohibit maintaining those frontend sources.
+Do not restore the legacy Python server or Electron packaging as UI cleanup.
 
 ## Project Shape
 
@@ -27,6 +28,15 @@ src/
 └── LXMF-rs/                   # dependency for lxmf-wire
 ```
 
+## Frontend Engineering
+
+Read and apply [Frontend engineering principles](FRONTEND_ENGINEERING_PRINCIPLES.md)
+before JavaScript/TypeScript UI design, implementation, refactoring, or review.
+Its repository appendix gives the reviewed source boundaries and local checks.
+Business/domain authority stays in the designated backend or native runtime;
+stores, hooks, composables, and frontend services are not alternative owners.
+This supplements the existing architecture, safety, toolchain, and workflow rules.
+
 ## UI and Packaging
 
 - `ui/` is imported from the canonical `ui-shared` branch and must stay
@@ -39,6 +49,10 @@ src/
   for local operator workstations.
 
 ## Required Checks
+
+Documentation-only policy edits require document/link/diff checks, not
+application builds or dependency installation. For source changes, reuse
+installed locked dependencies and run checks for the affected layers.
 
 Run these before declaring Rust transition work complete:
 
